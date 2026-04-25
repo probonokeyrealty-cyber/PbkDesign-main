@@ -6557,7 +6557,7 @@
           <div class="plugin-card-body">
             <div class="plugin-field">
               <label>Endpoint URL</label>
-              <input type="text" placeholder="http://localhost:8788  (set when you run OpenClaw locally)"
+              <input type="text" placeholder="https://pbk-openclaw-bridge.onrender.com"
                      data-plugin-field="endpoint" autocomplete="off"/>
             </div>
             <div class="plugin-field">
@@ -8822,6 +8822,8 @@
     return String(endpoint).trim().replace(/\/+$/, '');
   }
 
+  const DEFAULT_OPENCLAW_ENDPOINT = normalizeOpenClawEndpoint('https://pbk-openclaw-bridge.onrender.com');
+
   function sanitizeOpenClawConfig(config = {}) {
     const endpoint = normalizeOpenClawEndpoint(config.endpoint || '');
     const apiKey = String(config.apiKey || '').trim();
@@ -8836,7 +8838,14 @@
   }
 
   function getOpenClawConfig() {
-    return sanitizeOpenClawConfig(parseJSONSafe(localStorage.getItem(OPENCLAW_STORAGE_KEY), {}));
+    return sanitizeOpenClawConfig({
+      endpoint: DEFAULT_OPENCLAW_ENDPOINT,
+      apiKey: '',
+      status: DEFAULT_OPENCLAW_ENDPOINT ? 'saved' : 'not-configured',
+      lastMessage: DEFAULT_OPENCLAW_ENDPOINT ? 'PBK public bridge is preconfigured.' : '',
+      lastCheckedAt: 0,
+      ...parseJSONSafe(localStorage.getItem(OPENCLAW_STORAGE_KEY), {})
+    });
   }
 
   function saveOpenClawConfig(partial = {}) {
@@ -9568,7 +9577,7 @@
           const failed = saveOpenClawConfig({
             ...getOpenClawConfig(),
             status: 'error',
-            lastMessage: 'Live sync lost. Restart the local OpenClaw server, then reconnect.'
+            lastMessage: 'Live sync lost. Check the OpenClaw bridge, then reconnect.'
           });
           reflectOpenClawUI(failed);
           PBK.events.emit('openclaw:status', failed);
@@ -10140,8 +10149,13 @@
   setInterval(syncCoreBindings, 60000);
   updatePaletteMeta();
 
-  if (getOpenClawConfig().status === 'connected' && getOpenClawConfig().endpoint) {
-    startOpenClawPolling({ immediate: true });
+  const initialOpenClawConfig = getOpenClawConfig();
+  if (initialOpenClawConfig.endpoint) {
+    syncOpenClawState({ silent: false }).catch((error) => {
+      console.error('Initial OpenClaw state sync failed', error);
+      reflectOpenClawUI(initialOpenClawConfig);
+    });
+    startOpenClawPolling({ immediate: false });
   }
 
   const initialHash = window.location.hash.replace(/^#/, '');

@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: pbk-openclaw-bridge
+    runtime: docker
+    plan: free
+    region: ohio
+    dockerfilePath: ./Dockerfile.openclaw
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PBK_OPENCLAW_STATE_DIR
+        value: /app/.pbk-local
+      - key: PBK_N8N_APPROVAL_WEBHOOK
+        sync: false
+      - key: PBK_N8N_LEAD_WEBHOOK
+        sync: false

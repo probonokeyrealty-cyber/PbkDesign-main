@@ -1,0 +1,111 @@
+{
+  "name": "PBK Lead Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pbk-lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "WebhookLeadIntake",
+      "name": "Lead Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json;\nconst lead = {\n  leadId: input.leadId || input.id || `lead-${Date.now()}`,\n  source: input.source || 'manual-webhook',\n  seller: {\n    name: input?.seller?.name || input.name || 'Unknown seller',\n    phone: input?.seller?.phone || input.phone || '',\n    email: input?.seller?.email || input.email || ''\n  },\n  property: {\n    address: input?.property?.address || input.address || '',\n    city: input?.property?.city || input.city || '',\n    state: input?.property?.state || input.state || ''\n  },\n  tags: Array.isArray(input.tags) ? input.tags : []\n};\nreturn [{ json: lead }];"
+      },
+      "id": "CodeNormalizeLead",
+      "name": "Normalize Lead Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -380,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PBK_OPENCLAW_URL || 'http://127.0.0.1:8788' }}/events",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"eventType\": \"lead-intake\", \"payload\": $json }",
+        "options": {}
+      },
+      "id": "HttpToOpenClaw",
+      "name": "Push To OpenClaw",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -100,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, message: 'Lead intake accepted by PBK local bridge', openclaw: $json } }}"
+      },
+      "id": "RespondLeadIntake",
+      "name": "Respond To Lead Intake",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        -40
+      ]
+    }
+  ],
+  "connections": {
+    "Lead Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead Payload": {
+      "main": [
+        [
+          {
+            "node": "Push To OpenClaw",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push To OpenClaw": {
+      "main": [
+        [
+          {
+            "node": "Respond To Lead Intake",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {},
+  "versionId": "pbk-lead-intake-v1",
+  "meta": {
+    "instanceId": "pbk-local"
+  },
+  "id": "pbkLeadIntakeWorkflow",
+  "tags": []
+}

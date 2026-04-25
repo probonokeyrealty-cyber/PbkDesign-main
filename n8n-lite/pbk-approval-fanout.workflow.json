@@ -1,0 +1,206 @@
+{
+  "name": "PBK Approval Fanout",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pbk-approval-request",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "WebhookApprovalRequest",
+      "name": "Approval Request Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -820,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json;\nconst id = input.id || `approval-${Date.now()}`;\nconst baseUrl = $env.PBK_BASE_URL || 'http://127.0.0.1:5678';\nreturn [{\n  json: {\n    id,\n    leadId: input.leadId || '',\n    leadName: input.leadName || input.name || 'Unknown seller',\n    address: input.address || '',\n    offerPrice: input.offerPrice || 0,\n    mao: input.mao || 0,\n    notes: input.notes || '',\n    createdAt: input.createdAt || new Date().toISOString(),\n    approveUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=approved`,\n    rejectUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=rejected`\n  }\n}];"
+      },
+      "id": "CodeNormalizeApproval",
+      "name": "Normalize Approval Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PBK_APPROVAL_NOTIFY_WEBHOOK || 'https://example.com/pbk-approval' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { id: $json.id, leadName: $json.leadName, address: $json.address, offerPrice: $json.offerPrice, mao: $json.mao, notes: $json.notes, approveUrl: $json.approveUrl, rejectUrl: $json.rejectUrl } }}",
+        "options": {}
+      },
+      "id": "HttpNotifyChannel",
+      "name": "Notify Approval Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -280,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, message: 'Approval request fanned out', approveUrl: $node['Normalize Approval Request'].json.approveUrl, rejectUrl: $node['Normalize Approval Request'].json.rejectUrl } }}"
+      },
+      "id": "RespondApprovalRequest",
+      "name": "Respond To Approval Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "pbk-approval-decision",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "WebhookApprovalDecision",
+      "name": "Approval Decision Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -820,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json;\nreturn [{\n  json: {\n    id: input.query?.id || input.id || '',\n    status: input.query?.status || input.status || 'approved',\n    actor: input.query?.actor || input.actor || 'n8n callback',\n    actedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "CodeNormalizeDecision",
+      "name": "Normalize Approval Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PBK_OPENCLAW_URL || 'http://127.0.0.1:8788' }}/events",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"eventType\": \"approval-callback\", \"payload\": $json }",
+        "options": {}
+      },
+      "id": "HttpDecisionToOpenClaw",
+      "name": "Post Decision To OpenClaw",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -280,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, message: 'Approval decision forwarded to PBK local bridge', decision: $json } }}"
+      },
+      "id": "RespondApprovalDecision",
+      "name": "Respond To Approval Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        140
+      ]
+    }
+  ],
+  "connections": {
+    "Approval Request Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Approval Request": {
+      "main": [
+        [
+          {
+            "node": "Notify Approval Channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Approval Channel": {
+      "main": [
+        [
+          {
+            "node": "Respond To Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Decision Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "Post Decision To OpenClaw",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Decision To OpenClaw": {
+      "main": [
+        [
+          {
+            "node": "Respond To Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {},
+  "versionId": "pbk-approval-fanout-v1",
+  "meta": {
+    "instanceId": "pbk-local"
+  },
+  "id": "pbkApprovalFanoutWorkflow",
+  "tags": []
+}

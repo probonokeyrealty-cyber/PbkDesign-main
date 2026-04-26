@@ -12,6 +12,17 @@ services:
         value: production
       - key: PBK_OPENCLAW_STATE_DIR
         value: /app/.pbk-local
+      # Bearer token required on POST endpoints. Set in the Render dashboard
+      # (the same value goes into PBK Settings -> OpenClaw API key field).
+      - key: PBK_BRIDGE_API_KEY
+        sync: false
+      # Postgres connection string for durable state across cold starts.
+      # When set, the bridge ignores .pbk-local/ and uses a 'bridge_state' table
+      # (single JSONB row). Use Render's "Add Database" -> Postgres free tier
+      # then bind via "Add Environment Variable -> From Database".
+      - key: PBK_DATABASE_URL
+        sync: false
+      # n8n webhook URLs the bridge can fan-out to. Set in Render dashboard.
       - key: PBK_N8N_APPROVAL_WEBHOOK
         sync: false
       - key: PBK_N8N_LEAD_WEBHOOK

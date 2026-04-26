@@ -1,0 +1,43 @@
+# Keep the OpenClaw bridge image small and predictable.
+# Anything not explicitly COPY'd in Dockerfile.openclaw is irrelevant.
+
+# Heavy / generated / private trees
+node_modules
+dist
+build
+coverage
+.cache
+.tmp
+.vite
+.netlify
+
+# Frontend-only assets — the bridge does not serve these
+public
+src
+analyzer.html
+index.html
+index.shell.html
+
+# Persistence and prior deploy artifacts
+.pbk-local
+deploy-*.zip
+*.tsbuildinfo
+
+# Source control + editor metadata
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Lockfiles + manifests are intentionally NOT ignored — the Dockerfile may
+# reference them on future builds. Keep them visible to the build context.
+
+# Docs and runbooks (don't need to be inside the bridge image)
+*.md
+PBK_*
+n8n-lite
+
+# Tests, examples, scripts that aren't the bridge
+scripts/parity-check.mjs
+scripts/sync-master-template.mjs

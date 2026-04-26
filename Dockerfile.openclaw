@@ -1,12 +1,76 @@
-FROM node:22-alpine
+# PBK OpenClaw bridge — public host image (Render, Fly, etc.)
+#
+# The bridge needs:
+#   - node 22+
+#   - @sparticuz/chromium  (Chrome binary for serverless/container PDF rendering)
+#   - puppeteer-core       (Puppeteer that talks to an external Chrome binary)
+#   - pg                   (Postgres client for durable state when PBK_DATABASE_URL is set)
+#
+# Alpine + glibc-built chromium do not mix; use the Debian slim base so the
+# Sparticuz Chromium binary can find its libc and X11 deps.
+
+FROM node:22-slim
+
+# Runtime libraries Chrome needs. Sparticuz ships the binary, but the host
+# image still needs the GTK/X11/font/SSL stack for it to launch.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      fonts-liberation \
+      libasound2 \
+      libatk-bridge2.0-0 \
+      libatk1.0-0 \
+      libc6 \
+      libcairo2 \
+      libcups2 \
+      libdbus-1-3 \
+      libexpat1 \
+      libfontconfig1 \
+      libgbm1 \
+      libgcc-s1 \
+      libglib2.0-0 \
+      libgtk-3-0 \
+      libnspr4 \
+      libnss3 \
+      libpango-1.0-0 \
+      libpangocairo-1.0-0 \
+      libstdc++6 \
+      libx11-6 \
+      libx11-xcb1 \
+      libxcb1 \
+      libxcomposite1 \
+      libxcursor1 \
+      libxdamage1 \
+      libxext6 \
+      libxfixes3 \
+      libxi6 \
+      libxrandr2 \
+      libxrender1 \
+      libxss1 \
+      libxtst6 \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# Install ONLY the bridge's runtime deps. The frontend's React/Radix universe
+# in the repo's package.json is irrelevant to this container, so we don't ship it.
+# Pinned versions for reproducibility.
+RUN npm install --no-save --no-audit --no-fund --loglevel=error \
+      @sparticuz/chromium@147.0.1 \
+      puppeteer-core@24.41.0 \
+      pg@8.13.1
+
+# Copy the bridge source last so dependency installation caches across rebuilds.
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 
+# Default to the persistent state path for file-mode fallback. When
+# PBK_DATABASE_URL is set the bridge ignores this and uses Postgres instead.
 ENV NODE_ENV=production
-ENV PORT=10000
+ENV PBK_OPENCLAW_STATE_DIR=/app/.pbk-local
 
+# Render injects $PORT at runtime — the bridge already reads it. 10000 is the
+# default fallback when nothing is injected.
+ENV PORT=10000
 EXPOSE 10000
 
+# `--public` bumps the bridge into hosted mode (binds 0.0.0.0, hardens defaults).
 CMD ["node", "./scripts/openclaw-local-server.mjs", "--public"]

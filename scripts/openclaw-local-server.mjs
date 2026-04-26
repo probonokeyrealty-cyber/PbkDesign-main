@@ -6,11 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
+import pg from 'pg';
+const { Pool: PgPool } = pg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-04-25-contract-runtime-v2';
+const BUILD_REVISION = '2026-04-26-postgres-state-v4';
 
 const IS_RESET = process.argv.includes('--reset');
 const IS_LAN = process.argv.includes('--lan');
@@ -37,6 +39,20 @@ const PORT = Number(process.env.PBK_OPENCLAW_PORT || process.env.PORT || 8788);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
+
+// Bearer token required on mutating endpoints when set. Leave unset for local
+// dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
+const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+
+// Endpoints that stay open even when PBK_BRIDGE_API_KEY is set, so external
+// healthchecks (Render, uptime monitors) can still reach the bridge.
+const PUBLIC_PATHS = new Set(['/', '/health', '/status', '/api/health', '/api/status']);
+
+// Postgres state backend. When PBK_DATABASE_URL is set the bridge persists
+// state to a 'bridge_state' table (single row, JSONB column) instead of the
+// .pbk-local/openclaw-state.json file. Survives Render free-tier cold starts.
+const DATABASE_URL = String(process.env.PBK_DATABASE_URL || '').trim();
+const STATE_BACKEND = DATABASE_URL ? 'postgres' : 'file';
 
 const SHOULD_RESET = IS_RESET;
 
@@ -726,6 +742,56 @@ function buildDefaultState() {
   };
 }
 
+let __pgPool = null;
+function getPgPool() {
+  if (__pgPool) return __pgPool;
+  if (!DATABASE_URL) return null;
+  __pgPool = new PgPool({
+    connectionString: DATABASE_URL,
+    max: 2,
+    // Render Postgres requires TLS but uses a self-signed cert chain.
+    // Disable cert validation for managed-DB hostnames; keep it on for localhost.
+    ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL)
+      ? false
+      : { rejectUnauthorized: false },
+  });
+  __pgPool.on('error', (err) => {
+    console.error('[pbk-local-openclaw] pg pool error:', err && err.message ? err.message : err);
+  });
+  return __pgPool;
+}
+
+async function ensurePgSchema() {
+  const pool = getPgPool();
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bridge_state (
+      id TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+async function loadStateFromDb() {
+  const pool = getPgPool();
+  if (!pool) return null;
+  const result = await pool.query("SELECT data FROM bridge_state WHERE id = 'singleton' LIMIT 1");
+  return result.rows[0]?.data || null;
+}
+
+async function persistStateToDb(nextState) {
+  const pool = getPgPool();
+  if (!pool) return false;
+  await pool.query(
+    `INSERT INTO bridge_state (id, data, updated_at)
+     VALUES ('singleton', $1::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [JSON.stringify(nextState)],
+  );
+  return true;
+}
+
 async function ensureRuntimeDir() {
   await mkdir(RUNTIME_DIR, { recursive: true });
 }
@@ -733,6 +799,10 @@ async function ensureRuntimeDir() {
 async function persistState(nextState) {
   nextState.status.lastUpdatedAt = isoNow();
   updateDerivedStatus(nextState);
+  if (DATABASE_URL) {
+    await persistStateToDb(nextState);
+    return;
+  }
   await ensureRuntimeDir();
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
 }
@@ -801,8 +871,20 @@ function hydrateState(raw = {}) {
 }
 
 async function loadState() {
-  await ensureRuntimeDir();
+  if (DATABASE_URL) {
+    await ensurePgSchema();
+  } else {
+    await ensureRuntimeDir();
+  }
   if (SHOULD_RESET) {
+    const fresh = buildDefaultState();
+    await persistState(fresh);
+    return fresh;
+  }
+
+  if (DATABASE_URL) {
+    const dbState = await loadStateFromDb();
+    if (dbState) return hydrateState(dbState);
     const fresh = buildDefaultState();
     await persistState(fresh);
     return fresh;
@@ -2173,6 +2255,22 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // Bearer-token gate. Skipped entirely when PBK_BRIDGE_API_KEY is unset
+  // (local dev). Healthcheck endpoints stay open so Render's healthCheckPath
+  // and external monitors keep working without credentials.
+  if (BRIDGE_API_KEY && !PUBLIC_PATHS.has(pathname)) {
+    const header = String(request.headers.authorization || '').trim();
+    const expected = `Bearer ${BRIDGE_API_KEY}`;
+    if (header !== expected) {
+      json(response, 401, {
+        ok: false,
+        error: 'Unauthorized',
+        hint: 'Send Authorization: Bearer <PBK_BRIDGE_API_KEY> on POST endpoints.',
+      });
+      return;
+    }
+  }
+
   try {
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       json(response, 200, {
@@ -2188,7 +2286,9 @@ const server = createServer(async (request, response) => {
           documentsPdf: true,
           approvals: true,
           contracts: true,
-          analyzerBridge: true
+          analyzerBridge: true,
+          authRequired: Boolean(BRIDGE_API_KEY),
+          stateBackend: STATE_BACKEND,
         },
         lastUpdatedAt: state.status.lastUpdatedAt,
       });
@@ -2502,6 +2602,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[pbk-local-openclaw] listening on http://${HOST}:${PORT}`);
+  console.log(`[pbk-local-openclaw] state backend: ${STATE_BACKEND}${DATABASE_URL ? ' (postgres)' : ` (file: ${STATE_FILE})`}`);
   console.log(`[pbk-local-openclaw] state file: ${STATE_FILE}`);
   console.log(`[pbk-local-openclaw] tools: ${state.status.tools.join(', ')}`);
   if (APPROVAL_WEBHOOK_URL) {

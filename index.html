@@ -11164,6 +11164,17 @@
     anchor.remove();
   }
 
+  function getContractPdfEndpoint() {
+    const endpoint = String(getOpenClawConfig().endpoint || '').trim();
+    if (!endpoint) return '/api/documents/pdf';
+
+    try {
+      return new URL('/api/documents/pdf', endpoint).toString();
+    } catch (error) {
+      return '/api/documents/pdf';
+    }
+  }
+
   async function ensureContractPdf({ openInNewTab = false, download = false } = {}) {
     const runtime = await getAnalyzerContractRuntime();
 
@@ -11197,7 +11208,7 @@
       };
     }
 
-    const response = await fetch('/api/documents/pdf', {
+    const response = await fetch(getContractPdfEndpoint(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -11206,7 +11217,9 @@
         propertyAddress: runtime.address,
         selectedPathLabel: runtime.selectedPathLabel,
         companyName: runtime.branding.companyName,
-        masterPackageQuery: runtime.masterPackageQuery
+        masterPackageQuery: runtime.masterPackageQuery,
+        previewOrigin: window.location.origin,
+        previewUrl: runtime.previewUrl
       })
     });
 

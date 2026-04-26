@@ -1,8 +1,11 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,6 +68,8 @@ const LIMITS = {
   contracts: 90,
 };
 
+const DEFAULT_PREVIEW_ORIGIN = String(process.env.PBK_DOCUMENTS_ORIGIN || 'https://pbkcommandcenter.netlify.app').trim();
+
 function isoNow() {
   return new Date().toISOString();
 }
@@ -104,6 +109,205 @@ function hashString(value = '') {
 
 function jsonStringify(value) {
   return JSON.stringify(value, null, 2);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeHtml(value = '') {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeFilename(value = '') {
+  return String(value || 'PBK_Document')
+    .replace(/[^a-z0-9_-]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 90);
+}
+
+function getLocalChromePath() {
+  const candidates = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ];
+
+  return candidates.find((candidate) => {
+    try {
+      return Boolean(candidate && existsSync(candidate));
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function launchPdfBrowserWithRetry() {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const localChromePath = IS_HOSTED ? '' : getLocalChromePath();
+      return await puppeteer.launch({
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: localChromePath || (await chromium.executablePath()),
+        headless: 'new',
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await sleep(800);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+function renderPdfFallbackHtml(payload = {}) {
+  const title = payload.documentTitle || 'PBK Document';
+  const company = payload.companyName || 'Probono Key Realty';
+  const address = payload.propertyAddress || 'No property loaded';
+  const pathLabel = payload.selectedPathLabel || 'Selected Path';
+  const body = payload.content || 'No document content available.';
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      @page { size: Letter; margin: 0.5in; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: #111827;
+        background: #f8fafc;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+      .page {
+        min-height: 10in;
+        border: 1px solid #dbe3ef;
+        border-radius: 22px;
+        background: rgba(255,255,255,0.94);
+        padding: 28px;
+        box-shadow: 0 20px 45px rgba(15,23,42,0.08);
+      }
+      .eyebrow {
+        color: #2563eb;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 8px 0 6px;
+        font-size: 26px;
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+      }
+      .meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 14px 0 20px;
+      }
+      .pill {
+        border: 1px solid #dbeafe;
+        border-radius: 999px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        padding: 6px 10px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 11.5px;
+        line-height: 1.65;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="eyebrow">${escapeHtml(company)}</div>
+      <h1>${escapeHtml(title)}</h1>
+      <div class="meta">
+        <span class="pill">${escapeHtml(pathLabel)}</span>
+        <span class="pill">${escapeHtml(address)}</span>
+        <span class="pill">${escapeHtml(new Date().toLocaleDateString('en-US'))}</span>
+      </div>
+      <pre>${escapeHtml(body)}</pre>
+    </main>
+  </body>
+</html>`;
+}
+
+function buildPdfPreviewUrl(payload = {}) {
+  if (payload.previewUrl) return String(payload.previewUrl).trim();
+  if (!payload.masterPackageQuery) return '';
+
+  const origin = String(payload.previewOrigin || DEFAULT_PREVIEW_ORIGIN || '').trim();
+  if (!origin) return '';
+
+  const url = new URL('/PBK_Master_Deal_Package.html', origin);
+  url.search = String(payload.masterPackageQuery).startsWith('?')
+    ? String(payload.masterPackageQuery)
+    : `?${payload.masterPackageQuery}`;
+  url.searchParams.set('pbk_preview', '1');
+  url.searchParams.delete('pbk_print');
+  return url.toString();
+}
+
+async function generatePdfDocument(payload = {}) {
+  let browser;
+
+  try {
+    browser = await launchPdfBrowserWithRetry();
+    const page = await browser.newPage();
+    const previewUrl = buildPdfPreviewUrl(payload);
+
+    if (previewUrl) {
+      await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 45000 });
+      await page.emulateMediaType('print');
+      await page.evaluate(() => document.fonts?.ready);
+      await sleep(400);
+    } else {
+      await page.setContent(renderPdfFallbackHtml(payload), { waitUntil: 'networkidle0' });
+    }
+
+    return await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      preferCSSPageSize: true,
+      displayHeaderFooter: true,
+      margin: {
+        top: '0.5in',
+        right: '0.5in',
+        bottom: '0.6in',
+        left: '0.5in',
+      },
+      headerTemplate:
+        '<div style="width:100%;font-size:9px;color:#64748b;padding:0 0.5in;font-family:Inter,Arial,sans-serif;">PBK Deal Package</div>',
+      footerTemplate:
+        '<div style="width:100%;font-size:9px;color:#64748b;padding:0 0.5in;font-family:Inter,Arial,sans-serif;text-align:right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>',
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
 }
 
 function getItemTimestamp(item = {}) {
@@ -1846,6 +2050,16 @@ function json(response, statusCode, payload) {
   response.end(JSON.stringify(payload, null, 2));
 }
 
+function sendBinary(response, statusCode, body, headers = {}) {
+  response.writeHead(statusCode, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    ...headers,
+  });
+  response.end(body);
+}
+
 async function readBody(request) {
   const chunks = [];
   for await (const chunk of request) {
@@ -1982,6 +2196,22 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         tools: TOOL_NAMES,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/documents/pdf') {
+      const body = await readBody(request);
+      const pdf = await generatePdfDocument(body);
+      const filename = `${safeFilename(body.documentTitle || body.documentType || 'PBK_Master_Deal_Package')}_${new Date()
+        .toISOString()
+        .replace(/[-:T.Z]/g, '')
+        .slice(0, 14)}.pdf`;
+
+      sendBinary(response, 200, pdf, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-store',
       });
       return;
     }
@@ -2236,6 +2466,7 @@ const server = createServer(async (request, response) => {
         'GET /health',
         'GET /state',
         'GET /api/tools',
+        'POST /api/documents/pdf',
         'POST /invoke',
         'POST /events',
         'GET/POST /api/approvals',

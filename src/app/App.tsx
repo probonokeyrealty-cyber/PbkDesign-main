@@ -11,6 +11,8 @@ import { calculateARV, calculateLandOffer, calculateMAO, calculateVerdict } from
 import {
   DEFAULT_BRANDING,
   PBKBranding,
+  buildDocumentSet,
+  buildMasterPackageParams,
   getDefaultSelectedPath,
   getAnalyzeReadiness,
   getPdfReadiness,
@@ -139,58 +141,60 @@ export default function App() {
   const [exportStatus, setExportStatus] = useState('Select a path and complete seller info to generate.');
   const [analyzeStatus, setAnalyzeStatus] = useState('');
 
-  const mergeExternalDeal = (incoming: Partial<DealData>) => {
-    setDeal((prev) => {
-      const next: DealData = {
-        ...prev,
-        ...incoming,
-        repairs:
-          incoming.repairs && typeof incoming.repairs === 'object'
-            ? {
-                ...prev.repairs,
-                ...incoming.repairs,
-              }
-            : prev.repairs,
-        underwriting:
-          incoming.underwriting && typeof incoming.underwriting === 'object'
-            ? {
-                ...prev.underwriting,
-                ...incoming.underwriting,
-              }
-            : prev.underwriting,
-        confirmedTerms:
-          incoming.confirmedTerms && typeof incoming.confirmedTerms === 'object'
-            ? {
-                ...prev.confirmedTerms,
-                ...incoming.confirmedTerms,
-              }
-            : prev.confirmedTerms,
-        comps: incoming.comps
+  const buildMergedDealState = (base: DealData, incoming: Partial<DealData> = {}): DealData => {
+    const next: DealData = {
+      ...base,
+      ...incoming,
+      repairs:
+        incoming.repairs && typeof incoming.repairs === 'object'
           ? {
-              A: {
-                ...prev.comps.A,
-                ...(incoming.comps.A || {}),
-              },
-              B: {
-                ...prev.comps.B,
-                ...(incoming.comps.B || {}),
-              },
-              C: {
-                ...prev.comps.C,
-                ...(incoming.comps.C || {}),
-              },
+              ...base.repairs,
+              ...incoming.repairs,
             }
-          : prev.comps,
-      };
+          : base.repairs,
+      underwriting:
+        incoming.underwriting && typeof incoming.underwriting === 'object'
+          ? {
+              ...base.underwriting,
+              ...incoming.underwriting,
+            }
+          : base.underwriting,
+      confirmedTerms:
+        incoming.confirmedTerms && typeof incoming.confirmedTerms === 'object'
+          ? {
+              ...base.confirmedTerms,
+              ...incoming.confirmedTerms,
+            }
+          : base.confirmedTerms,
+      comps: incoming.comps
+        ? {
+            A: {
+              ...base.comps.A,
+              ...(incoming.comps.A || {}),
+            },
+            B: {
+              ...base.comps.B,
+              ...(incoming.comps.B || {}),
+            },
+            C: {
+              ...base.comps.C,
+              ...(incoming.comps.C || {}),
+            },
+          }
+        : base.comps,
+    };
 
-      next.selectedPath = normalizeSelectedPath({
-        type: next.type,
-        contact: next.contact,
-        selectedPath: next.selectedPath,
-      });
-
-      return next;
+    next.selectedPath = normalizeSelectedPath({
+      type: next.type,
+      contact: next.contact,
+      selectedPath: next.selectedPath,
     });
+
+    return next;
+  };
+
+  const mergeExternalDeal = (incoming: Partial<DealData>) => {
+    setDeal((prev) => buildMergedDealState(prev, incoming));
   };
 
   const applyBridgeState = (payload: {
@@ -574,6 +578,38 @@ export default function App() {
         activeTab,
         analyzeStatus,
       }),
+      getBranding: () => branding,
+      getSelectedPath: () => normalizeSelectedPath(deal),
+      getPdfReadiness: (incomingDeal?: Partial<DealData>) =>
+        getPdfReadiness(buildMergedDealState(deal, incomingDeal || {})),
+      getDocumentSet: (
+        incomingDeal?: Partial<DealData>,
+        incomingBranding?: Partial<PBKBranding>,
+      ) =>
+        buildDocumentSet(
+          buildMergedDealState(deal, incomingDeal || {}),
+          {
+            ...branding,
+            ...(incomingBranding || {}),
+          },
+        ),
+      buildMasterPackageQuery: ({
+        deal: incomingDeal,
+        branding: incomingBranding,
+        printMode = false,
+      }: {
+        deal?: Partial<DealData>;
+        branding?: Partial<PBKBranding>;
+        printMode?: boolean;
+      } = {}) =>
+        buildMasterPackageParams(
+          buildMergedDealState(deal, incomingDeal || {}),
+          {
+            ...branding,
+            ...(incomingBranding || {}),
+          },
+          Boolean(printMode),
+        ),
       setState: applyBridgeState,
       setActiveTab: (nextTab: AppTab) => setActiveTab(nextTab),
       analyze: handleAnalyzeDeal,

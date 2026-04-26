@@ -3625,6 +3625,14 @@
       cursor: pointer; transition: background 0.15s;
     }
     .contract-row:hover { background: var(--bg-hover); }
+    .contract-row.active {
+      background: var(--sky-glow);
+      box-shadow: inset 3px 0 0 var(--sky);
+    }
+    .contract-row.is-draft .c-icon {
+      background: color-mix(in srgb, var(--sky-glow) 72%, transparent);
+      border-color: var(--sky-dim);
+    }
     .contract-row:last-child { border-bottom: none; }
     .c-icon {
       width: 32px; height: 32px; border-radius: var(--radius);
@@ -3676,6 +3684,76 @@
     }
     .cp-doc .clause-hl { background: #fef3c7; padding: 0 2px; }
     .cp-doc strong { color: var(--sky-deep); }
+    .cp-doc h5 {
+      margin: 18px 0 8px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #475569;
+      font-family: var(--font-mono);
+    }
+    .contract-runtime-note {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border: 1px solid rgba(37, 99, 235, 0.12);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.7);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: #475569;
+    }
+    .cp-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .cp-meta-pill {
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.86);
+      padding: 10px 12px;
+    }
+    .cp-meta-pill .k {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 9px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    .cp-meta-pill .v {
+      display: block;
+      font-size: 12px;
+      font-family: var(--font-ui);
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .contract-runtime-help {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px dashed rgba(148, 163, 184, 0.45);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: #64748b;
+    }
+    .contract-empty {
+      padding: var(--s-5);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+    .contracts-inline-status {
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-tertiary);
+    }
 
     .cp-footer {
       padding: var(--s-4); border-top: 1px solid var(--border-dim);
@@ -3706,6 +3784,7 @@
 
     @media (max-width: 1100px) {
       .contracts-layout { grid-template-columns: 1fr; }
+      .cp-meta-grid { grid-template-columns: 1fr; }
     }
   </style>
 
@@ -8609,6 +8688,7 @@
 
   const OPENCLAW_STORAGE_KEY = 'pbk-openclaw-config';
   const ANALYZER_STORAGE_KEY = 'pbk-deal-data';
+  const BRANDING_STORAGE_KEY = 'pbk-branding';
 
   function parseJSONSafe(raw, fallback = null) {
     try {
@@ -9121,7 +9201,9 @@
   let openClawPollFailures = 0;
 
   PBK.state.runtime = PBK.state.runtime || {
-    brainTopic: 'Wholesaling'
+    brainTopic: 'Wholesaling',
+    contractPreviewId: 'analyzer-draft',
+    contractPdf: null
   };
 
   function escapeHtml(value = '') {
@@ -9576,6 +9658,8 @@
     } else if (getOpenClawConfig().status === 'connected') {
       setBoundValue('dashboard.heroSubtitle', 'OpenClaw connected — analyzer, calls, and activity are ready to sync.');
     }
+
+    renderContractsExperience();
   }
 
   async function syncOpenClawState({ silent = false } = {}) {
@@ -10428,28 +10512,101 @@
     page.addEventListener('click', async (event) => {
       const button = event.target.closest('.btn, .chip-btn');
       if (!button) return;
+      const action = button.dataset.contractAction || '';
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
-      if (label === 'open in docusign') {
-        await invokeRuntimeTool('sendDocuSign', {
-          leadName: 'Robert Chen',
-          address: '55 Birch Rd, Columbus OH',
-          amount: 98500,
-          email: 'robert@example.com',
-          notes: 'Contract sent from Contracts page preview.'
-        }, {
-          actionLabel: 'contracts',
-          successTitle: 'DocuSign sent',
-          successDesc: 'The contract was pushed to the public bridge and activity log.',
-          errorTitle: 'DocuSign send failed'
-        });
+      if (action === 'focus-contract') {
+        PBK.state.runtime.contractPreviewId = button.dataset.contractId || 'analyzer-draft';
+        renderContractsExperience();
         return;
       }
 
-      if (label === 'remind') {
+      if (action === 'open-draft' || action === 'return-draft') {
+        PBK.state.runtime.contractPreviewId = 'analyzer-draft';
+        renderContractsExperience();
+        if (action === 'open-draft' || label === 'open') {
+          const preview = page.querySelector('.contract-preview');
+          preview?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+
+      if (action === 'edit') {
+        showPage('analyzer');
+        setTimeout(async () => {
+          const api = await ensureAnalyzerBridgeLoaded();
+          syncAnalyzerFrame(true);
+          api?.setActiveTab?.('documents');
+        }, 120);
+        return;
+      }
+
+      if (action === 'open-pdf') {
+        try {
+          const pdf = await ensureContractPdf({ openInNewTab: true });
+          if (pdf) {
+            renderContractsExperience(pdf.runtime);
+            toast({
+              type: 'success',
+              title: 'Analyzer PDF ready',
+              desc: 'The live master package opened in a new tab from the analyzer-backed document pipeline.'
+            });
+          }
+        } catch (error) {
+          toast({
+            type: 'error',
+            title: 'Could not open the live PDF',
+            desc: error?.message || 'The Netlify PDF function did not return a contract packet.'
+          });
+        }
+        return;
+      }
+
+      if (action === 'send') {
+        let pdf = null;
+        try {
+          pdf = await ensureContractPdf({ openInNewTab: false });
+        } catch (error) {
+          toast({
+            type: 'error',
+            title: 'PDF sync failed',
+            desc: error?.message || 'The analyzer-backed PDF could not be generated, so DocuSign was not sent.'
+          });
+          return;
+        }
+
+        if (!pdf?.runtime) return;
+
+        await invokeRuntimeTool('sendDocuSign', {
+          leadName: pdf.runtime.leadName,
+          address: pdf.runtime.address,
+          amount: pdf.runtime.amount,
+          email: pdf.runtime.email,
+          phone: pdf.runtime.phone,
+          selectedPath: pdf.runtime.selectedPath,
+          selectedPathLabel: pdf.runtime.selectedPathLabel,
+          timeline: pdf.runtime.timeline,
+          earnestDeposit: pdf.runtime.earnestDeposit,
+          previewUrl: pdf.runtime.previewUrl,
+          masterPackageQuery: pdf.runtime.masterPackageQuery,
+          pdfGeneratedAt: pdf.syncedAt,
+          documentTitle: 'PBK Master Deal Package',
+          notes: `Contract sent from analyzer-backed contract preview (${pdf.runtime.selectedPathLabel}).`
+        }, {
+          actionLabel: 'contracts',
+          successTitle: 'DocuSign sent',
+          successDesc: `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed to the live bridge.`,
+          errorTitle: 'DocuSign send failed'
+        });
+        renderContractsExperience();
+        return;
+      }
+
+      if (action === 'remind' || label === 'remind') {
+        const runtime = getAnalyzerContractRuntimeSync();
         await invokeRuntimeTool('slackNotify', {
           channel: '#deals',
-          text: 'Reminder requested for Robert Chen contract.'
+          text: `Reminder requested for ${runtime.leadName} at ${runtime.address}.`
         }, {
           actionLabel: 'deal reminders',
           successTitle: 'Reminder queued',
@@ -10459,10 +10616,48 @@
         return;
       }
 
-      if (label === 'edit') {
-        await submitAgentCommand('prepare a revised contract note for Robert Chen at $98,500', {
-          leadName: 'Robert Chen',
-          address: '55 Birch Rd, Columbus OH'
+      if (label === '+ new contract') {
+        const runtime = getAnalyzerContractRuntimeSync();
+        if (!runtime?.deal?.address) {
+          showPage('analyzer');
+          toast({
+            type: 'info',
+            title: 'Start from the analyzer',
+            desc: 'Load a deal in the analyzer first, then PBK can create the draft contract packet here.'
+          });
+          return;
+        }
+
+        PBK.state.runtime.contractPreviewId = 'analyzer-draft';
+        renderContractsExperience();
+        page.querySelector('.contract-preview')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+
+    page.addEventListener('click', (event) => {
+      const row = event.target.closest('.contract-row');
+      if (!row) return;
+      PBK.state.runtime.contractPreviewId = row.dataset.contractId || 'analyzer-draft';
+      renderContractsExperience();
+    });
+
+    page.querySelector('.page-head-actions')?.addEventListener('click', (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === 'templates') {
+        showPage('analyzer');
+        setTimeout(() => syncAnalyzerFrame(true), 120);
+        return;
+      }
+
+      if (label === 'audit log') {
+        showPage('settings');
+        toast({
+          type: 'info',
+          title: 'Audit trail lives in the runtime log',
+          desc: 'OpenClaw activity, approvals, DocuSign events, and DNC changes are all recorded in the live runtime surfaces.'
         });
       }
     });
@@ -10770,8 +10965,610 @@
     return parseJSONSafe(localStorage.getItem(ANALYZER_STORAGE_KEY), null);
   }
 
-  function getAnalyzerFrame() {
+  function getVisibleAnalyzerFrame() {
     return document.getElementById('pbkAnalyzerFrame');
+  }
+
+  function getBackgroundAnalyzerFrame() {
+    return document.getElementById('pbkAnalyzerBridgeFrame');
+  }
+
+  function getAnalyzerFrame() {
+    return getVisibleAnalyzerFrame() || getBackgroundAnalyzerFrame();
+  }
+
+  function ensureBackgroundAnalyzerFrame() {
+    let frame = getBackgroundAnalyzerFrame();
+    if (frame) return frame;
+
+    frame = document.createElement('iframe');
+    frame.id = 'pbkAnalyzerBridgeFrame';
+    frame.src = '/analyzer.html?embedded=1&bridge=background';
+    frame.loading = 'lazy';
+    frame.tabIndex = -1;
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'fixed';
+    frame.style.width = '1px';
+    frame.style.height = '1px';
+    frame.style.opacity = '0';
+    frame.style.pointerEvents = 'none';
+    frame.style.left = '-9999px';
+    frame.style.bottom = '0';
+    frame.addEventListener('load', () => syncAnalyzerFrame(false));
+    document.body.appendChild(frame);
+    return frame;
+  }
+
+  async function ensureAnalyzerBridgeLoaded(timeoutMs = 12000) {
+    const frame = getAnalyzerFrame() || ensureBackgroundAnalyzerFrame();
+    if (!frame) return null;
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const api = frame.contentWindow?.PBKAnalyzer;
+      if (api?.getState) return api;
+      await new Promise((resolve) => setTimeout(resolve, 160));
+    }
+
+    return null;
+  }
+
+  function getAnalyzerBridgeApiSync() {
+    return getAnalyzerFrame()?.contentWindow?.PBKAnalyzer || null;
+  }
+
+  function getStoredBranding() {
+    const stored = parseJSONSafe(localStorage.getItem(BRANDING_STORAGE_KEY), {});
+    return {
+      companyName: stored?.companyName || 'Probono Key Realty',
+      logoDataUrl: stored?.logoDataUrl || ''
+    };
+  }
+
+  function normalizeContractPath(deal = {}) {
+    const selectedPath = String(deal.selectedPath || '').trim();
+    if (deal.type === 'land') {
+      if (selectedPath === 'rbp' || selectedPath === 'rbp-land') return 'rbp-land';
+      return deal.contact === 'realtor' ? 'land-agent' : 'land-owner';
+    }
+    if (['land-owner', 'land-agent', 'rbp-land'].includes(selectedPath)) return 'cash';
+    return selectedPath || 'cash';
+  }
+
+  function getContractPathLabel(path = 'cash') {
+    const labels = {
+      cash: 'Cash Offer',
+      cf: 'Creative Finance',
+      mt: 'Mortgage Takeover',
+      rbp: 'Retail Buyer Program',
+      'land-owner': 'Land / Builder Assignment',
+      'land-agent': 'Land / Builder Assignment',
+      'rbp-land': 'Land RBP Backup'
+    };
+    return labels[path] || 'Cash Offer';
+  }
+
+  function getContractAgreedPrice(deal = {}) {
+    return num(deal.agreedPrice) || num(deal.rbpPriceConfirm) || num(deal.offer) || num(deal.price);
+  }
+
+  function getContractReadinessFallback(deal = {}) {
+    const missing = [];
+    if (!String(deal.sellerName || '').trim()) missing.push('seller name');
+    if (!String(deal.sellerEmail || '').includes('@')) missing.push('valid seller email');
+    if (!String(deal.address || '').trim()) missing.push('property address');
+    if (getContractAgreedPrice(deal) <= 0) missing.push('agreed price');
+    if (!String(deal.timeline || '').trim()) missing.push('close timeline');
+
+    return {
+      ready: missing.length === 0,
+      missing,
+      message:
+        missing.length === 0
+          ? 'Premium package ready.'
+          : `Complete ${missing.join(', ')} before generating the premium package.`,
+    };
+  }
+
+  function getAnalyzerSnapshotFallback() {
+    return PBK.state.analyzer || {
+      deal: getStoredAnalyzerDeal() || {},
+      activeTab: 'analyzer',
+      analyzeStatus: ''
+    };
+  }
+
+  function buildAnalyzerContractRuntime(api = null) {
+    const snapshot = api?.getState?.() || getAnalyzerSnapshotFallback();
+    const deal = snapshot?.deal || {};
+    const branding = api?.getBranding?.() || getStoredBranding();
+    const selectedPath = api?.getSelectedPath?.() || normalizeContractPath(deal);
+    const pdfReadiness = api?.getPdfReadiness?.(deal) || getContractReadinessFallback(deal);
+    const documentSet = api?.getDocumentSet?.(deal, branding) || null;
+    let masterPackageQuery = '';
+
+    if (pdfReadiness.ready && api?.buildMasterPackageQuery) {
+      try {
+        masterPackageQuery = api.buildMasterPackageQuery({
+          deal,
+          branding,
+          printMode: false
+        }) || '';
+      } catch (error) {
+        console.warn('Failed to build analyzer master package query', error);
+      }
+    }
+
+    return {
+      snapshot,
+      deal,
+      branding,
+      selectedPath,
+      selectedPathLabel: getContractPathLabel(selectedPath),
+      pdfReadiness,
+      documentSet,
+      masterPackageQuery,
+      previewUrl: masterPackageQuery
+        ? `${window.location.origin}/PBK_Master_Deal_Package.html?${masterPackageQuery}`
+        : '',
+      leadName: String(deal.sellerName || deal.leadName || '').trim() || 'Seller not entered',
+      address: String(deal.address || '').trim() || 'No property loaded',
+      email: String(deal.sellerEmail || '').trim(),
+      phone: String(deal.sellerPhone || '').trim(),
+      amount: getContractAgreedPrice(deal),
+      timeline: String(deal.timeline || '').trim(),
+      earnestDeposit: String(deal.earnestDeposit || '').trim() || 'Delivered within 3 business days',
+      updatedAt: snapshot?.updatedAt || Date.now(),
+    };
+  }
+
+  function getAnalyzerContractRuntimeSync() {
+    return buildAnalyzerContractRuntime(getAnalyzerBridgeApiSync());
+  }
+
+  async function getAnalyzerContractRuntime() {
+    const api = await ensureAnalyzerBridgeLoaded();
+    return buildAnalyzerContractRuntime(api);
+  }
+
+  function sanitizePdfFilename(value = '') {
+    const cleaned = String(value || '')
+      .replace(/[^a-z0-9_-]+/gi, '_')
+      .replace(/^_+|_+$/g, '');
+    return cleaned || 'PBK_Master_Deal_Package';
+  }
+
+  function getCachedContractPdf(query = '') {
+    const cache = PBK.state.runtime?.contractPdf;
+    if (cache?.query === query && cache?.url) return cache;
+    return null;
+  }
+
+  function setCachedContractPdf(cache = null) {
+    const current = PBK.state.runtime?.contractPdf;
+    if (current?.url && current.url !== cache?.url) {
+      try {
+        URL.revokeObjectURL(current.url);
+      } catch (error) {}
+    }
+    PBK.state.runtime.contractPdf = cache;
+  }
+
+  function downloadContractPdf(url, fileName) {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.rel = 'noreferrer';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
+  async function ensureContractPdf({ openInNewTab = false, download = false } = {}) {
+    const runtime = await getAnalyzerContractRuntime();
+
+    if (!runtime?.deal?.address) {
+      toast({
+        type: 'warning',
+        title: 'Open the analyzer first',
+        desc: 'Load a property in the analyzer so the contract draft has a real address and seller context.'
+      });
+      showPage('analyzer');
+      return null;
+    }
+
+    if (!runtime.pdfReadiness.ready || !runtime.masterPackageQuery) {
+      toast({
+        type: 'warning',
+        title: 'Contract draft needs a few more fields',
+        desc: runtime.pdfReadiness.message
+      });
+      showPage('analyzer');
+      return null;
+    }
+
+    const cached = getCachedContractPdf(runtime.masterPackageQuery);
+    if (cached) {
+      if (openInNewTab) window.open(cached.url, '_blank', 'noopener');
+      if (download) downloadContractPdf(cached.url, cached.fileName);
+      return {
+        ...cached,
+        runtime
+      };
+    }
+
+    const response = await fetch('/api/documents/pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentType: 'masterPackage',
+        documentTitle: 'PBK Master Deal Package',
+        propertyAddress: runtime.address,
+        selectedPathLabel: runtime.selectedPathLabel,
+        companyName: runtime.branding.companyName,
+        masterPackageQuery: runtime.masterPackageQuery
+      })
+    });
+
+    if (!response.ok) {
+      let message = `PDF service returned ${response.status}`;
+      try {
+        const payload = await response.json();
+        message = payload.message || payload.error || message;
+      } catch (error) {}
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const syncedAt = new Date().toISOString();
+    const fileName = `${sanitizePdfFilename(runtime.address)}_${new Date().toISOString().slice(0, 10)}.pdf`;
+    const cache = {
+      query: runtime.masterPackageQuery,
+      url,
+      syncedAt,
+      fileName,
+    };
+
+    setCachedContractPdf(cache);
+
+    if (openInNewTab) window.open(url, '_blank', 'noopener');
+    if (download) downloadContractPdf(url, fileName);
+
+    return {
+      ...cache,
+      runtime
+    };
+  }
+
+  function getContractStage(record = {}) {
+    if (record.isDraft) return 'draft';
+    const status = String(record.status || '').toLowerCase();
+    if (['funded', 'closed'].includes(status)) return 'funded';
+    if (['completed', 'signed'].includes(status)) return 'signed';
+    if (['viewed', 'opened', 'review', 'reviewing', 'updated'].includes(status)) return 'viewed';
+    if (['sent', 'delivered'].includes(status)) return 'sent';
+    return 'draft';
+  }
+
+  function getContractStatusChip(record = {}) {
+    const stage = getContractStage(record);
+    if (record.isDraft) {
+      return record.ready ? { label: 'Draft ready', className: 'sent' } : { label: 'Needs fields', className: 'cold' };
+    }
+    if (stage === 'funded') return { label: 'Funded', className: 'won' };
+    if (stage === 'signed') return { label: 'Signed', className: 'won' };
+    if (stage === 'viewed') return { label: 'Viewed', className: 'sent' };
+    if (stage === 'sent') return { label: 'Sent', className: 'sent' };
+    return { label: 'Draft', className: 'cold' };
+  }
+
+  function getContractProgress(record = {}) {
+    const stage = getContractStage(record);
+    if (record.isDraft) return record.ready ? 34 : 12;
+    if (stage === 'funded') return 100;
+    if (stage === 'signed') return 86;
+    if (stage === 'viewed') return 58;
+    if (stage === 'sent') return 32;
+    return 18;
+  }
+
+  function buildContractRecords(runtime) {
+    const runtimeContracts = Array.isArray(PBK.state.openclawRuntime?.contracts)
+      ? PBK.state.openclawRuntime.contracts
+      : [];
+
+    const draftRecord = runtime?.deal?.address
+      ? {
+          id: 'analyzer-draft',
+          leadName: runtime.leadName,
+          address: runtime.address,
+          amount: runtime.amount,
+          status: runtime.pdfReadiness.ready ? 'draft-ready' : 'draft-missing',
+          createdAt: runtime.updatedAt || new Date().toISOString(),
+          updatedAt: runtime.updatedAt || new Date().toISOString(),
+          notes: runtime.pdfReadiness.ready
+            ? `${runtime.selectedPathLabel} draft synced from the analyzer and ready for PDF + signature.`
+            : runtime.pdfReadiness.message,
+          selectedPathLabel: runtime.selectedPathLabel,
+          ready: runtime.pdfReadiness.ready,
+          isDraft: true
+        }
+      : null;
+
+    return [draftRecord, ...runtimeContracts].filter(Boolean).slice(0, 8);
+  }
+
+  function summarizeContractStages(records = []) {
+    const stages = {
+      draft: { count: 0, value: 0 },
+      sent: { count: 0, value: 0 },
+      viewed: { count: 0, value: 0 },
+      signed: { count: 0, value: 0 },
+      funded: { count: 0, value: 0 },
+    };
+
+    records.forEach((record) => {
+      const key = getContractStage(record);
+      stages[key].count += 1;
+      stages[key].value += num(record.amount || 0);
+    });
+
+    return stages;
+  }
+
+  function buildFallbackPurchaseAgreement(runtime) {
+    return [
+      runtime.branding.companyName || 'Probono Key Realty',
+      'PURCHASE AGREEMENT WORKSHEET',
+      '',
+      'Template status: live shell fallback preview while the analyzer documents warm up.',
+      '',
+      `Buyer: ${runtime.branding.companyName || 'Probono Key Realty'}`,
+      `Seller: ${runtime.leadName}`,
+      `Property: ${runtime.address}`,
+      `Selected Path: ${runtime.selectedPathLabel}`,
+      '',
+      'Core Terms',
+      `Purchase Price: ${runtime.amount ? money(runtime.amount) : '[AGREED PRICE]'}`,
+      `Earnest Deposit: ${runtime.earnestDeposit}`,
+      `Close Timeline: ${runtime.timeline || '[CLOSE TIMELINE]'}`,
+      `Seller Email: ${runtime.email || '[SELLER EMAIL]'}`,
+      `Seller Phone: ${runtime.phone || '[SELLER PHONE]'}`,
+      '',
+      'Execution Notes',
+      runtime.pdfReadiness.ready
+        ? 'The analyzer has enough information to generate the live PBK master package PDF and signature packet.'
+        : runtime.pdfReadiness.message,
+    ].join('\n');
+  }
+
+  function buildRuntimeContractSummary(record, runtime) {
+    const statusChip = getContractStatusChip(record);
+    return [
+      runtime?.branding?.companyName || 'Probono Key Realty',
+      'DOCUSIGN ENVELOPE SUMMARY',
+      '',
+      `Lead: ${record.leadName || 'Unknown seller'}`,
+      `Property: ${record.address || 'Unknown property'}`,
+      `Provider: ${record.provider || 'DocuSign'}`,
+      `Envelope ID: ${record.envelopeId || record.id || 'Pending'}`,
+      `Status: ${statusChip.label}`,
+      `Amount: ${record.amount ? money(record.amount) : 'Not set'}`,
+      `Email: ${record.email || 'Not stored'}`,
+      record.selectedPathLabel ? `Path: ${record.selectedPathLabel}` : '',
+      record.notes ? `Notes: ${record.notes}` : 'Notes: No extra notes were saved with this envelope yet.',
+      '',
+      `Created: ${formatRuntimeTime(record.createdAt)}`,
+      `Updated: ${formatRuntimeTime(record.updatedAt)}`,
+      record.previewUrl ? `Preview URL: ${record.previewUrl}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  function renderContractDocument(documentText, brandingName = '') {
+    const lines = String(documentText || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim());
+    const filteredLines =
+      brandingName && lines[0] === brandingName
+        ? lines.slice(1)
+        : lines;
+
+    return filteredLines.map((line, index) => {
+      if (!line) return '<div style="height: 10px;"></div>';
+      if (index === 0) return `<h4>${escapeHtml(line)}</h4>`;
+      if (/^[A-Z][A-Z /&.-]{4,}$/.test(line)) {
+        return `<h5>${escapeHtml(line)}</h5>`;
+      }
+
+      const highlighted = escapeHtml(line).replace(/\[(.+?)\]/g, '<span class="clause-hl">[$1]</span>');
+      return `<p style="margin-bottom: 12px;">${highlighted}</p>`;
+    }).join('');
+  }
+
+  function buildClauseCards(runtime, activeRecord) {
+    if (!activeRecord || !activeRecord.isDraft) {
+      return [
+        { label: 'Runtime envelope', note: activeRecord?.provider || 'DocuSign', active: true },
+        { label: 'Status sync', note: getContractStatusChip(activeRecord).label, active: false },
+        { label: 'Last update', note: formatRelativeTime(activeRecord?.updatedAt), active: false },
+      ];
+    }
+
+    const repairs = num(runtime?.deal?.repairs?.mid || 0);
+    const selectedPath = runtime?.selectedPath || 'cash';
+    const clauses = [
+      {
+        label: repairs > 15000 ? '7-day inspection' : 'As-is quick close',
+        note: repairs > 15000 ? 'repairs flagged by analyzer' : 'cleaner condition profile',
+        active: true
+      },
+      {
+        label: selectedPath === 'cf' ? 'Seller finance note terms' : 'Wholesale assignment',
+        note: selectedPath === 'cf' ? 'creative-finance packet' : 'default PBK disposition clause',
+        active: selectedPath === 'cf' || selectedPath === 'cash'
+      },
+      {
+        label: selectedPath === 'mt' ? 'Subject-to disclosure' : 'Earnest deposit timing',
+        note: selectedPath === 'mt' ? 'mortgage takeover path selected' : runtime?.earnestDeposit || 'delivered within 3 business days',
+        active: selectedPath === 'mt'
+      },
+      {
+        label: selectedPath === 'rbp' || selectedPath === 'rbp-land' ? 'Retail buyer financing fallback' : 'Close timeline lock',
+        note: selectedPath === 'rbp' || selectedPath === 'rbp-land' ? 'RBP backup path available' : runtime?.timeline || 'timeline missing',
+        active: selectedPath === 'rbp' || selectedPath === 'rbp-land'
+      },
+      {
+        label: selectedPath.includes('land') ? 'Land assignment rider' : 'Seller communication guardrails',
+        note: selectedPath.includes('land') ? 'builder / land workflow detected' : 'email + phone carried from analyzer',
+        active: selectedPath.includes('land')
+      }
+    ];
+
+    return clauses;
+  }
+
+  function renderContractsExperience(runtime = getAnalyzerContractRuntimeSync()) {
+    const page = getPageNode('contracts');
+    if (!page) return;
+
+    const records = buildContractRecords(runtime);
+    const stages = summarizeContractStages(records);
+    const activePreviewId = PBK.state.runtime?.contractPreviewId || 'analyzer-draft';
+    const activeRecord = records.find((record) => record.id === activePreviewId) || records[0] || null;
+    if (activeRecord) {
+      PBK.state.runtime.contractPreviewId = activeRecord.id;
+    }
+
+    const headTag = page.querySelector('.ph-tag');
+    if (headTag) {
+      headTag.textContent = `Pipeline · ${records.length} active · ${money(
+        Object.values(stages).reduce((sum, stage) => sum + stage.value, 0),
+      )} in motion`;
+    }
+
+    const headCopy = page.querySelector('.page-head-left p');
+    if (headCopy) {
+      headCopy.textContent = runtime?.deal?.address
+        ? `Analyzer-linked draft for ${runtime.address}. PDFs and DocuSign now use the same deal state, path logic, and seller terms coming from the React analyzer.`
+        : 'Open a deal in the analyzer to generate the live contract draft, PDF packet, and DocuSign payload from one source of truth.';
+    }
+
+    const stageNodes = page.querySelectorAll('.pipeline-stages .pstage');
+    const stageOrder = ['draft', 'sent', 'viewed', 'signed', 'funded'];
+    const stageStats = stageOrder.map((key) => stages[key]);
+    const activeStage = stageStats.findIndex((entry) => entry.count > 0);
+    stageNodes.forEach((node, index) => {
+      node.classList.toggle('active', index === (activeStage >= 0 ? activeStage : 0));
+      node.querySelector('.ps-count').textContent = String(stageStats[index]?.count || 0);
+      node.querySelector('.ps-value').textContent = money(stageStats[index]?.value || 0);
+    });
+
+    const pipeline = page.querySelector('.contract-pipeline');
+    if (pipeline) {
+      pipeline.querySelectorAll('.contract-row, .contract-empty').forEach((row) => row.remove());
+      if (!records.length) {
+        pipeline.insertAdjacentHTML(
+          'beforeend',
+          `<div class="contract-empty">Open the analyzer and save a deal to start a live contract draft. Existing DocuSign activity will appear here after the first send.</div>`,
+        );
+      } else {
+        pipeline.insertAdjacentHTML(
+          'beforeend',
+          records.map((record) => {
+            const chip = getContractStatusChip(record);
+            const progress = getContractProgress(record);
+            const isActive = record.id === activeRecord?.id;
+            return `
+              <div class="contract-row ${record.isDraft ? 'is-draft' : ''} ${isActive ? 'active' : ''}" data-contract-id="${escapeHtml(record.id)}">
+                <div class="c-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                <div>
+                  <div class="c-who">${escapeHtml(record.leadName || 'Unknown seller')}${record.isDraft ? ` <span style="color: var(--sky); font-size: 10px; font-family: var(--font-mono); margin-left: 6px;">▸ ANALYZER</span>` : ''}</div>
+                  <div class="c-addr">${escapeHtml(record.address || 'Unknown property')}${record.envelopeId ? ` · ${escapeHtml(record.envelopeId)}` : ''}</div>
+                </div>
+                <div class="c-amount">${money(record.amount || 0)}</div>
+                <div class="c-date">${escapeHtml(record.isDraft ? 'synced now' : formatRelativeTime(record.updatedAt || record.createdAt))}</div>
+                <div>
+                  <span class="status-chip ${escapeHtml(chip.className)}">${escapeHtml(chip.label)}</span>
+                  <div class="progress-bar"><div class="progress-fill" style="width: ${progress}%${record.isDraft ? '; background: var(--ion);' : ''}"></div></div>
+                  <div class="progress-label">${progress}% · ${escapeHtml(record.notes || record.status || 'Live contract activity')}</div>
+                </div>
+                <div class="c-date">${escapeHtml(record.timeline || runtime.timeline || 'TBD')}</div>
+                <div><button class="chip-btn" data-contract-action="${record.isDraft ? 'open-draft' : 'focus-contract'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Open' : 'Summary'}</button></div>
+              </div>
+            `;
+          }).join(''),
+        );
+      }
+    }
+
+    const preview = page.querySelector('.contract-preview');
+    if (preview) {
+      const statusChip = getContractStatusChip(activeRecord || {});
+      const contractText = activeRecord?.isDraft
+        ? runtime.documentSet?.purchaseAgreement || buildFallbackPurchaseAgreement(runtime)
+        : buildRuntimeContractSummary(activeRecord, runtime);
+      const cachedPdf = runtime.masterPackageQuery ? getCachedContractPdf(runtime.masterPackageQuery) : null;
+      const syncedCopy = cachedPdf?.syncedAt
+        ? `PDF synced ${formatRelativeTime(cachedPdf.syncedAt)}`
+        : activeRecord?.isDraft
+          ? 'Generate a fresh PDF from the analyzer-backed package before sending.'
+          : 'Historic envelope summary from the live bridge.';
+
+      preview.innerHTML = `
+        <div class="cp-head">
+          <div>
+            <div class="cp-title">${escapeHtml(activeRecord?.isDraft ? `Analyzer draft · ${runtime.selectedPathLabel}` : activeRecord?.envelopeId || activeRecord?.id || 'Contract summary')}</div>
+            <div class="c-addr">${escapeHtml(activeRecord?.address || runtime.address)} · ${escapeHtml(activeRecord?.leadName || runtime.leadName)} · ${money(activeRecord?.amount || runtime.amount)}</div>
+            <div class="contracts-inline-status">${escapeHtml(activeRecord?.isDraft ? runtime.pdfReadiness.message : syncedCopy)}</div>
+          </div>
+          <button class="chip-btn ${activeRecord?.isDraft ? 'active' : ''}" data-contract-action="${activeRecord?.isDraft ? 'open-draft' : 'return-draft'}">${activeRecord?.isDraft ? 'Analyzer source' : 'Back to draft'}</button>
+        </div>
+        <div class="cp-doc">
+          <div class="contract-runtime-note">
+            <span class="status-chip ${escapeHtml(statusChip.className)}">${escapeHtml(statusChip.label)}</span>
+            <span>${escapeHtml(syncedCopy)}</span>
+          </div>
+          <div class="cp-meta-grid">
+            <div class="cp-meta-pill"><span class="k">Path</span><span class="v">${escapeHtml(runtime.selectedPathLabel)}</span></div>
+            <div class="cp-meta-pill"><span class="k">Seller</span><span class="v">${escapeHtml(runtime.leadName)}</span></div>
+            <div class="cp-meta-pill"><span class="k">Agreement</span><span class="v">${runtime.amount ? money(runtime.amount) : 'Missing price'}</span></div>
+            <div class="cp-meta-pill"><span class="k">Timeline</span><span class="v">${escapeHtml(runtime.timeline || 'Missing close timeline')}</span></div>
+          </div>
+          ${renderContractDocument(contractText, runtime.branding.companyName)}
+          <div class="contract-runtime-help">
+            ${escapeHtml(activeRecord?.isDraft ? `Source of truth: ${runtime.address}. Keep seller info and path terms updated in the analyzer, then regenerate the PDF or send to DocuSign from here.` : `This summary is coming from the live bridge state for ${activeRecord?.leadName || 'the selected contract'}. Use Back to draft to edit the analyzer-backed packet.`)}
+          </div>
+        </div>
+        <div class="cp-footer">
+          ${activeRecord?.isDraft
+            ? `
+                <button class="btn btn-ghost" data-contract-action="edit">Edit in Analyzer</button>
+                <button class="btn btn-ghost" data-contract-action="open-pdf">Open Live PDF</button>
+                <button class="btn btn-primary" data-contract-action="send">Send via DocuSign</button>
+              `
+            : `
+                <button class="btn btn-ghost" data-contract-action="return-draft">Back to draft</button>
+                <button class="btn btn-ghost" data-contract-action="remind">Remind seller</button>
+                <button class="btn btn-primary" data-contract-action="open-draft">Open draft</button>
+              `}
+        </div>
+      `;
+    }
+
+    const clauseBox = page.querySelector('.clause-variations');
+    if (clauseBox) {
+      const clauseCards = buildClauseCards(runtime, activeRecord);
+      clauseBox.innerHTML = `
+        <h4>▸ Smart clauses · analyzer aware</h4>
+        ${clauseCards.map((clause) => `
+          <div class="cv-item ${clause.active ? 'active' : ''}">
+            <span class="cv-name">${escapeHtml(clause.label)}</span>
+            <span class="cv-note">${escapeHtml(clause.note)}</span>
+          </div>
+        `).join('')}
+      `;
+    }
   }
 
   function setAnalyzerRuntimeMeta(message) {
@@ -10816,6 +11613,8 @@
         ? `Live state synced from ${deal.address}.`
         : 'Live analyzer state synced from the embedded React app.'
     );
+
+    renderContractsExperience();
   }
 
   function syncAnalyzerFrame(showNotice = false) {
@@ -10982,6 +11781,14 @@
     if (name === 'analyzer') {
       mountAnalyzerExperience();
       syncAnalyzerFrame(false);
+    }
+    if (name === 'contracts') {
+      renderContractsExperience();
+      ensureAnalyzerBridgeLoaded()
+        .then(() => renderContractsExperience())
+        .catch((error) => {
+          console.warn('Background analyzer bridge did not warm in time for contracts view', error);
+        });
     }
     updatePaletteMeta();
   };

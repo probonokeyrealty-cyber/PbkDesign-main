@@ -569,6 +569,7 @@
   }
   .status-chip.new { background: var(--ion-glow); color: var(--ion); }
   .status-chip.neg { background: var(--amber-glow); color: var(--amber); }
+  .status-chip.pending { background: var(--bg-hover); color: var(--text-secondary); }
   .status-chip.sent { background: var(--magenta-glow); color: var(--magenta); }
   .status-chip.won { background: var(--lime-glow); color: var(--lime); }
   .status-chip.signed { background: var(--sky-glow); color: var(--sky); }
@@ -9203,7 +9204,11 @@
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
     contractPreviewId: 'analyzer-draft',
-    contractPdf: null
+    contractPdf: null,
+    contractPdfService: {
+      status: 'unknown',
+      message: ''
+    }
   };
 
   function escapeHtml(value = '') {
@@ -10541,22 +10546,43 @@
         return;
       }
 
+      if (action === 'open-preview') {
+        const runtime = await getAnalyzerContractRuntime();
+        if (!runtime?.previewUrl) {
+          toast({
+            type: 'warning',
+            title: 'Analyzer preview unavailable',
+            desc: 'Open the analyzer and save the deal so the live document preview has a full package URL.'
+          });
+          return;
+        }
+        window.open(runtime.previewUrl, '_blank', 'noopener');
+        toast({
+          type: 'info',
+          title: 'Analyzer preview opened',
+          desc: 'The contract preview is coming straight from the analyzer package.'
+        });
+        return;
+      }
+
       if (action === 'open-pdf') {
         try {
           const pdf = await ensureContractPdf({ openInNewTab: true });
           if (pdf) {
             renderContractsExperience(pdf.runtime);
             toast({
-              type: 'success',
-              title: 'Analyzer PDF ready',
-              desc: 'The live master package opened in a new tab from the analyzer-backed document pipeline.'
+              type: pdf.fallback ? 'warning' : 'success',
+              title: pdf.fallback ? 'Analyzer preview opened' : 'Analyzer PDF ready',
+              desc: pdf.fallback
+                ? 'The PDF renderer is still warming up, so PBK opened the analyzer-backed preview instead.'
+                : 'The live master package opened in a new tab from the analyzer-backed document pipeline.'
             });
           }
         } catch (error) {
           toast({
             type: 'error',
             title: 'Could not open the live PDF',
-            desc: error?.message || 'The Netlify PDF function did not return a contract packet.'
+            desc: error?.message || 'The PDF service did not return a contract packet.'
           });
         }
         return;
@@ -10591,11 +10617,14 @@
           masterPackageQuery: pdf.runtime.masterPackageQuery,
           pdfGeneratedAt: pdf.syncedAt,
           documentTitle: 'PBK Master Deal Package',
-          notes: `Contract sent from analyzer-backed contract preview (${pdf.runtime.selectedPathLabel}).`
+          pdfStatus: pdf.fallback ? 'preview-fallback' : 'generated',
+          notes: `Contract sent from analyzer-backed contract preview (${pdf.runtime.selectedPathLabel}${pdf.fallback ? ', preview fallback active' : ''}).`
         }, {
           actionLabel: 'contracts',
           successTitle: 'DocuSign sent',
-          successDesc: `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed to the live bridge.`,
+          successDesc: pdf.fallback
+            ? `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed using the analyzer preview while the PDF renderer catches up.`
+            : `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed to the live bridge.`,
           errorTitle: 'DocuSign send failed'
         });
         renderContractsExperience();
@@ -11154,6 +11183,20 @@
     PBK.state.runtime.contractPdf = cache;
   }
 
+  function getContractPdfServiceStatus() {
+    return PBK.state.runtime?.contractPdfService || {
+      status: 'unknown',
+      message: ''
+    };
+  }
+
+  function setContractPdfServiceStatus(status = 'unknown', message = '') {
+    PBK.state.runtime.contractPdfService = {
+      status,
+      message: String(message || '').trim()
+    };
+  }
+
   function downloadContractPdf(url, fileName) {
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -11200,6 +11243,7 @@
 
     const cached = getCachedContractPdf(runtime.masterPackageQuery);
     if (cached) {
+      setContractPdfServiceStatus('ready', 'Using cached analyzer-backed PDF.');
       if (openInNewTab) window.open(cached.url, '_blank', 'noopener');
       if (download) downloadContractPdf(cached.url, cached.fileName);
       return {
@@ -11208,50 +11252,71 @@
       };
     }
 
-    const response = await fetch(getContractPdfEndpoint(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        documentType: 'masterPackage',
-        documentTitle: 'PBK Master Deal Package',
-        propertyAddress: runtime.address,
-        selectedPathLabel: runtime.selectedPathLabel,
-        companyName: runtime.branding.companyName,
-        masterPackageQuery: runtime.masterPackageQuery,
-        previewOrigin: window.location.origin,
-        previewUrl: runtime.previewUrl
-      })
-    });
+    try {
+      const response = await fetch(getContractPdfEndpoint(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentType: 'masterPackage',
+          documentTitle: 'PBK Master Deal Package',
+          propertyAddress: runtime.address,
+          selectedPathLabel: runtime.selectedPathLabel,
+          companyName: runtime.branding.companyName,
+          masterPackageQuery: runtime.masterPackageQuery,
+          previewOrigin: window.location.origin,
+          previewUrl: runtime.previewUrl
+        })
+      });
 
-    if (!response.ok) {
-      let message = `PDF service returned ${response.status}`;
-      try {
-        const payload = await response.json();
-        message = payload.message || payload.error || message;
-      } catch (error) {}
-      throw new Error(message);
+      if (!response.ok) {
+        let message = `PDF service returned ${response.status}`;
+        try {
+          const payload = await response.json();
+          message = payload.message || payload.error || message;
+        } catch (error) {}
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const syncedAt = new Date().toISOString();
+      const fileName = `${sanitizePdfFilename(runtime.address)}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const cache = {
+        query: runtime.masterPackageQuery,
+        url,
+        syncedAt,
+        fileName,
+      };
+
+      setCachedContractPdf(cache);
+      setContractPdfServiceStatus('ready', 'PDF renderer live.');
+
+      if (openInNewTab) window.open(url, '_blank', 'noopener');
+      if (download) downloadContractPdf(url, fileName);
+
+      return {
+        ...cache,
+        runtime
+      };
+    } catch (error) {
+      const fallbackMessage = error?.message || 'PDF renderer unavailable.';
+      setContractPdfServiceStatus('degraded', fallbackMessage);
+      if (!runtime.previewUrl) {
+        throw error;
+      }
+
+      if (openInNewTab) window.open(runtime.previewUrl, '_blank', 'noopener');
+
+      return {
+        query: runtime.masterPackageQuery,
+        url: runtime.previewUrl,
+        syncedAt: new Date().toISOString(),
+        fileName: `${sanitizePdfFilename(runtime.address)}_${new Date().toISOString().slice(0, 10)}.html`,
+        runtime,
+        fallback: true,
+        errorMessage: fallbackMessage
+      };
     }
-
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const syncedAt = new Date().toISOString();
-    const fileName = `${sanitizePdfFilename(runtime.address)}_${new Date().toISOString().slice(0, 10)}.pdf`;
-    const cache = {
-      query: runtime.masterPackageQuery,
-      url,
-      syncedAt,
-      fileName,
-    };
-
-    setCachedContractPdf(cache);
-
-    if (openInNewTab) window.open(url, '_blank', 'noopener');
-    if (download) downloadContractPdf(url, fileName);
-
-    return {
-      ...cache,
-      runtime
-    };
   }
 
   function getContractStage(record = {}) {
@@ -11455,7 +11520,7 @@
 
     const headTag = page.querySelector('.ph-tag');
     if (headTag) {
-      headTag.textContent = `Pipeline · ${records.length} active · ${money(
+      headTag.textContent = `Pipeline - ${records.length} active - ${money(
         Object.values(stages).reduce((sum, stage) => sum + stage.value, 0),
       )} in motion`;
     }
@@ -11496,15 +11561,15 @@
               <div class="contract-row ${record.isDraft ? 'is-draft' : ''} ${isActive ? 'active' : ''}" data-contract-id="${escapeHtml(record.id)}">
                 <div class="c-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
                 <div>
-                  <div class="c-who">${escapeHtml(record.leadName || 'Unknown seller')}${record.isDraft ? ` <span style="color: var(--sky); font-size: 10px; font-family: var(--font-mono); margin-left: 6px;">▸ ANALYZER</span>` : ''}</div>
-                  <div class="c-addr">${escapeHtml(record.address || 'Unknown property')}${record.envelopeId ? ` · ${escapeHtml(record.envelopeId)}` : ''}</div>
+                  <div class="c-who">${escapeHtml(record.leadName || 'Unknown seller')}${record.isDraft ? ` <span style="color: var(--sky); font-size: 10px; font-family: var(--font-mono); margin-left: 6px;">ANALYZER</span>` : ''}</div>
+                  <div class="c-addr">${escapeHtml(record.address || 'Unknown property')}${record.envelopeId ? ` - ${escapeHtml(record.envelopeId)}` : ''}</div>
                 </div>
                 <div class="c-amount">${money(record.amount || 0)}</div>
                 <div class="c-date">${escapeHtml(record.isDraft ? 'synced now' : formatRelativeTime(record.updatedAt || record.createdAt))}</div>
                 <div>
                   <span class="status-chip ${escapeHtml(chip.className)}">${escapeHtml(chip.label)}</span>
                   <div class="progress-bar"><div class="progress-fill" style="width: ${progress}%${record.isDraft ? '; background: var(--ion);' : ''}"></div></div>
-                  <div class="progress-label">${progress}% · ${escapeHtml(record.notes || record.status || 'Live contract activity')}</div>
+                  <div class="progress-label">${progress}% - ${escapeHtml(record.notes || record.status || 'Live contract activity')}</div>
                 </div>
                 <div class="c-date">${escapeHtml(record.timeline || runtime.timeline || 'TBD')}</div>
                 <div><button class="chip-btn" data-contract-action="${record.isDraft ? 'open-draft' : 'focus-contract'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Open' : 'Summary'}</button></div>
@@ -11522,17 +11587,34 @@
         ? runtime.documentSet?.purchaseAgreement || buildFallbackPurchaseAgreement(runtime)
         : buildRuntimeContractSummary(activeRecord, runtime);
       const cachedPdf = runtime.masterPackageQuery ? getCachedContractPdf(runtime.masterPackageQuery) : null;
+      const pdfService = getContractPdfServiceStatus();
       const syncedCopy = cachedPdf?.syncedAt
         ? `PDF synced ${formatRelativeTime(cachedPdf.syncedAt)}`
         : activeRecord?.isDraft
-          ? 'Generate a fresh PDF from the analyzer-backed package before sending.'
+          ? pdfService.status === 'degraded'
+            ? `PDF renderer offline right now. Analyzer preview is still live${pdfService.message ? ` - ${pdfService.message}` : ''}.`
+            : 'Generate a fresh PDF from the analyzer-backed package before sending.'
           : 'Historic envelope summary from the live bridge.';
+      const rendererLabel = activeRecord?.isDraft
+        ? pdfService.status === 'ready'
+          ? 'PDF renderer live'
+          : pdfService.status === 'degraded'
+            ? 'Analyzer preview fallback'
+            : 'PDF renderer pending'
+        : 'Bridge history';
+      const rendererClass = activeRecord?.isDraft
+        ? pdfService.status === 'ready'
+          ? 'new'
+          : pdfService.status === 'degraded'
+            ? 'neg'
+            : 'pending'
+        : statusChip.className;
 
       preview.innerHTML = `
         <div class="cp-head">
           <div>
-            <div class="cp-title">${escapeHtml(activeRecord?.isDraft ? `Analyzer draft · ${runtime.selectedPathLabel}` : activeRecord?.envelopeId || activeRecord?.id || 'Contract summary')}</div>
-            <div class="c-addr">${escapeHtml(activeRecord?.address || runtime.address)} · ${escapeHtml(activeRecord?.leadName || runtime.leadName)} · ${money(activeRecord?.amount || runtime.amount)}</div>
+            <div class="cp-title">${escapeHtml(activeRecord?.isDraft ? `Analyzer draft - ${runtime.selectedPathLabel}` : activeRecord?.envelopeId || activeRecord?.id || 'Contract summary')}</div>
+            <div class="c-addr">${escapeHtml(activeRecord?.address || runtime.address)} - ${escapeHtml(activeRecord?.leadName || runtime.leadName)} - ${money(activeRecord?.amount || runtime.amount)}</div>
             <div class="contracts-inline-status">${escapeHtml(activeRecord?.isDraft ? runtime.pdfReadiness.message : syncedCopy)}</div>
           </div>
           <button class="chip-btn ${activeRecord?.isDraft ? 'active' : ''}" data-contract-action="${activeRecord?.isDraft ? 'open-draft' : 'return-draft'}">${activeRecord?.isDraft ? 'Analyzer source' : 'Back to draft'}</button>
@@ -11541,6 +11623,7 @@
           <div class="contract-runtime-note">
             <span class="status-chip ${escapeHtml(statusChip.className)}">${escapeHtml(statusChip.label)}</span>
             <span>${escapeHtml(syncedCopy)}</span>
+            <span class="status-chip ${escapeHtml(rendererClass)}">${escapeHtml(rendererLabel)}</span>
           </div>
           <div class="cp-meta-grid">
             <div class="cp-meta-pill"><span class="k">Path</span><span class="v">${escapeHtml(runtime.selectedPathLabel)}</span></div>
@@ -11557,6 +11640,7 @@
           ${activeRecord?.isDraft
             ? `
                 <button class="btn btn-ghost" data-contract-action="edit">Edit in Analyzer</button>
+                <button class="btn btn-ghost" data-contract-action="open-preview">Open Analyzer Preview</button>
                 <button class="btn btn-ghost" data-contract-action="open-pdf">Open Live PDF</button>
                 <button class="btn btn-primary" data-contract-action="send">Send via DocuSign</button>
               `
@@ -11573,7 +11657,7 @@
     if (clauseBox) {
       const clauseCards = buildClauseCards(runtime, activeRecord);
       clauseBox.innerHTML = `
-        <h4>▸ Smart clauses · analyzer aware</h4>
+        <h4>Smart clauses - analyzer aware</h4>
         ${clauseCards.map((clause) => `
           <div class="cv-item ${clause.active ? 'active' : ''}">
             <span class="cv-name">${escapeHtml(clause.label)}</span>

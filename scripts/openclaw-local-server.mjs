@@ -10,6 +10,7 @@ import puppeteer from 'puppeteer-core';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
+const BUILD_REVISION = '2026-04-25-contract-runtime-v2';
 
 const IS_RESET = process.argv.includes('--reset');
 const IS_LAN = process.argv.includes('--lan');
@@ -2177,11 +2178,18 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         service: 'pbk-local-openclaw',
+        revision: BUILD_REVISION,
         host: HOST,
         port: PORT,
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
         n8n: state.status.n8n,
+        features: {
+          documentsPdf: true,
+          approvals: true,
+          contracts: true,
+          analyzerBridge: true
+        },
         lastUpdatedAt: state.status.lastUpdatedAt,
       });
       return;
@@ -2195,6 +2203,10 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && matchesPath(pathname, ['/api/tools'])) {
       json(response, 200, {
         ok: true,
+        revision: BUILD_REVISION,
+        features: {
+          documentsPdf: true
+        },
         tools: TOOL_NAMES,
       });
       return;

@@ -9399,6 +9399,47 @@
     document.querySelector('[data-openclaw-summary="dnc"]')?.replaceChildren(document.createTextNode(String(counts.dnc)));
   }
 
+  function renderDncList(snapshot) {
+    const list = document.querySelector('[data-page="settings"] .dnc-list');
+    if (!list) return;
+
+    const toolbar = list.querySelector('.dnc-toolbar');
+    if (!toolbar) return;
+
+    list.querySelectorAll('.dnc-row').forEach((row) => row.remove());
+
+    const entries = Array.isArray(snapshot?.dncEntries) ? snapshot.dncEntries.slice(0, 8) : [];
+    entries.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'dnc-row';
+      row.dataset.dncPhone = entry.phone || '';
+      row.innerHTML = `
+        <span class="phone">${escapeHtml(entry.phone || 'Unknown')}</span>
+        <span class="reason">${escapeHtml(entry.reason || 'Manual DNC add')}</span>
+        <span class="date">${escapeHtml(formatRelativeTime(entry.addedAt || entry.createdAt))}</span>
+        <span><button class="chip-btn" data-dnc-action="remove">Remove</button></span>
+      `;
+      list.appendChild(row);
+    });
+
+    const desc = list.closest('.settings-section')?.querySelector('.section-desc');
+    if (desc && Array.isArray(snapshot?.dncEntries)) {
+      desc.textContent = `${snapshot.dncEntries.length} numbers on file. Ava auto-adds any lead that yells, asks to stop, or files a complaint. You can upload a CSV of existing DNCs or add manually.`;
+    }
+  }
+
+  function renderToolUsage(snapshot) {
+    const usage = snapshot?.status?.toolUsage || {};
+    document.querySelectorAll('.tool-item').forEach((row) => {
+      const nameNode = row.querySelector('.tool-name');
+      const countNode = row.querySelector('.tool-count');
+      if (!nameNode || !countNode) return;
+      const toolName = nameNode.textContent.replace(/\s+/g, ' ').trim();
+      if (!Object.prototype.hasOwnProperty.call(usage, toolName)) return;
+      countNode.textContent = `${usage[toolName]}x`;
+    });
+  }
+
   function renderBrainTopics(snapshot) {
     const page = document.querySelector('[data-page="brain"]');
     if (!page) return;
@@ -9524,6 +9565,8 @@
     renderActivityFeed(snapshot);
     renderApprovalQueue(snapshot);
     renderActivityLog(snapshot);
+    renderDncList(snapshot);
+    renderToolUsage(snapshot);
     renderBrainTopics(snapshot);
     renderBrainLibrary(snapshot);
 
@@ -9630,6 +9673,786 @@
         desc: error?.message || 'The local brain did not accept that decision.'
       });
     }
+  }
+
+  function getPageNode(name) {
+    return document.querySelector(`.page[data-page="${name}"]`);
+  }
+
+  function getFirstName(name = '') {
+    return String(name || '').trim().split(/\s+/)[0] || 'there';
+  }
+
+  function parseMetaLine(value = '') {
+    const parts = String(value || '')
+      .split('·')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    return {
+      phone: parts.find((part) => /\d/.test(part)) || '',
+      address: parts.find((part) => /[A-Za-z]/.test(part) && /\d/.test(part) && !/\+/.test(part)) || '',
+    };
+  }
+
+  function getDashboardCallContext() {
+    const liveCall = (PBK.state.openclawRuntime?.calls || []).find((call) => call.status === 'live') || {};
+    return {
+      id: liveCall.id || '',
+      leadId: liveCall.leadId || 'lead-diane-kowalski',
+      leadName: liveCall.leadName || 'Diane Kowalski',
+      address: liveCall.address || PBK.state.analyzer?.deal?.address || '202 Cherry Ln, Columbus OH',
+      phone: liveCall.phone || '+1 (614) 555-0142',
+    };
+  }
+
+  function getCallCardContext(card) {
+    if (!card) return getDashboardCallContext();
+    const leadName = card.querySelector('.n')?.textContent?.trim() || card.querySelector('.lead-name')?.textContent?.trim() || 'Unknown seller';
+    const meta = parseMetaLine(card.querySelector('.a')?.textContent || '');
+    const liveCall = (PBK.state.openclawRuntime?.calls || []).find((call) => {
+      return call.leadName === leadName || (meta.phone && String(call.phone || '').includes(meta.phone.replace(/\D+/g, '').slice(-10)));
+    }) || {};
+
+    return {
+      id: liveCall.id || '',
+      leadId: liveCall.leadId || '',
+      leadName,
+      address: liveCall.address || meta.address || 'Unknown property',
+      phone: liveCall.phone || meta.phone || '',
+    };
+  }
+
+  function getInboxContext() {
+    const page = getPageNode('inbox');
+    const name = page?.querySelector('.convo-who')?.textContent?.trim() || 'Diane Kowalski';
+    const meta = parseMetaLine(page?.querySelector('.convo-meta')?.textContent || '');
+    return {
+      leadName: name,
+      address: meta.address || '202 Cherry Ln, Columbus OH',
+      phone: meta.phone || '+1 (614) 555-0142',
+    };
+  }
+
+  function getLeadDetailContext() {
+    const page = getPageNode('lead-detail');
+    const name = page?.querySelector('.ld-name')?.textContent?.replace(/\s+/g, ' ')?.trim() || 'Diane Kowalski';
+    const details = page?.querySelector('.ld-details')?.textContent || '';
+    const meta = parseMetaLine(details);
+    return {
+      leadName: name,
+      address: meta.address || '202 Cherry Ln, Columbus OH',
+      phone: meta.phone || '+1 (614) 555-0142',
+    };
+  }
+
+  function appendThinkLine(text, tag = 'tool') {
+    const stream =
+      document.querySelector('.page.active .think-stream') ||
+      document.querySelector('#thinkStream') ||
+      document.querySelector('.think-stream');
+    if (!stream) return;
+
+    const timestamp = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+
+    const line = document.createElement('div');
+    line.className = 'think-line';
+    line.innerHTML = `<span class="think-ts">${escapeHtml(timestamp)}</span><span class="think-body"><span class="tag ${escapeHtml(tag)}">${escapeHtml(tag)}</span>${escapeHtml(text)}</span>`;
+    stream.appendChild(line);
+    stream.scrollTop = stream.scrollHeight;
+  }
+
+  async function ensureOpenClawReady(actionLabel = 'this action') {
+    if (!PBK.openclaw.isConfigured()) {
+      toast({
+        type: 'warning',
+        title: 'OpenClaw endpoint missing',
+        desc: `Open Settings and connect the bridge before using ${actionLabel}.`
+      });
+      showPage('settings');
+      return false;
+    }
+
+    if (PBK.openclaw.isConnected()) return true;
+
+    try {
+      await PBK.openclaw.testConnection(readOpenClawDraft());
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: 'OpenClaw connection failed',
+        desc: error?.message || `PBK could not reach the bridge for ${actionLabel}.`
+      });
+      return false;
+    }
+
+    return PBK.openclaw.isConnected();
+  }
+
+  async function applyRuntimeResponse(response) {
+    if (response?.state) {
+      renderOpenClawState(response.state);
+      return response.state;
+    }
+    return syncOpenClawState({ silent: true });
+  }
+
+  async function invokeRuntimeTool(toolName, params = {}, options = {}) {
+    const {
+      actionLabel = toolName,
+      successTitle = 'Action sent',
+      successDesc = null,
+      errorTitle = `${toolName} failed`,
+      tag = 'tool'
+    } = options;
+
+    if (!await ensureOpenClawReady(actionLabel)) return null;
+
+    appendThinkLine(`calling ${toolName}`, tag);
+    try {
+      const response = await PBK.openclaw.invoke(toolName, params);
+      await applyRuntimeResponse(response);
+      toast({
+        type: 'success',
+        title: successTitle,
+        desc: typeof successDesc === 'function' ? successDesc(response) : (successDesc || `${toolName} completed successfully.`)
+      });
+      return response;
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: errorTitle,
+        desc: error?.message || `${toolName} did not complete.`
+      });
+      return null;
+    }
+  }
+
+  async function postRuntimeEvent(eventType, payload = {}, options = {}) {
+    const {
+      actionLabel = eventType,
+      successTitle = 'Event sent',
+      successDesc = null,
+      errorTitle = `${eventType} failed`,
+      tag = 'decision'
+    } = options;
+
+    if (!await ensureOpenClawReady(actionLabel)) return null;
+
+    appendThinkLine(`posting ${eventType}`, tag);
+    try {
+      const response = await PBK.openclaw.postEvent(eventType, payload);
+      await applyRuntimeResponse(response);
+      toast({
+        type: 'success',
+        title: successTitle,
+        desc: typeof successDesc === 'function' ? successDesc(response) : (successDesc || `${eventType} accepted by OpenClaw.`)
+      });
+      return response;
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: errorTitle,
+        desc: error?.message || `${eventType} did not complete.`
+      });
+      return null;
+    }
+  }
+
+  function buildSmsDraft(context) {
+    return `Hi ${getFirstName(context.leadName)} - this is Ava with PBK. I can call after 5pm tomorrow about ${context.address}. If another time works better, text me here.`;
+  }
+
+  async function submitAgentCommand(command, extra = {}) {
+    const trimmed = String(command || '').trim();
+    if (!trimmed) {
+      toast({
+        type: 'info',
+        title: 'Give Ava a concrete command',
+        desc: 'Try "call Diane now", "analyze 202 Cherry Ln", or "send DocuSign to Robert Chen".'
+      });
+      return null;
+    }
+
+    const response = await invokeRuntimeTool('runAgentCommand', {
+      command: trimmed,
+      ...extra
+    }, {
+      actionLabel: 'agent commands',
+      successTitle: 'Ava is on it',
+      successDesc: (payload) => {
+        const routed = payload?.result?.routedTo || 'updateCRM';
+        return `Command routed to ${routed}.`;
+      },
+      errorTitle: 'Agent command failed',
+      tag: 'decision'
+    });
+
+    const routed = response?.result?.routedTo;
+    if (routed) appendThinkLine(`routed to ${routed}`, 'done');
+    return response;
+  }
+
+  async function handleLiveCallAction(action, context, transferTarget = '') {
+    const normalized = String(action || '').toLowerCase();
+
+    if (normalized === 'mark dnc') {
+      const response = await postRuntimeEvent('dnc-add', {
+        phone: context.phone,
+        name: context.leadName,
+        reason: `Manual DNC add from live call UI for ${context.leadName}.`,
+        source: 'dashboard'
+      }, {
+        actionLabel: 'DNC updates',
+        successTitle: 'Number added to DNC',
+        successDesc: `${context.leadName} is now protected from future outbound contact.`,
+        errorTitle: 'Could not add to DNC'
+      });
+      if (response) {
+        await postRuntimeEvent('call-control', {
+          id: context.id,
+          phone: context.phone,
+          action: 'end',
+          actor: 'PBK dashboard'
+        }, {
+          actionLabel: 'ending the live call',
+          successTitle: 'Call ended',
+          successDesc: `${context.leadName}'s live call was safely closed.`,
+          errorTitle: 'Could not end call'
+        });
+      }
+      return response;
+    }
+
+    if (normalized === 'transfer') {
+      return postRuntimeEvent('call-control', {
+        id: context.id,
+        phone: context.phone,
+        action: 'transfer',
+        target: transferTarget || 'human agent',
+        actor: 'PBK dashboard'
+      }, {
+        actionLabel: 'call transfers',
+        successTitle: 'Call transferred',
+        successDesc: `${context.leadName} was transferred to ${transferTarget || 'a human agent'}.`,
+        errorTitle: 'Transfer failed'
+      });
+    }
+
+    const mappedAction = normalized === 'take over' ? 'takeover' : normalized === 'mute ai' ? 'mute' : normalized === 'end call' ? 'end' : normalized;
+    return postRuntimeEvent('call-control', {
+      id: context.id,
+      phone: context.phone,
+      action: mappedAction,
+      actor: 'PBK dashboard'
+    }, {
+      actionLabel: 'live call controls',
+      successTitle: normalized === 'take over' ? 'Human takeover engaged' : normalized === 'mute ai' ? 'AI muted' : 'Call updated',
+      successDesc: `${context.leadName} is now in sync with the ${normalized} command.`,
+      errorTitle: 'Live call action failed'
+    });
+  }
+
+  function exportJsonFile(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function createLeadFromPrompts(source = 'manual') {
+    const sellerName = window.prompt('Seller name', 'New PBK lead');
+    if (!sellerName) return null;
+    const address = window.prompt('Property address', '808 Opportunity Ave, Columbus OH');
+    if (!address) return null;
+    const phone = window.prompt('Phone number', '+1 (614) 555-0199') || '';
+    const tags = (window.prompt('Comma-separated tags', 'probate, high-equity') || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    return postRuntimeEvent('lead-intake', {
+      source,
+      seller: {
+        name: sellerName,
+        phone
+      },
+      property: {
+        address
+      },
+      tags
+    }, {
+      actionLabel: 'lead imports',
+      successTitle: 'Lead imported',
+      successDesc: `${sellerName} was added to the PBK pipeline.`,
+      errorTitle: 'Lead import failed'
+    });
+  }
+
+  function wireAgentConsoleRuntime() {
+    document.querySelectorAll('.command-bar').forEach((bar) => {
+      if (bar.dataset.runtimeWired === 'true') return;
+      bar.dataset.runtimeWired = 'true';
+
+      const textarea = bar.querySelector('textarea');
+      const buttons = Array.from(bar.querySelectorAll('.btn'));
+
+      buttons.forEach((button) => {
+        button.addEventListener('click', async () => {
+          const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+          if (label === 'send') {
+            const response = await submitAgentCommand(textarea?.value || '');
+            if (response && textarea) textarea.value = '';
+            return;
+          }
+
+          if (label === 'attach') {
+            promptAndIngestSource();
+            return;
+          }
+
+          if (label === 'voice') {
+            toast({
+              type: 'info',
+              title: 'Voice command capture next',
+              desc: 'For the MVP, type the command and PBK will route it through the bridge.'
+            });
+          }
+        });
+      });
+
+      textarea?.addEventListener('keydown', async (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault();
+          const response = await submitAgentCommand(textarea.value || '');
+          if (response) textarea.value = '';
+        }
+      });
+    });
+
+    document.querySelectorAll('.quick-commands .qcmd').forEach((chip) => {
+      if (chip.dataset.runtimeWired === 'true') return;
+      chip.dataset.runtimeWired = 'true';
+      chip.addEventListener('click', () => {
+        const bar = document.querySelector('.page.active .command-bar textarea') || document.querySelector('.command-bar textarea');
+        if (!bar) return;
+        bar.value = chip.textContent.trim();
+        bar.focus();
+        toast({
+          type: 'info',
+          title: 'Command loaded',
+          desc: 'Press Send to hand it to Ava.'
+        });
+      });
+    });
+  }
+
+  function wireInboxRuntime() {
+    const page = getPageNode('inbox');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    const compose = page.querySelector('.compose');
+    const textarea = compose?.querySelector('textarea');
+
+    compose?.querySelectorAll('.compose-channels .chip-btn').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        compose.querySelectorAll('.compose-channels .chip-btn').forEach((button) => button.classList.remove('active'));
+        chip.classList.add('active');
+      });
+    });
+
+    compose?.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+
+      const context = getInboxContext();
+      const channel = compose.querySelector('.compose-channels .chip-btn.active')?.textContent?.trim().toLowerCase() || 'sms';
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === 'ask ai') {
+        if (textarea) textarea.value = buildSmsDraft(context);
+        toast({
+          type: 'success',
+          title: 'Draft ready',
+          desc: `PBK drafted a ${channel.toUpperCase()} follow-up for ${context.leadName}.`
+        });
+        return;
+      }
+
+      if (label === 'send') {
+        const body = textarea?.value?.trim() || buildSmsDraft(context);
+        if (channel === 'call') {
+          await invokeRuntimeTool('telnyx_call', {
+            leadName: context.leadName,
+            address: context.address,
+            phone: context.phone,
+            script: body
+          }, {
+            actionLabel: 'outbound calls',
+            successTitle: 'Call started from inbox',
+            successDesc: `${context.leadName} is now being called.`,
+            errorTitle: 'Inbox call failed'
+          });
+        } else if (channel === 'email') {
+          await submitAgentCommand(`send an email update to ${context.leadName} about ${context.address}`, context);
+        } else {
+          const response = await invokeRuntimeTool('telnyx_sms', {
+            leadName: context.leadName,
+            address: context.address,
+            phone: context.phone,
+            body
+          }, {
+            actionLabel: 'outbound SMS',
+            successTitle: 'Message sent',
+            successDesc: `${context.leadName} just received the latest follow-up.`,
+            errorTitle: 'SMS send failed'
+          });
+          if (response && textarea) textarea.value = '';
+        }
+      }
+    });
+
+    page.querySelector('.convo-actions')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('.chip-btn');
+      if (!button) return;
+
+      const context = getInboxContext();
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === 'lead profile') {
+        showPage('lead-detail');
+        return;
+      }
+
+      if (label === 'call now') {
+        await invokeRuntimeTool('telnyx_call', context, {
+          actionLabel: 'outbound calls',
+          successTitle: 'Calling now',
+          successDesc: `${context.leadName} is being dialed from the inbox.`,
+          errorTitle: 'Inbox call failed'
+        });
+        return;
+      }
+
+      if (label === 'mark dnc') {
+        await postRuntimeEvent('dnc-add', {
+          phone: context.phone,
+          name: context.leadName,
+          reason: 'Manual DNC add from inbox thread.',
+          source: 'inbox'
+        }, {
+          actionLabel: 'DNC updates',
+          successTitle: 'Marked DNC',
+          successDesc: `${context.leadName} will not receive future outbound contact.`,
+          errorTitle: 'Could not mark DNC'
+        });
+        return;
+      }
+
+      if (label === 'send to ai') {
+        await submitAgentCommand(`take over follow-up for ${context.leadName} at ${context.address}`, context);
+      }
+    });
+  }
+
+  function wireLeadsRuntime() {
+    const page = getPageNode('leads');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    page.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === '+ new lead') {
+        await createLeadFromPrompts('manual-new-lead');
+        return;
+      }
+
+      if (label === 'export') {
+        exportJsonFile(`pbk-leads-${new Date().toISOString().slice(0, 10)}.json`, PBK.state.openclawRuntime?.leadImports || []);
+        toast({
+          type: 'success',
+          title: 'Lead export ready',
+          desc: 'The current imported lead list was exported as JSON.'
+        });
+      }
+    });
+
+    page.querySelector('.upload-zone')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === 'browse files') {
+        await createLeadFromPrompts('csv-upload');
+        return;
+      }
+
+      if (label === 'import from batchdata') {
+        const address = window.prompt('BatchData lead address', '909 Equity Ridge, Akron OH');
+        if (!address) return;
+        const sellerName = window.prompt('Seller name', 'BatchData Lead') || 'BatchData Lead';
+        const contact = await invokeRuntimeTool('skipTrace', {
+          leadName: sellerName,
+          address
+        }, {
+          actionLabel: 'skip tracing',
+          successTitle: 'Skip trace complete',
+          successDesc: 'BatchData contact details were generated for the new lead.',
+          errorTitle: 'Skip trace failed'
+        });
+
+        if (!contact) return;
+
+        const leadPhone = contact?.result?.contact?.phone || '';
+        await postRuntimeEvent('lead-intake', {
+          source: 'BatchData',
+          seller: {
+            name: sellerName,
+            phone: leadPhone
+          },
+          property: {
+            address
+          },
+          tags: ['batchdata', 'skip-traced']
+        }, {
+          actionLabel: 'lead imports',
+          successTitle: 'BatchData lead imported',
+          successDesc: `${sellerName} was added with enriched contact data.`,
+          errorTitle: 'BatchData import failed'
+        });
+      }
+    });
+  }
+
+  function wireLeadDetailRuntime() {
+    const page = getPageNode('lead-detail');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    page.querySelector('.ld-actions')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+      const context = getLeadDetailContext();
+
+      if (label === 'call') {
+        await invokeRuntimeTool('telnyx_call', context, {
+          actionLabel: 'outbound calls',
+          successTitle: 'Lead call started',
+          successDesc: `${context.leadName} is now being dialed.`,
+          errorTitle: 'Lead call failed'
+        });
+        return;
+      }
+
+      if (label === 'text') {
+        const body = window.prompt('SMS body', buildSmsDraft(context));
+        if (!body) return;
+        await invokeRuntimeTool('telnyx_sms', {
+          ...context,
+          body
+        }, {
+          actionLabel: 'outbound SMS',
+          successTitle: 'SMS sent',
+          successDesc: `${context.leadName} received the latest follow-up.`,
+          errorTitle: 'Lead SMS failed'
+        });
+        return;
+      }
+
+      if (label === 'send to ava') {
+        await submitAgentCommand(`work this lead and report back on ${context.address}`, context);
+      }
+    });
+  }
+
+  function wireCallsRuntime() {
+    const page = getPageNode('calls');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    page.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+
+      const callCard = button.closest('.lc-card');
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (callCard) {
+        const context = getCallCardContext(callCard);
+        if (label === 'transfer') {
+          const target = window.prompt('Transfer target', 'human agent') || 'human agent';
+          await handleLiveCallAction(label, context, target);
+          return;
+        }
+
+        if (['take over', 'mute ai', 'end'].includes(label)) {
+          await handleLiveCallAction(label === 'end' ? 'end call' : label, context);
+          return;
+        }
+      }
+
+      if (!callCard && label === 'start outbound batch') {
+        await invokeRuntimeTool('createApproval', {
+          type: 'outbound',
+          leadName: 'Outbound Batch',
+          address: 'Next 30 minute queue',
+          notes: 'Start outbound batch from Calls page.'
+        }, {
+          actionLabel: 'outbound approvals',
+          successTitle: 'Outbound batch queued',
+          successDesc: 'The next outbound batch is waiting in the approval queue.',
+          errorTitle: 'Could not queue outbound batch'
+        });
+      }
+    });
+  }
+
+  function wireDashboardRuntime() {
+    const page = getPageNode('dashboard');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    page.querySelector('.call-controls')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn');
+      if (!button) return;
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+      const context = getDashboardCallContext();
+
+      if (label === 'transfer') {
+        const target = window.prompt('Transfer target', 'human agent') || 'human agent';
+        await handleLiveCallAction(label, context, target);
+        return;
+      }
+
+      if (['take over', 'mute ai', 'mark dnc', 'end call'].includes(label)) {
+        await handleLiveCallAction(label, context);
+      }
+    });
+  }
+
+  function wireContractsRuntime() {
+    const page = getPageNode('contracts');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    page.addEventListener('click', async (event) => {
+      const button = event.target.closest('.btn, .chip-btn');
+      if (!button) return;
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === 'open in docusign') {
+        await invokeRuntimeTool('sendDocuSign', {
+          leadName: 'Robert Chen',
+          address: '55 Birch Rd, Columbus OH',
+          amount: 98500,
+          email: 'robert@example.com',
+          notes: 'Contract sent from Contracts page preview.'
+        }, {
+          actionLabel: 'contracts',
+          successTitle: 'DocuSign sent',
+          successDesc: 'The contract was pushed to the public bridge and activity log.',
+          errorTitle: 'DocuSign send failed'
+        });
+        return;
+      }
+
+      if (label === 'remind') {
+        await invokeRuntimeTool('slackNotify', {
+          channel: '#deals',
+          text: 'Reminder requested for Robert Chen contract.'
+        }, {
+          actionLabel: 'deal reminders',
+          successTitle: 'Reminder queued',
+          successDesc: 'A follow-up reminder was pushed into the runtime activity feed.',
+          errorTitle: 'Reminder failed'
+        });
+        return;
+      }
+
+      if (label === 'edit') {
+        await submitAgentCommand('prepare a revised contract note for Robert Chen at $98,500', {
+          leadName: 'Robert Chen',
+          address: '55 Birch Rd, Columbus OH'
+        });
+      }
+    });
+  }
+
+  function wireSettingsRuntime() {
+    const page = getPageNode('settings');
+    if (!page || page.dataset.runtimeWired === 'true') return;
+    page.dataset.runtimeWired = 'true';
+
+    const dncList = page.querySelector('.dnc-list');
+    dncList?.addEventListener('click', async (event) => {
+      const button = event.target.closest('.chip-btn');
+      if (!button) return;
+      const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+
+      if (label === 'import csv') {
+        const raw = window.prompt('Paste comma-separated phone numbers', '+1 (216) 555-0401, +1 (614) 555-0101');
+        if (!raw) return;
+        const numbers = raw.split(',').map((item) => item.trim()).filter(Boolean);
+        for (const phone of numbers) {
+          await postRuntimeEvent('dnc-add', {
+            phone,
+            reason: 'Imported from dashboard DNC tool.',
+            source: 'settings-import'
+          }, {
+            actionLabel: 'DNC imports',
+            successTitle: 'DNC import complete',
+            successDesc: `${numbers.length} numbers were queued into the bridge.`,
+            errorTitle: 'DNC import failed'
+          });
+        }
+        return;
+      }
+
+      if (label === '+ add') {
+        const phone = window.prompt('Phone number', '+1 (614) 555-0188');
+        if (!phone) return;
+        const reason = window.prompt('Reason', 'Manual DNC add from settings') || 'Manual DNC add from settings';
+        await postRuntimeEvent('dnc-add', {
+          phone,
+          reason,
+          source: 'settings'
+        }, {
+          actionLabel: 'DNC updates',
+          successTitle: 'DNC entry added',
+          successDesc: `${phone} is now on the internal DNC list.`,
+          errorTitle: 'Could not add DNC entry'
+        });
+        return;
+      }
+
+      if (label === 'remove') {
+        const row = button.closest('.dnc-row');
+        const phone = row?.dataset.dncPhone || row?.querySelector('.phone')?.textContent || '';
+        await postRuntimeEvent('dnc-remove', {
+          phone,
+          actor: 'PBK settings'
+        }, {
+          actionLabel: 'DNC removals',
+          successTitle: 'DNC entry removed',
+          successDesc: `${phone} was removed from the internal DNC list.`,
+          errorTitle: 'Could not remove DNC entry'
+        });
+      }
+    });
   }
 
   function appendBrainMessage(kind, content, citations = []) {
@@ -10144,6 +10967,14 @@
 
   wireOpenClawCard();
   wireBrainRuntime();
+  wireAgentConsoleRuntime();
+  wireInboxRuntime();
+  wireLeadsRuntime();
+  wireLeadDetailRuntime();
+  wireCallsRuntime();
+  wireDashboardRuntime();
+  wireContractsRuntime();
+  wireSettingsRuntime();
   mountAnalyzerExperience();
   syncCoreBindings();
   setInterval(syncCoreBindings, 60000);

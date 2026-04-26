@@ -38,20 +38,39 @@ const normalizeApprovalRequest = node({
     parameters: {
       mode: 'runOnceForAllItems',
       jsCode: `const input = $input.first().json;
-const id = input.id || \`approval-\${Date.now()}\`;
-const baseUrl = $env.PBK_BASE_URL || 'https://probonokeyrealty1.app.n8n.cloud';
+const source = input.body ?? input;
+const id = source.id || \`approval-\${Date.now()}\`;
+const baseUrl = 'https://probonokeyrealty1.app.n8n.cloud';
 return [{
   json: {
     id,
-    leadId: input.leadId || '',
-    leadName: input.leadName || input.name || 'Unknown seller',
-    address: input.address || '',
-    offerPrice: input.offerPrice || 0,
-    mao: input.mao || 0,
-    notes: input.notes || '',
-    createdAt: input.createdAt || new Date().toISOString(),
+    leadId: source.leadId || '',
+    leadName: source.leadName || source.name || 'Unknown seller',
+    address: source.address || '',
+    offerPrice: source.offerPrice || 0,
+    mao: source.mao || 0,
+    notes: source.notes || '',
+    createdAt: source.createdAt || new Date().toISOString(),
     approveUrl: \`\${baseUrl}/webhook/pbk-approval-decision?id=\${id}&status=approved\`,
-    rejectUrl: \`\${baseUrl}/webhook/pbk-approval-decision?id=\${id}&status=rejected\`
+    rejectUrl: \`\${baseUrl}/webhook/pbk-approval-decision?id=\${id}&status=rejected\`,
+    notifyPayload: {
+      eventType: 'approval-notify',
+      payload: {
+        actor: 'n8n',
+        category: 'APPROVAL',
+        status: 'fanned-out',
+        text: \`Approval request ready for \${source.leadName || source.name || 'Unknown seller'} at \${source.address || ''}\`,
+        target: source.address || '',
+        id,
+        leadName: source.leadName || source.name || 'Unknown seller',
+        address: source.address || '',
+        offerPrice: source.offerPrice || 0,
+        mao: source.mao || 0,
+        notes: source.notes || '',
+        approveUrl: \`\${baseUrl}/webhook/pbk-approval-decision?id=\${id}&status=approved\`,
+        rejectUrl: \`\${baseUrl}/webhook/pbk-approval-decision?id=\${id}&status=rejected\`
+      }
+    }
   }
 }];`,
     },
@@ -82,11 +101,12 @@ const notifyApprovalChannel = node({
     position: [-280, -180],
     parameters: {
       method: 'POST',
-      url: "={{ $env.PBK_APPROVAL_NOTIFY_WEBHOOK || 'https://pbk-openclaw-bridge.onrender.com/events' }}",
+      authentication: 'none',
+      url: 'https://pbk-openclaw-bridge.onrender.com/events',
       sendBody: true,
+      contentType: 'json',
       specifyBody: 'json',
-      jsonBody:
-        "={{ { eventType: 'approval-notify', payload: { actor: 'n8n', category: 'APPROVAL', status: 'fanned-out', text: `Approval request ready for ${$json.leadName} at ${$json.address}`, target: $json.address, id: $json.id, leadName: $json.leadName, offerPrice: $json.offerPrice, mao: $json.mao, notes: $json.notes, approveUrl: $json.approveUrl, rejectUrl: $json.rejectUrl } } }}",
+      jsonBody: '={{ $json.notifyPayload }}',
       options: {},
     },
   },
@@ -146,7 +166,16 @@ return [{
     id: input.query?.id || input.id || '',
     status: input.query?.status || input.status || 'approved',
     actor: input.query?.actor || input.actor || 'n8n callback',
-    actedAt: new Date().toISOString()
+    actedAt: new Date().toISOString(),
+    bridgeEvent: {
+      eventType: 'approval-callback',
+      payload: {
+        id: input.query?.id || input.id || '',
+        status: input.query?.status || input.status || 'approved',
+        actor: input.query?.actor || input.actor || 'n8n callback',
+        actedAt: new Date().toISOString()
+      }
+    }
   }
 }];`,
     },
@@ -169,10 +198,12 @@ const postDecisionToOpenClaw = node({
     position: [-280, 140],
     parameters: {
       method: 'POST',
-      url: "={{ $env.PBK_OPENCLAW_URL || 'https://pbk-openclaw-bridge.onrender.com' }}/events",
+      authentication: 'none',
+      url: 'https://pbk-openclaw-bridge.onrender.com/events',
       sendBody: true,
+      contentType: 'json',
       specifyBody: 'json',
-      jsonBody: "={ \"eventType\": \"approval-callback\", \"payload\": $json }",
+      jsonBody: '={{ $json.bridgeEvent }}',
       options: {},
     },
   },

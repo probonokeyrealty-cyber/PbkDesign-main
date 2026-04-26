@@ -20,7 +20,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first().json;\nconst id = input.id || `approval-${Date.now()}`;\nconst baseUrl = $env.PBK_BASE_URL || 'https://probonokeyrealty1.app.n8n.cloud';\nreturn [{\n  json: {\n    id,\n    leadId: input.leadId || '',\n    leadName: input.leadName || input.name || 'Unknown seller',\n    address: input.address || '',\n    offerPrice: input.offerPrice || 0,\n    mao: input.mao || 0,\n    notes: input.notes || '',\n    createdAt: input.createdAt || new Date().toISOString(),\n    approveUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=approved`,\n    rejectUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=rejected`\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nconst source = input.body ?? input;\nconst id = source.id || `approval-${Date.now()}`;\nconst baseUrl = 'https://probonokeyrealty1.app.n8n.cloud';\nreturn [{\n  json: {\n    id,\n    leadId: source.leadId || '',\n    leadName: source.leadName || source.name || 'Unknown seller',\n    address: source.address || '',\n    offerPrice: source.offerPrice || 0,\n    mao: source.mao || 0,\n    notes: source.notes || '',\n    createdAt: source.createdAt || new Date().toISOString(),\n    approveUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=approved`,\n    rejectUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=rejected`,\n    notifyPayload: {\n      eventType: 'approval-notify',\n      payload: {\n        actor: 'n8n',\n        category: 'APPROVAL',\n        status: 'fanned-out',\n        text: `Approval request ready for ${source.leadName || source.name || 'Unknown seller'} at ${source.address || ''}`,\n        target: source.address || '',\n        id,\n        leadName: source.leadName || source.name || 'Unknown seller',\n        address: source.address || '',\n        offerPrice: source.offerPrice || 0,\n        mao: source.mao || 0,\n        notes: source.notes || '',\n        approveUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=approved`,\n        rejectUrl: `${baseUrl}/webhook/pbk-approval-decision?id=${id}&status=rejected`\n      }\n    }\n  }\n}];"
       },
       "id": "CodeNormalizeApproval",
       "name": "Normalize Approval Request",
@@ -34,10 +34,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.PBK_APPROVAL_NOTIFY_WEBHOOK || 'https://pbk-openclaw-bridge.onrender.com/events' }}",
+        "authentication": "none",
+        "url": "https://pbk-openclaw-bridge.onrender.com/events",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { eventType: 'approval-notify', payload: { actor: 'n8n', category: 'APPROVAL', status: 'fanned-out', text: `Approval request ready for ${$json.leadName} at ${$json.address}`, target: $json.address, id: $json.id, leadName: $json.leadName, offerPrice: $json.offerPrice, mao: $json.mao, notes: $json.notes, approveUrl: $json.approveUrl, rejectUrl: $json.rejectUrl } } }}",
+        "jsonBody": "={{ $json.notifyPayload }}",
         "options": {}
       },
       "id": "HttpNotifyChannel",
@@ -82,7 +84,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const input = $input.first().json;\nreturn [{\n  json: {\n    id: input.query?.id || input.id || '',\n    status: input.query?.status || input.status || 'approved',\n    actor: input.query?.actor || input.actor || 'n8n callback',\n    actedAt: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const input = $input.first().json;\nreturn [{\n  json: {\n    id: input.query?.id || input.id || '',\n    status: input.query?.status || input.status || 'approved',\n    actor: input.query?.actor || input.actor || 'n8n callback',\n    actedAt: new Date().toISOString(),\n    bridgeEvent: {\n      eventType: 'approval-callback',\n      payload: {\n        id: input.query?.id || input.id || '',\n        status: input.query?.status || input.status || 'approved',\n        actor: input.query?.actor || input.actor || 'n8n callback',\n        actedAt: new Date().toISOString()\n      }\n    }\n  }\n}];"
       },
       "id": "CodeNormalizeDecision",
       "name": "Normalize Approval Decision",
@@ -96,10 +98,12 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.PBK_OPENCLAW_URL || 'https://pbk-openclaw-bridge.onrender.com' }}/events",
+        "authentication": "none",
+        "url": "https://pbk-openclaw-bridge.onrender.com/events",
         "sendBody": true,
+        "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={ \"eventType\": \"approval-callback\", \"payload\": $json }",
+        "jsonBody": "={{ $json.bridgeEvent }}",
         "options": {}
       },
       "id": "HttpDecisionToOpenClaw",

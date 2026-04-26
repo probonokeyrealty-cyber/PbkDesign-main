@@ -35,22 +35,34 @@ const normalizeLeadPayload = node({
     parameters: {
       mode: 'runOnceForAllItems',
       jsCode: `const input = $input.first().json;
+const source = input.body ?? input;
 const lead = {
-  leadId: input.leadId || input.id || \`lead-\${Date.now()}\`,
-  source: input.source || 'manual-webhook',
+  leadId: source.leadId || source.id || \`lead-\${Date.now()}\`,
+  source: source.source || 'manual-webhook',
   seller: {
-    name: input?.seller?.name || input.name || 'Unknown seller',
-    phone: input?.seller?.phone || input.phone || '',
-    email: input?.seller?.email || input.email || ''
+    name: source?.seller?.name || source.name || 'Unknown seller',
+    phone: source?.seller?.phone || source.phone || '',
+    email: source?.seller?.email || source.email || ''
   },
   property: {
-    address: input?.property?.address || input.address || '',
-    city: input?.property?.city || input.city || '',
-    state: input?.property?.state || input.state || ''
+    address: source?.property?.address || source.address || '',
+    city: source?.property?.city || source.city || '',
+    state: source?.property?.state || source.state || ''
   },
-  tags: Array.isArray(input.tags) ? input.tags : []
+  tags: Array.isArray(source.tags) ? source.tags : []
 };
-return [{ json: lead }];`,
+return [{
+  json: {
+    ...lead,
+    bridgeEvent: {
+      eventType: 'lead-intake',
+      payload: {
+        ...lead,
+        _source: 'n8n-lead-intake'
+      }
+    }
+  }
+}];`,
     },
   },
   output: [
@@ -72,10 +84,12 @@ const pushToOpenClaw = node({
     position: [-100, -40],
     parameters: {
       method: 'POST',
-      url: "={{ $env.PBK_OPENCLAW_URL || 'https://pbk-openclaw-bridge.onrender.com' }}/events",
+      authentication: 'none',
+      url: 'https://pbk-openclaw-bridge.onrender.com/events',
       sendBody: true,
+      contentType: 'json',
       specifyBody: 'json',
-      jsonBody: "={{ { eventType: 'lead-intake', payload: { ...$json, _source: 'n8n-lead-intake' } } }}",
+      jsonBody: '={{ $json.bridgeEvent }}',
       options: {},
     },
   },

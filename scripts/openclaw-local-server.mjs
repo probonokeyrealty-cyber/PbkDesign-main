@@ -701,7 +701,7 @@ function findLeadContext(params = {}) {
     leadId: params.leadId || derivedLeadId || fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId || randomUUID(),
     leadName: explicitLeadName || fallbackApproval.leadName || fallbackImport?.seller?.name || fallbackCall.leadName || 'Unknown seller',
     address: explicitAddress || fallbackApproval.address || fallbackImport?.property?.address || fallbackCall.address || 'Unknown property',
-    phone: explicitPhone || normalizePhone(fallbackCall.phone) || normalizePhone(fallbackImport?.seller?.phone) || '',
+    phone: explicitPhone || (hasExplicitContext ? '' : normalizePhone(fallbackCall.phone) || normalizePhone(fallbackImport?.seller?.phone) || ''),
     email: params.email || fallbackImport?.seller?.email || '',
   };
   return fallback;
@@ -1106,7 +1106,7 @@ const toolHandlers = {
   async telnyx_call(params = {}) {
     recordToolUse('telnyx_call');
     const context = findLeadContext(params);
-    const phone = normalizePhone(params.phone || params.to || context.phone);
+    const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
     const dnc = findDncEntryByPhone(phone);
 
     if (dnc) {
@@ -1160,7 +1160,7 @@ const toolHandlers = {
     recordToolUse('telnyx_sms');
     const context = findLeadContext(params);
     const direction = params.direction || 'outbound';
-    const phone = normalizePhone(params.phone || params.to || context.phone);
+    const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
     const dnc = direction === 'outbound' ? findDncEntryByPhone(phone) : null;
 
     if (dnc) {

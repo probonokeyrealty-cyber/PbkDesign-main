@@ -34,10 +34,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.PBK_OPENCLAW_URL || 'http://127.0.0.1:8788' }}/events",
+        "url": "={{ $env.PBK_OPENCLAW_URL || 'https://pbk-openclaw-bridge.onrender.com' }}/events",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"eventType\": \"lead-intake\", \"payload\": $json }",
+        "jsonBody": "={{ { eventType: 'lead-intake', payload: { ...$json, _source: 'n8n-lead-intake' } } }}",
         "options": {}
       },
       "id": "HttpToOpenClaw",

@@ -680,6 +680,7 @@ function currency(value) {
 
 async function handleEvent(eventType, payload = {}) {
   if (eventType === 'lead-intake') {
+    const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
     const leadImport = normalizeLeadIntake(payload);
     addLeadImport(state, leadImport);
     addActivity(
@@ -721,7 +722,7 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     await persistState(state);
-    if (LEAD_WEBHOOK_URL) {
+    if (LEAD_WEBHOOK_URL && !fromN8nLeadIntake) {
       await fireWebhook(LEAD_WEBHOOK_URL, {
         eventType: 'lead-intake',
         payload: leadImport,

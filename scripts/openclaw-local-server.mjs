@@ -681,6 +681,30 @@ function currency(value) {
 async function handleEvent(eventType, payload = {}) {
   if (eventType === 'lead-intake') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
+
+    if (LEAD_WEBHOOK_URL && !fromN8nLeadIntake) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'System',
+          category: 'IMPORT',
+          status: 'queued',
+          text: `Forwarded lead intake to n8n from ${payload.source || 'manual bridge event'}`,
+          target: payload?.seller?.name || payload.name || payload.address || 'lead intake',
+        }),
+      );
+      await persistState(state);
+      const fanout = await fireWebhook(LEAD_WEBHOOK_URL, {
+        ...payload,
+        _source: payload?._source || 'openclaw-bridge',
+      });
+      return {
+        ok: true,
+        forwarded: true,
+        fanout,
+      };
+    }
+
     const leadImport = normalizeLeadIntake(payload);
     addLeadImport(state, leadImport);
     addActivity(
@@ -722,12 +746,6 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     await persistState(state);
-    if (LEAD_WEBHOOK_URL && !fromN8nLeadIntake) {
-      await fireWebhook(LEAD_WEBHOOK_URL, {
-        eventType: 'lead-intake',
-        payload: leadImport,
-      });
-    }
     return {
       ok: true,
       leadImport,

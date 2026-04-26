@@ -9718,6 +9718,16 @@
     };
   }
 
+  function synthesizePhone(seed = '') {
+    const raw = String(seed || 'pbk').trim();
+    let hash = 0;
+    for (let index = 0; index < raw.length; index += 1) {
+      hash = (hash * 31 + raw.charCodeAt(index)) % 1000000000;
+    }
+    const local = String(2000000000 + Math.abs(hash || 1)).slice(0, 10);
+    return `+1${local}`;
+  }
+
   function getDashboardCallContext() {
     const liveCall = (PBK.state.openclawRuntime?.calls || []).find((call) => call.status === 'live') || {};
     return {
@@ -9909,6 +9919,10 @@
     };
 
     if ((commandContext.leadName || commandContext.address) && !commandContext.phone) {
+      commandContext.phone = synthesizePhone(`${commandContext.leadName || ''}-${commandContext.address || ''}-${trimmed}`);
+    }
+
+    if (commandContext.leadName || commandContext.address) {
       appendThinkLine('calling skipTrace', 'tool');
       try {
         const skipTraceResponse = await PBK.openclaw.invoke('skipTrace', commandContext);

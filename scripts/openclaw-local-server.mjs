@@ -168,7 +168,7 @@ async function launchPdfBrowserWithRetry() {
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const localChromePath = IS_HOSTED ? '' : getLocalChromePath();
+      const localChromePath = getLocalChromePath();
       return await puppeteer.launch({
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,

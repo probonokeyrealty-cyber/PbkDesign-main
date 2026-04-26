@@ -690,29 +690,44 @@ function findLeadContext(params = {}) {
   const fallbackImport = state.leadImports[0] || {};
   const fallbackApproval = state.approvals[0] || {};
   const fallbackCall = state.calls.find((call) => call.status === 'live') || state.calls[0] || {};
+  const explicitPhone = normalizePhone(params.phone || params.to || params.number);
+  const explicitLeadName = params.leadName || params.name || '';
+  const explicitAddress = params.address || '';
+  const hasExplicitContext = Boolean(explicitPhone || explicitLeadName || explicitAddress);
+  const derivedLeadId = hasExplicitContext
+    ? `lead-${slugify(`${explicitLeadName || 'seller'}-${explicitAddress || explicitPhone || 'manual'}`)}`
+    : '';
   const fallback = {
-    leadId: fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId || randomUUID(),
-    leadName:
-      params.leadName ||
-      params.name ||
-      fallbackApproval.leadName ||
-      fallbackImport?.seller?.name ||
-      fallbackCall.leadName ||
-      'Unknown seller',
-    address:
-      params.address ||
-      fallbackApproval.address ||
-      fallbackImport?.property?.address ||
-      fallbackCall.address ||
-      'Unknown property',
-    phone:
-      normalizePhone(params.phone || params.to || params.number) ||
-      normalizePhone(fallbackCall.phone) ||
-      normalizePhone(fallbackImport?.seller?.phone) ||
-      '',
+    leadId: params.leadId || derivedLeadId || fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId || randomUUID(),
+    leadName: explicitLeadName || fallbackApproval.leadName || fallbackImport?.seller?.name || fallbackCall.leadName || 'Unknown seller',
+    address: explicitAddress || fallbackApproval.address || fallbackImport?.property?.address || fallbackCall.address || 'Unknown property',
+    phone: explicitPhone || normalizePhone(fallbackCall.phone) || normalizePhone(fallbackImport?.seller?.phone) || '',
     email: params.email || fallbackImport?.seller?.email || '',
   };
   return fallback;
+}
+
+function extractCommandContext(command = '') {
+  const raw = String(command || '').trim();
+  if (!raw) return {};
+
+  const phoneMatch = raw.match(/(\+?1?[\s.(+-]*\d{3}[\s).-]*\d{3}[\s.-]*\d{4})/);
+  const analyzeMatch = raw.match(/\b(?:analyze|run analyzer on|mao on)\s+(.+)$/i);
+  const addressMatch =
+    analyzeMatch ||
+    raw.match(/\bat\s+(.+?)(?:\s+(?:now|today|tomorrow|asap|please|right now)\b|$)/i) ||
+    raw.match(/\bfor\s+(\d{1,5}[^,]+,\s*[A-Za-z .'-]+(?:,\s*[A-Z]{2})?)/i);
+  const nameMatch = raw.match(/\b(?:call|text|sms|message|send(?: a)?(?: contract| docusign)? to|work this lead and report back on)\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i);
+
+  const leadName = nameMatch?.[1]?.trim() || '';
+  const address = addressMatch?.[1]?.trim().replace(/[.?!]+$/, '') || '';
+  const phone = phoneMatch?.[1] ? normalizePhone(phoneMatch[1]) : '';
+
+  return {
+    ...(leadName ? { leadName } : {}),
+    ...(address ? { address } : {}),
+    ...(phone ? { phone } : {}),
+  };
 }
 
 function buildAnalyzerSummary(params = {}) {
@@ -1322,7 +1337,11 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
-    const context = findLeadContext(params);
+    const parsedContext = extractCommandContext(command);
+    const context = findLeadContext({
+      ...parsedContext,
+      ...params,
+    });
     const lower = command.toLowerCase();
 
     addActivity(

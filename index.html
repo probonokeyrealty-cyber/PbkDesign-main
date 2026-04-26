@@ -9695,6 +9695,29 @@
     };
   }
 
+  function extractCommandContextFromText(command = '') {
+    const raw = String(command || '').trim();
+    if (!raw) return {};
+
+    const phoneMatch = raw.match(/(\+?1?[\s.(+-]*\d{3}[\s).-]*\d{3}[\s.-]*\d{4})/);
+    const analyzeMatch = raw.match(/\b(?:analyze|run analyzer on|mao on)\s+(.+)$/i);
+    const addressMatch =
+      analyzeMatch ||
+      raw.match(/\bat\s+(.+?)(?:\s+(?:now|today|tomorrow|asap|please|right now)\b|$)/i) ||
+      raw.match(/\bfor\s+(\d{1,5}[^,]+,\s*[A-Za-z .'-]+(?:,\s*[A-Z]{2})?)/i);
+    const nameMatch = raw.match(/\b(?:call|text|sms|message|send(?: a)?(?: contract| docusign)? to|work this lead and report back on)\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i);
+
+    const leadName = nameMatch?.[1]?.trim() || '';
+    const address = addressMatch?.[1]?.trim().replace(/[.?!]+$/, '') || '';
+    const phone = phoneMatch?.[1]?.trim() || '';
+
+    return {
+      ...(leadName ? { leadName } : {}),
+      ...(address ? { address } : {}),
+      ...(phone ? { phone } : {})
+    };
+  }
+
   function getDashboardCallContext() {
     const liveCall = (PBK.state.openclawRuntime?.calls || []).find((call) => call.status === 'live') || {};
     return {
@@ -9878,19 +9901,58 @@
       return null;
     }
 
-    const response = await invokeRuntimeTool('runAgentCommand', {
-      command: trimmed,
+    if (!await ensureOpenClawReady('agent commands')) return null;
+
+    const commandContext = {
+      ...extractCommandContextFromText(trimmed),
       ...extra
-    }, {
-      actionLabel: 'agent commands',
-      successTitle: 'Ava is on it',
-      successDesc: (payload) => {
-        const routed = payload?.result?.routedTo || 'updateCRM';
-        return `Command routed to ${routed}.`;
-      },
-      errorTitle: 'Agent command failed',
-      tag: 'decision'
-    });
+    };
+
+    if ((commandContext.leadName || commandContext.address) && !commandContext.phone) {
+      appendThinkLine('calling skipTrace', 'tool');
+      try {
+        const skipTraceResponse = await PBK.openclaw.invoke('skipTrace', commandContext);
+        if (skipTraceResponse?.result?.contact?.phone) {
+          commandContext.phone = skipTraceResponse.result.contact.phone;
+        }
+        if (skipTraceResponse?.result?.contact?.email && !commandContext.email) {
+          commandContext.email = skipTraceResponse.result.contact.email;
+        }
+        if (skipTraceResponse?.state) {
+          renderOpenClawState(skipTraceResponse.state);
+        } else {
+          await syncOpenClawState({ silent: true });
+        }
+      } catch (error) {
+        toast({
+          type: 'warning',
+          title: 'Skip trace fallback missed',
+          desc: error?.message || 'PBK could not enrich that command with contact data, so Ava will use the bridge defaults.'
+        });
+      }
+    }
+
+    appendThinkLine('calling runAgentCommand', 'decision');
+    let response = null;
+    try {
+      response = await PBK.openclaw.invoke('runAgentCommand', {
+        command: trimmed,
+        ...commandContext
+      });
+      await applyRuntimeResponse(response);
+      toast({
+        type: 'success',
+        title: 'Ava is on it',
+        desc: `Command routed to ${response?.result?.routedTo || 'updateCRM'}.`
+      });
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: 'Agent command failed',
+        desc: error?.message || 'The bridge did not accept that command.'
+      });
+      return null;
+    }
 
     const routed = response?.result?.routedTo;
     if (routed) appendThinkLine(`routed to ${routed}`, 'done');

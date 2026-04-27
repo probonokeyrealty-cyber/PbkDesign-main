@@ -8943,6 +8943,7 @@
       authRequired: meta.authRequired == null ? null : Boolean(meta.authRequired),
       productionReady: meta.productionReady == null ? null : Boolean(meta.productionReady),
       hosted: meta.hosted == null ? null : Boolean(meta.hosted),
+      healthShape: String(meta.healthShape || '').trim(),
       mode: String(meta.mode || '').trim(),
       lastSyncAt: String(meta.lastSyncAt || '').trim(),
       healthUrl: String(meta.healthUrl || '').trim(),
@@ -9027,16 +9028,26 @@
   function extractOpenClawRuntimeMeta(body = {}, extra = {}) {
     const runtime = body?.runtime || {};
     const features = body?.features || {};
+    const hasRuntimeMeta = !!(runtime && typeof runtime === 'object' && Object.keys(runtime).length);
+    const inheritedWarnings = runtime?.warnings || body?.warnings || features?.warnings || extra.warnings || [];
+    const warnings = Array.isArray(inheritedWarnings) ? [...inheritedWarnings] : [];
+    const healthShape = hasRuntimeMeta
+      ? 'runtime'
+      : ((body?.ok != null || body?.revision || Object.keys(features).length) ? 'legacy' : '');
+    if (healthShape === 'legacy') {
+      warnings.unshift('Bridge responded with a legacy health payload. Redeploy Render to expose runtime metadata.');
+    }
     return sanitizeOpenClawRuntimeMeta({
       bridgeRevision: body?.revision || runtime?.revision || extra.bridgeRevision || '',
       stateBackend: runtime?.stateBackend || features?.stateBackend || extra.stateBackend || '',
       authRequired: runtime?.authRequired ?? features?.authRequired ?? extra.authRequired,
       productionReady: runtime?.productionReady ?? features?.productionReady ?? extra.productionReady,
       hosted: runtime?.hosted ?? features?.hosted ?? extra.hosted,
+      healthShape,
       mode: runtime?.mode || features?.mode || extra.mode || '',
       lastSyncAt: extra.lastSyncAt || body?.lastUpdatedAt || '',
       healthUrl: extra.healthUrl || '',
-      warnings: runtime?.warnings || body?.warnings || features?.warnings || extra.warnings || []
+      warnings
     });
   }
 
@@ -9091,7 +9102,7 @@
         ? (config.apiKey ? 'Required + loaded' : 'Required - missing local key')
         : 'Open / local only';
     const readyLabel = runtimeMeta.productionReady == null
-      ? 'Pending check'
+      ? (runtimeMeta.healthShape === 'legacy' ? 'Legacy health' : 'Pending check')
       : runtimeMeta.productionReady
         ? 'Ready'
         : 'Needs envs';

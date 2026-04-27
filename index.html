@@ -11693,6 +11693,8 @@
   function renderContractsExperience(runtime = getAnalyzerContractRuntimeSync()) {
     const page = getPageNode('contracts');
     if (!page) return;
+    const openClawConfig = getOpenClawConfig();
+    const bridgeRuntime = sanitizeOpenClawRuntimeMeta(openClawConfig.runtimeMeta || {});
 
     const records = buildContractRecords(runtime);
     const stages = summarizeContractStages(records);
@@ -11772,6 +11774,12 @@
         : buildRuntimeContractSummary(activeRecord, runtime);
       const cachedPdf = runtime.masterPackageQuery ? getCachedContractPdf(runtime.masterPackageQuery) : null;
       const pdfService = getContractPdfServiceStatus();
+      const bridgeLegacy = bridgeRuntime.healthShape === 'legacy';
+      const bridgeCopy = bridgeLegacy
+        ? 'Hosted bridge is still on the older runtime contract. Redeploy Render before trusting hosted PDF health.'
+        : bridgeRuntime.bridgeRevision
+          ? `Hosted bridge revision ${bridgeRuntime.bridgeRevision}${bridgeRuntime.stateBackend ? ` · ${bridgeRuntime.stateBackend}` : ''}.`
+          : 'Hosted bridge status has not been checked in this browser yet.';
       const syncedCopy = cachedPdf?.syncedAt
         ? `PDF synced ${formatRelativeTime(cachedPdf.syncedAt)}`
         : activeRecord?.isDraft
@@ -11781,10 +11789,10 @@
           : 'Historic envelope summary from the live bridge.';
       const rendererLabel = activeRecord?.isDraft
         ? pdfService.status === 'ready'
-          ? 'PDF renderer live'
+          ? 'Bridge PDF generated'
           : pdfService.status === 'degraded'
             ? 'Analyzer preview fallback'
-            : 'PDF renderer pending'
+            : 'Bridge PDF pending'
         : 'Bridge history';
       const rendererClass = activeRecord?.isDraft
         ? pdfService.status === 'ready'
@@ -11808,6 +11816,7 @@
             <span class="status-chip ${escapeHtml(statusChip.className)}">${escapeHtml(statusChip.label)}</span>
             <span>${escapeHtml(syncedCopy)}</span>
             <span class="status-chip ${escapeHtml(rendererClass)}">${escapeHtml(rendererLabel)}</span>
+            ${activeRecord?.isDraft ? `<span class="status-chip ${bridgeLegacy ? 'neg' : 'pending'}">${escapeHtml(bridgeLegacy ? 'Bridge health legacy' : 'Bridge health checked')}</span>` : ''}
           </div>
           <div class="cp-meta-grid">
             <div class="cp-meta-pill"><span class="k">Path</span><span class="v">${escapeHtml(runtime.selectedPathLabel)}</span></div>
@@ -11817,7 +11826,7 @@
           </div>
           ${renderContractDocument(contractText, runtime.branding.companyName)}
           <div class="contract-runtime-help">
-            ${escapeHtml(activeRecord?.isDraft ? `Source of truth: ${runtime.address}. Keep seller info and path terms updated in the analyzer, then regenerate the PDF or send to DocuSign from here.` : `This summary is coming from the live bridge state for ${activeRecord?.leadName || 'the selected contract'}. Use Back to draft to edit the analyzer-backed packet.`)}
+            ${escapeHtml(activeRecord?.isDraft ? `Source of truth: ${runtime.address}. Keep seller info and path terms updated in the analyzer, then regenerate the PDF or send to DocuSign from here. ${bridgeCopy}` : `This summary is coming from the live bridge state for ${activeRecord?.leadName || 'the selected contract'}. Use Back to draft to edit the analyzer-backed packet.`)}
           </div>
         </div>
         <div class="cp-footer">

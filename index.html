@@ -898,6 +898,48 @@
     color: var(--text-secondary); font-size: 14px;
     max-width: 520px;
   }
+[data-page="dashboard"] .founder-ops-strip {
+    margin-top: var(--s-5);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-3);
+  }
+[data-page="dashboard"] .founder-ops-card {
+    border: 1px solid var(--border-dim);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(5,7,11,0.72));
+    padding: 14px 16px;
+    display: grid;
+    gap: 6px;
+    min-height: 108px;
+  }
+[data-page="dashboard"] .founder-ops-card[data-state="warning"] {
+    border-color: rgba(255, 176, 32, 0.36);
+    background: linear-gradient(180deg, rgba(255,176,32,0.08), rgba(5,7,11,0.82));
+  }
+[data-page="dashboard"] .founder-ops-card[data-state="good"] {
+    border-color: rgba(125, 211, 252, 0.34);
+    background: linear-gradient(180deg, rgba(125,211,252,0.08), rgba(5,7,11,0.82));
+  }
+[data-page="dashboard"] .founder-ops-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-ghost);
+  }
+[data-page="dashboard"] .founder-ops-value {
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 1.1;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+[data-page="dashboard"] .founder-ops-note {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
 [data-page="dashboard"] .stats-ribbon {
     display: grid; grid-template-columns: repeat(4, 1fr);
     gap: 0; margin-top: var(--s-8);
@@ -1384,12 +1426,14 @@
     .right-col { grid-column: 1 / -1; }
     .console { grid-template-columns: 1fr; }
     .console-side { border-left: none; border-top: 1px solid var(--border-dim); }
+    .founder-ops-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 @media (max-width: 720px) {
     .app { grid-template-columns: 56px 1fr; }
     .grid { grid-template-columns: 1fr; }
     .stats-ribbon { grid-template-columns: repeat(2, 1fr); }
     .hero h1 { font-size: 36px; }
+    .founder-ops-strip { grid-template-columns: 1fr; }
     .live-body { grid-template-columns: 1fr; }
     .transcript { border-right: none; border-bottom: 1px solid var(--border-dim); }
   }
@@ -1407,6 +1451,28 @@
       <div class="hero-tag"><span data-bind="dashboard.heroTime">Live · — · —</span></div>
       <h1>Good <span data-bind="dashboard.timeOfDay">morning</span>, <span data-bind="user.firstName">there</span>. <em>Your agents closed <span data-bind="dashboard.overnightRevenue">$0</span> overnight.</em></h1>
       <p class="hero-sub"><span data-bind="dashboard.heroSubtitle">No live activity yet — connect OpenClaw to begin.</span></p>
+      <div class="founder-ops-strip" data-founder-ops="dashboard">
+        <article class="founder-ops-card" data-founder-card="bridge">
+          <span class="founder-ops-label">Bridge</span>
+          <strong class="founder-ops-value">Checking runtime</strong>
+          <p class="founder-ops-note">Render bridge, auth, and database state appear here after the next health check.</p>
+        </article>
+        <article class="founder-ops-card" data-founder-card="analyzer">
+          <span class="founder-ops-label">Analyzer</span>
+          <strong class="founder-ops-value">Waiting on deal</strong>
+          <p class="founder-ops-note">Load or sync a property to turn the analyzer into the source of truth for contracts.</p>
+        </article>
+        <article class="founder-ops-card" data-founder-card="contracts">
+          <span class="founder-ops-label">Contracts</span>
+          <strong class="founder-ops-value">Packet pending</strong>
+          <p class="founder-ops-note">PDF mode and send readiness will surface here once the analyzer packet is complete.</p>
+        </article>
+        <article class="founder-ops-card" data-founder-card="brain">
+          <span class="founder-ops-label">Brain</span>
+          <strong class="founder-ops-value">Sync waiting</strong>
+          <p class="founder-ops-note">Recent research, live activity, and approval pressure roll up here for quick triage.</p>
+        </article>
+      </div>
 
       <div class="stats-ribbon">
         <div class="stat">
@@ -3653,6 +3719,49 @@
     .progress-fill { height: 100%; background: var(--sky); }
     .progress-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.06em; }
 
+    .contracts-ops-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--s-3);
+      padding: 0 var(--s-6) var(--s-4);
+    }
+    .contracts-ops-card {
+      border: 1px solid var(--border-dim);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(7,10,14,0.86));
+      padding: 14px 16px;
+      display: grid;
+      gap: 6px;
+      min-height: 104px;
+    }
+    .contracts-ops-card[data-state="warning"] {
+      border-color: rgba(255, 176, 32, 0.36);
+      background: linear-gradient(180deg, rgba(255,176,32,0.08), rgba(7,10,14,0.9));
+    }
+    .contracts-ops-card[data-state="good"] {
+      border-color: rgba(125, 211, 252, 0.34);
+      background: linear-gradient(180deg, rgba(125,211,252,0.08), rgba(7,10,14,0.9));
+    }
+    .contracts-ops-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-ghost);
+    }
+    .contracts-ops-value {
+      font-family: var(--font-display);
+      font-size: 19px;
+      line-height: 1.1;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .contracts-ops-note {
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
     /* preview side */
     .contract-preview {
       background: var(--bg-panel); border: 1px solid var(--border-dim);
@@ -3784,8 +3893,12 @@
     .cv-item .cv-note { color: var(--text-tertiary); font-size: 10px; }
 
     @media (max-width: 1100px) {
+      .contracts-ops-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 var(--s-6) var(--s-4); }
       .contracts-layout { grid-template-columns: 1fr; }
       .cp-meta-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .contracts-ops-strip { grid-template-columns: 1fr; }
     }
   </style>
 
@@ -3800,6 +3913,28 @@
       <button class="btn btn-ghost">Audit log</button>
       <button class="btn btn-primary">+ New contract</button>
     </div>
+  </div>
+  <div class="contracts-ops-strip" data-contracts-ops>
+    <article class="contracts-ops-card" data-contracts-card="source">
+      <span class="contracts-ops-label">Source of truth</span>
+      <strong class="contracts-ops-value">Analyzer packet</strong>
+      <p class="contracts-ops-note">Contracts inherit seller, address, path, and price from the analyzer snapshot.</p>
+    </article>
+    <article class="contracts-ops-card" data-contracts-card="pdf">
+      <span class="contracts-ops-label">PDF mode</span>
+      <strong class="contracts-ops-value">Checking renderer</strong>
+      <p class="contracts-ops-note">Bridge PDF generation and analyzer preview fallback will show here.</p>
+    </article>
+    <article class="contracts-ops-card" data-contracts-card="bridge">
+      <span class="contracts-ops-label">Hosted bridge</span>
+      <strong class="contracts-ops-value">Waiting on health</strong>
+      <p class="contracts-ops-note">Bridge revision and backend trust are verified from the current browser session.</p>
+    </article>
+    <article class="contracts-ops-card" data-contracts-card="next">
+      <span class="contracts-ops-label">Next action</span>
+      <strong class="contracts-ops-value">Complete packet</strong>
+      <p class="contracts-ops-note">PBK will tell you what to fix before you send a live seller envelope.</p>
+    </article>
   </div>
 
   <section class="contracts-layout">
@@ -4997,6 +5132,48 @@
     }
     .brain-hero h2 em { font-style: italic; font-weight: 700; color: var(--sky); }
     .brain-hero p { color: var(--text-secondary); font-size: 13px; max-width: 520px; margin-bottom: var(--s-4); }
+    .brain-ops-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--s-3);
+      margin-bottom: var(--s-4);
+    }
+    .brain-ops-card {
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 16px;
+      background: rgba(5, 7, 11, 0.34);
+      padding: 12px 14px;
+      display: grid;
+      gap: 6px;
+      min-height: 96px;
+    }
+    .brain-ops-card[data-state="warning"] {
+      border-color: rgba(255, 176, 32, 0.4);
+      background: rgba(255, 176, 32, 0.08);
+    }
+    .brain-ops-card[data-state="good"] {
+      border-color: rgba(125, 211, 252, 0.34);
+      background: rgba(125, 211, 252, 0.08);
+    }
+    .brain-ops-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-ghost);
+    }
+    .brain-ops-value {
+      font-family: var(--font-display);
+      font-size: 18px;
+      line-height: 1.12;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .brain-ops-note {
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.45;
+    }
     .br-stats {
       display: flex; gap: var(--s-6); font-family: var(--font-mono);
       padding-top: var(--s-4); border-top: 1px solid var(--border-dim);
@@ -5205,10 +5382,12 @@
       .brain-layout { grid-template-columns: 240px 1fr; }
       .brain-right { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; position: static; }
       .brain-right > * { flex: 1; min-width: 280px; }
+      .brain-ops-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 900px) {
       .brain-layout { grid-template-columns: 1fr; }
       .brain-left { position: static; }
+      .brain-ops-strip { grid-template-columns: 1fr; }
     }
   </style>
 
@@ -5280,6 +5459,28 @@
         <div class="br-tag" data-brain-meta="hero-tag">▸ A+ Acquisition Manager · Status</div>
         <h2 data-brain-meta="hero-title">Ava read <em>47 new sources</em> this week.</h2>
         <p data-brain-meta="hero-copy">3 new FCC rulings on telemarketing consent · a peer-reviewed paper on motivated seller psychology · 12 local Ohio court docs on probate timelines. Her scripts auto-updated where relevant.</p>
+        <div class="brain-ops-strip" data-brain-ops>
+          <article class="brain-ops-card" data-brain-card="sync">
+            <span class="brain-ops-label">Sync</span>
+            <strong class="brain-ops-value">Waiting on bridge</strong>
+            <p class="brain-ops-note">The hosted brain sync, backend mode, and freshness clock appear here.</p>
+          </article>
+          <article class="brain-ops-card" data-brain-card="topic">
+            <span class="brain-ops-label">Active topic</span>
+            <strong class="brain-ops-value">Wholesaling</strong>
+            <p class="brain-ops-note">Use the left rail to narrow the library and recent insight stream.</p>
+          </article>
+          <article class="brain-ops-card" data-brain-card="library">
+            <span class="brain-ops-label">Library</span>
+            <strong class="brain-ops-value">0 sources</strong>
+            <p class="brain-ops-note">Research count, weekly intake, and suggested reading will stay live here.</p>
+          </article>
+          <article class="brain-ops-card" data-brain-card="query">
+            <span class="brain-ops-label">Query lane</span>
+            <strong class="brain-ops-value">Connect Rex</strong>
+            <p class="brain-ops-note">Once OpenClaw is connected, this card flips into a real ask-the-brain prompt.</p>
+          </article>
+        </div>
         <div class="br-stats">
           <div class="br-stat">
             <div class="l">Sources indexed</div>
@@ -6114,6 +6315,73 @@
     .settings-section .section-desc {
       color: var(--text-secondary); font-size: 13px; margin-bottom: var(--s-5);
     }
+    .settings-runtime-deck {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: var(--s-3);
+      margin: var(--s-4) 0 var(--s-5);
+    }
+    .settings-runtime-card {
+      border: 1px solid var(--border-dim);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(7,10,14,0.9));
+      padding: 14px 16px;
+      display: grid;
+      gap: 6px;
+      min-height: 112px;
+    }
+    .settings-runtime-card[data-state="warning"] {
+      border-color: rgba(255, 176, 32, 0.36);
+      background: linear-gradient(180deg, rgba(255,176,32,0.08), rgba(7,10,14,0.92));
+    }
+    .settings-runtime-card[data-state="good"] {
+      border-color: rgba(125, 211, 252, 0.34);
+      background: linear-gradient(180deg, rgba(125,211,252,0.08), rgba(7,10,14,0.92));
+    }
+    .settings-runtime-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-ghost);
+    }
+    .settings-runtime-value {
+      font-family: var(--font-display);
+      font-size: 18px;
+      color: var(--text-primary);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+    .settings-runtime-note {
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .settings-api-note {
+      margin: 0 0 var(--s-4);
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 176, 32, 0.32);
+      border-radius: 14px;
+      background: rgba(255, 176, 32, 0.08);
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .provider-readiness-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 176, 32, 0.36);
+      background: rgba(255, 176, 32, 0.08);
+      color: var(--amber);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
 
     .setting-row {
       display: grid; grid-template-columns: 1fr 320px;
@@ -6193,6 +6461,7 @@
       .settings-layout { grid-template-columns: 1fr; }
       .settings-nav { display: none; }
       .setting-row { grid-template-columns: 1fr; gap: var(--s-3); }
+      .settings-runtime-deck { grid-template-columns: 1fr; }
     }
   </style>
 
@@ -6615,6 +6884,28 @@
       <div class="settings-section" id="settings-api-keys">
         <h3><em>API Keys</em> & plugins.</h3>
         <p class="section-desc">Connect external services and Codex/OpenClaw plugins. PBK Paradise stays usable without these — plugins extend Ava with extra tools when you're ready. <strong>Nothing required up front.</strong></p>
+        <div class="settings-runtime-deck" data-settings-runtime>
+          <article class="settings-runtime-card" data-settings-card="bridge">
+            <span class="settings-runtime-label">Hosted bridge</span>
+            <strong class="settings-runtime-value">Waiting on health</strong>
+            <p class="settings-runtime-note">This card tracks the public Render bridge, revision, and whether your browser trusts the last health check.</p>
+          </article>
+          <article class="settings-runtime-card" data-settings-card="database">
+            <span class="settings-runtime-label">Database</span>
+            <strong class="settings-runtime-value">Checking backend</strong>
+            <p class="settings-runtime-note">Founder mode wants durable Postgres state before you rely on hosted approvals or activity history.</p>
+          </article>
+          <article class="settings-runtime-card" data-settings-card="workflows">
+            <span class="settings-runtime-label">Workflow glue</span>
+            <strong class="settings-runtime-value">n8n in loop</strong>
+            <p class="settings-runtime-note">Lead intake, approval fanout, and keep-warm live here. Keep smokes green after each workflow edit.</p>
+          </article>
+          <article class="settings-runtime-card" data-settings-card="providers">
+            <span class="settings-runtime-label">Provider APIs</span>
+            <strong class="settings-runtime-value">Bridge-backed today</strong>
+            <p class="settings-runtime-note">BatchData, Telnyx, DocuSign, Slack, and CRM still need real provider calls behind the runtime before they are key-only launchable.</p>
+          </article>
+        </div>
 
         <!-- ===== OpenClaw plugin card ===== -->
         <div class="plugin-card" data-plugin="openclaw" data-plugin-status="not-configured">
@@ -6673,12 +6964,16 @@
 
         <!-- ===== Standalone API keys (existing services) ===== -->
         <h4 class="settings-subhead">Direct API keys</h4>
-        <p class="section-desc" style="margin-top: -8px;">For services Ava calls directly without OpenClaw in the loop.</p>
+        <p class="section-desc" style="margin-top: -8px;">Stage provider credentials here now; the next backend pass will turn these into real outbound integrations behind the bridge.</p>
+        <div class="settings-api-note">
+          These keys are staged at the UI level, but PBK still needs the next backend pass to make live outbound provider calls. Today the founder runtime can simulate and log these actions through the bridge; Telnyx, DocuSign, BatchData, Slack-direct, and CRM provider APIs are the next real integration slice.
+        </div>
 
         <div class="setting-row">
           <div>
             <div class="setting-label">BatchData (skip-trace)</div>
             <div class="setting-help">Owner lookup, phone enrichment, mailing addresses.</div>
+            <div class="provider-readiness-badge">Backend wiring next</div>
           </div>
           <div class="setting-ctrl">
             <input type="password" placeholder="bd_••••••••" style="font-family: var(--font-mono); font-size: 12px;"/>
@@ -6689,6 +6984,7 @@
           <div>
             <div class="setting-label">Telnyx (calls + SMS)</div>
             <div class="setting-help">Outbound calling and TCPA-safe SMS.</div>
+            <div class="provider-readiness-badge">Runtime only today</div>
           </div>
           <div class="setting-ctrl">
             <input type="password" placeholder="KEY••••••" style="font-family: var(--font-mono); font-size: 12px;"/>
@@ -6699,6 +6995,7 @@
           <div>
             <div class="setting-label">DocuSign (contracts)</div>
             <div class="setting-help">Sends purchase agreements and assignment contracts for e-signature.</div>
+            <div class="provider-readiness-badge">Envelope sync next</div>
           </div>
           <div class="setting-ctrl">
             <input type="password" placeholder="ds_••••••••" style="font-family: var(--font-mono); font-size: 12px;"/>
@@ -8829,6 +9126,47 @@
     [data-page="analyzer"] .analyzer-runtime-copy {
       color: var(--text-tertiary);
     }
+    [data-page="analyzer"] .analyzer-ops-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--s-3);
+    }
+    [data-page="analyzer"] .analyzer-ops-card {
+      border: 1px solid var(--border-dim);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(5,7,11,0.72));
+      padding: 14px 16px;
+      display: grid;
+      gap: 6px;
+      min-height: 104px;
+    }
+    [data-page="analyzer"] .analyzer-ops-card[data-state="warning"] {
+      border-color: rgba(255, 176, 32, 0.36);
+      background: linear-gradient(180deg, rgba(255,176,32,0.08), rgba(5,7,11,0.82));
+    }
+    [data-page="analyzer"] .analyzer-ops-card[data-state="good"] {
+      border-color: rgba(125, 211, 252, 0.34);
+      background: linear-gradient(180deg, rgba(125,211,252,0.08), rgba(5,7,11,0.82));
+    }
+    [data-page="analyzer"] .analyzer-ops-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-ghost);
+    }
+    [data-page="analyzer"] .analyzer-ops-value {
+      font-family: var(--font-display);
+      font-size: 19px;
+      line-height: 1.1;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    [data-page="analyzer"] .analyzer-ops-note {
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }
     [data-page="analyzer"] .analyzer-frame-wrap {
       border-radius: 20px;
       overflow: hidden;
@@ -8917,6 +9255,9 @@
     }
     @media (max-width: 900px) {
       [data-page="analyzer"] .analyzer-bridge-head {
+        grid-template-columns: 1fr;
+      }
+      [data-page="analyzer"] .analyzer-ops-grid {
         grid-template-columns: 1fr;
       }
       [data-page="analyzer"] .analyzer-head-actions {
@@ -9154,6 +9495,12 @@
     } else if (config.status === 'not-configured' || config.status === 'error') {
       setBoundValue('dashboard.heroSubtitle', PBK_BIND_DEFAULTS['dashboard.heroSubtitle']);
     }
+
+    renderDashboardFounderOps();
+    renderAnalyzerFounderOps();
+    renderSettingsRuntimeDeck();
+    renderBrainOpsStrip();
+    renderContractsOpsStrip();
   }
 
   function buildOpenClawHeaders(config, withJson = false) {
@@ -9820,6 +10167,231 @@
     }
   }
 
+  function paintOpsCard(card, { state = '', value = '', note = '' } = {}) {
+    if (!card) return;
+    if (state) {
+      card.dataset.state = state;
+    } else {
+      delete card.dataset.state;
+    }
+    const valueNode = card.querySelector('strong');
+    const noteNode = card.querySelector('p');
+    if (valueNode) valueNode.textContent = value;
+    if (noteNode) noteNode.textContent = note;
+  }
+
+  function getFounderRuntimeSummary() {
+    const config = getOpenClawConfig();
+    const runtimeMeta = sanitizeOpenClawRuntimeMeta(config.runtimeMeta || {});
+    const snapshot = PBK.state.openclawRuntime || {};
+    const docs = Array.isArray(snapshot.brainDocs) ? snapshot.brainDocs : [];
+    const activity = Array.isArray(snapshot.activity) ? snapshot.activity : [];
+    const approvals = Array.isArray(snapshot.approvals)
+      ? snapshot.approvals.filter((item) => item.status === 'pending')
+      : [];
+    const dealRuntime = getAnalyzerContractRuntimeSync();
+    const deal = dealRuntime?.deal || {};
+    const hasDeal = Boolean(String(deal.address || '').trim());
+    const pdfReadiness = dealRuntime?.pdfReadiness || { ready: false, message: 'Analyzer packet not ready yet.' };
+    const pdfService = getContractPdfServiceStatus();
+    const bridgeState = config.status === 'connected'
+      ? ((runtimeMeta.healthShape === 'legacy' || runtimeMeta.productionReady === false) ? 'warning' : 'good')
+      : config.status === 'error'
+        ? 'warning'
+        : '';
+    const bridgeValue = config.status === 'connected'
+      ? (runtimeMeta.healthShape === 'legacy'
+          ? 'Legacy bridge health'
+          : runtimeMeta.productionReady === false
+            ? 'Bridge needs envs'
+            : 'Bridge healthy')
+      : config.status === 'saved'
+        ? 'Bridge saved locally'
+        : config.status === 'error'
+          ? 'Bridge disconnected'
+          : 'Bridge not linked';
+    const bridgeNote = config.status === 'connected'
+      ? `${runtimeMeta.bridgeRevision || 'Revision pending'}${runtimeMeta.stateBackend ? ` · ${runtimeMeta.stateBackend}` : ''}${runtimeMeta.lastSyncAt ? ` · synced ${formatRelativeTime(runtimeMeta.lastSyncAt)}` : ''}`
+      : config.lastMessage || 'Add or reconnect the hosted bridge to unlock live founder telemetry.';
+
+    const analyzerState = hasDeal ? (pdfReadiness.ready ? 'good' : 'warning') : '';
+    const analyzerValue = hasDeal ? dealRuntime.address : 'Waiting on deal';
+    const analyzerNote = hasDeal
+      ? (pdfReadiness.ready
+          ? `${dealRuntime.selectedPathLabel} packet is ready to drive contracts.`
+          : pdfReadiness.message)
+      : 'Load a property in the analyzer so PBK can sync math, seller info, and document state.';
+
+    const contractState = pdfService.status === 'ready'
+      ? 'good'
+      : pdfService.status === 'degraded'
+        ? 'warning'
+        : pdfReadiness.ready
+          ? 'warning'
+          : '';
+    const contractValue = pdfService.status === 'ready'
+      ? 'Bridge PDF generated'
+      : pdfService.status === 'degraded'
+        ? 'Analyzer preview fallback'
+        : pdfReadiness.ready
+          ? 'Bridge PDF pending'
+          : 'Packet incomplete';
+    const contractNote = pdfService.message
+      || (pdfReadiness.ready
+        ? `Ready to send ${dealRuntime.selectedPathLabel} once the renderer is warm.`
+        : pdfReadiness.message);
+
+    const brainState = config.status === 'connected'
+      ? 'good'
+      : docs.length
+        ? 'warning'
+        : '';
+    const brainValue = docs.length ? `${docs.length} sources live` : 'Waiting on sources';
+    const brainNote = docs.length
+      ? `${approvals.length} pending approvals · ${activity.length} recent runtime events.`
+      : 'Ingest a PDF, memo, URL, or voice note to start turning the brain into a live research asset.';
+
+    const databaseState = runtimeMeta.stateBackend === 'postgres'
+      ? 'good'
+      : runtimeMeta.stateBackend === 'file'
+        ? 'warning'
+        : '';
+    const databaseValue = runtimeMeta.stateBackend === 'postgres'
+      ? 'Postgres durable'
+      : runtimeMeta.stateBackend === 'file'
+        ? 'File-backed state'
+        : 'Backend unknown';
+    const databaseNote = runtimeMeta.stateBackend === 'postgres'
+      ? 'Hosted approvals, activity, and brain docs should survive cold starts now.'
+      : runtimeMeta.stateBackend === 'file'
+        ? 'Render is still falling back to file state. Flip the hosted bridge to Postgres before launch.'
+        : 'Connect and poll the bridge to confirm the current database mode.';
+
+    const workflowState = config.status === 'connected' && runtimeMeta.productionReady ? 'good' : 'warning';
+    const workflowValue = runtimeMeta.productionReady ? 'Founder runtime green' : 'Smoke workflows again';
+    const workflowNote = runtimeMeta.productionReady
+      ? 'n8n lead intake, approval fanout, and keep-warm should stay on your post-change checklist.'
+      : 'Bridge envs or workflow smokes still need attention before calling this launch-ready.';
+
+    let nextValue = 'Reconnect bridge';
+    let nextNote = 'Restore the hosted brain first so the rest of the operator surfaces become trustworthy again.';
+    if (config.status === 'connected' && !hasDeal) {
+      nextValue = 'Load a property';
+      nextNote = 'Sync the latest analyzer deal so contracts and founder cards can inherit real numbers.';
+    } else if (config.status === 'connected' && hasDeal && !pdfReadiness.ready) {
+      nextValue = 'Complete the packet';
+      nextNote = pdfReadiness.message;
+    } else if (config.status === 'connected' && hasDeal && pdfService.status === 'degraded') {
+      nextValue = 'Preview while PDF warms';
+      nextNote = 'The analyzer preview is still safe to review while the hosted PDF renderer catches up.';
+    } else if (config.status === 'connected' && hasDeal && pdfReadiness.ready) {
+      nextValue = 'Send or approve';
+      nextNote = 'The founder lane is ready for an approval decision, PDF review, or live seller send.';
+    }
+
+    return {
+      bridge: { state: bridgeState, value: bridgeValue, note: bridgeNote },
+      analyzer: { state: analyzerState, value: analyzerValue, note: analyzerNote },
+      contracts: { state: contractState, value: contractValue, note: contractNote },
+      brain: { state: brainState, value: brainValue, note: brainNote },
+      database: { state: databaseState, value: databaseValue, note: databaseNote },
+      workflow: { state: workflowState, value: workflowValue, note: workflowNote },
+      next: { state: workflowState, value: nextValue, note: nextNote },
+      activeTopic: getSelectedBrainTopic(),
+      docsCount: docs.length,
+      pendingApprovals: approvals.length,
+      dealRuntime,
+      pdfReadiness,
+      pdfService,
+      runtimeMeta
+    };
+  }
+
+  function renderDashboardFounderOps() {
+    const summary = getFounderRuntimeSummary();
+    const strip = document.querySelector('[data-founder-ops="dashboard"]');
+    if (!strip) return;
+    paintOpsCard(strip.querySelector('[data-founder-card="bridge"]'), summary.bridge);
+    paintOpsCard(strip.querySelector('[data-founder-card="analyzer"]'), summary.analyzer);
+    paintOpsCard(strip.querySelector('[data-founder-card="contracts"]'), summary.contracts);
+    paintOpsCard(strip.querySelector('[data-founder-card="brain"]'), summary.brain);
+  }
+
+  function renderAnalyzerFounderOps() {
+    const summary = getFounderRuntimeSummary();
+    const strip = document.querySelector('[data-analyzer-ops]');
+    if (!strip) return;
+    paintOpsCard(strip.querySelector('[data-analyzer-card="bridge"]'), summary.bridge);
+    paintOpsCard(strip.querySelector('[data-analyzer-card="snapshot"]'), summary.analyzer);
+    paintOpsCard(strip.querySelector('[data-analyzer-card="handoff"]'), {
+      state: summary.pdfReadiness.ready ? 'good' : 'warning',
+      value: summary.pdfReadiness.ready ? summary.dealRuntime.selectedPathLabel : 'Packet incomplete',
+      note: summary.pdfReadiness.message
+    });
+    paintOpsCard(strip.querySelector('[data-analyzer-card="next"]'), summary.next);
+  }
+
+  function renderSettingsRuntimeDeck() {
+    const summary = getFounderRuntimeSummary();
+    const deck = document.querySelector('[data-settings-runtime]');
+    if (!deck) return;
+    paintOpsCard(deck.querySelector('[data-settings-card="bridge"]'), summary.bridge);
+    paintOpsCard(deck.querySelector('[data-settings-card="database"]'), summary.database);
+    paintOpsCard(deck.querySelector('[data-settings-card="workflows"]'), summary.workflow);
+    paintOpsCard(deck.querySelector('[data-settings-card="providers"]'), {
+      state: 'warning',
+      value: 'Bridge-backed today',
+      note: 'Provider keys can be staged now, but Telnyx, DocuSign, BatchData, Slack-direct, and CRM still need real outbound backend calls.'
+    });
+  }
+
+  function renderBrainOpsStrip() {
+    const summary = getFounderRuntimeSummary();
+    const strip = document.querySelector('[data-brain-ops]');
+    if (!strip) return;
+    paintOpsCard(strip.querySelector('[data-brain-card="sync"]'), {
+      state: summary.bridge.state,
+      value: summary.bridge.value,
+      note: summary.bridge.note
+    });
+    paintOpsCard(strip.querySelector('[data-brain-card="topic"]'), {
+      state: summary.docsCount ? 'good' : '',
+      value: summary.activeTopic || 'Wholesaling',
+      note: summary.docsCount
+        ? `${summary.docsCount} indexed sources are available inside this topic lane right now.`
+        : 'Use the topic rail to focus the brain once the first sources arrive.'
+    });
+    paintOpsCard(strip.querySelector('[data-brain-card="library"]'), {
+      state: summary.brain.state,
+      value: summary.brain.value,
+      note: summary.brain.note
+    });
+    paintOpsCard(strip.querySelector('[data-brain-card="query"]'), {
+      state: summary.bridge.state,
+      value: getOpenClawConfig().status === 'connected' ? 'Ask Rex live' : 'Connect OpenClaw',
+      note: getOpenClawConfig().status === 'connected'
+        ? 'Use the chat rail for live founder questions; answers will cite the indexed runtime library.'
+        : 'The query lane stays read-only until the hosted bridge is connected in this browser.'
+    });
+  }
+
+  function renderContractsOpsStrip(runtime = getAnalyzerContractRuntimeSync()) {
+    const summary = getFounderRuntimeSummary();
+    const strip = document.querySelector('[data-contracts-ops]');
+    if (!strip) return;
+    const hasDeal = Boolean(String(runtime?.deal?.address || '').trim());
+    paintOpsCard(strip.querySelector('[data-contracts-card="source"]'), {
+      state: hasDeal ? (summary.pdfReadiness.ready ? 'good' : 'warning') : '',
+      value: hasDeal ? (runtime.address || 'Analyzer snapshot loaded') : 'No analyzer snapshot',
+      note: hasDeal
+        ? `${runtime.selectedPathLabel} · ${runtime.leadName || 'Seller pending'}`
+        : 'Open the analyzer and sync a real deal before relying on contract previews or outbound sends.'
+    });
+    paintOpsCard(strip.querySelector('[data-contracts-card="pdf"]'), summary.contracts);
+    paintOpsCard(strip.querySelector('[data-contracts-card="bridge"]'), summary.bridge);
+    paintOpsCard(strip.querySelector('[data-contracts-card="next"]'), summary.next);
+  }
+
   function renderOpenClawState(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return;
     PBK.state.openclawRuntime = snapshot;
@@ -9830,6 +10402,10 @@
     renderToolUsage(snapshot);
     renderBrainTopics(snapshot);
     renderBrainLibrary(snapshot);
+    renderDashboardFounderOps();
+    renderAnalyzerFounderOps();
+    renderSettingsRuntimeDeck();
+    renderBrainOpsStrip();
 
     const lastActivity = Array.isArray(snapshot.activity) ? snapshot.activity[0] : null;
     if (lastActivity?.text) {
@@ -11504,6 +12080,7 @@
   }
 
   function getContractStage(record = {}) {
+    record = record || {};
     if (record.isDraft) return 'draft';
     const status = String(record.status || '').toLowerCase();
     if (['funded', 'closed'].includes(status)) return 'funded';
@@ -11514,6 +12091,7 @@
   }
 
   function getContractStatusChip(record = {}) {
+    record = record || {};
     const stage = getContractStage(record);
     if (record.isDraft) {
       return record.ready ? { label: 'Draft ready', className: 'sent' } : { label: 'Needs fields', className: 'cold' };
@@ -11526,6 +12104,7 @@
   }
 
   function getContractProgress(record = {}) {
+    record = record || {};
     const stage = getContractStage(record);
     if (record.isDraft) return record.ready ? 34 : 12;
     if (stage === 'funded') return 100;
@@ -11606,6 +12185,7 @@
   }
 
   function buildRuntimeContractSummary(record, runtime) {
+    record = record || {};
     const statusChip = getContractStatusChip(record);
     return [
       runtime?.branding?.companyName || 'Probono Key Realty',
@@ -11693,6 +12273,7 @@
   function renderContractsExperience(runtime = getAnalyzerContractRuntimeSync()) {
     const page = getPageNode('contracts');
     if (!page) return;
+    renderContractsOpsStrip(runtime);
     const openClawConfig = getOpenClawConfig();
     const bridgeRuntime = sanitizeOpenClawRuntimeMeta(openClawConfig.runtimeMeta || {});
 
@@ -11873,6 +12454,7 @@
           : 'Analyzer standalone';
     }
     if (copy) copy.textContent = message;
+    renderAnalyzerFounderOps();
   }
 
   function reflectAnalyzerSnapshot(payload) {
@@ -11904,6 +12486,8 @@
         : 'Live analyzer state synced from the embedded React app.'
     );
 
+    renderDashboardFounderOps();
+    renderAnalyzerFounderOps();
     renderContractsExperience();
   }
 
@@ -11974,6 +12558,29 @@
         <div class="analyzer-runtime-meta">
           <span class="analyzer-runtime-chip" id="analyzerRuntimeChip">Analyzer standalone</span>
           <span class="analyzer-runtime-copy" id="analyzerRuntimeCopy">Loading the React analyzer…</span>
+        </div>
+
+        <div class="analyzer-ops-grid" data-analyzer-ops>
+          <article class="analyzer-ops-card" data-analyzer-card="bridge">
+            <span class="analyzer-ops-label">Bridge lane</span>
+            <strong class="analyzer-ops-value">Checking runtime</strong>
+            <p class="analyzer-ops-note">This keeps the embedded analyzer honest about hosted health, auth, and database mode.</p>
+          </article>
+          <article class="analyzer-ops-card" data-analyzer-card="snapshot">
+            <span class="analyzer-ops-label">Latest deal</span>
+            <strong class="analyzer-ops-value">No property yet</strong>
+            <p class="analyzer-ops-note">Load or sync a deal and this shell will confirm which property is driving the packet.</p>
+          </article>
+          <article class="analyzer-ops-card" data-analyzer-card="handoff">
+            <span class="analyzer-ops-label">Contract handoff</span>
+            <strong class="analyzer-ops-value">Packet incomplete</strong>
+            <p class="analyzer-ops-note">Seller info, agreed price, and timeline still gate contract generation until they are complete.</p>
+          </article>
+          <article class="analyzer-ops-card" data-analyzer-card="next">
+            <span class="analyzer-ops-label">Next action</span>
+            <strong class="analyzer-ops-value">Load a deal</strong>
+            <p class="analyzer-ops-note">The shell will recommend the next founder move instead of hiding it in the preview pane.</p>
+          </article>
         </div>
 
         <div class="analyzer-frame-wrap">

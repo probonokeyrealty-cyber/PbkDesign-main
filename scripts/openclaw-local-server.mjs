@@ -12,7 +12,7 @@ const { Pool: PgPool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-04-26-telnyx-live-v7';
+const BUILD_REVISION = '2026-04-26-providers-live-v8';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -51,6 +51,21 @@ const TELNYX_WEBHOOK_URL = String(
 )
   .trim()
   .replace(/\/+$/g, '');
+
+// ── DocuSign JWT auth ───────────────────────────────────────────────────────
+const DOCUSIGN_INTEGRATION_KEY = String(process.env.PBK_DOCUSIGN_INTEGRATION_KEY || process.env.DOCUSIGN_INTEGRATION_KEY || '').trim();
+const DOCUSIGN_USER_ID = String(process.env.PBK_DOCUSIGN_USER_ID || process.env.DOCUSIGN_USER_ID || '').trim();
+const DOCUSIGN_ACCOUNT_ID = String(process.env.PBK_DOCUSIGN_ACCOUNT_ID || process.env.DOCUSIGN_ACCOUNT_ID || '').trim();
+const DOCUSIGN_AUTH_HOST = String(process.env.PBK_DOCUSIGN_AUTH_HOST || 'account-d.docusign.com').trim();
+let DOCUSIGN_REST_BASE = String(process.env.PBK_DOCUSIGN_REST_BASE || 'https://demo.docusign.net/restapi').trim().replace(/\/+$/g, '');
+const DOCUSIGN_PRIVATE_KEY = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY || process.env.DOCUSIGN_PRIVATE_KEY || '');
+
+// ── BatchData skip-trace ────────────────────────────────────────────────────
+const BATCHDATA_API_KEY = String(process.env.PBK_BATCHDATA_API_KEY || process.env.BATCHDATA_API_KEY || '').trim();
+const BATCHDATA_BASE_URL = String(process.env.PBK_BATCHDATA_BASE_URL || 'https://api.batchdata.com').trim().replace(/\/+$/g, '');
+
+// ── Slack incoming webhook ──────────────────────────────────────────────────
+const SLACK_WEBHOOK_URL = String(process.env.PBK_SLACK_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL || '').trim();
 
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
@@ -1402,6 +1417,276 @@ async function fireTelnyxRequest(endpoint, payload) {
   }
 }
 
+// ── Slack incoming webhook ──────────────────────────────────────────────────
+function getSlackProviderMeta() {
+  return {
+    configured: Boolean(SLACK_WEBHOOK_URL),
+    ready: Boolean(SLACK_WEBHOOK_URL),
+    missing: SLACK_WEBHOOK_URL ? [] : ['PBK_SLACK_WEBHOOK_URL'],
+  };
+}
+
+async function fireSlackWebhook(payload) {
+  if (!SLACK_WEBHOOK_URL) {
+    return { ok: false, skipped: true, error: 'PBK_SLACK_WEBHOOK_URL is not set.' };
+  }
+  try {
+    const response = await fetch(SLACK_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      body: text,
+      error: response.ok ? '' : (text || `Slack webhook returned ${response.status}`),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Slack webhook failed.' };
+  }
+}
+
+// ── BatchData skip-trace ────────────────────────────────────────────────────
+function getBatchDataProviderMeta() {
+  return {
+    configured: Boolean(BATCHDATA_API_KEY),
+    ready: Boolean(BATCHDATA_API_KEY),
+    missing: BATCHDATA_API_KEY ? [] : ['PBK_BATCHDATA_API_KEY'],
+  };
+}
+
+async function fireBatchDataSkipTrace(params = {}) {
+  if (!BATCHDATA_API_KEY) {
+    return { ok: false, skipped: true, error: 'PBK_BATCHDATA_API_KEY is not set.' };
+  }
+  const requestPayload = {
+    requests: [
+      {
+        propertyAddress: {
+          street: params.address || params.street || '',
+          city: params.city || '',
+          state: params.state || '',
+          zip: params.zip || params.zipCode || '',
+        },
+        ...(params.firstName ? { name: { first: params.firstName, last: params.lastName || '' } } : {}),
+      },
+    ],
+  };
+  try {
+    const response = await fetch(`${BATCHDATA_BASE_URL}/api/v1/property/skip-trace`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${BATCHDATA_API_KEY}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestPayload),
+    });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+    if (!response.ok) {
+      return { ok: false, status: response.status, body, error: body?.error || body?.message || `BatchData returned ${response.status}` };
+    }
+    const persons = body?.results?.persons || body?.results?.[0]?.persons || [];
+    const primary = persons[0] || {};
+    const phones = (primary.phoneNumbers || []).map((p) => ({ phone: p.number || p.phone, type: p.type, score: p.score }));
+    const emails = (primary.emails || []).map((e) => ({ email: e.email || e.value, score: e.score }));
+    return {
+      ok: true,
+      status: response.status,
+      body,
+      contact: {
+        name: [primary.firstName, primary.lastName].filter(Boolean).join(' ') || undefined,
+        phone: phones[0]?.phone || '',
+        email: emails[0]?.email || '',
+        phones,
+        emails,
+        confidence: primary.confidence || phones[0]?.score || null,
+        source: 'batchdata',
+      },
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'BatchData request failed.' };
+  }
+}
+
+// ── DocuSign JWT auth + envelope create ─────────────────────────────────────
+import { createSign as __dsCreateSign } from 'node:crypto';
+
+let __docusignAccessToken = null;
+let __docusignAccessTokenExpiresAt = 0;
+
+function getDocuSignProviderMeta() {
+  const missing = [];
+  if (!DOCUSIGN_INTEGRATION_KEY) missing.push('PBK_DOCUSIGN_INTEGRATION_KEY');
+  if (!DOCUSIGN_USER_ID) missing.push('PBK_DOCUSIGN_USER_ID');
+  if (!DOCUSIGN_ACCOUNT_ID) missing.push('PBK_DOCUSIGN_ACCOUNT_ID');
+  if (!DOCUSIGN_PRIVATE_KEY) missing.push('PBK_DOCUSIGN_PRIVATE_KEY');
+  return {
+    configured: missing.length === 0,
+    ready: missing.length === 0,
+    authHost: DOCUSIGN_AUTH_HOST,
+    restBase: DOCUSIGN_REST_BASE,
+    missing,
+  };
+}
+
+function __dsBase64UrlEncode(buf) {
+  return Buffer.from(buf).toString('base64').replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function __dsBuildJwt() {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: DOCUSIGN_INTEGRATION_KEY,
+    sub: DOCUSIGN_USER_ID,
+    aud: DOCUSIGN_AUTH_HOST,
+    iat: now,
+    exp: now + 3600,
+    scope: 'signature impersonation',
+  };
+  const headerB64 = __dsBase64UrlEncode(JSON.stringify(header));
+  const payloadB64 = __dsBase64UrlEncode(JSON.stringify(payload));
+  const data = `${headerB64}.${payloadB64}`;
+  const signer = __dsCreateSign('RSA-SHA256');
+  signer.update(data);
+  signer.end();
+  const sigBuf = signer.sign(DOCUSIGN_PRIVATE_KEY);
+  const sigB64 = sigBuf.toString('base64').replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return `${data}.${sigB64}`;
+}
+
+async function __dsRefreshAccessToken() {
+  const meta = getDocuSignProviderMeta();
+  if (!meta.ready) {
+    throw new Error(`DocuSign env not fully set: missing ${meta.missing.join(', ')}`);
+  }
+  const jwt = __dsBuildJwt();
+  const response = await fetch(`https://${DOCUSIGN_AUTH_HOST}/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }).toString(),
+  });
+  const text = await response.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  if (!response.ok) {
+    const reason = body?.error_description || body?.error || `DocuSign auth returned ${response.status}`;
+    throw new Error(`DocuSign JWT auth failed: ${reason}`);
+  }
+  __docusignAccessToken = body.access_token;
+  __docusignAccessTokenExpiresAt = Date.now() + (toNumber(body.expires_in, 3600) - 60) * 1000;
+  return __docusignAccessToken;
+}
+
+async function __dsAccessToken() {
+  if (__docusignAccessToken && Date.now() < __docusignAccessTokenExpiresAt) {
+    return __docusignAccessToken;
+  }
+  return __dsRefreshAccessToken();
+}
+
+async function fireDocuSignEnvelope(params = {}) {
+  const meta = getDocuSignProviderMeta();
+  if (!meta.ready) {
+    return { ok: false, skipped: true, error: `DocuSign env not fully set: missing ${meta.missing.join(', ')}` };
+  }
+  let token;
+  try {
+    token = await __dsAccessToken();
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'DocuSign auth failed.' };
+  }
+
+  let documentBase64 = params.documentBase64 || '';
+  if (!documentBase64) {
+    try {
+      const pdfBuffer = await generatePdfDocument({
+        documentTitle: params.documentTitle || `${params.template || 'Assignment'} - ${params.address || params.leadName || 'PBK contract'}`,
+        propertyAddress: params.address || '',
+        leadName: params.leadName || '',
+        amount: params.amount,
+        selectedPathLabel: params.template || 'assignment',
+        previewOrigin: params.previewOrigin || DEFAULT_PREVIEW_ORIGIN,
+      });
+      documentBase64 = Buffer.from(pdfBuffer).toString('base64');
+    } catch (error) {
+      return { ok: false, error: `PDF generation for envelope failed: ${error instanceof Error ? error.message : error}` };
+    }
+  }
+
+  const signers = Array.isArray(params.signers) && params.signers.length
+    ? params.signers
+    : [{ name: params.leadName || 'Recipient', email: params.email || params.recipientEmail || '' }];
+  if (!signers[0].email) {
+    return { ok: false, error: 'DocuSign envelope requires a signer email (params.signers[0].email or params.email).' };
+  }
+
+  const envelopeBody = {
+    emailSubject: params.emailSubject || `${params.template || 'Assignment Contract'} - ${params.address || params.leadName || 'Probono Key Realty'}`,
+    status: params.dryRun ? 'created' : 'sent',
+    documents: [{
+      documentBase64,
+      name: params.documentName || 'PBK Master Deal Package.pdf',
+      fileExtension: 'pdf',
+      documentId: '1',
+    }],
+    recipients: {
+      signers: signers.map((signer, idx) => ({
+        email: signer.email,
+        name: signer.name || `Recipient ${idx + 1}`,
+        recipientId: String(idx + 1),
+        routingOrder: String(idx + 1),
+        tabs: signer.tabs || {
+          signHereTabs: [{
+            documentId: '1',
+            pageNumber: '1',
+            xPosition: '100',
+            yPosition: '650',
+          }],
+        },
+      })),
+    },
+  };
+
+  try {
+    const response = await fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(envelopeBody),
+    });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+    if (!response.ok) {
+      return { ok: false, status: response.status, body, error: body?.errorCode || body?.message || `DocuSign envelope create returned ${response.status}` };
+    }
+    return {
+      ok: true,
+      status: response.status,
+      envelope: {
+        envelopeId: body.envelopeId,
+        uri: body.uri,
+        statusDateTime: body.statusDateTime,
+        status: body.status,
+      },
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'DocuSign envelope create failed.' };
+  }
+}
+
 let state = await loadState();
 
 const toolHandlers = {
@@ -1924,22 +2209,50 @@ const toolHandlers = {
 
   async sendDocuSign(params = {}) {
     recordToolUse('sendDocuSign');
+    const docusignMeta = getDocuSignProviderMeta();
     const contract = createContractRecord(params);
+
+    let live = false;
+    let envelope = null;
+    let providerError = '';
+
+    if (docusignMeta.ready) {
+      const response = await fireDocuSignEnvelope(params);
+      if (response.ok) {
+        live = true;
+        envelope = response.envelope;
+        contract.envelopeId = envelope?.envelopeId || contract.envelopeId;
+        contract.status = envelope?.status === 'created' ? 'draft' : (envelope?.status || contract.status);
+      } else {
+        providerError = response.error || 'DocuSign envelope create failed.';
+      }
+    }
+
     upsertContract(state, contract);
     addActivity(
       state,
       makeActivity({
         actor: 'DocuSign',
         category: 'CONTRACT',
-        status: contract.status,
-        text: `Sent contract to ${contract.leadName}${contract.amount ? ` for ${currency(contract.amount)}` : ''}`,
+        status: live ? contract.status : (docusignMeta.ready ? 'warning' : 'pending'),
+        text: live
+          ? `Sent contract to ${contract.leadName}${contract.amount ? ` for ${currency(contract.amount)}` : ''} (envelope ${envelope?.envelopeId?.slice(0, 12) || ''})`
+          : (docusignMeta.ready
+              ? `DocuSign envelope failed for ${contract.leadName}: ${providerError}`
+              : `DocuSign queued for ${contract.leadName} - DocuSign env not configured.`),
         target: contract.address,
       }),
     );
     await persistState(state);
     return {
-      ok: true,
+      ok: live || !docusignMeta.ready,
       contract,
+      envelope,
+      docusign: {
+        live,
+        configured: docusignMeta.configured,
+        error: providerError || undefined,
+      },
     };
   },
 
@@ -1950,14 +2263,37 @@ const toolHandlers = {
 
   async skipTrace(params = {}) {
     recordToolUse('skipTrace');
-    const contact = inferSkipTraceContact(params);
+    const batchDataMeta = getBatchDataProviderMeta();
+
+    let contact;
+    let live = false;
+    let providerError = '';
+
+    if (batchDataMeta.ready) {
+      const response = await fireBatchDataSkipTrace(params);
+      if (response.ok && response.contact && (response.contact.phone || response.contact.email)) {
+        contact = {
+          ...inferSkipTraceContact(params),
+          ...response.contact,
+        };
+        live = true;
+      } else {
+        providerError = response.error || 'BatchData returned no contacts.';
+        contact = inferSkipTraceContact(params);
+      }
+    } else {
+      contact = inferSkipTraceContact(params);
+    }
+
     addActivity(
       state,
       makeActivity({
         actor: 'BatchData',
         category: 'SKIPTRACE',
-        status: 'complete',
-        text: `Skip trace found ${contact.phone}${contact.email ? ` and ${contact.email}` : ''}`,
+        status: live ? 'complete' : (batchDataMeta.ready ? 'warning' : 'pending'),
+        text: live
+          ? `Skip trace found ${contact.phone}${contact.email ? ` and ${contact.email}` : ''}`
+          : `Skip trace fallback (${providerError || 'BATCHDATA not configured'}) - using inferred contacts.`,
         target: contact.address || contact.leadName,
       }),
     );
@@ -1965,6 +2301,11 @@ const toolHandlers = {
     return {
       ok: true,
       contact,
+      batchData: {
+        live,
+        configured: batchDataMeta.configured,
+        error: providerError || undefined,
+      },
     };
   },
 
@@ -2029,21 +2370,45 @@ const toolHandlers = {
 
   async slackNotify(params = {}) {
     recordToolUse('slackNotify');
+    const slackMeta = getSlackProviderMeta();
+    const text = params.text || params.message || 'Slack notification sent from PBK bridge.';
+
+    let live = false;
+    let providerStatus = 'sent';
+    let providerError = '';
+
+    if (slackMeta.ready) {
+      const slackPayload = params.payload || (params.blocks ? { text, blocks: params.blocks } : { text });
+      const response = await fireSlackWebhook(slackPayload);
+      live = response.ok;
+      if (!response.ok) {
+        providerStatus = 'warning';
+        providerError = response.error || `Slack webhook failed (${response.status || '?'})`;
+      }
+    } else {
+      providerStatus = 'pending';
+    }
+
     addActivity(
       state,
       makeActivity({
         actor: 'Slack',
         category: 'NOTIFY',
-        status: 'sent',
-        text: params.text || params.message || 'Slack notification sent from PBK bridge.',
+        status: providerStatus,
+        text: live ? text : `${text}${providerError ? ` (${providerError})` : ' (Slack webhook not configured)'}`,
         target: params.channel || '#deals',
       }),
     );
     await persistState(state);
     return {
-      ok: true,
+      ok: live,
       channel: params.channel || '#deals',
       sentAt: isoNow(),
+      slack: {
+        live,
+        configured: slackMeta.configured,
+        error: providerError || undefined,
+      },
     };
   },
 
@@ -2762,6 +3127,12 @@ const server = createServer(async (request, response) => {
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
         n8n: state.status.n8n,
+        providers: {
+          telnyx: getTelnyxProviderMeta(),
+          docusign: getDocuSignProviderMeta(),
+          batchdata: getBatchDataProviderMeta(),
+          slack: getSlackProviderMeta(),
+        },
         features: {
           documentsPdf: true,
           approvals: true,

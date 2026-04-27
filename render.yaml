@@ -12,18 +12,73 @@ services:
         value: production
       - key: PBK_OPENCLAW_STATE_DIR
         value: /app/.pbk-local
-      # Bearer token required on POST endpoints. Set in the Render dashboard
-      # (the same value goes into PBK Settings -> OpenClaw API key field).
+
+      # ── Core auth + state ───────────────────────────────────────────────
+      # Bearer token required on POST endpoints. Same value goes into the PBK
+      # Settings -> OpenClaw API key field and into the n8n 'PBK Bridge Bearer'
+      # credential.
       - key: PBK_BRIDGE_API_KEY
         sync: false
-      # Postgres connection string for durable state across cold starts.
-      # When set, the bridge ignores .pbk-local/ and uses a 'bridge_state' table
-      # (single JSONB row). Use Render's "Add Database" -> Postgres free tier
-      # then bind via "Add Environment Variable -> From Database".
+      # Postgres connection string. Use Render's "Add From Database" pattern
+      # against the pbk-openclaw-db service so this is wired automatically.
       - key: PBK_DATABASE_URL
         sync: false
-      # n8n webhook URLs the bridge can fan-out to. Set in Render dashboard.
+      # Public base URL of THIS service. Used to build provider webhook URLs
+      # (Telnyx call events, DocuSign envelope status, etc.) that point back here.
+      - key: PBK_PUBLIC_BASE_URL
+        value: https://pbk-openclaw-bridge.onrender.com
+
+      # ── n8n outbound (bridge fans events to n8n) ────────────────────────
       - key: PBK_N8N_APPROVAL_WEBHOOK
         sync: false
       - key: PBK_N8N_LEAD_WEBHOOK
+        sync: false
+
+      # ── Telnyx (voice + messaging) ──────────────────────────────────────
+      # Required for live SMS/calls. Without these the bridge falls back to
+      # stub behavior (records activity but doesn't actually dial/send).
+      - key: PBK_TELNYX_API_KEY
+        sync: false
+      - key: PBK_TELNYX_FROM_NUMBER
+        sync: false
+      - key: PBK_TELNYX_CONNECTION_ID
+        sync: false
+      - key: PBK_TELNYX_MESSAGING_PROFILE_ID
+        sync: false
+      # Optional: override the default webhook URL Telnyx posts call/message
+      # events to. Defaults to ${PBK_PUBLIC_BASE_URL}/api/webhooks/telnyx.
+      - key: PBK_TELNYX_WEBHOOK_URL
+        sync: false
+
+      # ── DocuSign (JWT auth + envelope create) ───────────────────────────
+      # Provision: DocuSign developer account -> create Service Integration ->
+      # generate RSA keypair -> upload public key -> grant impersonation
+      # consent for the user. https://developers.docusign.com/platform/auth/jwt/
+      - key: PBK_DOCUSIGN_INTEGRATION_KEY
+        sync: false
+      - key: PBK_DOCUSIGN_USER_ID
+        sync: false
+      - key: PBK_DOCUSIGN_ACCOUNT_ID
+        sync: false
+      # Auth host. Use 'account-d.docusign.com' for dev/sandbox, 'account.docusign.com' for prod.
+      - key: PBK_DOCUSIGN_AUTH_HOST
+        value: account-d.docusign.com
+      # REST base URL. 'https://demo.docusign.net/restapi' for dev, 'https://www.docusign.net/restapi' for prod.
+      - key: PBK_DOCUSIGN_REST_BASE
+        value: https://demo.docusign.net/restapi
+      # The full PEM-formatted RSA private key. Multi-line; paste exactly,
+      # including the BEGIN/END markers. Render's env var UI handles newlines.
+      - key: PBK_DOCUSIGN_PRIVATE_KEY
+        sync: false
+
+      # ── BatchData skip-trace ────────────────────────────────────────────
+      - key: PBK_BATCHDATA_API_KEY
+        sync: false
+      # Optional: override base URL for BatchData (e.g. staging environments).
+      - key: PBK_BATCHDATA_BASE_URL
+        value: https://api.batchdata.com
+
+      # ── Slack incoming webhook (direct from bridge) ─────────────────────
+      # Channel is determined by the URL when the webhook is created in Slack.
+      - key: PBK_SLACK_WEBHOOK_URL
         sync: false

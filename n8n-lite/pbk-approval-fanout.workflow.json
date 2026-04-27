@@ -34,7 +34,8 @@
     {
       "parameters": {
         "method": "POST",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
         "url": "https://pbk-openclaw-bridge.onrender.com/events",
         "sendBody": true,
         "contentType": "json",
@@ -98,7 +99,8 @@
     {
       "parameters": {
         "method": "POST",
-        "authentication": "none",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
         "url": "https://pbk-openclaw-bridge.onrender.com/events",
         "sendBody": true,
         "contentType": "json",

@@ -165,6 +165,9 @@ async function main() {
     assert(typeof health?.revision === 'string' && health.revision.length > 0, 'Bridge health did not return a revision.');
     assert(health?.features?.authRequired === true, 'Bridge health did not report authRequired: true.');
     assert(typeof health?.features?.stateBackend === 'string' && health.features.stateBackend.length > 0, 'Bridge health did not report stateBackend.');
+    assert(health?.runtime?.mode === 'local', `Expected local smoke runtime mode, got ${health?.runtime?.mode || 'missing'}.`);
+    assert(health?.runtime?.hosted === false, 'Expected local smoke runtime hosted flag to be false.');
+    assert(Array.isArray(health?.runtime?.warnings), 'Bridge health did not expose runtime warnings array.');
     assert(unauthorizedState.status === 401, `Expected unauthenticated /state to return 401, got ${unauthorizedState.status}.`);
     assert(Array.isArray(state?.approvals), 'Authenticated /state did not return approvals.');
     assert(firstLeadEvent?.ok === true, 'First lead-intake event did not succeed.');
@@ -181,6 +184,7 @@ async function main() {
       revision: health.revision,
       authRequired: health.features.authRequired,
       stateBackend: health.features.stateBackend,
+      mode: health.runtime.mode,
       approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
       activity: Array.isArray(state?.activity) ? state.activity.length : 0,
       leadReplaySafe: Boolean(secondLeadEvent?.replayed),

@@ -86,6 +86,7 @@ const LIMITS = {
 };
 
 const DEFAULT_PREVIEW_ORIGIN = String(process.env.PBK_DOCUMENTS_ORIGIN || 'https://pbkcommandcenter.netlify.app').trim();
+const RUNTIME_MODE = IS_HOSTED ? 'hosted' : IS_LAN ? 'lan' : 'local';
 
 function isoNow() {
   return new Date().toISOString();
@@ -113,6 +114,35 @@ function normalizePhone(value = '') {
   if (digits.length === 10) return `+1${digits}`;
   if (digits.startsWith('1') && digits.length === 11) return `+${digits}`;
   return `+${digits}`;
+}
+
+function getRuntimeWarnings() {
+  const warnings = [];
+  if (IS_HOSTED && !BRIDGE_API_KEY) {
+    warnings.push('PBK_BRIDGE_API_KEY is not set.');
+  }
+  if (IS_HOSTED && STATE_BACKEND !== 'postgres') {
+    warnings.push('Hosted bridge is still using file-backed state. Set PBK_DATABASE_URL.');
+  }
+  if (IS_HOSTED && !APPROVAL_WEBHOOK_URL) {
+    warnings.push('PBK_N8N_APPROVAL_WEBHOOK is not set.');
+  }
+  if (IS_HOSTED && !LEAD_WEBHOOK_URL) {
+    warnings.push('PBK_N8N_LEAD_WEBHOOK is not set.');
+  }
+  return warnings;
+}
+
+function getRuntimeMeta() {
+  const warnings = getRuntimeWarnings();
+  return {
+    mode: RUNTIME_MODE,
+    hosted: IS_HOSTED,
+    authRequired: Boolean(BRIDGE_API_KEY),
+    stateBackend: STATE_BACKEND,
+    productionReady: !IS_HOSTED || warnings.length === 0,
+    warnings,
+  };
 }
 
 function hashString(value = '') {
@@ -2307,6 +2337,7 @@ const server = createServer(async (request, response) => {
 
   try {
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
+      const runtimeMeta = getRuntimeMeta();
       json(response, 200, {
         ok: true,
         service: 'pbk-local-openclaw',
@@ -2321,9 +2352,14 @@ const server = createServer(async (request, response) => {
           approvals: true,
           contracts: true,
           analyzerBridge: true,
-          authRequired: Boolean(BRIDGE_API_KEY),
-          stateBackend: STATE_BACKEND,
+          authRequired: runtimeMeta.authRequired,
+          stateBackend: runtimeMeta.stateBackend,
+          productionReady: runtimeMeta.productionReady,
+          hosted: runtimeMeta.hosted,
+          mode: runtimeMeta.mode,
         },
+        runtime: runtimeMeta,
+        warnings: runtimeMeta.warnings,
         lastUpdatedAt: state.status.lastUpdatedAt,
       });
       return;

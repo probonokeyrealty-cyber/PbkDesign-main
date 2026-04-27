@@ -8870,6 +8870,37 @@
       font-size: 12px;
       line-height: 1.55;
     }
+    [data-page="settings"] .plugin-runtime-grid {
+      margin-top: var(--s-3);
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    [data-page="settings"] .plugin-runtime-item {
+      border: 1px solid var(--border-dim);
+      border-radius: 12px;
+      background: rgba(125,211,252,0.04);
+      padding: 10px 12px;
+      display: grid;
+      gap: 4px;
+    }
+    [data-page="settings"] .plugin-runtime-item[data-runtime-state="warning"] {
+      border-color: rgba(255, 176, 32, 0.4);
+      background: rgba(255, 176, 32, 0.08);
+    }
+    [data-page="settings"] .plugin-runtime-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-ghost);
+    }
+    [data-page="settings"] .plugin-runtime-value {
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
     .cp-empty {
       display: none;
       padding: 18px;
@@ -8905,6 +8936,22 @@
 
   const DEFAULT_OPENCLAW_ENDPOINT = normalizeOpenClawEndpoint('https://pbk-openclaw-bridge.onrender.com');
 
+  function sanitizeOpenClawRuntimeMeta(meta = {}) {
+    return {
+      bridgeRevision: String(meta.bridgeRevision || '').trim(),
+      stateBackend: String(meta.stateBackend || '').trim(),
+      authRequired: meta.authRequired == null ? null : Boolean(meta.authRequired),
+      productionReady: meta.productionReady == null ? null : Boolean(meta.productionReady),
+      hosted: meta.hosted == null ? null : Boolean(meta.hosted),
+      mode: String(meta.mode || '').trim(),
+      lastSyncAt: String(meta.lastSyncAt || '').trim(),
+      healthUrl: String(meta.healthUrl || '').trim(),
+      warnings: Array.isArray(meta.warnings)
+        ? meta.warnings.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 6)
+        : []
+    };
+  }
+
   function sanitizeOpenClawConfig(config = {}) {
     const endpoint = normalizeOpenClawEndpoint(config.endpoint || '');
     const apiKey = String(config.apiKey || '').trim();
@@ -8914,7 +8961,8 @@
       apiKey,
       status,
       lastMessage: config.lastMessage || '',
-      lastCheckedAt: config.lastCheckedAt || 0
+      lastCheckedAt: config.lastCheckedAt || 0,
+      runtimeMeta: sanitizeOpenClawRuntimeMeta(config.runtimeMeta || {})
     };
   }
 
@@ -8925,6 +8973,7 @@
       status: DEFAULT_OPENCLAW_ENDPOINT ? 'saved' : 'not-configured',
       lastMessage: DEFAULT_OPENCLAW_ENDPOINT ? 'PBK public bridge is preconfigured.' : '',
       lastCheckedAt: 0,
+      runtimeMeta: {},
       ...parseJSONSafe(localStorage.getItem(OPENCLAW_STORAGE_KEY), {})
     });
   }
@@ -8950,7 +8999,8 @@
       apiKey: card.querySelector('[data-plugin-field="apiKey"]')?.value || '',
       status: getOpenClawConfig().status,
       lastMessage: getOpenClawConfig().lastMessage,
-      lastCheckedAt: getOpenClawConfig().lastCheckedAt
+      lastCheckedAt: getOpenClawConfig().lastCheckedAt,
+      runtimeMeta: getOpenClawConfig().runtimeMeta
     });
   }
 
@@ -8964,6 +9014,32 @@
     return note;
   }
 
+  function ensurePluginRuntimeGrid(card) {
+    let grid = card.querySelector('.plugin-runtime-grid');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'plugin-runtime-grid';
+      ensurePluginRuntimeNote(card).after(grid);
+    }
+    return grid;
+  }
+
+  function extractOpenClawRuntimeMeta(body = {}, extra = {}) {
+    const runtime = body?.runtime || {};
+    const features = body?.features || {};
+    return sanitizeOpenClawRuntimeMeta({
+      bridgeRevision: body?.revision || runtime?.revision || extra.bridgeRevision || '',
+      stateBackend: runtime?.stateBackend || features?.stateBackend || extra.stateBackend || '',
+      authRequired: runtime?.authRequired ?? features?.authRequired ?? extra.authRequired,
+      productionReady: runtime?.productionReady ?? features?.productionReady ?? extra.productionReady,
+      hosted: runtime?.hosted ?? features?.hosted ?? extra.hosted,
+      mode: runtime?.mode || features?.mode || extra.mode || '',
+      lastSyncAt: extra.lastSyncAt || body?.lastUpdatedAt || '',
+      healthUrl: extra.healthUrl || '',
+      warnings: runtime?.warnings || body?.warnings || features?.warnings || extra.warnings || []
+    });
+  }
+
   function reflectOpenClawUI(config = getOpenClawConfig()) {
     const card = getOpenClawCard();
     if (!card) return;
@@ -8974,6 +9050,8 @@
     const connectBtn = card.querySelector('[data-plugin-action="connect"]');
     const statusText = card.querySelector('.plugin-status-text');
     const runtimeNote = ensurePluginRuntimeNote(card);
+    const runtimeGrid = ensurePluginRuntimeGrid(card);
+    const runtimeMeta = sanitizeOpenClawRuntimeMeta(config.runtimeMeta || {});
 
     if (endpointInput && document.activeElement !== endpointInput) endpointInput.value = config.endpoint || '';
     if (apiKeyInput && document.activeElement !== apiKeyInput) apiKeyInput.value = config.apiKey || '';
@@ -9002,13 +9080,60 @@
     };
 
     const copy = statusCopy[config.status] || statusCopy['not-configured'];
+    const syncLabel = runtimeMeta.lastSyncAt
+      ? formatRelativeTime(runtimeMeta.lastSyncAt)
+      : config.lastCheckedAt
+        ? formatRelativeTime(config.lastCheckedAt)
+        : 'Never';
+    const authLabel = runtimeMeta.authRequired == null
+      ? (config.apiKey ? 'Key staged locally' : 'Unknown')
+      : runtimeMeta.authRequired
+        ? (config.apiKey ? 'Required + loaded' : 'Required - missing local key')
+        : 'Open / local only';
+    const readyLabel = runtimeMeta.productionReady == null
+      ? 'Pending check'
+      : runtimeMeta.productionReady
+        ? 'Ready'
+        : 'Needs envs';
+    const warningSummary = runtimeMeta.warnings[0] || '';
+    const runtimeNoteText = warningSummary && config.status === 'connected'
+      ? `${config.lastMessage || copy.note} Warning: ${warningSummary}`
+      : copy.note;
     card.dataset.pluginStatus = config.status;
     if (statusText) statusText.textContent = copy.label;
-    if (runtimeNote) runtimeNote.textContent = copy.note;
+    if (runtimeNote) runtimeNote.textContent = runtimeNoteText;
     if (testBtn) testBtn.disabled = !config.endpoint || config.status === 'testing';
     if (connectBtn) {
       connectBtn.disabled = !config.endpoint || config.status === 'testing';
       connectBtn.textContent = config.status === 'connected' ? 'Reconnect OpenClaw' : 'Connect OpenClaw';
+    }
+    if (runtimeGrid) {
+      runtimeGrid.innerHTML = config.endpoint ? `
+        <div class="plugin-runtime-item">
+          <span class="plugin-runtime-label">Revision</span>
+          <span class="plugin-runtime-value">${escapeHtml(runtimeMeta.bridgeRevision || 'Pending')}</span>
+        </div>
+        <div class="plugin-runtime-item">
+          <span class="plugin-runtime-label">Backend</span>
+          <span class="plugin-runtime-value">${escapeHtml(runtimeMeta.stateBackend || 'Unknown')}</span>
+        </div>
+        <div class="plugin-runtime-item">
+          <span class="plugin-runtime-label">Auth</span>
+          <span class="plugin-runtime-value">${escapeHtml(authLabel)}</span>
+        </div>
+        <div class="plugin-runtime-item">
+          <span class="plugin-runtime-label">Last Sync</span>
+          <span class="plugin-runtime-value">${escapeHtml(syncLabel)}</span>
+        </div>
+        <div class="plugin-runtime-item${runtimeMeta.productionReady === false ? '" data-runtime-state="warning' : '"'}">
+          <span class="plugin-runtime-label">Runtime</span>
+          <span class="plugin-runtime-value">${escapeHtml(readyLabel)}</span>
+        </div>
+        <div class="plugin-runtime-item${warningSummary ? '" data-runtime-state="warning' : '"'}">
+          <span class="plugin-runtime-label">Operator Note</span>
+          <span class="plugin-runtime-value">${escapeHtml(warningSummary || 'Bridge health looks stable from the last check.')}</span>
+        </div>
+      ` : '';
     }
 
     if (config.status === 'connected') {
@@ -9059,7 +9184,14 @@
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
         const type = response.headers.get('content-type') || '';
         const body = type.includes('json') ? await response.json() : await response.text();
-        return { url, body };
+        return {
+          url,
+          body,
+          runtimeMeta: extractOpenClawRuntimeMeta(body, {
+            healthUrl: url,
+            lastSyncAt: new Date().toISOString()
+          })
+        };
       } catch (error) {
         lastError = error;
       }
@@ -9131,12 +9263,17 @@
   PBK.openclaw = {
     getConfig: getOpenClawConfig,
     saveConfig(config = {}) {
+      const current = getOpenClawConfig();
+      const nextEndpoint = normalizeOpenClawEndpoint(config.endpoint || current.endpoint);
+      const endpointChanged = nextEndpoint !== current.endpoint;
       const next = saveOpenClawConfig({
         ...config,
-        status: normalizeOpenClawEndpoint(config.endpoint || getOpenClawConfig().endpoint) ? 'saved' : 'not-configured',
-        lastMessage: normalizeOpenClawEndpoint(config.endpoint || getOpenClawConfig().endpoint)
+        status: nextEndpoint ? 'saved' : 'not-configured',
+        lastMessage: nextEndpoint
           ? 'Config saved on this device.'
-          : ''
+          : '',
+        lastCheckedAt: endpointChanged ? 0 : current.lastCheckedAt,
+        runtimeMeta: endpointChanged ? {} : current.runtimeMeta
       });
       reflectOpenClawUI(next);
       PBK.events.emit('openclaw:status', next);
@@ -9152,7 +9289,8 @@
       const testing = saveOpenClawConfig({
         ...config,
         status: 'testing',
-        lastMessage: 'Checking OpenClaw health…'
+        lastMessage: 'Checking OpenClaw health…',
+        lastCheckedAt: Date.now()
       });
       reflectOpenClawUI(testing);
       try {
@@ -9160,7 +9298,9 @@
         const connected = saveOpenClawConfig({
           ...testing,
           status: 'connected',
-          lastMessage: `Connected via ${result.url.replace(testing.endpoint, '') || '/'}`
+          lastMessage: `Connected via ${result.url.replace(testing.endpoint, '') || '/'}`,
+          lastCheckedAt: Date.now(),
+          runtimeMeta: result.runtimeMeta
         });
         reflectOpenClawUI(connected);
         PBK.events.emit('openclaw:status', connected);
@@ -9174,7 +9314,8 @@
         const failed = saveOpenClawConfig({
           ...testing,
           status: 'error',
-          lastMessage: error?.message || 'Connection failed.'
+          lastMessage: error?.message || 'Connection failed.',
+          lastCheckedAt: Date.now()
         });
         reflectOpenClawUI(failed);
         PBK.events.emit('openclaw:status', failed);
@@ -9384,6 +9525,22 @@
     const countNode = document.querySelector('[data-openclaw-count="approvals"]');
     if (!container) return;
 
+    const config = getOpenClawConfig();
+    const lastSyncCopy = config.runtimeMeta?.lastSyncAt
+      ? formatRelativeTime(config.runtimeMeta.lastSyncAt)
+      : 'never';
+    const staleNotice = config.status === 'connected'
+      ? ''
+      : `
+        <div class="qcard" style="border-left-color: var(--amber);">
+          <div class="qcard-head">
+            <span class="qcard-type">Bridge</span>
+            <span class="qcard-time">stale</span>
+          </div>
+          <div class="qcard-body">Showing the last successful approval snapshot from ${escapeHtml(lastSyncCopy)}. Reconnect OpenClaw to resume live approval updates.</div>
+        </div>
+      `;
+
     const approvals = Array.isArray(snapshot?.approvals)
       ? snapshot.approvals.filter((item) => item.status === 'pending').slice(0, 6)
       : [];
@@ -9392,6 +9549,7 @@
 
     if (!approvals.length) {
       container.innerHTML = `
+        ${staleNotice}
         <div class="qcard" style="border-left-color: var(--sky-dim);">
           <div class="qcard-head">
             <span class="qcard-type">▸ Runtime</span>
@@ -9403,7 +9561,7 @@
       return;
     }
 
-    container.innerHTML = approvals.map((approval) => {
+    container.innerHTML = `${staleNotice}${approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
       const primaryLabel = type === 'contract'
         ? 'Send Contract'
@@ -9439,7 +9597,7 @@
           </div>
         </div>
       `;
-    }).join('');
+    }).join('')}`;
   }
 
   function renderActivityLog(snapshot) {
@@ -9548,9 +9706,14 @@
     const marketPulse = document.querySelector('[data-brain-market-pulse]');
     const reading = document.querySelector('[data-brain-reading]');
     const activeTopic = getSelectedBrainTopic();
+    const config = getOpenClawConfig();
+    const syncMeta = config.runtimeMeta?.lastSyncAt
+      ? ` · last sync ${formatRelativeTime(config.runtimeMeta.lastSyncAt)}`
+      : '';
+    const staleMeta = config.status === 'connected' ? '' : ' · bridge disconnected';
 
     document.querySelector('[data-brain-meta="header"]')?.replaceChildren(
-      document.createTextNode(`Continuous learning · ${snapshot?.status?.sourcesIndexed || docs.length} sources · updated ${formatRelativeTime(snapshot?.status?.lastUpdatedAt)}`)
+      document.createTextNode(`Continuous learning - ${snapshot?.status?.sourcesIndexed || docs.length} sources - updated ${formatRelativeTime(snapshot?.status?.lastUpdatedAt)}${syncMeta}${staleMeta}`)
     );
     const heroTitle = document.querySelector('[data-brain-meta="hero-title"]');
     if (heroTitle) heroTitle.innerHTML = `Ava read <em>${escapeHtml(String(snapshot?.status?.weeklySources || docs.length))} new sources</em> this week.`;
@@ -9668,17 +9831,25 @@
   }
 
   async function syncOpenClawState({ silent = false } = {}) {
-    const snapshot = await fetchOpenClawState();
+    const config = getOpenClawConfig();
+    const [snapshot, health] = await Promise.all([
+      fetchOpenClawState(config),
+      probeOpenClaw(config).catch(() => null)
+    ]);
     openClawPollFailures = 0;
     renderOpenClawState(snapshot);
-    if (!silent) {
-      const connected = saveOpenClawConfig({
-        ...getOpenClawConfig(),
-        status: 'connected',
-        lastMessage: `Live sync ok · updated ${formatRuntimeTime(snapshot?.status?.lastUpdatedAt)}`
-      });
-      reflectOpenClawUI(connected);
-    }
+    const connected = saveOpenClawConfig({
+      ...config,
+      status: 'connected',
+      lastCheckedAt: Date.now(),
+      lastMessage: `Live sync ok · updated ${formatRuntimeTime(snapshot?.status?.lastUpdatedAt)}`,
+      runtimeMeta: health?.runtimeMeta || sanitizeOpenClawRuntimeMeta({
+        ...(config.runtimeMeta || {}),
+        lastSyncAt: new Date().toISOString()
+      })
+    });
+    reflectOpenClawUI(connected);
+    if (!silent) PBK.events.emit('openclaw:status', connected);
     return snapshot;
   }
 
@@ -10940,9 +11111,11 @@
     [endpointInput, apiKeyInput].forEach((input) => {
       input?.addEventListener('input', () => {
         const draft = readOpenClawDraft();
+        const current = getOpenClawConfig();
         reflectOpenClawUI({
           ...draft,
           status: draft.endpoint ? 'saved' : 'not-configured',
+          runtimeMeta: draft.endpoint === current.endpoint ? current.runtimeMeta : {},
           lastMessage: draft.endpoint
             ? 'Draft ready. Save it, test it, or connect now.'
             : 'Enter the local OpenClaw endpoint to unlock runtime tools.'

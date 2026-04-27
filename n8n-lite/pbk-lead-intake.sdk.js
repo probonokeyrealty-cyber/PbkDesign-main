@@ -84,7 +84,8 @@ const pushToOpenClaw = node({
     position: [-100, -40],
     parameters: {
       method: 'POST',
-      authentication: 'none',
+      authentication: 'genericCredentialType',
+      genericAuthType: 'httpBearerAuth',
       url: 'https://pbk-openclaw-bridge.onrender.com/events',
       sendBody: true,
       contentType: 'json',

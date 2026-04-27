@@ -101,7 +101,8 @@ const notifyApprovalChannel = node({
     position: [-280, -180],
     parameters: {
       method: 'POST',
-      authentication: 'none',
+      authentication: 'genericCredentialType',
+      genericAuthType: 'httpBearerAuth',
       url: 'https://pbk-openclaw-bridge.onrender.com/events',
       sendBody: true,
       contentType: 'json',
@@ -198,7 +199,8 @@ const postDecisionToOpenClaw = node({
     position: [-280, 140],
     parameters: {
       method: 'POST',
-      authentication: 'none',
+      authentication: 'genericCredentialType',
+      genericAuthType: 'httpBearerAuth',
       url: 'https://pbk-openclaw-bridge.onrender.com/events',
       sendBody: true,
       contentType: 'json',

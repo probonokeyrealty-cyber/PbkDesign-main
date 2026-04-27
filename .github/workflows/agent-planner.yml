@@ -1,0 +1,47 @@
+name: Agent Planner
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/ISSUE_TEMPLATE/agent-work-packet.yml
+      - .github/workflows/agent-planner.yml
+      - scripts/pbk-agent-lib.mjs
+      - scripts/pbk-agent-labels.mjs
+      - scripts/pbk-agent-planner.mjs
+      - AWAY_MODE_OPERATIONS.md
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  planner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      PBK_SLACK_WEBHOOK_URL: ${{ secrets.PBK_SLACK_WEBHOOK_URL }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Sync agent labels
+        run: node ./scripts/pbk-agent-labels.mjs
+
+      - name: Run agent planner
+        if: ${{ secrets.GOOGLE_API_KEY != '' }}
+        run: node ./scripts/pbk-agent-planner.mjs

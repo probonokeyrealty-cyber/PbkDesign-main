@@ -1,0 +1,77 @@
+name: Agent Work Packet
+description: Create a bounded unattended task for the PBK founder agent lane.
+title: "[agent] "
+labels:
+  - agent/ui
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for one unattended PR worth of work.
+
+        Rules:
+        - Pick exactly one category label: `agent/ui`, `agent/runtime`, `agent/qa`, or `agent/provider`
+        - Add `agent/ready` only when the task is small and decision-complete
+        - Add `agent/automerge` only for low-risk tasks that can deploy after passing checks
+        - Use `agent/human-required` instead of `agent/ready` for secrets, billing, or account-level work
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: The single outcome this issue should achieve.
+      placeholder: Make the Settings page show provider state clearly when a provider is configured but not fully ready.
+    validations:
+      required: true
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      description: Concrete checks the agent can use to know it is done.
+      placeholder: |
+        - Settings page shows live/configured/missing badges for providers
+        - npm run build passes
+        - npm run test:founder passes
+    validations:
+      required: true
+  - type: textarea
+    id: allowed_files
+    attributes:
+      label: Allowed files
+      description: Keep this tight. The agent should stay inside these paths unless the issue explicitly says otherwise.
+      placeholder: |
+        - index.html
+        - scripts/openclaw-local-server.mjs
+        - RELEASE_CHECKLIST.md
+    validations:
+      required: true
+  - type: textarea
+    id: forbidden_files
+    attributes:
+      label: Forbidden files
+      description: Call out anything the agent must not touch.
+      placeholder: |
+        - render.yaml
+        - netlify.toml
+        - provider secrets / env var values
+    validations:
+      required: true
+  - type: textarea
+    id: required_tests
+    attributes:
+      label: Required tests
+      description: Minimum tests the agent must run before opening a PR.
+      placeholder: |
+        - npm run build
+        - npm run test:founder
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy_impact
+    attributes:
+      label: Deploy impact
+      options:
+        - No deploy impact
+        - Safe auto-deploy after checks pass
+        - Human review required before deploy
+    validations:
+      required: true

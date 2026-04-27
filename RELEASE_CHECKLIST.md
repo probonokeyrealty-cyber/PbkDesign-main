@@ -7,6 +7,7 @@ Use this checklist before calling the founder build production-ready.
 - Run `npm run build`
 - Run `npm run test:mcp`
 - Run `npm run test:bridge`
+- Run `npm run test:hosted` when hosted bridge secrets are available
 
 ## Bridge
 
@@ -18,6 +19,7 @@ Use this checklist before calling the founder build production-ready.
 - `GET /state` with the bearer key returns live runtime state
 - `POST /invoke` with `getBrainState` succeeds
 - `POST /api/documents/pdf` returns a valid PDF
+- Hosted founder smoke passes against the live Render bridge
 
 ## Analyzer + Contracts
 

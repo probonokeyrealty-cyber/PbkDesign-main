@@ -12,9 +12,9 @@ const { Pool: PgPool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-04-26-postgres-state-v4';
+const BUILD_REVISION = '2026-04-26-founder-replay-v6';
 
-const IS_RESET = process.argv.includes('--reset');
+const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
 const IS_PUBLIC = process.argv.includes('--public');
 const IS_HOSTED =
@@ -1736,6 +1736,21 @@ async function handleEvent(eventType, payload = {}) {
 
   if (normalizedEvent === 'lead-intake' || normalizedEvent === 'lead-import') {
     const fromN8nLeadIntake = payload?._source === 'n8n-lead-intake';
+    const eventId = payload?.eventId || payload?.event_id || null;
+
+    // Replay short-circuit: if we've already processed this eventId, return
+    // without mutating state or appending activity. Catches n8n retries.
+    if (eventId) {
+      const prior = state.leadImports.find((item) => item && item.eventId === eventId);
+      if (prior) {
+        return {
+          ok: true,
+          replayed: true,
+          leadImport: prior,
+          eventId,
+        };
+      }
+    }
 
     if (LEAD_WEBHOOK_URL && !fromN8nLeadIntake) {
       addActivity(
@@ -1761,6 +1776,7 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     const leadImport = normalizeLeadIntake(payload);
+    if (eventId) leadImport.eventId = eventId;
     const dedupeKey = `${slugify(leadImport.property.address)}::${normalizePhone(leadImport.seller.phone)}`;
     const duplicate = state.leadImports.find((item) => {
       const itemKey = `${slugify(item?.property?.address || '')}::${normalizePhone(item?.seller?.phone || '')}`;
@@ -1827,9 +1843,27 @@ async function handleEvent(eventType, payload = {}) {
       };
     }
 
-    approval.status = payload.status || approval.status;
-    approval.actor = payload.actor || 'n8n';
-    approval.actedAt = payload.actedAt || isoNow();
+    // Replay short-circuit: if status/actor/actedAt already match incoming
+    // payload, n8n is just retrying. No mutation, no extra activity entry.
+    const incomingStatus = payload.status || approval.status;
+    const incomingActor = payload.actor || approval.actor || 'n8n';
+    const incomingActedAt = payload.actedAt || approval.actedAt || null;
+    if (
+      approval.status === incomingStatus &&
+      approval.actor === incomingActor &&
+      incomingActedAt &&
+      approval.actedAt === incomingActedAt
+    ) {
+      return {
+        ok: true,
+        replayed: true,
+        approval,
+      };
+    }
+
+    approval.status = incomingStatus;
+    approval.actor = incomingActor;
+    approval.actedAt = incomingActedAt || isoNow();
     approval.notes = payload.notes || approval.notes;
 
     addActivity(

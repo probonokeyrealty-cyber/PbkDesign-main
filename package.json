@@ -10,7 +10,10 @@
     "dev": "vite",
     "openclaw:local": "node ./scripts/openclaw-local-server.mjs",
     "openclaw:lan": "node ./scripts/openclaw-local-server.mjs --lan",
-    "openclaw:reset": "node ./scripts/openclaw-local-server.mjs --reset"
+    "openclaw:reset": "node ./scripts/openclaw-local-server.mjs --reset",
+    "test:bridge": "node ./scripts/openclaw-smoke.mjs",
+    "test:mcp": "npm --prefix ./mcp-server run typecheck",
+    "test:founder": "npm run build && npm run test:mcp && npm run test:bridge"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

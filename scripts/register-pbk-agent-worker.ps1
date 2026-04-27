@@ -11,25 +11,24 @@ if (-not (Test-Path $workerScript)) {
   throw "Worker script not found at $workerScript"
 }
 
-$action = New-ScheduledTaskAction `
-  -Execute "powershell.exe" `
-  -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$workerScript`" -RepoPath `"$RepoPath`""
+$taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$workerScript`" -RepoPath `"$RepoPath`""
+$arguments = @(
+  '/Create',
+  '/TN', $TaskName,
+  '/SC', 'MINUTE',
+  '/MO', "$IntervalMinutes",
+  '/TR', $taskCommand,
+  '/F'
+)
 
-$trigger = New-ScheduledTaskTrigger -Daily -At "12:00AM"
-$trigger.Repetition = New-ScheduledTaskRepetitionSettings -Interval (New-TimeSpan -Minutes $IntervalMinutes) -Duration (New-TimeSpan -Days 1)
+$createOutput = & schtasks.exe @arguments 2>&1
+if ($LASTEXITCODE -ne 0) {
+  throw "Failed to register task via schtasks.exe: $createOutput"
+}
 
-$settings = New-ScheduledTaskSettingsSet `
-  -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries `
-  -StartWhenAvailable `
-  -MultipleInstances IgnoreNew
-
-Register-ScheduledTask `
-  -TaskName $TaskName `
-  -Action $action `
-  -Trigger $trigger `
-  -Settings $settings `
-  -Description "PBK unattended founder worker" `
-  -Force | Out-Null
+$registered = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+if (-not $registered) {
+  throw "Task $TaskName was not found after registration."
+}
 
 Write-Host "Registered scheduled task $TaskName"

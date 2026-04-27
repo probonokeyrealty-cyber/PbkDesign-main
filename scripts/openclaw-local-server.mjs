@@ -12,7 +12,7 @@ const { Pool: PgPool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-04-26-founder-replay-v6';
+const BUILD_REVISION = '2026-04-26-telnyx-live-v7';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -39,6 +39,18 @@ const PORT = Number(process.env.PBK_OPENCLAW_PORT || process.env.PORT || 8788);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
+const PUBLIC_BASE_URL = String(process.env.PBK_PUBLIC_BASE_URL || process.env.PBK_BRIDGE_PUBLIC_URL || '')
+  .trim()
+  .replace(/\/+$/g, '');
+const TELNYX_API_KEY = String(process.env.PBK_TELNYX_API_KEY || process.env.TELNYX_API_KEY || '').trim();
+const TELNYX_CONNECTION_ID = String(process.env.PBK_TELNYX_CONNECTION_ID || '').trim();
+const TELNYX_FROM_NUMBER = String(process.env.PBK_TELNYX_FROM_NUMBER || '').trim();
+const TELNYX_MESSAGING_PROFILE_ID = String(process.env.PBK_TELNYX_MESSAGING_PROFILE_ID || '').trim();
+const TELNYX_WEBHOOK_URL = String(
+  process.env.PBK_TELNYX_WEBHOOK_URL || (PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/api/webhooks/telnyx` : ''),
+)
+  .trim()
+  .replace(/\/+$/g, '');
 
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
@@ -133,6 +145,46 @@ function getRuntimeWarnings() {
   return warnings;
 }
 
+function getTelnyxProviderMeta() {
+  const fromNumberConfigured = Boolean(normalizePhone(TELNYX_FROM_NUMBER));
+  const webhookConfigured = Boolean(TELNYX_WEBHOOK_URL);
+  const messagingReady = Boolean(TELNYX_API_KEY && fromNumberConfigured);
+  const voiceReady = Boolean(messagingReady && TELNYX_CONNECTION_ID);
+
+  const messagingMissing = [];
+  const voiceMissing = [];
+
+  if (!TELNYX_API_KEY) {
+    messagingMissing.push('PBK_TELNYX_API_KEY');
+    voiceMissing.push('PBK_TELNYX_API_KEY');
+  }
+  if (!fromNumberConfigured) {
+    messagingMissing.push('PBK_TELNYX_FROM_NUMBER');
+    voiceMissing.push('PBK_TELNYX_FROM_NUMBER');
+  }
+  if (!TELNYX_CONNECTION_ID) {
+    voiceMissing.push('PBK_TELNYX_CONNECTION_ID');
+  }
+
+  return {
+    configured: Boolean(TELNYX_API_KEY),
+    fromNumberConfigured,
+    connectionIdConfigured: Boolean(TELNYX_CONNECTION_ID),
+    messagingProfileConfigured: Boolean(TELNYX_MESSAGING_PROFILE_ID),
+    webhookConfigured,
+    publicBaseUrlConfigured: Boolean(PUBLIC_BASE_URL),
+    messagingReady,
+    voiceReady,
+    stateSyncReady: webhookConfigured,
+    messagingMissing,
+    voiceMissing,
+    warnings:
+      messagingReady && !webhookConfigured
+        ? ['PBK_TELNYX_WEBHOOK_URL or PBK_PUBLIC_BASE_URL is not set; Telnyx state updates rely on provider-side defaults.']
+        : [],
+  };
+}
+
 function getRuntimeMeta() {
   const warnings = getRuntimeWarnings();
   return {
@@ -141,6 +193,9 @@ function getRuntimeMeta() {
     authRequired: Boolean(BRIDGE_API_KEY),
     stateBackend: STATE_BACKEND,
     productionReady: !IS_HOSTED || warnings.length === 0,
+    providers: {
+      telnyx: getTelnyxProviderMeta(),
+    },
     warnings,
   };
 }
@@ -1178,9 +1233,15 @@ function createCallRecord(params = {}) {
     leadName: context.leadName,
     address: context.address,
     phone: normalizePhone(params.phone || params.to || context.phone),
+    from: normalizePhone(params.from || params.fromNumber || ''),
     direction: params.direction || 'outbound',
     status: params.status || 'live',
     assistantId: params.assistantId || 'ava-acquisition-v3',
+    provider: params.provider || 'PBK',
+    commandId: params.commandId || '',
+    telnyxCallControlId: params.telnyxCallControlId || params.call_control_id || '',
+    telnyxCallLegId: params.telnyxCallLegId || params.call_leg_id || '',
+    telnyxCallSessionId: params.telnyxCallSessionId || params.call_session_id || '',
     script: params.script || params.notes || '',
     sentiment: toNumber(params.sentiment, 0.66),
     yellRisk: toNumber(params.yellRisk, 0.05),
@@ -1200,11 +1261,14 @@ function createMessageRecord(params = {}) {
     leadName: context.leadName,
     address: context.address,
     phone: normalizePhone(params.phone || params.to || context.phone),
+    from: normalizePhone(params.from || params.fromNumber || ''),
     email: params.email || context.email || '',
     channel: params.channel || 'sms',
     direction: params.direction || 'outbound',
     body: String(params.body || params.message || '').trim(),
     status: params.status || (params.direction === 'inbound' ? 'received' : 'sent'),
+    provider: params.provider || 'PBK',
+    messagingProfileId: params.messagingProfileId || params.messaging_profile_id || '',
     createdAt: params.createdAt || isoNow(),
   };
 }
@@ -1261,6 +1325,79 @@ async function fireWebhook(url, payload) {
     return {
       ok: false,
       error: error instanceof Error ? error.message : 'Webhook request failed',
+    };
+  }
+}
+
+function encodeClientState(payload = {}) {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+}
+
+function getTelnyxFromNumber(params = {}) {
+  return normalizePhone(params.from || params.fromNumber || TELNYX_FROM_NUMBER);
+}
+
+function getTelnyxWebhookUrl(params = {}) {
+  return String(params.webhookUrl || TELNYX_WEBHOOK_URL || '').trim();
+}
+
+function extractTelnyxError(body) {
+  if (!body) return 'Telnyx request failed.';
+  if (typeof body === 'string') return body;
+  if (Array.isArray(body.errors) && body.errors.length > 0) {
+    return body.errors
+      .map((item) => item?.detail || item?.title || item?.code || 'Unknown Telnyx error')
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (body.error) {
+    return typeof body.error === 'string' ? body.error : body.error.message || 'Telnyx request failed.';
+  }
+  if (body.message) return body.message;
+  if (body.detail) return body.detail;
+  return 'Telnyx request failed.';
+}
+
+async function fireTelnyxRequest(endpoint, payload) {
+  if (!TELNYX_API_KEY) {
+    return {
+      ok: false,
+      skipped: true,
+      error: 'PBK_TELNYX_API_KEY is not set.',
+    };
+  }
+
+  try {
+    const response = await fetch(`https://api.telnyx.com/v2${endpoint}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TELNYX_API_KEY}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    let body = null;
+    if (text) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = text;
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      body,
+      error: response.ok ? '' : extractTelnyxError(body),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Telnyx request failed.',
     };
   }
 }
@@ -1434,6 +1571,8 @@ const toolHandlers = {
     recordToolUse('telnyx_call');
     const context = findLeadContext(params);
     const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
+    const fromNumber = getTelnyxFromNumber(params);
+    const telnyxMeta = getTelnyxProviderMeta();
     const dnc = findDncEntryByPhone(phone);
 
     if (dnc) {
@@ -1456,6 +1595,114 @@ const toolHandlers = {
       };
     }
 
+    if (!phone) {
+      return {
+        ok: false,
+        error: 'No destination phone number was available for this call.',
+        telnyx: {
+          live: false,
+          configured: telnyxMeta.voiceReady,
+        },
+      };
+    }
+
+    if (telnyxMeta.voiceReady && fromNumber) {
+      const webhookUrl = getTelnyxWebhookUrl(params);
+      const requestPayload = {
+        connection_id: params.connectionId || TELNYX_CONNECTION_ID,
+        from: fromNumber,
+        to: Array.isArray(params.to) ? params.to : phone,
+        command_id: params.commandId || `pbk-call-${randomUUID()}`,
+        client_state: encodeClientState({
+          leadId: context.leadId,
+          leadName: context.leadName,
+          address: context.address,
+          phone,
+          actor: params.actor || 'ava-acquisition-v3',
+        }),
+      };
+
+      if (params.fromDisplayName) requestPayload.from_display_name = String(params.fromDisplayName).slice(0, 128);
+      if (params.timeoutSecs) requestPayload.timeout_secs = toNumber(params.timeoutSecs, 30);
+      if (params.timeLimitSecs) requestPayload.time_limit_secs = toNumber(params.timeLimitSecs, 14400);
+      if (params.answeringMachineDetection) requestPayload.answering_machine_detection = params.answeringMachineDetection;
+      if (params.record) requestPayload.record = params.record;
+      if (params.recordTrack) requestPayload.record_track = params.recordTrack;
+      if (params.audioUrl) requestPayload.audio_url = params.audioUrl;
+      if (params.transcription === true) requestPayload.transcription = true;
+      if (webhookUrl) {
+        requestPayload.webhook_url = webhookUrl;
+        requestPayload.webhook_url_method = 'POST';
+      }
+
+      const telnyxResponse = await fireTelnyxRequest('/calls', requestPayload);
+      if (!telnyxResponse.ok) {
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Telnyx',
+            category: 'CALL',
+            status: 'warning',
+            text: `Telnyx call failed for ${context.leadName}: ${telnyxResponse.error || 'unknown error'}`,
+            target: context.address || phone,
+          }),
+        );
+        await persistState(state);
+        return {
+          ok: false,
+          error: telnyxResponse.error || 'Telnyx call failed.',
+          telnyx: {
+            live: true,
+            configured: true,
+            status: telnyxResponse.status || 0,
+            response: telnyxResponse.body || null,
+          },
+        };
+      }
+
+      const providerCall = telnyxResponse.body?.data || {};
+      const call = createCallRecord({
+        ...params,
+        id: providerCall.call_control_id || providerCall.call_leg_id || params.id,
+        leadId: context.leadId,
+        leadName: context.leadName,
+        address: context.address,
+        phone,
+        status: 'queued',
+        startedAt: providerCall.start_time || isoNow(),
+        updatedAt: isoNow(),
+        provider: 'Telnyx',
+        from: fromNumber,
+        telnyxCallControlId: providerCall.call_control_id || '',
+        telnyxCallLegId: providerCall.call_leg_id || '',
+        telnyxCallSessionId: providerCall.call_session_id || '',
+        commandId: requestPayload.command_id,
+      });
+
+      upsertCall(state, call);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Ava',
+          category: 'CALL',
+          status: 'queued',
+          text: `Outbound call queued via Telnyx to ${context.leadName}`,
+          target: context.address || phone,
+        }),
+      );
+      await persistState(state);
+      return {
+        ok: true,
+        call,
+        telnyx: {
+          live: true,
+          configured: true,
+          status: telnyxResponse.status,
+          response: providerCall,
+        },
+      };
+    }
+
     const call = createCallRecord({
       ...params,
       leadId: context.leadId,
@@ -1463,6 +1710,8 @@ const toolHandlers = {
       address: context.address,
       phone,
       status: 'live',
+      provider: 'Simulated',
+      from: fromNumber,
     });
 
     upsertCall(state, call);
@@ -1472,7 +1721,7 @@ const toolHandlers = {
         actor: 'Ava',
         category: 'CALL',
         status: 'live',
-        text: `Outbound call started to ${context.leadName}`,
+        text: `Outbound call started to ${context.leadName}${telnyxMeta.voiceReady ? '' : ' (simulated - add Telnyx voice keys to go live)'}`,
         target: context.address || phone,
       }),
     );
@@ -1480,6 +1729,12 @@ const toolHandlers = {
     return {
       ok: true,
       call,
+      telnyx: {
+        live: false,
+        configured: telnyxMeta.voiceReady,
+        simulated: true,
+        missing: telnyxMeta.voiceMissing,
+      },
     };
   },
 
@@ -1488,7 +1743,10 @@ const toolHandlers = {
     const context = findLeadContext(params);
     const direction = params.direction || 'outbound';
     const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
-    const dnc = direction === 'outbound' ? findDncEntryByPhone(phone) : null;
+    const fromNumber = getTelnyxFromNumber(params);
+    const telnyxMeta = getTelnyxProviderMeta();
+    const fromWebhook = Boolean(params._fromTelnyxWebhook);
+    const dnc = direction === 'outbound' && !fromWebhook ? findDncEntryByPhone(phone) : null;
 
     if (dnc) {
       addActivity(
@@ -1510,6 +1768,120 @@ const toolHandlers = {
       };
     }
 
+    const bodyText = String(params.body || params.message || '').trim();
+
+    if (params.id) {
+      const existing = state.messages.find((item) => item.id === params.id);
+      if (
+        existing &&
+        existing.status === (params.status || existing.status) &&
+        existing.direction === direction &&
+        String(existing.body || '').trim() === bodyText
+      ) {
+        return {
+          ok: true,
+          replayed: true,
+          message: existing,
+        };
+      }
+    }
+
+    if (!phone) {
+      return {
+        ok: false,
+        error: 'No destination phone number was available for this message.',
+        telnyx: {
+          live: false,
+          configured: telnyxMeta.messagingReady,
+        },
+      };
+    }
+
+    if (direction === 'outbound' && !fromWebhook && telnyxMeta.messagingReady && fromNumber) {
+      if (!bodyText) {
+        return {
+          ok: false,
+          error: 'Message body is required for outbound SMS.',
+          telnyx: {
+            live: false,
+            configured: telnyxMeta.messagingReady,
+          },
+        };
+      }
+
+      const requestPayload = {
+        from: fromNumber,
+        to: phone,
+        text: bodyText,
+      };
+      const webhookUrl = getTelnyxWebhookUrl(params);
+      if (webhookUrl) requestPayload.webhook_url = webhookUrl;
+      if (TELNYX_MESSAGING_PROFILE_ID) requestPayload.messaging_profile_id = TELNYX_MESSAGING_PROFILE_ID;
+
+      const telnyxResponse = await fireTelnyxRequest('/messages', requestPayload);
+      if (!telnyxResponse.ok) {
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Telnyx',
+            category: 'SMS',
+            status: 'warning',
+            text: `Telnyx SMS failed for ${context.leadName}: ${telnyxResponse.error || 'unknown error'}`,
+            target: context.address || phone,
+          }),
+        );
+        await persistState(state);
+        return {
+          ok: false,
+          error: telnyxResponse.error || 'Telnyx SMS failed.',
+          telnyx: {
+            live: true,
+            configured: true,
+            status: telnyxResponse.status || 0,
+            response: telnyxResponse.body || null,
+          },
+        };
+      }
+
+      const providerMessage = telnyxResponse.body?.data || {};
+      const message = createMessageRecord({
+        ...params,
+        id: providerMessage.id || params.id,
+        leadId: context.leadId,
+        leadName: context.leadName,
+        address: context.address,
+        phone,
+        direction,
+        body: bodyText,
+        status: providerMessage.status || 'queued',
+        from: fromNumber,
+        provider: 'Telnyx',
+      });
+
+      upsertMessage(state, message);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Ava',
+          category: 'SMS',
+          status: 'queued',
+          text: `Outbound SMS queued via Telnyx to ${context.leadName}`,
+          target: context.address || phone,
+        }),
+      );
+      await persistState(state);
+      return {
+        ok: true,
+        message,
+        telnyx: {
+          live: true,
+          configured: true,
+          status: telnyxResponse.status,
+          response: providerMessage,
+        },
+      };
+    }
+
     const message = createMessageRecord({
       ...params,
       leadId: context.leadId,
@@ -1517,6 +1889,9 @@ const toolHandlers = {
       address: context.address,
       phone,
       direction,
+      body: bodyText,
+      from: fromNumber,
+      provider: fromWebhook ? 'Telnyx' : 'Simulated',
     });
     upsertMessage(state, message);
     addActivity(
@@ -1524,8 +1899,13 @@ const toolHandlers = {
       makeActivity({
         actor: direction === 'inbound' ? context.leadName || 'Seller' : 'Ava',
         category: 'SMS',
-        status: direction === 'inbound' ? 'received' : 'sent',
-        text: `${direction === 'inbound' ? 'Inbound' : 'Outbound'} SMS: ${message.body || '(empty message)'}`,
+        status: message.status,
+        text:
+          direction === 'inbound'
+            ? `Inbound SMS: ${message.body || '(empty message)'}`
+            : fromWebhook
+              ? `Outbound SMS status updated: ${message.body || '(empty message)'}`
+              : `Outbound SMS: ${message.body || '(empty message)'}${telnyxMeta.messagingReady ? '' : ' (simulated - add Telnyx messaging keys to go live)'}`,
         target: context.address || phone,
       }),
     );
@@ -1533,6 +1913,12 @@ const toolHandlers = {
     return {
       ok: true,
       message,
+      telnyx: {
+        live: false,
+        configured: telnyxMeta.messagingReady,
+        simulated: !fromWebhook,
+        missing: telnyxMeta.messagingMissing,
+      },
     };
   },
 
@@ -2051,6 +2437,25 @@ async function handleEvent(eventType, payload = {}) {
   }
 
   if (normalizedEvent === 'call-status') {
+    const existingCall = state.calls.find(
+      (item) =>
+        item.id === payload.id ||
+        item.id === payload.callId ||
+        item.id === payload.call_control_id ||
+        (normalizePhone(item.phone) && normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')),
+    );
+    if (
+      existingCall &&
+      existingCall.status === (payload.status || existingCall.status) &&
+      normalizePhone(existingCall.phone) === normalizePhone(payload.phone || payload.to || existingCall.phone || '')
+    ) {
+      return {
+        ok: true,
+        replayed: true,
+        call: existingCall,
+      };
+    }
+
     const call = createCallRecord({
       ...payload,
       id: payload.id || payload.callId || payload.call_control_id || randomUUID(),
@@ -2118,6 +2523,7 @@ async function handleEvent(eventType, payload = {}) {
     return toolHandlers.telnyx_sms({
       ...payload,
       direction: normalizedEvent === 'sms-inbound' ? 'inbound' : 'outbound',
+      _fromTelnyxWebhook: true,
     });
   }
 
@@ -2238,17 +2644,24 @@ function matchPath(pathname, pattern) {
 function mapTelnyxWebhook(body = {}) {
   const eventType = String(body.data?.event_type || body.event_type || body.type || '').toLowerCase();
   const payload = body.data?.payload || body.payload || body.data || body;
+  const payloadTo = Array.isArray(payload.to)
+    ? payload.to[0]?.phone_number || payload.to[0]
+    : payload.to?.phone_number || payload.to;
+  const payloadFrom = Array.isArray(payload.from)
+    ? payload.from[0]?.phone_number || payload.from[0]
+    : payload.from?.phone_number || payload.from;
 
   if (eventType.includes('message')) {
     return {
       eventType: eventType.includes('received') ? 'sms-inbound' : 'sms-outbound',
       payload: {
         id: payload.id || payload.message_id,
-        phone: payload.to || payload.from || payload.phone_number,
+        phone: payloadTo || payloadFrom || payload.phone_number,
         body: payload.text || payload.body || '',
         direction: eventType.includes('received') ? 'inbound' : 'outbound',
-        status: payload.status || 'received',
+        status: payload.status || (eventType.includes('received') ? 'received' : 'sent'),
         leadName: payload.contact_name || '',
+        actor: 'Telnyx',
       },
     };
   }
@@ -2258,7 +2671,7 @@ function mapTelnyxWebhook(body = {}) {
       eventType: 'call-status',
       payload: {
         id: payload.call_control_id || payload.id || randomUUID(),
-        phone: payload.to || payload.from || payload.phone_number,
+        phone: payloadTo || payloadFrom || payload.phone_number,
         status: eventType.includes('hangup')
           ? 'ended'
           : eventType.includes('answered')
@@ -2268,6 +2681,8 @@ function mapTelnyxWebhook(body = {}) {
               : 'queued',
         leadName: payload.contact_name || '',
         address: payload.address || '',
+        actor: 'Telnyx',
+        call_control_id: payload.call_control_id || payload.id || '',
       },
     };
   }
@@ -2371,12 +2786,16 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/tools'])) {
+      const runtimeMeta = getRuntimeMeta();
       json(response, 200, {
         ok: true,
         revision: BUILD_REVISION,
         features: {
-          documentsPdf: true
+          documentsPdf: true,
+          authRequired: runtimeMeta.authRequired,
+          stateBackend: runtimeMeta.stateBackend,
         },
+        runtime: runtimeMeta,
         tools: TOOL_NAMES,
       });
       return;

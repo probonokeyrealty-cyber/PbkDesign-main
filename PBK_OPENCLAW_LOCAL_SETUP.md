@@ -66,6 +66,8 @@ Accepted tool names:
 - `updateCRM`
 - `ingestResearchDoc`
 - `getBrainState`
+- `telnyx_call`
+- `telnyx_sms`
 
 Example:
 
@@ -140,3 +142,33 @@ $env:PBK_N8N_LEAD_WEBHOOK='http://127.0.0.1:5678/webhook/pbk-lead-intake'; npm r
 ```
 
 The importable workflow files live in [`C:\Users\Dell\Documents\New project 2\PbkDesign-main\n8n-lite`](/C:/Users/Dell/Documents/New%20project%202/PbkDesign-main/n8n-lite).
+
+## Optional Telnyx live outbound
+
+Without Telnyx variables, the bridge keeps founder-safe simulated call and SMS behavior.
+
+For live outbound SMS locally:
+
+```powershell
+$env:PBK_TELNYX_API_KEY='key_live_xxxxx'
+$env:PBK_TELNYX_FROM_NUMBER='+16145550142'
+npm run openclaw:local
+```
+
+For live outbound voice as well:
+
+```powershell
+$env:PBK_TELNYX_API_KEY='key_live_xxxxx'
+$env:PBK_TELNYX_FROM_NUMBER='+16145550142'
+$env:PBK_TELNYX_CONNECTION_ID='1234567890123456789'
+$env:PBK_PUBLIC_BASE_URL='https://pbk-openclaw-bridge.onrender.com'
+npm run openclaw:local
+```
+
+Optional webhook override:
+
+```powershell
+$env:PBK_TELNYX_WEBHOOK_URL='https://pbk-openclaw-bridge.onrender.com/api/webhooks/telnyx'
+```
+
+The local `/health` response now reports Telnyx readiness under `runtime.providers.telnyx`.

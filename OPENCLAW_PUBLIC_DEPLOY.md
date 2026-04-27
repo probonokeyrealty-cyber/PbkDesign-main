@@ -75,7 +75,34 @@ Import the workflow files from:
 - `n8n-lite/pbk-lead-intake.workflow.json`
 - `n8n-lite/pbk-approval-fanout.workflow.json`
 
-## 4. Quick launch checklist
+## 4. Telnyx live outbound
+
+The bridge can now place real Telnyx calls and SMS messages. Without the Telnyx variables below, PBK keeps the founder-safe simulated behavior for calls and texts.
+
+Set these on the public bridge when you are ready to go live:
+
+```text
+PBK_TELNYX_API_KEY=key_live_xxxxx
+PBK_TELNYX_FROM_NUMBER=+16145550142
+PBK_TELNYX_CONNECTION_ID=1234567890123456789
+PBK_PUBLIC_BASE_URL=https://pbk-openclaw-bridge.onrender.com
+```
+
+Optional:
+
+```text
+PBK_TELNYX_WEBHOOK_URL=https://pbk-openclaw-bridge.onrender.com/api/webhooks/telnyx
+PBK_TELNYX_MESSAGING_PROFILE_ID=4000eba1-a0c0-4563-9925-b25e842a7cb6
+```
+
+Notes:
+
+- `PBK_TELNYX_API_KEY` + `PBK_TELNYX_FROM_NUMBER` enables live outbound SMS.
+- `PBK_TELNYX_CONNECTION_ID` is also required for live outbound voice calls.
+- `PBK_PUBLIC_BASE_URL` lets the bridge auto-build the Telnyx webhook callback URL.
+- If webhook configuration is missing, outbound send can still work, but PBK may not receive live status updates back from Telnyx.
+
+## 5. Quick launch checklist
 
 - Netlify frontend is live.
 - Bridge answers `GET /health`.
@@ -84,3 +111,4 @@ Import the workflow files from:
 - Analyzer can call `analyzeDeal`.
 - Approval queue updates after `POST /events`.
 - Brain page loads from public bridge state.
+- Telnyx runtime in `/health` shows live readiness once keys are set.

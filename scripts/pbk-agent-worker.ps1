@@ -19,7 +19,13 @@ function Get-Token {
     if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, "Machine") }
     if ($value) { return $value }
   }
-  throw "Missing GitHub token. Set PBK_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN."
+
+  $ghToken = (& cmd /c "gh auth token" 2>$null | Out-String).Trim()
+  if ($ghToken) {
+    return $ghToken
+  }
+
+  throw "Missing GitHub token. Set PBK_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN, or log in with gh auth login."
 }
 
 function Invoke-GitHubApi {

@@ -3,6 +3,8 @@ param(
   [string]$Repository = "probonokeyrealty-cyber/PbkDesign-main",
   [string]$AgentId = "main",
   [string]$OpenClawProfile = "pbk-worker",
+  [string]$FallbackOpenClawProfile = "pbk-worker-openai",
+  [string]$FallbackModel = "openai/gpt-5.2",
   [int]$StaleClaimMinutes = 60,
   [int]$IssueNumber = 0,
   [switch]$DryRun,
@@ -13,12 +15,68 @@ $ErrorActionPreference = "Stop"
 
 $claimMarker = "<!-- pbk-agent-worker:claimed -->"
 $doneMarker = "<!-- pbk-agent-worker:finished -->"
+$allowedRunnerArtifacts = @(
+  ".openclaw",
+  ".openclaw/",
+  "AGENTS.md",
+  "HEARTBEAT.md",
+  "IDENTITY.md",
+  "SOUL.md",
+  "TOOLS.md",
+  "USER.md",
+  "MEMORY.md",
+  "memory",
+  "memory/"
+)
+
+function Get-EnvironmentValue {
+  param([string]$Name)
+
+  foreach ($scope in @("Process", "User", "Machine")) {
+    $value = [Environment]::GetEnvironmentVariable($Name, $scope)
+    if ($value) {
+      return $value
+    }
+  }
+
+  return $null
+}
+
+function ConvertTo-GitHubSafeText {
+  param(
+    [AllowNull()]
+    [string]$Value,
+    [int]$MaxChars = 6000
+  )
+
+  if ($null -eq $Value) {
+    return ""
+  }
+
+  $builder = New-Object System.Text.StringBuilder
+  foreach ($ch in $Value.ToCharArray()) {
+    $code = [int][char]$ch
+    if ($code -eq 0) {
+      continue
+    }
+    if ($code -ge 0xD800 -and $code -le 0xDFFF) {
+      [void]$builder.Append("?")
+      continue
+    }
+    [void]$builder.Append($ch)
+  }
+
+  $clean = $builder.ToString()
+  if ($clean.Length -gt $MaxChars) {
+    $clean = $clean.Substring(0, $MaxChars - 16) + "`n...[truncated]"
+  }
+
+  return $clean
+}
 
 function Get-Token {
   foreach ($name in @("PBK_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")) {
-    $value = [Environment]::GetEnvironmentVariable($name, "Process")
-    if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, "User") }
-    if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, "Machine") }
+    $value = Get-EnvironmentValue -Name $name
     if ($value) { return $value }
   }
 
@@ -105,6 +163,88 @@ function Remove-IssueComment {
   Invoke-GitHubApi -Method DELETE -Uri "https://api.github.com/repos/$Repository/issues/comments/$CommentId" | Out-Null
 }
 
+function Add-IssueComment {
+  param(
+    [int]$Number,
+    [string]$Body
+  )
+
+  $tempPath = Join-Path $env:TEMP ("pbk-issue-comment-{0}.md" -f [guid]::NewGuid().ToString())
+  $safeBody = ConvertTo-GitHubSafeText -Value $Body
+  Set-Content -Path $tempPath -Value $safeBody -Encoding utf8
+
+  try {
+    & cmd /c ("gh issue comment {0} --repo {1} --body-file ""{2}""" -f $Number, $Repository, $tempPath) | Out-Null
+  }
+  finally {
+    Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Ensure-GitIdentity {
+  param([string]$Repo)
+
+  $name = (git -C $Repo config --get user.name 2>$null | Out-String).Trim()
+  $email = (git -C $Repo config --get user.email 2>$null | Out-String).Trim()
+
+  if (-not $name) {
+    git -C $Repo config user.name "PBK Agent Worker" | Out-Null
+  }
+  if (-not $email) {
+    git -C $Repo config user.email "pbk-agent@local.invalid" | Out-Null
+  }
+}
+
+function Get-OrCreatePullRequest {
+  param(
+    [string]$Title,
+    [string]$BranchName,
+    [string]$Body
+  )
+
+  $existingJson = (& gh pr list --repo $Repository --head $BranchName --json number,url 2>$null | Out-String).Trim()
+  if ($existingJson) {
+    $existing = @(ConvertFrom-JsonCompat -JsonText $existingJson)
+    if ($existing.Count -gt 0) {
+      return [pscustomobject]@{
+        number = $existing[0].number
+        html_url = $existing[0].url
+      }
+    }
+  }
+
+  $tempPath = Join-Path $env:TEMP ("pbk-pr-body-{0}.md" -f [guid]::NewGuid().ToString())
+  $safeBody = ConvertTo-GitHubSafeText -Value $Body
+  Set-Content -Path $tempPath -Value $safeBody -Encoding utf8
+
+  try {
+    & gh pr create --repo $Repository --base main --head $BranchName --title $Title --body-file $tempPath | Out-Null
+    $createdJson = (& gh pr view --repo $Repository $BranchName --json number,url | Out-String).Trim()
+    if (-not $createdJson) {
+      throw "GitHub CLI created the pull request but did not return JSON metadata."
+    }
+
+    $created = ConvertFrom-JsonCompat -JsonText $createdJson
+    return [pscustomobject]@{
+      number = $created.number
+      html_url = $created.url
+    }
+  }
+  finally {
+    Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Get-AgentPullRequestTitle {
+  param([string]$IssueTitle)
+
+  if ($IssueTitle -match '^\[agent\]\s*') {
+    return $IssueTitle
+  }
+
+  return "[agent] $IssueTitle"
+}
+
 function Get-NextIssue {
   if ($IssueNumber -gt 0) {
     return Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$Repository/issues/$IssueNumber"
@@ -166,18 +306,124 @@ function Get-OpenClawJson {
     throw "OpenClaw output did not include JSON."
   }
   $jsonText = $RawText.Substring($start)
-  return ($jsonText | ConvertFrom-Json -Depth 50)
+  return (ConvertFrom-JsonCompat -JsonText $jsonText)
+}
+
+function Normalize-OpenClawResult {
+  param([object]$Json)
+
+  if (-not $Json) {
+    return $null
+  }
+
+  $text = "$($Json.meta.finalAssistantVisibleText)".Trim()
+  if (-not $text) {
+    $textParts = @($Json.payloads | ForEach-Object { $_.text }) | Where-Object { $_ }
+    $text = ($textParts -join "`n").Trim()
+  }
+
+  $stopReason = @(
+    "$($Json.meta.completion.stopReason)".Trim()
+    "$($Json.meta.stopReason)".Trim()
+    "$($Json.completion.stopReason)".Trim()
+    "$($Json.stopReason)".Trim()
+  ) | Where-Object { $_ } | Select-Object -First 1
+
+  if (-not $text) {
+    return $null
+  }
+
+  if ($stopReason -and $stopReason -eq "error") {
+    return $null
+  }
+
+  if (-not $Json.meta) {
+    $Json | Add-Member -MemberType NoteProperty -Name meta -Value ([pscustomobject]@{}) -Force
+  }
+  if (-not $Json.meta.finalAssistantVisibleText) {
+    $Json.meta | Add-Member -MemberType NoteProperty -Name finalAssistantVisibleText -Value $text -Force
+  }
+
+  return $Json
+}
+
+function ConvertFrom-JsonCompat {
+  param([string]$JsonText)
+
+  $command = Get-Command ConvertFrom-Json
+  if ($command.Parameters.ContainsKey("Depth")) {
+    return ($JsonText | ConvertFrom-Json -Depth 50)
+  }
+
+  return ($JsonText | ConvertFrom-Json)
 }
 
 function Assert-CleanRepo {
-  $status = git -C $RepoPath status --porcelain
-  if ($status) {
-    throw "Agent worker requires a clean repo clone. Current repo has pending changes."
+  $status = @(git -C $RepoPath status --porcelain --untracked-files=all)
+  $meaningful = @($status | Where-Object {
+      $line = "$_"
+      if (-not $line.Trim()) {
+        return $false
+      }
+
+      $path = if ($line.Length -ge 4) { $line.Substring(3).Trim() } else { $line.Trim() }
+      foreach ($allowed in $allowedRunnerArtifacts) {
+        $normalizedAllowed = $allowed.TrimEnd("/")
+        if ($path -eq $normalizedAllowed -or $path.StartsWith("$normalizedAllowed/")) {
+          return $false
+        }
+      }
+
+      return $true
+    })
+
+  if ($meaningful.Count -gt 0) {
+    throw ("Agent worker requires a clean repo clone. Pending changes:`n{0}" -f ($meaningful -join "`n"))
   }
 }
 
+function Ensure-RunnerPrerequisites {
+  $assets = @(
+    @{
+      Source = Join-Path $RepoPath "public\PBK_Master_Deal_Package.html"
+      Destination = Join-Path $HOME "PBK_Master_Deal_Package.html"
+    },
+    @{
+      Source = Join-Path $RepoPath "public\legacy\PBK_Command_Center v5.html"
+      Destination = Join-Path $HOME "PBK_Command_Center v5.html"
+    }
+  )
+
+  foreach ($asset in $assets) {
+    if (-not (Test-Path $asset.Source)) {
+      continue
+    }
+
+    $shouldCopy = -not (Test-Path $asset.Destination)
+    if (-not $shouldCopy) {
+      $sourceInfo = Get-Item $asset.Source
+      $destInfo = Get-Item $asset.Destination
+      $shouldCopy = ($sourceInfo.Length -ne $destInfo.Length)
+    }
+
+    if ($shouldCopy) {
+      Copy-Item -Path $asset.Source -Destination $asset.Destination -Force
+    }
+  }
+}
+
+function Get-OpenClawProfileRoot {
+  param([string]$ProfileName)
+  return (Join-Path $HOME ".openclaw-$ProfileName")
+}
+
 function Ensure-OpenClawProfile {
-  $profileRoot = Join-Path $HOME ".openclaw-$OpenClawProfile"
+  param(
+    [string]$ProfileName,
+    [string]$PrimaryModel
+  )
+
+  $profileRoot = Get-OpenClawProfileRoot -ProfileName $ProfileName
   $configPath = Join-Path $profileRoot "openclaw.json"
   New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
 
@@ -186,11 +432,17 @@ function Ensure-OpenClawProfile {
       defaults = @{
         workspace = $RepoPath
         model = @{
-          primary = "google/gemini-2.5-flash"
+          primary = $PrimaryModel
         }
         models = @{
-          "google/gemini-2.5-flash" = @{}
+          $PrimaryModel = @{}
         }
+      }
+    }
+    env = @{
+      shellEnv = @{
+        enabled = $true
+        timeoutMs = 5000
       }
     }
   }
@@ -242,8 +494,211 @@ function Get-CommandSafePrompt {
   return (($Value -replace "(`r`n|`n|`r)", "\n")).Trim()
 }
 
+function Get-OpenClawSessionFile {
+  param(
+    [string]$ProfileName,
+    [string]$SessionId
+  )
+
+  $profileRoot = Get-OpenClawProfileRoot -ProfileName $ProfileName
+  return (Join-Path $profileRoot "agents\$AgentId\sessions\$SessionId.jsonl")
+}
+
+function Get-OpenClawSessionResult {
+  param([string]$SessionFile)
+
+  if (-not (Test-Path $SessionFile)) {
+    return $null
+  }
+
+  $lastAssistant = $null
+  foreach ($line in Get-Content $SessionFile) {
+    try {
+      $entry = ConvertFrom-JsonCompat -JsonText $line
+    }
+    catch {
+      continue
+    }
+
+    if ($entry.type -eq "message" -and $entry.message -and $entry.message.role -eq "assistant") {
+      $lastAssistant = $entry.message
+    }
+  }
+
+  if (-not $lastAssistant) {
+    return $null
+  }
+
+  $textParts = @($lastAssistant.content | Where-Object { $_.type -eq "text" } | ForEach-Object { $_.text }) | Where-Object { $_ }
+  $text = ($textParts -join "`n").Trim()
+  $stopReason = "$($lastAssistant.stopReason)"
+  $errorMessage = "$($lastAssistant.errorMessage)".Trim()
+
+  return [pscustomobject]@{
+    Success = ($stopReason -ne "error" -and -not [string]::IsNullOrWhiteSpace($text))
+    Text = $text
+    StopReason = $stopReason
+    ErrorMessage = $errorMessage
+  }
+}
+
+function Set-OpenClawProcessEnvironment {
+  foreach ($name in @("GOOGLE_API_KEY", "OPENAI_API_KEY")) {
+    $value = Get-EnvironmentValue -Name $name
+    if ($value) {
+      [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
+
+function Quote-ProcessArgument {
+  param([string]$Value)
+
+  if ($null -eq $Value -or $Value.Length -eq 0) {
+    return '""'
+  }
+
+  if ($Value -notmatch '[\s"]') {
+    return $Value
+  }
+
+  $escaped = $Value -replace '(\\*)"', '$1$1\"'
+  $escaped = $escaped -replace '(\\+)$', '$1$1'
+  return '"' + $escaped + '"'
+}
+
+function Invoke-OpenClawTurn {
+  param(
+    [string]$ProfileName,
+    [string]$Prompt,
+    [string]$SessionId,
+    [int]$TimeoutSeconds = 600
+  )
+
+  $sessionFile = Get-OpenClawSessionFile -ProfileName $ProfileName -SessionId $SessionId
+  $stdoutPath = Join-Path $env:TEMP "pbk-openclaw-$SessionId.stdout.log"
+  $stderrPath = Join-Path $env:TEMP "pbk-openclaw-$SessionId.stderr.log"
+
+  foreach ($path in @($sessionFile, "$sessionFile.lock", $stdoutPath, $stderrPath)) {
+    if (Test-Path $path) {
+      Remove-Item $path -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  Set-OpenClawProcessEnvironment
+
+  $argumentList = @(
+    $openClawEntrypoint,
+    "--profile",
+    $ProfileName,
+    "agent",
+    "--local",
+    "--agent",
+    $AgentId,
+    "--session-id",
+    $SessionId,
+    "--message",
+    $Prompt,
+    "--json"
+  )
+  $quotedArguments = ($argumentList | ForEach-Object { Quote-ProcessArgument -Value "$_" }) -join " "
+
+  $process = Start-Process `
+    -FilePath "node" `
+    -ArgumentList $quotedArguments `
+    -WorkingDirectory $RepoPath `
+    -NoNewWindow `
+    -PassThru `
+    -RedirectStandardOutput $stdoutPath `
+    -RedirectStandardError $stderrPath
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $sessionResult = $null
+
+  while ((Get-Date) -lt $deadline) {
+    $sessionResult = Get-OpenClawSessionResult -SessionFile $sessionFile
+    if ($sessionResult -and ($sessionResult.Success -or $sessionResult.StopReason -eq "error")) {
+      break
+    }
+
+    if ($process.HasExited) {
+      break
+    }
+
+    Start-Sleep -Seconds 2
+  }
+
+  if ($sessionResult -and $sessionResult.Success) {
+    Start-Sleep -Seconds 2
+    if (-not $process.HasExited) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+
+    return [pscustomobject]@{
+      meta = [pscustomobject]@{
+        finalAssistantVisibleText = $sessionResult.Text
+      }
+    }
+  }
+
+  if (-not $process.HasExited) {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+  }
+
+  $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { "" }
+  $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { "" }
+
+  foreach ($rawText in @($stdout, $stderr)) {
+    if (-not $rawText) {
+      continue
+    }
+
+    try {
+      $json = Get-OpenClawJson -RawText $rawText
+      $normalized = Normalize-OpenClawResult -Json $json
+      if ($normalized) {
+        return $normalized
+      }
+    }
+    catch {
+      Write-Warning ("OpenClaw result parse failed for profile {0}: {1}" -f $ProfileName, $_.Exception.Message)
+    }
+  }
+
+  if ($sessionResult -and $sessionResult.StopReason -eq "error") {
+    throw ("OpenClaw session failed for profile {0}: {1}" -f $ProfileName, $sessionResult.ErrorMessage)
+  }
+
+  $combinedText = (@($stdout, $stderr) | Where-Object { $_ }) -join "`n"
+  if ($combinedText) {
+    try {
+      $json = Get-OpenClawJson -RawText $combinedText
+      $normalized = Normalize-OpenClawResult -Json $json
+      if ($normalized) {
+        return $normalized
+      }
+    }
+    catch {
+      Write-Warning ("Combined OpenClaw result parse failed for profile {0}: {1}" -f $ProfileName, $_.Exception.Message)
+    }
+  }
+
+  $details = (@($stdout, $stderr) | Where-Object { $_ } | ForEach-Object { $_.Trim() }) -join "`n"
+  if (-not $details) {
+    $details = "No JSON output captured before timeout."
+  }
+
+  throw "OpenClaw run failed for profile $ProfileName. $details"
+}
+
 Assert-CleanRepo
-Ensure-OpenClawProfile
+Ensure-RunnerPrerequisites
+Ensure-OpenClawProfile -ProfileName $OpenClawProfile -PrimaryModel "google/gemini-2.5-flash"
+$fallbackAvailable = $false
+if (Get-EnvironmentValue -Name "OPENAI_API_KEY") {
+  Ensure-OpenClawProfile -ProfileName $FallbackOpenClawProfile -PrimaryModel $FallbackModel
+  $fallbackAvailable = $true
+}
 
 $issue = Get-NextIssue
 if (-not $issue) {
@@ -258,6 +713,7 @@ git -C $RepoPath pull --ff-only origin main
 
 $branchName = "agent/$($issue.number)-$(Get-Slug -Value $issue.title)"
 git -C $RepoPath checkout -B $branchName origin/main
+Ensure-GitIdentity -Repo $RepoPath
 
 $prompt = Get-CommandSafePrompt -Value (New-AgentPrompt -Issue $issue)
 $openClawEntrypoint = Get-OpenClawEntrypoint
@@ -271,6 +727,9 @@ if ($DryRun) {
 $claimComment = $null
 
 try {
+  $usedProfile = $OpenClawProfile
+  $primaryFailureMessage = $null
+
   $claimBody = @"
 $claimMarker
 Worker claimed this issue on $(hostname) at $(Get-Date -Format o).
@@ -280,21 +739,33 @@ Worker claimed this issue on $(hostname) at $(Get-Date -Format o).
     $claimComment = Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{ body = $claimBody }
   }
 
-  $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
-  $PSNativeCommandUseErrorActionPreference = $false
   try {
-    $raw = (& node $openClawEntrypoint --profile $OpenClawProfile agent --local --agent $AgentId --session-id $runSessionId --message $prompt --json 2>&1 | Out-String)
+    $result = Invoke-OpenClawTurn -ProfileName $OpenClawProfile -Prompt $prompt -SessionId $runSessionId
   }
-  finally {
-    $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+  catch {
+    $primaryFailureMessage = $_.Exception.Message
+    if (-not $fallbackAvailable) {
+      throw
+    }
+
+    Write-Warning "Primary worker run failed; retrying with fallback profile $FallbackOpenClawProfile. $primaryFailureMessage"
+    $usedProfile = $FallbackOpenClawProfile
+    $fallbackSessionId = [guid]::NewGuid().ToString()
+    $result = Invoke-OpenClawTurn -ProfileName $FallbackOpenClawProfile -Prompt $prompt -SessionId $fallbackSessionId
   }
-  $result = Get-OpenClawJson -RawText $raw
 
   $diff = git -C $RepoPath status --porcelain
   if (-not $diff) {
-    Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
-      body = "$doneMarker`nWorker completed without code changes. Summary:`n`n$($result.meta.finalAssistantVisibleText)"
-    } | Out-Null
+    $summary = $result.meta.finalAssistantVisibleText
+    if ($primaryFailureMessage) {
+      $summary = "Fallback profile $FallbackOpenClawProfile succeeded after primary failure: $primaryFailureMessage`n`n$summary"
+    }
+    $summary = ConvertTo-GitHubSafeText -Value $summary
+
+    Add-IssueComment -Number $issue.number -Body "$doneMarker`nWorker completed without code changes. Summary:`n`n$summary"
+    if ($claimComment -and $claimComment.id) {
+      Remove-IssueComment -CommentId $claimComment.id
+    }
     exit 0
   }
 
@@ -308,23 +779,26 @@ Worker claimed this issue on $(hostname) at $(Get-Date -Format o).
     git -C $RepoPath push -u origin $branchName
   }
 
-  $prBody = @"
+  $summaryText = $result.meta.finalAssistantVisibleText
+  $executionNotes = @("- model profile: $usedProfile")
+  if ($primaryFailureMessage) {
+    $executionNotes += "- primary failure: $primaryFailureMessage"
+  }
+
+  $prBody = ConvertTo-GitHubSafeText -Value @"
 Closes #$($issue.number)
 
 ## Agent summary
-$($result.meta.finalAssistantVisibleText)
+$summaryText
 
 ## Checks
 - npm run test:founder
+
+## Execution
+$($executionNotes -join "`n")
 "@
 
-  $pr = Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/pulls" -Body @{
-    title = "[agent] $($issue.title)"
-    head = $branchName
-    base = "main"
-    body = $prBody
-    draft = $false
-  }
+  $pr = Get-OrCreatePullRequest -Title (Get-AgentPullRequestTitle -IssueTitle $issue.title) -BranchName $branchName -Body $prBody
 
   if ($issueLabels -contains "agent/automerge") {
     Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($pr.number)/labels" -Body @{
@@ -337,16 +811,20 @@ $($result.meta.finalAssistantVisibleText)
     labels = $updatedIssueLabels
   } | Out-Null
 
-  $doneBody = @(
+  $doneBody = ConvertTo-GitHubSafeText -Value (@(
     $doneMarker
     "Worker opened PR $($pr.html_url)"
     ""
+    "Execution:"
+    ($executionNotes -join "`n")
+    ""
     "Summary:"
-    $result.meta.finalAssistantVisibleText
-  ) -join "`n"
-  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
-    body = $doneBody
-  } | Out-Null
+    $summaryText
+  ) -join "`n")
+  Add-IssueComment -Number $issue.number -Body $doneBody
+  if ($claimComment -and $claimComment.id) {
+    Remove-IssueComment -CommentId $claimComment.id
+  }
 
   Write-Host "Opened PR $($pr.html_url)"
 }
@@ -360,18 +838,16 @@ catch {
     }
   }
 
-  $failureBody = @(
+  $failureBody = ConvertTo-GitHubSafeText -Value (@(
     "Worker run failed on $(hostname) at $(Get-Date -Format o)."
     ""
     "Error:"
     '```'
     $_.Exception.Message
     '```'
-  ) -join "`n"
+  ) -join "`n")
 
-  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
-    body = $failureBody
-  } | Out-Null
+  Add-IssueComment -Number $issue.number -Body $failureBody
 
   throw
 }

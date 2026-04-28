@@ -29,6 +29,7 @@ The unattended builder runs on your machine and needs:
 | --- | --- |
 | `PBK_GITHUB_TOKEN` or `gh auth login` | GitHub API + PR creation |
 | OpenClaw local model auth | Lets `openclaw agent --local` edit the repo |
+| `OPENAI_API_KEY` | Optional worker fallback when Gemini hits quota or stalls |
 | A clean dedicated repo clone | Prevents the worker from colliding with your active workspace |
 
 Recommended dedicated clone path:
@@ -66,7 +67,10 @@ The task runs every 15 minutes, claims one `agent/ready` issue, creates a branch
 Operational notes:
 
 - The worker uses a dedicated OpenClaw profile named `pbk-worker`.
+- If `OPENAI_API_KEY` is available, the worker also maintains `pbk-worker-openai` as an automatic fallback lane.
 - That profile should target the dedicated runner clone workspace at `C:\Users\Dell\pbk-agent-runner`, not the generic OpenClaw workspace folder.
+- Both worker profiles enable shell-env import so scheduled runs can inherit local provider keys without storing secrets in the repo.
+- The worker auto-configures a local Git identity in the runner clone and uses the GitHub CLI for PR creation so unattended runs do not depend on fragile REST JSON payloads.
 - Stale `pbk-agent-worker:claimed` comments older than the configured timeout are treated as reclaimable so a failed run does not jam the queue permanently.
 
 ## Safety rules

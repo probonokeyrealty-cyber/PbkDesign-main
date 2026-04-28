@@ -2,6 +2,8 @@ param(
   [string]$RepoPath = "C:\Users\Dell\Documents\New project 2\PbkDesign-main",
   [string]$Repository = "probonokeyrealty-cyber/PbkDesign-main",
   [string]$AgentId = "main",
+  [string]$OpenClawProfile = "pbk-worker",
+  [int]$StaleClaimMinutes = 60,
   [int]$IssueNumber = 0,
   [switch]$DryRun,
   [switch]$NoPush
@@ -72,6 +74,37 @@ function Get-IssueComments {
   Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$Repository/issues/$Number/comments?per_page=100"
 }
 
+function Get-CommentTimestamp {
+  param([object]$Comment)
+  if (-not $Comment.created_at) {
+    return $null
+  }
+
+  if ($Comment.created_at -is [datetimeoffset]) {
+    return $Comment.created_at
+  }
+  if ($Comment.created_at -is [datetime]) {
+    return [datetimeoffset]$Comment.created_at
+  }
+
+  $rawValue = "$($Comment.created_at)".Trim()
+  if (-not $rawValue) {
+    return $null
+  }
+
+  $parsed = [datetimeoffset]::MinValue
+  if ([datetimeoffset]::TryParse($rawValue, [ref]$parsed)) {
+    return $parsed
+  }
+
+  return $null
+}
+
+function Remove-IssueComment {
+  param([Int64]$CommentId)
+  Invoke-GitHubApi -Method DELETE -Uri "https://api.github.com/repos/$Repository/issues/comments/$CommentId" | Out-Null
+}
+
 function Get-NextIssue {
   if ($IssueNumber -gt 0) {
     return Invoke-GitHubApi -Method GET -Uri "https://api.github.com/repos/$Repository/issues/$IssueNumber"
@@ -85,9 +118,35 @@ function Get-NextIssue {
 
   foreach ($candidate in $candidates) {
     $comments = @(Get-IssueComments -Number $candidate.number)
-    $isClaimed = $comments | Where-Object { ($_.body -as [string]) -match [regex]::Escape($claimMarker) }
-    $isDone = $comments | Where-Object { ($_.body -as [string]) -match [regex]::Escape($doneMarker) }
-    if ((-not $isClaimed) -and (-not $isDone)) {
+    $doneComments = @($comments | Where-Object { ($_.body -as [string]) -match [regex]::Escape($doneMarker) })
+    if ($doneComments.Count -gt 0) {
+      continue
+    }
+
+    $claimComments = @($comments | Where-Object { ($_.body -as [string]) -match [regex]::Escape($claimMarker) })
+    if ($claimComments.Count -eq 0) {
+      return $candidate
+    }
+
+    $latestClaim = $claimComments[-1]
+    $latestClaimAt = Get-CommentTimestamp $latestClaim
+    if (-not $latestClaimAt) {
+      return $candidate
+    }
+
+    $failureAfterClaim = @($comments | Where-Object {
+        $body = $_.body -as [string]
+        $createdAt = Get-CommentTimestamp $_
+        $createdAt -and
+        $createdAt -gt $latestClaimAt -and
+        $body -like "Worker run failed on*"
+      })
+    if ($failureAfterClaim.Count -gt 0) {
+      return $candidate
+    }
+
+    $claimAgeMinutes = (([datetimeoffset]::UtcNow) - $latestClaimAt.ToUniversalTime()).TotalMinutes
+    if ($claimAgeMinutes -ge $StaleClaimMinutes) {
       return $candidate
     }
   }
@@ -117,6 +176,37 @@ function Assert-CleanRepo {
   }
 }
 
+function Ensure-OpenClawProfile {
+  $profileRoot = Join-Path $HOME ".openclaw-$OpenClawProfile"
+  $configPath = Join-Path $profileRoot "openclaw.json"
+  New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
+
+  $config = @{
+    agents = @{
+      defaults = @{
+        workspace = $RepoPath
+        model = @{
+          primary = "google/gemini-2.5-flash"
+        }
+        models = @{
+          "google/gemini-2.5-flash" = @{}
+        }
+      }
+    }
+  }
+
+  ($config | ConvertTo-Json -Depth 10) | Set-Content -Path $configPath -Encoding UTF8
+}
+
+function Get-OpenClawEntrypoint {
+  $cmdPath = (Get-Command openclaw.cmd -ErrorAction Stop).Source
+  $entrypoint = Join-Path (Split-Path $cmdPath -Parent) "node_modules\openclaw\openclaw.mjs"
+  if (-not (Test-Path $entrypoint)) {
+    throw "OpenClaw entrypoint not found at $entrypoint"
+  }
+  return $entrypoint
+}
+
 function New-AgentPrompt {
   param([object]$Issue)
 
@@ -136,6 +226,8 @@ Hard rules:
 - Do not change secrets, env vars, billing resources, provider dashboards, or cloud settings.
 - Do not buy anything or complete onboarding steps.
 - Stay inside this repo only.
+- For file reads and edits, use absolute paths rooted at $RepoPath.
+- For shell/exec commands, set workdir to $RepoPath.
 - Run the narrowest useful checks while you work.
 - Before finishing, make sure npm run build and npm run test:founder pass unless the issue explicitly limits scope and you explain why.
 
@@ -145,6 +237,14 @@ When you are done:
 "@
 }
 
+function Get-CommandSafePrompt {
+  param([string]$Value)
+  return (($Value -replace "(`r`n|`n|`r)", "\n")).Trim()
+}
+
+Assert-CleanRepo
+Ensure-OpenClawProfile
+
 $issue = Get-NextIssue
 if (-not $issue) {
   Write-Host "No agent-ready issue available."
@@ -152,17 +252,6 @@ if (-not $issue) {
 }
 
 $issueLabels = Get-IssueLabelNames -Issue $issue
-$claimBody = @"
-$claimMarker
-Worker claimed this issue on $(hostname) at $(Get-Date -Format o).
-"@
-
-if (-not $DryRun) {
-  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{ body = $claimBody } | Out-Null
-}
-
-Assert-CleanRepo
-
 git -C $RepoPath fetch origin
 git -C $RepoPath checkout main
 git -C $RepoPath pull --ff-only origin main
@@ -170,35 +259,56 @@ git -C $RepoPath pull --ff-only origin main
 $branchName = "agent/$($issue.number)-$(Get-Slug -Value $issue.title)"
 git -C $RepoPath checkout -B $branchName origin/main
 
-$prompt = New-AgentPrompt -Issue $issue
+$prompt = Get-CommandSafePrompt -Value (New-AgentPrompt -Issue $issue)
+$openClawEntrypoint = Get-OpenClawEntrypoint
+$runSessionId = [guid]::NewGuid().ToString()
 
 if ($DryRun) {
   Write-Host $prompt
   exit 0
 }
 
-$raw = (& openclaw.cmd agent --local --agent $AgentId --message $prompt --json 2>&1 | Out-String)
-$result = Get-OpenClawJson -RawText $raw
+$claimComment = $null
 
-$diff = git -C $RepoPath status --porcelain
-if (-not $diff) {
-  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
-    body = "$doneMarker`nWorker completed without code changes. Summary:`n`n$($result.meta.finalAssistantVisibleText)"
-  } | Out-Null
-  exit 0
-}
+try {
+  $claimBody = @"
+$claimMarker
+Worker claimed this issue on $(hostname) at $(Get-Date -Format o).
+"@
 
-npm --prefix $RepoPath run test:founder
+  if (-not $DryRun) {
+    $claimComment = Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{ body = $claimBody }
+  }
 
-git -C $RepoPath add -A
-$commitMessage = "[agent] Resolve #$($issue.number) $($issue.title)"
-git -C $RepoPath commit -m $commitMessage
+  $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $raw = (& node $openClawEntrypoint --profile $OpenClawProfile agent --local --agent $AgentId --session-id $runSessionId --message $prompt --json 2>&1 | Out-String)
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+  }
+  $result = Get-OpenClawJson -RawText $raw
 
-if (-not $NoPush) {
-  git -C $RepoPath push -u origin $branchName
-}
+  $diff = git -C $RepoPath status --porcelain
+  if (-not $diff) {
+    Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
+      body = "$doneMarker`nWorker completed without code changes. Summary:`n`n$($result.meta.finalAssistantVisibleText)"
+    } | Out-Null
+    exit 0
+  }
 
-$prBody = @"
+  npm --prefix $RepoPath run test:founder
+
+  git -C $RepoPath add -A
+  $commitMessage = "[agent] Resolve #$($issue.number) $($issue.title)"
+  git -C $RepoPath commit -m $commitMessage
+
+  if (-not $NoPush) {
+    git -C $RepoPath push -u origin $branchName
+  }
+
+  $prBody = @"
 Closes #$($issue.number)
 
 ## Agent summary
@@ -208,33 +318,60 @@ $($result.meta.finalAssistantVisibleText)
 - npm run test:founder
 "@
 
-$pr = Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/pulls" -Body @{
-  title = "[agent] $($issue.title)"
-  head = $branchName
-  base = "main"
-  body = $prBody
-  draft = $false
-}
+  $pr = Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/pulls" -Body @{
+    title = "[agent] $($issue.title)"
+    head = $branchName
+    base = "main"
+    body = $prBody
+    draft = $false
+  }
 
-if ($issueLabels -contains "agent/automerge") {
-  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($pr.number)/labels" -Body @{
-    labels = @("agent/automerge")
+  if ($issueLabels -contains "agent/automerge") {
+    Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($pr.number)/labels" -Body @{
+      labels = @("agent/automerge")
+    } | Out-Null
+  }
+
+  $updatedIssueLabels = @($issueLabels | Where-Object { $_ -ne "agent/ready" })
+  Invoke-GitHubApi -Method PATCH -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)" -Body @{
+    labels = $updatedIssueLabels
   } | Out-Null
+
+  $doneBody = @(
+    $doneMarker
+    "Worker opened PR $($pr.html_url)"
+    ""
+    "Summary:"
+    $result.meta.finalAssistantVisibleText
+  ) -join "`n"
+  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
+    body = $doneBody
+  } | Out-Null
+
+  Write-Host "Opened PR $($pr.html_url)"
 }
+catch {
+  if ($claimComment -and $claimComment.id) {
+    try {
+      Remove-IssueComment -CommentId $claimComment.id
+    }
+    catch {
+      Write-Warning "Failed to remove claim comment $($claimComment.id): $($_.Exception.Message)"
+    }
+  }
 
-$updatedIssueLabels = @($issueLabels | Where-Object { $_ -ne "agent/ready" })
-Invoke-GitHubApi -Method PATCH -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)" -Body @{
-  labels = $updatedIssueLabels
-} | Out-Null
+  $failureBody = @(
+    "Worker run failed on $(hostname) at $(Get-Date -Format o)."
+    ""
+    "Error:"
+    '```'
+    $_.Exception.Message
+    '```'
+  ) -join "`n"
 
-Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
-  body = @"
-$doneMarker
-Worker opened PR $($pr.html_url)
+  Invoke-GitHubApi -Method POST -Uri "https://api.github.com/repos/$Repository/issues/$($issue.number)/comments" -Body @{
+    body = $failureBody
+  } | Out-Null
 
-Summary:
-$($result.meta.finalAssistantVisibleText)
-"@
-} | Out-Null
-
-Write-Host "Opened PR $($pr.html_url)"
+  throw
+}

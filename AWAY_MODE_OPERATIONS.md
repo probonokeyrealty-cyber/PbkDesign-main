@@ -63,6 +63,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register-pbk-agent-worker.ps1
 
 The task runs every 15 minutes, claims one `agent/ready` issue, creates a branch, uses the local OpenClaw agent to make the change, runs `npm run test:founder`, pushes the branch, and opens a PR.
 
+Operational notes:
+
+- The worker uses a dedicated OpenClaw profile named `pbk-worker`.
+- That profile should target the dedicated runner clone workspace at `C:\Users\Dell\pbk-agent-runner`, not the generic OpenClaw workspace folder.
+- Stale `pbk-agent-worker:claimed` comments older than the configured timeout are treated as reclaimable so a failed run does not jam the queue permanently.
+
 ## Safety rules
 
 The unattended system is allowed to:

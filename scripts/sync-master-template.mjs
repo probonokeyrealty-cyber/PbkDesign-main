@@ -9,6 +9,15 @@ const appRoot = path.resolve(__dirname, '..');
 const publicDir = path.join(appRoot, 'public');
 const legacyDir = path.join(publicDir, 'legacy');
 
+function keepExistingOrThrow(sourceLabel, destinationPath) {
+  if (fs.existsSync(destinationPath)) {
+    console.log(`Using checked-in fallback for ${sourceLabel} -> ${destinationPath}`);
+    return;
+  }
+
+  throw new Error(`Missing required PBK asset: ${sourceLabel}`);
+}
+
 const copies = [
   {
     from: path.join(workspaceRoot, 'PBK_Master_Deal_Package.html'),
@@ -25,7 +34,13 @@ fs.mkdirSync(legacyDir, { recursive: true });
 
 copies.forEach(({ from, to }) => {
   if (!fs.existsSync(from)) {
-    throw new Error(`Missing required PBK asset: ${from}`);
+    keepExistingOrThrow(from, to);
+    return;
+  }
+
+  if (path.resolve(from) === path.resolve(to)) {
+    console.log(`PBK asset already in place: ${to}`);
+    return;
   }
 
   fs.copyFileSync(from, to);

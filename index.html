@@ -9516,12 +9516,53 @@
       return;
     }
 
+    const providerLabels = {
+      telnyx: 'Telnyx',
+      docusign: 'DocuSign',
+      batchdata: 'BatchData',
+      slack: 'Slack'
+    };
+
     const order = ['telnyx', 'docusign', 'batchdata', 'slack'];
-    let readyCount = 0;
+    const total = order.length;
+    let liveCount = 0;
     let configuredCount = 0;
 
+    const normalizeMissing = (value) => {
+      if (!value) return [];
+      if (Array.isArray(value)) return value.filter(Boolean);
+      return [];
+    };
+
+    const shortList = (items, limit = 2) => {
+      const list = normalizeMissing(items);
+      if (!list.length) return '';
+      const shown = list.slice(0, limit);
+      const extra = list.length - shown.length;
+      return extra > 0 ? `${shown.join(', ')} +${extra}` : shown.join(', ');
+    };
+
+    const buildMissingHint = (meta, key) => {
+      const missing = normalizeMissing(meta?.missing);
+      const messagingMissing = normalizeMissing(meta?.messagingMissing);
+      const voiceMissing = normalizeMissing(meta?.voiceMissing);
+
+      if (key === 'telnyx') {
+        const parts = [];
+        if (meta?.messagingReady === false && messagingMissing.length) parts.push(`SMS: ${shortList(messagingMissing)}`);
+        if (meta?.voiceReady === false && voiceMissing.length) parts.push(`Voice: ${shortList(voiceMissing)}`);
+        if (!parts.length && missing.length) parts.push(shortList(missing));
+        return parts.length ? `Missing ${parts.join(' · ')}` : '';
+      }
+
+      if (missing.length) return `Missing ${shortList(missing)}`;
+      if (messagingMissing.length) return `Missing ${shortList(messagingMissing)}`;
+      if (voiceMissing.length) return `Missing ${shortList(voiceMissing)}`;
+      return '';
+    };
+
     order.forEach((key) => {
-      const meta = providers[key];
+      const meta = providers?.[key];
       const row = card.querySelector(`.settings-providers-row[data-provider="${key}"]`);
       if (!row || !meta) return;
 
@@ -9529,15 +9570,17 @@
       const isReady = Boolean(meta.ready);
       const isConfigured = Boolean(meta.configured);
 
-      if (isReady) readyCount += 1;
+      if (isReady) liveCount += 1;
       if (isConfigured) configuredCount += 1;
 
+      const hint = buildMissingHint(meta, key);
       let state = 'missing';
       let label = 'Not configured';
 
       if (isReady) {
         state = 'ready';
         label = 'Live';
+
         if (key === 'telnyx') {
           const lanes = [];
           if (meta.messagingReady) lanes.push('SMS');
@@ -9546,30 +9589,48 @@
         }
       } else if (isConfigured) {
         state = 'warning';
-        label = 'Configured · not ready';
-      } else if (meta.missing && meta.missing.length) {
-        label = `Missing ${meta.missing.length} env`;
+
+        if (key === 'telnyx') {
+          const lanes = [];
+          if (meta.messagingReady) lanes.push('SMS ready');
+          if (meta.voiceReady) lanes.push('voice ready');
+          const prefix = lanes.length ? `Partial · ${lanes.join(' + ')}` : 'Configured · not ready';
+          label = hint ? `${prefix} · ${hint}` : prefix;
+        } else {
+          const prefix = 'Configured · not ready';
+          label = hint ? `${prefix} · ${hint}` : prefix;
+        }
+      } else {
+        label = hint ? `Not configured · ${hint}` : 'Not configured';
       }
 
       row.dataset.state = state;
       if (stateEl) stateEl.textContent = label;
+
+      const nameEl = row.querySelector('.settings-providers-name');
+      if (nameEl && providerLabels[key] && nameEl.textContent !== providerLabels[key]) {
+        nameEl.textContent = providerLabels[key];
+      }
     });
 
     if (summaryEl) {
-      summaryEl.textContent = readyCount === 4
-        ? '4 of 4 live'
-        : readyCount > 0
-          ? `${readyCount} of 4 live`
-          : configuredCount > 0
-            ? `${configuredCount} configured · 0 ready`
-            : 'No providers wired yet';
+      if (liveCount === 0 && configuredCount === 0) {
+        summaryEl.textContent = 'No providers configured';
+      } else if (liveCount === total) {
+        summaryEl.textContent = `${total} of ${total} live`;
+      } else {
+        summaryEl.textContent = `${liveCount} of ${total} live · ${total - liveCount} need setup`;
+      }
     }
 
     if (noteEl) {
-      const missingProviders = order.filter((key) => providers[key] && !providers[key].ready);
-      noteEl.textContent = missingProviders.length === 0
-        ? 'All four providers are live. Outbound calls, SMS, contracts, skip-trace, and Slack alerts hit real APIs.'
-        : `Set env vars on Render for: ${missingProviders.join(', ')}. See PROVIDERS.md for setup.`;
+      const notLive = order
+        .filter((key) => providers?.[key] && !providers[key].ready)
+        .map((key) => providerLabels[key] || key);
+
+      noteEl.textContent = notLive.length === 0
+        ? 'Bridge health reports all provider APIs live.'
+        : `Bridge health reports ${liveCount} of ${total} live. Missing requirements are listed per provider (Render env vars).`;
     }
   }
 

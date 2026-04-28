@@ -66,7 +66,7 @@ foreach ($f in $forbidden) {
 Write-Host "      all encoding checks pass."
 
 Write-Host "[3/5] Vite build (must pass) ..." -ForegroundColor Cyan
-npm run build
+cmd /c npm run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed - aborting push" }
 
 Write-Host "[4/5] Staging + committing ..." -ForegroundColor Cyan
@@ -134,15 +134,12 @@ Write-Host ""
 Write-Host "Done on PbkDesign-main." -ForegroundColor Green
 Write-Host ""
 Write-Host "Don't forget the Netlify mirror sync." -ForegroundColor Yellow
-Write-Host "Per CLAUDE.md repo-reality, pbkcommandcenter.netlify.app deploys from"
-Write-Host "the SECOND repo (probonokeyrealty-cyber/pbkcommandcenter), not this one."
-Write-Host "Re-sync index.html into that mirror's PbkDesign-main/ subfolder, then push:"
+Write-Host "Per CLAUDE.md repo-reality, pbkcommandcenter.netlify.app still deploys from"
+Write-Host "the mirror repo (probonokeyrealty-cyber/pbkcommandcenter), not this one."
+Write-Host "Run the safer mirror sync helper next so only committed HEAD is copied:"
 Write-Host ""
-Write-Host '   cd C:\Users\Dell\Documents\"New project 2"\pbkcommandcenter-repo'
-Write-Host '   Copy-Item ..\PbkDesign-main\index.html .\PbkDesign-main\index.html -Force'
-Write-Host '   git add PbkDesign-main/index.html'
-Write-Host '   git commit -m "Sync encoding-fix index.html from PbkDesign-main"'
-Write-Host '   git push'
+Write-Host '   cd C:\Users\Dell\Documents\"New project 2"'
+Write-Host '   .\SYNC_TO_MIRROR.ps1'
 Write-Host ""
 Write-Host "Or repoint Netlify directly at probonokeyrealty-cyber/PbkDesign-main"
 Write-Host "to retire the mirror once and for all (Netlify dashboard -> Site Settings"

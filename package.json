@@ -11,6 +11,7 @@
     "openclaw:local": "node ./scripts/openclaw-local-server.mjs",
     "openclaw:lan": "node ./scripts/openclaw-local-server.mjs --lan",
     "openclaw:reset": "node ./scripts/openclaw-local-server.mjs --reset",
+    "brain:export": "node ./scripts/export-logseq-brain.mjs",
     "test:bridge": "node ./scripts/openclaw-smoke.mjs",
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",
     "test:mcp": "npm --prefix ./mcp-server run typecheck",

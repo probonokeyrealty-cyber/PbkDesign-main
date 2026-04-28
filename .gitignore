@@ -3,6 +3,7 @@ dist/
 .netlify/
 .tmp/
 .pbk-local/
+brain-export/
 
 PBK_React_Preview_Code_*/
 PBK_React_Preview_Code_*.zip

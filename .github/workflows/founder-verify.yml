@@ -26,9 +26,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp-server/package-lock.json
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: npm ci
+
+      - name: Install MCP server dependencies
+        run: npm ci --prefix ./mcp-server
 
       - name: Run founder gate
         run: npm run test:founder

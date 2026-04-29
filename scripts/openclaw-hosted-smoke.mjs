@@ -169,7 +169,25 @@ async function main() {
         revision: health.revision,
         authRequired: health.features.authRequired,
         stateBackend: health.features.stateBackend,
-        providers: Object.keys(health.providers || {}),
+        providers: Object.fromEntries(
+          Object.entries(health.providers || {}).map(([name, meta]) => {
+            const isReady = meta?.ready === true
+              || meta?.messagingReady === true
+              || meta?.voiceReady === true;
+            const isConfigured = meta?.configured === true;
+            const missing = Array.isArray(meta?.missing) ? meta.missing : [];
+            const status = isReady
+              ? (name === 'telnyx'
+                  ? `ready (${[meta.messagingReady && 'sms', meta.voiceReady && 'voice'].filter(Boolean).join('+') || 'partial'})`
+                  : 'ready')
+              : isConfigured
+                ? 'configured but not ready'
+                : missing.length
+                  ? `missing ${missing.length} env`
+                  : 'not configured';
+            return [name, status];
+          })
+        ),
         hosted: health.runtime.hosted,
         approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
         pdfBytes: pdfBuffer.length,

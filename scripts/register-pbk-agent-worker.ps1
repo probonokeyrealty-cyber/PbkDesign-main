@@ -11,20 +11,30 @@ if (-not (Test-Path $workerScript)) {
   throw "Worker script not found at $workerScript"
 }
 
-$taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$workerScript`" -RepoPath `"$RepoPath`""
-$arguments = @(
-  '/Create',
-  '/TN', $TaskName,
-  '/SC', 'MINUTE',
-  '/MO', "$IntervalMinutes",
-  '/TR', $taskCommand,
-  '/F'
-)
+Import-Module ScheduledTasks -ErrorAction Stop
 
-$createOutput = & schtasks.exe @arguments 2>&1
-if ($LASTEXITCODE -ne 0) {
-  throw "Failed to register task via schtasks.exe: $createOutput"
-}
+$action = New-ScheduledTaskAction `
+  -Execute "powershell.exe" `
+  -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$workerScript`" -RepoPath `"$RepoPath`""
+
+$trigger = New-ScheduledTaskTrigger `
+  -Once `
+  -At (Get-Date).AddMinutes(1) `
+  -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
+  -RepetitionDuration (New-TimeSpan -Days 3650)
+
+$settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable
+
+Register-ScheduledTask `
+  -TaskName $TaskName `
+  -Action $action `
+  -Trigger $trigger `
+  -Settings $settings `
+  -Description "Runs the PBK away-mode worker every $IntervalMinutes minutes." `
+  -Force | Out-Null
 
 $registered = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
 if (-not $registered) {

@@ -1,0 +1,14 @@
+{
+  "name": "Subject-To Agreement",
+  "type": "subto",
+  "version": "2026-04-28",
+  "description": "Creative finance subject-to purchase template with seller disclosure markers.",
+  "fields": {
+    "seller_name": "Seller legal name",
+    "property_address": "Subject property",
+    "existing_loan_balance": "Approximate unpaid principal balance",
+    "existing_interest_rate": "Current mortgage rate",
+    "cash_to_seller": "Upfront equity payout",
+    "monthly_payment_responsibility": "Payment responsibility and servicing language"
+  }
+}

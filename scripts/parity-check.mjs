@@ -150,7 +150,7 @@ const scenarios = [
       deal.cfType = 'carry';
     },
     expectedPath: 'cf',
-    expectedDocChecks: ['Down Payment: $11,111', 'Interest Rate: 5.50%', 'Term Length: 7 years'],
+    expectedDocChecks: ['Down Payment: $11,111', 'Interest Rate: 5.50%', 'Loan Term: 7 years'],
     expectedParams: ['cfDn', 'cfRate', 'cfTerm', 'cfType'],
   },
   {
@@ -166,7 +166,7 @@ const scenarios = [
       deal.mtType = 'subto';
     },
     expectedPath: 'mt',
-    expectedDocChecks: ['Upfront Cash', 'Existing Loan Balance: $170,000', 'Existing Rate: 3.50%'],
+    expectedDocChecks: ['Upfront Cash to Seller: $10,000', 'Assume Existing Loan Balance: $170,000', 'Existing Interest Rate: 3.50%'],
     expectedParams: ['mtUpfront', 'mtBal', 'mtRate', 'mtType'],
   },
   {

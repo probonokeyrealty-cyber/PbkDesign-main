@@ -35,6 +35,7 @@ import { registerDealTools } from "./tools/deals.js";
 import { registerApprovalTools } from "./tools/approvals.js";
 import { registerBrainTools } from "./tools/brain.js";
 import { registerCommsTools } from "./tools/comms.js";
+import { registerAdminTools } from "./tools/admin.js";
 import { registerMetaTools } from "./tools/meta.js";
 
 const SERVER_NAME = "pbk-openclaw-mcp-server";
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   registerApprovalTools(server);
   registerBrainTools(server);
   registerCommsTools(server);
+  registerAdminTools(server);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

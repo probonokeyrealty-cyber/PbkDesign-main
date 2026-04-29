@@ -68,6 +68,21 @@ async function main() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const quotas = await fetch(`${BASE_URL}/api/quotas`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const tooling = await fetch(`${BASE_URL}/api/tooling/status`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const contractTemplates = await fetch(`${BASE_URL}/api/contracts/templates`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
     const leadEventPayload = {
       eventType: 'lead-intake',
       payload: {
@@ -143,6 +158,109 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const sellerDocs = await fetch(`${BASE_URL}/api/send-seller-docs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        email: 'smoke@example.com',
+        senderProfile: 'warm',
+        selectedDocuments: ['seller', 'loi'],
+        documentSet: {
+          seller: 'Smoke seller guide content.',
+          loi: 'Smoke letter of interest content.',
+        },
+      }),
+    }).then((response) => response.json());
+    const browserResearch = await fetch(`${BASE_URL}/api/browser-research/launch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'Use BrowserOS to inspect https://pbkcommandcenter.netlify.app and report the page title.',
+        requestedBy: 'smoke-test',
+        source: 'smoke',
+      }),
+    }).then((response) => response.json());
+    const adminRequest = await fetch(`${BASE_URL}/api/admin/request`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        command: 'Add pbk-smoke-domain.com to Instantly and start warmup.',
+        requestedBy: 'smoke-test',
+        requiresApproval: true,
+      }),
+    }).then((response) => response.json());
+    const adminTaskId = adminRequest?.task?.id;
+    assert(adminTaskId, 'Admin request did not create a task.');
+    const adminApproval = await fetch(`${BASE_URL}/api/admin/tasks/${encodeURIComponent(adminTaskId)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        status: 'approved',
+        actor: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const preparedContract = await fetch(`${BASE_URL}/api/contracts/prepare`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        email: 'smoke@example.com',
+        amount: 91500,
+        selectedPath: 'cash',
+        selectedPathLabel: 'Cash Offer',
+      }),
+    }).then((response) => response.json());
+    const instantlyWebhook = await fetch(`${BASE_URL}/api/webhooks/instantly`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        event: 'reply.received',
+        leadId: 'smoke-lead-1',
+        name: 'Smoke Test Seller',
+        email: 'smoke@example.com',
+        address: '808 Smoke Test Ave, Columbus OH',
+        body: 'Yes, tell me more.',
+      }),
+    }).then((response) => response.json());
+    const emailWebhook = await fetch(`${BASE_URL}/api/webhooks/email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        type: 'reply',
+        leadId: 'smoke-lead-1',
+        name: 'Smoke Test Seller',
+        email: 'smoke@example.com',
+        address: '808 Smoke Test Ave, Columbus OH',
+        subject: 'Re: Seller packet',
+        text: 'I am interested and ready for a call.',
+      }),
+    }).then((response) => response.json());
     const pdfResponse = await fetch(`${BASE_URL}/api/documents/pdf`, {
       method: 'POST',
       headers: {
@@ -170,11 +288,24 @@ async function main() {
     assert(Array.isArray(health?.runtime?.warnings), 'Bridge health did not expose runtime warnings array.');
     assert(unauthorizedState.status === 401, `Expected unauthenticated /state to return 401, got ${unauthorizedState.status}.`);
     assert(Array.isArray(state?.approvals), 'Authenticated /state did not return approvals.');
+    assert(quotas?.ok === true, 'Quota endpoint did not return ok: true.');
+    assert(typeof quotas?.quotas?.docs?.deliveredToday === 'number', 'Quota endpoint did not return docs counters.');
+    assert(tooling?.ok === true, 'Tooling status endpoint did not return ok: true.');
+    assert(Number(tooling?.tooling?.summary?.totalCount || 0) >= 5, 'Tooling status did not report the advanced stack.');
+    assert(typeof tooling?.tooling?.browserOs?.note === 'string', 'Tooling status did not return BrowserOS metadata.');
+    assert(Array.isArray(contractTemplates?.templates), 'Contract template endpoint did not return templates.');
     assert(firstLeadEvent?.ok === true, 'First lead-intake event did not succeed.');
     assert(secondLeadEvent?.replayed === true, 'Second identical lead-intake event was not treated as a replay.');
     assert(firstApprovalDecision?.ok === true, 'First approval callback did not succeed.');
     assert(secondApprovalDecision?.replayed === true, 'Second identical approval callback was not treated as a replay.');
     assert(invoke?.ok === true, 'Authenticated /invoke getBrainState did not succeed.');
+    assert(sellerDocs?.ok === true, 'Seller document endpoint did not succeed.');
+    assert(typeof browserResearch?.answer === 'string', 'Browser research endpoint did not return a response.');
+    assert(adminRequest?.ok === true, 'Admin request endpoint did not succeed.');
+    assert(adminApproval?.ok === true, 'Admin approval endpoint did not succeed.');
+    assert(preparedContract?.ok === true, 'Contract prepare endpoint did not succeed.');
+    assert(instantlyWebhook?.ok === true, 'Instantly webhook endpoint did not succeed.');
+    assert(emailWebhook?.ok === true, 'Email webhook endpoint did not succeed.');
     assert(pdfResponse.ok, `PDF endpoint returned ${pdfResponse.status}.`);
     assert((pdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'PDF endpoint did not return application/pdf.');
     assert(pdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'PDF endpoint did not return a valid PDF signature.');
@@ -187,6 +318,11 @@ async function main() {
       mode: health.runtime.mode,
       approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
       activity: Array.isArray(state?.activity) ? state.activity.length : 0,
+      contractTemplates: Array.isArray(contractTemplates?.templates) ? contractTemplates.templates.length : 0,
+      toolingReady: Number(tooling?.tooling?.summary?.readyCount || 0),
+      browserOsReady: Boolean(tooling?.tooling?.browserOs?.ready),
+      docsDeliveredToday: Number(quotas?.quotas?.docs?.deliveredToday || 0),
+      adminQueue: Number(quotas?.quotas?.docs?.queuedAdminTasks || 0),
       leadReplaySafe: Boolean(secondLeadEvent?.replayed),
       approvalReplaySafe: Boolean(secondApprovalDecision?.replayed),
       pdfBytes: pdfBuffer.length,

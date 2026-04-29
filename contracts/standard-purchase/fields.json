@@ -1,0 +1,14 @@
+{
+  "name": "Standard Purchase Agreement",
+  "type": "standard-purchase",
+  "version": "2026-04-28",
+  "description": "Default cash-style purchase agreement used for standard direct-to-seller acquisitions.",
+  "fields": {
+    "seller_name": "Seller legal name",
+    "buyer_entity": "PBK buying entity",
+    "property_address": "Full subject property address",
+    "purchase_price": "Purchase amount in USD",
+    "earnest_money": "Earnest deposit language",
+    "closing_timeline": "Closing window or target date"
+  }
+}

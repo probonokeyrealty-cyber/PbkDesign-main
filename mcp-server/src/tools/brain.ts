@@ -8,6 +8,17 @@ const GetBrainStateInput = z
   })
   .strict();
 
+const GetBrainEmailContextInput = z
+  .object({
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    email: z.string().optional(),
+    templateId: z.string().optional().describe("Optional cold-email template hint such as probate, absentee, or high-equity."),
+    requestedBy: z.string().optional(),
+  })
+  .strict();
+
 const IngestResearchDocInput = z
   .object({
     title: z.string().min(1).describe("Document title (shows on the Brain page)."),
@@ -33,6 +44,8 @@ const GetStateInput = z
         "analyzerRuns",
         "calls",
         "messages",
+        "appointments",
+        "leadStageTransitions",
         "contracts",
         "dncEntries",
         "status",
@@ -43,7 +56,52 @@ const GetStateInput = z
   })
   .strict();
 
+const LaunchBrowserResearchInput = z
+  .object({
+    query: z.string().min(1).describe("Natural-language browser research request, URL, or listing/property prompt for BrowserOS."),
+    requestedBy: z.string().optional().describe("Actor label recorded in the bridge activity feed."),
+    source: z.string().optional().describe("Origin label such as 'brain', 'shell-brain', or 'agent-console'."),
+  })
+  .strict();
+
 export function registerBrainTools(server: McpServer): void {
+  server.registerTool(
+    "pbk_get_brain_email_context",
+    {
+      title: "Build Brain email context",
+      description: `Assemble the seller/property context used for cold-email personalization from the current bridge state and analyzer history.
+
+Args:
+  - leadId, leadName, address, email (optional): Lead identifiers.
+  - templateId (string): Optional template hint such as "probate" or "absentee".
+  - requestedBy (string): Actor label for bridge activity.
+
+Returns:
+  { ok: true, context: { ownerName, propertyAddress, estimatedEquity, marketValue, targetOffer, mao, recentComps, motivationSignals, ... } }`,
+      inputSchema: GetBrainEmailContextInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("getBrainEmailContext", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
   server.registerTool(
     "pbk_get_brain_state",
     {
@@ -126,7 +184,7 @@ Returns:
       description: `Snapshot of the bridge's full state, or a slice of it. Backs the dashboard's polling loop, but exposed here so other agents can inspect approvals, activity, contracts, calls, etc. directly.
 
 Args:
-  - section ('all' | 'approvals' | 'activity' | 'brainDocs' | 'leadImports' | 'analyzerRuns' | 'calls' | 'messages' | 'contracts' | 'dncEntries' | 'status'): Defaults to 'all'.
+  - section ('all' | 'approvals' | 'activity' | 'brainDocs' | 'leadImports' | 'analyzerRuns' | 'calls' | 'messages' | 'appointments' | 'leadStageTransitions' | 'contracts' | 'dncEntries' | 'status'): Defaults to 'all'.
   - limit (number, 1..80): Max items per array section. Larger sections are sliced from the newest end.
 
 Returns:
@@ -160,6 +218,8 @@ Returns:
             analyzerRuns: slice("analyzerRuns"),
             calls: slice("calls"),
             messages: slice("messages"),
+            appointments: slice("appointments"),
+            leadStageTransitions: slice("leadStageTransitions"),
             contracts: slice("contracts"),
             dncEntries: slice("dncEntries"),
           };
@@ -170,6 +230,43 @@ Returns:
         return {
           content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
           structuredContent: out,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_launch_browser_research",
+    {
+      title: "Queue BrowserOS research from Rex",
+      description: `Ask the PBK bridge to route a browser-native research request through the BrowserOS lane without leaving the existing Brain workflow.
+
+Args:
+  - query (string, required): Listing URL, public-record prompt, or natural-language request such as "Use BrowserOS to inspect 202 Cherry Ln on Zillow."
+  - requestedBy (string): Optional actor label.
+  - source (string): Optional source label for auditing.
+
+Returns:
+  { ok, answer, citations, job, tooling: { browserOs } }`,
+      inputSchema: LaunchBrowserResearchInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("launchBrowserResearch", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
         };
       } catch (error) {
         return {

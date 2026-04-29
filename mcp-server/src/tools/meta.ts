@@ -74,4 +74,39 @@ Returns:
       }
     },
   );
+
+  server.registerTool(
+    "pbk_get_tooling_status",
+    {
+      title: "Read advanced tooling readiness",
+      description: `Return the bridge-backed tooling status payload used by PBK Settings. This covers the meta-agent lab scaffold, BrowserOS registration, browser research queue, Context7, workflow ops, observability, and GitHub verification.
+
+Args:
+  (none)
+
+Returns:
+  { ok: true, tooling: { metaAgent, browserOs, browserResearch, context7, workflowOps, observability, github, summary } }`,
+      inputSchema: HealthInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async () => {
+      try {
+        const result = await bridgeRequest({ method: "GET", path: "/api/tooling/status" });
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
 }

@@ -1,0 +1,13 @@
+{
+  "name": "Probate Addendum",
+  "type": "probate-addendum",
+  "version": "2026-04-28",
+  "description": "Estate / executor disclosure addendum for probate acquisitions.",
+  "fields": {
+    "executor_name": "Authorized executor or administrator",
+    "estate_name": "Estate legal name",
+    "letters_status": "Letters testamentary / administration status",
+    "court_county": "Probate court county",
+    "property_address": "Inherited property address"
+  }
+}

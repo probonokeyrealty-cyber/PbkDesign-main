@@ -1,0 +1,13 @@
+{
+  "name": "Assignment Agreement",
+  "type": "assignment",
+  "version": "2026-04-28",
+  "description": "Wholesale assignment agreement used for end-buyer transfers.",
+  "fields": {
+    "assignor_name": "PBK or assigning entity",
+    "assignee_name": "End buyer legal name",
+    "subject_property": "Original contract property address",
+    "assignment_fee": "Assignment fee amount",
+    "close_of_escrow": "Original closing timeline"
+  }
+}

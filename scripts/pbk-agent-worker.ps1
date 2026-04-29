@@ -301,6 +301,41 @@ function Get-Slug {
 
 function Get-OpenClawJson {
   param([string]$RawText)
+  if (-not $RawText) {
+    throw "OpenClaw output did not include JSON."
+  }
+
+  # OpenClaw's stderr can contain inline `{...}` snippets inside log lines
+  # (e.g. `rawError=Google Generative AI API error (429): { "error": { ... }`)
+  # BEFORE the real final payload JSON. The first `{` is therefore not
+  # reliable. The actual payload is a pretty-printed multi-line object whose
+  # opening line is exactly `{`. Find those candidate lines and try parsing
+  # from the latest one first; fall back to the first-`{` heuristic only as
+  # a last resort.
+  $normalized = $RawText -replace "`r`n", "`n"
+  $lines = $normalized -split "`n"
+  $candidates = @()
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].Trim() -eq "{") {
+      $candidates += $i
+    }
+  }
+
+  if ($candidates.Count -gt 0) {
+    [array]::Reverse($candidates)
+    foreach ($lineIdx in $candidates) {
+      $jsonText = ($lines[$lineIdx..($lines.Count - 1)] -join "`n").Trim()
+      try {
+        return (ConvertFrom-JsonCompat -JsonText $jsonText)
+      }
+      catch {
+        continue
+      }
+    }
+  }
+
+  # Last-chance: the original first-brace approach. Useful when the entire
+  # raw text IS one inline JSON line and there are no `^{$` markers.
   $start = $RawText.IndexOf("{")
   if ($start -lt 0) {
     throw "OpenClaw output did not include JSON."

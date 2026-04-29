@@ -11,7 +11,6 @@ permissions:
 
 jobs:
   hosted-founder-smoke:
-    if: ${{ secrets.PBK_BRIDGE_API_KEY != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -19,16 +18,31 @@ jobs:
       PBK_HOSTED_BRIDGE_URL: ${{ secrets.PBK_HOSTED_BRIDGE_URL }}
 
     steps:
+      - name: Check hosted smoke secrets
+        id: hosted-secrets
+        shell: bash
+        run: |
+          if [ -z "$PBK_BRIDGE_API_KEY" ]; then
+            echo "run_smoke=false" >> "$GITHUB_OUTPUT"
+            echo "PBK_BRIDGE_API_KEY is not configured; skipping hosted smoke."
+          else
+            echo "run_smoke=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out repository
+        if: ${{ steps.hosted-secrets.outputs.run_smoke == 'true' }}
         uses: actions/checkout@v4
 
       - name: Set up Node
+        if: ${{ steps.hosted-secrets.outputs.run_smoke == 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Wait for Render and Netlify
+        if: ${{ steps.hosted-secrets.outputs.run_smoke == 'true' }}
         run: sleep 120
 
       - name: Run hosted founder smoke
+        if: ${{ steps.hosted-secrets.outputs.run_smoke == 'true' }}
         run: node ./scripts/openclaw-hosted-smoke.mjs

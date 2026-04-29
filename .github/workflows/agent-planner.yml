@@ -42,6 +42,17 @@ jobs:
       - name: Sync agent labels
         run: node ./scripts/pbk-agent-labels.mjs
 
+      - name: Check planner secrets
+        id: planner-secrets
+        shell: bash
+        run: |
+          if [ -z "$GOOGLE_API_KEY" ]; then
+            echo "run_planner=false" >> "$GITHUB_OUTPUT"
+            echo "GOOGLE_API_KEY is not configured; skipping agent planner."
+          else
+            echo "run_planner=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run agent planner
-        if: ${{ secrets.GOOGLE_API_KEY != '' }}
+        if: ${{ steps.planner-secrets.outputs.run_planner == 'true' }}
         run: node ./scripts/pbk-agent-planner.mjs

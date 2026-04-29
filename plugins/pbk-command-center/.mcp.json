@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "pbk-openclaw": {
+      "command": "node",
+      "args": [
+        "../../mcp-server/dist/index.js"
+      ],
+      "env": {
+        "PBK_BRIDGE_ENDPOINT": "http://127.0.0.1:8788",
+        "PBK_BRIDGE_API_KEY": "__SET_PBK_BRIDGE_API_KEY__"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "browseros": {
+      "url": "http://127.0.0.1:9000/mcp"
+    }
+  }
+}

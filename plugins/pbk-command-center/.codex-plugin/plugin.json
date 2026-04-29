@@ -1,0 +1,32 @@
+{
+  "name": "pbk-command-center",
+  "version": "0.1.0",
+  "description": "PBK Wholesale Paradise command-center design and implementation guardrails.",
+  "author": {
+    "name": "Probono Key Realty",
+    "url": "https://github.com/probonokeyrealty-cyber"
+  },
+  "homepage": "https://github.com/probonokeyrealty-cyber/PbkDesign-main/tree/main/plugins/pbk-command-center",
+  "repository": "https://github.com/probonokeyrealty-cyber/PbkDesign-main",
+  "license": "MIT",
+  "keywords": ["pbk", "command-center", "design-system", "browseros", "real-estate"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "PBK Command Center",
+    "shortDescription": "Keep PBK feature work inside the existing command-center design.",
+    "longDescription": "A repo-local plugin that anchors future PBK UI and BrowserOS work to the existing Bloomberg-style command-center system instead of allowing redesign drift.",
+    "developerName": "Probono Key Realty",
+    "category": "Productivity",
+    "capabilities": ["Write", "Interactive"],
+    "websiteURL": "https://github.com/probonokeyrealty-cyber/PbkDesign-main",
+    "privacyPolicyURL": "https://github.com/probonokeyrealty-cyber/PbkDesign-main/blob/main/plugins/pbk-command-center/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/probonokeyrealty-cyber/PbkDesign-main/blob/main/plugins/pbk-command-center/TERMS.md",
+    "defaultPrompt": [
+      "Add a small PBK feature without changing the overall design.",
+      "Place BrowserOS inside the Brain lane and existing tooling cards.",
+      "Use the PBK command-center references before touching UI."
+    ],
+    "brandColor": "#63C6FF"
+  }
+}

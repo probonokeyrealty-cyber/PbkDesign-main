@@ -17,9 +17,14 @@ interface PathDeliverablesProps {
   branding: PBKBranding;
   onBrandingChange: (branding: PBKBranding) => void;
   exportStatus: string;
+  documentDeliveryStatus: string;
   onPreview: () => void;
   onPrint: () => void;
   onGenerate: () => void;
+  onEmailDocuments: (payload: {
+    selectedDocuments: QuickDocumentType[];
+    senderProfile: 'warm' | 'cold';
+  }) => void | Promise<void>;
 }
 
 const documentLabels: Record<QuickDocumentType, string> = {
@@ -64,15 +69,19 @@ export function PathDeliverables({
   branding,
   onBrandingChange,
   exportStatus,
+  documentDeliveryStatus,
   onPreview,
   onPrint,
   onGenerate,
+  onEmailDocuments,
 }: PathDeliverablesProps) {
   const generatedDocuments = useMemo(
     () => buildDocumentSet(deal, branding),
     [deal, branding],
   );
   const [editableDocuments, setEditableDocuments] = useState<Record<QuickDocumentType, string>>(generatedDocuments);
+  const [selectedDocuments, setSelectedDocuments] = useState<QuickDocumentType[]>(['seller', 'loi']);
+  const [senderProfile, setSenderProfile] = useState<'warm' | 'cold'>('warm');
   const readiness = getPdfReadiness(deal);
 
   useEffect(() => {
@@ -98,6 +107,14 @@ export function PathDeliverables({
       });
     };
     reader.readAsDataURL(file);
+  };
+
+  const toggleDocumentSelection = (documentType: QuickDocumentType) => {
+    setSelectedDocuments((prev) =>
+      prev.includes(documentType)
+        ? prev.filter((item) => item !== documentType)
+        : [...prev, documentType],
+    );
   };
 
   return (
@@ -261,6 +278,78 @@ export function PathDeliverables({
               <Send size={14} />
               Generate Selected-Path Premium PDF
             </button>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 shadow-sm">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-blue-500 mb-2">
+              Email Delivery
+            </div>
+            <div className="text-[16px] font-semibold tracking-tight text-gray-900 dark:text-gray-100">
+              Send Seller Documents
+            </div>
+            <div className="mt-2 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+              Choose the exact docs to send and whether this should come from the warm business inbox or the cold outreach profile.
+            </div>
+
+            <div className="mt-3 grid gap-2">
+              {(['seller', 'loi', 'email', 'purchaseAgreement', 'assignmentContract', 'sellerQuestionnaire'] as QuickDocumentType[]).map((documentType) => (
+                <label
+                  key={documentType}
+                  className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-700 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-200"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedDocuments.includes(documentType)}
+                    onChange={() => toggleDocumentSelection(documentType)}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>{documentLabels[documentType]}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSenderProfile('warm')}
+                className={`rounded-xl border px-3 py-2 text-[11px] font-semibold transition-all ${
+                  senderProfile === 'warm'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-300'
+                }`}
+              >
+                Main Business Email
+              </button>
+              <button
+                type="button"
+                onClick={() => setSenderProfile('cold')}
+                className={`rounded-xl border px-3 py-2 text-[11px] font-semibold transition-all ${
+                  senderProfile === 'cold'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-300'
+                }`}
+              >
+                Cold Campaign Sender
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onEmailDocuments({ selectedDocuments, senderProfile })}
+              disabled={!selectedDocuments.length}
+              className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-[12px] font-semibold transition-all ${
+                selectedDocuments.length
+                  ? 'bg-slate-950 text-white hover:bg-slate-800 dark:bg-blue-500 dark:hover:bg-blue-400'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-slate-900 dark:text-slate-600'
+              }`}
+            >
+              <Send size={14} />
+              Email Selected Documents
+            </button>
+
+            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[10.5px] leading-5 text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-400">
+              {documentDeliveryStatus}
+            </div>
           </div>
 
           <DocumentPdfPanel

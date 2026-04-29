@@ -1,0 +1,22 @@
+{
+  "sources": [
+    {
+      "id": "county-auditor",
+      "kind": "public-records",
+      "allowed": true,
+      "notes": "Owner and mailing-address verification only."
+    },
+    {
+      "id": "public-listing-sites",
+      "kind": "listing-review",
+      "allowed": true,
+      "notes": "Use for visual review and recent listing context. Respect site rules and do not automate prohibited actions."
+    }
+  ],
+  "defaultTasks": [
+    "public-records-owner-verify",
+    "property-photos-and-condition-pass",
+    "distress-signal-scan",
+    "recent-listing-and-agent-scan"
+  ]
+}

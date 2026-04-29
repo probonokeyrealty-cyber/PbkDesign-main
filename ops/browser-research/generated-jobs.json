@@ -1,0 +1,27 @@
+{
+  "exportedAt": "2026-04-29T23:36:50.254Z",
+  "source": "C:\\Users\\Dell\\Documents\\New project 2\\PbkDesign-main\\.pbk-local\\openclaw-state.json",
+  "jobs": [
+    {
+      "id": "browser-job-1",
+      "leadId": "lead-diane-kowalski",
+      "sellerName": "Diane Kowalski",
+      "address": "202 Cherry Ln, Columbus OH",
+      "city": "",
+      "state": "",
+      "source": "daily_probate_import.csv",
+      "priority": "high",
+      "tags": [
+        "probate",
+        "high-equity",
+        "ohio"
+      ],
+      "tasks": [
+        "public-records-owner-verify",
+        "property-photos-and-condition-pass",
+        "distress-signal-scan",
+        "recent-listing-and-agent-scan"
+      ]
+    }
+  ]
+}

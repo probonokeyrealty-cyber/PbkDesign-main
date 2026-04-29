@@ -1,0 +1,104 @@
+{
+  "name": "PBK Tooling Health Check",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [220, 260]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'http://host.docker.internal:8788'}}/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            }
+          ]
+        }
+      },
+      "id": "bridge-health",
+      "name": "Bridge Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 180]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'http://host.docker.internal:8788'}}/api/quotas",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            }
+          ]
+        }
+      },
+      "id": "bridge-quotas",
+      "name": "Bridge Quotas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "const health = $items('Bridge Health', 0, 0)[0].json || {};\nconst quotas = $items('Bridge Quotas', 0, 0)[0].json || {};\nreturn [{ json: { ok: true, summary: `Bridge ${health.revision || 'unknown'} | approvals ${health.runtime?.productionReady ? 'ready' : 'needs work'} | docs today ${quotas.quotas?.docs?.deliveredToday || 0}` } }];"
+      },
+      "id": "summarize",
+      "name": "Summarize Runtime",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 260]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Bridge Health",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Bridge Quotas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bridge Health": {
+      "main": [
+        [
+          {
+            "node": "Summarize Runtime",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bridge Quotas": {
+      "main": [
+        [
+          {
+            "node": "Summarize Runtime",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "pbk-tooling-health-check-v1"
+}

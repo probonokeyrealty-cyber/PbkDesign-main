@@ -1,0 +1,4 @@
+langgraph>=0.2.60
+pydantic-ai>=0.0.16
+pydantic>=2.10.0
+python-dotenv>=1.0.1

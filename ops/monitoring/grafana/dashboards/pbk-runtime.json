@@ -1,0 +1,50 @@
+{
+  "title": "PBK Runtime",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Pending Approvals",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+      "targets": [{ "expr": "pbk_approvals_pending" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Pending Admin Tasks",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+      "targets": [{ "expr": "pbk_admin_tasks_pending" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Live Calls",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 },
+      "targets": [{ "expr": "pbk_calls_live" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Docs Delivered Today",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 },
+      "targets": [{ "expr": "pbk_documents_delivered_today" }]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Provider Readiness",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+      "targets": [{ "expr": "pbk_provider_ready" }]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Brain Sources Indexed",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+      "targets": [{ "expr": "pbk_brain_sources_indexed" }]
+    }
+  ]
+}

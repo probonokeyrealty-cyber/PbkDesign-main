@@ -1,0 +1,20 @@
+{
+  "name": "pbk-local",
+  "interface": {
+    "displayName": "PBK Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "pbk-command-center",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pbk-command-center"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

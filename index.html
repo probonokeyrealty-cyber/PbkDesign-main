@@ -5399,6 +5399,7 @@
       <p>A research agent that reads everything so your acquisition team doesn't have to. Wholesaling tactics, creative finance, cash deal structures, legal shifts, and local market pulse — all ingested, summarized, and queryable.</p>
     </div>
     <div class="page-head-actions">
+      <button class="btn btn-ghost" data-brain-action="browser-research">Browser research</button>
       <button class="btn btn-ghost" data-brain-action="export">Export library</button>
       <button class="btn btn-ghost">API</button>
       <button class="btn btn-primary" data-brain-action="ingest">+ Ingest source</button>
@@ -7750,6 +7751,20 @@
   @media (min-width: 721px) {
     .mobile-sheet, .mobile-sheet-backdrop { display: none !important; }
   }
+
+  /* keyboard focus rings for nav surfaces (rail, mobile bottom nav, more sheet) */
+  .rail-item:focus-visible,
+  .mobile-nav-item:focus-visible,
+  .mob-sheet-item:focus-visible {
+    outline: 2px solid var(--sky);
+    outline-offset: 2px;
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+  /* respect reduced-motion: drop the active scale effect */
+  @media (prefers-reduced-motion: reduce) {
+    .mob-sheet-item:active { transform: none !important; }
+  }
 </style>
 
 <!-- ===== ONBOARDING TOUR ===== -->
@@ -8176,6 +8191,12 @@
     const card = btn.closest('.qcard');
     if (!card) return;
 
+    if (card.dataset.adminTaskId && typeof handleAdminTaskAction === 'function') {
+      e.preventDefault();
+      handleAdminTaskAction(btn, card);
+      return;
+    }
+
     if (card.dataset.approvalId && typeof handleApprovalAction === 'function') {
       e.preventDefault();
       handleApprovalAction(btn, card);
@@ -8585,28 +8606,61 @@
     mobBackdrop.classList.remove('open');
     mobSheet.classList.remove('open');
   }
+  // Promote click-only divs to keyboard-operable buttons.
+  function makeKeyboardClickable(el, label) {
+    if (!el) return;
+    if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+    if (label && !el.hasAttribute('aria-label')) el.setAttribute('aria-label', label);
+    el.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        el.click();
+      }
+    });
+  }
   document.querySelectorAll('.mobile-nav-item').forEach(item => {
+    const labelText = item.querySelector('span')?.textContent?.trim();
+    makeKeyboardClickable(item, labelText || 'Open tab');
     item.addEventListener('click', () => {
       // "More" button opens the sheet, doesn't switch page
       if (item.id === 'mobMoreBtn') {
         openMobSheet();
         return;
       }
-      document.querySelectorAll('.mobile-nav-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.mobile-nav-item').forEach(i => {
+        i.classList.remove('active');
+        i.removeAttribute('aria-current');
+      });
       item.classList.add('active');
+      item.setAttribute('aria-current', 'page');
       if (item.dataset.page) showPage(item.dataset.page);
     });
   });
   // Sheet items navigate + close sheet
   document.querySelectorAll('.mob-sheet-item').forEach(item => {
+    const labelText = item.querySelector('span')?.textContent?.trim();
+    makeKeyboardClickable(item, labelText || 'Open tab');
     item.addEventListener('click', () => {
       const page = item.dataset.page;
       if (page) showPage(page);
       closeMobSheet();
       // mark More as active in bottom nav
-      document.querySelectorAll('.mobile-nav-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.mobile-nav-item').forEach(i => {
+        i.classList.remove('active');
+        i.removeAttribute('aria-current');
+      });
       document.getElementById('mobMoreBtn')?.classList.add('active');
+      document.getElementById('mobMoreBtn')?.setAttribute('aria-current', 'page');
     });
+  });
+  // Promote desktop rail items to keyboard-operable buttons too, with tooltip text as label.
+  document.querySelectorAll('.rail-item').forEach(item => {
+    const labelText = item.querySelector('.rail-tooltip')?.textContent?.trim();
+    makeKeyboardClickable(item, labelText || 'Open tab');
+    if (item.classList.contains('active')) {
+      item.setAttribute('aria-current', 'page');
+    }
   });
   mobBackdrop?.addEventListener('click', closeMobSheet);
   // Esc closes sheet
@@ -8618,9 +8672,18 @@
   const _origShowPage = showPage;
   window.showPage = function(name) {
     _origShowPage(name);
-    document.querySelectorAll('.mobile-nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.mobile-nav-item').forEach(i => {
+      i.classList.remove('active');
+      i.removeAttribute('aria-current');
+    });
     const mob = document.querySelector(`.mobile-nav-item[data-page="${name}"]`);
-    if (mob) mob.classList.add('active');
+    if (mob) {
+      mob.classList.add('active');
+      mob.setAttribute('aria-current', 'page');
+    }
+    // Mirror aria-current on the desktop rail too.
+    document.querySelectorAll('.rail-item').forEach(i => i.removeAttribute('aria-current'));
+    document.querySelector(`.rail-item[data-page="${name}"]`)?.setAttribute('aria-current', 'page');
   };
 
   // =========================================================
@@ -11873,6 +11936,40 @@
     });
   }
 
+  async function promptAndLaunchBrowserResearch() {
+    if (!PBK.openclaw.isConnected()) {
+      toast({
+        type: 'info',
+        title: 'Connect OpenClaw first',
+        desc: 'Connect the local brain before launching BrowserOS research from PBK.'
+      });
+      return;
+    }
+
+    const prompt = window.prompt('Browser research request', 'Use BrowserOS to inspect the Zillow page for 202 Cherry Ln and summarize the property details.');
+    if (!prompt) return;
+
+    appendBrainMessage('user', prompt);
+
+    try {
+      const response = await PBK.openclaw.invoke('launchBrowserResearch', {
+        query: prompt,
+        requestedBy: 'Jordan',
+        source: 'legacy-brain'
+      });
+      const result = response?.result || response;
+      appendBrainMessage('ai', result?.answer || 'Browser research request queued.', result?.citations || []);
+      if (response?.state) renderOpenClawState(response.state);
+      else await syncOpenClawState({ silent: true });
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: 'Browser research failed',
+        desc: error?.message || 'The local bridge did not accept that BrowserOS request.'
+      });
+    }
+  }
+
   function wireBrainRuntime() {
     const page = document.querySelector('[data-page="brain"]');
     if (!page || page.dataset.runtimeWired === 'true') return;
@@ -11906,6 +12003,10 @@
 
       if (action === 'export') {
         exportBrainLibrary();
+      }
+
+      if (action === 'browser-research') {
+        promptAndLaunchBrowserResearch();
       }
     });
 
@@ -12988,6 +13089,483 @@
   cpInput.addEventListener('input', updatePaletteMeta);
   cpResults.querySelector('[data-nav="activity-log"] .cp-sub')?.insertAdjacentText('beforeend', ' — palette');
   cpResults.querySelector('[data-nav="recordings"] .cp-sub')?.insertAdjacentText('beforeend', ' — palette');
+
+  async function fetchOpenClawQuotas(config = getOpenClawConfig()) {
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+
+    const candidates = [
+      `${base}/api/quotas`,
+      `${base}/quotas`
+    ];
+
+    let lastError = null;
+    for (const url of candidates) {
+      try {
+        const response = await fetchWithTimeout(url, {
+          headers: buildOpenClawHeaders(config)
+        }, 4500);
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        const type = response.headers.get('content-type') || '';
+        const body = type.includes('json') ? await response.json() : await response.text();
+        return body?.quotas || body || null;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('OpenClaw quotas endpoint did not respond.');
+  }
+
+  async function fetchOpenClawToolingStatus(config = getOpenClawConfig()) {
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+
+    const candidates = [
+      `${base}/api/tooling/status`,
+      `${base}/tooling/status`
+    ];
+
+    let lastError = null;
+    for (const url of candidates) {
+      try {
+        const response = await fetchWithTimeout(url, {
+          headers: buildOpenClawHeaders(config)
+        }, 4500);
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        const type = response.headers.get('content-type') || '';
+        const body = type.includes('json') ? await response.json() : await response.text();
+        return body?.tooling || body || null;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('OpenClaw tooling endpoint did not respond.');
+  }
+
+  function ensureProviderRow(listEl, key, label) {
+    if (!listEl) return null;
+    let row = listEl.querySelector(`.settings-providers-row[data-provider="${key}"]`);
+    if (row) return row;
+
+    row = document.createElement('li');
+    row.className = 'settings-providers-row';
+    row.dataset.provider = key;
+    row.innerHTML = `
+      <span class="settings-providers-dot" aria-hidden="true"></span>
+      <span class="settings-providers-name">${escapeHtml(label)}</span>
+      <span class="settings-providers-state">-</span>
+    `;
+    listEl.appendChild(row);
+    return row;
+  }
+
+  function buildQuotaSummary(quotas) {
+    if (!quotas || typeof quotas !== 'object') return '';
+    const bits = [];
+    if (quotas.instantly) {
+      bits.push(`Instantly ${Number(quotas.instantly.suggestedRemainingDaily || 0)} suggested sends left today`);
+    }
+    if (quotas.telnyx) {
+      bits.push(`Telnyx ${Number(quotas.telnyx.phoneNumbersConfigured || 0)} numbers configured`);
+      bits.push(`Active calls ${Number(quotas.telnyx.activeCalls || 0)}`);
+    }
+    if (quotas.docs) {
+      bits.push(`Docs delivered today ${Number(quotas.docs.deliveredToday || 0)}`);
+      bits.push(`Admin queue ${Number(quotas.docs.queuedAdminTasks || 0)}`);
+    }
+    return bits.filter(Boolean).join(' · ');
+  }
+
+  function buildToolingSummary(tooling) {
+    if (!tooling || typeof tooling !== 'object') return '';
+    const summary = tooling.summary || {};
+    const bits = [];
+    if (summary.totalCount) {
+      bits.push(`Tooling ${Number(summary.readyCount || 0)}/${Number(summary.totalCount || 0)} ready`);
+    }
+    if (tooling.browserOs?.ready) {
+      bits.push('BrowserOS registered');
+    }
+    if (tooling.metaAgent?.scenarioLeads) {
+      bits.push(`Meta-agent ${Number(tooling.metaAgent.scenarioLeads || 0)} leads exported`);
+    }
+    if (tooling.browserResearch?.jobsSeeded) {
+      bits.push(`Browser research ${Number(tooling.browserResearch.jobsSeeded || 0)} jobs`);
+    }
+    if (tooling.observability?.dashboardPanels) {
+      bits.push(`Grafana ${Number(tooling.observability.dashboardPanels || 0)} panels`);
+    }
+    return bits.filter(Boolean).join(' Â· ');
+  }
+
+  const baseRenderProvidersCard = renderProvidersCard;
+  renderProvidersCard = function(providers, quotas = PBK.state.openclawQuotas || null, tooling = PBK.state.openclawTooling || null) {
+    baseRenderProvidersCard(providers);
+
+    const card = document.querySelector('[data-settings-card="providers"]');
+    if (!card) return;
+
+    const summaryEl = card.querySelector('[data-providers-summary]');
+    const noteEl = card.querySelector('[data-providers-note]');
+    const listEl = card.querySelector('[data-providers-list]');
+    let quotaEl = card.querySelector('[data-providers-quotas]');
+    let toolingEl = card.querySelector('[data-providers-tooling]');
+
+    if (!quotaEl) {
+      quotaEl = document.createElement('p');
+      quotaEl.className = 'settings-runtime-note';
+      quotaEl.dataset.providersQuotas = 'true';
+      listEl?.after(quotaEl);
+    }
+
+    if (!toolingEl) {
+      toolingEl = document.createElement('p');
+      toolingEl.className = 'settings-runtime-note';
+      toolingEl.dataset.providersTooling = 'true';
+      quotaEl?.after(toolingEl);
+    }
+
+    const providerLabels = {
+      telnyx: 'Telnyx',
+      instantly: 'Instantly',
+      docusign: 'DocuSign',
+      batchdata: 'BatchData',
+      slack: 'Slack',
+      render: 'Render'
+    };
+
+    const order = ['telnyx', 'instantly', 'docusign', 'batchdata', 'slack', 'render'];
+    const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
+    const shortList = (items, limit = 2) => {
+      const list = normalizeMissing(items);
+      if (!list.length) return '';
+      const shown = list.slice(0, limit);
+      const extra = list.length - shown.length;
+      return extra > 0 ? `${shown.join(', ')} +${extra}` : shown.join(', ');
+    };
+    const buildMissingHint = (meta, key) => {
+      const missing = normalizeMissing(meta?.missing);
+      const messagingMissing = normalizeMissing(meta?.messagingMissing);
+      const voiceMissing = normalizeMissing(meta?.voiceMissing);
+
+      if (key === 'telnyx') {
+        const parts = [];
+        if (meta?.messagingReady === false && messagingMissing.length) parts.push(`SMS: ${shortList(messagingMissing)}`);
+        if (meta?.voiceReady === false && voiceMissing.length) parts.push(`Voice: ${shortList(voiceMissing)}`);
+        if (!parts.length && missing.length) parts.push(shortList(missing));
+        return parts.length ? `Missing ${parts.join(' · ')}` : '';
+      }
+
+      if (missing.length) return `Missing ${shortList(missing)}`;
+      if (messagingMissing.length) return `Missing ${shortList(messagingMissing)}`;
+      if (voiceMissing.length) return `Missing ${shortList(voiceMissing)}`;
+      return '';
+    };
+
+    if (!providers) {
+      if (quotaEl) quotaEl.textContent = 'Quota and delivery counters appear here once the bridge responds.';
+      if (toolingEl) toolingEl.textContent = 'Advanced tooling readiness appears here once the bridge responds.';
+      return;
+    }
+
+    let liveCount = 0;
+    let configuredCount = 0;
+
+    order.forEach((key) => {
+      const meta = providers?.[key];
+      if (!meta) return;
+      const row = ensureProviderRow(listEl, key, providerLabels[key] || key);
+      if (!row) return;
+
+      const isReady = Boolean(meta.ready);
+      const isConfigured = Boolean(meta.configured);
+      const hint = buildMissingHint(meta, key);
+      const stateEl = row.querySelector('.settings-providers-state');
+      const nameEl = row.querySelector('.settings-providers-name');
+
+      if (isReady) liveCount += 1;
+      if (isConfigured) configuredCount += 1;
+
+      let state = 'missing';
+      let label = 'Not configured';
+
+      if (isReady) {
+        state = 'ready';
+        label = 'Live';
+        if (key === 'telnyx') {
+          const lanes = [];
+          if (meta.messagingReady) lanes.push('SMS');
+          if (meta.voiceReady) lanes.push('voice');
+          if (lanes.length) label = `Live · ${lanes.join(' + ')}`;
+        } else if (key === 'instantly') {
+          label = 'Live · campaign admin ready';
+        } else if (key === 'render') {
+          label = 'Live · deploy control ready';
+        }
+      } else if (isConfigured) {
+        state = 'warning';
+        if (key === 'telnyx') {
+          const lanes = [];
+          if (meta.messagingReady) lanes.push('SMS ready');
+          if (meta.voiceReady) lanes.push('voice ready');
+          const prefix = lanes.length ? `Partial · ${lanes.join(' + ')}` : 'Configured · not ready';
+          label = hint ? `${prefix} · ${hint}` : prefix;
+        } else if (key === 'instantly') {
+          label = hint ? `Configured · ${hint}` : 'Configured · awaiting quota check';
+        } else if (key === 'render') {
+          label = hint ? `Configured · ${hint}` : 'Configured · awaiting deploy check';
+        } else {
+          const prefix = 'Configured · not ready';
+          label = hint ? `${prefix} · ${hint}` : prefix;
+        }
+      } else {
+        label = hint ? `Not configured · ${hint}` : 'Not configured';
+      }
+
+      row.dataset.state = state;
+      if (stateEl) stateEl.textContent = label;
+      if (nameEl) nameEl.textContent = providerLabels[key] || key;
+    });
+
+    if (summaryEl) {
+      if (liveCount === 0 && configuredCount === 0) {
+        summaryEl.textContent = 'No providers configured';
+      } else if (liveCount === order.length) {
+        summaryEl.textContent = `${order.length} of ${order.length} live`;
+      } else {
+        summaryEl.textContent = `${liveCount} of ${order.length} live · ${order.length - liveCount} need setup`;
+      }
+    }
+
+    if (noteEl) {
+      noteEl.textContent = liveCount === order.length
+        ? 'Bridge health reports all provider APIs live.'
+        : `Bridge health reports ${liveCount} of ${order.length} live. Missing requirements are listed per provider (Render env vars).`;
+    }
+
+    if (quotaEl) {
+      const quotaSummary = buildQuotaSummary(quotas);
+      quotaEl.textContent = quotaSummary || 'Quota and delivery counters will appear after the next bridge sync.';
+    }
+    if (toolingEl) {
+      const toolingSummary = buildToolingSummary(tooling);
+      toolingEl.textContent = toolingSummary || 'Advanced tooling readiness will appear after the next bridge sync.';
+    }
+  };
+
+  renderApprovalQueue = function(snapshot) {
+    const container = document.querySelector('[data-openclaw-feed="approvals"]');
+    const countNode = document.querySelector('[data-openclaw-count="approvals"]');
+    if (!container) return;
+
+    const config = getOpenClawConfig();
+    const lastSyncCopy = config.runtimeMeta?.lastSyncAt ? formatRelativeTime(config.runtimeMeta.lastSyncAt) : 'never';
+    const staleNotice = config.status === 'connected'
+      ? ''
+      : `
+        <div class="qcard" style="border-left-color: var(--amber);">
+          <div class="qcard-head">
+            <span class="qcard-type">Bridge</span>
+            <span class="qcard-time">stale</span>
+          </div>
+          <div class="qcard-body">Showing the last successful approval snapshot from ${escapeHtml(lastSyncCopy)}. Reconnect OpenClaw to resume live approval updates.</div>
+        </div>
+      `;
+
+    const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending').slice(0, 5) : [];
+    const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending').slice(0, 4) : [];
+    const totalQueued = approvals.length + adminTasks.length;
+
+    if (countNode) countNode.textContent = `— ${totalQueued}`;
+
+    if (!totalQueued) {
+      container.innerHTML = `
+        ${staleNotice}
+        <div class="qcard" style="border-left-color: var(--sky-dim);">
+          <div class="qcard-head">
+            <span class="qcard-type">Runtime</span>
+            <span class="qcard-time">live</span>
+          </div>
+          <div class="qcard-body">No pending approvals or admin actions right now. New offer, contract, outbound, and infrastructure requests will appear here.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const approvalCards = approvals.map((approval) => {
+      const type = String(approval.type || 'offer').toLowerCase();
+      const primaryLabel = type === 'contract' ? 'Send Contract' : type === 'outbound' ? 'Start' : 'Approve';
+      const secondaryLabel = type === 'contract' ? 'Edit' : type === 'outbound' ? 'Later' : 'Reject';
+      const accent = type === 'contract' ? 'var(--ion)' : type === 'outbound' ? 'var(--magenta)' : 'var(--amber)';
+      return `
+        <div class="qcard" data-approval-id="${escapeHtml(approval.id)}" style="border-left-color: ${accent};">
+          <div class="qcard-head">
+            <span class="qcard-type" style="color: ${accent};">● ${escapeHtml(type.charAt(0).toUpperCase() + type.slice(1))}</span>
+            <span class="qcard-time">${escapeHtml(formatRelativeTime(approval.createdAt))}</span>
+          </div>
+          <div class="qcard-body">
+            ${escapeHtml(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`)}
+            <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">
+              ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
+            </span>
+          </div>
+          <div class="qcard-actions">
+            <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
+            <button class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const adminCards = adminTasks.map((task) => {
+      const summary = task.summary || task.reason || 'Administrative action is waiting for approval.';
+      const impact = task.costEstimate ? `Estimated cost ${task.costEstimate}` : (task.scope || 'Infrastructure update');
+      return `
+        <div class="qcard" data-admin-task-id="${escapeHtml(task.id)}" style="border-left-color: var(--sky);">
+          <div class="qcard-head">
+            <span class="qcard-type" style="color: var(--sky);">● Admin</span>
+            <span class="qcard-time">${escapeHtml(formatRelativeTime(task.createdAt))}</span>
+          </div>
+          <div class="qcard-body">
+            <strong>${escapeHtml(String(task.kind || 'admin').replace(/-/g, ' '))}</strong> — ${escapeHtml(summary)}
+            <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">${escapeHtml(impact)}</span>
+          </div>
+          <div class="qcard-actions">
+            <button class="btn btn-primary" data-admin-action="approved">Approve</button>
+            <button class="btn btn-ghost" data-admin-action="rejected">Reject</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = `${staleNotice}${approvalCards}${adminCards}`;
+  };
+
+  async function updateAdminTaskDecision(taskId, status) {
+    const config = getOpenClawConfig();
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+
+    const response = await fetchWithTimeout(`${base}/api/admin/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PUT',
+      headers: buildOpenClawHeaders(config, true),
+      body: JSON.stringify({
+        status,
+        actor: 'PBK dashboard',
+        note: `Dashboard marked task ${status}.`
+      })
+    }, 12000);
+
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  }
+
+  async function handleAdminTaskAction(button, card) {
+    const taskId = card.dataset.adminTaskId;
+    const action = button.dataset.adminAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
+    if (!taskId) return;
+
+    if (!PBK.openclaw.isConnected()) {
+      card.style.transition = 'opacity 0.3s, transform 0.3s';
+      card.style.opacity = '0';
+      card.style.transform = 'translateX(-12px)';
+      setTimeout(() => card.remove(), 300);
+      toast({
+        type: action === 'approved' ? 'success' : 'warning',
+        title: action === 'approved' ? 'Admin approval staged' : 'Admin decision staged',
+        desc: 'Connect the local OpenClaw bridge to turn this queue into a live admin callback.'
+      });
+      return;
+    }
+
+    button.disabled = true;
+    try {
+      await updateAdminTaskDecision(taskId, action);
+      await syncOpenClawState({ silent: true });
+      toast({
+        type: action === 'approved' ? 'success' : 'warning',
+        title: action === 'approved' ? 'Admin action sent to OpenClaw' : 'Admin task rejected',
+        desc: 'Rex and the bridge audit log were updated.'
+      });
+    } catch (error) {
+      button.disabled = false;
+      toast({
+        type: 'error',
+        title: 'Admin action failed',
+        desc: error?.message || 'The local brain did not accept that admin decision.'
+      });
+    }
+  }
+
+  const baseGetFounderRuntimeSummary = getFounderRuntimeSummary;
+  getFounderRuntimeSummary = function() {
+    const summary = baseGetFounderRuntimeSummary();
+    const snapshot = PBK.state.openclawRuntime || {};
+    const quotas = PBK.state.openclawQuotas || {};
+    const tooling = PBK.state.openclawTooling || {};
+    const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((task) => task.status === 'pending') : [];
+    const documentsDeliveredToday = Number(quotas?.docs?.deliveredToday || 0);
+    const toolingReady = Number(tooling?.summary?.readyCount || 0);
+    const toolingTotal = Number(tooling?.summary?.totalCount || 0);
+
+    return {
+      ...summary,
+      brain: {
+        ...summary.brain,
+        note: summary.docsCount
+          ? `${summary.pendingApprovals} pending approvals · ${adminTasks.length} admin actions · ${documentsDeliveredToday} docs sent today.`
+          : summary.brain.note
+      },
+        workflow: {
+          ...summary.workflow,
+          note: `${summary.workflow.note} ${adminTasks.length ? `Admin queue ${adminTasks.length} pending.` : 'No admin backlog right now.'} ${toolingTotal ? `Tooling ${toolingReady}/${toolingTotal} ready.` : ''}`.trim()
+        },
+        next: {
+          ...summary.next,
+          note: `${summary.next.note}${documentsDeliveredToday ? ` ${documentsDeliveredToday} seller packets already went out today.` : ''}`.trim()
+        },
+        adminTasksPending: adminTasks.length,
+        documentsDeliveredToday,
+        toolingReady,
+        toolingTotal
+      };
+  };
+
+  const baseRenderOpenClawState = renderOpenClawState;
+  renderOpenClawState = function(snapshot) {
+    baseRenderOpenClawState(snapshot);
+    renderProvidersCard(snapshot?.status?.providers || getOpenClawConfig().runtimeMeta?.providers || null, PBK.state.openclawQuotas || null);
+  };
+
+  syncOpenClawState = async function({ silent = false } = {}) {
+    const config = getOpenClawConfig();
+    const [snapshot, health, quotas, tooling] = await Promise.all([
+      fetchOpenClawState(config),
+      probeOpenClaw(config).catch(() => null),
+      fetchOpenClawQuotas(config).catch(() => null),
+      fetchOpenClawToolingStatus(config).catch(() => null)
+    ]);
+    openClawPollFailures = 0;
+    PBK.state.openclawQuotas = quotas;
+    PBK.state.openclawTooling = tooling;
+    renderOpenClawState(snapshot);
+    const connected = saveOpenClawConfig({
+      ...config,
+      status: 'connected',
+      lastCheckedAt: Date.now(),
+      lastMessage: `Live sync ok — updated ${formatRuntimeTime(snapshot?.status?.lastUpdatedAt)}`,
+      runtimeMeta: health?.runtimeMeta || sanitizeOpenClawRuntimeMeta({
+        ...(config.runtimeMeta || {}),
+        lastSyncAt: new Date().toISOString()
+      })
+      });
+      reflectOpenClawUI(connected);
+      renderProvidersCard(connected.runtimeMeta?.providers || snapshot?.status?.providers || null, quotas, tooling);
+      if (!silent) PBK.events.emit('openclaw:status', connected);
+      return snapshot;
+    };
 
   wireOpenClawCard();
   wireBrainRuntime();

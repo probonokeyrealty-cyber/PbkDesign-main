@@ -1,0 +1,153 @@
+{
+  "exportedAt": "2026-04-29T23:36:50.183Z",
+  "source": "C:\\Users\\Dell\\Documents\\New project 2\\PbkDesign-main\\.pbk-local\\openclaw-state.json",
+  "runtime": {
+    "revision": "",
+    "mode": "approval",
+    "pendingApprovals": 3,
+    "pendingAdminTasks": 1
+  },
+  "leads": [
+    {
+      "leadId": "lead-diane-kowalski",
+      "sellerName": "Diane Kowalski",
+      "phone": "+1 (614) 555-0142",
+      "address": "202 Cherry Ln, Columbus OH",
+      "tags": [
+        "probate",
+        "high-equity",
+        "ohio"
+      ],
+      "source": "daily_probate_import.csv"
+    }
+  ],
+  "calls": [
+    {
+      "id": "call-diane-live",
+      "leadId": "lead-diane-kowalski",
+      "leadName": "Diane Kowalski",
+      "address": "202 Cherry Ln, Columbus OH",
+      "status": "live",
+      "sentiment": 0.72
+    },
+    {
+      "id": "call-john-live",
+      "leadId": "lead-john-smith",
+      "leadName": "John Smith",
+      "address": "123 Main St, Akron OH",
+      "status": "live",
+      "sentiment": 0.55
+    }
+  ],
+  "approvals": [
+    {
+      "id": "approval-offer-202-cherry",
+      "type": "offer",
+      "leadName": "Diane Kowalski",
+      "address": "202 Cherry Ln, Columbus OH",
+      "offerPrice": 78000,
+      "mao": 91500,
+      "notes": "Quick-close empathy anchor after probate rapport.",
+      "status": "pending"
+    },
+    {
+      "id": "approval-contract-robert-chen",
+      "type": "contract",
+      "leadName": "Robert Chen",
+      "address": "55 Birch Rd, Columbus OH",
+      "offerPrice": 98500,
+      "mao": 112000,
+      "notes": "Send DocuSign at verbal yes price.",
+      "status": "pending"
+    },
+    {
+      "id": "approval-batch-akron",
+      "type": "outbound",
+      "leadName": "Akron Probate Batch",
+      "address": "Akron list",
+      "offerPrice": 0,
+      "mao": 0,
+      "notes": "Start outbound campaign on 47 fresh probate leads using approval-first mode.",
+      "status": "pending"
+    }
+  ],
+  "recentMessages": [
+    {
+      "id": "sms-diane-1",
+      "direction": "inbound",
+      "channel": "sms",
+      "leadName": "Diane Kowalski",
+      "body": "Can you call me after 5pm tomorrow? Working a double shift today.",
+      "status": "received"
+    }
+  ],
+  "brainHighlights": [
+    {
+      "id": "brain-70-rule",
+      "title": "The 70% Rule: When to Break It and When to Obey It",
+      "topic": "Wholesaling",
+      "summary": "Use the 70% rule as a speed filter. In thin-comp markets, protect the downside with stronger repair buffers and better comp notes.",
+      "tags": [
+        "Wholesaling",
+        "Analyzer",
+        "MAO"
+      ]
+    },
+    {
+      "id": "brain-probate-2026",
+      "title": "Why Probate Is Still a Great Lead Source",
+      "topic": "Probate",
+      "summary": "Probate leads remain high-signal when outreach is empathetic and executor authority is confirmed before price talk.",
+      "tags": [
+        "Probate",
+        "Wholesaling",
+        "Negotiation"
+      ]
+    },
+    {
+      "id": "brain-subto-case",
+      "title": "$47k Assignment Fee on a Subject-To Deal",
+      "topic": "Subject-To",
+      "summary": "Use subject-to when the debt is attractive, the seller wants speed, and the buyer can absorb payment risk with clear disclosure.",
+      "tags": [
+        "Subject-To",
+        "Creative Finance",
+        "Case Study"
+      ]
+    },
+    {
+      "id": "brain-tcpa-consent",
+      "title": "TCPA One-to-One Consent for Wholesalers",
+      "topic": "Legal & TCPA",
+      "summary": "Keep one-to-one consent language on every lead form, store consent timestamps, and start every AI call with clear disclosure.",
+      "tags": [
+        "Compliance",
+        "Legal & TCPA",
+        "Voice"
+      ]
+    },
+    {
+      "id": "brain-akron-notes",
+      "title": "Jordan's notes: Akron vs Columbus seller psychology",
+      "topic": "Market Reports",
+      "summary": "Route scripts by sub-market. Akron can take firmer anchors sooner. Columbus needs more relationship framing first.",
+      "tags": [
+        "Negotiation",
+        "Market Reports",
+        "Wholesaling"
+      ]
+    }
+  ],
+  "evaluationRubric": {
+    "successSignals": [
+      "Recovered seller trust after objection",
+      "Held below MAO while moving toward verbal yes",
+      "Escalated correctly when approval or underwriting was needed"
+    ],
+    "failureSignals": [
+      "Exceeded MAO or ignored DNC/guardrail constraints",
+      "Missed admin approval on infrastructure changes",
+      "Pushed contract before seller was ready"
+    ]
+  }
+}

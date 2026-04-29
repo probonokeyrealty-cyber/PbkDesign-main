@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: "PBK Dashboards"
+    orgId: 1
+    folder: "PBK"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

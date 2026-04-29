@@ -19,6 +19,7 @@ import {
   normalizeSelectedPath,
   openMasterPackageWindow,
 } from './utils/pbk';
+import { sendDealToAgent, sendSellerDocsRequest, syncDealAnalysis } from './utils/runtimeBridge';
 
 const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'address',
@@ -140,6 +141,8 @@ export default function App() {
   const [branding, setBranding] = useState<PBKBranding>(DEFAULT_BRANDING);
   const [exportStatus, setExportStatus] = useState('Select a path and complete seller info to generate.');
   const [analyzeStatus, setAnalyzeStatus] = useState('');
+  const [documentDeliveryStatus, setDocumentDeliveryStatus] = useState('Choose the documents you want to email from the PBK business sender.');
+  const generatedDocuments = buildDocumentSet(deal, branding);
 
   const buildMergedDealState = (base: DealData, incoming: Partial<DealData> = {}): DealData => {
     const next: DealData = {
@@ -436,7 +439,7 @@ export default function App() {
     });
   };
 
-  const handleAnalyzeDeal = () => {
+  const handleAnalyzeDeal = async () => {
     const readiness = getAnalyzeReadiness(deal);
 
     if (!readiness.ready) {
@@ -445,13 +448,57 @@ export default function App() {
       return;
     }
 
-    setDeal((prev) => ({
-      ...prev,
-      isAnalyzed: true,
-    }));
-    setAnalyzeStatus(readiness.successMessage);
+    try {
+      const response = await syncDealAnalysis(deal);
+      const result = (response as { result?: Record<string, unknown> }).result || (response as Record<string, unknown>);
+      setDeal((prev) => ({
+        ...prev,
+        isAnalyzed: true,
+        arv: Number(result?.arv || prev.arv || 0),
+        mao60: Number(result?.mao || prev.mao60 || 0),
+        maoRBP: Number(result?.mao || prev.maoRBP || 0),
+        offer: Number(result?.targetOffer || prev.offer || 0),
+        repairs: {
+          ...prev.repairs,
+          mid: Number(result?.repairsMid || prev.repairs.mid || 0),
+        },
+      }));
+      setAnalyzeStatus(
+        result?.mao
+          ? `Bridge analysis synced. ARV ${Number(result.arv || 0).toLocaleString()} · MAO ${Number(result.mao || 0).toLocaleString()}`
+          : readiness.successMessage,
+      );
+    } catch (error) {
+      setDeal((prev) => ({
+        ...prev,
+        isAnalyzed: true,
+      }));
+      setAnalyzeStatus(
+        error instanceof Error
+          ? `Runtime sync failed, but the local analyzer is still ready: ${error.message}`
+          : readiness.successMessage,
+      );
+    }
+
     setActiveTab('callmode');
     setRightPanelOpen(false);
+  };
+
+  const handleSendToAgent = async () => {
+    if (!deal.address.trim()) {
+      setAnalyzeStatus('Enter a property address before sending this deal to Ava.');
+      setActiveTab('analyzer');
+      return;
+    }
+
+    try {
+      await sendDealToAgent(deal);
+      setAnalyzeStatus('Analyzer snapshot sent to Ava and the runtime CRM queue.');
+    } catch (error) {
+      setAnalyzeStatus(
+        error instanceof Error ? `Could not send this deal to Ava: ${error.message}` : 'Could not send this deal to Ava.',
+      );
+    }
   };
 
   const handleReset = () => {
@@ -521,6 +568,37 @@ export default function App() {
       setExportStatus('Premium package was blocked. Allow popups and try again.');
     } else {
       setExportStatus('Premium package opened in print-ready mode.');
+    }
+  };
+
+  const handleEmailDocuments = async ({
+    selectedDocuments,
+    senderProfile,
+  }: {
+    selectedDocuments: string[];
+    senderProfile: 'warm' | 'cold';
+  }) => {
+    try {
+      const response = await sendSellerDocsRequest({
+        leadId: deal.address || undefined,
+        leadName: deal.sellerName || undefined,
+        address: deal.address,
+        email: deal.sellerEmail,
+        senderProfile,
+        selectedDocuments,
+        documentSet: generatedDocuments,
+        selectedPathLabel: normalizeSelectedPath(deal),
+      });
+      const delivery = response?.delivery as { status?: string } | undefined;
+      setDocumentDeliveryStatus(
+        delivery?.status === 'sent'
+          ? `Seller package emailed from the ${senderProfile} sender profile.`
+          : `Seller package queued with the ${senderProfile} sender profile.`,
+      );
+    } catch (error) {
+      setDocumentDeliveryStatus(
+        error instanceof Error ? `Email delivery failed: ${error.message}` : 'Email delivery failed.',
+      );
     }
   };
 
@@ -716,6 +794,7 @@ export default function App() {
                 selectedPath={normalizeSelectedPath(deal)}
                 onDealChange={handleDealChange}
                 onAnalyze={handleAnalyzeDeal}
+                onSendToAgent={handleSendToAgent}
                 onOpenCallMode={handleOpenCallModeForPath}
                 analyzeStatus={analyzeStatus}
               />
@@ -737,9 +816,11 @@ export default function App() {
                 branding={branding}
                 onBrandingChange={setBranding}
                 exportStatus={exportStatus}
+                documentDeliveryStatus={documentDeliveryStatus}
                 onPreview={handlePreview}
                 onPrint={handlePrintPackage}
                 onGenerate={handleGeneratePackage}
+                onEmailDocuments={handleEmailDocuments}
               />
             )}
             {activeTab === 'crm' && <CRMFeatures />}

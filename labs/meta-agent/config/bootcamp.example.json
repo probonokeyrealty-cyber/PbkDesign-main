@@ -1,0 +1,15 @@
+{
+  "populationSize": 12,
+  "simulationCallsPerAgent": 24,
+  "approvalThreshold": 0.78,
+  "promotionTrafficPercent": 5,
+  "profitFloor": 5000,
+  "fallbackModel": "gemini-2.5-flash",
+  "graderWeights": {
+    "guardrails": 0.3,
+    "margin": 0.25,
+    "empathy": 0.2,
+    "closeRate": 0.15,
+    "handoffQuality": 0.1
+  }
+}

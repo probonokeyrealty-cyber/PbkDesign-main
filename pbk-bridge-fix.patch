@@ -1,0 +1,207 @@
+# PBK bridge auth + Dockerfile fix
+# Apply with: cd PbkDesign-main && git apply pbk-bridge-fix.patch
+
+diff --git a/Dockerfile.openclaw b/Dockerfile.openclaw
+--- a/Dockerfile.openclaw
++++ b/Dockerfile.openclaw
+@@ -1,12 +1,73 @@
+-FROM node:22-alpine
++# PBK OpenClaw bridge — public host image (Render, Fly, etc.)
++#
++# The bridge needs:
++#   - node 22+
++#   - @sparticuz/chromium  (Chrome binary for serverless/container PDF rendering)
++#   - puppeteer-core       (Puppeteer that talks to an external Chrome binary)
++#
++# Alpine + glibc-built chromium do not mix; use the Debian slim base so the
++# Sparticuz Chromium binary can find its libc and X11 deps.
++
++FROM node:22-slim
++
++# Runtime libraries Chrome needs. Sparticuz ships the binary, but the host
++# image still needs the GTK/X11/font/SSL stack for it to launch.
++RUN apt-get update && apt-get install -y --no-install-recommends \
++      ca-certificates \
++      fonts-liberation \
++      libasound2 \
++      libatk-bridge2.0-0 \
++      libatk1.0-0 \
++      libc6 \
++      libcairo2 \
++      libcups2 \
++      libdbus-1-3 \
++      libexpat1 \
++      libfontconfig1 \
++      libgbm1 \
++      libgcc-s1 \
++      libglib2.0-0 \
++      libgtk-3-0 \
++      libnspr4 \
++      libnss3 \
++      libpango-1.0-0 \
++      libpangocairo-1.0-0 \
++      libstdc++6 \
++      libx11-6 \
++      libx11-xcb1 \
++      libxcb1 \
++      libxcomposite1 \
++      libxcursor1 \
++      libxdamage1 \
++      libxext6 \
++      libxfixes3 \
++      libxi6 \
++      libxrandr2 \
++      libxrender1 \
++      libxss1 \
++      libxtst6 \
++  && rm -rf /var/lib/apt/lists/*
+ 
+ WORKDIR /app
+ 
++# Install ONLY the bridge's runtime deps. The frontend's React/Radix universe
++# in the repo's package.json is irrelevant to this container, so we don't ship it.
++# Pinned to the exact versions resolved in the repo's package-lock.json.
++RUN npm install --no-save --no-audit --no-fund --loglevel=error \
++      @sparticuz/chromium@147.0.1 \
++      puppeteer-core@24.41.0
++
++# Copy the bridge source last so dependency installation caches across rebuilds.
+ COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+ 
++# Default to the persistent state path that render.yaml mounts.
+ ENV NODE_ENV=production
+-ENV PORT=10000
++ENV PBK_OPENCLAW_STATE_DIR=/app/.pbk-local
+ 
++# Render injects $PORT at runtime — the bridge already reads it. 10000 is the
++# default fallback when nothing is injected.
++ENV PORT=10000
+ EXPOSE 10000
+ 
++# `--public` bumps the bridge into hosted mode (binds 0.0.0.0, hardens defaults).
+ CMD ["node", "./scripts/openclaw-local-server.mjs", "--public"]
+diff --git a/render.yaml b/render.yaml
+--- a/render.yaml
++++ b/render.yaml
+@@ -12,6 +12,11 @@
+         value: production
+       - key: PBK_OPENCLAW_STATE_DIR
+         value: /app/.pbk-local
++      # Bearer token required on POST endpoints. Set in the Render dashboard
++      # (the same value goes into PBK Settings -> OpenClaw API key field).
++      - key: PBK_BRIDGE_API_KEY
++        sync: false
++      # n8n webhook URLs the bridge can fan-out to. Set in Render dashboard.
+       - key: PBK_N8N_APPROVAL_WEBHOOK
+         sync: false
+       - key: PBK_N8N_LEAD_WEBHOOK
+diff --git a/scripts/openclaw-local-server.mjs b/scripts/openclaw-local-server.mjs
+--- a/scripts/openclaw-local-server.mjs
++++ b/scripts/openclaw-local-server.mjs
+@@ -10,7 +10,7 @@
+ const __filename = fileURLToPath(import.meta.url);
+ const __dirname = path.dirname(__filename);
+ const ROOT_DIR = path.resolve(__dirname, '..');
+-const BUILD_REVISION = '2026-04-25-contract-runtime-v2';
++const BUILD_REVISION = '2026-04-26-bridge-auth-v3';
+ 
+ const IS_RESET = process.argv.includes('--reset');
+ const IS_LAN = process.argv.includes('--lan');
+@@ -38,6 +38,14 @@
+ const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
+ const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
+ 
++// Bearer token required on mutating endpoints when set. Leave unset for local
++// dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
++const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
++
++// Endpoints that stay open even when PBK_BRIDGE_API_KEY is set, so external
++// healthchecks (Render, uptime monitors) can still reach the bridge.
++const PUBLIC_PATHS = new Set(['/', '/health', '/status', '/api/health', '/api/status']);
++
+ const SHOULD_RESET = IS_RESET;
+ 
+ const TOOL_NAMES = [
+@@ -2173,6 +2181,22 @@
+     return;
+   }
+ 
++  // Bearer-token gate. Skipped entirely when PBK_BRIDGE_API_KEY is unset
++  // (local dev). Healthcheck endpoints stay open so Render's healthCheckPath
++  // and external monitors keep working without credentials.
++  if (BRIDGE_API_KEY && !PUBLIC_PATHS.has(pathname)) {
++    const header = String(request.headers.authorization || '').trim();
++    const expected = `Bearer ${BRIDGE_API_KEY}`;
++    if (header !== expected) {
++      json(response, 401, {
++        ok: false,
++        error: 'Unauthorized',
++        hint: 'Send Authorization: Bearer <PBK_BRIDGE_API_KEY> on POST endpoints.',
++      });
++      return;
++    }
++  }
++
+   try {
+     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
+       json(response, 200, {
+@@ -2188,7 +2212,8 @@
+           documentsPdf: true,
+           approvals: true,
+           contracts: true,
+-          analyzerBridge: true
++          analyzerBridge: true,
++          authRequired: Boolean(BRIDGE_API_KEY),
+         },
+         lastUpdatedAt: state.status.lastUpdatedAt,
+       });
+
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,43 @@
++# Keep the OpenClaw bridge image small and predictable.
++# Keep the OpenClaw bridge image small and predictable.
++# Anything not explicitly COPY'd in Dockerfile.openclaw is irrelevant.
++
++# Heavy / generated / private trees
++node_modules
++dist
++build
++coverage
++.cache
++.tmp
++.vite
++.netlify
++
++# Frontend-only assets — the bridge does not serve these
++public
++src
++analyzer.html
++index.html
++index.shell.html
++
++# Persistence and prior deploy artifacts
++.pbk-local
++deploy-*.zip
++*.tsbuildinfo
++
++# Source control + editor metadata
++.git
++.gitignore
++.github
++.vscode
++.idea
++
++# Lockfiles + manifests are intentionally NOT ignored — the Dockerfile may
++# reference them on future builds. Keep them visible to the build context.
++
++# Docs and runbooks (don't need to be inside the bridge image)
++*.md
++PBK_*
++n8n-lite
++
++# Tests, examples, scripts that aren't the bridge
++scripts/parity-check.mjs
++scripts/sync-master-template.mjs

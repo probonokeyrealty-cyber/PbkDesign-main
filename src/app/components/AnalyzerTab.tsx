@@ -12,7 +12,8 @@ interface AnalyzerTabProps {
   deal: DealData;
   selectedPath: PBKPath;
   onDealChange: (updates: Partial<DealData>) => void;
-  onAnalyze: () => void;
+  onAnalyze: () => void | Promise<void>;
+  onSendToAgent: () => void | Promise<void>;
   onOpenCallMode: (path: PBKPath) => void;
   analyzeStatus: string;
 }
@@ -22,6 +23,7 @@ export function AnalyzerTab({
   selectedPath,
   onDealChange,
   onAnalyze,
+  onSendToAgent,
   onOpenCallMode,
   analyzeStatus,
 }: AnalyzerTabProps) {
@@ -433,12 +435,20 @@ export function AnalyzerTab({
         </div>
       )}
 
-      <button
-        onClick={onAnalyze}
-        className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md"
-      >
-        {analyzeCtaLabel}
-      </button>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <button
+          onClick={onAnalyze}
+          className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md"
+        >
+          {analyzeCtaLabel}
+        </button>
+        <button
+          onClick={onSendToAgent}
+          className="w-full px-4 py-3 rounded-full border border-blue-200 bg-blue-50 text-[13px] font-semibold text-blue-700 transition-all hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+        >
+          Send to Agent
+        </button>
+      </div>
       {analyzeStatus && (
         <div
           className={`mt-2 rounded-xl border px-3 py-2 text-[11.5px] leading-relaxed ${

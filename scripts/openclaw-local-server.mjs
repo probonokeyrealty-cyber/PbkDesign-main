@@ -140,6 +140,8 @@ const RENDER_API_KEY = String(process.env.PBK_RENDER_API_KEY || process.env.REND
 const RENDER_SERVICE_ID = String(process.env.PBK_RENDER_SERVICE_ID || process.env.RENDER_SERVICE_ID || '').trim();
 const RENDER_BASE_URL = String(process.env.PBK_RENDER_BASE_URL || 'https://api.render.com/v1').trim().replace(/\/+$/g, '');
 const BROWSEROS_MCP_URL = String(process.env.PBK_BROWSEROS_MCP_URL || 'http://127.0.0.1:9000/mcp').trim();
+const PROPERTY_CACHE_TTL_DAYS = Math.max(1, Number(process.env.PBK_PROPERTY_CACHE_TTL_DAYS || 30));
+const PROPERTY_CACHE_TTL_MS = PROPERTY_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const DEFAULT_BOOKING_LINK = String(process.env.PBK_BOOKING_LINK || process.env.PBK_CALENDAR_BOOKING_URL || 'https://cal.com/pbk-capital/intro-call').trim();
 const DEFAULT_LEAD_TIMEZONE = String(process.env.PBK_DEFAULT_LEAD_TIMEZONE || 'America/New_York').trim();
 const AUTO_DIAL_IMMEDIATE_REPLIES = !/^(0|false|no)$/i.test(String(process.env.PBK_REPLY_AUTO_DIAL_IMMEDIATE || 'true').trim());
@@ -173,6 +175,8 @@ const SHOULD_RESET = IS_RESET;
 
 const TOOL_NAMES = [
   'analyzeDeal',
+  'getPropertyData',
+  'cachePropertyData',
   'classifyParticipant',
   'getParticipantProfile',
   'getBrainEmailContext',
@@ -213,6 +217,7 @@ const LIMITS = {
   brainDocs: 90,
   leadImports: 90,
   analyzerRuns: 90,
+  propertyCache: 320,
   dncEntries: 120,
   calls: 90,
   messages: 140,
@@ -244,6 +249,21 @@ function isoNow() {
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toMoneyNumber(value, fallback = 0) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  const normalized = raw.replace(/[$,\s]/g, '');
+  const match = normalized.match(/^(-?\d+(?:\.\d+)?)(k|m)?$/i);
+  if (!match) return fallback;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return fallback;
+  const suffix = String(match[2] || '').toLowerCase();
+  if (suffix === 'm') return Math.round(amount * 1_000_000);
+  if (suffix === 'k') return Math.round(amount * 1_000);
+  return Math.round(amount);
 }
 
 function trimArray(items = [], limit = 25) {
@@ -818,10 +838,227 @@ function currency(value) {
 
 function averagePrices(deal = {}) {
   const prices = ['A', 'B', 'C']
-    .map((key) => toNumber(deal?.comps?.[key]?.price, 0))
+    .map((key) => toMoneyNumber(deal?.comps?.[key]?.price, 0))
     .filter((value) => value > 0);
   if (!prices.length) return 0;
   return Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length);
+}
+
+function normalizeAddressKey(address = '') {
+  return slugify(String(address || '').replace(/\b(usa|united states)\b/ig, '').trim());
+}
+
+function firstMoneyValue(...values) {
+  for (const value of values) {
+    const parsed = toMoneyNumber(value, 0);
+    if (parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function normalizeComparablePrices(value) {
+  const items = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.values(value)
+      : [];
+  const normalized = items
+    .map((item, index) => {
+      const price = firstMoneyValue(item?.price, item?.soldPrice, item?.salePrice, item?.value, item);
+      if (!price) return null;
+      return {
+        label: item?.label || item?.address || item?.description || `Comp ${index + 1}`,
+        price,
+        date: item?.date || item?.soldDate || item?.saleDate || '',
+        distance: item?.distance || '',
+        source: item?.source || '',
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+  return normalized;
+}
+
+function getPropertyAnalysisValues(input = {}) {
+  const raw = input?.values || input?.data || input || {};
+  const comps = normalizeComparablePrices(raw.recentComps || raw.comps || raw.comparables || raw.soldComps);
+  const compObject = Object.fromEntries(
+    comps.slice(0, 3).map((comp, index) => [String.fromCharCode(65 + index), { price: comp.price }]),
+  );
+  return {
+    arv: firstMoneyValue(
+      raw.arv,
+      raw.afterRepairValue,
+      raw.estimatedValue,
+      raw.marketValue,
+      raw.zestimate,
+      raw.redfinEstimate,
+      raw.listPrice,
+      raw.price,
+    ),
+    repairsMid: firstMoneyValue(raw.repairsMid, raw.estimatedRepairs, raw.repairs, raw.rehabEstimate),
+    mao: firstMoneyValue(raw.mao, raw.maxAllowableOffer),
+    targetOffer: firstMoneyValue(raw.targetOffer, raw.offerPrice, raw.recommendedOffer),
+    beds: toNumber(raw.beds || raw.bedrooms, 0),
+    baths: toNumber(raw.baths || raw.bathrooms, 0),
+    sqft: toNumber(raw.sqft || raw.squareFeet || raw.livingArea, 0),
+    yearBuilt: toNumber(raw.yearBuilt || raw.year, 0),
+    comps,
+    compObject,
+  };
+}
+
+function findPropertyCacheEntry(address = '') {
+  const key = normalizeAddressKey(address);
+  if (!key) return { hit: false, key, entry: null, expired: false, ageMs: null };
+  const entry = (state.propertyCache || []).find((item) => item.key === key || normalizeAddressKey(item.address) === key) || null;
+  if (!entry) return { hit: false, key, entry: null, expired: false, ageMs: null };
+  const updatedAtMs = Date.parse(entry.updatedAt || entry.createdAt || '');
+  const ageMs = Number.isFinite(updatedAtMs) ? Date.now() - updatedAtMs : Number.POSITIVE_INFINITY;
+  const expired = ageMs > PROPERTY_CACHE_TTL_MS;
+  return { hit: !expired, key, entry, expired, ageMs };
+}
+
+function upsertPropertyCacheEntry(params = {}) {
+  const data = params.data || params.propertyData || params.browserData || params.values || {};
+  const address = params.address || data.address || data.propertyAddress || '';
+  const key = normalizeAddressKey(address);
+  if (!key) return null;
+  const now = isoNow();
+  const values = getPropertyAnalysisValues(data);
+  const entry = {
+    id: `property-cache-${key}`,
+    key,
+    address,
+    source: params.source || data.source || 'manual',
+    provider: params.provider || data.provider || params.source || 'browseros',
+    status: params.status || 'ready',
+    data,
+    values,
+    createdAt: params.createdAt || now,
+    updatedAt: now,
+    expiresAt: new Date(Date.now() + PROPERTY_CACHE_TTL_MS).toISOString(),
+  };
+  const existingIndex = (state.propertyCache || []).findIndex((item) => item.key === key || normalizeAddressKey(item.address) === key);
+  if (!Array.isArray(state.propertyCache)) state.propertyCache = [];
+  if (existingIndex >= 0) {
+    state.propertyCache[existingIndex] = {
+      ...state.propertyCache[existingIndex],
+      ...entry,
+      createdAt: state.propertyCache[existingIndex].createdAt || entry.createdAt,
+    };
+  } else {
+    state.propertyCache.unshift(entry);
+  }
+  state.propertyCache = sortNewest(state.propertyCache).slice(0, LIMITS.propertyCache);
+  return entry;
+}
+
+async function queueBrowserPropertyResearch({ address = '', requestedBy = 'Analyzer', source = 'analyzer' } = {}) {
+  const toolingStatus = await buildToolingStatus();
+  const browserOs = toolingStatus.browserOs || {};
+  const ready = Boolean(browserOs.ready);
+  const targetLabel = address || 'Unknown property';
+  const query = [
+    `Use BrowserOS to enrich analyzer data for ${targetLabel}.`,
+    'Capture property value estimate, list price, recent sold comps, beds, baths, sqft, year built, tax info, listing status, and source URLs.',
+    'Return JSON that can be posted back to /api/property-data.',
+  ].join(' ');
+  const job = {
+    id: `browser-property-${normalizeAddressKey(targetLabel) || randomUUID().slice(0, 8)}`,
+    createdAt: isoNow(),
+    requestedBy,
+    source,
+    provider: 'browseros',
+    status: ready ? 'queued' : 'setup-required',
+    query,
+    targetUrl: '',
+    targetLabel,
+    site: 'property-enrichment',
+    endpoint: browserOs.endpoint || BROWSEROS_MCP_URL,
+    cacheKey: normalizeAddressKey(targetLabel),
+  };
+  addActivity(
+    state,
+    makeActivity({
+      actor: requestedBy,
+      category: 'RESEARCH',
+      status: ready ? 'queued' : 'warning',
+      text: ready
+        ? `Queued BrowserOS property enrichment for ${targetLabel}. Analyzer returned immediately from cache/fallback.`
+        : `Analyzer requested BrowserOS enrichment for ${targetLabel}, but BrowserOS is not registered yet.`,
+      target: targetLabel,
+    }),
+  );
+  state.status.lastBrowserResearchAt = job.createdAt;
+  return {
+    ready,
+    job,
+    browserOs,
+  };
+}
+
+async function resolvePropertyDataForAnalyzer(params = {}) {
+  const address = params.address || params.deal?.address || params.propertyAddress || '';
+  const incomingData = params.propertyData || params.browserData || params.enrichmentData || null;
+  if (incomingData && address) {
+    const entry = upsertPropertyCacheEntry({
+      address,
+      data: incomingData,
+      source: params.propertyDataSource || params.source || 'browseros',
+      provider: params.provider || 'browseros',
+    });
+    return {
+      propertyData: entry,
+      enrichment: {
+        source: entry?.source || 'browseros',
+        cache: 'write-through',
+        cacheKey: entry?.key || normalizeAddressKey(address),
+        ttlDays: PROPERTY_CACHE_TTL_DAYS,
+      },
+    };
+  }
+
+  const cache = findPropertyCacheEntry(address);
+  if (cache.hit) {
+    return {
+      propertyData: cache.entry,
+      enrichment: {
+        source: cache.entry.source || cache.entry.provider || 'cache',
+        cache: 'hit',
+        cacheKey: cache.key,
+        ageMs: cache.ageMs,
+        ttlDays: PROPERTY_CACHE_TTL_DAYS,
+      },
+    };
+  }
+
+  let browserResearch = null;
+  if (address && params.useBrowserOs !== false && params.queueBrowserResearch !== false) {
+    browserResearch = await queueBrowserPropertyResearch({
+      address,
+      requestedBy: params.requestedBy || 'Analyzer',
+      source: params.source || 'analyzer-cache-miss',
+    });
+  }
+
+  return {
+    propertyData: null,
+    enrichment: {
+      source: 'fallback',
+      cache: cache.expired ? 'expired' : 'miss',
+      cacheKey: cache.key || normalizeAddressKey(address),
+      ttlDays: PROPERTY_CACHE_TTL_DAYS,
+      browserResearch: browserResearch
+        ? {
+          ready: browserResearch.ready,
+          status: browserResearch.job.status,
+          jobId: browserResearch.job.id,
+          endpoint: browserResearch.job.endpoint,
+        }
+        : null,
+    },
+  };
 }
 
 function buildToolUsageSeed() {
@@ -1255,7 +1492,10 @@ function buildDefaultState() {
       pendingBookingRequests: 0,
       leadStageTransitionsToday: 0,
       documentDeliveries: 0,
+      propertyCacheCount: 0,
+      propertyCacheTtlDays: PROPERTY_CACHE_TTL_DAYS,
       lastDocumentDeliveryAt: null,
+      lastPropertyCacheAt: null,
       lastAppointmentAt: null,
       lastLeadTransitionAt: null,
       lastAdminTaskAt: null,
@@ -1306,6 +1546,7 @@ function buildDefaultState() {
     brainDocs: buildDefaultBrainDocs(),
     leadImports: buildDefaultLeadImports(),
     analyzerRuns: buildDefaultAnalyzerRuns(),
+    propertyCache: [],
     dncEntries: buildDefaultDncEntries(),
     calls: buildDefaultCalls(),
     messages: buildDefaultMessages(),
@@ -1389,6 +1630,7 @@ function limitStateArrays(nextState) {
   nextState.brainDocs = sortNewest(nextState.brainDocs).slice(0, LIMITS.brainDocs);
   nextState.leadImports = sortNewest(nextState.leadImports).slice(0, LIMITS.leadImports);
   nextState.analyzerRuns = sortNewest(nextState.analyzerRuns).slice(0, LIMITS.analyzerRuns);
+  nextState.propertyCache = sortNewest(nextState.propertyCache || []).slice(0, LIMITS.propertyCache);
   nextState.dncEntries = sortNewest(nextState.dncEntries).slice(0, LIMITS.dncEntries);
   nextState.calls = sortNewest(nextState.calls).slice(0, LIMITS.calls);
   nextState.messages = sortNewest(nextState.messages).slice(0, LIMITS.messages);
@@ -1411,10 +1653,13 @@ function updateDerivedStatus(nextState) {
   nextState.status.dncCount = nextState.dncEntries.length;
   nextState.status.contractsOpen = nextState.contracts.filter((contract) => !['completed', 'void', 'rejected'].includes(String(contract.status || '').toLowerCase())).length;
   nextState.status.documentDeliveries = nextState.documentDeliveries.length;
+  nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
+  nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
   nextState.status.lastApprovalAt = nextState.approvals[0]?.createdAt || null;
   nextState.status.lastAdminTaskAt = getItemTimestamp(nextState.adminTasks[0] || {}) || null;
   nextState.status.lastImportAt = nextState.leadImports[0]?.createdAt || null;
   nextState.status.lastAnalyzerAt = nextState.analyzerRuns[0]?.createdAt || null;
+  nextState.status.lastPropertyCacheAt = getItemTimestamp((nextState.propertyCache || [])[0] || {}) || null;
   nextState.status.lastCallAt = getItemTimestamp(nextState.calls[0] || {}) || null;
   nextState.status.lastMessageAt = getItemTimestamp(nextState.messages[0] || {}) || null;
   nextState.status.lastAppointmentAt = getItemTimestamp(nextState.appointments[0] || {}) || null;
@@ -1450,6 +1695,7 @@ function hydrateState(raw = {}) {
     brainDocs: trimArray(raw.brainDocs || defaults.brainDocs, LIMITS.brainDocs),
     leadImports: trimArray(raw.leadImports || defaults.leadImports, LIMITS.leadImports),
     analyzerRuns: trimArray(raw.analyzerRuns || defaults.analyzerRuns, LIMITS.analyzerRuns),
+    propertyCache: trimArray(raw.propertyCache || defaults.propertyCache, LIMITS.propertyCache),
     dncEntries: trimArray(raw.dncEntries || defaults.dncEntries, LIMITS.dncEntries),
     calls: trimArray(raw.calls || defaults.calls, LIMITS.calls),
     messages: trimArray(raw.messages || defaults.messages, LIMITS.messages),
@@ -1710,19 +1956,33 @@ function buildAnalyzerSummary(params = {}) {
   const deal = params.deal || {};
   const address = params.address || deal.address || 'Unknown address';
   const seed = hashString(address);
+  const propertyValues = getPropertyAnalysisValues(params.propertyData || deal.propertyData || {});
   const fallbackArv = Math.round((120000 + (seed % 150000)) / 5000) * 5000;
   const fallbackRepairs = Math.round((16000 + (seed % 42000)) / 500) * 500;
-  const arv = toNumber(params.arv, 0) || toNumber(deal.arv, 0) || averagePrices(deal) || fallbackArv;
-  const repairsMid = toNumber(params.repairsMid, 0) || toNumber(deal?.repairs?.mid, 0) || fallbackRepairs;
+  const arv =
+    toMoneyNumber(params.arv, 0) ||
+    toMoneyNumber(deal.arv, 0) ||
+    propertyValues.arv ||
+    averagePrices({ comps: propertyValues.compObject }) ||
+    averagePrices(deal) ||
+    fallbackArv;
+  const repairsMid =
+    toMoneyNumber(params.repairsMid, 0) ||
+    toMoneyNumber(params.repairs, 0) ||
+    toMoneyNumber(deal?.repairs?.mid, 0) ||
+    propertyValues.repairsMid ||
+    fallbackRepairs;
   const fee = toNumber(params.fee, 0) || toNumber(deal.fee, 9000) || 9000;
   const mao =
-    toNumber(params.mao, 0) ||
-    toNumber(deal.mao60, 0) ||
+    toMoneyNumber(params.mao, 0) ||
+    toMoneyNumber(deal.mao60, 0) ||
+    propertyValues.mao ||
     Math.max(0, Math.round((arv - repairsMid) * 0.68 - fee));
   const targetOffer =
-    toNumber(params.offerPrice, 0) ||
-    toNumber(deal.offer, 0) ||
-    toNumber(deal.agreedPrice, 0) ||
+    toMoneyNumber(params.offerPrice, 0) ||
+    toMoneyNumber(deal.offer, 0) ||
+    toMoneyNumber(deal.agreedPrice, 0) ||
+    propertyValues.targetOffer ||
     Math.max(0, Math.round(mao * 0.85));
   const estProfit = Math.max(0, mao - targetOffer);
 
@@ -1735,7 +1995,9 @@ function buildAnalyzerSummary(params = {}) {
     mao,
     targetOffer,
     estProfit,
-    status: 'complete',
+    comps: propertyValues.comps,
+    enrichment: params.enrichment || null,
+    status: params.status || 'complete',
     createdAt: isoNow(),
   };
 }
@@ -5628,7 +5890,12 @@ let state = await loadState();
 const toolHandlers = {
   async analyzeDeal(params = {}) {
     recordToolUse('analyzeDeal');
-    const run = buildAnalyzerSummary(params);
+    const propertyResolution = await resolvePropertyDataForAnalyzer(params);
+    const run = buildAnalyzerSummary({
+      ...params,
+      propertyData: propertyResolution.propertyData,
+      enrichment: propertyResolution.enrichment,
+    });
     addAnalyzerRun(state, run);
     addActivity(
       state,
@@ -5636,12 +5903,82 @@ const toolHandlers = {
         actor: 'System',
         category: 'ANALYZE',
         status: 'success',
-        text: `Analyzer ran - ARV ${currency(run.arv)} - MAO ${currency(run.mao)} - target ${currency(run.targetOffer)}`,
+        text: `Analyzer ran - ARV ${currency(run.arv)} - MAO ${currency(run.mao)} - target ${currency(run.targetOffer)} (${propertyResolution.enrichment.cache} property cache)`,
         target: run.address,
       }),
     );
     await persistState(state);
     return run;
+  },
+
+  async getPropertyData(params = {}) {
+    recordToolUse('getPropertyData');
+    const address = params.address || params.propertyAddress || params.deal?.address || '';
+    const cache = findPropertyCacheEntry(address);
+    let browserResearch = null;
+    if (!cache.hit && params.queueBrowserResearch) {
+      browserResearch = await queueBrowserPropertyResearch({
+        address,
+        requestedBy: params.requestedBy || 'Rex',
+        source: params.source || 'property-cache-miss',
+      });
+      await persistState(state);
+    }
+    return {
+      ok: Boolean(cache.hit),
+      address,
+      cache: {
+        hit: cache.hit,
+        expired: cache.expired,
+        key: cache.key,
+        ageMs: cache.ageMs,
+        ttlDays: PROPERTY_CACHE_TTL_DAYS,
+      },
+      propertyData: cache.entry || null,
+      browserResearch: browserResearch
+        ? {
+          ready: browserResearch.ready,
+          job: browserResearch.job,
+        }
+        : null,
+    };
+  },
+
+  async cachePropertyData(params = {}) {
+    recordToolUse('cachePropertyData');
+    const entry = upsertPropertyCacheEntry({
+      address: params.address || params.propertyAddress,
+      data: params.data || params.propertyData || params.browserData || params,
+      source: params.source || 'browseros',
+      provider: params.provider || 'browseros',
+      status: params.status || 'ready',
+    });
+    if (!entry) {
+      return {
+        ok: false,
+        error: 'cachePropertyData requires an address or data.address.',
+      };
+    }
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.requestedBy || 'BrowserOS',
+        category: 'CACHE',
+        status: 'success',
+        text: `Cached analyzer-ready property data for ${entry.address}.`,
+        target: entry.address,
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: true,
+      propertyData: entry,
+      cache: {
+        key: entry.key,
+        ttlDays: PROPERTY_CACHE_TTL_DAYS,
+        expiresAt: entry.expiresAt,
+      },
+    };
   },
 
   async classifyParticipant(params = {}) {
@@ -8528,6 +8865,7 @@ function buildStateSnapshot() {
     brainDocs: state.brainDocs,
     leadImports: state.leadImports,
     analyzerRuns: state.analyzerRuns,
+    propertyCache: state.propertyCache || [],
     dncEntries: state.dncEntries,
     calls: state.calls,
     messages: state.messages,
@@ -8802,6 +9140,30 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         tooling: await buildToolingStatus(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/property-data') {
+      const result = await toolHandlers.getPropertyData({
+        address: url.searchParams.get('address') || '',
+        queueBrowserResearch: /^(1|true|yes)$/i.test(String(url.searchParams.get('queueBrowserResearch') || '').trim()),
+        requestedBy: url.searchParams.get('requestedBy') || 'api',
+        source: 'api',
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/property-data') {
+      const body = await readBody(request);
+      const result = await toolHandlers.cachePropertyData({
+        ...body,
+        source: body.source || 'api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -9599,6 +9961,7 @@ const server = createServer(async (request, response) => {
         'GET /api/tools',
         'GET /api/quotas',
         'GET /api/tooling/status',
+        'GET/POST /api/property-data',
         'GET /api/brain/email-context',
         'GET /api/participants/profile',
         'GET /api/crm/streak/status',

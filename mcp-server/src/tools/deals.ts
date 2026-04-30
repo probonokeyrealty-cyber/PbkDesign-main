@@ -18,6 +18,27 @@ const AnalyzeDealInput = z
     lotSize: z.number().nonnegative().optional().describe("Lot size in acres."),
     contact: z.enum(["owner", "agent", "investor", "wholesaler"]).optional(),
     notes: z.string().optional(),
+    propertyData: z.record(z.unknown()).optional().describe("Analyzer-ready property data from BrowserOS/Zillow/Redfin/public records. Cached by the bridge when provided."),
+    useBrowserOs: z.boolean().optional().describe("When true/default, queue BrowserOS enrichment on cache miss instead of waiting inline."),
+    queueBrowserResearch: z.boolean().optional().describe("Set false to avoid queueing BrowserOS enrichment when the cache misses."),
+  })
+  .strict();
+
+const PropertyDataInput = z
+  .object({
+    address: z.string().min(2).describe("Property address to read/write in the analyzer property cache."),
+    queueBrowserResearch: z.boolean().optional().describe("For reads, queue BrowserOS enrichment when cache misses."),
+    requestedBy: z.string().optional(),
+  })
+  .strict();
+
+const CachePropertyDataInput = z
+  .object({
+    address: z.string().min(2).describe("Property address for the cache entry."),
+    source: z.string().optional().describe("Where the data came from, e.g. browseros, zillow, redfin, county-records."),
+    provider: z.string().optional(),
+    data: z.record(z.unknown()).optional().describe("Raw extracted property data. Supports arv, zestimate, redfinEstimate, comps, beds, baths, sqft, yearBuilt, tax info, URLs."),
+    propertyData: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -86,6 +107,64 @@ Don't use when:
     async (params) => {
       try {
         const result = await bridgeInvoke<{ result: unknown }>("analyzeDeal", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: { ok: true, result },
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_get_property_data",
+    {
+      title: "Get analyzer property cache",
+      description: `Read analyzer-ready property data from the bridge cache. Use this before slow browser research. If queueBrowserResearch=true and the cache misses, the bridge queues a BrowserOS enrichment job but still returns immediately.`,
+      inputSchema: PropertyDataInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke<{ result: unknown }>("getPropertyData", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: { ok: true, result },
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_cache_property_data",
+    {
+      title: "Cache BrowserOS property data",
+      description: `Persist analyzer-ready property data extracted by BrowserOS, n8n, or a manual browser run. Subsequent pbk_analyze_deal calls for the same address use this cache and return quickly.`,
+      inputSchema: CachePropertyDataInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke<{ result: unknown }>("cachePropertyData", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: { ok: true, result },

@@ -15,6 +15,7 @@
     "agent:export-scenario": "node ./scripts/export-meta-agent-scenario.mjs",
     "research:seed-browser-jobs": "node ./scripts/seed-browser-research-jobs.mjs",
     "monitoring:render-config": "node ./scripts/render-monitoring-config.mjs",
+    "db:migrate": "node ./scripts/apply-supabase-migrations.mjs",
     "doctor:browser-use": "node ./scripts/browser-use-doctor.mjs",
     "test:parity": "node ./scripts/parity-check.mjs",
     "test:bridge": "node ./scripts/openclaw-smoke.mjs",

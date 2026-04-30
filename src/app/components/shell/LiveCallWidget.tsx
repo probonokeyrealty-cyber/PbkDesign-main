@@ -16,16 +16,15 @@
  *   the seam, and it stays the seam. We do not pull engine state into the
  *   shell card.
  *
- * State source (planned):
- *   Phase 1 (now)     — local stub state so Command Center renders + demos.
- *   Phase 2 (next)    — subscribe to OpenClaw WS via `lib/ws.ts` (TBD).
- *                       Payload shape mirrors the stub `LiveCallState` below.
- *   Phase 3 (later)   — Telnyx PSTN take-over hands the audio leg to the user.
+ * State source:
+ *   Command Center passes the latest bridge call state from `/state`.
+ *   If no call is active, the widget renders an idle empty state instead of
+ *   implying a live call is running.
  *
  * Props:
- *   - `state?`   external override (for storybook / demo / parent-fed data)
+ *   - `state?`   bridge-fed call state
  *   - `onTakeOver?`, `onMute?`, `onEnd?` action handlers (parent decides nav)
- *   - `compact?` true → 240px-ish vertical card; false → full-width
+ *   - `compact?` true for the compact vertical card; false for full-width
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -61,77 +60,38 @@ export interface TranscriptLine {
 
 export interface LiveCallState {
   callId: string | null;
-  /** Linked deal id — Take Over routes to /deal/:id when present. */
+  /** Linked deal id. Take Over routes to /deal/:id when present. */
   dealId: string | null;
   status: CallStatus;
   agentMode: AgentMode;
   caller: {
     name: string | null;
     phone: string | null;
-    /** Optional CRM hint shown under the name, e.g. "owner · 4501 Maple St" */
+    /** Optional CRM hint shown under the name, e.g. "owner - 4501 Maple St" */
     context?: string;
   };
   /** ISO timestamp of call start; widget computes elapsed. */
   startedAt: string | null;
-  /** 0–100; <40 cold, 40–70 neutral, >70 warm. Streamed from OpenClaw. */
+  /** 0-100; <40 cold, 40-70 neutral, >70 warm. Streamed from OpenClaw. */
   sentiment: number | null;
   transcript: TranscriptLine[];
 }
 
-// ---- Stub state ---------------------------------------------------------
-// This is what the WS feed will eventually provide. Kept here so the widget
-// renders something realistic in the Command Center before the WS lands.
+// ---- Empty state --------------------------------------------------------
 
-const STUB_STATE: LiveCallState = {
-  callId: 'demo-001',
+const EMPTY_STATE: LiveCallState = {
+  callId: null,
   dealId: null,
-  status: 'connected',
+  status: 'idle',
   agentMode: 'autopilot',
   caller: {
-    name: 'Marcus Hill',
-    phone: '+1 (404) 555-0188',
-    context: 'owner · 1827 Glenwood Ave SE',
+    name: null,
+    phone: null,
+    context: 'Waiting for the next bridge call event',
   },
-  startedAt: new Date(Date.now() - 1000 * 73).toISOString(), // 1:13 ago
-  sentiment: 62,
-  transcript: [
-    {
-      id: 't1',
-      speaker: 'ava',
-      text: "Hi Marcus, this is Ava with Probono Key Realty — got a minute?",
-      ts: new Date(Date.now() - 1000 * 73).toISOString(),
-    },
-    {
-      id: 't2',
-      speaker: 'lead',
-      text: 'Uh, yeah, what is this about?',
-      ts: new Date(Date.now() - 1000 * 67).toISOString(),
-    },
-    {
-      id: 't3',
-      speaker: 'ava',
-      text: 'Calling about the property on Glenwood — are you still the owner?',
-      ts: new Date(Date.now() - 1000 * 58).toISOString(),
-    },
-    {
-      id: 't4',
-      speaker: 'lead',
-      text: "Yeah, I am. We've been thinking about selling actually.",
-      ts: new Date(Date.now() - 1000 * 42).toISOString(),
-    },
-    {
-      id: 't5',
-      speaker: 'ava',
-      text: 'Great — mind if I ask a few quick questions about condition?',
-      ts: new Date(Date.now() - 1000 * 30).toISOString(),
-    },
-    {
-      id: 't6',
-      speaker: 'lead',
-      text: 'Sure, go ahead.',
-      ts: new Date(Date.now() - 1000 * 18).toISOString(),
-    },
-  ],
+  startedAt: null,
+  sentiment: null,
+  transcript: [],
 };
 
 // ---- Utilities ----------------------------------------------------------
@@ -147,7 +107,7 @@ function fmtElapsed(startedAt: string | null): string {
 }
 
 function sentimentTone(score: number | null) {
-  if (score == null) return { label: '—', color: 'text-slate-500', bg: 'bg-slate-800' };
+  if (score == null) return { label: '-', color: 'text-slate-500', bg: 'bg-slate-800' };
   if (score >= 70) return { label: 'warm', color: 'text-emerald-400', bg: 'bg-emerald-500' };
   if (score >= 40) return { label: 'neutral', color: 'text-amber-400', bg: 'bg-amber-500' };
   return { label: 'cold', color: 'text-rose-400', bg: 'bg-rose-500' };
@@ -197,7 +157,7 @@ export function LiveCallWidget({
   onEnd,
   compact = false,
 }: LiveCallWidgetProps) {
-  const live = state ?? STUB_STATE;
+  const live = state ?? EMPTY_STATE;
 
   // Tick once per second so elapsed timer updates without external state.
   const [, setTick] = useState(0);
@@ -268,7 +228,7 @@ export function LiveCallWidget({
             )}
           </div>
           <div className="text-[11px] text-slate-400 tabular-nums shrink-0">
-            {live.caller.phone ?? '—'}
+            {live.caller.phone ?? '-'}
           </div>
         </div>
 
@@ -277,7 +237,7 @@ export function LiveCallWidget({
           <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-slate-500 mb-1">
             <span>Sentiment</span>
             <span className={sent.color}>
-              {live.sentiment ?? '—'} · {sent.label}
+              {live.sentiment ?? '-'} / {sent.label}
             </span>
           </div>
           <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">

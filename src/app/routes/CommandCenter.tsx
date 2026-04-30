@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
+import type { LiveCallState, TranscriptLine } from '../components/shell/LiveCallWidget';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 
 function formatRelative(value?: string) {
@@ -12,6 +13,65 @@ function formatRelative(value?: string) {
   return `${hours}h ago`;
 }
 
+function toNumber(value: unknown, fallback: number | null = null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function mapCallStatus(status: unknown): LiveCallState['status'] {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'live' || normalized === 'connected') return 'connected';
+  if (normalized === 'dialing' || normalized === 'queued') return 'dialing';
+  if (normalized === 'hold' || normalized === 'on-hold') return 'on-hold';
+  if (normalized === 'ended' || normalized === 'completed' || normalized === 'failed') return 'ended';
+  return 'idle';
+}
+
+function mapTranscriptLine(line: unknown, index: number): TranscriptLine | null {
+  if (!line || typeof line !== 'object') return null;
+  const item = line as Record<string, unknown>;
+  const speaker = String(item.speaker || '').toLowerCase();
+  const mappedSpeaker: TranscriptLine['speaker'] =
+    speaker.includes('ai') || speaker.includes('ava')
+      ? 'ava'
+      : speaker.includes('you') || speaker.includes('user') || speaker.includes('human')
+        ? 'user'
+        : 'lead';
+  const text = String(item.text || item.body || '').trim();
+  if (!text) return null;
+  return {
+    id: String(item.id || `line-${index}`),
+    speaker: mappedSpeaker,
+    text,
+    ts: String(item.ts || item.createdAt || item.at || new Date().toISOString()),
+  };
+}
+
+function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallState | undefined {
+  if (!call) return undefined;
+  const rawSentiment = toNumber(call.sentiment);
+  const sentiment =
+    rawSentiment == null ? null : rawSentiment <= 1 ? Math.round(rawSentiment * 100) : Math.round(rawSentiment);
+  const transcript = Array.isArray(call.transcript)
+    ? call.transcript.map(mapTranscriptLine).filter(Boolean) as TranscriptLine[]
+    : [];
+
+  return {
+    callId: String(call.id || call.callId || ''),
+    dealId: call.dealId ? String(call.dealId) : null,
+    status: mapCallStatus(call.status),
+    agentMode: String(call.agentMode || call.mode || 'autopilot') === 'human' ? 'human' : 'autopilot',
+    caller: {
+      name: call.leadName ? String(call.leadName) : null,
+      phone: call.phone ? String(call.phone) : null,
+      context: [call.address, call.script].filter(Boolean).map(String).join(' / ') || undefined,
+    },
+    startedAt: call.startedAt ? String(call.startedAt) : null,
+    sentiment,
+    transcript,
+  };
+}
+
 export function CommandCenter() {
   const navigate = useNavigate();
   const { snapshot, tooling, loading, error } = useRuntimeSnapshot();
@@ -21,6 +81,10 @@ export function CommandCenter() {
   const leadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
   const activity = Array.isArray(snapshot?.activity) ? snapshot.activity.slice(0, 8) : [];
   const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
+  const activeCall = mapRuntimeCall(
+    calls.find((call) => ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(String(call.status || '').toLowerCase()))
+      || calls[0],
+  );
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
   const toolingHighlights = [
     { label: 'Meta-Agent', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
@@ -31,7 +95,7 @@ export function CommandCenter() {
 
   const kpis = [
     { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
-    { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + simulated runtime' },
+    { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
     { label: 'Approvals Pending', value: String(approvals.filter((item) => item.status === 'pending').length), hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin tasks waiting` },
     { label: 'Deals in Pipeline', value: String((snapshot?.contracts || []).length), hint: 'prepared, sent, or signed contracts' },
     { label: 'Tooling Ready', value: `${String(toolingSummary.readyCount || 0)}/${String(toolingSummary.totalCount || 0)}`, hint: 'advanced systems available in repo' },
@@ -85,6 +149,7 @@ export function CommandCenter() {
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         <div className="xl:col-span-5 space-y-4">
           <LiveCallWidget
+            state={activeCall}
             onTakeOver={(state) => {
               navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
             }}

@@ -7070,9 +7070,9 @@
 
         <!-- ===== Standalone API keys (existing services) ===== -->
         <h4 class="settings-subhead">Direct API keys</h4>
-        <p class="section-desc" style="margin-top: -8px;">Stage provider credentials here now; the next backend pass will turn these into real outbound integrations behind the bridge.</p>
+        <p class="section-desc" style="margin-top: -8px;">Review provider credentials and bridge readiness for live outbound integrations.</p>
         <div class="settings-api-note">
-          These keys are staged at the UI level, but PBK still needs the next backend pass to make live outbound provider calls. Today the founder runtime can simulate and log these actions through the bridge; Telnyx, DocuSign, BatchData, Slack-direct, and CRM provider APIs are the next real integration slice.
+          PBK now routes live provider actions through the bridge when the matching Render environment variables are configured. Keep secrets in Render or OpenClaw local secrets, not in the browser.
         </div>
 
         <div class="setting-row">
@@ -10728,9 +10728,9 @@
     paintOpsCard(deck.querySelector('[data-settings-card="database"]'), summary.database);
     paintOpsCard(deck.querySelector('[data-settings-card="workflows"]'), summary.workflow);
     paintOpsCard(deck.querySelector('[data-settings-card="providers"]'), {
-      state: 'warning',
-      value: 'Bridge-backed today',
-      note: 'Provider keys can be staged now, but Telnyx, DocuSign, BatchData, Slack-direct, and CRM still need real outbound backend calls.'
+      state: 'ok',
+      value: 'Live via bridge',
+      note: 'Telnyx, DocuSign, Instantly, Slack, Streak, and Render write through the bridge when provider secrets are configured.'
     });
   }
 
@@ -10881,8 +10881,8 @@
       setTimeout(() => card.remove(), 300);
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval staged' : 'Decision staged',
-        desc: 'Connect the local OpenClaw bridge to turn this queue into a live approval callback.'
+        title: action === 'approved' ? 'Approval removed locally' : 'Decision removed locally',
+        desc: 'Reconnect the OpenClaw bridge to replay this as a live approval callback.'
       });
       return;
     }
@@ -13556,8 +13556,8 @@
       setTimeout(() => card.remove(), 300);
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin approval staged' : 'Admin decision staged',
-        desc: 'Connect the local OpenClaw bridge to turn this queue into a live admin callback.'
+        title: action === 'approved' ? 'Admin approval removed locally' : 'Admin rejection removed locally',
+        desc: 'Reconnect the OpenClaw bridge to replay this as a live admin callback.'
       });
       return;
     }

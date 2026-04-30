@@ -4,7 +4,7 @@ import { Search, Power } from 'lucide-react';
 /**
  * ShellTopbar — global topbar for the Paradise shell.
  *
- * Contains: global search (placeholder), Autopilot toggle stub, account chip.
+ * Contains: global search input, Autopilot control, and account chip.
  * Distinct from the engine's own `TopBar.tsx` (which lives inside DealView).
  */
 export function ShellTopbar() {
@@ -12,8 +12,8 @@ export function ShellTopbar() {
   const [query, setQuery] = useState('');
 
   return (
-    <header className="h-14 px-4 flex items-center gap-4 bg-slate-950 border-b border-slate-800">
-      <div className="flex-1 max-w-xl relative">
+    <header className="h-14 px-3 sm:px-4 flex items-center gap-2 sm:gap-4 bg-slate-950 border-b border-slate-800 min-w-0">
+      <div className="flex-1 max-w-xl min-w-0 relative">
         <Search
           size={14}
           className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
@@ -43,7 +43,7 @@ export function ShellTopbar() {
         Autopilot {autopilot ? 'ON' : 'OFF'}
       </button>
 
-      <div className="flex items-center gap-2 pl-3 border-l border-slate-800">
+      <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-slate-800 min-w-0">
         <div className="h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-300 grid place-items-center text-xs font-semibold">
           PK
         </div>

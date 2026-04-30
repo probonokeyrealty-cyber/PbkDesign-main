@@ -54,3 +54,30 @@
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+html,
+body,
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea,
+  button {
+    max-width: 100%;
+  }
+
+  main,
+  section,
+  article,
+  header,
+  footer,
+  aside,
+  nav,
+  div {
+    min-width: 0;
+  }
+}

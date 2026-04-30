@@ -22,7 +22,7 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard }> = 
  */
 export function Sidebar() {
   return (
-    <aside className="h-full bg-slate-950 border-r border-slate-800 flex flex-col">
+    <aside className="hidden h-full bg-slate-950 border-r border-slate-800 md:flex md:flex-col">
       <div className="h-14 flex items-center px-4 border-b border-slate-800">
         <span className="font-semibold tracking-wide text-slate-100">PBK</span>
         <span className="ml-2 text-xs uppercase tracking-widest text-slate-400">

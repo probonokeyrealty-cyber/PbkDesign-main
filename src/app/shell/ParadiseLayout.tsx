@@ -14,7 +14,7 @@ import { ShellTopbar } from './ShellTopbar';
  */
 export function ParadiseLayout() {
   return (
-    <div className="h-full w-full grid grid-cols-[240px_1fr] bg-slate-950 text-slate-100">
+    <div className="h-full w-full grid grid-cols-1 md:grid-cols-[240px_1fr] bg-slate-950 text-slate-100 overflow-hidden">
       <Sidebar />
       <div className="grid grid-rows-[56px_1fr] min-w-0 min-h-0">
         <ShellTopbar />

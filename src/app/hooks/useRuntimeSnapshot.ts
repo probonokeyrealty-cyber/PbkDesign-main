@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   fetchRuntimeQuotas,
   fetchRuntimeState,
@@ -15,36 +15,46 @@ export function useRuntimeSnapshot(pollMs = 12000) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
 
+  const refresh = useCallback(async () => {
+    try {
+      const [nextSnapshot, nextQuotas, nextTooling] = await Promise.all([
+        fetchRuntimeState(),
+        fetchRuntimeQuotas().catch(() => null),
+        fetchRuntimeToolingStatus().catch(() => null),
+      ]);
+      setSnapshot(nextSnapshot);
+      setQuotas(nextQuotas);
+      setTooling(nextTooling);
+      setError('');
+      return nextSnapshot;
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'Could not load PBK runtime.');
+      throw nextError;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
     const hydrate = async () => {
       try {
-        const [nextSnapshot, nextQuotas, nextTooling] = await Promise.all([
-          fetchRuntimeState(),
-          fetchRuntimeQuotas().catch(() => null),
-          fetchRuntimeToolingStatus().catch(() => null),
-        ]);
-        if (cancelled) return;
-        setSnapshot(nextSnapshot);
-        setQuotas(nextQuotas);
-        setTooling(nextTooling);
-        setError('');
-      } catch (nextError) {
-        if (cancelled) return;
-        setError(nextError instanceof Error ? nextError.message : 'Could not load PBK runtime.');
-      } finally {
-        if (!cancelled) setLoading(false);
+        await refresh();
+      } catch {
+        // refresh already stores the visible error state.
       }
     };
 
-    hydrate();
-    const timer = window.setInterval(hydrate, pollMs);
+    if (!cancelled) hydrate();
+    const timer = window.setInterval(() => {
+      if (!cancelled) hydrate();
+    }, pollMs);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [pollMs]);
+  }, [pollMs, refresh]);
 
   return {
     snapshot,
@@ -52,5 +62,6 @@ export function useRuntimeSnapshot(pollMs = 12000) {
     tooling,
     loading,
     error,
+    refresh,
   };
 }

@@ -6,6 +6,11 @@ import { DealView } from '../routes/DealView';
 import { Inbox } from '../routes/Inbox';
 import { Settings } from '../routes/Settings';
 
+const shellBasename =
+  typeof window !== 'undefined' && window.location.pathname.endsWith('/index.shell.html')
+    ? '/index.shell.html'
+    : undefined;
+
 const router = createBrowserRouter([
   {
     path: '/',
@@ -19,7 +24,7 @@ const router = createBrowserRouter([
       { path: 'settings', Component: Settings },
     ],
   },
-]);
+], shellBasename ? { basename: shellBasename } : undefined);
 
 /** ParadiseRouter — top-level router used by `main.shell.tsx`. */
 export function ParadiseRouter() {

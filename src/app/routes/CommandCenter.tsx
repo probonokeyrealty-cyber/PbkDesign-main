@@ -1,7 +1,13 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
 import type { LiveCallState, TranscriptLine } from '../components/shell/LiveCallWidget';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import {
+  controlRuntimeCall,
+  updateAdminTaskDecision,
+  updateApprovalDecision,
+} from '../utils/runtimeBridge';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -74,7 +80,9 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
 
 export function CommandCenter() {
   const navigate = useNavigate();
-  const { snapshot, tooling, loading, error } = useRuntimeSnapshot();
+  const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
+  const [actionStatus, setActionStatus] = useState('');
+  const [pendingAction, setPendingAction] = useState('');
 
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
@@ -100,6 +108,20 @@ export function CommandCenter() {
     { label: 'Deals in Pipeline', value: String((snapshot?.contracts || []).length), hint: 'prepared, sent, or signed contracts' },
     { label: 'Tooling Ready', value: `${String(toolingSummary.readyCount || 0)}/${String(toolingSummary.totalCount || 0)}`, hint: 'advanced systems available in repo' },
   ];
+
+  const runRuntimeAction = async (key: string, successMessage: string, action: () => Promise<void>) => {
+    setPendingAction(key);
+    setActionStatus('');
+    try {
+      await action();
+      await refresh().catch(() => null);
+      setActionStatus(successMessage);
+    } catch (nextError) {
+      setActionStatus(nextError instanceof Error ? nextError.message : 'Runtime action failed.');
+    } finally {
+      setPendingAction('');
+    }
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -129,6 +151,12 @@ export function CommandCenter() {
         </div>
       </div>
 
+      {actionStatus && (
+        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          {actionStatus}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
         {kpis.map((kpi) => (
           <div
@@ -151,13 +179,25 @@ export function CommandCenter() {
           <LiveCallWidget
             state={activeCall}
             onTakeOver={(state) => {
-              navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+              const callId = state.callId || '';
+              void runRuntimeAction(`call:${callId}:takeover`, 'Human takeover sent to the bridge.', async () => {
+                if (callId) await controlRuntimeCall(callId, 'takeover');
+                navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+              });
             }}
             onMute={(state) => {
-              console.info('[LiveCallWidget] mute requested for', state.callId);
+              const callId = state.callId || '';
+              if (!callId) return;
+              void runRuntimeAction(`call:${callId}:mute`, 'Ava mute command sent to the bridge.', async () => {
+                await controlRuntimeCall(callId, 'mute');
+              });
             }}
             onEnd={(state) => {
-              console.info('[LiveCallWidget] end requested for', state.callId);
+              const callId = state.callId || '';
+              if (!callId) return;
+              void runRuntimeAction(`call:${callId}:end`, 'Call end command sent to the bridge.', async () => {
+                await controlRuntimeCall(callId, 'end');
+              });
             }}
           />
 
@@ -183,6 +223,38 @@ export function CommandCenter() {
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-slate-400">{String(task.summary || task.command || 'Administrative action')}</div>
+                  {String(task.status || '').toLowerCase() === 'pending' && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={pendingAction === `admin:${String(task.id)}:approved`}
+                        onClick={() => {
+                          const taskId = String(task.id || '');
+                          if (!taskId) return;
+                          void runRuntimeAction(`admin:${taskId}:approved`, 'Admin task approved and replayed through Rex.', async () => {
+                            await updateAdminTaskDecision(taskId, 'approved');
+                          });
+                        }}
+                        className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pendingAction === `admin:${String(task.id)}:rejected`}
+                        onClick={() => {
+                          const taskId = String(task.id || '');
+                          if (!taskId) return;
+                          void runRuntimeAction(`admin:${taskId}:rejected`, 'Admin task rejected.', async () => {
+                            await updateAdminTaskDecision(taskId, 'rejected');
+                          });
+                        }}
+                        className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
               {!adminTasks.length && (
@@ -250,7 +322,7 @@ export function CommandCenter() {
             <div className="mt-3 space-y-2">
               {activity.map((item, index) => (
                 <div
-                  key={`${String(item.at || item.createdAt || index)}`}
+                  key={`${String(item.id || item.at || item.createdAt || 'activity')}-${index}`}
                   className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -291,6 +363,37 @@ export function CommandCenter() {
                     {String(approval.leadName || approval.address || 'PBK approval')}
                   </div>
                   <div className="mt-1 text-xs text-slate-400">{String(approval.address || 'No address recorded')}</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={pendingAction === `approval:${String(approval.id)}:approved`}
+                      onClick={() => {
+                        const approvalId = String(approval.id || '');
+                        if (!approvalId) return;
+                        void runRuntimeAction(`approval:${approvalId}:approved`, 'Approval decision sent to Ava.', async () => {
+                          await updateApprovalDecision(approvalId, 'approved');
+                        });
+                      }}
+                      className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
+                      onClick={() => {
+                        const approvalId = String(approval.id || '');
+                        if (!approvalId) return;
+                        const rejectionStatus = String(approval.type || '').toLowerCase() === 'contract' ? 'needs-revision' : 'rejected';
+                        void runRuntimeAction(`approval:${approvalId}:rejected`, 'Approval rejection sent to Ava.', async () => {
+                          await updateApprovalDecision(approvalId, rejectionStatus);
+                        });
+                      }}
+                      className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Reject'}
+                    </button>
+                  </div>
                 </div>
               ))}
               {!approvals.filter((item) => item.status === 'pending').length && (

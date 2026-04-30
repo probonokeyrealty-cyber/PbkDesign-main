@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import { updateAdminTaskDecision } from '../utils/runtimeBridge';
 
 type ReadinessState = 'ready' | 'partial' | 'missing' | 'unknown';
 
@@ -50,7 +52,9 @@ function StatusDot({ state }: { state: ReadinessState }) {
 }
 
 export function Settings() {
-  const { snapshot, quotas, tooling, loading, error } = useRuntimeSnapshot();
+  const { snapshot, quotas, tooling, loading, error, refresh } = useRuntimeSnapshot();
+  const [pendingAction, setPendingAction] = useState('');
+  const [actionStatus, setActionStatus] = useState('');
   const status = (snapshot?.status || {}) as Record<string, unknown>;
   const runtimeProviders = (status.providers || {}) as Record<string, Record<string, unknown>>;
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
@@ -70,6 +74,23 @@ export function Settings() {
     { id: 'observability', label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
     { id: 'github', label: 'GitHub Verify', meta: tooling?.github as Record<string, unknown> | undefined },
   ];
+
+  const decideAdminTask = async (task: Record<string, unknown>, status: string) => {
+    const taskId = String(task.id || '');
+    if (!taskId) return;
+    const key = `admin:${taskId}:${status}`;
+    setPendingAction(key);
+    setActionStatus('');
+    try {
+      await updateAdminTaskDecision(taskId, status);
+      await refresh().catch(() => null);
+      setActionStatus(status === 'approved' ? 'Admin task approved and executed.' : 'Admin task rejected.');
+    } catch (nextError) {
+      setActionStatus(nextError instanceof Error ? nextError.message : 'Admin task update failed.');
+    } finally {
+      setPendingAction('');
+    }
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -102,6 +123,12 @@ export function Settings() {
               : `State backend · ${(status.stateBackend as string) || 'unknown'}`}
         </div>
       </div>
+
+      {actionStatus && (
+        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          {actionStatus}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
         {providerCards.map((card) => {
@@ -187,6 +214,26 @@ export function Settings() {
                 <div>
                   <div className="font-medium text-slate-100">{String(task.provider || 'admin')} / {String(task.action || 'review')}</div>
                   <div className="mt-1 text-xs text-slate-400">{String(task.summary || task.command || 'Administrative action')}</div>
+                  {String(task.status || '').toLowerCase() === 'pending' && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={pendingAction === `admin:${String(task.id)}:approved`}
+                        onClick={() => void decideAdminTask(task, 'approved')}
+                        className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pendingAction === `admin:${String(task.id)}:rejected`}
+                        onClick={() => void decideAdminTask(task, 'rejected')}
+                        className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="text-xs uppercase tracking-[0.14em] text-slate-500">
                   {String(task.status || 'pending')}

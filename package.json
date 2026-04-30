@@ -20,6 +20,7 @@
     "test:parity": "node ./scripts/parity-check.mjs",
     "test:bridge": "node ./scripts/openclaw-smoke.mjs",
     "test:e2e": "node ./scripts/openclaw-e2e.mjs",
+    "test:e2e:browseros": "node ./scripts/browseros-e2e.mjs",
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",
     "test:mcp": "npm --prefix ./mcp-server run typecheck",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

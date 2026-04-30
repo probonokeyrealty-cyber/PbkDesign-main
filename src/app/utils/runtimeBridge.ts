@@ -181,6 +181,50 @@ export async function fetchRuntimeToolingStatus() {
   return response.tooling || {};
 }
 
+export async function postRuntimeEvent<T = Record<string, unknown>>(eventType: string, payload: Record<string, unknown>) {
+  return bridgeRequest<T>({
+    method: 'POST',
+    path: '/events',
+    body: { eventType, payload },
+  });
+}
+
+export async function updateApprovalDecision(approvalId: string, status: string) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'PUT',
+    path: `/api/approvals/${encodeURIComponent(approvalId)}`,
+    body: {
+      status,
+      actor: 'PBK React shell',
+      actedAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function updateAdminTaskDecision(taskId: string, status: string) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'PUT',
+    path: `/api/admin/tasks/${encodeURIComponent(taskId)}`,
+    body: {
+      status,
+      actor: 'PBK React shell',
+      notes: `React shell marked task ${status}.`,
+    },
+  });
+}
+
+export async function controlRuntimeCall(callId: string, action: string, extra: Record<string, unknown> = {}) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: `/api/calls/${encodeURIComponent(callId)}/action`,
+    body: {
+      action,
+      actor: 'PBK React shell',
+      ...extra,
+    },
+  });
+}
+
 export async function queryBrainRequest(query: string) {
   return invokeRuntimeTool<Record<string, unknown>>('getBrainState', { query });
 }

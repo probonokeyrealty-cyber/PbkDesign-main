@@ -1,9 +1,30 @@
+import { useState } from 'react';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import { updateApprovalDecision } from '../utils/runtimeBridge';
 
 export function Inbox() {
-  const { snapshot, loading, error } = useRuntimeSnapshot();
+  const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
+  const [pendingAction, setPendingAction] = useState('');
+  const [actionStatus, setActionStatus] = useState('');
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
   const messages = Array.isArray(snapshot?.messages) ? snapshot.messages.slice(0, 12) : [];
+
+  const decideApproval = async (approval: Record<string, unknown>, status: string) => {
+    const approvalId = String(approval.id || '');
+    if (!approvalId) return;
+    const key = `approval:${approvalId}:${status}`;
+    setPendingAction(key);
+    setActionStatus('');
+    try {
+      await updateApprovalDecision(approvalId, status);
+      await refresh().catch(() => null);
+      setActionStatus(status === 'approved' ? 'Approval sent to Ava.' : 'Decision sent to Ava.');
+    } catch (nextError) {
+      setActionStatus(nextError instanceof Error ? nextError.message : 'Approval update failed.');
+    } finally {
+      setPendingAction('');
+    }
+  };
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -18,6 +39,12 @@ export function Inbox() {
           {loading ? 'Loading inbox…' : error || `${messages.length} recent messages`}
         </div>
       </div>
+
+      {actionStatus && (
+        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          {actionStatus}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
         <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
@@ -37,6 +64,27 @@ export function Inbox() {
                 </div>
                 <div className="mt-1 text-xs text-slate-400">
                   {String(approval.address || 'No address recorded')}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={pendingAction === `approval:${String(approval.id)}:approved`}
+                    onClick={() => void decideApproval(approval, 'approved')}
+                    className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
+                    onClick={() => {
+                      const status = String(approval.type || '').toLowerCase() === 'contract' ? 'needs-revision' : 'rejected';
+                      void decideApproval(approval, status);
+                    }}
+                    className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Reject'}
+                  </button>
                 </div>
               </div>
             ))}

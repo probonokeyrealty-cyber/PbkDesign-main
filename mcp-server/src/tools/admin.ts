@@ -58,6 +58,11 @@ const PrepareContractInput = z
     address: z.string().optional(),
     email: z.string().optional(),
     amount: z.number().nonnegative().optional(),
+    contractPath: z.string().optional(),
+    pathId: z.string().optional(),
+    path: z.string().optional(),
+    dealType: z.string().optional(),
+    contractType: z.string().optional(),
     selectedPath: z.string().optional(),
     selectedPathLabel: z.string().optional(),
     templateId: z.string().optional(),
@@ -80,6 +85,11 @@ const ContractLawyerReviewInput = z
     address: z.string().optional(),
     email: z.string().email().optional(),
     amount: z.number().nonnegative().optional(),
+    contractPath: z.string().optional(),
+    pathId: z.string().optional(),
+    path: z.string().optional(),
+    dealType: z.string().optional(),
+    contractType: z.string().optional(),
     selectedPath: z.string().optional(),
     selectedPathLabel: z.string().optional(),
     templateId: z.string().optional(),
@@ -87,6 +97,14 @@ const ContractLawyerReviewInput = z
     reviewerName: z.string().optional(),
     sellerNotice: z.string().optional(),
     notes: z.string().optional(),
+  })
+  .strict();
+
+const ReloadContractTemplatesInput = z
+  .object({
+    reason: z.string().optional(),
+    source: z.string().optional(),
+    actor: z.string().optional(),
   })
   .strict();
 
@@ -429,6 +447,35 @@ export function registerAdminTools(server: McpServer): void {
     async (params) => {
       try {
         const result = await bridgeJson("/api/contracts/lawyer-review", "POST", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_reload_contract_templates",
+    {
+      title: "Reload contract template paths",
+      description: "Refresh the bridge contract path library from the contracts folder after template, field-map, or negotiation script updates.",
+      inputSchema: ReloadContractTemplatesInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeJson("/api/contracts/reload", "POST", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

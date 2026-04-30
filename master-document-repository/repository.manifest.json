@@ -1,0 +1,68 @@
+{
+  "name": "PBK Command Center - Master Document Repository",
+  "version": "2026-04-29",
+  "calculatorPolicy": "Investor Yield Calculator lives inside the PBK Command Center only; no separate Excel file.",
+  "groups": [
+    {
+      "id": "01-training-and-protocol",
+      "title": "Training & Protocol",
+      "items": [
+        "Agent Training Manual",
+        "Daily Drill Checklist",
+        "Protocol Compliance Checklist",
+        "Objection Handling Engine (Master)",
+        "Path Selection Decision Tree (Flowchart)"
+      ]
+    },
+    {
+      "id": "02-scripts-master",
+      "title": "Scripts (Master)",
+      "items": [
+        "Homeowner Scripts (Cash, RBP)",
+        "Agent Scripts",
+        "Objection Scripts (12-objection cards)"
+      ]
+    },
+    {
+      "id": "03-deal-path-contracts-and-agreements",
+      "title": "Deal Path Contracts & Agreements",
+      "contractPathIds": [
+        "cash-offer",
+        "retail-buyer-program",
+        "creative-finance-agent",
+        "mortgage-takeover-agent",
+        "land"
+      ]
+    },
+    {
+      "id": "04-pdf-packages-and-templates",
+      "title": "PDF Packages & Templates",
+      "items": [
+        "Blank Master Deal Package Template",
+        "Cash Deal Package",
+        "RBP Deal Package",
+        "CF (Agent) Deal Package",
+        "MT (Agent) Deal Package",
+        "Land Deal Package"
+      ]
+    },
+    {
+      "id": "05-legal-and-compliance",
+      "title": "Legal & Compliance",
+      "items": [
+        "Entity Documents (LLC, Corp)",
+        "W-9 / Disbursement Authorization",
+        "Assignment Fee Schedule & Policy",
+        "Anti-Money Laundering / KYC Checklist"
+      ]
+    },
+    {
+      "id": "06-updates-and-version-log",
+      "title": "Updates & Version Log",
+      "items": [
+        "Changelog",
+        "Archive (old contract versions)"
+      ]
+    }
+  ]
+}

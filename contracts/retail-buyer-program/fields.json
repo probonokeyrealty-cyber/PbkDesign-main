@@ -1,0 +1,22 @@
+{
+  "name": "Retail Buyer Program Deal Package",
+  "type": "retail-buyer-program",
+  "aliases": ["rbp", "retail buyer program", "retail buyer", "seller net sheet", "double close"],
+  "version": "2026-04-29",
+  "description": "Retail Buyer Program path for homeowner deals where PBK may use assignment or double-close execution.",
+  "documents": [
+    "Purchase & Sale Agreement (RBP)",
+    "Assignment / Double-Close Instructions",
+    "RBP Seller Net Sheet"
+  ],
+  "fields": {
+    "seller_name": "Seller legal name",
+    "buyer_entity": "PBK buying entity",
+    "property_address": "Full subject property address",
+    "purchase_price": "Purchase amount in USD",
+    "seller_net": "Estimated seller net after agreed costs",
+    "retail_buyer_strategy": "Assignment or double-close execution plan",
+    "closing_timeline": "Target close date or closing window",
+    "access_terms": "Showing, inspection, and buyer access terms"
+  }
+}

@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createPrivateKey, createSign as __dsCreateSign, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync, watch } from 'node:fs';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chromium from '@sparticuz/chromium';
@@ -201,6 +201,7 @@ const TOOL_NAMES = [
   'sendSellerDocs',
   'prepareContract',
   'contractLawyerReview',
+  'reloadContractTemplates',
   'requestAdminAction',
   'launchBrowserResearch',
   'runAgentCommand',
@@ -2407,6 +2408,14 @@ function createContractRecord(params = {}) {
     notes: params.notes || '',
     approvalId: params.approvalId || '',
     templateId: params.templateId || '',
+    templateFields: params.templateFields || {},
+    templateFieldMap: params.templateFieldMap || {},
+    contractPath: params.contractPath || params.selectedPath || '',
+    contractType: params.contractType || params.templateId || '',
+    templatePath: params.templatePath || '',
+    templateFile: params.templateFile || '',
+    negotiationFile: params.negotiationFile || '',
+    negotiationPrompt: params.negotiationPrompt || '',
     underwritingStatus: params.underwritingStatus || '',
     underwritingReviewerEmail: params.underwritingReviewerEmail || '',
     underwritingReviewerName: params.underwritingReviewerName || '',
@@ -3632,8 +3641,59 @@ async function executeAdminTask(task, overrides = {}) {
   return response;
 }
 
-async function getContractTemplateLibrary() {
+const CONTRACT_SCRIPT_FILENAMES = ['negotiation.md', 'script.md', 'prompt.md'];
+const CONTRACT_TEMPLATE_FILENAMES = ['template.pdf', 'agreement.pdf', 'contract.pdf', 'template.docx', 'agreement.docx', 'template.html'];
+const DEFAULT_CONTRACT_PATH = 'standard-purchase';
+let contractTemplateCache = {
+  loadedAt: '',
+  reason: 'not-loaded',
+  templates: [],
+  errors: [],
+};
+let contractTemplateWatcherStarted = false;
+let contractTemplateReloadTimer = null;
+
+function contractRelativePath(filePath = '') {
+  if (!filePath) return '';
+  return path.relative(CONTRACTS_DIR, filePath).replace(/\\/g, '/');
+}
+
+function resolveContractLibraryPath(relativePath = '') {
+  if (!relativePath) return '';
+  const resolved = path.resolve(CONTRACTS_DIR, relativePath);
+  const relative = path.relative(CONTRACTS_DIR, resolved);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? resolved : '';
+}
+
+async function readTextIfExists(filePath = '') {
+  if (!filePath) return '';
+  try {
+    return await readFile(filePath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+async function statIsoIfExists(filePath = '') {
+  if (!filePath) return '';
+  try {
+    return (await stat(filePath)).mtime.toISOString();
+  } catch {
+    return '';
+  }
+}
+
+function sortContractTemplates(templates = []) {
+  return [...templates].sort((left, right) => {
+    if (left.id === DEFAULT_CONTRACT_PATH) return -1;
+    if (right.id === DEFAULT_CONTRACT_PATH) return 1;
+    return String(left.name || left.id).localeCompare(String(right.name || right.id));
+  });
+}
+
+async function loadContractTemplateLibrary(reason = 'load') {
   const templates = [];
+  const errors = [];
   try {
     const directories = await readdir(CONTRACTS_DIR, { withFileTypes: true });
     for (const entry of directories) {
@@ -3643,20 +3703,201 @@ async function getContractTemplateLibrary() {
       let fields = {};
       try {
         fields = JSON.parse(await readFile(fieldsPath, 'utf8'));
-      } catch {
+      } catch (error) {
+        errors.push({
+          id: entry.name,
+          file: contractRelativePath(fieldsPath),
+          error: error instanceof Error ? error.message : 'Unable to read fields.json',
+        });
         fields = {};
       }
+
+      let folderFiles = [];
+      try {
+        folderFiles = await readdir(templateDir, { withFileTypes: true });
+      } catch {
+        folderFiles = [];
+      }
+
+      const existingFiles = folderFiles.filter((item) => item.isFile()).map((item) => item.name);
+      const scriptFile = CONTRACT_SCRIPT_FILENAMES.find((fileName) => existingFiles.includes(fileName)) || '';
+      const templateFile =
+        CONTRACT_TEMPLATE_FILENAMES.find((fileName) => existingFiles.includes(fileName)) ||
+        existingFiles.find((fileName) => /\.(pdf|docx|html)$/i.test(fileName)) ||
+        '';
+      const scriptPath = scriptFile ? path.join(templateDir, scriptFile) : '';
+      const templatePath = templateFile ? path.join(templateDir, templateFile) : '';
+      const negotiationScript = await readTextIfExists(scriptPath);
+      const updatedAtCandidates = await Promise.all([
+        statIsoIfExists(fieldsPath),
+        statIsoIfExists(scriptPath),
+        statIsoIfExists(templatePath),
+      ]);
+      const updatedAt = updatedAtCandidates.filter(Boolean).sort().at(-1) || '';
+
       templates.push({
         id: entry.name,
+        pathId: entry.name,
         name: fields.name || entry.name,
         type: fields.type || entry.name,
+        aliases: Array.isArray(fields.aliases) ? fields.aliases : [],
+        version: fields.version || '',
+        description: fields.description || '',
         fields,
+        fieldMap: fields.fields || fields,
+        folder: entry.name,
+        hasTemplate: Boolean(templateFile),
+        templateFile,
+        templatePath: templatePath ? contractRelativePath(templatePath) : '',
+        hasNegotiation: Boolean(negotiationScript),
+        negotiationFile: scriptFile,
+        negotiationPath: scriptPath ? contractRelativePath(scriptPath) : '',
+        negotiationScript,
+        updatedAt,
       });
     }
-  } catch {
-    return [];
+  } catch (error) {
+    errors.push({
+      id: 'contracts',
+      file: contractRelativePath(CONTRACTS_DIR),
+      error: error instanceof Error ? error.message : 'Unable to read contracts directory',
+    });
   }
-  return templates;
+
+  return {
+    loadedAt: isoNow(),
+    reason,
+    templates: sortContractTemplates(templates),
+    errors,
+  };
+}
+
+async function reloadContractTemplateLibrary(reason = 'manual') {
+  contractTemplateCache = await loadContractTemplateLibrary(reason);
+  return {
+    ok: contractTemplateCache.errors.length === 0,
+    ...contractTemplateCache,
+  };
+}
+
+async function getContractTemplateLibrary(options = {}) {
+  if (options.force || !contractTemplateCache.loadedAt) {
+    await reloadContractTemplateLibrary(options.reason || 'lazy-load');
+  }
+  return contractTemplateCache.templates;
+}
+
+function normalizeContractPathKey(value = '') {
+  return slugify(String(value || '').trim())
+    .replace(/subject-to/g, 'subto')
+    .replace(/sub-to/g, 'subto');
+}
+
+function inferContractPathFromParams(params = {}) {
+  const fragments = [
+    params.contractPath,
+    params.pathId,
+    params.path,
+    params.selectedPath,
+    params.selectedPathLabel,
+    params.templateId,
+    params.template,
+    params.dealType,
+    params.contractType,
+    params.leadType,
+    params.source,
+    params.notes,
+    params.body,
+    params.reply,
+    params.motivationSignals,
+    params.tags,
+  ]
+    .flat()
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (/\b(subto|sub-to|subject to|subject-to|creative finance|mortgage|loan balance|take over payments)\b/.test(fragments)) {
+    if (/\b(creative finance|seller carry|seller finance|wrap|promissory note|deed of trust|beneficial interest|cf)\b/.test(fragments)) {
+      return 'creative-finance-agent';
+    }
+    return 'mortgage-takeover-agent';
+  }
+  if (/\b(retail buyer program|retail buyer|rbp|seller net sheet|double close|double-close)\b/.test(fragments)) {
+    return 'retail-buyer-program';
+  }
+  if (/\b(vacant land|land contract|land due diligence|land due-diligence|parcel|acreage)\b/.test(fragments)) {
+    return 'land';
+  }
+  if (/\b(probate|estate|executor|administrator|inherited|letters testamentary)\b/.test(fragments)) {
+    return 'probate-addendum';
+  }
+  if (/\b(assign|assignment|assignor|assignee|end buyer|buyer lined up|wholesale fee)\b/.test(fragments)) {
+    return 'assignment';
+  }
+  if (/\b(cash|standard|purchase|as-is|quick close|direct to seller)\b/.test(fragments)) {
+    return 'cash-offer';
+  }
+  return DEFAULT_CONTRACT_PATH;
+}
+
+function selectContractTemplate(templates = [], params = {}) {
+  const keys = [
+    params.contractPath,
+    params.pathId,
+    params.path,
+    params.selectedPath,
+    params.templateId,
+    params.template,
+    params.contractType,
+    inferContractPathFromParams(params),
+    DEFAULT_CONTRACT_PATH,
+  ].map(normalizeContractPathKey).filter(Boolean);
+
+  for (const key of keys) {
+    const match = templates.find((item) => {
+      const itemKeys = [
+        item.id,
+        item.pathId,
+        item.type,
+        item.name,
+        item.folder,
+        item.aliases,
+      ].flat().map(normalizeContractPathKey);
+      return itemKeys.includes(key) || itemKeys.some((itemKey) => itemKey && (itemKey.includes(key) || key.includes(itemKey)));
+    });
+    if (match) return match;
+  }
+
+  return templates[0] || {
+    id: DEFAULT_CONTRACT_PATH,
+    pathId: DEFAULT_CONTRACT_PATH,
+    name: 'Standard Purchase Agreement',
+    type: DEFAULT_CONTRACT_PATH,
+    fields: {},
+    fieldMap: {},
+    folder: DEFAULT_CONTRACT_PATH,
+    hasTemplate: false,
+    hasNegotiation: false,
+    negotiationScript: '',
+  };
+}
+
+function startContractTemplateWatcher() {
+  if (contractTemplateWatcherStarted || IS_HOSTED) return;
+  contractTemplateWatcherStarted = true;
+  try {
+    watch(CONTRACTS_DIR, { recursive: true }, () => {
+      clearTimeout(contractTemplateReloadTimer);
+      contractTemplateReloadTimer = setTimeout(() => {
+        reloadContractTemplateLibrary('file-watch').catch((error) => {
+          console.warn('[pbk-local-openclaw] contract template reload failed:', error instanceof Error ? error.message : error);
+        });
+      }, 200);
+    });
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] contract template watcher unavailable:', error instanceof Error ? error.message : error);
+  }
 }
 
 async function readJsonIfExists(filePath) {
@@ -5282,14 +5523,33 @@ async function fireDocuSignEnvelope(params = {}) {
   }
 
   let documentBase64 = params.documentBase64 || '';
+  let documentName = params.documentName || 'PBK Master Deal Package.pdf';
+  if (!documentBase64 && params.templatePath && /\.pdf$/i.test(String(params.templatePath))) {
+    const resolvedTemplatePath = resolveContractLibraryPath(params.templatePath);
+    if (resolvedTemplatePath) {
+      try {
+        documentBase64 = (await readFile(resolvedTemplatePath)).toString('base64');
+        documentName = params.documentName || path.basename(resolvedTemplatePath);
+      } catch {
+        documentBase64 = '';
+      }
+    }
+  }
   if (!documentBase64) {
     try {
+      const contractLabel =
+        params.selectedPathLabel ||
+        params.contractType ||
+        params.template ||
+        params.templateId ||
+        params.selectedPath ||
+        'PBK Contract';
       const pdfBuffer = await generatePdfDocument({
-        documentTitle: params.documentTitle || `${params.template || 'Assignment'} - ${params.address || params.leadName || 'PBK contract'}`,
+        documentTitle: params.documentTitle || `${contractLabel} - ${params.address || params.leadName || 'PBK contract'}`,
         propertyAddress: params.address || '',
         leadName: params.leadName || '',
         amount: params.amount,
-        selectedPathLabel: params.template || 'assignment',
+        selectedPathLabel: contractLabel,
         previewOrigin: params.previewOrigin || DEFAULT_PREVIEW_ORIGIN,
       });
       documentBase64 = Buffer.from(pdfBuffer).toString('base64');
@@ -5306,11 +5566,11 @@ async function fireDocuSignEnvelope(params = {}) {
   }
 
   const envelopeBody = {
-    emailSubject: params.emailSubject || `${params.template || 'Assignment Contract'} - ${params.address || params.leadName || 'Probono Key Realty'}`,
+    emailSubject: params.emailSubject || `${params.selectedPathLabel || params.contractType || params.template || params.templateId || 'PBK Contract'} - ${params.address || params.leadName || 'Probono Key Realty'}`,
     status: params.dryRun ? 'created' : 'sent',
     documents: [{
       documentBase64,
-      name: params.documentName || 'PBK Master Deal Package.pdf',
+      name: documentName,
       fileExtension: 'pdf',
       documentId: '1',
     }],
@@ -7077,14 +7337,36 @@ const toolHandlers = {
   async sendDocuSign(params = {}) {
     recordToolUse('sendDocuSign');
     const docusignMeta = getDocuSignProviderMeta();
-    const contract = createContractRecord(params);
+    const templates = await getContractTemplateLibrary();
+    const template = selectContractTemplate(templates, params);
+    const selectedPath = template.pathId || template.id || inferContractPathFromParams(params);
+    const contract = createContractRecord({
+      ...params,
+      selectedPath,
+      selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
+      templateId: params.templateId || template.id,
+      templateFields: params.templateFields || template.fields || {},
+      templateFieldMap: params.templateFieldMap || template.fieldMap || template.fields || {},
+      contractPath: selectedPath,
+      contractType: params.contractType || template.type || selectedPath,
+      templatePath: params.templatePath || template.templatePath || '',
+      templateFile: params.templateFile || template.templateFile || '',
+      negotiationFile: params.negotiationFile || template.negotiationFile || '',
+      negotiationPrompt: params.negotiationPrompt || template.negotiationScript || '',
+    });
 
     let live = false;
     let envelope = null;
     let providerError = '';
 
     if (docusignMeta.ready) {
-      const response = await fireDocuSignEnvelope(params);
+      const response = await fireDocuSignEnvelope({
+        ...params,
+        ...contract,
+        signers: params.signers,
+        documentBase64: params.documentBase64,
+        documentName: params.documentName,
+      });
       if (response.ok) {
         live = true;
         envelope = response.envelope;
@@ -7117,6 +7399,8 @@ const toolHandlers = {
     return {
       ok: live || queueOnly,
       contract,
+      template,
+      path: selectedPath,
       envelope,
       docusign: {
         live,
@@ -7383,17 +7667,8 @@ const toolHandlers = {
   async prepareContract(params = {}) {
     recordToolUse('prepareContract');
     const templates = await getContractTemplateLibrary();
-    const selectedPath = String(params.selectedPath || '').trim().toLowerCase();
-    const requestedTemplate = String(params.templateId || params.template || '').trim().toLowerCase();
-    const template =
-      templates.find((item) => item.id === requestedTemplate || String(item.type || '').toLowerCase() === requestedTemplate) ||
-      templates.find((item) => selectedPath && item.id.includes(selectedPath)) ||
-      templates[0] || {
-        id: 'standard-purchase',
-        name: 'standard-purchase',
-        type: 'standard-purchase',
-        fields: {},
-      };
+    const template = selectContractTemplate(templates, params);
+    const selectedPath = template.pathId || template.id || inferContractPathFromParams(params);
 
     const contract = createContractRecord({
       ...params,
@@ -7401,10 +7676,18 @@ const toolHandlers = {
       provider: 'PBK Contract Prep',
       documentTitle: `${template.name} - ${params.address || params.leadName || 'PBK contract'}`,
       notes: params.notes || `Prepared from template ${template.name}.`,
-      selectedPathLabel: params.selectedPathLabel || selectedPath || template.name,
+      selectedPath,
+      selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
     });
     contract.templateId = template.id;
     contract.templateFields = template.fields;
+    contract.templateFieldMap = template.fieldMap || template.fields || {};
+    contract.contractPath = selectedPath;
+    contract.contractType = template.type || selectedPath;
+    contract.templatePath = template.templatePath || '';
+    contract.templateFile = template.templateFile || '';
+    contract.negotiationFile = template.negotiationFile || '';
+    contract.negotiationPrompt = template.negotiationScript || '';
     contract.underwritingStatus = 'pending';
 
     upsertContract(state, contract);
@@ -7424,7 +7707,16 @@ const toolHandlers = {
       ok: true,
       contract,
       template,
-      templatesAvailable: templates.map((item) => ({ id: item.id, name: item.name })),
+      path: selectedPath,
+      negotiationPrompt: template.negotiationScript || '',
+      templatesAvailable: templates.map((item) => ({
+        id: item.id,
+        pathId: item.pathId,
+        name: item.name,
+        type: item.type,
+        hasTemplate: item.hasTemplate,
+        hasNegotiation: item.hasNegotiation,
+      })),
     };
   },
 
@@ -7458,6 +7750,9 @@ const toolHandlers = {
       metadata: {
         selectedPath: contract.selectedPath || '',
         selectedPathLabel: contract.selectedPathLabel || '',
+        contractType: contract.contractType || '',
+        negotiationFile: contract.negotiationFile || '',
+        templatePath: contract.templatePath || '',
       },
       notes: approvalNotes,
     });
@@ -7492,6 +7787,25 @@ const toolHandlers = {
       sellerNotice,
       nextStep: 'Await underwriting approval callback before DocuSign is sent.',
     };
+  },
+
+  async reloadContractTemplates(params = {}) {
+    recordToolUse('reloadContractTemplates');
+    const result = await reloadContractTemplateLibrary(params.reason || params.source || 'tool');
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.actor || 'Rex',
+        category: 'CONTRACT',
+        status: result.ok ? 'synced' : 'warning',
+        text: result.ok
+          ? `Reloaded ${result.templates.length} contract path${result.templates.length === 1 ? '' : 's'} from the contracts folder.`
+          : `Reloaded contract paths with ${result.errors.length} issue${result.errors.length === 1 ? '' : 's'}.`,
+        target: 'contracts',
+      }),
+    );
+    await persistState(state);
+    return result;
   },
 
   async requestAdminAction(params = {}) {
@@ -8220,6 +8534,20 @@ function buildStateSnapshot() {
     appointments: state.appointments,
     leadStageTransitions: state.leadStageTransitions,
     contracts: state.contracts,
+    contractTemplates: {
+      loadedAt: contractTemplateCache.loadedAt,
+      reason: contractTemplateCache.reason,
+      errors: contractTemplateCache.errors,
+      templates: contractTemplateCache.templates.map((item) => ({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        version: item.version,
+        hasTemplate: item.hasTemplate,
+        hasNegotiation: item.hasNegotiation,
+        updatedAt: item.updatedAt,
+      })),
+    },
     documentDeliveries: state.documentDeliveries,
     adminTasks: state.adminTasks,
     adminAudit: state.adminAudit,
@@ -8529,10 +8857,27 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && pathname === '/api/contracts/templates') {
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/contracts/templates', '/api/contracts/paths'])) {
+      const templates = await getContractTemplateLibrary();
       json(response, 200, {
         ok: true,
-        templates: await getContractTemplateLibrary(),
+        loadedAt: contractTemplateCache.loadedAt,
+        reason: contractTemplateCache.reason,
+        errors: contractTemplateCache.errors,
+        templates,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/contracts/reload') {
+      const body = await readBody(request);
+      const result = await toolHandlers.reloadContractTemplates({
+        ...body,
+        source: body.source || 'api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -9260,6 +9605,8 @@ const server = createServer(async (request, response) => {
         'GET /api/crm/streak/bootstrap-plan',
         'GET /metrics',
         'GET /api/contracts/templates',
+        'GET /api/contracts/paths',
+        'POST /api/contracts/reload',
         'GET/POST /api/appointments',
         'GET /api/replies/templates',
         'GET /api/lead-transitions',
@@ -9305,6 +9652,10 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
+  startContractTemplateWatcher();
+  reloadContractTemplateLibrary('startup').catch((error) => {
+    console.warn('[pbk-local-openclaw] contract template startup load failed:', error instanceof Error ? error.message : error);
+  });
   console.log(`[pbk-local-openclaw] listening on http://${HOST}:${PORT}`);
   console.log(`[pbk-local-openclaw] state backend: ${STATE_BACKEND}${DATABASE_URL ? ' (postgres)' : ` (file: ${STATE_FILE})`}`);
   console.log(`[pbk-local-openclaw] state file: ${STATE_FILE}`);

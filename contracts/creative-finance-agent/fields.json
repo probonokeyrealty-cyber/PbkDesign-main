@@ -1,0 +1,29 @@
+{
+  "name": "Agent-Preferred Creative Finance Deal Package",
+  "type": "creative-finance-agent",
+  "aliases": ["cf", "creative finance", "seller carry", "seller financing", "wrap", "agent preferred cf"],
+  "version": "2026-04-29",
+  "description": "Agent-preferred creative finance path with seller-carry, wrap, commission protection, and finder/JV documentation.",
+  "documents": [
+    "Purchase Agreement (Seller Carry / Wrap)",
+    "Promissory Note & Deed of Trust",
+    "Assignment of Beneficial Interest",
+    "Co-Brokerage / Commission Protection Agreement",
+    "Joint Venture (Finder's Fee) Agreement",
+    "CF Terms Addendum"
+  ],
+  "fields": {
+    "seller_name": "Seller legal name",
+    "buyer_entity": "PBK buying entity",
+    "agent_name": "Referring or listing agent name",
+    "brokerage_name": "Agent brokerage name",
+    "property_address": "Full subject property address",
+    "purchase_price": "Total purchase amount in USD",
+    "down_payment": "Cash down payment",
+    "seller_carry_balance": "Seller-financed principal balance",
+    "interest_rate": "Seller carry or wrap interest rate",
+    "monthly_payment": "Monthly payment amount",
+    "balloon_date": "Balloon maturity or payoff date",
+    "commission_protection": "Commission or co-brokerage terms"
+  }
+}

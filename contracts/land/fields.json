@@ -1,0 +1,24 @@
+{
+  "name": "Land Deal Package",
+  "type": "land",
+  "aliases": ["land", "vacant land", "parcel", "acreage", "land contract"],
+  "version": "2026-04-29",
+  "description": "Vacant land path for homeowner or agent sourced land acquisitions and assignments.",
+  "documents": [
+    "Vacant Land Purchase Agreement",
+    "Assignment of Land Contract",
+    "Land Due-Diligence Checklist"
+  ],
+  "fields": {
+    "seller_name": "Seller legal name",
+    "buyer_entity": "PBK buying entity",
+    "property_address": "Full land parcel address or legal description",
+    "parcel_number": "Parcel or APN number",
+    "purchase_price": "Purchase amount in USD",
+    "earnest_money": "Earnest deposit amount and timing",
+    "due_diligence_period": "Land due-diligence period",
+    "access_status": "Access, easement, or road frontage status",
+    "utilities_status": "Utilities availability",
+    "zoning_status": "Zoning or permitted-use status"
+  }
+}

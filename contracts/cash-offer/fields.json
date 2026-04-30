@@ -1,0 +1,22 @@
+{
+  "name": "Cash Offer Deal Package",
+  "type": "cash-offer",
+  "aliases": ["cash", "cash-offer", "standard cash", "homeowner cash", "agent backup cash"],
+  "version": "2026-04-29",
+  "description": "Cash offer path for direct homeowner acquisitions and agent backup offers.",
+  "documents": [
+    "Purchase & Sale Agreement (Cash)",
+    "Assignment of Contract (Wholesale)",
+    "Proof of Funds Template"
+  ],
+  "fields": {
+    "seller_name": "Seller legal name",
+    "buyer_entity": "PBK buying entity",
+    "property_address": "Full subject property address",
+    "purchase_price": "Cash purchase amount in USD",
+    "earnest_money": "Earnest deposit amount and delivery timing",
+    "closing_timeline": "Target close date or closing window",
+    "inspection_period": "Inspection period or as-is confirmation",
+    "proof_of_funds_status": "Proof of funds attached / pending"
+  }
+}

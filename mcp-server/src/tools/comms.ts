@@ -33,7 +33,12 @@ const SendContractInput = z
     leadName: z.string().min(1),
     address: z.string().min(1),
     amount: z.number().nonnegative().describe("Contract amount in USD."),
-    template: z.enum(["assignment", "purchase", "release", "amendment"]).optional(),
+    template: z.string().optional().describe("Contract path or template id, such as standard-purchase, subto, assignment, or probate-addendum."),
+    contractPath: z.string().optional(),
+    selectedPath: z.string().optional(),
+    selectedPathLabel: z.string().optional(),
+    dealType: z.string().optional(),
+    contractType: z.string().optional(),
     signers: z
       .array(z.object({ name: z.string(), email: z.string().email() }).strict())
       .min(1)
@@ -656,7 +661,7 @@ Returns:
 
 Args:
   - leadName (string, required), address (string, required), amount (number, required).
-  - template ('assignment'|'purchase'|'release'|'amendment'): Defaults to 'assignment'.
+  - template or contractPath: Contract folder id such as standard-purchase, subto, assignment, or probate-addendum.
   - signers (array of {name, email}): Optional. Bridge defaults to the lead contact when omitted.
   - notes (string): Optional reviewer note.
 

@@ -1,0 +1,31 @@
+{
+  "name": "Agent-Preferred Mortgage Takeover Deal Package",
+  "type": "mortgage-takeover-agent",
+  "aliases": ["mt", "mortgage takeover", "subject-to", "subto", "take over payments", "loan assumption", "agent preferred mt"],
+  "version": "2026-04-29",
+  "description": "Agent-preferred mortgage takeover path for subject-to, lender authorization, due-on-sale disclosure, and commission protection.",
+  "documents": [
+    "Subject-To Purchase Agreement",
+    "Loan Assumption / Estoppel Letter",
+    "Authorization to Release Info (Lender)",
+    "Due-on-Sale Disclosure",
+    "Beneficial Interest Assignment",
+    "Co-Brokerage / Commission Protection Agreement",
+    "MT Compliance Checklist & Timeline"
+  ],
+  "fields": {
+    "seller_name": "Seller legal name",
+    "buyer_entity": "PBK buying entity",
+    "agent_name": "Referring or listing agent name",
+    "brokerage_name": "Agent brokerage name",
+    "property_address": "Full subject property address",
+    "existing_loan_balance": "Approximate unpaid principal balance",
+    "existing_interest_rate": "Current mortgage interest rate",
+    "monthly_payment": "Current monthly payment",
+    "arrears_status": "Current, late, arrears, or reinstatement amount",
+    "cash_to_seller": "Upfront seller payment",
+    "lender_authorization_status": "Authorization to release information status",
+    "due_on_sale_disclosure": "Due-on-sale disclosure acknowledged / pending",
+    "commission_protection": "Commission or co-brokerage terms"
+  }
+}

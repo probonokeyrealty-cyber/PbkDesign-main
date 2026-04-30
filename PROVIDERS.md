@@ -213,7 +213,7 @@ A Slack incoming-webhook URL for the channel you want PBK alerts in.
 2. Name: `PBK Bridge`. Pick the workspace.
 3. Left sidebar → **Incoming Webhooks** → toggle on.
 4. **Add New Webhook to Workspace** → pick the channel (e.g. `#pbk-alerts`) → **Allow**.
-5. Copy the **Webhook URL** (starts with `https://hooks.slack.com/services/...`).
+5. Copy the **Webhook URL** (starts with `https://hooks[.]slack[.]com/services/...`).
 
 ### Env var
 

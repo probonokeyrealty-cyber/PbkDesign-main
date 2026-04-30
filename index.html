@@ -13623,9 +13623,30 @@
 
   syncOpenClawState = async function({ silent = false } = {}) {
     const config = getOpenClawConfig();
-    const [snapshot, health, quotas, tooling] = await Promise.all([
+    const health = await probeOpenClaw(config).catch(() => null);
+    const authRequired = Boolean(health?.runtimeMeta?.authRequired);
+    const hasApiKey = Boolean(String(config.apiKey || '').trim());
+
+    if (authRequired && !hasApiKey) {
+      openClawPollFailures = 0;
+      const connected = saveOpenClawConfig({
+        ...config,
+        status: 'saved',
+        lastCheckedAt: Date.now(),
+        lastMessage: 'Bridge health ok — add the API key to enable live state sync.',
+        runtimeMeta: health?.runtimeMeta || sanitizeOpenClawRuntimeMeta({
+          ...(config.runtimeMeta || {}),
+          lastSyncAt: new Date().toISOString()
+        })
+      });
+      reflectOpenClawUI(connected);
+      renderProvidersCard(connected.runtimeMeta?.providers || null, null, null);
+      if (!silent) PBK.events.emit('openclaw:status', connected);
+      return PBK.state.openclawRuntime || {};
+    }
+
+    const [snapshot, quotas, tooling] = await Promise.all([
       fetchOpenClawState(config),
-      probeOpenClaw(config).catch(() => null),
       fetchOpenClawQuotas(config).catch(() => null),
       fetchOpenClawToolingStatus(config).catch(() => null)
     ]);

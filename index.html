@@ -8196,6 +8196,304 @@
   </div>
 </div>
 
+<style id="pbk-mobile-overflow-guard">
+  @media (max-width: 720px) {
+    .page.active,
+    .page-head,
+    .page-head-left,
+    .page-head-actions,
+    .inbox-layout,
+    .ib-convo,
+    .convo-head,
+    .convo-title,
+    .convo-body,
+    .compose,
+    .upload-zone,
+    .leads-toolbar,
+    .leads-table-wrap,
+    .bulk-bar,
+    .bulk-bar > div,
+    .calls-grid,
+    .lc-card,
+    .lc-head,
+    .lc-body,
+    .lc-meters,
+    .upcoming-queue,
+    .contract-pipeline,
+    .contracts-layout,
+    .contracts-ops-strip,
+    .pipeline-stages,
+    .an-grid,
+    .chart-panel,
+    .settings-layout,
+    .settings-content,
+    .settings-section,
+    .setting-row,
+    .setting-ctrl,
+    .dnc-toolbar,
+    .role-table,
+    .ld-layout,
+    .ld-hero,
+    .ld-hero-top,
+    .ld-info,
+    .ld-details,
+    .ld-actions,
+    .ld-card,
+    .ld-timeline-head,
+    .tl-event {
+      min-width: 0 !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .page-head,
+    .page-head-actions,
+    .bulk-bar,
+    .convo-head,
+    .convo-title,
+    .convo-actions,
+    .compose,
+    .compose-channels,
+    .calls-grid,
+    .lc-head,
+    .lc-ctrls,
+    .pipeline-stages,
+    .chart-panel h4,
+    .setting-ctrl,
+    .dnc-toolbar,
+    .ld-hero-top,
+    .ld-details,
+    .ld-actions,
+    .ld-timeline-head {
+      flex-wrap: wrap !important;
+    }
+
+    .inbox-layout,
+    .calls-grid,
+    .contracts-layout,
+    .contracts-ops-strip,
+    .an-grid,
+    .settings-layout,
+    .settings-runtime-deck,
+    .ld-layout {
+      grid-template-columns: minmax(0, 1fr) !important;
+      width: 100% !important;
+      overflow-x: hidden !important;
+    }
+
+    .page-head,
+    .convo-head,
+    .convo-body,
+    .compose,
+    .leads-toolbar,
+    .leads-table-wrap,
+    .calls-grid,
+    .upcoming-queue,
+    .contracts-layout,
+    .contracts-ops-strip,
+    .an-grid,
+    .settings-content,
+    .ld-layout,
+    .ld-hero-top {
+      padding-inline: var(--s-3) !important;
+    }
+
+    .convo-actions,
+    .compose-channels,
+    .lc-ctrls,
+    .ld-actions,
+    .page-head-actions {
+      display: flex !important;
+      gap: var(--s-2) !important;
+    }
+
+    .convo-actions .chip-btn,
+    .compose-channels .chip-btn,
+    .bulk-bar .chip-btn,
+    .bulk-bar .btn,
+    .lc-ctrls .btn,
+    .ld-actions .btn,
+    .page-head-actions .btn,
+    .page-head-actions .chip-btn,
+    .upload-zone .btn,
+    .leads-toolbar .btn,
+    .filter-dd,
+    .dnc-toolbar .btn {
+      flex: 1 1 min(150px, 100%) !important;
+      min-width: 0 !important;
+      justify-content: center !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere !important;
+      text-align: center !important;
+    }
+
+    .upload-zone {
+      margin-inline: var(--s-3) !important;
+      padding: var(--s-4) !important;
+      align-items: flex-start !important;
+    }
+
+    .upload-zone .uz-icon {
+      width: 42px !important;
+      height: 42px !important;
+    }
+
+    .leads-search,
+    .setting-ctrl input,
+    .setting-ctrl select,
+    .compose textarea,
+    .dnc-toolbar input {
+      width: 100% !important;
+      max-width: 100% !important;
+      min-width: 0 !important;
+    }
+
+    .leads-table-container,
+    [data-page="dashboard"] .table-container,
+    .contract-pipeline,
+    .perf-table,
+    .role-table,
+    .dnc-list {
+      max-width: 100% !important;
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .pipeline-stages {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .pstage {
+      min-width: 0 !important;
+      padding-inline: var(--s-3) !important;
+    }
+
+    .bubble {
+      max-width: 100% !important;
+    }
+
+    .call-recap-stats,
+    .lc-meters,
+    .ld-stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .lc-card {
+      min-height: auto !important;
+    }
+
+    .lc-who,
+    .lc-who > div,
+    .lc-timer,
+    .lc-turn,
+    .lc-turn .t,
+    .convo-who,
+    .convo-meta,
+    .ib-name,
+    .ib-addr,
+    .ib-preview,
+    .upload-zone h4,
+    .upload-zone p,
+    .contracts-ops-value,
+    .contracts-ops-note,
+    .pstage .ps-label,
+    .pstage .ps-value,
+    .chart-panel h4,
+    .chart-panel .chart-big,
+    .chart-panel .chart-big em,
+    .chart-panel .delta,
+    .funnel-step,
+    .settings-section h3,
+    .settings-section .section-desc,
+    .settings-runtime-value,
+    .settings-runtime-note,
+    .setting-label,
+    .setting-help,
+    .ld-name,
+    .ld-details,
+    .ld-field,
+    .tl-title,
+    .tl-desc {
+      min-width: 0 !important;
+      max-width: 100% !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere !important;
+      word-break: normal !important;
+    }
+
+    .chart-panel .chart-big {
+      line-height: 1.1 !important;
+    }
+
+    .bar-chart,
+    .heatmap {
+      width: 100% !important;
+      min-width: 0 !important;
+      overflow: hidden !important;
+    }
+
+    .funnel-step {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: var(--s-2) !important;
+    }
+
+    .funnel-step .fs-val {
+      text-align: left !important;
+    }
+
+    .setting-row {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: var(--s-3) !important;
+    }
+
+    .bulk-bar {
+      margin: var(--s-3) !important;
+      align-items: stretch !important;
+    }
+
+    .bulk-bar > div {
+      margin-left: 0 !important;
+      flex: 1 1 100% !important;
+      display: flex !important;
+    }
+
+    .bulk-bar > div .btn {
+      width: 100% !important;
+    }
+
+    .setting-ctrl,
+    .dnc-toolbar {
+      align-items: stretch !important;
+    }
+
+    .ld-hero-top {
+      align-items: flex-start !important;
+    }
+
+    .ld-av {
+      width: 64px !important;
+      height: 64px !important;
+      font-size: 28px !important;
+    }
+
+    .ld-score-ring {
+      width: 64px !important;
+      height: 64px !important;
+      flex: 0 0 auto !important;
+    }
+
+    .tl-event {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: var(--s-2) !important;
+    }
+
+    .tl-event::after {
+      display: none !important;
+    }
+  }
+</style>
+
 <script>
   // =========================================================
   // PAGE ROUTER

@@ -1,14 +1,23 @@
 import { execFileSync } from 'node:child_process';
-import { createServer } from 'node:http';
+import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
+import { globalAgent as httpsGlobalAgent } from 'node:https';
 import { createPrivateKey, createSign as __dsCreateSign, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import pg from 'pg';
 const { Pool: PgPool } = pg;
+
+httpGlobalAgent.keepAlive = true;
+httpGlobalAgent.keepAliveMsecs = 1000;
+httpGlobalAgent.maxSockets = 80;
+httpsGlobalAgent.keepAlive = true;
+httpsGlobalAgent.keepAliveMsecs = 1000;
+httpsGlobalAgent.maxSockets = 80;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -146,6 +155,7 @@ const RENDER_BASE_URL = String(process.env.PBK_RENDER_BASE_URL || 'https://api.r
 const BROWSEROS_MCP_URL = String(process.env.PBK_BROWSEROS_MCP_URL || 'http://127.0.0.1:9000/mcp').trim();
 const PROPERTY_CACHE_TTL_DAYS = Math.max(1, Number(process.env.PBK_PROPERTY_CACHE_TTL_DAYS || 30));
 const PROPERTY_CACHE_TTL_MS = PROPERTY_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+const ANALYZER_RESULT_CACHE_TTL_MS = Math.max(30000, Number(process.env.PBK_ANALYZER_RESULT_CACHE_TTL_MS || 5 * 60 * 1000));
 const DEFAULT_BOOKING_LINK = String(process.env.PBK_BOOKING_LINK || process.env.PBK_CALENDAR_BOOKING_URL || 'https://cal.com/pbk-capital/intro-call').trim();
 const DEFAULT_LEAD_TIMEZONE = String(process.env.PBK_DEFAULT_LEAD_TIMEZONE || 'America/New_York').trim();
 const AUTO_DIAL_IMMEDIATE_REPLIES = !/^(0|false|no)$/i.test(String(process.env.PBK_REPLY_AUTO_DIAL_IMMEDIATE || 'true').trim());
@@ -7030,10 +7040,80 @@ async function fireDocuSignEnvelope(params = {}) {
 }
 
 let state = await loadState();
+const analyzerResultCache = new Map();
+
+function buildAnalyzerCacheKey(params = {}) {
+  const deal = params.deal || {};
+  const propertyData = params.propertyData || params.browserData || params.enrichmentData || deal.propertyData || {};
+  const relevant = {
+    address: normalizeAddressKey(params.address || deal.address || params.propertyAddress || ''),
+    selectedPath: params.selectedPath || deal.selectedPath || deal.path || '',
+    price: params.price || deal.price || deal.agreedPrice || '',
+    arv: params.arv || deal.arv || '',
+    mao: params.mao || deal.mao60 || '',
+    repairs: params.repairs || params.repairsMid || deal?.repairs?.mid || '',
+    beds: params.beds || deal.beds || '',
+    baths: params.baths || deal.baths || '',
+    sqft: params.sqft || deal.sqft || '',
+    year: params.year || deal.year || '',
+    dom: params.dom || deal.dom || '',
+    propertyHash: propertyData && Object.keys(propertyData).length ? hashString(JSON.stringify(propertyData)) : '',
+  };
+  return hashString(JSON.stringify(relevant));
+}
+
+function getAnalyzerResultCache(params = {}) {
+  if (params.force || params.noCache) return null;
+  const key = buildAnalyzerCacheKey(params);
+  const entry = analyzerResultCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > ANALYZER_RESULT_CACHE_TTL_MS) {
+    analyzerResultCache.delete(key);
+    return null;
+  }
+  return {
+    key,
+    result: {
+      ...entry.result,
+      cache: {
+        ...(entry.result.cache || {}),
+        analyzer: 'hit',
+        key,
+        cachedAt: entry.cachedAt,
+        ttlMs: ANALYZER_RESULT_CACHE_TTL_MS,
+      },
+    },
+  };
+}
+
+function setAnalyzerResultCache(params = {}, result = {}) {
+  const key = buildAnalyzerCacheKey(params);
+  analyzerResultCache.set(key, {
+    cachedAt: Date.now(),
+    result: {
+      ...result,
+      cache: {
+        ...(result.cache || {}),
+        analyzer: 'write-through',
+        key,
+        ttlMs: ANALYZER_RESULT_CACHE_TTL_MS,
+      },
+    },
+  });
+  if (analyzerResultCache.size > 200) {
+    const oldest = [...analyzerResultCache.entries()]
+      .sort((left, right) => left[1].cachedAt - right[1].cachedAt)
+      .slice(0, analyzerResultCache.size - 200);
+    oldest.forEach(([oldKey]) => analyzerResultCache.delete(oldKey));
+  }
+}
 
 const toolHandlers = {
   async analyzeDeal(params = {}) {
     recordToolUse('analyzeDeal');
+    const cached = getAnalyzerResultCache(params);
+    if (cached) return cached.result;
+
     const propertyResolution = await resolvePropertyDataForAnalyzer(params);
     const run = buildAnalyzerSummary({
       ...params,
@@ -7052,6 +7132,7 @@ const toolHandlers = {
       }),
     );
     await persistState(state);
+    setAnalyzerResultCache(params, run);
     return run;
   },
 
@@ -9676,6 +9757,60 @@ async function handleEvent(eventType, payload = {}) {
     return toolHandlers.ingestResearchDoc(payload);
   }
 
+  if (normalizedEvent === 'lead-tag') {
+    const tag = String(payload.tag || '').trim();
+    const leads = Array.isArray(payload.leads) ? payload.leads : [payload];
+    if (!tag) {
+      return {
+        ok: false,
+        outcome: 'unavailable',
+        error: 'Tag is required.',
+      };
+    }
+
+    const updated = [];
+    const missing = [];
+    for (const lead of leads) {
+      const matcher = {
+        leadId: lead.leadId || lead.id || '',
+        leadName: lead.leadName || lead.name || lead?.seller?.name || '',
+        address: lead.address || lead?.property?.address || '',
+        email: lead.email || lead?.seller?.email || '',
+      };
+      const existing = findLatestLeadImport(matcher);
+      const nextTags = Array.from(new Set([
+        ...((Array.isArray(existing?.tags) ? existing.tags : String(lead.tags || '').split(/[,\s]+/))
+          .map((item) => String(item || '').trim())
+          .filter(Boolean)),
+        tag,
+      ]));
+      const patched = patchLeadImport(state, matcher, { tags: nextTags, lastTaggedAt: isoNow(), lastTaggedBy: payload.actor || 'Command Center' });
+      if (patched) updated.push(patched);
+      else missing.push(matcher.leadName || matcher.address || matcher.leadId || 'unknown lead');
+    }
+
+    addActivity(
+      state,
+      makeActivity({
+        actor: payload.actor || 'Command Center',
+        category: 'LEAD',
+        status: updated.length ? 'success' : 'warning',
+        text: updated.length
+          ? `Applied lead tag "${tag}" to ${updated.length} lead${updated.length === 1 ? '' : 's'}.`
+          : `Lead tag "${tag}" could not be applied because no matching lead imports were found.`,
+        target: missing.length ? `Missing: ${missing.slice(0, 3).join(', ')}` : tag,
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: updated.length > 0,
+      outcome: updated.length > 0 ? 'live' : 'unavailable',
+      tag,
+      updated,
+      missing,
+    };
+  }
+
   if (normalizedEvent === 'dnc-add') {
     const entry = buildDncEntry(payload);
     const existing = findDncEntryByPhone(entry.phone);
@@ -10034,19 +10169,36 @@ function buildStateSnapshot() {
     },
     documentDeliveries: state.documentDeliveries,
     attachments: state.attachments || [],
+    settings: ensureRuntimeSettings(state),
     adminTasks: state.adminTasks,
     adminAudit: state.adminAudit,
   };
 }
 
 function json(response, statusCode, payload) {
-  response.writeHead(statusCode, {
+  const body = Buffer.from(JSON.stringify(payload, null, 2));
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    Vary: 'Accept-Encoding',
+  };
+  if (response.pbkAcceptsGzip && body.length >= 2048) {
+    const compressed = gzipSync(body);
+    response.writeHead(statusCode, {
+      ...headers,
+      'Content-Encoding': 'gzip',
+      'Content-Length': String(compressed.length),
+    });
+    response.end(compressed);
+    return;
+  }
+  response.writeHead(statusCode, {
+    ...headers,
+    'Content-Length': String(body.length),
   });
-  response.end(JSON.stringify(payload, null, 2));
+  response.end(body);
 }
 
 function sendText(response, statusCode, body, contentType = 'text/plain; charset=utf-8') {
@@ -10249,6 +10401,7 @@ function mapDocuSignWebhook(body = {}) {
 }
 
 const server = createServer(async (request, response) => {
+  response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
 
@@ -11723,6 +11876,11 @@ const server = createServer(async (request, response) => {
     });
   }
 });
+
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+server.requestTimeout = 120000;
+server.maxRequestsPerSocket = 1000;
 
 server.listen(PORT, HOST, () => {
   startContractTemplateWatcher();

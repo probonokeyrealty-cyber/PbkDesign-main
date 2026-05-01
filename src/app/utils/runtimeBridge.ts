@@ -41,6 +41,7 @@ type BridgeRequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   body?: unknown;
+  keepalive?: boolean;
 };
 
 function getHostPBK(): Record<string, unknown> | null {
@@ -127,11 +128,15 @@ export async function bridgeRequest<T = unknown>({
   method = 'GET',
   path,
   body,
+  keepalive,
 }: BridgeRequestOptions): Promise<T> {
+  const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
+  const canKeepalive = method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const response = await fetch(buildUrl(path), {
     method,
     headers: buildHeaders(body !== undefined && method !== 'GET'),
-    body: body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined,
+    body: serializedBody,
+    keepalive: keepalive ?? canKeepalive,
   });
 
   const text = await response.text();

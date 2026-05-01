@@ -8,7 +8,7 @@ import {
   RuntimeToolingStatus,
 } from '../utils/runtimeBridge';
 
-export function useRuntimeSnapshot(pollMs = 12000) {
+export function useRuntimeSnapshot(pollMs = 5000) {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
   const [quotas, setQuotas] = useState<RuntimeQuotas | null>(null);
   const [tooling, setTooling] = useState<RuntimeToolingStatus | null>(null);
@@ -55,8 +55,8 @@ export function useRuntimeSnapshot(pollMs = 12000) {
   useEffect(() => {
     let cancelled = false;
     const getNextDelay = () => {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return Math.max(30000, pollMs);
-      if (typeof document !== 'undefined' && document.hidden) return Math.max(30000, pollMs);
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return Math.max(60000, pollMs);
+      if (typeof document !== 'undefined' && document.hidden) return Math.max(60000, pollMs);
       if (!failuresRef.current) return pollMs;
       return Math.min(60000, Math.round(pollMs * Math.pow(1.6, failuresRef.current)));
     };

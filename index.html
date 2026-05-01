@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PBK Wholesale Paradise — Command Center</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2306080B'/%3E%3Cpath d='M14 42V16h21c8 0 13 5 13 12s-5 12-13 12H25v2H14zm11-12h9c2 0 4-1 4-3s-2-3-4-3h-9v6z' fill='%237DD3FC'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://pbk-openclaw-bridge.onrender.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -5990,7 +5991,7 @@
     <div class="page-head-actions">
       <button class="btn btn-ghost">Export CSV</button>
       <button class="btn btn-ghost">Webhook</button>
-      <button class="btn btn-primary">Live tail</button>
+      <button class="btn btn-primary">Refresh live</button>
     </div>
   </div>
 
@@ -6297,7 +6298,7 @@
     <div class="page-head-actions">
       <button class="btn btn-ghost">Bulk export</button>
       <button class="btn btn-ghost">Retention policy</button>
-      <button class="btn btn-primary">Download MP3</button>
+      <button class="btn btn-primary">Download recording</button>
     </div>
   </div>
 
@@ -7717,6 +7718,57 @@
   .modal h3 { font-family: var(--font-display); font-weight: 500; font-size: 22px; margin-bottom: var(--s-2); letter-spacing: -0.02em; }
   .modal p { color: var(--text-secondary); font-size: 13px; line-height: 1.6; margin-bottom: var(--s-4); }
   .modal .modal-actions { display: flex; gap: var(--s-2); justify-content: flex-end; }
+  .pbk-form-modal { width: min(560px, calc(100vw - 40px)); }
+  .pbk-form-modal form { display: grid; gap: var(--s-3); margin-top: var(--s-4); }
+  .pbk-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+  .pbk-form-field { display: grid; gap: 6px; }
+  .pbk-form-field.full { grid-column: 1 / -1; }
+  .pbk-form-field label {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-tertiary);
+  }
+  .pbk-form-field input,
+  .pbk-form-field select,
+  .pbk-form-field textarea {
+    width: 100%; background: var(--bg-void); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 11px; color: var(--text-primary);
+    font-family: var(--font-mono); font-size: 12px; min-width: 0;
+  }
+  .pbk-form-field textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
+  .pbk-form-field input:focus,
+  .pbk-form-field select:focus,
+  .pbk-form-field textarea:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
+  .pbk-form-hint { font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--text-ghost); }
+  .pbk-outcome {
+    display: inline-flex; align-items: center; gap: 6px; width: fit-content;
+    padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-secondary); background: var(--bg-void);
+  }
+  .pbk-outcome.live { color: var(--sky); border-color: var(--sky-dim); background: var(--sky-glow); }
+  .pbk-outcome.queued_for_approval { color: var(--amber); border-color: var(--amber); background: var(--amber-glow); }
+  .pbk-outcome.provider_missing,
+  .pbk-outcome.unavailable { color: var(--crimson); border-color: var(--crimson); background: var(--crimson-glow); }
+  .pbk-outcome.local_view_only { color: var(--text-tertiary); border-color: var(--border-bright); }
+  @media (max-width: 720px) {
+    .pbk-form-grid { grid-template-columns: 1fr; }
+    .modal .modal-actions { flex-direction: column-reverse; }
+    .modal .modal-actions .btn { width: 100%; justify-content: center; }
+    .qcard-actions,
+    .call-controls,
+    .ld-actions,
+    .lc-controls,
+    .page-head-actions,
+    .bulk-actions {
+      flex-wrap: wrap;
+    }
+    .qcard-actions .btn,
+    .call-controls .btn,
+    .ld-actions .btn,
+    .lc-controls .btn {
+      min-height: 44px;
+    }
+  }
 </style>
 
 <!-- toast stack -->
@@ -8858,31 +8910,12 @@
       return;
     }
 
-    const isPrimary = btn.classList.contains('btn-primary');
-    const isReject = btn.textContent.trim().toLowerCase() === 'reject';
-
-    card.style.transition = 'opacity 0.3s, transform 0.3s';
-    card.style.opacity = '0';
-    card.style.transform = 'translateX(-12px)';
-    setTimeout(() => card.remove(), 300);
-
-    if (isPrimary) {
-      toast({
-        type: 'success',
-        title: 'Approved — sent to Ava',
-        desc: 'She\'ll execute within 30 seconds — audit log updated',
-        undo: () => toast({ type: 'info', title: 'Reverted', desc: 'Approval rolled back' })
-      });
-      return;
-    }
-
-    if (isReject) {
-      toast({
-        type: 'warning',
-        title: 'Rejected',
-        desc: 'Ava will hold this offer — ask her to revise via the agent console'
-      });
-    }
+    e.preventDefault();
+    toast({
+      type: 'warning',
+      title: 'Approval needs live bridge data',
+      desc: 'This visible card is a static fallback. Connect OpenClaw or wait for the approval queue to sync before approving or rejecting.'
+    });
   });
 
   // =========================================================
@@ -8899,8 +8932,8 @@
   let currentMode = 'approval';
   const modeMessages = {
     autopilot: {
-      title: 'Autopilot engaged',
-      desc: 'Ava is fully live — guardrails still enforced — watch the agent console'
+      title: 'Autopilot requested',
+      desc: 'Mode preference saved; high-risk calls, contracts, campaigns, and provider writes remain approval-gated.'
     },
     approval: {
       title: 'Approval mode — via Slack #deals',
@@ -8921,11 +8954,16 @@
     currentMode = mode;
     modeOpts.forEach(o => o.classList.toggle('active', o.dataset.mode === mode));
     mpOptions.forEach(o => o.classList.toggle('selected', o.dataset.mode === mode));
-    toast({
-      type: mode === 'autopilot' ? 'warning' : mode === 'manual' ? 'info' : 'success',
-      title: modeMessages[mode].title,
-      desc: modeMessages[mode].desc
-    });
+    persistUiSetting({ operatingMode: mode, approvalGatedProduction: true }, 'Command Center mode picker')
+      .then((payload) => {
+        toastOutcome({
+          outcome: payload?.localOnly ? 'local_view_only' : 'live',
+          title: modeMessages[mode].title,
+          desc: payload?.localOnly
+            ? `${modeMessages[mode].desc} Bridge persistence is offline, so this is local until reconnect.`
+            : modeMessages[mode].desc
+        });
+      });
   }
 
   modeOpts.forEach(opt => {
@@ -9030,6 +9068,20 @@
     cpBackdrop.classList.remove('open');
     cpModal.classList.remove('open');
   }
+  const topbarSearchInput = document.querySelector('.topbar-search input');
+  topbarSearchInput?.addEventListener('focus', () => {
+    openPalette();
+    cpInput.value = topbarSearchInput.value || '';
+    cpInput.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  topbarSearchInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      openPalette();
+      cpInput.value = topbarSearchInput.value || '';
+      cpInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
   let focusedIdx = 0;
   function visibleItems() { return cpItems.filter(i => i.style.display !== 'none'); }
   function setFocused(idx) {
@@ -9159,32 +9211,7 @@
     });
   }, 1000);
 
-  // Activity feed tick
-  const feed = document.getElementById('activityFeed');
-  const feedLines = [
-    ['ok', '<strong>J. Smith</strong> accepted $145k offer'],
-    ['info', 'AI drafted contract #DS-4823'],
-    ['warn', 'Approval needed: outbound batch (112 leads)'],
-    ['ok', '<strong>D. Kowalski</strong> sentiment +0.04'],
-    ['info', 'Analyzer returned <strong>MAO $103k</strong> on Walnut Ct'],
-    ['ok', '<strong>L. Briggs</strong> booked callback for 4pm'],
-    ['info', 'Brain ingested new source — REtipster'],
-    ['info', 'Skip-trace complete — 47 new numbers — BatchData']
-  ];
-  let feedIdx = 0;
-  setInterval(() => {
-    if (!feed) return;
-    const [kind, text] = feedLines[feedIdx % feedLines.length];
-    const row = document.createElement('div');
-    row.className = 'activity-row';
-    row.style.animation = 'fadeIn 0.4s ease-out';
-    const now = new Date();
-    const ts = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    row.innerHTML = `<span class="activity-time">${ts}</span><span class="activity-dot ${kind}"></span><span class="activity-text">${text}</span>`;
-    feed.insertBefore(row, feed.firstChild);
-    while (feed.children.length > 10) feed.removeChild(feed.lastChild);
-    feedIdx++;
-  }, 5000);
+  // Activity feed is rendered from the bridge only. No synthetic production events.
 
   // =========================================================
   // THEME TOGGLE (light / dark)
@@ -10526,6 +10553,10 @@
     try {
       return await fetch(url, {
         ...init,
+        keepalive: init.keepalive ?? (
+          !['GET', 'HEAD'].includes(String(init.method || 'GET').toUpperCase())
+          && (!init.body || (typeof init.body === 'string' && init.body.length < 60000))
+        ),
         signal: controller.signal
       });
     } finally {
@@ -10706,8 +10737,8 @@
     }
   };
 
-  const OPENCLAW_POLL_INTERVAL = 12000;
-  const OPENCLAW_HIDDEN_POLL_INTERVAL = 30000;
+  const OPENCLAW_POLL_INTERVAL = 5000;
+  const OPENCLAW_HIDDEN_POLL_INTERVAL = 60000;
   const OPENCLAW_MAX_RETRY_INTERVAL = 60000;
   const OPENCLAW_STALE_GRACE_MS = 120000;
   let openClawPollTimer = null;
@@ -11811,6 +11842,67 @@
     return syncOpenClawState({ silent: true });
   }
 
+  function getRuntimeOutcome(response = {}, fallback = 'live') {
+    const result = response?.result || response || {};
+    const nested = [
+      result,
+      result.telnyx,
+      result.delivery,
+      result.docusign,
+      result.emailResult,
+      result.sync,
+      result.activation,
+      result.execution,
+      result.task,
+    ].filter(Boolean);
+
+    if (result.outcome) return String(result.outcome);
+    if (result.approval || result.approvalId || result.task?.approvalRequired || result.status === 'queued') return 'queued_for_approval';
+    if (nested.some((item) => item?.simulated || item?.provider === 'simulated-email')) return 'provider_missing';
+    if (nested.some((item) => item?.configured === false || Array.isArray(item?.missing) && item.missing.length)) return 'provider_missing';
+    if (nested.some((item) => item?.live === true)) return 'live';
+    if (nested.some((item) => item?.live === false && item?.ok === true)) return 'provider_missing';
+    return fallback;
+  }
+
+  function outcomeToastType(outcome) {
+    if (outcome === 'live') return 'success';
+    if (outcome === 'queued_for_approval' || outcome === 'local_view_only') return 'info';
+    if (outcome === 'provider_missing' || outcome === 'unavailable') return 'warning';
+    return 'info';
+  }
+
+  function outcomeLabel(outcome) {
+    return String(outcome || 'unavailable').replace(/_/g, ' ');
+  }
+
+  function buildOutcomeDesc(outcome, desc, response, fallback = '') {
+    const result = response?.result || response || {};
+    const providerMissing = result?.telnyx?.missing || result?.delivery?.missing || result?.missing;
+    if (outcome === 'provider_missing') {
+      const missing = Array.isArray(providerMissing) && providerMissing.length ? ` Missing: ${providerMissing.join(', ')}.` : '';
+      return `${desc || fallback || 'The action was captured, but no live provider call was made.'}${missing}`;
+    }
+    if (outcome === 'queued_for_approval') {
+      return desc || fallback || 'Approval-gated action queued. PBK will not execute it until it is approved.';
+    }
+    if (outcome === 'local_view_only') {
+      return desc || fallback || 'This only changes the current screen; server data was not modified.';
+    }
+    if (outcome === 'unavailable') {
+      return desc || fallback || 'This action is unavailable until the required provider is configured.';
+    }
+    return desc || fallback || 'Live action completed through the bridge.';
+  }
+
+  function toastOutcome({ outcome = 'live', title = 'Action complete', desc = '', response = null, fallback = '' }) {
+    toast({
+      type: outcomeToastType(outcome),
+      title: `${title} · ${outcomeLabel(outcome)}`,
+      desc: buildOutcomeDesc(outcome, desc, response, fallback)
+    });
+  }
+
   async function invokeRuntimeTool(toolName, params = {}, options = {}) {
     const {
       actionLabel = toolName,
@@ -11826,10 +11918,13 @@
     try {
       const response = await PBK.openclaw.invoke(toolName, params);
       await applyRuntimeResponse(response);
-      toast({
-        type: 'success',
+      const outcome = getRuntimeOutcome(response, 'live');
+      toastOutcome({
+        outcome,
         title: successTitle,
-        desc: typeof successDesc === 'function' ? successDesc(response) : (successDesc || `${toolName} completed successfully.`)
+        desc: typeof successDesc === 'function' ? successDesc(response, outcome) : successDesc,
+        response,
+        fallback: `${toolName} returned through the bridge.`
       });
       return response;
     } catch (error) {
@@ -11857,10 +11952,13 @@
     try {
       const response = await PBK.openclaw.postEvent(eventType, payload);
       await applyRuntimeResponse(response);
-      toast({
-        type: 'success',
+      const outcome = getRuntimeOutcome(response, response?.forwarded ? 'queued_for_approval' : 'live');
+      toastOutcome({
+        outcome,
         title: successTitle,
-        desc: typeof successDesc === 'function' ? successDesc(response) : (successDesc || `${eventType} accepted by OpenClaw.`)
+        desc: typeof successDesc === 'function' ? successDesc(response, outcome) : successDesc,
+        response,
+        fallback: `${eventType} accepted by OpenClaw.`
       });
       return response;
     } catch (error) {
@@ -12073,6 +12171,154 @@
     return modal;
   }
 
+  function showPbkFormModal({ title, intro = '', fields = [], submitLabel = 'Save', submitClass = 'btn-primary', onSubmit = null }) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop open';
+    const modal = document.createElement('div');
+    modal.className = 'modal open pbk-form-modal';
+    const fieldHtml = fields.map((field) => {
+      const name = escapeHtml(field.name);
+      const value = escapeHtml(field.value || '');
+      const required = field.required ? ' required' : '';
+      const full = field.full !== false ? ' full' : '';
+      const hint = field.hint ? `<span class="pbk-form-hint">${escapeHtml(field.hint)}</span>` : '';
+      let control = '';
+      if (field.type === 'textarea') {
+        control = `<textarea data-field-name="${name}" placeholder="${escapeHtml(field.placeholder || '')}"${required}>${value}</textarea>`;
+      } else if (field.type === 'select') {
+        const options = (field.options || []).map((option) => {
+          const optionValue = typeof option === 'string' ? option : option.value;
+          const optionLabel = typeof option === 'string' ? option : option.label;
+          return `<option value="${escapeHtml(optionValue)}"${String(optionValue) === String(field.value || '') ? ' selected' : ''}>${escapeHtml(optionLabel)}</option>`;
+        }).join('');
+        control = `<select data-field-name="${name}"${required}>${options}</select>`;
+      } else {
+        control = `<input data-field-name="${name}" type="${escapeHtml(field.type || 'text')}" value="${value}" placeholder="${escapeHtml(field.placeholder || '')}"${required}>`;
+      }
+      return `
+        <div class="pbk-form-field${full}">
+          <label>${escapeHtml(field.label || field.name)}</label>
+          ${control}
+          ${hint}
+        </div>
+      `;
+    }).join('');
+    modal.innerHTML = `
+      <h3>${escapeHtml(title)}</h3>
+      ${intro ? `<p>${intro}</p>` : ''}
+      <form>
+        <div class="pbk-form-grid">${fieldHtml}</div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+          <button class="btn ${submitClass}" type="submit">${escapeHtml(submitLabel)}</button>
+        </div>
+      </form>
+    `;
+    const close = () => {
+      modal.remove();
+      backdrop.remove();
+    };
+    backdrop.addEventListener('click', close);
+    modal.addEventListener('click', (event) => {
+      if (event.target.closest('[data-modal-close]')) close();
+    });
+    modal.querySelector('form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submit = event.currentTarget.querySelector('button[type="submit"]');
+      const values = {};
+      modal.querySelectorAll('[data-field-name]').forEach((field) => {
+        values[field.dataset.fieldName] = field.value;
+      });
+      submit.disabled = true;
+      try {
+        const result = onSubmit ? await onSubmit(values, { modal, close }) : null;
+        if (result !== false) close();
+      } catch (error) {
+        toast({ type: 'error', title: `${title} failed`, desc: error?.message || 'PBK could not complete that action.' });
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    document.body.append(backdrop, modal);
+    setTimeout(() => modal.querySelector('[data-field-name]')?.focus(), 40);
+    return modal;
+  }
+
+  function showLocalViewToast(title, desc) {
+    toastOutcome({ outcome: 'local_view_only', title, desc });
+  }
+
+  async function persistUiSetting(patch, actor = 'Command Center') {
+    const current = parseJSONSafe(localStorage.getItem(PBK_UI_SETTINGS_KEY), {});
+    const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(next));
+    try {
+      const payload = await requestOpenClawApi('/api/settings', {
+        method: 'POST',
+        body: { settings: { ui: next }, actor },
+        timeout: 9000
+      });
+      if (payload?.settings?.ui) localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(payload.settings.ui));
+      return payload;
+    } catch (error) {
+      return { ok: false, localOnly: true, error: error?.message || 'Settings bridge unavailable.' };
+    }
+  }
+
+  function showLeadModal(source = 'manual', defaults = {}) {
+    return showPbkFormModal({
+      title: 'New PBK lead',
+      intro: 'Add a seller lead through the bridge so Ava, Rex, approvals, and the analyzer all see the same record.',
+      submitLabel: 'Create lead',
+      fields: [
+        { name: 'sellerName', label: 'Seller name', value: defaults.sellerName || '', placeholder: 'Diane Kowalski', required: true, full: false },
+        { name: 'phone', label: 'Phone', value: defaults.phone || '', placeholder: '+1 (614) 555-0199', full: false },
+        { name: 'address', label: 'Property address', value: defaults.address || '', placeholder: '202 Cherry Ln, Columbus OH', required: true },
+        { name: 'email', label: 'Email', value: defaults.email || '', placeholder: 'seller@example.com', full: false },
+        { name: 'tags', label: 'Tags', value: defaults.tags || 'probate, high-equity', placeholder: 'probate, high-equity', full: false }
+      ],
+      onSubmit: async (values) => {
+        const tags = String(values.tags || '').split(',').map((item) => item.trim()).filter(Boolean);
+        const response = await postRuntimeEvent('lead-intake', {
+          source,
+          seller: {
+            name: values.sellerName,
+            phone: values.phone,
+            email: values.email
+          },
+          property: { address: values.address },
+          tags
+        }, {
+          actionLabel: 'lead imports',
+          successTitle: 'Lead imported',
+          successDesc: `${values.sellerName} was added through the bridge.`,
+          errorTitle: 'Lead import failed'
+        });
+        return Boolean(response);
+      }
+    });
+  }
+
+  function showTextActionModal({ title, intro = '', label = 'Value', value = '', placeholder = '', submitLabel = 'Continue', onSubmit }) {
+    return showPbkFormModal({
+      title,
+      intro,
+      submitLabel,
+      fields: [{ name: 'value', label, value, placeholder, required: true }],
+      onSubmit: async ({ value: nextValue }, controls) => onSubmit(nextValue, controls)
+    });
+  }
+
+  function showTextareaActionModal({ title, intro = '', label = 'Details', value = '', placeholder = '', submitLabel = 'Continue', onSubmit }) {
+    return showPbkFormModal({
+      title,
+      intro,
+      submitLabel,
+      fields: [{ name: 'value', label, value, placeholder, type: 'textarea', required: true }],
+      onSubmit: async ({ value: nextValue }, controls) => onSubmit(nextValue, controls)
+    });
+  }
+
   function rowsToCsv(rows) {
     return rows.map((row) => row.map((cell) => {
       const value = String(cell ?? '').replace(/\s+/g, ' ').trim();
@@ -12139,33 +12385,8 @@
     document.querySelector('[data-page="leads"] .bulk-count')?.replaceChildren(document.createTextNode(`${count} selected`));
   }
 
-  async function createLeadFromPrompts(source = 'manual') {
-    const sellerName = window.prompt('Seller name', 'New PBK lead');
-    if (!sellerName) return null;
-    const address = window.prompt('Property address', '808 Opportunity Ave, Columbus OH');
-    if (!address) return null;
-    const phone = window.prompt('Phone number', '+1 (614) 555-0199') || '';
-    const tags = (window.prompt('Comma-separated tags', 'probate, high-equity') || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    return postRuntimeEvent('lead-intake', {
-      source,
-      seller: {
-        name: sellerName,
-        phone
-      },
-      property: {
-        address
-      },
-      tags
-    }, {
-      actionLabel: 'lead imports',
-      successTitle: 'Lead imported',
-      successDesc: `${sellerName} was added to the PBK pipeline.`,
-      errorTitle: 'Lead import failed'
-    });
+  async function createLeadFromModal(source = 'manual') {
+    return showLeadModal(source);
   }
 
   function chooseLocalFiles({ accept = '', multiple = false } = {}) {
@@ -12207,7 +12428,7 @@
     const textLike = /^(text\/|application\/json|application\/csv|application\/xml)/i.test(file.type || '')
       || /\.(csv|txt|md|json|html?|xml)$/i.test(file.name || '');
     if (!textLike) {
-      return `Uploaded file: ${file.name || 'attachment'} (${file.type || 'unknown type'}, ${Math.round((file.size || 0) / 1024)} KB). Binary parsing is deferred; store metadata and route the original file through Supabase Storage in the next attachment pass.`;
+      return `Uploaded file: ${file.name || 'attachment'} (${file.type || 'unknown type'}, ${Math.round((file.size || 0) / 1024)} KB). The bridge will store the original file in Supabase Storage and attempt server-side extraction; if storage is unavailable, text extraction may be deferred.`;
     }
     const text = await file.text();
     return text.length > maxChars ? `${text.slice(0, maxChars)}\n\n[Truncated from ${text.length} characters]` : text;
@@ -12370,10 +12591,12 @@
           }
 
           if (label === 'voice') {
-            toast({
-              type: 'info',
-              title: 'Voice command capture next',
-              desc: 'For the MVP, type the command and PBK will route it through the bridge.'
+            button.disabled = true;
+            button.title = 'Voice input coming soon. Type the command for now.';
+            toastOutcome({
+              outcome: 'unavailable',
+              title: 'Voice input coming soon',
+              desc: 'Type the command for now; PBK will not pretend microphone capture is live.'
             });
           }
         });
@@ -12448,8 +12671,10 @@
             script: body
           }, {
             actionLabel: 'outbound calls',
-            successTitle: 'Call started from inbox',
-            successDesc: `${context.leadName} is now being called.`,
+            successTitle: 'Inbox call request complete',
+            successDesc: (response, outcome) => outcome === 'live'
+              ? `${context.leadName} is now being called through Telnyx.`
+              : `${context.leadName}'s call request was captured without claiming a live dial.`,
             errorTitle: 'Inbox call failed'
           });
         } else if (channel === 'email') {
@@ -12462,8 +12687,10 @@
             body
           }, {
             actionLabel: 'outbound SMS',
-            successTitle: 'Message sent',
-            successDesc: `${context.leadName} just received the latest follow-up.`,
+            successTitle: 'SMS request complete',
+            successDesc: (response, outcome) => outcome === 'live'
+              ? `${context.leadName} received the follow-up through the live SMS provider.`
+              : `${context.leadName}'s SMS request was captured without pretending delivery happened.`,
             errorTitle: 'SMS send failed'
           });
           if (response && textarea) textarea.value = '';
@@ -12486,8 +12713,10 @@
       if (label === 'call now') {
         await invokeRuntimeTool('telnyx_call', context, {
           actionLabel: 'outbound calls',
-          successTitle: 'Calling now',
-          successDesc: `${context.leadName} is being dialed from the inbox.`,
+          successTitle: 'Inbox call request complete',
+          successDesc: (response, outcome) => outcome === 'live'
+            ? `${context.leadName} is being dialed from the inbox.`
+            : `${context.leadName}'s call request was captured without claiming a live dial.`,
           errorTitle: 'Inbox call failed'
         });
         return;
@@ -12526,7 +12755,7 @@
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
       if (label === '+ new lead') {
-        await createLeadFromPrompts('manual-new-lead');
+        await createLeadFromModal('manual-new-lead');
         return;
       }
 
@@ -12551,37 +12780,42 @@
       }
 
       if (label === 'import from batchdata') {
-        const address = window.prompt('BatchData lead address', '909 Equity Ridge, Akron OH');
-        if (!address) return;
-        const sellerName = window.prompt('Seller name', 'BatchData Lead') || 'BatchData Lead';
-        const contact = await invokeRuntimeTool('skipTrace', {
-          leadName: sellerName,
-          address
-        }, {
-          actionLabel: 'skip tracing',
-          successTitle: 'Skip trace complete',
-          successDesc: 'BatchData contact details were generated for the new lead.',
-          errorTitle: 'Skip trace failed'
-        });
-
-        if (!contact) return;
-
-        const leadPhone = contact?.result?.contact?.phone || '';
-        await postRuntimeEvent('lead-intake', {
-          source: 'BatchData',
-          seller: {
-            name: sellerName,
-            phone: leadPhone
-          },
-          property: {
-            address
-          },
-          tags: ['batchdata', 'skip-traced']
-        }, {
-          actionLabel: 'lead imports',
-          successTitle: 'BatchData lead imported',
-          successDesc: `${sellerName} was added with enriched contact data.`,
-          errorTitle: 'BatchData import failed'
+        showPbkFormModal({
+          title: 'BatchData lead import',
+          intro: 'PBK will run this through the bridge. If BatchData is not configured, the action returns provider_missing instead of pretending it imported live data.',
+          submitLabel: 'Import through bridge',
+          fields: [
+            { name: 'sellerName', label: 'Seller name', value: 'BatchData Lead', required: true, full: false },
+            { name: 'address', label: 'Property address', value: '909 Equity Ridge, Akron OH', required: true, full: false }
+          ],
+          onSubmit: async ({ sellerName, address }) => {
+            const contact = await invokeRuntimeTool('skipTrace', {
+              leadName: sellerName,
+              address
+            }, {
+              actionLabel: 'skip tracing',
+              successTitle: 'Skip trace complete',
+              successDesc: 'Provider status is shown in this toast; no fake BatchData success is implied.',
+              errorTitle: 'Skip trace failed'
+            });
+            if (!contact) return false;
+            const leadPhone = contact?.result?.contact?.phone || '';
+            const response = await postRuntimeEvent('lead-intake', {
+              source: 'BatchData',
+              seller: {
+                name: sellerName,
+                phone: leadPhone
+              },
+              property: { address },
+              tags: ['batchdata', 'skip-traced']
+            }, {
+              actionLabel: 'lead imports',
+              successTitle: 'BatchData lead imported',
+              successDesc: `${sellerName} was added with the bridge-returned contact record.`,
+              errorTitle: 'BatchData import failed'
+            });
+            return Boolean(response);
+          }
         });
       }
     });
@@ -12601,24 +12835,36 @@
       if (label === 'call') {
         await invokeRuntimeTool('telnyx_call', context, {
           actionLabel: 'outbound calls',
-          successTitle: 'Lead call started',
-          successDesc: `${context.leadName} is now being dialed.`,
+          successTitle: 'Lead call request complete',
+          successDesc: (response, outcome) => outcome === 'live'
+            ? `${context.leadName} is now being dialed.`
+            : `${context.leadName}'s call request was captured without claiming a live dial.`,
           errorTitle: 'Lead call failed'
         });
         return;
       }
 
       if (label === 'text') {
-        const body = window.prompt('SMS body', buildSmsDraft(context));
-        if (!body) return;
-        await invokeRuntimeTool('telnyx_sms', {
-          ...context,
-          body
-        }, {
-          actionLabel: 'outbound SMS',
-          successTitle: 'SMS sent',
-          successDesc: `${context.leadName} received the latest follow-up.`,
-          errorTitle: 'Lead SMS failed'
+        showTextareaActionModal({
+          title: `Text ${context.leadName}`,
+          intro: 'PBK will send only if Telnyx messaging is configured; otherwise the action reports provider_missing.',
+          label: 'SMS body',
+          value: buildSmsDraft(context),
+          submitLabel: 'Send SMS',
+          onSubmit: async (body) => {
+            const response = await invokeRuntimeTool('telnyx_sms', {
+              ...context,
+              body
+            }, {
+              actionLabel: 'outbound SMS',
+              successTitle: 'SMS request complete',
+              successDesc: (payload, outcome) => outcome === 'live'
+                ? `${context.leadName} received the latest follow-up.`
+                : `${context.leadName}'s follow-up is not live because the messaging provider is missing.`,
+              errorTitle: 'Lead SMS failed'
+            });
+            return Boolean(response);
+          }
         });
         return;
       }
@@ -12641,11 +12887,30 @@
       const callCard = button.closest('.lc-card');
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
+      if (!callCard && label === 'call history') {
+        showPage('activity-log');
+        showLocalViewToast('Call history opened', 'Activity Log is filtered manually for call events in this MVP.');
+        return;
+      }
+
+      if (!callCard && label === 'recordings') {
+        showPage('recordings');
+        return;
+      }
+
       if (callCard) {
         const context = getCallCardContext(callCard);
         if (label === 'transfer') {
-          const target = window.prompt('Transfer target', 'human agent') || 'human agent';
-          await handleLiveCallAction(label, context, target);
+          showTextActionModal({
+            title: `Transfer ${context.leadName || 'live call'}`,
+            intro: 'Transfer is written through the bridge call-control event. No provider-side transfer is claimed unless the bridge confirms it.',
+            label: 'Transfer target',
+            value: 'human agent',
+            submitLabel: 'Transfer call',
+            onSubmit: async (target) => {
+              await handleLiveCallAction(label, context, target);
+            }
+          });
           return;
         }
 
@@ -12683,8 +12948,16 @@
       const context = getDashboardCallContext();
 
       if (label === 'transfer') {
-        const target = window.prompt('Transfer target', 'human agent') || 'human agent';
-        await handleLiveCallAction(label, context, target);
+        showTextActionModal({
+          title: `Transfer ${context.leadName || 'live call'}`,
+          intro: 'Transfer is written through the bridge call-control event. No provider-side transfer is claimed unless the bridge confirms it.',
+          label: 'Transfer target',
+          value: 'human agent',
+          submitLabel: 'Transfer call',
+          onSubmit: async (target) => {
+            await handleLiveCallAction(label, context, target);
+          }
+        });
         return;
       }
 
@@ -12806,10 +13079,15 @@
           notes: `Contract sent from analyzer-backed contract preview (${pdf.runtime.selectedPathLabel}${pdf.fallback ? ', preview fallback active' : ''}).`
         }, {
           actionLabel: 'contracts',
-          successTitle: 'DocuSign sent',
-          successDesc: pdf.fallback
-            ? `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed using the analyzer preview while the PDF renderer catches up.`
-            : `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed to the live bridge.`,
+          successTitle: 'DocuSign request complete',
+          successDesc: (response, outcome) => {
+            if (outcome === 'live') {
+              return pdf.fallback
+                ? `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed using the analyzer preview while the PDF renderer catches up.`
+                : `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed to the live bridge.`;
+            }
+            return `The ${pdf.runtime.selectedPathLabel} packet request was captured without claiming DocuSign delivery.`;
+          },
           errorTitle: 'DocuSign send failed'
         });
         renderContractsExperience();
@@ -12889,37 +13167,52 @@
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
       if (label === 'import csv') {
-        const raw = window.prompt('Paste comma-separated phone numbers', '+1 (216) 555-0401, +1 (614) 555-0101');
-        if (!raw) return;
-        const numbers = raw.split(',').map((item) => item.trim()).filter(Boolean);
-        for (const phone of numbers) {
-          await postRuntimeEvent('dnc-add', {
-            phone,
-            reason: 'Imported from dashboard DNC tool.',
-            source: 'settings-import'
-          }, {
-            actionLabel: 'DNC imports',
-            successTitle: 'DNC import complete',
-            successDesc: `${numbers.length} numbers were queued into the bridge.`,
-            errorTitle: 'DNC import failed'
-          });
-        }
+        showTextareaActionModal({
+          title: 'Import DNC numbers',
+          intro: 'Paste one phone per line or comma-separated. Each number is written through the bridge DNC event.',
+          label: 'Phone numbers',
+          value: '+1 (216) 555-0401, +1 (614) 555-0101',
+          submitLabel: 'Import DNC',
+          onSubmit: async (raw) => {
+            const numbers = raw.split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
+            if (!numbers.length) return false;
+            if (!await ensureOpenClawReady('DNC imports')) return false;
+            for (const phone of numbers) {
+              await PBK.openclaw.postEvent('dnc-add', {
+                phone,
+                reason: 'Imported from dashboard DNC tool.',
+                source: 'settings-import'
+              });
+            }
+            await syncOpenClawState({ silent: true });
+            toastOutcome({ outcome: 'live', title: 'DNC import complete', desc: `${numbers.length} numbers were written through the bridge.` });
+          }
+        });
         return;
       }
 
       if (label === '+ add') {
-        const phone = window.prompt('Phone number', '+1 (614) 555-0188');
-        if (!phone) return;
-        const reason = window.prompt('Reason', 'Manual DNC add from settings') || 'Manual DNC add from settings';
-        await postRuntimeEvent('dnc-add', {
-          phone,
-          reason,
-          source: 'settings'
-        }, {
-          actionLabel: 'DNC updates',
-          successTitle: 'DNC entry added',
-          successDesc: `${phone} is now on the internal DNC list.`,
-          errorTitle: 'Could not add DNC entry'
+        showPbkFormModal({
+          title: 'Add DNC entry',
+          intro: 'DNC changes are written to the bridge so Ava and the approval flow respect them immediately.',
+          submitLabel: 'Add to DNC',
+          fields: [
+            { name: 'phone', label: 'Phone number', value: '+1 (614) 555-0188', required: true, full: false },
+            { name: 'reason', label: 'Reason', value: 'Manual DNC add from settings', required: true, full: false }
+          ],
+          onSubmit: async ({ phone, reason }) => {
+            const response = await postRuntimeEvent('dnc-add', {
+              phone,
+              reason,
+              source: 'settings'
+            }, {
+              actionLabel: 'DNC updates',
+              successTitle: 'DNC entry added',
+              successDesc: `${phone} is now on the internal DNC list.`,
+              errorTitle: 'Could not add DNC entry'
+            });
+            return Boolean(response);
+          }
         });
         return;
       }
@@ -12951,7 +13244,7 @@
       const label = normalizeControlText(button.textContent);
 
       if (label === '+ new') {
-        await createLeadFromPrompts('dashboard-new-lead');
+        await createLeadFromModal('dashboard-new-lead');
         return;
       }
 
@@ -12965,7 +13258,7 @@
           if (filter === 'hot') return text.includes('hot') || item.querySelector('.badge.hot');
           return true;
         });
-        toast({ type: 'info', title: 'Inbox filtered', desc: `${shown} dashboard messages visible.` });
+        showLocalViewToast('Inbox filtered', `${shown} dashboard messages visible. This is a local view filter only.`);
         return;
       }
 
@@ -12975,12 +13268,19 @@
       }
 
       if (label === 'filter') {
-        const query = window.prompt('Filter pipeline by seller, city, status, or phone', 'negotiating');
-        if (!query) return;
-        const needle = normalizeControlText(query);
-        const rows = Array.from(page.querySelectorAll('.table-container tbody tr'));
-        const shown = filterItemsByText(rows, (row) => normalizeControlText(row.textContent).includes(needle));
-        toast({ type: 'info', title: 'Pipeline filtered', desc: `${shown} matching rows visible.` });
+        showTextActionModal({
+          title: 'Filter visible pipeline',
+          intro: 'This is a local view filter. It does not modify server data or lead status.',
+          label: 'Search seller, city, status, or phone',
+          value: 'negotiating',
+          submitLabel: 'Apply local filter',
+          onSubmit: async (query) => {
+            const needle = normalizeControlText(query);
+            const rows = Array.from(page.querySelectorAll('.table-container tbody tr'));
+            const shown = filterItemsByText(rows, (row) => normalizeControlText(row.textContent).includes(needle));
+            showLocalViewToast('Pipeline filtered', `${shown} matching rows visible.`);
+          }
+        });
         return;
       }
 
@@ -12990,7 +13290,7 @@
         rows
           .sort((a, b) => Number(b.querySelector('.score span')?.textContent || 0) - Number(a.querySelector('.score span')?.textContent || 0))
           .forEach((row) => tbody.appendChild(row));
-        toast({ type: 'success', title: 'Pipeline sorted', desc: 'Rows are ordered by highest score.' });
+        showLocalViewToast('Pipeline sorted', 'Rows are ordered by highest score in the current browser view.');
       }
     });
   }
@@ -13014,12 +13314,33 @@
       }
     };
 
-    page.addEventListener('click', (event) => {
+    page.addEventListener('click', async (event) => {
       const button = event.target.closest('button');
       if (button) {
         const label = normalizeControlText(button.textContent);
         if (label === 'edit prompt') {
-          showUtilityModal('Ava prompt workspace', 'Prompt editing is routed through the agent command bar for safety. Ask Rex: <code>open wholesale.agent.md for review</code>, then approve the proposed patch.');
+          showTextareaActionModal({
+            title: 'Request Ava prompt change',
+            intro: 'Prompt edits are approval-gated. PBK will create an admin task instead of modifying wholesale.agent.md directly from the browser.',
+            label: 'Requested prompt change',
+            value: 'Tighten Ava opener while preserving consent and empathy.',
+            submitLabel: 'Queue prompt approval',
+            onSubmit: async (note) => {
+              const response = await invokeRuntimeTool('createApproval', {
+                type: 'prompt-edit',
+                leadName: 'Ava Prompt',
+                address: 'wholesale.agent.md',
+                notes: note,
+                approvalAction: 'prompt_patch'
+              }, {
+                actionLabel: 'prompt edit approvals',
+                successTitle: 'Prompt edit queued',
+                successDesc: 'Rex will turn this request into an approval-backed patch.',
+                errorTitle: 'Prompt edit queue failed'
+              });
+              return Boolean(response);
+            }
+          });
           return;
         }
         if (label === 'view logs') {
@@ -13028,7 +13349,7 @@
           return;
         }
         if (label === 'active') {
-          toast({ type: 'success', title: 'Ava is active', desc: 'Agent runtime is approval-first and ready for bridge commands.' });
+          toastOutcome({ outcome: 'live', title: 'Ava is active', desc: 'Agent runtime is approval-first and ready for bridge commands.' });
           return;
         }
       }
@@ -13070,26 +13391,19 @@
         return;
       }
 
-      if (label === 'live tail') {
+      if (label === 'refresh live') {
         if (tailTimer) {
           clearInterval(tailTimer);
           tailTimer = null;
           button.classList.remove('active');
-          toast({ type: 'info', title: 'Live tail paused', desc: 'Activity log polling is stopped.' });
-          return;
         }
-        button.classList.add('active');
-        const poll = async () => {
-          try {
-            const snapshot = await syncOpenClawState({ silent: true });
-            renderActivityLog(snapshot || PBK.state.openclawRuntime || {});
-          } catch (error) {
-            toast({ type: 'warning', title: 'Live tail waiting', desc: 'Bridge polling will retry automatically.' });
-          }
-        };
-        await poll();
-        tailTimer = setInterval(poll, 8000);
-        toast({ type: 'success', title: 'Live tail active', desc: 'Activity log is polling the bridge every 8 seconds.' });
+        try {
+          const snapshot = await syncOpenClawState({ silent: true });
+          renderActivityLog(snapshot || PBK.state.openclawRuntime || {});
+          toastOutcome({ outcome: 'live', title: 'Activity refreshed', desc: 'Pulled the latest bridge activity once.' });
+        } catch (error) {
+          toastOutcome({ outcome: 'unavailable', title: 'Activity refresh waiting', desc: error?.message || 'Bridge polling will retry automatically.' });
+        }
       }
     });
   }
@@ -13133,7 +13447,7 @@
       const name = page.querySelector('.rec-item.active .who')?.textContent?.trim() || page.querySelector('.rec-player-head .who')?.textContent?.trim() || 'PBK recording';
       const transcript = Array.from(page.querySelectorAll('.rec-line')).map((line) => line.textContent.replace(/\s+/g, ' ').trim()).join('\n');
       downloadTextFile(`${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pbk-recording'}.${format}`, transcript || `${name}\nNo transcript loaded.`, 'text/plain');
-      toast({ type: 'success', title: 'Recording export ready', desc: 'No audio URL is attached yet, so PBK exported the transcript package.' });
+      showLocalViewToast('Transcript export ready', 'No audio URL is attached yet, so PBK exported the visible transcript package.');
     };
 
     const fetchSignedRecording = async (context) => {
@@ -13160,15 +13474,22 @@
       const label = normalizeControlText(button.textContent?.trim() ? button.textContent : button.title);
 
       if (label === 'filter') {
-        const query = window.prompt('Filter recordings by lead, status, or note', 'verbal');
-        if (!query) return;
-        const needle = normalizeControlText(query);
-        const shown = filterItemsByText(Array.from(page.querySelectorAll('.rec-item')), (item) => normalizeControlText(item.textContent).includes(needle));
-        toast({ type: 'info', title: 'Recordings filtered', desc: `${shown} recordings visible.` });
+        showTextActionModal({
+          title: 'Filter recordings',
+          intro: 'This is a local view filter for the current recordings list.',
+          label: 'Search lead, status, or note',
+          value: 'verbal',
+          submitLabel: 'Apply local filter',
+          onSubmit: async (query) => {
+            const needle = normalizeControlText(query);
+            const shown = filterItemsByText(Array.from(page.querySelectorAll('.rec-item')), (item) => normalizeControlText(item.textContent).includes(needle));
+            showLocalViewToast('Recordings filtered', `${shown} recordings visible.`);
+          }
+        });
         return;
       }
 
-      if (label === 'bulk export' || label === 'download mp3' || label === 'download') {
+      if (label === 'bulk export' || label === 'download recording' || label === 'download') {
         const context = getActiveRecordingContext();
         fetchSignedRecording(context)
           .then((payload) => {
@@ -13181,55 +13502,80 @@
             document.body.appendChild(link);
             link.click();
             link.remove();
-            toast({ type: 'success', title: 'Recording download ready', desc: 'PBK fetched a secure signed Supabase URL.' });
+            toastOutcome({ outcome: 'live', title: 'Recording download ready', desc: 'PBK fetched a secure signed Supabase URL.' });
           })
           .catch((error) => {
-            exportActiveRecording(label === 'download mp3' ? 'mp3.txt' : 'txt');
-            toast({ type: 'warning', title: 'Audio unavailable', desc: error?.message || 'Exported transcript package instead.' });
+            exportActiveRecording('txt');
+            toastOutcome({ outcome: 'provider_missing', title: 'Audio unavailable', desc: error?.message || 'No recording object is attached, so PBK exported the transcript instead.' });
           });
         return;
       }
 
       if (label === 'retention policy') {
-        showUtilityModal('Recording retention', 'Current MVP policy: keep transcripts and call recordings for the selected Settings retention window, then retain summaries only. Persisted provider enforcement is a backend phase.');
+        showPbkFormModal({
+          title: 'Recording retention',
+          intro: 'Save the retention preference through the bridge. Deletion enforcement remains approval-gated until the cleanup worker is enabled.',
+          submitLabel: 'Save policy',
+          fields: [
+            { name: 'retentionDays', label: 'Retention days', type: 'number', value: '365', required: true, full: false },
+            { name: 'enforcement', label: 'Enforcement', type: 'select', value: 'approval-gated', full: false, options: [
+              { value: 'approval-gated', label: 'Approval-gated cleanup' },
+              { value: 'manual', label: 'Manual review only' }
+            ] }
+          ],
+          onSubmit: async (values) => {
+            const payload = await persistUiSetting({
+              recordingRetention: {
+                days: Number(values.retentionDays || 365),
+                enforcement: values.enforcement
+              }
+            }, 'Recording retention');
+            toastOutcome({
+              outcome: payload?.localOnly ? 'local_view_only' : 'live',
+              title: 'Retention policy saved',
+              desc: payload?.localOnly ? 'Policy is local until the bridge reconnects.' : 'Policy saved through bridge settings.'
+            });
+          }
+        });
         return;
       }
 
       if (label === 'send to lead') {
         const context = getActiveRecordingContext();
-        const email = window.prompt(`Send recording link to which email for ${context.leadName}?`);
-        if (!email) return;
-        const note = window.prompt('Optional note for the email', 'Here is the secure call recording package we discussed.') || '';
-        requestOpenClawApi('/api/recordings/send-email', {
-          method: 'POST',
-          body: {
-            messageId: context.messageId,
-            leadName: context.leadName,
-            address: context.address,
-            email,
-            message: note,
-            actor: 'Command Center'
-          },
-          timeout: 15000
-        })
-          .then(async (payload) => {
+        showPbkFormModal({
+          title: `Send recording for ${context.leadName}`,
+          intro: 'This sends only if Resend and Supabase signed URLs are configured. Otherwise PBK reports provider_missing.',
+          submitLabel: 'Send secure link',
+          fields: [
+            { name: 'email', label: 'Recipient email', type: 'email', placeholder: 'seller@example.com', required: true },
+            { name: 'message', label: 'Email note', type: 'textarea', value: 'Here is the secure call recording package we discussed.' }
+          ],
+          onSubmit: async ({ email, message }) => {
+            const payload = await requestOpenClawApi('/api/recordings/send-email', {
+              method: 'POST',
+              body: {
+                messageId: context.messageId,
+                leadName: context.leadName,
+                address: context.address,
+                email,
+                message,
+                actor: 'Command Center'
+              },
+              timeout: 15000
+            });
             if (payload?.state) renderOpenClawState(payload.state);
             else await syncOpenClawState({ silent: true });
-            toast({
-              type: payload?.delivery?.live ? 'success' : 'info',
-              title: payload?.delivery?.live ? 'Recording email sent' : 'Recording email simulated',
-              desc: payload?.delivery?.live
+            const outcome = getRuntimeOutcome(payload, payload?.delivery?.live ? 'live' : 'provider_missing');
+            toastOutcome({
+              outcome,
+              title: 'Recording email request complete',
+              desc: outcome === 'live'
                 ? `Secure signed link sent to ${email}.`
-                : `PBK prepared the recording package for ${email}; configure Resend for live sending.`
+                : `PBK prepared the recording package for ${email}, but Resend/Supabase must be live before a real email is delivered.`,
+              response: payload
             });
-          })
-          .catch((error) => {
-            toast({
-              type: 'error',
-              title: 'Recording email failed',
-              desc: error?.message || 'PBK could not send the recording package.'
-            });
-          });
+          }
+        });
         return;
       }
 
@@ -13297,19 +13643,23 @@
     const writeDraft = async (patch) => {
       const next = { ...readDraft(), ...patch, updatedAt: new Date().toISOString() };
       localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(next));
+      let bridgePayload = null;
+      let localOnly = false;
       try {
         const payload = await requestOpenClawApi('/api/settings', {
           method: 'POST',
           body: { settings: { ui: next }, actor: 'Command Center' },
           timeout: 9000
         });
+        bridgePayload = payload;
         if (payload?.settings?.ui) {
           localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(payload.settings.ui));
         }
       } catch (error) {
+        localOnly = true;
         console.warn('Settings bridge persistence failed; local draft retained.', error);
       }
-      return next;
+      return { ...next, localOnly, bridgePayload };
     };
     const keyForRow = (row) => row?.querySelector('.setting-label')?.textContent?.replace(/\s+/g, ' ').trim();
 
@@ -13330,14 +13680,24 @@
       if (input && draft?.value != null) input.value = draft.value;
       if (toggle && draft?.enabled != null) toggle.classList.toggle('on', Boolean(draft.enabled));
 
-      input?.addEventListener('change', () => {
-        writeDraft({ [key]: { value: input.value } });
-        toast({ type: 'success', title: 'Setting saved', desc: `${key} is persisted through the bridge when connected.` });
+      input?.addEventListener('change', async () => {
+        const payload = await writeDraft({ [key]: { value: input.value } });
+        toastOutcome({
+          outcome: payload?.localOnly ? 'local_view_only' : 'live',
+          title: 'Setting saved',
+          desc: `${key} preference saved${payload?.localOnly ? ' locally until the bridge reconnects.' : ' through bridge state.'}`,
+          response: payload
+        });
       });
       toggle?.addEventListener('click', () => {
-        setTimeout(() => {
-          writeDraft({ [key]: { enabled: toggle.classList.contains('on') } });
-          toast({ type: 'success', title: 'Setting saved', desc: `${key} preference updated through the bridge when connected.` });
+        setTimeout(async () => {
+          const payload = await writeDraft({ [key]: { enabled: toggle.classList.contains('on') } });
+          toastOutcome({
+            outcome: payload?.localOnly ? 'local_view_only' : 'live',
+            title: 'Setting saved',
+            desc: `${key} preference saved${payload?.localOnly ? ' locally until the bridge reconnects.' : ' through bridge state.'}`,
+            response: payload
+          });
         }, 0);
       });
     });
@@ -13347,24 +13707,63 @@
       if (!button || button.closest('.dnc-list') || button.closest('[data-plugin="openclaw"]')) return;
       const label = normalizeControlText(button.textContent);
       if (label === '+ invite teammate') {
-        const email = window.prompt('Teammate email', 'acquisitions@pbk.capital');
-        if (!email) return;
-        writeDraft({ pendingInvite: email });
-        toast({ type: 'success', title: 'Invite staged', desc: `${email} is saved to settings state until Supabase auth is enabled.` });
+        button.disabled = true;
+        button.title = 'Team management comes after authentication is enabled.';
+        toastOutcome({
+          outcome: 'unavailable',
+          title: 'Team invites disabled',
+          desc: 'User profiles and authentication are intentionally out of scope for this production pass.'
+        });
       }
       if (label === '+ add another plugin') {
         event.preventDefault();
         event.stopPropagation();
-        const plugin = window.prompt('Plugin name', 'custom-mcp');
-        if (!plugin) return;
-        writeDraft({ pendingPlugin: plugin });
-        toast({ type: 'success', title: 'Plugin staged', desc: `${plugin} is saved to settings state for the next OpenClaw plugin pass.` });
+        showTextActionModal({
+          title: 'Request OpenClaw plugin',
+          intro: 'Plugin installation is approval-gated so a browser click cannot mutate the OpenClaw runtime unexpectedly.',
+          label: 'Plugin name',
+          value: 'custom-mcp',
+          submitLabel: 'Queue plugin request',
+          onSubmit: async (plugin) => {
+            writeDraft({ pendingPlugin: plugin });
+            const response = await invokeRuntimeTool('createApproval', {
+              type: 'plugin-install',
+              leadName: 'OpenClaw Plugin',
+              address: plugin,
+              notes: `Install or configure OpenClaw plugin: ${plugin}`
+            }, {
+              actionLabel: 'plugin approvals',
+              successTitle: 'Plugin approval queued',
+              successDesc: `${plugin} is queued for approval before runtime changes.`,
+              errorTitle: 'Plugin approval failed'
+            });
+            return Boolean(response);
+          }
+        });
       }
       if (label === 'edit' || label === 'edit script') {
-        const note = window.prompt('Draft setting update', label === 'edit script' ? 'Update TCPA consent script' : 'Update team role');
-        if (!note) return;
-        writeDraft({ lastSettingsDraft: note });
-        toast({ type: 'success', title: 'Draft saved', desc: 'Rex can turn this into a formal admin change when ready.' });
+        showTextareaActionModal({
+          title: label === 'edit script' ? 'Request script change' : 'Request settings change',
+          intro: 'PBK saves the request through bridge settings and queues approval when the change can affect production behavior.',
+          label: 'Requested change',
+          value: label === 'edit script' ? 'Update TCPA consent script' : 'Update team role',
+          submitLabel: 'Queue change',
+          onSubmit: async (note) => {
+            writeDraft({ lastSettingsDraft: note });
+            const response = await invokeRuntimeTool('createApproval', {
+              type: label === 'edit script' ? 'script-edit' : 'settings-change',
+              leadName: 'PBK Settings',
+              address: label === 'edit script' ? 'TCPA consent script' : 'Team settings',
+              notes: note
+            }, {
+              actionLabel: 'settings approvals',
+              successTitle: 'Change approval queued',
+              successDesc: 'The change is queued for approval instead of being silently applied.',
+              errorTitle: 'Change approval failed'
+            });
+            return Boolean(response);
+          }
+        });
       }
     });
   }
@@ -13425,7 +13824,7 @@
         if (filter === 'email') return text.includes('contract') || text.includes('attorney') || text.includes('clause');
         return true;
       });
-      toast({ type: 'info', title: 'Inbox filtered', desc: `${shown} conversations visible.` });
+      showLocalViewToast('Inbox filtered', `${shown} conversations visible.`);
     });
   }
 
@@ -13450,14 +13849,28 @@
       }
 
       if (label === 'tag') {
-        const tag = window.prompt('Tag selected leads', 'warm-reply');
-        if (!tag) return;
-        rows.forEach((row) => {
-          const tagCell = row.children[7];
-          if (!tagCell) return;
-          tagCell.insertAdjacentHTML('beforeend', ` <span class="tag absentee">${escapeHtml(tag)}</span>`);
+        showTextActionModal({
+          title: 'Tag selected leads',
+          intro: 'Tags are written through the bridge and then reflected locally. If the bridge is offline, PBK will not pretend the tag persisted.',
+          label: 'Tag',
+          value: 'warm-reply',
+          submitLabel: 'Apply tag',
+          onSubmit: async (tag) => {
+            if (!await ensureOpenClawReady('lead tag persistence')) return false;
+            const response = await PBK.openclaw.postEvent('lead-tag', {
+              tag,
+              leads,
+              actor: 'Command Center'
+            });
+            await applyRuntimeResponse(response);
+            rows.forEach((row) => {
+              const tagCell = row.children[7];
+              if (!tagCell || normalizeControlText(tagCell.textContent).includes(normalizeControlText(tag))) return;
+              tagCell.insertAdjacentHTML('beforeend', ` <span class="tag absentee">${escapeHtml(tag)}</span>`);
+            });
+            toastOutcome({ outcome: getRuntimeOutcome(response, 'live'), title: 'Lead tag applied', desc: `${leads.length} leads were tagged through the bridge.`, response });
+          }
         });
-        toast({ type: 'success', title: 'Tag applied locally', desc: `${leads.length} leads now show ${tag}.` });
         return;
       }
 
@@ -13711,6 +14124,18 @@
     const page = getPageNode('integrations');
     if (!page || page.dataset.integrationsWired === 'true') return;
     page.dataset.integrationsWired = 'true';
+    const approvalActions = new Set([
+      'api keys',
+      'webhooks',
+      '+ connect new',
+      'configure',
+      'numbers',
+      'rotate key',
+      'templates',
+      'buy list',
+      'connect'
+    ]);
+    const viewActions = new Set(['logs', 'sql editor', 'backups', 'usage']);
     page.addEventListener('click', async (event) => {
       const button = event.target.closest('button');
       if (!button) return;
@@ -13733,8 +14158,10 @@
           text: 'PBK integration test ping from Command Center.'
         }, {
           actionLabel: 'Slack test ping',
-          successTitle: 'Slack ping sent',
-          successDesc: 'The bridge accepted the Slack test request.',
+          successTitle: 'Slack ping request complete',
+          successDesc: (response, outcome) => outcome === 'live'
+            ? 'The bridge accepted the live Slack test request.'
+            : 'The bridge captured the Slack test request without claiming provider delivery.',
           errorTitle: 'Slack ping failed'
         });
         return;
@@ -13751,6 +14178,39 @@
           successDesc: 'No real call was fired without approval.',
           errorTitle: 'Could not queue test call'
         });
+        return;
+      }
+      if (approvalActions.has(action)) {
+        showTextareaActionModal({
+          title: `${provider} ${button.textContent.trim()}`,
+          intro: 'Provider writes are approval-gated. PBK will queue a real admin task instead of changing credentials, buying numbers, launching campaigns, or mutating provider settings from the browser.',
+          label: 'Approval note',
+          value: `${provider}: ${button.textContent.trim()} requested from Integrations page.`,
+          submitLabel: 'Queue provider approval',
+          onSubmit: async (note) => {
+            const response = await invokeRuntimeTool('createApproval', {
+              type: 'provider-action',
+              leadName: provider,
+              address: button.textContent.trim(),
+              notes: note,
+              approvalAction: action
+            }, {
+              actionLabel: `${provider} provider approvals`,
+              successTitle: 'Provider approval queued',
+              successDesc: 'Approval required before PBK performs this provider write.',
+              errorTitle: 'Provider approval failed'
+            });
+            return Boolean(response);
+          }
+        });
+        return;
+      }
+      if (viewActions.has(action)) {
+        showUtilityModal(`${provider} ${button.textContent.trim()}`, `
+          <span class="pbk-outcome local_view_only">local view only</span>
+          <p>This is a provider navigation/control surface. PBK does not fake live provider data here.</p>
+          <p>Use the provider dashboard or bridge health endpoint until this provider-specific view is connected.</p>
+        `);
         return;
       }
       showUtilityModal(`${provider} ${button.textContent.trim()}`, `This control is now routed to the provider action surface. For MVP safety, PBK opens provider dashboards or queues approval-first actions instead of writing credentials directly from the browser.`);
@@ -13774,7 +14234,7 @@
         if (filter === 'system') return text.includes('system') || text.includes('sync') || text.includes('guardrail');
         return true;
       });
-      toast({ type: 'info', title: 'Notifications filtered', desc: `${shown} notifications visible.` });
+      showLocalViewToast('Notifications filtered', `${shown} notifications visible.`);
     });
   }
 
@@ -13792,19 +14252,19 @@
 
       if (page.dataset.page === 'leads') {
         shown = filterItemsByText(getLeadRows(), (row) => normalizeControlText(row.textContent).includes(value));
-        toast({ type: 'info', title: 'Lead tag filter applied', desc: `${shown} leads match "${tag.textContent.trim()}".` });
+        showLocalViewToast('Lead tag filter applied', `${shown} leads match "${tag.textContent.trim()}".`);
         return;
       }
 
       if (page.dataset.page === 'brain') {
         shown = filterItemsByText(Array.from(page.querySelectorAll('.insight-row, .lib-card')), (item) => normalizeControlText(item.textContent).includes(value));
-        toast({ type: 'info', title: 'Brain filtered', desc: `${shown} research cards match "${tag.textContent.trim()}".` });
+        showLocalViewToast('Brain filtered', `${shown} research cards match "${tag.textContent.trim()}".`);
         return;
       }
 
       if (page.dataset.page === 'dashboard') {
         shown = filterItemsByText(Array.from(page.querySelectorAll('.table-container tbody tr, .msg')), (item) => normalizeControlText(item.textContent).includes(value));
-        toast({ type: 'info', title: 'Dashboard filtered', desc: `${shown} visible items match "${tag.textContent.trim()}".` });
+        showLocalViewToast('Dashboard filtered', `${shown} visible items match "${tag.textContent.trim()}".`);
       }
     });
   }
@@ -13952,40 +14412,50 @@
       }
     }
 
-    const title = window.prompt('Source title');
-    if (!title) return;
-    const source = window.prompt('Source or URL', 'Manual ingest') || 'Manual ingest';
-    const topic = window.prompt('Topic', getSelectedBrainTopic()) || getSelectedBrainTopic();
-    const summary = window.prompt('What should Rex remember from this source?') || 'Manual research note added from PBK.';
-    const tags = (window.prompt('Optional comma-separated tags', topic) || topic)
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    try {
-      const response = await PBK.openclaw.invoke('ingestResearchDoc', {
-        title,
-        source,
-        topic,
-        summary,
-        excerpt: summary,
-        kind: 'note',
-        tags,
-      });
-      if (response?.state) renderOpenClawState(response.state);
-      else await syncOpenClawState({ silent: true });
-      toast({
-        type: 'success',
-        title: 'Source ingested',
-        desc: `${title} is now available to Rex and the Brain page.`
-      });
-    } catch (error) {
-      toast({
-        type: 'error',
-        title: 'Ingest failed',
-        desc: error?.message || 'The local brain did not accept that source.'
-      });
-    }
+    showPbkFormModal({
+      title: 'Ingest Brain source',
+      intro: 'This stores a real research note through OpenClaw. If the bridge rejects it, PBK will show an error instead of a fake success.',
+      submitLabel: 'Ingest source',
+      fields: [
+        { name: 'title', label: 'Source title', value: 'Manual PBK note', required: true, full: false },
+        { name: 'source', label: 'Source or URL', value: 'Manual ingest', required: true, full: false },
+        { name: 'topic', label: 'Topic', value: getSelectedBrainTopic(), required: true, full: false },
+        { name: 'tags', label: 'Tags', value: getSelectedBrainTopic(), hint: 'Comma-separated tags for Rex retrieval.', full: false },
+        { name: 'summary', label: 'What should Rex remember?', type: 'textarea', value: 'Manual research note added from PBK.', required: true, full: true }
+      ],
+      onSubmit: async ({ title, source, topic, summary, tags }) => {
+        try {
+          const response = await PBK.openclaw.invoke('ingestResearchDoc', {
+            title,
+            source,
+            topic,
+            summary,
+            excerpt: summary,
+            kind: 'note',
+            tags: String(tags || topic)
+              .split(',')
+              .map((item) => item.trim())
+              .filter(Boolean),
+          });
+          if (response?.state) renderOpenClawState(response.state);
+          else await syncOpenClawState({ silent: true });
+          toastOutcome({
+            outcome: getRuntimeOutcome(response, 'live'),
+            title: 'Source ingest complete',
+            desc: `${title} is now available to Rex and the Brain page.`,
+            response
+          });
+          return true;
+        } catch (error) {
+          toast({
+            type: 'error',
+            title: 'Ingest failed',
+            desc: error?.message || 'The local brain did not accept that source.'
+          });
+          return false;
+        }
+      }
+    });
   }
 
   function exportBrainLibrary() {
@@ -14015,28 +14485,46 @@
       return;
     }
 
-    const prompt = window.prompt('Browser research request', 'Use BrowserOS to inspect the Zillow page for 202 Cherry Ln and summarize the property details.');
-    if (!prompt) return;
-
-    appendBrainMessage('user', prompt);
-
-    try {
-      const response = await PBK.openclaw.invoke('launchBrowserResearch', {
-        query: prompt,
-        requestedBy: 'Jordan',
-        source: 'legacy-brain'
-      });
-      const result = response?.result || response;
-      appendBrainMessage('ai', result?.answer || 'Browser research request queued.', result?.citations || []);
-      if (response?.state) renderOpenClawState(response.state);
-      else await syncOpenClawState({ silent: true });
-    } catch (error) {
-      toast({
-        type: 'error',
-        title: 'Browser research failed',
-        desc: error?.message || 'The local bridge did not accept that BrowserOS request.'
-      });
-    }
+    showPbkFormModal({
+      title: 'Launch BrowserOS research',
+      intro: 'Rex will queue a structured BrowserOS request. The outcome is shown as live, queued, provider missing, or unavailable.',
+      submitLabel: 'Launch research',
+      fields: [
+        { name: 'target', label: 'URL or search term', value: '202 Cherry Ln Columbus OH property details', required: true, full: true },
+        { name: 'goal', label: 'Research goal', type: 'textarea', value: 'Inspect public property pages and summarize ARV clues, condition notes, and likely owner context.', required: true, full: true }
+      ],
+      onSubmit: async ({ target, goal }) => {
+        const prompt = `${goal}\n\nTarget: ${target}`;
+        appendBrainMessage('user', prompt);
+        try {
+          const response = await PBK.openclaw.invoke('launchBrowserResearch', {
+            query: prompt,
+            target,
+            goal,
+            requestedBy: 'Jordan',
+            source: 'pbk-brain'
+          });
+          const result = response?.result || response;
+          appendBrainMessage('ai', result?.answer || 'Browser research request queued.', result?.citations || []);
+          if (response?.state) renderOpenClawState(response.state);
+          else await syncOpenClawState({ silent: true });
+          toastOutcome({
+            outcome: getRuntimeOutcome(response, 'queued_for_approval'),
+            title: 'Browser research requested',
+            desc: 'Rex accepted the BrowserOS research job.',
+            response
+          });
+          return true;
+        } catch (error) {
+          toast({
+            type: 'error',
+            title: 'Browser research failed',
+            desc: error?.message || 'The local bridge did not accept that BrowserOS request.'
+          });
+          return false;
+        }
+      }
+    });
   }
 
   function wireBrainRuntime() {

@@ -163,9 +163,14 @@ const SUPABASE_SERVICE_ROLE_KEY = String(
     || '',
 ).trim();
 const SUPABASE_CALL_RECORDINGS_BUCKET = String(process.env.PBK_CALL_RECORDINGS_BUCKET || 'call_recordings').trim();
+const SUPABASE_ATTACHMENTS_BUCKET = String(process.env.PBK_ATTACHMENTS_BUCKET || 'attachments').trim();
 const SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS = Math.max(
   60,
   Number(process.env.PBK_RECORDING_SIGNED_URL_TTL_SECONDS || 3600),
+);
+const SUPABASE_ATTACHMENT_SIGNED_URL_TTL_SECONDS = Math.max(
+  60,
+  Number(process.env.PBK_ATTACHMENT_SIGNED_URL_TTL_SECONDS || 3600),
 );
 const STREAK_API_KEY = String(process.env.PBK_STREAK_API_KEY || process.env.STREAK_API_KEY || '').trim();
 const STREAK_BASE_URL = String(process.env.PBK_STREAK_BASE_URL || 'https://api.streak.com/api').trim().replace(/\/+$/g, '');
@@ -253,6 +258,7 @@ const LIMITS = {
   leadStageTransitions: 180,
   contracts: 90,
   documentDeliveries: 120,
+  attachments: 160,
   adminTasks: 90,
   adminAudit: 160,
 };
@@ -1587,6 +1593,7 @@ function buildDefaultState() {
     leadStageTransitions: buildDefaultLeadStageTransitions(),
     contracts: buildDefaultContracts(),
     documentDeliveries: buildDefaultDocumentDeliveries(),
+    attachments: [],
     settings: {
       ui: {},
       updatedAt: isoNow(),
@@ -1662,6 +1669,128 @@ async function persistState(nextState) {
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
 }
 
+async function persistAttachmentMetadata(attachment = {}) {
+  const pool = getPgPool();
+  if (!pool || !attachment.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.attachments (
+        id, workspace_id, lead_id, lead_name, address, filename, content_type, size_bytes,
+        storage_bucket, storage_path, topic, tags, status, extraction_status, extraction_parser,
+        extraction_error, text_characters, brain_doc_id, metadata, created_at, updated_at
+      )
+      VALUES (
+        $1, 'pbk', $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11::jsonb, $12, $13, $14,
+        $15, $16, $17, $18::jsonb, $19, $20
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        address = EXCLUDED.address,
+        filename = EXCLUDED.filename,
+        content_type = EXCLUDED.content_type,
+        size_bytes = EXCLUDED.size_bytes,
+        storage_bucket = EXCLUDED.storage_bucket,
+        storage_path = EXCLUDED.storage_path,
+        topic = EXCLUDED.topic,
+        tags = EXCLUDED.tags,
+        status = EXCLUDED.status,
+        extraction_status = EXCLUDED.extraction_status,
+        extraction_parser = EXCLUDED.extraction_parser,
+        extraction_error = EXCLUDED.extraction_error,
+        text_characters = EXCLUDED.text_characters,
+        brain_doc_id = EXCLUDED.brain_doc_id,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        attachment.id,
+        attachment.leadId || '',
+        attachment.leadName || '',
+        attachment.address || '',
+        attachment.filename || 'attachment',
+        attachment.contentType || 'application/octet-stream',
+        Math.max(0, Number(attachment.size || attachment.sizeBytes || 0)),
+        attachment.bucket || SUPABASE_ATTACHMENTS_BUCKET,
+        attachment.storagePath || '',
+        attachment.topic || '',
+        JSON.stringify(attachment.tags || []),
+        attachment.status || 'stored',
+        attachment.extractionStatus || 'stored-only',
+        attachment.extractionParser || '',
+        attachment.extractionError || '',
+        Math.max(0, Number(attachment.textCharacters || 0)),
+        attachment.brainDocId || '',
+        JSON.stringify({
+          signedUrlExpiresIn: attachment.signedUrlExpiresIn || 0,
+        }),
+        attachment.createdAt || isoNow(),
+        attachment.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] attachment metadata persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistEmailLogRecord(record = {}) {
+  const pool = getPgPool();
+  if (!pool || !record.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.email_log (
+        id, workspace_id, lead_id, lead_name, message_id, email_type, provider,
+        recipient_email, subject, status, live, storage_path, signed_url_expires_in,
+        metadata, sent_at, created_at, updated_at
+      )
+      VALUES (
+        $1, 'pbk', $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12,
+        $13::jsonb, $14, $15, $16
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        message_id = EXCLUDED.message_id,
+        email_type = EXCLUDED.email_type,
+        provider = EXCLUDED.provider,
+        recipient_email = EXCLUDED.recipient_email,
+        subject = EXCLUDED.subject,
+        status = EXCLUDED.status,
+        live = EXCLUDED.live,
+        storage_path = EXCLUDED.storage_path,
+        signed_url_expires_in = EXCLUDED.signed_url_expires_in,
+        metadata = EXCLUDED.metadata,
+        sent_at = EXCLUDED.sent_at,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.leadId || '',
+        record.leadName || '',
+        record.messageId || '',
+        record.type || 'transactional',
+        record.provider || '',
+        record.to || record.recipientEmail || '',
+        record.subject || '',
+        record.status || 'queued',
+        Boolean(record.live),
+        record.storagePath || '',
+        Math.max(0, Number(record.signedUrlExpiresIn || 0)),
+        JSON.stringify(record.metadata || {}),
+        record.ok ? isoNow() : null,
+        record.createdAt || isoNow(),
+        record.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] email log persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
 function limitStateArrays(nextState) {
   nextState.approvals = sortNewest(nextState.approvals).slice(0, LIMITS.approvals);
   nextState.activity = sortNewest(nextState.activity).slice(0, LIMITS.activity);
@@ -1676,6 +1805,7 @@ function limitStateArrays(nextState) {
   nextState.leadStageTransitions = sortNewest(nextState.leadStageTransitions).slice(0, LIMITS.leadStageTransitions);
   nextState.contracts = sortNewest(nextState.contracts).slice(0, LIMITS.contracts);
   nextState.documentDeliveries = sortNewest(nextState.documentDeliveries).slice(0, LIMITS.documentDeliveries);
+  nextState.attachments = sortNewest(nextState.attachments || []).slice(0, LIMITS.attachments);
   nextState.adminTasks = sortNewest(nextState.adminTasks).slice(0, LIMITS.adminTasks);
   nextState.adminAudit = sortNewest(nextState.adminAudit).slice(0, LIMITS.adminAudit);
 }
@@ -1691,6 +1821,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.dncCount = nextState.dncEntries.length;
   nextState.status.contractsOpen = nextState.contracts.filter((contract) => !['completed', 'void', 'rejected'].includes(String(contract.status || '').toLowerCase())).length;
   nextState.status.documentDeliveries = nextState.documentDeliveries.length;
+  nextState.status.attachmentsStored = (nextState.attachments || []).length;
   nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
   nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
   nextState.status.lastApprovalAt = nextState.approvals[0]?.createdAt || null;
@@ -1704,6 +1835,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastLeadTransitionAt = getItemTimestamp(nextState.leadStageTransitions[0] || {}) || null;
   nextState.status.lastContractAt = getItemTimestamp(nextState.contracts[0] || {}) || null;
   nextState.status.lastDocumentDeliveryAt = getItemTimestamp(nextState.documentDeliveries[0] || {}) || null;
+  nextState.status.lastAttachmentAt = getItemTimestamp((nextState.attachments || [])[0] || {}) || null;
   nextState.status.tools = [...TOOL_NAMES];
   nextState.status.toolUsage = {
     ...buildToolUsageSeed(),
@@ -1743,6 +1875,7 @@ function hydrateState(raw = {}) {
     leadStageTransitions: trimArray(raw.leadStageTransitions || defaults.leadStageTransitions, LIMITS.leadStageTransitions),
     contracts: trimArray(raw.contracts || defaults.contracts, LIMITS.contracts),
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
+    attachments: trimArray(raw.attachments || defaults.attachments, LIMITS.attachments),
     settings: {
       ...defaults.settings,
       ...(raw.settings && typeof raw.settings === 'object' ? raw.settings : {}),
@@ -1860,6 +1993,13 @@ function addAnalyzerRun(stateRef, run) {
 
 function addDocumentDelivery(stateRef, delivery) {
   stateRef.documentDeliveries.unshift(delivery);
+  limitStateArrays(stateRef);
+  updateDerivedStatus(stateRef);
+}
+
+function addAttachmentRecord(stateRef, attachment) {
+  if (!Array.isArray(stateRef.attachments)) stateRef.attachments = [];
+  stateRef.attachments.unshift(attachment);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
 }
@@ -5653,6 +5793,342 @@ async function uploadSupabaseRecording({ storagePath, contentType = 'audio/mpeg'
   };
 }
 
+const ensuredSupabaseBuckets = new Set();
+
+function normalizeStoragePathForBucket(value = '', bucket = '') {
+  const trimmed = String(value || '').trim().replace(/^\/+/g, '');
+  const bucketPrefix = bucket ? `${bucket}/` : '';
+  return bucketPrefix && trimmed.startsWith(bucketPrefix) ? trimmed.slice(bucketPrefix.length) : trimmed;
+}
+
+async function ensureSupabaseBucket(bucket = '') {
+  const bucketName = String(bucket || '').trim();
+  const meta = getSupabaseStorageProviderMeta();
+  if (!bucketName || !meta.ready || ensuredSupabaseBuckets.has(bucketName)) {
+    return { ok: Boolean(bucketName), skipped: !bucketName || !meta.ready };
+  }
+
+  const bucketUrl = `${SUPABASE_URL}/storage/v1/bucket/${encodeURIComponent(bucketName)}`;
+  const existing = await fetch(bucketUrl, {
+    method: 'GET',
+    headers: getSupabaseStorageHeaders(),
+  }).catch((error) => ({ ok: false, status: 0, error }));
+
+  if (existing.ok) {
+    ensuredSupabaseBuckets.add(bucketName);
+    return { ok: true, bucket: bucketName, existing: true };
+  }
+
+  const create = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+    method: 'POST',
+    headers: getSupabaseStorageHeaders(),
+    body: JSON.stringify({ id: bucketName, name: bucketName, public: false }),
+  }).catch((error) => ({ ok: false, status: 0, error }));
+
+  if (create.ok || create.status === 409) {
+    ensuredSupabaseBuckets.add(bucketName);
+    return { ok: true, bucket: bucketName, existing: create.status === 409 };
+  }
+
+  const text = typeof create.text === 'function' ? await create.text().catch(() => '') : '';
+  return {
+    ok: false,
+    bucket: bucketName,
+    status: create.status || 0,
+    error: text || create.error?.message || `Could not create Supabase Storage bucket ${bucketName}.`,
+  };
+}
+
+async function uploadSupabaseObject({ bucket, storagePath, contentType = 'application/octet-stream', bytes }) {
+  const meta = getSupabaseStorageProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `Supabase Storage is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  const bucketName = String(bucket || '').trim();
+  const normalizedPath = normalizeStoragePathForBucket(storagePath, bucketName);
+  if (!bucketName) return { ok: false, error: 'Supabase Storage bucket is missing.' };
+  if (!normalizedPath) return { ok: false, error: 'Storage path is missing.' };
+  if (!bytes?.length) return { ok: false, error: 'Upload bytes are missing.' };
+
+  const ensured = await ensureSupabaseBucket(bucketName);
+  if (ensured.ok === false) return ensured;
+
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(bucketName)}/${encodePathSegments(normalizedPath)}`,
+    {
+      method: 'PUT',
+      headers: {
+        ...getSupabaseStorageHeaders(contentType),
+        'x-upsert': 'true',
+      },
+      body: bytes,
+    },
+  );
+  const responseText = await response.text().catch(() => '');
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: responseText || `Supabase upload failed with ${response.status}.`,
+    };
+  }
+  return {
+    ok: true,
+    bucket: bucketName,
+    storagePath: normalizedPath,
+    response: responseText ? safeJsonParse(responseText, responseText) : {},
+  };
+}
+
+async function createSupabaseObjectSignedUrl(bucket, storagePath, expiresIn = SUPABASE_ATTACHMENT_SIGNED_URL_TTL_SECONDS) {
+  const meta = getSupabaseStorageProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `Supabase Storage is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  const bucketName = String(bucket || '').trim();
+  const normalizedPath = normalizeStoragePathForBucket(storagePath, bucketName);
+  if (!bucketName) return { ok: false, error: 'Supabase Storage bucket is missing.' };
+  if (!normalizedPath) return { ok: false, error: 'Storage path is missing.' };
+  const url = `${SUPABASE_URL}/storage/v1/object/sign/${encodeURIComponent(bucketName)}/${encodePathSegments(normalizedPath)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getSupabaseStorageHeaders(),
+    body: JSON.stringify({ expiresIn }),
+  });
+  const payload = await response.json().catch(async () => ({ error: await response.text().catch(() => '') }));
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: payload?.message || payload?.error || `Supabase signed URL request failed with ${response.status}.`,
+    };
+  }
+  const signedUrl = payload.signedURL || payload.signedUrl || payload.url || '';
+  const normalizedSignedUrl = String(signedUrl || '');
+  const absoluteSignedUrl = normalizedSignedUrl && /^https?:\/\//i.test(normalizedSignedUrl)
+    ? normalizedSignedUrl
+    : `${SUPABASE_URL}${normalizedSignedUrl.startsWith('/storage/v1') ? '' : '/storage/v1'}${normalizedSignedUrl.startsWith('/') ? '' : '/'}${normalizedSignedUrl}`;
+  return {
+    ok: true,
+    bucket: bucketName,
+    storagePath: normalizedPath,
+    expiresIn,
+    signedUrl: absoluteSignedUrl,
+  };
+}
+
+function getSafeFileName(filename = 'attachment') {
+  const cleaned = String(filename || 'attachment')
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || 'attachment';
+}
+
+function buildAttachmentStoragePath(params = {}) {
+  const explicit = normalizeStoragePathForBucket(
+    params.storagePath || params.storage_path || params.path || '',
+    SUPABASE_ATTACHMENTS_BUCKET,
+  );
+  if (explicit) return explicit;
+  const context = findLeadContext(params);
+  const leadKey = slugify(context.leadId || context.leadName || context.address || params.topic || 'general') || 'general';
+  const safeName = getSafeFileName(params.filename || params.fileName || 'attachment');
+  const extension = safeName.includes('.') ? safeName.split('.').pop() : 'bin';
+  const stem = slugify(safeName.replace(/\.[^.]+$/g, '')) || 'attachment';
+  return `${leadKey}/${Date.now()}-${randomUUID().slice(0, 8)}-${stem}.${extension}`;
+}
+
+async function extractAttachmentText({ filename = '', contentType = '', bytes }) {
+  const fileName = String(filename || 'attachment');
+  const mime = String(contentType || '').toLowerCase();
+  const extension = fileName.toLowerCase().split('.').pop() || '';
+  const textLike = /^(text\/|application\/json|application\/csv|application\/xml)/i.test(mime)
+    || ['txt', 'md', 'csv', 'json', 'html', 'htm', 'xml'].includes(extension);
+
+  if (!bytes?.length) return { ok: false, text: '', error: 'No attachment bytes were available for extraction.' };
+
+  if (textLike) {
+    const text = Buffer.from(bytes).toString('utf8');
+    return { ok: true, parser: 'text', text, characters: text.length };
+  }
+
+  if (mime.includes('pdf') || extension === 'pdf') {
+    try {
+      const { PDFParse } = await import('pdf-parse');
+      const parser = new PDFParse({ data: Buffer.from(bytes) });
+      const result = await parser.getText();
+      await Promise.resolve(parser.destroy?.()).catch(() => {});
+      const text = String(result?.text || '').trim();
+      return { ok: Boolean(text), parser: 'pdf-parse', text, characters: text.length };
+    } catch (error) {
+      return { ok: false, parser: 'pdf-parse', text: '', error: error?.message || 'PDF extraction failed.' };
+    }
+  }
+
+  if (mime.includes('word') || ['docx', 'doc'].includes(extension)) {
+    try {
+      const mammoth = await import('mammoth');
+      const extractor = mammoth.extractRawText || mammoth.default?.extractRawText;
+      if (typeof extractor !== 'function') throw new Error('mammoth.extractRawText is unavailable.');
+      const result = await extractor({ buffer: Buffer.from(bytes) });
+      const text = String(result?.value || '').trim();
+      return {
+        ok: Boolean(text),
+        parser: 'mammoth',
+        text,
+        characters: text.length,
+        warnings: result?.messages || [],
+      };
+    } catch (error) {
+      return { ok: false, parser: 'mammoth', text: '', error: error?.message || 'DOCX extraction failed.' };
+    }
+  }
+
+  return {
+    ok: false,
+    parser: 'unsupported',
+    text: '',
+    error: `No text extractor is configured for ${mime || extension || 'this file type'}.`,
+  };
+}
+
+function parseTags(value = '') {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  return String(value || '')
+    .split(/[,\n|;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function handleAttachmentUpload({ file = {}, fields = {} } = {}) {
+  const filename = getSafeFileName(file.filename || file.name || fields.filename || 'attachment');
+  const contentType = String(file.contentType || file.type || fields.contentType || 'application/octet-stream').trim();
+  const bytes = Buffer.isBuffer(file.data) ? file.data : Buffer.from(file.data || []);
+  if (!bytes.length) return { ok: false, error: 'Attachment file is empty.' };
+
+  const topic = fields.topic || 'Uploaded Documents';
+  const tags = [
+    ...parseTags(fields.tags),
+    topic,
+    'attachment',
+    filename.split('.').pop(),
+  ].filter(Boolean);
+  const attachmentId = fields.id || `att-${randomUUID()}`;
+  const storagePath = buildAttachmentStoragePath({ ...fields, filename });
+  const upload = await uploadSupabaseObject({
+    bucket: SUPABASE_ATTACHMENTS_BUCKET,
+    storagePath,
+    contentType,
+    bytes,
+  });
+  if (upload.ok === false) return upload;
+
+  const signed = await createSupabaseObjectSignedUrl(
+    SUPABASE_ATTACHMENTS_BUCKET,
+    storagePath,
+    Number(fields.expiresIn || SUPABASE_ATTACHMENT_SIGNED_URL_TTL_SECONDS),
+  );
+  const extraction = await extractAttachmentText({ filename, contentType, bytes });
+  const searchableText = extraction.text
+    || `Uploaded attachment ${filename}. Type: ${contentType || 'unknown'}. Size: ${bytes.length} bytes.`;
+  let brain = null;
+  try {
+    brain = await toolHandlers.ingestResearchDoc({
+      title: fields.title || filename,
+      source: fields.source || `Supabase attachment: ${filename}`,
+      topic,
+      summary: searchableText.slice(0, 2400),
+      excerpt: searchableText,
+      kind: 'attachment',
+      tags,
+      metadata: {
+        attachmentId,
+        filename,
+        contentType,
+        size: bytes.length,
+        bucket: SUPABASE_ATTACHMENTS_BUCKET,
+        storagePath,
+        signedUrlExpiresIn: signed.expiresIn,
+        extraction: {
+          ok: extraction.ok,
+          parser: extraction.parser,
+          characters: extraction.characters || 0,
+          error: extraction.error || '',
+        },
+        leadId: fields.leadId || '',
+        leadName: fields.leadName || '',
+        address: fields.address || '',
+      },
+    });
+  } catch (error) {
+    brain = { ok: false, error: error?.message || 'Brain ingest failed after attachment upload.' };
+  }
+
+  const attachment = {
+    id: attachmentId,
+    leadId: fields.leadId || '',
+    leadName: fields.leadName || '',
+    address: fields.address || '',
+    filename,
+    contentType,
+    size: bytes.length,
+    bucket: SUPABASE_ATTACHMENTS_BUCKET,
+    storagePath,
+    topic,
+    tags,
+    status: upload.ok ? 'stored' : 'failed',
+    extractionStatus: extraction.ok ? 'indexed' : 'stored-only',
+    extractionParser: extraction.parser || '',
+    extractionError: extraction.error || '',
+    textCharacters: extraction.characters || 0,
+    brainDocId: brain?.doc?.id || brain?.result?.doc?.id || '',
+    signedUrlExpiresIn: signed.expiresIn || 0,
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+
+  addAttachmentRecord(state, attachment);
+  await persistAttachmentMetadata(attachment);
+  addActivity(
+    state,
+    makeActivity({
+      actor: fields.actor || 'Command Center',
+      category: 'BRAIN',
+      status: extraction.ok ? 'indexed' : 'uploaded',
+      text: `${filename} uploaded to Supabase Storage${extraction.ok ? ' and indexed for Rex' : '; text extraction needs review'}.`,
+      target: storagePath,
+    }),
+  );
+  await persistState(state);
+
+  return {
+    ok: true,
+    attachment,
+    upload,
+    signed,
+    signedUrl: signed.ok ? signed.signedUrl : '',
+    extraction: {
+      ok: extraction.ok,
+      parser: extraction.parser,
+      characters: extraction.characters || 0,
+      error: extraction.error || '',
+      warnings: extraction.warnings || [],
+    },
+    brain,
+  };
+}
+
 function safeJsonParse(raw, fallback = null) {
   try {
     return JSON.parse(raw);
@@ -5693,6 +6169,78 @@ function normalizeWorkflowDraft(params = {}) {
       ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
     },
     updatedAt: isoNow(),
+  };
+}
+
+function materializeN8nWorkflow(draft = {}) {
+  if (Array.isArray(draft.nodes) && draft.nodes.length) {
+    return {
+      nodes: draft.nodes,
+      connections: draft.connections && typeof draft.connections === 'object' ? draft.connections : {},
+    };
+  }
+
+  const triggerType = String(draft.settings?.triggerType || draft.triggerType || '').toLowerCase();
+  const table = String(draft.settings?.table || draft.table || 'leads_import').trim();
+  const event = String(draft.settings?.event || draft.event || 'INSERT').trim();
+  const filter = String(draft.settings?.filter || draft.filter || '').trim();
+  const pathKey = slugify(`${draft.name || 'pbk-workflow'}-${table}-${event}`) || `pbk-workflow-${randomUUID().slice(0, 8)}`;
+  const triggerNode = triggerType.includes('schedule')
+    ? {
+        parameters: { rule: { interval: [{ minutes: 15 }] } },
+        id: `trigger-${pathKey}`,
+        name: 'PBK Schedule Trigger',
+        type: 'n8n-nodes-base.scheduleTrigger',
+        typeVersion: 1.2,
+        position: [240, 300],
+      }
+    : triggerType.includes('manual')
+      ? {
+          parameters: {},
+          id: `trigger-${pathKey}`,
+          name: 'PBK Manual Trigger',
+          type: 'n8n-nodes-base.manualTrigger',
+          typeVersion: 1,
+          position: [240, 300],
+        }
+      : {
+          parameters: {
+            httpMethod: 'POST',
+            path: pathKey,
+            responseMode: 'onReceived',
+            options: {},
+          },
+          id: `trigger-${pathKey}`,
+          name: 'PBK Webhook Trigger',
+          type: 'n8n-nodes-base.webhook',
+          typeVersion: 2,
+          position: [240, 300],
+        };
+
+  const actionNode = {
+    parameters: {},
+    id: `pbk-handoff-${pathKey}`,
+    name: 'PBK Approval Handoff',
+    type: 'n8n-nodes-base.noOp',
+    typeVersion: 1,
+    position: [520, 300],
+    notesInFlow: true,
+    notes: [
+      `PBK workflow draft: ${draft.name || 'Command Center draft'}`,
+      `Trigger: ${draft.settings?.triggerType || draft.triggerType || 'unspecified'}`,
+      `Table/Event: ${table} / ${event}`,
+      filter ? `Filter: ${filter}` : 'Filter: none',
+      'Next production step: replace this no-op with the live PBK bridge action after approval.',
+    ].join('\n'),
+  };
+
+  return {
+    nodes: [triggerNode, actionNode],
+    connections: {
+      [triggerNode.name]: {
+        main: [[{ node: actionNode.name, type: 'main', index: 0 }]],
+      },
+    },
   };
 }
 
@@ -5768,10 +6316,11 @@ async function saveWorkflowPersistence(params = {}) {
   if (params.syncToN8n || params.applyToN8n) {
     const method = draft.id && !String(draft.id).startsWith('workflow-') ? 'PUT' : 'POST';
     const pathname = method === 'PUT' ? `workflows/${encodeURIComponent(draft.id)}` : 'workflows';
+    const workflowPayload = materializeN8nWorkflow(draft);
     sync = await n8nApiRequest(method, pathname, {
       name: draft.name,
-      nodes: draft.nodes,
-      connections: draft.connections,
+      nodes: workflowPayload.nodes,
+      connections: workflowPayload.connections,
       settings: draft.settings,
       active: draft.active,
     });
@@ -5783,6 +6332,87 @@ async function saveWorkflowPersistence(params = {}) {
     draft,
     drafts: drafts.slice(0, 80),
     sync,
+  };
+}
+
+function getN8nWorkflowIdFromDraft(draft = {}, params = {}) {
+  return String(
+    params.n8nWorkflowId
+      || params.workflowId
+      || draft.n8nWorkflowId
+      || draft.metadata?.n8nWorkflowId
+      || draft.metadata?.workflowId
+      || '',
+  ).trim();
+}
+
+async function publishWorkflowPersistence(params = {}) {
+  const draft = normalizeWorkflowDraft(params);
+  const drafts = await loadWorkflowDrafts();
+  const existingDraftIndex = drafts.findIndex((item) => item.id === draft.id);
+  const previousDraft = existingDraftIndex >= 0 ? drafts[existingDraftIndex] : null;
+  const existingN8nId = getN8nWorkflowIdFromDraft(draft, params) || getN8nWorkflowIdFromDraft(previousDraft || {}, {});
+  const shouldActivate = params.activate ?? params.active ?? draft.active ?? true;
+  let sync = null;
+  let activation = null;
+
+  const meta = getN8nWorkflowProviderMeta();
+  if (!meta.ready) {
+    sync = {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `n8n workflow API is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  } else {
+    const method = existingN8nId ? 'PUT' : 'POST';
+    const pathname = existingN8nId ? `workflows/${encodeURIComponent(existingN8nId)}` : 'workflows';
+    const workflowPayload = materializeN8nWorkflow(draft);
+    sync = await n8nApiRequest(method, pathname, {
+      name: draft.name,
+      nodes: workflowPayload.nodes,
+      connections: workflowPayload.connections,
+      settings: draft.settings,
+      active: false,
+    });
+    const workflowId = String(
+      sync.payload?.id
+        || sync.payload?.data?.id
+        || sync.payload?.workflow?.id
+        || existingN8nId
+        || '',
+    ).trim();
+
+    if (sync.ok && workflowId && shouldActivate) {
+      activation = await n8nApiRequest('POST', `workflows/${encodeURIComponent(workflowId)}/activate`);
+    }
+
+    if (workflowId) {
+      draft.metadata = {
+        ...(draft.metadata || {}),
+        n8nWorkflowId: workflowId,
+        n8nPublishedAt: isoNow(),
+        n8nActivationStatus: activation ? (activation.ok ? 'active' : 'activation-failed') : 'draft',
+      };
+      draft.n8nWorkflowId = workflowId;
+      draft.active = Boolean(shouldActivate && (activation?.ok || !activation));
+    }
+  }
+
+  if (existingDraftIndex >= 0) {
+    drafts.splice(existingDraftIndex, 1, { ...drafts[existingDraftIndex], ...draft });
+  } else {
+    drafts.unshift(draft);
+  }
+  await saveWorkflowDrafts(drafts.slice(0, 80));
+
+  return {
+    ok: Boolean(sync?.ok),
+    provider: sync?.ok ? 'n8n-api' : 'local-draft-store',
+    draft,
+    drafts: drafts.slice(0, 80),
+    sync,
+    activation,
   };
 }
 
@@ -9403,6 +10033,7 @@ function buildStateSnapshot() {
       })),
     },
     documentDeliveries: state.documentDeliveries,
+    attachments: state.attachments || [],
     adminTasks: state.adminTasks,
     adminAudit: state.adminAudit,
   };
@@ -9438,19 +10069,92 @@ function sendBinary(response, statusCode, body, headers = {}) {
   response.end(body);
 }
 
-async function readBody(request) {
+async function readRawBodyBuffer(request) {
   const chunks = [];
   for await (const chunk of request) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
-  if (!chunks.length) return {};
-  const raw = Buffer.concat(chunks).toString('utf8');
+  return chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
+}
+
+async function readBody(request) {
+  const buffer = await readRawBodyBuffer(request);
+  if (!buffer.length) return {};
+  const raw = buffer.toString('utf8');
   if (!raw) return {};
   try {
     return JSON.parse(raw);
   } catch {
     return { raw };
   }
+}
+
+function parseMultipartContentDisposition(value = '') {
+  const result = {};
+  String(value || '').split(';').forEach((part) => {
+    const [rawKey, ...rawValue] = part.trim().split('=');
+    const key = String(rawKey || '').trim().toLowerCase();
+    if (!key || !rawValue.length) return;
+    result[key] = rawValue.join('=').trim().replace(/^"|"$/g, '');
+  });
+  return result;
+}
+
+function parseMultipartFormDataBuffer(buffer, contentType = '') {
+  const boundaryMatch = String(contentType || '').match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  const boundaryText = boundaryMatch?.[1] || boundaryMatch?.[2] || '';
+  if (!boundaryText) return { fields: {}, files: [], error: 'Multipart boundary is missing.' };
+  const boundary = Buffer.from(`--${boundaryText}`);
+  const fields = {};
+  const files = [];
+  let cursor = 0;
+
+  while (cursor < buffer.length) {
+    let start = buffer.indexOf(boundary, cursor);
+    if (start < 0) break;
+    start += boundary.length;
+    if (buffer[start] === 45 && buffer[start + 1] === 45) break;
+    if (buffer[start] === 13 && buffer[start + 1] === 10) start += 2;
+    const next = buffer.indexOf(boundary, start);
+    if (next < 0) break;
+    let part = buffer.slice(start, next);
+    if (part.length >= 2 && part[part.length - 2] === 13 && part[part.length - 1] === 10) {
+      part = part.slice(0, -2);
+    }
+    cursor = next;
+
+    const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'));
+    if (headerEnd < 0) continue;
+    const headerText = part.slice(0, headerEnd).toString('utf8');
+    const data = part.slice(headerEnd + 4);
+    const headers = {};
+    headerText.split('\r\n').forEach((line) => {
+      const splitAt = line.indexOf(':');
+      if (splitAt < 0) return;
+      headers[line.slice(0, splitAt).trim().toLowerCase()] = line.slice(splitAt + 1).trim();
+    });
+    const disposition = parseMultipartContentDisposition(headers['content-disposition']);
+    const name = disposition.name || '';
+    if (!name) continue;
+    if (disposition.filename != null) {
+      files.push({
+        fieldName: name,
+        filename: disposition.filename,
+        contentType: headers['content-type'] || 'application/octet-stream',
+        data,
+      });
+    } else {
+      fields[name] = data.toString('utf8');
+    }
+  }
+
+  return { fields, files };
+}
+
+async function readMultipartFormData(request) {
+  const contentType = request.headers['content-type'] || '';
+  const buffer = await readRawBodyBuffer(request);
+  return parseMultipartFormDataBuffer(buffer, contentType);
 }
 
 function matchesPath(pathname, pathnames) {
@@ -9737,6 +10441,27 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/workflows/publish', '/api/n8n/workflows/publish'])) {
+      const body = await readBody(request);
+      const result = await publishWorkflowPersistence(body);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'n8n',
+          category: 'AUTOMATION',
+          status: result.sync?.ok ? (result.activation?.ok || !result.activation ? 'published' : 'activation-failed') : 'queued',
+          text: `${result.draft.name} workflow ${result.sync?.ok ? 'published to n8n' : 'kept as a local draft'}`,
+          target: result.draft.metadata?.n8nWorkflowId || result.draft.id,
+        }),
+      );
+      await persistState(state);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/property-data') {
       const result = await toolHandlers.getPropertyData({
         address: url.searchParams.get('address') || '',
@@ -9771,6 +10496,54 @@ const server = createServer(async (request, response) => {
         requestedBy: url.searchParams.get('requestedBy') || 'api',
       });
       json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/attachments') {
+      json(response, 200, {
+        ok: true,
+        bucket: SUPABASE_ATTACHMENTS_BUCKET,
+        attachments: state.attachments || [],
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/attachments') {
+      const contentType = String(request.headers['content-type'] || '');
+      let file = null;
+      let fields = {};
+
+      if (/multipart\/form-data/i.test(contentType)) {
+        const parsed = await readMultipartFormData(request);
+        if (parsed.error) {
+          json(response, 400, { ok: false, error: parsed.error });
+          return;
+        }
+        fields = parsed.fields || {};
+        file = parsed.files?.[0] || null;
+      } else {
+        const body = await readBody(request);
+        fields = body;
+        const base64 = String(body.fileBase64 || body.base64 || '').replace(/^data:[^;]+;base64,/i, '');
+        if (base64) {
+          file = {
+            filename: body.filename || body.fileName || 'attachment',
+            contentType: body.contentType || 'application/octet-stream',
+            data: Buffer.from(base64, 'base64'),
+          };
+        }
+      }
+
+      if (!file) {
+        json(response, 400, { ok: false, error: 'No attachment file was provided.' });
+        return;
+      }
+
+      const result = await handleAttachmentUpload({ file, fields });
+      json(response, result.ok === false ? 501 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
       return;
     }
 
@@ -10356,6 +11129,120 @@ const server = createServer(async (request, response) => {
         upload,
         signedUrl: signed.ok ? signed.signedUrl : '',
         signed,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/recordings/send-email') {
+      const body = await readBody(request);
+      const messageId = String(body.messageId || body.id || '').trim();
+      const recipientEmail = String(body.email || body.to || body.recipientEmail || '').trim();
+      if (!messageId) {
+        json(response, 400, { ok: false, error: 'messageId is required.' });
+        return;
+      }
+      if (!recipientEmail || !recipientEmail.includes('@')) {
+        json(response, 400, { ok: false, error: 'A valid recipient email is required.' });
+        return;
+      }
+
+      const message = findMessageById(messageId);
+      if (!message) {
+        json(response, 404, { ok: false, messageId, error: 'Recording message not found.' });
+        return;
+      }
+
+      const directUrl = getMessageRecordingUrl(message);
+      let signed = null;
+      const storagePath = getMessageRecordingPath(message);
+      if (!directUrl) {
+        signed = await createSupabaseRecordingSignedUrl(
+          storagePath,
+          Number(body.expiresIn || body.expiresInSeconds || 7 * 24 * 60 * 60),
+        );
+        if (signed.ok === false) {
+          json(response, 501, {
+            ...signed,
+            messageId,
+            storagePath,
+            error: signed.error || 'Could not create a signed recording URL.',
+          });
+          return;
+        }
+      }
+
+      const recordingUrl = directUrl || signed?.signedUrl || '';
+      const leadName = body.leadName || message.leadName || 'there';
+      const note = String(body.message || body.note || 'Here is the secure call recording package we discussed.').trim();
+      const subject = String(body.subject || `PBK call recording for ${leadName}`).trim();
+      const delivery = await sendTransactionalEmail({
+        from: getSenderAddress(body.senderProfile || 'warm'),
+        to: recipientEmail,
+        subject,
+        text: `${note}\n\nSecure recording link: ${recordingUrl}\n\nThis link expires automatically for security.`,
+        html: `
+          <p>${escapeHtml(note)}</p>
+          <p><a href="${escapeHtml(recordingUrl)}">Listen to the secure recording</a></p>
+          <p style="color:#6b7280;font-size:12px;">This link expires automatically for security.</p>
+        `,
+      });
+
+      const deliveryRecord = {
+        id: `recording-email-${Date.now()}-${randomUUID().slice(0, 8)}`,
+        type: 'recording-email',
+        messageId,
+        leadId: body.leadId || message.leadId || '',
+        leadName,
+        to: recipientEmail,
+        subject,
+        storagePath,
+        signedUrlExpiresIn: signed?.expiresIn || 0,
+        provider: delivery.provider || 'email',
+        live: Boolean(delivery.live),
+        ok: Boolean(delivery.ok),
+        status: delivery.ok ? 'sent' : 'failed',
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      };
+      addDocumentDelivery(state, deliveryRecord);
+      await persistEmailLogRecord(deliveryRecord);
+      upsertMessage(
+        state,
+        createMessageRecord({
+          id: `msg-${deliveryRecord.id}`,
+          leadId: deliveryRecord.leadId,
+          leadName,
+          address: body.address || message.address || '',
+          channel: 'email',
+          direction: 'outbound',
+          provider: delivery.provider || 'Resend',
+          status: delivery.ok ? 'sent' : 'failed',
+          body: `Recording package sent to ${recipientEmail}.`,
+          payload: {
+            type: 'recording-email',
+            messageId,
+            delivery: deliveryRecord,
+          },
+        }),
+      );
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'Command Center',
+          category: 'EMAIL',
+          status: delivery.ok ? 'sent' : 'failed',
+          text: `Recording package ${delivery.ok ? 'sent' : 'attempted'} for ${leadName}.`,
+          target: recipientEmail,
+        }),
+      );
+      await persistState(state);
+      json(response, delivery.ok ? 200 : 502, {
+        ok: Boolean(delivery.ok),
+        delivery,
+        deliveryRecord,
+        signed,
+        signedUrl: recordingUrl,
         state: buildStateSnapshot(),
       });
       return;

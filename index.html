@@ -4621,6 +4621,9 @@
       <div style="margin-top: var(--s-2);">
         <button class="btn btn-primary" style="width: 100%; justify-content: center;">Save changes</button>
       </div>
+      <div style="margin-top: var(--s-2);">
+        <button class="btn btn-ghost" style="width: 100%; justify-content: center;">Publish to n8n</button>
+      </div>
     </aside>
   </div>
 </section>
@@ -8416,6 +8419,101 @@
       -webkit-overflow-scrolling: touch;
     }
 
+    .upcoming-queue,
+    .uq-list {
+      overflow-x: visible !important;
+    }
+
+    .uq-list {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: var(--s-3) !important;
+    }
+
+    .uq-card,
+    .contract-row,
+    .perf-row,
+    .rec-player-head,
+    .brain-hero,
+    .dnc-row,
+    .role-row {
+      min-width: 0 !important;
+      max-width: 100% !important;
+      overflow-wrap: break-word !important;
+    }
+
+    .uq-card {
+      width: 100% !important;
+    }
+
+    .brain-hero,
+    .rec-player-head {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .brain-hero {
+      overflow-x: hidden !important;
+    }
+
+    .brain-hero::after {
+      right: -120px !important;
+      width: 140px !important;
+      height: 140px !important;
+    }
+
+    .activity-row,
+    .activity-text {
+      min-width: 0 !important;
+      overflow-wrap: anywhere !important;
+    }
+
+    .rec-player-head {
+      flex-wrap: wrap !important;
+      align-items: flex-start !important;
+    }
+
+    .rec-player-head > div:not(.rec-avatar) {
+      flex: 1 1 180px !important;
+      min-width: 0 !important;
+    }
+
+    .rec-player-head .chip-btn {
+      flex: 1 1 130px !important;
+      justify-content: center !important;
+    }
+
+    .contract-row {
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: var(--s-2) !important;
+    }
+
+    .contract-row > *,
+    .perf-row > *,
+    .dnc-row > *,
+    .role-row > * {
+      min-width: 0 !important;
+      max-width: 100% !important;
+      white-space: normal !important;
+      overflow-wrap: anywhere !important;
+    }
+
+    .perf-row {
+      grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(54px, 0.75fr)) !important;
+      column-gap: var(--s-2) !important;
+    }
+
+    .dnc-row,
+    .role-row {
+      grid-template-columns: minmax(0, 1fr) !important;
+      row-gap: var(--s-2) !important;
+    }
+
+    .dnc-row .chip-btn,
+    .role-row .chip-btn {
+      justify-self: stretch !important;
+      width: 100% !important;
+    }
+
     .pipeline-stages {
       display: grid !important;
       grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
@@ -10680,6 +10778,25 @@
     return payload;
   }
 
+  async function requestOpenClawFormDataApi(path, formData, { method = 'POST', timeout = 15000 } = {}) {
+    const config = getOpenClawConfig();
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+    const url = new URL(String(path || '').replace(/^\/+/, ''), `${base}/`).toString();
+    const response = await fetchWithTimeout(url, {
+      method,
+      headers: buildOpenClawHeaders(config, false),
+      body: formData
+    }, timeout);
+    const type = response.headers.get('content-type') || '';
+    const payload = type.includes('json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
+    if (!response.ok) {
+      const message = payload?.error || payload?.message || `Bridge returned ${response.status}`;
+      throw new Error(message);
+    }
+    return payload;
+  }
+
   PBK.openclaw.getState = async function() {
     return fetchOpenClawState();
   };
@@ -11895,6 +12012,184 @@
     });
   }
 
+  function chooseLocalFiles({ accept = '', multiple = false } = {}) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = accept;
+      input.multiple = multiple;
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      input.style.top = '-9999px';
+      input.setAttribute('aria-hidden', 'true');
+
+      const finish = (files = []) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('focus', onFocus);
+        input.remove();
+        resolve(Array.from(files || []));
+      };
+
+      const onFocus = () => {
+        window.setTimeout(() => {
+          if (!settled && !input.files?.length) finish([]);
+        }, 700);
+      };
+
+      input.addEventListener('change', () => finish(input.files));
+      input.addEventListener('cancel', () => finish([]));
+      window.setTimeout(() => window.addEventListener('focus', onFocus, { once: true }), 120);
+      document.body.appendChild(input);
+      input.click();
+    });
+  }
+
+  async function readFileAsText(file, maxChars = 16000) {
+    if (!file) return '';
+    const textLike = /^(text\/|application\/json|application\/csv|application\/xml)/i.test(file.type || '')
+      || /\.(csv|txt|md|json|html?|xml)$/i.test(file.name || '');
+    if (!textLike) {
+      return `Uploaded file: ${file.name || 'attachment'} (${file.type || 'unknown type'}, ${Math.round((file.size || 0) / 1024)} KB). Binary parsing is deferred; store metadata and route the original file through Supabase Storage in the next attachment pass.`;
+    }
+    const text = await file.text();
+    return text.length > maxChars ? `${text.slice(0, maxChars)}\n\n[Truncated from ${text.length} characters]` : text;
+  }
+
+  async function uploadAttachmentToBridge(file, metadata = {}) {
+    if (!file) throw new Error('No file selected.');
+    const formData = new FormData();
+    formData.append('file', file, file.name || 'attachment');
+    Object.entries(metadata || {}).forEach(([key, value]) => {
+      if (value == null) return;
+      formData.append(key, Array.isArray(value) ? value.join(',') : String(value));
+    });
+    return requestOpenClawFormDataApi('/api/attachments', formData, {
+      method: 'POST',
+      timeout: 30000
+    });
+  }
+
+  function parseCsvRows(text = '') {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      const next = text[index + 1];
+      if (quoted) {
+        if (char === '"' && next === '"') {
+          cell += '"';
+          index += 1;
+        } else if (char === '"') {
+          quoted = false;
+        } else {
+          cell += char;
+        }
+      } else if (char === '"') {
+        quoted = true;
+      } else if (char === ',') {
+        row.push(cell.trim());
+        cell = '';
+      } else if (char === '\n') {
+        row.push(cell.trim());
+        if (row.some(Boolean)) rows.push(row);
+        row = [];
+        cell = '';
+      } else if (char !== '\r') {
+        cell += char;
+      }
+    }
+
+    row.push(cell.trim());
+    if (row.some(Boolean)) rows.push(row);
+    return rows;
+  }
+
+  function normalizeCsvHeader(value = '') {
+    return String(value).toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  function pickCsvValue(record, aliases = []) {
+    for (const alias of aliases) {
+      const value = record[normalizeCsvHeader(alias)];
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function csvRowsToLeadPayloads(rows = [], source = 'csv-upload') {
+    if (rows.length < 2) return [];
+    const headers = rows[0].map(normalizeCsvHeader);
+    return rows.slice(1).map((row) => {
+      const record = {};
+      headers.forEach((header, index) => {
+        record[header] = row[index] || '';
+      });
+
+      const first = pickCsvValue(record, ['first_name', 'firstname', 'first']);
+      const last = pickCsvValue(record, ['last_name', 'lastname', 'last']);
+      const leadName = pickCsvValue(record, ['seller', 'seller_name', 'owner', 'owner_name', 'name', 'lead'])
+        || [first, last].filter(Boolean).join(' ')
+        || 'CSV Lead';
+      const address = pickCsvValue(record, ['address', 'property_address', 'property', 'mailing_address', 'street']);
+      const phone = pickCsvValue(record, ['phone', 'mobile', 'cell', 'phone_number', 'primary_phone']);
+      const email = pickCsvValue(record, ['email', 'email_address']);
+      const tagText = pickCsvValue(record, ['tags', 'tag', 'motivation', 'status', 'list']);
+      const tags = tagText.split(/[;,|]/).map((item) => item.trim()).filter(Boolean);
+
+      return {
+        source,
+        seller: { name: leadName, phone, email },
+        property: { address },
+        tags,
+        raw: record
+      };
+    }).filter((lead) => lead.seller.name && lead.property.address);
+  }
+
+  async function importLeadCsvFromFile(source = 'csv-upload') {
+    const [file] = await chooseLocalFiles({ accept: '.csv,text/csv,text/plain' });
+    if (!file) return null;
+    const text = await readFileAsText(file, 600000);
+    const leads = csvRowsToLeadPayloads(parseCsvRows(text), source);
+
+    if (!leads.length) {
+      toast({
+        type: 'warning',
+        title: 'CSV needs headers',
+        desc: 'Use columns like seller/name, address/property_address, phone, email, and tags.'
+      });
+      return null;
+    }
+
+    const imported = [];
+    const failed = [];
+    for (const lead of leads.slice(0, 250)) {
+      try {
+        const response = await requestOpenClawApi('/api/leads/import', {
+          method: 'POST',
+          body: lead,
+          timeout: 12000
+        });
+        imported.push(response);
+      } catch (error) {
+        failed.push({ lead, error: error?.message || 'Import failed' });
+      }
+    }
+
+    await syncOpenClawState({ silent: true }).catch(() => {});
+    toast({
+      type: failed.length ? 'warning' : 'success',
+      title: failed.length ? 'CSV partially imported' : 'CSV imported',
+      desc: `${imported.length} leads imported from ${file.name}${failed.length ? `; ${failed.length} failed` : ''}.`
+    });
+    return { fileName: file.name, imported, failed, total: leads.length };
+  }
+
   function wireAgentConsoleRuntime() {
     document.querySelectorAll('.command-bar').forEach((bar) => {
       if (bar.dataset.runtimeWired === 'true') return;
@@ -11914,7 +12209,7 @@
           }
 
           if (label === 'attach') {
-            promptAndIngestSource();
+            promptAndIngestSource({ preferFile: true });
             return;
           }
 
@@ -12095,7 +12390,7 @@
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
       if (label === 'browse files') {
-        await createLeadFromPrompts('csv-upload');
+        await importLeadCsvFromFile('csv-upload');
         return;
       }
 
@@ -12519,7 +12814,7 @@
       }
 
       if (label === 'import csv') {
-        await createLeadFromPrompts('dashboard-csv-import');
+        await importLeadCsvFromFile('dashboard-csv-import');
         return;
       }
 
@@ -12745,8 +13040,40 @@
       }
 
       if (label === 'send to lead') {
-        const context = getLeadDetailContext();
-        showUtilityModal('Send recording package', `Draft an email to ${escapeHtml(context.leadName)} with the active recording recap attached. Live sending should stay approval-first until a seller-facing recording URL is available.`);
+        const context = getActiveRecordingContext();
+        const email = window.prompt(`Send recording link to which email for ${context.leadName}?`);
+        if (!email) return;
+        const note = window.prompt('Optional note for the email', 'Here is the secure call recording package we discussed.') || '';
+        requestOpenClawApi('/api/recordings/send-email', {
+          method: 'POST',
+          body: {
+            messageId: context.messageId,
+            leadName: context.leadName,
+            address: context.address,
+            email,
+            message: note,
+            actor: 'Command Center'
+          },
+          timeout: 15000
+        })
+          .then(async (payload) => {
+            if (payload?.state) renderOpenClawState(payload.state);
+            else await syncOpenClawState({ silent: true });
+            toast({
+              type: payload?.delivery?.live ? 'success' : 'info',
+              title: payload?.delivery?.live ? 'Recording email sent' : 'Recording email simulated',
+              desc: payload?.delivery?.live
+                ? `Secure signed link sent to ${email}.`
+                : `PBK prepared the recording package for ${email}; configure Resend for live sending.`
+            });
+          })
+          .catch((error) => {
+            toast({
+              type: 'error',
+              title: 'Recording email failed',
+              desc: error?.message || 'PBK could not send the recording package.'
+            });
+          });
         return;
       }
 
@@ -13106,6 +13433,42 @@
             ? 'Inspector values are synced with the n8n workflow API.'
             : 'Inspector values are saved in the PBK workflow draft store.'
         });
+        return;
+      }
+      if (label === 'publish to n8n') {
+        const { draft, error: draftError } = await saveAutomationDraft({ syncToN8n: false });
+        if (draftError) {
+          toast({
+            type: 'warning',
+            title: 'Publishing with local draft',
+            desc: 'PBK will still attempt to publish the latest inspector values to n8n.'
+          });
+        }
+        try {
+          const result = await requestOpenClawApi('/api/workflows/publish', {
+            method: 'POST',
+            body: {
+              workflow: draft,
+              activate: true,
+              metadata: { source: 'command-center-publish' }
+            },
+            timeout: 18000
+          });
+          if (result?.state) renderOpenClawState(result.state);
+          toast({
+            type: result?.sync?.ok ? 'success' : 'warning',
+            title: result?.sync?.ok ? 'Workflow published' : 'Workflow queued locally',
+            desc: result?.sync?.ok
+              ? `n8n workflow ${result?.activation?.ok || !result?.activation ? 'is active' : 'was created but activation needs review'}.`
+              : (result?.sync?.error || 'n8n API credentials are not available, so the draft stayed in PBK.')
+          });
+        } catch (error) {
+          toast({
+            type: 'error',
+            title: 'Publish failed',
+            desc: error?.message || 'PBK could not publish this workflow to n8n.'
+          });
+        }
       }
     });
   }
@@ -13361,7 +13724,7 @@
     }
   }
 
-  async function promptAndIngestSource() {
+  async function promptAndIngestSource({ preferFile = false } = {}) {
     if (!PBK.openclaw.isConnected()) {
       toast({
         type: 'warning',
@@ -13369,6 +13732,68 @@
         desc: 'Connect the local brain before ingesting documents into the research library.'
       });
       return;
+    }
+
+    if (preferFile) {
+      const [file] = await chooseLocalFiles({ accept: '.txt,.md,.csv,.json,.html,.htm,.pdf,.doc,.docx,text/*,application/json,application/pdf' });
+      if (file) {
+        const topic = getSelectedBrainTopic();
+        const tags = [topic, 'uploaded-file', (file.name || '').split('.').pop()].filter(Boolean);
+        try {
+          const response = await uploadAttachmentToBridge(file, {
+            title: file.name || 'Uploaded file',
+            source: `Command Center attachment: ${file.name || 'file'}`,
+            topic,
+            tags,
+            actor: 'Command Center'
+          });
+          if (response?.state) renderOpenClawState(response.state);
+          else await syncOpenClawState({ silent: true });
+          const extraction = response?.extraction;
+          toast({
+            type: 'success',
+            title: extraction?.ok ? 'Attachment stored and indexed' : 'Attachment stored',
+            desc: extraction?.ok
+              ? `${file.name || 'File'} is now available to Rex and the Brain page.`
+              : `${file.name || 'File'} is stored securely; text extraction needs review.`
+          });
+          return;
+        } catch (error) {
+          const excerpt = await readFileAsText(file);
+          try {
+            const fallback = await PBK.openclaw.invoke('ingestResearchDoc', {
+              title: file.name || 'Uploaded file',
+              source: `Local attachment fallback: ${file.name || 'file'}`,
+              topic,
+              summary: excerpt.slice(0, 2400),
+              excerpt,
+              kind: 'attachment',
+              tags,
+              metadata: {
+                fileName: file.name,
+                size: file.size,
+                type: file.type,
+                storageError: error?.message || ''
+              }
+            });
+            if (fallback?.state) renderOpenClawState(fallback.state);
+            else await syncOpenClawState({ silent: true });
+            toast({
+              type: 'warning',
+              title: 'Attachment indexed without file storage',
+              desc: error?.message || 'Supabase Storage did not accept the original file.'
+            });
+            return;
+          } catch (fallbackError) {
+            toast({
+              type: 'error',
+              title: 'Attachment ingest failed',
+              desc: fallbackError?.message || error?.message || 'The local brain did not accept that file.'
+            });
+            return;
+          }
+        }
+      }
     }
 
     const title = window.prompt('Source title');
@@ -13486,7 +13911,8 @@
       }
 
       if (action === 'ingest') {
-        promptAndIngestSource();
+        const label = normalizeControlText(event.target.closest('[data-brain-action]')?.textContent || '');
+        promptAndIngestSource({ preferFile: label === 'upload' });
       }
 
       if (action === 'export') {

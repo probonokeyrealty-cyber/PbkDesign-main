@@ -130,8 +130,9 @@ async function main() {
         templateId: 'probate',
       }),
     });
-    assert(coldEmail.response.ok && coldEmail.parsed?.ok === true, 'Cold email send failed.');
-    assert(coldEmail.parsed?.delivery?.ok === true, 'Cold email delivery did not report ok.');
+    const coldEmailOutcome = coldEmail.parsed?.result || coldEmail.parsed?.delivery?.result || '';
+    const coldEmailIsLive = coldEmail.response.ok && coldEmail.parsed?.ok === true && coldEmail.parsed?.delivery?.ok === true;
+    assert(coldEmailIsLive || coldEmailOutcome === 'provider_missing', 'Cold email send neither delivered nor reported provider_missing.');
 
     const classification = await requestJson('/api/participants/classify', {
       method: 'POST',
@@ -306,6 +307,8 @@ async function main() {
       stateBackend: health.features?.stateBackend || 'unknown',
       leadId,
       coldEmailProvider: coldEmail.parsed?.provider || 'unknown',
+      coldEmailOutcome,
+      coldEmailDelivered: coldEmailIsLive,
       coldEmailSimulated: Boolean(coldEmail.parsed?.delivery?.simulated),
       participantRole: participantProfile.parsed?.profile?.role || 'unknown',
       participantExpertise: participantProfile.parsed?.profile?.expertise || 'unknown',

@@ -149,6 +149,7 @@ const MAIN_BUSINESS_EMAIL = String(process.env.PBK_MAIN_BUSINESS_EMAIL || proces
 const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || process.env.COLD_CAMPAIGN_EMAIL || 'offers@pbkoutreach.local').trim();
 const INSTANTLY_API_KEY = String(process.env.PBK_INSTANTLY_API_KEY || process.env.INSTANTLY_API_KEY || '').trim();
 const INSTANTLY_BASE_URL = String(process.env.PBK_INSTANTLY_BASE_URL || 'https://api.instantly.ai/api/v2').trim().replace(/\/+$/g, '');
+const INSTANTLY_CAMPAIGN_CREATE_ENDPOINT = String(process.env.PBK_INSTANTLY_CAMPAIGN_CREATE_ENDPOINT || '/campaigns').trim();
 const INSTANTLY_WARMUP_ENABLE_ENDPOINT = String(process.env.PBK_INSTANTLY_WARMUP_ENABLE_ENDPOINT || '/accounts/warmup/enable').trim();
 const INSTANTLY_DOMAIN_ORDER_ENDPOINT = String(process.env.PBK_INSTANTLY_DOMAIN_ORDER_ENDPOINT || '/dfy-email-account-orders').trim();
 const INSTANTLY_DOMAIN_SETUP_WEBHOOK_URL = String(process.env.PBK_INSTANTLY_DOMAIN_SETUP_WEBHOOK || '').trim();
@@ -181,6 +182,11 @@ const SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS = Math.max(
   60,
   Number(process.env.PBK_RECORDING_SIGNED_URL_TTL_SECONDS || 3600),
 );
+const RECORDING_RETENTION_DEFAULT_DAYS = Math.max(
+  1,
+  Number(process.env.PBK_RECORDING_RETENTION_DAYS || 365),
+);
+const PROMPT_FILE_PATCH_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ALLOW_PROMPT_FILE_PATCH || '').trim());
 const SUPABASE_ATTACHMENT_SIGNED_URL_TTL_SECONDS = Math.max(
   60,
   Number(process.env.PBK_ATTACHMENT_SIGNED_URL_TTL_SECONDS || 3600),
@@ -304,6 +310,9 @@ const LIMITS = {
   documentDeliveries: 120,
   attachments: 160,
   browserResearchJobs: 160,
+  campaignExecutions: 120,
+  promptPatchApplications: 90,
+  recordingRetentionRuns: 90,
   adminTasks: 90,
   adminAudit: 160,
 };
@@ -321,6 +330,7 @@ const OBSERVABILITY_COMPOSE_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'doc
 const OBSERVABILITY_DASHBOARD_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'grafana', 'dashboards', 'pbk-runtime.json');
 const OBSERVABILITY_PROM_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'prometheus', 'generated.prometheus.yml');
 const TOOLING_VERIFY_WORKFLOW_FILE = path.join(ROOT_DIR, '.github', 'workflows', 'tooling-verify.yml');
+const WHOLESALE_AGENT_PROMPT_FILE = path.join(ROOT_DIR, 'wholesale.agent.md');
 
 function isoNow() {
   return new Date().toISOString();
@@ -1809,10 +1819,17 @@ function buildDefaultState() {
     documentDeliveries: buildDefaultDocumentDeliveries(),
     attachments: [],
     browserResearchJobs: [],
+    campaignExecutions: [],
+    promptPatchApplications: [],
+    recordingRetentionRuns: [],
     settings: {
       ui: {
         operatingMode: 'approval',
         approvalGatedProduction: true,
+        recordingRetention: {
+          days: RECORDING_RETENTION_DEFAULT_DAYS,
+          enforcement: 'approval-gated',
+        },
       },
       updatedAt: isoNow(),
       updatedBy: 'system',
@@ -2006,6 +2023,120 @@ async function persistEmailLogRecord(record = {}) {
   } catch (error) {
     console.warn('[pbk-local-openclaw] email log persistence skipped:', error?.message || error);
     return false;
+  }
+}
+
+async function persistUnifiedMessageRecord(message = {}) {
+  const pool = getPgPool();
+  if (!pool || !message.id) return false;
+  const payload = {
+    ...(message.payload && typeof message.payload === 'object' ? message.payload : {}),
+    leadName: message.leadName || '',
+    address: message.address || '',
+    phone: message.phone || '',
+    email: message.email || '',
+    callId: message.callId || '',
+    storagePath: message.storagePath || '',
+    storageBucket: message.storageBucket || '',
+    audioContentType: message.audioContentType || '',
+    durationSeconds: message.durationSeconds ?? null,
+    recordingUrl: message.recordingUrl || '',
+  };
+  const baseValues = [
+    message.id,
+    message.leadProfileId || null,
+    message.workspaceId || 'pbk',
+    message.channel || 'call',
+    message.direction || 'recording',
+    message.status || 'recorded',
+    message.provider || '',
+    message.fromEmail || '',
+    message.toEmail || message.email || '',
+    message.fromPhone || message.from || '',
+    message.toPhone || message.phone || '',
+    message.subject || '',
+    message.body || '',
+    message.intent || '',
+    message.sentiment ?? null,
+    JSON.stringify(payload),
+    message.createdAt || isoNow(),
+    message.updatedAt || isoNow(),
+  ];
+  const recordingValues = [
+    message.storagePath || '',
+    message.storageBucket || '',
+    message.audioContentType || '',
+    message.durationSeconds ?? null,
+    message.recordingUrl || '',
+  ];
+  const fullSql = `INSERT INTO public.unified_messages (
+      id, lead_id, workspace_id, channel, direction, status, provider,
+      from_email, to_email, from_phone, to_phone, subject, body, intent,
+      sentiment, payload, created_at, updated_at,
+      storage_path, storage_bucket, audio_content_type, duration_seconds, recording_url
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20,$21,$22,$23)
+    ON CONFLICT (id) DO UPDATE SET
+      workspace_id = EXCLUDED.workspace_id,
+      channel = EXCLUDED.channel,
+      direction = EXCLUDED.direction,
+      status = EXCLUDED.status,
+      provider = EXCLUDED.provider,
+      from_email = EXCLUDED.from_email,
+      to_email = EXCLUDED.to_email,
+      from_phone = EXCLUDED.from_phone,
+      to_phone = EXCLUDED.to_phone,
+      subject = EXCLUDED.subject,
+      body = EXCLUDED.body,
+      intent = EXCLUDED.intent,
+      sentiment = EXCLUDED.sentiment,
+      payload = EXCLUDED.payload,
+      storage_path = EXCLUDED.storage_path,
+      storage_bucket = EXCLUDED.storage_bucket,
+      audio_content_type = EXCLUDED.audio_content_type,
+      duration_seconds = EXCLUDED.duration_seconds,
+      recording_url = EXCLUDED.recording_url,
+      updated_at = EXCLUDED.updated_at`;
+  const baseSql = `INSERT INTO public.unified_messages (
+      id, lead_id, workspace_id, channel, direction, status, provider,
+      from_email, to_email, from_phone, to_phone, subject, body, intent,
+      sentiment, payload, created_at, updated_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
+    ON CONFLICT (id) DO UPDATE SET
+      workspace_id = EXCLUDED.workspace_id,
+      channel = EXCLUDED.channel,
+      direction = EXCLUDED.direction,
+      status = EXCLUDED.status,
+      provider = EXCLUDED.provider,
+      from_email = EXCLUDED.from_email,
+      to_email = EXCLUDED.to_email,
+      from_phone = EXCLUDED.from_phone,
+      to_phone = EXCLUDED.to_phone,
+      subject = EXCLUDED.subject,
+      body = EXCLUDED.body,
+      intent = EXCLUDED.intent,
+      sentiment = EXCLUDED.sentiment,
+      payload = EXCLUDED.payload,
+      updated_at = EXCLUDED.updated_at`;
+  try {
+    await pool.query(fullSql, [...baseValues, ...recordingValues]);
+    return true;
+  } catch (error) {
+    const messageText = String(error?.message || error || '');
+    if (!/column .* does not exist|violates foreign key constraint/i.test(messageText)) {
+      console.warn('[pbk-local-openclaw] unified message persistence skipped:', messageText);
+      return false;
+    }
+    try {
+      const retryValues = [...baseValues];
+      retryValues[1] = null;
+      await pool.query(baseSql, retryValues);
+      return true;
+    } catch (fallbackError) {
+      console.warn('[pbk-local-openclaw] unified message fallback persistence skipped:', fallbackError?.message || fallbackError);
+      return false;
+    }
   }
 }
 
@@ -2359,6 +2490,9 @@ function limitStateArrays(nextState) {
   nextState.documentDeliveries = sortNewest(nextState.documentDeliveries).slice(0, LIMITS.documentDeliveries);
   nextState.attachments = sortNewest(nextState.attachments || []).slice(0, LIMITS.attachments);
   nextState.browserResearchJobs = sortNewest(nextState.browserResearchJobs || []).slice(0, LIMITS.browserResearchJobs);
+  nextState.campaignExecutions = sortNewest(nextState.campaignExecutions || []).slice(0, LIMITS.campaignExecutions);
+  nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
+  nextState.recordingRetentionRuns = sortNewest(nextState.recordingRetentionRuns || []).slice(0, LIMITS.recordingRetentionRuns);
   nextState.adminTasks = sortNewest(nextState.adminTasks).slice(0, LIMITS.adminTasks);
   nextState.adminAudit = sortNewest(nextState.adminAudit).slice(0, LIMITS.adminAudit);
 }
@@ -2454,6 +2588,9 @@ function hydrateState(raw = {}) {
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
     attachments: trimArray(raw.attachments || defaults.attachments, LIMITS.attachments),
     browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs),
+    campaignExecutions: trimArray(raw.campaignExecutions || defaults.campaignExecutions, LIMITS.campaignExecutions),
+    promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
+    recordingRetentionRuns: trimArray(raw.recordingRetentionRuns || defaults.recordingRetentionRuns, LIMITS.recordingRetentionRuns),
     settings: {
       ...defaults.settings,
       ...(raw.settings && typeof raw.settings === 'object' ? raw.settings : {}),
@@ -3956,6 +4093,12 @@ function createCallRecord(params = {}) {
     telnyxCallControlId: params.telnyxCallControlId || params.call_control_id || '',
     telnyxCallLegId: params.telnyxCallLegId || params.call_leg_id || '',
     telnyxCallSessionId: params.telnyxCallSessionId || params.call_session_id || '',
+    storagePath: params.storagePath || params.storage_path || params.recordingStoragePath || '',
+    storageBucket: params.storageBucket || params.storage_bucket || '',
+    audioContentType: params.audioContentType || params.contentType || params.content_type || '',
+    durationSeconds: toNumber(params.durationSeconds || params.duration_seconds, 0),
+    recordingUrl: params.recordingUrl || params.audioUrl || params.url || '',
+    recordingMessageId: params.recordingMessageId || params.messageId || '',
     script: params.script || params.notes || '',
     sentiment: toNumber(params.sentiment, 0.66),
     yellRisk: toNumber(params.yellRisk, 0.05),
@@ -4852,10 +4995,11 @@ async function sendTransactionalEmail({
 
   if (!RESEND_API_KEY) {
     return {
-      ok: true,
+      ok: false,
       live: false,
-      simulated: true,
-      provider: 'simulated-email',
+      result: 'provider_missing',
+      provider: 'resend',
+      error: 'Email provider not configured - add RESEND_API_KEY in Render/OpenClaw.',
       from,
       to,
       subject,
@@ -7026,6 +7170,239 @@ async function uploadSupabaseRecording({ storagePath, contentType = 'audio/mpeg'
   };
 }
 
+async function deleteSupabaseRecording(storagePath = '') {
+  const meta = getSupabaseStorageProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `Supabase Storage is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  const normalizedPath = normalizeStoragePath(storagePath);
+  if (!normalizedPath) return { ok: false, error: 'Recording storage_path is missing.' };
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`,
+    {
+      method: 'DELETE',
+      headers: getSupabaseStorageHeaders(''),
+    },
+  );
+  const responseText = await response.text().catch(() => '');
+  if (!response.ok && response.status !== 404) {
+    return {
+      ok: false,
+      status: response.status,
+      error: responseText || `Supabase recording delete failed with ${response.status}.`,
+    };
+  }
+  return {
+    ok: true,
+    deleted: response.status !== 404,
+    bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+    storagePath: normalizedPath,
+  };
+}
+
+async function fetchRecordingBytes(recordingUrl = '') {
+  const url = String(recordingUrl || '').trim();
+  if (!url) return { ok: false, error: 'Recording URL is missing.' };
+  const headers = {};
+  if (TELNYX_API_KEY && /telnyx/i.test(url)) {
+    headers.Authorization = `Bearer ${TELNYX_API_KEY}`;
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    return {
+      ok: false,
+      status: response.status,
+      error: errorText || `Recording download failed with ${response.status}.`,
+    };
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  return {
+    ok: true,
+    bytes: Buffer.from(arrayBuffer),
+    contentType: response.headers.get('content-type') || 'audio/mpeg',
+  };
+}
+
+function getCallById(callId = '') {
+  const id = String(callId || '').trim();
+  if (!id) return null;
+  return (state.calls || []).find((call) =>
+    call.id === id
+    || call.callId === id
+    || call.telnyxCallControlId === id
+    || call.telnyxCallLegId === id
+    || call.telnyxCallSessionId === id,
+  ) || null;
+}
+
+function normalizeRecordingCapturePayload(input = {}) {
+  const payload = input.data?.payload || input.payload || input.data || input;
+  const recordingUrls = [
+    payload.recording_url,
+    payload.recordingUrl,
+    payload.audio_url,
+    payload.audioUrl,
+    payload.url,
+    payload.download_url,
+    payload.downloadUrl,
+    payload.recording_urls?.[0],
+    payload.recordingUrls?.[0],
+  ].filter(Boolean);
+  const callId = payload.call_control_id
+    || payload.callControlId
+    || payload.call_leg_id
+    || payload.callLegId
+    || payload.call_session_id
+    || payload.callSessionId
+    || payload.call_id
+    || payload.callId
+    || payload.id
+    || '';
+  return {
+    ...payload,
+    eventType: input.data?.event_type || input.event_type || input.type || input.eventType || '',
+    callId,
+    call_control_id: payload.call_control_id || payload.callControlId || '',
+    call_leg_id: payload.call_leg_id || payload.callLegId || '',
+    call_session_id: payload.call_session_id || payload.callSessionId || '',
+    recordingUrl: recordingUrls[0] || '',
+    audioBase64: payload.audioBase64 || payload.audio_base64 || payload.recordingBase64 || '',
+    contentType: payload.content_type || payload.contentType || payload.media_type || '',
+    durationSeconds: payload.duration_secs || payload.duration_seconds || payload.duration || 0,
+  };
+}
+
+async function captureRecordingFromPayload(input = {}) {
+  const params = normalizeRecordingCapturePayload(input);
+  const existingCall = getCallById(params.callId);
+  const messageId = params.messageId
+    || params.recording_id
+    || params.recordingId
+    || `msg-recording-${slugify(params.callId || existingCall?.leadName || 'call')}-${Date.now()}`;
+  const storagePath = buildRecordingStoragePath({
+    ...params,
+    messageId,
+    leadId: params.leadId || existingCall?.leadId || '',
+    leadName: params.leadName || existingCall?.leadName || '',
+    address: params.address || existingCall?.address || '',
+    extension: params.extension || (/wav/i.test(params.contentType) ? 'wav' : 'mp3'),
+  });
+
+  let bytes = null;
+  let download = null;
+  let contentType = params.contentType || 'audio/mpeg';
+  if (params.audioBase64) {
+    bytes = Buffer.from(String(params.audioBase64).replace(/^data:[^;]+;base64,/i, ''), 'base64');
+  } else if (params.recordingUrl) {
+    download = await fetchRecordingBytes(params.recordingUrl);
+    if (download.ok) {
+      bytes = download.bytes;
+      contentType = download.contentType || contentType;
+    }
+  }
+
+  if (!bytes?.length) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      error: download?.error || 'Telnyx webhook did not include downloadable recording audio.',
+      callId: params.callId,
+      recordingUrl: params.recordingUrl,
+    };
+  }
+
+  const upload = await uploadSupabaseRecording({ storagePath, contentType, bytes });
+  if (upload.ok === false) {
+    return {
+      ...upload,
+      result: 'provider_missing',
+      callId: params.callId,
+      messageId,
+      storagePath,
+    };
+  }
+
+  const message = {
+    ...(findMessageById(messageId) || createMessageRecord({
+      ...params,
+      id: messageId,
+      leadId: params.leadId || existingCall?.leadId || '',
+      leadName: params.leadName || existingCall?.leadName || '',
+      address: params.address || existingCall?.address || '',
+      channel: 'call',
+      direction: 'recording',
+      provider: 'Telnyx',
+      status: 'recorded',
+      body: 'Production call recording captured and stored.',
+    })),
+    ...params,
+    id: messageId,
+    leadId: params.leadId || existingCall?.leadId || '',
+    leadName: params.leadName || existingCall?.leadName || 'Unknown seller',
+    address: params.address || existingCall?.address || '',
+    channel: 'call',
+    direction: 'recording',
+    provider: params.provider || 'Telnyx',
+    status: 'recorded',
+    storagePath,
+    storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+    audioContentType: contentType,
+    durationSeconds: toNumber(params.durationSeconds, 0),
+    recordingUrl: '',
+    callId: params.callId || existingCall?.id || '',
+    payload: {
+      ...(params.payload && typeof params.payload === 'object' ? params.payload : {}),
+      sourceEventType: params.eventType,
+      storagePath,
+      storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+      contentType,
+      upload,
+    },
+    updatedAt: isoNow(),
+  };
+  upsertMessage(state, message);
+  await persistUnifiedMessageRecord(message);
+
+  if (existingCall) {
+    upsertCall(state, {
+      ...existingCall,
+      status: existingCall.status === 'live' ? 'ended' : existingCall.status,
+      storagePath,
+      storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+      audioContentType: contentType,
+      durationSeconds: message.durationSeconds,
+      recordingMessageId: message.id,
+      updatedAt: isoNow(),
+    });
+  }
+
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'Telnyx',
+      category: 'CALL',
+      status: 'uploaded',
+      text: `Call audio captured and stored for ${message.leadName || message.callId || message.id}.`,
+      target: storagePath,
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    message,
+    upload,
+    storagePath,
+    callId: params.callId,
+  };
+}
+
 const ensuredSupabaseBuckets = new Set();
 
 function normalizeStoragePathForBucket(value = '', bucket = '') {
@@ -7898,6 +8275,9 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     if (needle && !haystack.includes(needle)) return;
     records.push({
       id: record.id || `${record.kind}-${records.length}`,
+      recordId: record.recordId || record.leadId || record.callId || record.messageId || record.contractId || record.id || '',
+      recordKind: record.recordKind || record.kind || 'result',
+      routeContext: record.routeContext || '',
       kind: record.kind || 'result',
       title: compactSearchText(record.title || 'Untitled result'),
       subtitle: compactSearchText(record.subtitle || ''),
@@ -7916,6 +8296,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     subtitle: lead.property?.address || lead.address || '',
     body: [lead.seller?.phone, lead.seller?.email, lead.status, lead.source].filter(Boolean).join(' '),
     page: 'lead-detail',
+    recordId: lead.leadId || lead.id,
+    routeContext: `lead:${lead.leadId || lead.id || ''}`,
     createdAt: lead.createdAt,
     tags: lead.tags || [],
   }));
@@ -7926,6 +8308,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     subtitle: call.address || call.status || '',
     body: [call.phone, call.script, call.status, ...(call.transcript || []).map((line) => line.text)].join(' '),
     page: 'calls',
+    recordId: call.id,
+    routeContext: `call:${call.id || ''}`,
     createdAt: call.createdAt || call.startedAt,
   }));
   (state.messages || []).forEach((message) => add({
@@ -7935,6 +8319,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     subtitle: `${message.channel || 'message'} - ${message.status || ''}`,
     body: [message.address, message.phone, message.email, message.body].filter(Boolean).join(' '),
     page: 'inbox',
+    recordId: message.id,
+    routeContext: `message:${message.id || ''}`,
     createdAt: message.createdAt,
   }));
   (state.contracts || []).forEach((contract) => add({
@@ -7944,6 +8330,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     subtitle: contract.address || contract.status || '',
     body: [contract.envelopeId, contract.status, contract.pathType, contract.notes].filter(Boolean).join(' '),
     page: 'contracts',
+    recordId: contract.id,
+    routeContext: `contract:${contract.id || ''}`,
     createdAt: contract.createdAt || contract.updatedAt,
   }));
   (state.brainDocs || []).forEach((doc) => add({
@@ -7953,6 +8341,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     subtitle: doc.topic || doc.source || '',
     body: [doc.summary, doc.excerpt, doc.source].filter(Boolean).join(' '),
     page: 'brain',
+    recordId: doc.id,
+    routeContext: `brain:${doc.id || ''}`,
     createdAt: doc.createdAt,
     tags: doc.tags || [doc.topic].filter(Boolean),
   }));
@@ -7963,6 +8353,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     subtitle: [post.salesMentor, post.techniqueType].filter(Boolean).join(' - '),
     body: [post.summary, post.content].filter(Boolean).join(' '),
     page: 'brain',
+    recordId: post.id,
+    routeContext: `brain-blog:${post.id || ''}`,
     createdAt: post.publishedAt || post.createdAt,
     tags: [...(post.revenueStreams || []), ...(post.tags || [])],
   }));
@@ -7975,6 +8367,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
       subtitle: [item.actor, item.status].filter(Boolean).join(' - '),
       body: item.target || '',
       page: 'activity-log',
+      recordId: item.id,
+      routeContext: `activity:${item.id || ''}`,
       createdAt: item.at || item.createdAt,
     });
   });
@@ -7997,6 +8391,490 @@ function getMessageCounts() {
       const tags = Array.isArray(lead.tags) ? lead.tags.join(' ') : '';
       return /hot|urgent|probate|high-equity/i.test(`${tags} ${lead.status || ''}`);
     }).length,
+  };
+}
+
+function findBrowserResearchJob(jobId = '') {
+  const id = String(jobId || '').trim();
+  if (!id) return null;
+  return (state.browserResearchJobs || []).find((job) => job.id === id || job.jobId === id) || null;
+}
+
+async function updateBrowserResearchJobFromPayload(payload = {}) {
+  const jobId = String(payload.jobId || payload.id || payload.job_id || '').trim();
+  if (!jobId) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      error: 'BrowserOS research job id is required.',
+    };
+  }
+  const existing = findBrowserResearchJob(jobId) || {
+    id: jobId,
+    createdAt: isoNow(),
+    provider: 'browseros',
+    source: payload.source || 'browseros-callback',
+  };
+  const status = String(payload.status || payload.state || 'complete').trim().toLowerCase();
+  const resultData = payload.resultData || payload.result_data || payload.data || payload.results || {};
+  const resultSummary = String(
+    payload.resultSummary
+      || payload.result_summary
+      || payload.summary
+      || payload.answer
+      || resultData.summary
+      || '',
+  ).trim();
+  const updated = upsertBrowserResearchJob(state, {
+    ...existing,
+    status,
+    result: status,
+    resultSummary,
+    resultData,
+    sources: Array.isArray(payload.sources) ? payload.sources : Array.isArray(resultData.sources) ? resultData.sources : existing.sources || [],
+    screenshots: Array.isArray(payload.screenshots) ? payload.screenshots : Array.isArray(resultData.screenshots) ? resultData.screenshots : existing.screenshots || [],
+    tags: normalizeStringList(payload.tags || resultData.tags || existing.tags || []),
+    completedAt: /complete|done|indexed|success|failed|error/i.test(status) ? (payload.completedAt || payload.completed_at || isoNow()) : existing.completedAt || '',
+    updatedAt: isoNow(),
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: payload.actor || 'BrowserOS',
+      category: 'RESEARCH',
+      status: /fail|error/i.test(status) ? 'warning' : /complete|done|indexed|success/i.test(status) ? 'complete' : 'queued',
+      text: resultSummary
+        ? `BrowserOS research ${status}: ${resultSummary.slice(0, 160)}`
+        : `BrowserOS research job ${status}.`,
+      target: updated.targetLabel || updated.targetUrl || updated.id,
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: /fail|error/i.test(status) ? 'unavailable' : 'live',
+    verbiage: /complete|done|indexed|success/i.test(status) ? 'Research results saved' : 'Research job updated',
+    job: updated,
+    state: buildStateSnapshot(),
+  };
+}
+
+function getRecordingRetentionPolicy() {
+  const settings = ensureRuntimeSettings(state);
+  const policy = settings?.ui?.recordingRetention || {};
+  return {
+    days: Math.max(1, Number(policy.days || RECORDING_RETENTION_DEFAULT_DAYS)),
+    enforcement: policy.enforcement || 'approval-gated',
+  };
+}
+
+async function runRecordingRetentionCleanup({ dryRun = true, days = 0, actor = 'Retention worker' } = {}) {
+  const policy = getRecordingRetentionPolicy();
+  const retentionDays = Math.max(1, Number(days || policy.days || RECORDING_RETENTION_DEFAULT_DAYS));
+  const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const candidates = (state.messages || []).filter((message) => {
+    const storagePath = getMessageRecordingPath(message);
+    if (!storagePath) return false;
+    const created = Date.parse(message.createdAt || message.updatedAt || '');
+    return Number.isFinite(created) && created < cutoffMs;
+  });
+
+  const deletions = [];
+  if (!dryRun) {
+    for (const message of candidates) {
+      const storagePath = getMessageRecordingPath(message);
+      const deletion = await deleteSupabaseRecording(storagePath);
+      deletions.push({ messageId: message.id, storagePath, ...deletion });
+      if (deletion.ok) {
+        message.retentionStatus = 'deleted';
+        message.deletedAt = isoNow();
+        message.storagePath = '';
+        message.recordingUrl = '';
+        message.updatedAt = isoNow();
+      }
+    }
+  }
+
+  const run = {
+    id: `retention-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    result: dryRun ? 'local_view_only' : 'live',
+    status: dryRun ? 'dry-run' : 'complete',
+    dryRun: Boolean(dryRun),
+    days: retentionDays,
+    cutoffAt: new Date(cutoffMs).toISOString(),
+    candidateCount: candidates.length,
+    deletedCount: deletions.filter((item) => item.ok).length,
+    candidates: candidates.map((message) => ({
+      messageId: message.id,
+      leadName: message.leadName || '',
+      storagePath: getMessageRecordingPath(message),
+      createdAt: message.createdAt || message.updatedAt || '',
+    })),
+    deletions,
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+    actor,
+  };
+  upsertById(state, 'recordingRetentionRuns', run);
+  addActivity(
+    state,
+    makeActivity({
+      actor,
+      category: 'RETENTION',
+      status: dryRun ? 'preview' : 'complete',
+      text: dryRun
+        ? `Recording retention preview found ${candidates.length} expired file${candidates.length === 1 ? '' : 's'}.`
+        : `Recording retention cleanup deleted ${run.deletedCount} expired file${run.deletedCount === 1 ? '' : 's'}.`,
+      target: `${retentionDays}d policy`,
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: run.result,
+    verbiage: dryRun ? 'Retention preview ready' : 'Retention cleanup completed',
+    run,
+    state: buildStateSnapshot(),
+  };
+}
+
+function normalizeCampaignLead(input = {}) {
+  const seller = input.seller || {};
+  const property = input.property || {};
+  return {
+    leadId: input.leadId || input.id || '',
+    leadName: input.leadName || input.name || seller.name || 'Unknown seller',
+    address: input.address || property.address || '',
+    email: input.email || seller.email || '',
+    phone: normalizePhone(input.phone || seller.phone || ''),
+    tags: normalizeStringList(input.tags || []),
+  };
+}
+
+function getApprovalCampaignLeads(approval = {}) {
+  const selected = approval.metadata?.selectedLeads;
+  if (Array.isArray(selected) && selected.length) {
+    return selected.map(normalizeCampaignLead);
+  }
+  const note = String(approval.notes || '').toLowerCase();
+  const matching = (state.leadImports || []).filter((lead) => {
+    const normalized = normalizeCampaignLead(lead);
+    return note.includes(String(normalized.leadName || '').toLowerCase())
+      || note.includes(String(normalized.address || '').toLowerCase());
+  });
+  return matching.length ? matching.map(normalizeCampaignLead) : (state.leadImports || []).slice(0, 5).map(normalizeCampaignLead);
+}
+
+function splitLeadName(name = '') {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' '),
+  };
+}
+
+function buildInstantlyCampaignPayload({ approval = {}, leads = [] } = {}) {
+  const metadata = approval.metadata || {};
+  const templateId = metadata.templateId || metadata.campaignTemplateId || approval.templateId || '';
+  const campaignName = metadata.campaignName
+    || approval.campaignName
+    || `PBK approved campaign ${approval.id || new Date().toISOString().slice(0, 10)}`;
+  const contacts = leads
+    .filter((lead) => lead.email)
+    .map((lead) => {
+      const nameParts = splitLeadName(lead.leadName);
+      return {
+        email: lead.email,
+        first_name: nameParts.firstName,
+        last_name: nameParts.lastName,
+        phone: lead.phone || '',
+        company_name: '',
+        personalization: {
+          leadId: lead.leadId || '',
+          address: lead.address || '',
+          tags: lead.tags || [],
+        },
+        custom_variables: {
+          lead_id: lead.leadId || '',
+          seller_name: lead.leadName || '',
+          property_address: lead.address || '',
+          phone: lead.phone || '',
+        },
+      };
+    });
+  return {
+    name: campaignName,
+    campaign_name: campaignName,
+    template_id: templateId,
+    templateId,
+    leads: contacts,
+    contacts,
+    metadata: {
+      approvalId: approval.id || '',
+      source: 'pbk-approval-worker',
+      leadCount: leads.length,
+      emailLeadCount: contacts.length,
+    },
+  };
+}
+
+async function createInstantlyCampaignForApproval({ approval = {}, leads = [] } = {}) {
+  if (!INSTANTLY_API_KEY) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      provider: 'instantly',
+      error: 'Email provider not configured - add PBK_INSTANTLY_API_KEY in Render/OpenClaw.',
+    };
+  }
+  const emailLeads = leads.filter((lead) => lead.email);
+  if (!emailLeads.length) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      provider: 'instantly',
+      error: 'No campaign leads have email addresses, so Instantly campaign creation was skipped.',
+    };
+  }
+  const payload = buildInstantlyCampaignPayload({ approval, leads: emailLeads });
+  const response = await fireInstantlyRequest(INSTANTLY_CAMPAIGN_CREATE_ENDPOINT, payload);
+  const providerCampaignId =
+    response?.body?.id
+    || response?.body?.campaign_id
+    || response?.body?.campaignId
+    || response?.body?.data?.id
+    || '';
+  return {
+    ok: Boolean(response.ok),
+    result: response.ok ? 'live' : 'provider_missing',
+    provider: 'instantly',
+    endpoint: INSTANTLY_CAMPAIGN_CREATE_ENDPOINT,
+    providerCampaignId,
+    request: {
+      name: payload.name,
+      leadCount: payload.metadata.emailLeadCount,
+      templateId: payload.template_id || '',
+    },
+    response,
+    error: response.ok ? '' : response.error || 'Instantly campaign create request failed.',
+  };
+}
+
+async function executeApprovedCampaign(approval = {}, options = {}) {
+  if (String(approval.status || '').toLowerCase() !== 'approved') {
+    return {
+      ok: false,
+      result: 'queued_for_approval',
+      verbiage: 'Campaign queued for approval',
+      error: 'Campaign execution waits until the approval status is approved.',
+    };
+  }
+
+  const existing = (state.campaignExecutions || []).find((item) => item.approvalId === approval.id);
+  if (existing) {
+    return {
+      ok: true,
+      result: 'live',
+      verbiage: 'Campaign execution already started',
+      execution: existing,
+    };
+  }
+
+  const leads = getApprovalCampaignLeads(approval);
+  const instantlyResult = await createInstantlyCampaignForApproval({ approval, leads });
+  const startAt = Date.now();
+  const steps = leads.flatMap((lead, leadIndex) => {
+    const baseOffset = leadIndex * 60 * 60 * 1000;
+    return [
+      {
+        id: `step-${lead.leadId || leadIndex}-email`,
+        leadId: lead.leadId,
+        leadName: lead.leadName,
+        channel: 'email',
+        status: instantlyResult.ok && lead.email ? 'sent_to_provider' : INSTANTLY_API_KEY && lead.email ? 'provider_error' : 'provider_missing',
+        scheduledAt: new Date(startAt + baseOffset).toISOString(),
+        providerCampaignId: instantlyResult.providerCampaignId || '',
+        verbiage: instantlyResult.ok && lead.email
+          ? 'Email campaign sent to Instantly'
+          : lead.email
+            ? instantlyResult.error || 'Instantly campaign create failed'
+            : 'Lead has no email address for campaign enrollment',
+      },
+      {
+        id: `step-${lead.leadId || leadIndex}-sms`,
+        leadId: lead.leadId,
+        leadName: lead.leadName,
+        channel: 'sms',
+        status: getTelnyxProviderMeta().messagingReady ? 'scheduled' : 'provider_missing',
+        scheduledAt: new Date(startAt + baseOffset + 24 * 60 * 60 * 1000).toISOString(),
+        verbiage: getTelnyxProviderMeta().messagingReady ? 'SMS scheduled' : 'Phone provider not configured - add Telnyx API key and number',
+      },
+      {
+        id: `step-${lead.leadId || leadIndex}-call`,
+        leadId: lead.leadId,
+        leadName: lead.leadName,
+        channel: 'voice',
+        status: getTelnyxProviderMeta().voiceReady ? 'scheduled' : 'provider_missing',
+        scheduledAt: new Date(startAt + baseOffset + 3 * 24 * 60 * 60 * 1000).toISOString(),
+        verbiage: getTelnyxProviderMeta().voiceReady ? 'Call scheduled' : 'Phone provider not configured - add Telnyx API key and number',
+      },
+    ];
+  });
+
+  const execution = {
+    id: `campaign-exec-${approval.id || Date.now()}`,
+    approvalId: approval.id || '',
+    result: 'live',
+    status: instantlyResult.ok ? 'provider-started' : 'scheduled-with-provider-gaps',
+    mode: 'approval-gated-production',
+    providerCampaignId: instantlyResult.providerCampaignId || '',
+    instantly: instantlyResult,
+    leadCount: leads.length,
+    stepCount: steps.length,
+    providerMissingCount: steps.filter((step) => step.status === 'provider_missing').length,
+    leads,
+    steps,
+    notes: approval.notes || '',
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+    actor: options.actor || approval.actor || 'Approval worker',
+  };
+  upsertById(state, 'campaignExecutions', execution);
+  addActivity(
+    state,
+    makeActivity({
+      actor: execution.actor,
+      category: 'CAMPAIGN',
+      status: 'scheduled',
+      text: instantlyResult.ok
+        ? `Approved campaign sent to Instantly for ${instantlyResult.request.leadCount} email lead${instantlyResult.request.leadCount === 1 ? '' : 's'}.`
+        : `Approved campaign execution started locally, but Instantly is not live: ${instantlyResult.error || 'provider missing'}.`,
+      target: approval.leadName || approval.address || 'campaign',
+    }),
+  );
+  addAdminAudit(state, {
+    id: `audit-campaign-${approval.id || Date.now()}`,
+    action: 'campaign_start',
+    provider: 'instantly',
+    actor: execution.actor,
+    status: instantlyResult.ok ? 'complete' : 'provider_missing',
+    summary: instantlyResult.ok
+      ? `Instantly campaign ${instantlyResult.providerCampaignId || '(created)'} started for ${instantlyResult.request.leadCount} lead${instantlyResult.request.leadCount === 1 ? '' : 's'}.`
+      : instantlyResult.error || 'Instantly campaign creation skipped.',
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  });
+  return {
+    ok: true,
+    result: instantlyResult.ok ? 'live' : instantlyResult.result || 'provider_missing',
+    verbiage: instantlyResult.ok ? 'Campaign execution started' : 'Campaign queued with provider gaps',
+    execution,
+  };
+}
+
+async function applyApprovedPromptPatch(approval = {}, options = {}) {
+  if (String(approval.status || '').toLowerCase() !== 'approved') {
+    return {
+      ok: false,
+      result: 'queued_for_approval',
+      verbiage: 'Change requested - awaiting approval',
+      error: 'Prompt changes are only applied after approval.',
+    };
+  }
+
+  const requestedPatch = String(
+    approval.metadata?.promptPatch
+      || approval.metadata?.requestedPromptChange
+      || approval.notes
+      || '',
+  ).trim();
+  if (!requestedPatch) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      verbiage: 'Prompt apply unavailable - no approved patch text',
+      error: 'Approved prompt edit did not include patch text.',
+    };
+  }
+
+  const targetFile = String(approval.metadata?.targetFile || approval.address || 'wholesale.agent.md').trim();
+  const application = {
+    id: `prompt-apply-${approval.id || Date.now()}`,
+    approvalId: approval.id || '',
+    result: 'live',
+    status: 'applied-to-runtime-store',
+    targetFile,
+    promptPatch: requestedPatch,
+    actor: options.actor || approval.actor || 'Rex',
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+    fileWrite: {
+      attempted: false,
+      ok: false,
+      reason: PROMPT_FILE_PATCH_ENABLED
+        ? ''
+        : 'PBK_ALLOW_PROMPT_FILE_PATCH is not enabled; approved change was stored in bridge settings.',
+    },
+  };
+
+  const settings = ensureRuntimeSettings(state);
+  state.settings = {
+    ...settings,
+    agentPrompts: {
+      ...(settings.agentPrompts || {}),
+      ava: {
+        latestApprovedChange: requestedPatch,
+        targetFile,
+        approvalId: approval.id || '',
+        appliedAt: application.createdAt,
+        appliedBy: application.actor,
+      },
+    },
+    updatedAt: isoNow(),
+    updatedBy: application.actor,
+  };
+
+  if (PROMPT_FILE_PATCH_ENABLED) {
+    application.fileWrite.attempted = true;
+    const resolvedTarget = path.resolve(ROOT_DIR, targetFile);
+    if (!resolvedTarget.startsWith(ROOT_DIR) || !existsSync(resolvedTarget)) {
+      application.fileWrite.reason = 'Target prompt file is missing or outside the PBK repo.';
+    } else {
+      const current = await readFile(resolvedTarget, 'utf8');
+      const block = [
+        '',
+        '<!-- PBK approved prompt change',
+        `approvalId: ${approval.id || ''}`,
+        `appliedAt: ${application.createdAt}`,
+        requestedPatch,
+        '-->',
+        '',
+      ].join('\n');
+      await writeFile(resolvedTarget, `${current.replace(/\s*$/u, '')}${block}`, 'utf8');
+      application.status = 'applied-to-file';
+      application.fileWrite.ok = true;
+      application.fileWrite.path = resolvedTarget;
+    }
+  }
+
+  upsertById(state, 'promptPatchApplications', application);
+  addActivity(
+    state,
+    makeActivity({
+      actor: application.actor,
+      category: 'PROMPT',
+      status: 'applied',
+      text: application.fileWrite.ok
+        ? `Approved Ava prompt patch applied to ${targetFile}.`
+        : `Approved Ava prompt patch applied to runtime prompt store.`,
+      target: targetFile,
+    }),
+  );
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Prompt change applied',
+    application,
   };
 }
 
@@ -9843,7 +10721,8 @@ const toolHandlers = {
     );
     await persistState(state);
     return {
-      ok: Boolean(syncResult?.ok),
+      ok: true,
+      result: syncResult?.ok ? 'live' : syncResult?.skipped ? 'local_view_only' : 'provider_missing',
       updatedAt: isoNow(),
       target: params.target || params.leadId || 'crm',
       provider: syncResult?.provider || '',
@@ -10278,20 +11157,24 @@ const toolHandlers = {
 
   async launchBrowserResearch(params = {}) {
     recordToolUse('launchBrowserResearch');
-    const request = extractBrowserResearchRequest(params.query || params.command || params.prompt || '');
+    const structuredQuery = [params.goal, params.target ? `Target: ${params.target}` : ''].filter(Boolean).join('\n\n');
+    const request = extractBrowserResearchRequest(params.query || params.command || params.prompt || structuredQuery || '');
     const toolingStatus = await buildToolingStatus();
     const browserOs = toolingStatus.browserOs || {};
     const ready = Boolean(browserOs.ready);
+    const jobSlug = slugify(request.targetLabel || params.target || 'request') || randomUUID().slice(0, 8);
     const job = {
-      id: `browser-research-${slugify(request.targetLabel || 'request') || randomUUID().slice(0, 8)}`,
+      id: `browser-research-${jobSlug}-${randomUUID().slice(0, 8)}`,
       createdAt: isoNow(),
       requestedBy: params.requestedBy || 'Rex',
       source: params.source || 'brain',
       provider: 'browseros',
       status: ready ? 'queued' : 'setup-required',
       query: request.query,
+      goal: params.goal || '',
       targetUrl: request.targetUrl,
       targetLabel: request.targetLabel,
+      target: params.target || request.targetUrl || request.targetLabel || '',
       site: request.source,
       endpoint: browserOs.endpoint || BROWSEROS_MCP_URL,
     };
@@ -10461,8 +11344,13 @@ const toolHandlers = {
     );
     await persistState(state);
 
+    const result = delivery?.ok ? 'live' : delivery?.result || 'provider_missing';
     return {
       ok: Boolean(delivery?.ok),
+      result,
+      verbiage: delivery?.ok
+        ? 'Email sent'
+        : delivery?.error || 'Email provider not configured - add Instantly or Resend credentials.',
       provider,
       endpoint,
       email,
@@ -11163,7 +12051,7 @@ const toolHandlers = {
       documents: documents.map((item) => item.type),
       status: emailResult.ok ? 'sent' : 'failed',
       subject,
-      provider: emailResult.provider || (emailResult.live ? 'resend' : 'simulated-email'),
+      provider: emailResult.provider || 'resend',
     });
 
     addDocumentDelivery(state, delivery);
@@ -11196,7 +12084,9 @@ const toolHandlers = {
     await persistState(state);
 
     return {
-      ok: emailResult.ok,
+      ok: true,
+      result: emailResult.ok ? 'live' : 'provider_missing',
+      verbiage: emailResult.ok ? 'Seller documents sent' : 'Email provider not configured - add Resend API key in Settings',
       delivery,
       email: emailResult,
       attachments: attachments.map((item) => item.filename),
@@ -11662,6 +12552,8 @@ async function handleEvent(eventType, payload = {}) {
     approval.actedAt = incomingActedAt || isoNow();
     approval.notes = payload.notes || approval.notes;
     let contractResult = null;
+    let campaignResult = null;
+    let promptResult = null;
     if (approval.type === 'contract' && approval.contractId) {
       const contract = state.contracts.find((item) => item.id === approval.contractId);
       if (contract) {
@@ -11711,6 +12603,23 @@ async function handleEvent(eventType, payload = {}) {
       }
     }
 
+    if (
+      approval.status === 'approved'
+      && String(approval.type || '').toLowerCase() === 'campaign'
+    ) {
+      campaignResult = await executeApprovedCampaign(approval, { actor: incomingActor });
+    }
+
+    if (
+      approval.status === 'approved'
+      && (
+        String(approval.type || '').toLowerCase() === 'prompt-edit'
+        || String(approval.approvalAction || '').toLowerCase() === 'prompt_patch'
+      )
+    ) {
+      promptResult = await applyApprovedPromptPatch(approval, { actor: incomingActor });
+    }
+
     addActivity(
       state,
       makeActivity({
@@ -11727,7 +12636,13 @@ async function handleEvent(eventType, payload = {}) {
       ok: true,
       approval,
       contractResult,
+      campaignResult,
+      promptResult,
     };
+  }
+
+  if (normalizedEvent === 'recording-capture' || normalizedEvent === 'call-recording') {
+    return captureRecordingFromPayload(payload);
   }
 
   if (normalizedEvent === 'brain-doc') {
@@ -12156,6 +13071,9 @@ function buildStateSnapshot() {
     documentDeliveries: state.documentDeliveries,
     attachments: state.attachments || [],
     browserResearchJobs: state.browserResearchJobs || [],
+    campaignExecutions: state.campaignExecutions || [],
+    promptPatchApplications: state.promptPatchApplications || [],
+    recordingRetentionRuns: state.recordingRetentionRuns || [],
     settings: ensureRuntimeSettings(state),
     adminTasks: state.adminTasks,
     adminAudit: state.adminAudit,
@@ -12331,6 +13249,13 @@ function mapTelnyxWebhook(body = {}) {
         leadName: payload.contact_name || '',
         actor: 'Telnyx',
       },
+    };
+  }
+
+  if (eventType.includes('recording')) {
+    return {
+      eventType: 'recording-capture',
+      payload: normalizeRecordingCapturePayload(body),
     };
   }
 
@@ -13120,6 +14045,114 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const browserResearchJobMatch = matchPath(pathname, '/api/browser-research/jobs/:jobId');
+    if (browserResearchJobMatch && request.method === 'GET') {
+      const jobId = decodeURIComponent(browserResearchJobMatch.groups.jobId || '');
+      const job = findBrowserResearchJob(jobId);
+      json(response, job ? 200 : 404, {
+        ok: Boolean(job),
+        result: job ? 'live' : 'unavailable',
+        jobId,
+        job,
+        error: job ? '' : 'BrowserOS research job not found.',
+      });
+      return;
+    }
+
+    if (browserResearchJobMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await updateBrowserResearchJobFromPayload({
+        ...body,
+        jobId: decodeURIComponent(browserResearchJobMatch.groups.jobId || ''),
+      });
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/browser-research/complete', '/api/browser-research/results'])) {
+      const body = await readBody(request);
+      const result = await updateBrowserResearchJobFromPayload(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/campaigns/executions') {
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        executions: sortNewest(state.campaignExecutions || []),
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/campaigns/execute-approved', '/api/workers/campaigns/run'])) {
+      const body = await readBody(request);
+      const approvalId = String(body.approvalId || body.id || '').trim();
+      const approval = approvalId
+        ? state.approvals.find((item) => item.id === approvalId)
+        : sortNewest(state.approvals || []).find((item) =>
+          String(item.type || '').toLowerCase() === 'campaign'
+          && String(item.status || '').toLowerCase() === 'approved',
+        );
+      if (!approval) {
+        json(response, 404, {
+          ok: false,
+          result: 'unavailable',
+          verbiage: 'Campaign execution unavailable - no approved campaign found',
+          error: 'No approved campaign approval was found for execution.',
+        });
+        return;
+      }
+      const result = await executeApprovedCampaign(approval, { actor: body.actor || 'Campaign worker' });
+      await persistState(state);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/prompts/applications') {
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        applications: sortNewest(state.promptPatchApplications || []),
+        settings: ensureRuntimeSettings(state).agentPrompts || {},
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/prompts/apply-approved', '/api/workers/prompts/apply'])) {
+      const body = await readBody(request);
+      const approvalId = String(body.approvalId || body.id || '').trim();
+      const approval = approvalId
+        ? state.approvals.find((item) => item.id === approvalId)
+        : sortNewest(state.approvals || []).find((item) =>
+          String(item.status || '').toLowerCase() === 'approved'
+          && (
+            String(item.type || '').toLowerCase() === 'prompt-edit'
+            || String(item.approvalAction || '').toLowerCase() === 'prompt_patch'
+          ),
+        );
+      if (!approval) {
+        json(response, 404, {
+          ok: false,
+          result: 'unavailable',
+          verbiage: 'Prompt apply unavailable - no approved prompt edit found',
+          error: 'No approved prompt edit was found for application.',
+        });
+        return;
+      }
+      const result = await applyApprovedPromptPatch(approval, { actor: body.actor || 'Prompt worker' });
+      await persistState(state);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/invoke', '/api/invoke'])) {
       const body = await readBody(request);
       const toolName = body.toolName;
@@ -13476,6 +14509,7 @@ const server = createServer(async (request, response) => {
         updatedAt: isoNow(),
       };
       upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
       addActivity(
         state,
         makeActivity({
@@ -13614,6 +14648,37 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/recordings/retention/preview') {
+      const result = await runRecordingRetentionCleanup({
+        dryRun: true,
+        days: Number(url.searchParams.get('days') || 0),
+        actor: url.searchParams.get('actor') || 'Command Center',
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/recordings/retention/run') {
+      const body = await readBody(request);
+      const result = await runRecordingRetentionCleanup({
+        dryRun: body.dryRun ?? true,
+        days: Number(body.days || body.retentionDays || 0),
+        actor: body.actor || 'Retention worker',
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/recordings/capture') {
+      const body = await readBody(request);
+      const result = await captureRecordingFromPayload(body);
+      json(response, result.ok ? 200 : 501, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     const recordingMatch = matchPath(pathname, '/api/recordings/:messageId');
     if (recordingMatch && request.method === 'GET') {
       const messageId = decodeURIComponent(recordingMatch.groups.messageId || '');
@@ -13697,6 +14762,7 @@ const server = createServer(async (request, response) => {
         updatedAt: isoNow(),
       };
       upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
       addActivity(
         state,
         makeActivity({
@@ -13996,6 +15062,18 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/webhooks/telnyx/recording', '/api/webhooks/telnyx/recording'])) {
+      const body = await readBody(request);
+      const result = await captureRecordingFromPayload(body);
+      json(response, result.ok ? 200 : 501, {
+        ok: Boolean(result.ok),
+        mappedEvent: 'recording-capture',
+        result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/webhooks/docusign') {
       const body = await readBody(request);
       const mapped = mapDocuSignWebhook(body);
@@ -14055,6 +15133,8 @@ const server = createServer(async (request, response) => {
         'POST /api/crm/streak/bootstrap',
         'POST /api/send-seller-docs',
         'POST /api/browser-research/launch',
+        'GET/POST /api/browser-research/jobs/:jobId',
+        'POST /api/browser-research/complete',
         'POST /invoke',
         'POST /events',
         'GET/POST /api/admin/tasks',
@@ -14080,6 +15160,7 @@ const server = createServer(async (request, response) => {
         'POST /api/webhooks/instantly',
         'POST /api/webhooks/email',
         'POST /api/webhooks/telnyx',
+        'POST /webhooks/telnyx/recording',
         'POST /api/webhooks/docusign',
         'POST /api/docusign/callback',
       ],

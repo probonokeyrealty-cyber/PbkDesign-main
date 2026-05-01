@@ -197,6 +197,31 @@
       overflow-wrap: anywhere;
       word-break: break-word;
     }
+    .research-chat {
+      max-height: calc(100dvh - 132px);
+      margin-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    }
+    .rc-body {
+      max-height: min(58dvh, 420px) !important;
+      padding-bottom: calc(var(--s-4) + 88px + env(safe-area-inset-bottom, 0px)) !important;
+      scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    }
+    .rc-composer {
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: 10px !important;
+    }
+    .rc-composer textarea {
+      width: 100% !important;
+      flex: 0 0 auto !important;
+      min-height: 44px !important;
+      line-height: 1.45 !important;
+    }
+    .rc-composer .btn {
+      width: 100% !important;
+      min-height: 44px !important;
+      justify-content: center !important;
+    }
     .toast-stack { bottom: 80px; }
     /* Stack live call body vertically on mobile */
     .live-body { grid-template-columns: 1fr !important; }
@@ -9271,7 +9296,7 @@
       <div class="cp-group-label">Live search ${results.length ? `- ${results.length}` : '- no bridge results'}</div>
       ${results.length
         ? results.map((item) => `
-          <div class="cp-item" data-live-result="true" data-nav="${escapeHtml(item.page || 'dashboard')}" data-result-kind="${escapeHtml(item.kind || 'result')}" data-keywords="${escapeHtml([item.kind, item.title, item.subtitle, item.body, ...(item.tags || [])].join(' '))}">
+          <div class="cp-item" data-live-result="true" data-nav="${escapeHtml(item.page || 'dashboard')}" data-record-id="${escapeHtml(item.recordId || item.id || '')}" data-route-context="${escapeHtml(item.routeContext || '')}" data-result-kind="${escapeHtml(item.kind || 'result')}" data-keywords="${escapeHtml([item.kind, item.title, item.subtitle, item.body, item.recordId, ...(item.tags || [])].join(' '))}">
             <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></div>
             <span class="cp-label">${escapeHtml(item.title || 'Untitled result')}</span>
             <span class="cp-sub">${escapeHtml([item.kind, item.subtitle].filter(Boolean).join(' - ') || item.body || 'Live bridge result')}</span>
@@ -9286,6 +9311,58 @@
     cpResults.prepend(group);
     refreshPaletteItems();
     updatePaletteMeta();
+  }
+
+  function applySearchSelection(selection = {}) {
+    const normalized = {
+      page: selection.page || selection.nav || 'dashboard',
+      recordId: String(selection.recordId || '').trim(),
+      routeContext: String(selection.routeContext || '').trim(),
+      title: String(selection.title || '').trim(),
+      subtitle: String(selection.subtitle || '').trim(),
+      kind: String(selection.kind || selection.resultKind || '').trim()
+    };
+    PBK.state.activeSearchResult = normalized;
+    try {
+      sessionStorage.setItem('pbk-last-search-selection', JSON.stringify(normalized));
+    } catch {}
+
+    window.setTimeout(() => {
+      const page = getPageNode(normalized.page) || document;
+      const selectors = [];
+      const escapedId = normalized.recordId.replace(/["\\]/g, '\\$&');
+      if (escapedId) {
+        selectors.push(
+          `[data-record-id="${escapedId}"]`,
+          `[data-lead-id="${escapedId}"]`,
+          `[data-call-id="${escapedId}"]`,
+          `[data-message-id="${escapedId}"]`,
+          `[data-contract-id="${escapedId}"]`,
+          `[data-brain-id="${escapedId}"]`
+        );
+      }
+      let target = selectors.map((selector) => page.querySelector(selector)).find(Boolean);
+      if (!target) {
+        const terms = [normalized.recordId, normalized.title, normalized.subtitle]
+          .map((item) => String(item || '').toLowerCase())
+          .filter((item) => item.length >= 3);
+        const candidates = Array.from(page.querySelectorAll('.card, .lead-row, .q-card, .qcard, .message-row, .blog-card, .activity-row, tr, li, article, section'));
+        target = candidates.find((node) => {
+          const text = String(node.textContent || '').toLowerCase();
+          return terms.some((term) => text.includes(term));
+        });
+      }
+      if (!target) return;
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const previousOutline = target.style.outline;
+      const previousShadow = target.style.boxShadow;
+      target.style.outline = '1px solid var(--sky)';
+      target.style.boxShadow = '0 0 0 4px rgba(125, 211, 252, .14)';
+      window.setTimeout(() => {
+        target.style.outline = previousOutline;
+        target.style.boxShadow = previousShadow;
+      }, 2200);
+    }, 120);
   }
 
   function scheduleCommandPaletteSearch(query = '') {
@@ -10328,6 +10405,23 @@
       font-size: 10px;
       line-height: 1.45;
       overflow-wrap: anywhere;
+    }
+    .brain-status-summary {
+      color: var(--text-secondary);
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .brain-status-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .brain-status-actions .chip-btn {
+      min-height: 28px;
+      padding: 5px 8px;
+      font-size: 9px;
     }
     @media (max-width: 900px) {
       [data-page="analyzer"] .analyzer-bridge-head {
@@ -11993,7 +12087,7 @@
     }
 
     const attachments = sortRuntimeItems(Array.isArray(snapshot.attachments) ? snapshot.attachments : []).slice(0, 3);
-    const jobs = sortRuntimeItems(Array.isArray(snapshot.browserResearchJobs) ? snapshot.browserResearchJobs : []).slice(0, 3);
+    const jobs = sortRuntimeItems(Array.isArray(snapshot.browserResearchJobs) ? snapshot.browserResearchJobs : []).slice(0, 5);
     const attachmentRows = attachments.length
       ? attachments.map((item) => {
           const status = item.extractionStatus || (item.extractedText ? 'indexed' : 'stored-only');
@@ -12012,12 +12106,23 @@
         </div>
       `;
     const jobRows = jobs.length
-      ? jobs.map((job) => `
-        <div class="brain-status-item" data-state="${/complete|success/i.test(job.status || '') ? 'good' : /fail|error/i.test(job.status || '') ? 'warning' : ''}">
-          <div class="brain-status-title">${escapeHtml(job.targetLabel || job.url || job.query || 'Browser research job')}</div>
-          <div class="brain-status-meta">BrowserOS ${escapeHtml(job.status || 'queued')} - ${escapeHtml(formatRelativeTime(job.updatedAt || job.createdAt))}</div>
-        </div>
-      `).join('')
+      ? jobs.map((job) => {
+          const status = String(job.status || 'queued');
+          const state = /complete|success/i.test(status) ? 'good' : /fail|error/i.test(status) ? 'warning' : '';
+          const jobId = job.id || job.jobId || '';
+          const summary = job.resultSummary || job.summary || job.answer || job.error || 'Waiting for BrowserOS output. Completed jobs will show summaries, sources, and screenshots here.';
+          return `
+            <div class="brain-status-item" data-state="${escapeHtml(state)}" data-browser-research-job-id="${escapeHtml(jobId)}">
+              <div class="brain-status-title">${escapeHtml(job.targetLabel || job.target || job.url || job.query || 'Browser research job')}</div>
+              <div class="brain-status-meta">BrowserOS ${escapeHtml(status)} - ${escapeHtml(formatRelativeTime(job.updatedAt || job.completedAt || job.createdAt))}</div>
+              <div class="brain-status-summary">${escapeHtml(summary)}</div>
+              <div class="brain-status-actions">
+                <button class="chip-btn" type="button" data-browser-research-action="view" data-job-id="${escapeHtml(jobId)}">View</button>
+                <button class="chip-btn" type="button" data-browser-research-action="retry" data-job-id="${escapeHtml(jobId)}">Retry</button>
+              </div>
+            </div>
+          `;
+        }).join('')
       : `
         <div class="brain-status-item">
           <div class="brain-status-title">No BrowserOS research jobs yet</div>
@@ -12202,11 +12307,21 @@
     const item = event.target.closest('.cp-item[data-live-result="true"]');
     if (!item) return;
     if (item.dataset.nav) showPage(item.dataset.nav);
+    applySearchSelection({
+      page: item.dataset.nav,
+      recordId: item.dataset.recordId,
+      routeContext: item.dataset.routeContext,
+      kind: item.dataset.resultKind,
+      title: item.querySelector('.cp-label')?.textContent || '',
+      subtitle: item.querySelector('.cp-sub')?.textContent || ''
+    });
     closePalette();
     toastOutcome({
       outcome: 'live',
       title: 'Search result opened',
-      desc: item.dataset.resultKind ? `${item.dataset.resultKind} matched live bridge search.` : 'Opened live bridge search result.'
+      desc: item.dataset.recordId
+        ? `${item.dataset.resultKind || 'Record'} opened with exact-record focus.`
+        : (item.dataset.resultKind ? `${item.dataset.resultKind} matched live bridge search.` : 'Opened live bridge search result.')
     });
   });
 
@@ -12435,6 +12550,9 @@
 
   function getRuntimeOutcome(response = {}, fallback = 'live') {
     const result = response?.result || response || {};
+    if (['live', 'queued_for_approval', 'provider_missing', 'local_view_only', 'unavailable'].includes(String(response?.result || ''))) {
+      return String(response.result);
+    }
     const nested = [
       result,
       result.telnyx,
@@ -12448,6 +12566,9 @@
     ].filter(Boolean);
 
     if (result.outcome) return String(result.outcome);
+    if (['live', 'queued_for_approval', 'provider_missing', 'local_view_only', 'unavailable'].includes(String(result.result || ''))) {
+      return String(result.result);
+    }
     if (result.approval || result.approvalId || result.task?.approvalRequired || result.status === 'queued') return 'queued_for_approval';
     if (nested.some((item) => item?.simulated || item?.provider === 'simulated-email')) return 'provider_missing';
     if (nested.some((item) => item?.configured === false || Array.isArray(item?.missing) && item.missing.length)) return 'provider_missing';
@@ -14085,11 +14206,17 @@
                 leadName: 'Ava Prompt',
                 address: 'wholesale.agent.md',
                 notes: note,
-                approvalAction: 'prompt_patch'
+                approvalAction: 'prompt_patch',
+                metadata: {
+                  targetFile: 'wholesale.agent.md',
+                  promptPatch: note,
+                  requestedBy: 'Command Center',
+                  statusMessage: 'Change requested - awaiting approval'
+                }
               }, {
                 actionLabel: 'prompt edit approvals',
-                successTitle: 'Prompt edit queued',
-                successDesc: 'Rex will turn this request into an approval-backed patch.',
+                successTitle: 'Change requested - awaiting approval',
+                successDesc: 'Rex will apply the approved change to the runtime prompt store.',
                 errorTitle: 'Prompt edit queue failed'
               });
               return Boolean(response);
@@ -14268,7 +14395,7 @@
       if (label === 'retention policy') {
         showPbkFormModal({
           title: 'Recording retention',
-          intro: 'Save the retention preference through the bridge. Deletion enforcement remains approval-gated until the cleanup worker is enabled.',
+          intro: 'Save the retention preference through the bridge, then run a dry-run preview. Live deletion stays approval-gated.',
           submitLabel: 'Save policy',
           fields: [
             { name: 'retentionDays', label: 'Retention days', type: 'number', value: '365', required: true, full: false },
@@ -14289,6 +14416,14 @@
               title: 'Retention policy saved',
               desc: payload?.localOnly ? 'Policy is local until the bridge reconnects.' : 'Policy saved through bridge settings.'
             });
+            if (!payload?.localOnly) {
+              const preview = await requestOpenClawApi(`/api/recordings/retention/preview?days=${encodeURIComponent(values.retentionDays || 365)}`, { timeout: 9000 });
+              toastOutcome({
+                outcome: preview?.result || 'local_view_only',
+                title: preview?.verbiage || 'Retention preview ready',
+                desc: `${preview?.run?.candidateCount || 0} expired recording file${(preview?.run?.candidateCount || 0) === 1 ? '' : 's'} found.`
+              });
+            }
           }
         });
         return;
@@ -14305,29 +14440,37 @@
             { name: 'message', label: 'Email note', type: 'textarea', value: 'Here is the secure call recording package we discussed.' }
           ],
           onSubmit: async ({ email, message }) => {
-            const payload = await requestOpenClawApi('/api/recordings/send-email', {
-              method: 'POST',
-              body: {
-                messageId: context.messageId,
-                leadName: context.leadName,
-                address: context.address,
-                email,
-                message,
-                actor: 'Command Center'
-              },
-              timeout: 15000
-            });
-            if (payload?.state) renderOpenClawState(payload.state);
-            else await syncOpenClawState({ silent: true });
-            const outcome = getRuntimeOutcome(payload, payload?.delivery?.live ? 'live' : 'provider_missing');
-            toastOutcome({
-              outcome,
-              title: 'Recording email request complete',
-              desc: outcome === 'live'
-                ? `Secure signed link sent to ${email}.`
-                : `PBK prepared the recording package for ${email}, but Resend/Supabase must be live before a real email is delivered.`,
-              response: payload
-            });
+            try {
+              const payload = await requestOpenClawApi('/api/recordings/send-email', {
+                method: 'POST',
+                body: {
+                  messageId: context.messageId,
+                  leadName: context.leadName,
+                  address: context.address,
+                  email,
+                  message,
+                  actor: 'Command Center'
+                },
+                timeout: 15000
+              });
+              if (payload?.state) renderOpenClawState(payload.state);
+              else await syncOpenClawState({ silent: true });
+              const outcome = getRuntimeOutcome(payload, payload?.delivery?.live ? 'live' : 'provider_missing');
+              toastOutcome({
+                outcome,
+                title: outcome === 'live' ? 'Recording email sent' : 'Recording email not sent',
+                desc: outcome === 'live'
+                  ? `Secure signed link sent to ${email}.`
+                  : `PBK prepared the recording package for ${email}, but Resend/Supabase must be live before a real email is delivered.`,
+                response: payload
+              });
+            } catch (error) {
+              toastOutcome({
+                outcome: 'provider_missing',
+                title: 'Recording email not sent',
+                desc: error?.message || 'Email provider not configured - add Resend and Supabase Storage before sending recordings.'
+              });
+            }
           }
         });
         return;
@@ -14650,11 +14793,16 @@
           type: 'campaign',
           leadName: 'Selected Leads',
           address: `${leads.length} selected pipeline records`,
-          notes: `Start campaign for: ${leads.map((lead) => lead.leadName).join(', ')}`
+          notes: `Start campaign for: ${leads.map((lead) => lead.leadName).join(', ')}`,
+          metadata: {
+            selectedLeads: leads,
+            requestedAction: 'start_campaign',
+            statusMessage: 'Campaign queued for approval'
+          }
         }, {
           actionLabel: 'campaign approvals',
-          successTitle: 'Campaign approval queued',
-          successDesc: `${leads.length} leads are waiting for approval before campaign launch.`,
+          successTitle: 'Campaign queued for approval',
+          successDesc: `${leads.length} leads are waiting for approval; approved sandbox campaigns will create scheduled execution steps.`,
           errorTitle: 'Campaign approval failed'
         });
         return;
@@ -15282,6 +15430,94 @@
     );
   }
 
+  function findBrowserResearchJob(jobId) {
+    const jobs = Array.isArray(PBK.state.openclawRuntime?.browserResearchJobs) ? PBK.state.openclawRuntime.browserResearchJobs : [];
+    return jobs.find((job) => String(job.id || job.jobId || '') === String(jobId || ''));
+  }
+
+  function showBrowserResearchJob(jobId) {
+    const job = findBrowserResearchJob(jobId);
+    if (!job) {
+      toast({ type: 'warning', title: 'Research job not found', desc: 'Refresh the Brain page and try opening the BrowserOS result again.' });
+      return;
+    }
+    const sources = Array.isArray(job.sources) ? job.sources : [];
+    const screenshots = Array.isArray(job.screenshots) ? job.screenshots : [];
+    const tags = Array.isArray(job.tags) ? job.tags : [];
+    const resultData = job.resultData || job.results || job.data || {};
+    const resultPreview = Object.keys(resultData || {}).length ? JSON.stringify(resultData, null, 2).slice(0, 5000) : '';
+    const sourceList = sources.length
+      ? `<ul class="blog-takeaways">${sources.slice(0, 8).map((source) => {
+          const url = typeof source === 'string' ? source : source.url || source.href || '';
+          const label = typeof source === 'string' ? source : source.title || source.label || source.url || 'Source';
+          return `<li>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>` : escapeHtml(label)}</li>`;
+        }).join('')}</ul>`
+      : '<p style="color:var(--text-tertiary); margin:0;">No source links were attached to this result.</p>';
+    const modal = showUtilityModal(
+      job.targetLabel || job.target || job.query || 'BrowserOS research result',
+      `
+        <div style="display:grid; gap: var(--s-4); text-align:left;">
+          <div style="display:flex; flex-wrap:wrap; gap:6px;">
+            <span class="chip">${escapeHtml(job.status || 'queued')}</span>
+            ${(tags || []).slice(0, 6).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join('')}
+          </div>
+          <p style="color:var(--text-secondary); line-height:1.6; margin:0;">${escapeHtml(job.resultSummary || job.summary || job.answer || job.error || 'This BrowserOS job has not produced a summary yet.')}</p>
+          <div>
+            <div style="font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--sky); margin-bottom:8px;">Sources</div>
+            ${sourceList}
+          </div>
+          ${screenshots.length ? `
+            <div>
+              <div style="font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--sky); margin-bottom:8px;">Screenshots</div>
+              <div style="display:grid; gap:6px;">${screenshots.slice(0, 6).map((shot) => `<a href="${escapeHtml(String(shot))}" target="_blank" rel="noopener noreferrer">${escapeHtml(String(shot))}</a>`).join('')}</div>
+            </div>
+          ` : ''}
+          ${resultPreview ? `<pre style="max-height:260px; overflow:auto; white-space:pre-wrap; padding:var(--s-3); border:1px solid var(--border-dim); border-radius:var(--radius-md); background:var(--bg-console); color:var(--text-secondary); font-size:11px; line-height:1.5;">${escapeHtml(resultPreview)}</pre>` : ''}
+        </div>
+      `,
+      `<button class="btn btn-ghost" data-browser-research-action="retry" data-job-id="${escapeHtml(job.id || job.jobId || '')}">Retry</button>`
+    );
+    modal.addEventListener('click', (event) => {
+      const retryButton = event.target.closest('[data-browser-research-action="retry"]');
+      if (!retryButton) return;
+      retryBrowserResearchJob(retryButton.dataset.jobId || job.id || job.jobId || '');
+    });
+  }
+
+  async function retryBrowserResearchJob(jobId) {
+    const job = findBrowserResearchJob(jobId);
+    if (!job) {
+      toast({ type: 'warning', title: 'Research job not found', desc: 'Refresh the Brain page before retrying that BrowserOS request.' });
+      return;
+    }
+    if (!PBK.openclaw.isConnected()) {
+      toast({ type: 'info', title: 'Connect OpenClaw first', desc: 'Reconnect the bridge before retrying BrowserOS research.' });
+      return;
+    }
+    const target = job.target || job.targetLabel || job.url || job.query || 'PBK research target';
+    const goal = job.goal || 'Retry the previous BrowserOS research job and return a concise result summary, source list, and useful tags.';
+    try {
+      const response = await PBK.openclaw.invoke('launchBrowserResearch', {
+        query: `${goal}\n\nTarget: ${target}`,
+        target,
+        goal,
+        requestedBy: 'Jordan',
+        source: 'pbk-brain-retry',
+        retryOf: job.id || job.jobId || ''
+      });
+      if (response?.state) renderOpenClawState(response.state);
+      else await syncOpenClawState({ silent: true });
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'queued_for_approval'),
+        title: 'Research retry queued',
+        desc: 'Rex accepted the BrowserOS retry request. Watch the Brain status panel for updates.',
+        response
+      });
+    } catch (error) {
+      toast({ type: 'error', title: 'Retry failed', desc: error?.message || 'The bridge did not accept the BrowserOS retry request.' });
+    }
+  }
+
   async function trainRexFromBlogPost(postId) {
     if (!PBK.openclaw.isConnected()) {
       toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect the bridge before training Rex on Brain Blog content.' });
@@ -15526,6 +15762,14 @@
         const postId = blogActionButton.dataset.brainBlogId || blogActionButton.closest('[data-brain-blog-id]')?.dataset.brainBlogId || '';
         if (blogActionButton.dataset.brainBlogAction === 'read') showBrainBlogPost(postId);
         if (blogActionButton.dataset.brainBlogAction === 'train') trainRexFromBlogPost(postId);
+        return;
+      }
+
+      const researchActionButton = event.target.closest('[data-browser-research-action]');
+      if (researchActionButton) {
+        const jobId = researchActionButton.dataset.jobId || researchActionButton.closest('[data-browser-research-job-id]')?.dataset.browserResearchJobId || '';
+        if (researchActionButton.dataset.browserResearchAction === 'view') showBrowserResearchJob(jobId);
+        if (researchActionButton.dataset.browserResearchAction === 'retry') retryBrowserResearchJob(jobId);
         return;
       }
 

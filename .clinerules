@@ -1,0 +1,18 @@
+# PBK Agent Rules
+
+## UI and Frontend Development
+
+1. Always reference `DESIGN.md` before changing PBK UI.
+2. Preserve the existing modern PBK Command Center look.
+3. Use the exact color tokens, spacing rules, typography, and component patterns defined in `DESIGN.md`.
+4. Do not invent a new visual identity, shell, navigation system, or palette.
+5. If a necessary component style is missing, propose an addition to `DESIGN.md` first.
+6. Mobile work should fix containment, wrapping, and reachability without changing the desktop aesthetic.
+
+## Runtime and Provider Work
+
+1. Keep OpenClaw, Rex, n8n, Render, Netlify, Supabase, and provider writes on the existing bridge-backed paths.
+2. Do not hardcode secrets, tokens, webhook URLs, or JWT-shaped values.
+3. Use approval-backed execution for destructive, provider-write, or cost-incurring actions.
+4. Verify with the narrowest relevant test before declaring a change done.
+

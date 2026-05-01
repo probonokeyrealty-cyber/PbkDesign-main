@@ -8,6 +8,7 @@
 ### UI/UX Constraints
 - Extend, do not replace.
 - Never redesign the overall PBK Command Center.
+- Read `DESIGN.md` before making frontend or UI changes.
 - All new features must reuse the existing design language:
   - existing CSS variables and color system
   - Fraunces, Geist, and JetBrains Mono typography
@@ -18,8 +19,9 @@
 - Small changes are expected and encouraged, as long as they are implemented inside the existing PBK command-center language.
 
 ### Design Source Of Truth
-- Treat the GitHub repo itself as the source of truth for PBK visual direction.
+- Treat `DESIGN.md` and the GitHub repo itself as the source of truth for PBK visual direction.
 - Before changing PBK UI, review and align to these in-repo design references:
+  - `DESIGN.md`
   - `index.html`
   - `index.before-figma.html`
   - `public/legacy/PBK_Command_Center v5.html`

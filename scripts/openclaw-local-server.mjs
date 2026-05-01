@@ -85,6 +85,10 @@ hydrateWindowsUserEnv([
   'PBK_DOCUSIGN_AUTH_HOST',
   'PBK_DOCUSIGN_REST_BASE',
   'PBK_DOCUSIGN_PRIVATE_KEY',
+  'PBK_SUPABASE_URL',
+  'PBK_SUPABASE_SERVICE_ROLE_KEY',
+  'PBK_N8N_API_BASE_URL',
+  'PBK_N8N_API_KEY',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -149,6 +153,20 @@ const AUTO_SEND_REPLY_FOLLOWUPS = /^(1|true|yes)$/i.test(String(process.env.PBK_
 const GOOGLE_CALENDAR_ACCESS_TOKEN = String(process.env.PBK_GOOGLE_CALENDAR_ACCESS_TOKEN || '').trim();
 const GOOGLE_CALENDAR_ID = String(process.env.PBK_GOOGLE_CALENDAR_ID || 'primary').trim();
 const CALENDAR_SYNC_WEBHOOK_URL = String(process.env.PBK_CALENDAR_SYNC_WEBHOOK || '').trim();
+const SUPABASE_URL = String(process.env.PBK_SUPABASE_URL || process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '')
+  .trim()
+  .replace(/\/+$/g, '');
+const SUPABASE_SERVICE_ROLE_KEY = String(
+  process.env.PBK_SUPABASE_SERVICE_ROLE_KEY
+    || process.env.SUPABASE_SERVICE_ROLE_KEY
+    || process.env.SUPABASE_SERVICE_KEY
+    || '',
+).trim();
+const SUPABASE_CALL_RECORDINGS_BUCKET = String(process.env.PBK_CALL_RECORDINGS_BUCKET || 'call_recordings').trim();
+const SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS = Math.max(
+  60,
+  Number(process.env.PBK_RECORDING_SIGNED_URL_TTL_SECONDS || 3600),
+);
 const STREAK_API_KEY = String(process.env.PBK_STREAK_API_KEY || process.env.STREAK_API_KEY || '').trim();
 const STREAK_BASE_URL = String(process.env.PBK_STREAK_BASE_URL || 'https://api.streak.com/api').trim().replace(/\/+$/g, '');
 const STREAK_PIPELINE_KEY = String(process.env.PBK_STREAK_PIPELINE_KEY || '').trim();
@@ -156,6 +174,16 @@ const STREAK_STAGE_MAP_RAW = String(process.env.PBK_STREAK_STAGE_MAP || '').trim
 const STREAK_FIELD_MAP_RAW = String(process.env.PBK_STREAK_FIELD_MAP || '').trim();
 const STREAK_AUTO_CREATE_BOX = !/^(0|false|no)$/i.test(String(process.env.PBK_STREAK_AUTO_CREATE_BOX || 'true').trim());
 const CRM_SYNC_WEBHOOK_URL = String(process.env.PBK_CRM_SYNC_WEBHOOK || '').trim();
+const N8N_API_BASE_URL = String(
+  process.env.PBK_N8N_API_BASE_URL
+    || process.env.PBK_N8N_BASE_URL
+    || process.env.N8N_API_BASE_URL
+    || '',
+)
+  .trim()
+  .replace(/\/api\/v1\/?$/i, '')
+  .replace(/\/+$/g, '');
+const N8N_API_KEY = String(process.env.PBK_N8N_API_KEY || process.env.N8N_API_KEY || '').trim();
 
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
@@ -237,6 +265,7 @@ const BROWSER_RESEARCH_JOBS_FILE = path.join(ROOT_DIR, 'ops', 'browser-research'
 const BROWSER_RESEARCH_TARGETS_FILE = path.join(ROOT_DIR, 'ops', 'browser-research', 'targets.example.json');
 const MCP_REGISTRY_FILE = path.join(ROOT_DIR, 'mcp-servers', 'registry.example.json');
 const N8N_TOOLING_WORKFLOW_FILE = path.join(ROOT_DIR, 'n8n-lite', 'tooling-health-check.json');
+const N8N_WORKFLOW_DRAFTS_FILE = path.join(RUNTIME_DIR, 'n8n-workflow-drafts.json');
 const OBSERVABILITY_COMPOSE_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'docker-compose.observability.yml');
 const OBSERVABILITY_DASHBOARD_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'grafana', 'dashboards', 'pbk-runtime.json');
 const OBSERVABILITY_PROM_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'prometheus', 'generated.prometheus.yml');
@@ -558,6 +587,8 @@ function getRuntimeMeta() {
       telnyx: getTelnyxProviderMeta(),
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
+      supabaseStorage: getSupabaseStorageProviderMeta(),
+      n8nWorkflows: getN8nWorkflowProviderMeta(),
       streak: getStreakProviderMeta(),
       crmSync: getCrmSyncProviderMeta(),
       render: getRenderProviderMeta(),
@@ -1539,6 +1570,8 @@ function buildDefaultState() {
       n8n: {
         approvalWebhookConfigured: Boolean(APPROVAL_WEBHOOK_URL),
         leadWebhookConfigured: Boolean(LEAD_WEBHOOK_URL),
+        workflowApiConfigured: getN8nWorkflowProviderMeta().ready,
+        workflowDraftStore: true,
       },
     },
     approvals: buildDefaultApprovals(),
@@ -1674,6 +1707,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.n8n = {
     approvalWebhookConfigured: Boolean(APPROVAL_WEBHOOK_URL),
     leadWebhookConfigured: Boolean(LEAD_WEBHOOK_URL),
+    workflowApiConfigured: getN8nWorkflowProviderMeta().ready,
+    workflowDraftStore: true,
   };
 }
 
@@ -2611,11 +2646,22 @@ function createMessageRecord(params = {}) {
     email: params.email || context.email || '',
     channel: params.channel || 'sms',
     direction: params.direction || 'outbound',
+    subject: params.subject || '',
     body: String(params.body || params.message || '').trim(),
     status: params.status || (params.direction === 'inbound' ? 'received' : 'sent'),
     provider: params.provider || 'PBK',
+    intent: params.intent || '',
+    sentiment: params.sentiment ?? null,
+    storagePath: params.storagePath || params.storage_path || params.recordingStoragePath || '',
+    storageBucket: params.storageBucket || params.storage_bucket || '',
+    audioContentType: params.audioContentType || params.contentType || params.content_type || '',
+    durationSeconds: toNumber(params.durationSeconds || params.duration_seconds, 0),
+    recordingUrl: params.recordingUrl || params.audioUrl || params.url || '',
+    callId: params.callId || params.telnyxCallControlId || params.call_control_id || '',
     messagingProfileId: params.messagingProfileId || params.messaging_profile_id || '',
+    payload: params.payload && typeof params.payload === 'object' ? params.payload : {},
     createdAt: params.createdAt || isoNow(),
+    updatedAt: params.updatedAt || isoNow(),
   };
 }
 
@@ -5408,6 +5454,320 @@ function getGoogleCalendarProviderMeta() {
     calendarId: GOOGLE_CALENDAR_ID,
     mode: GOOGLE_CALENDAR_ACCESS_TOKEN ? 'google-rest' : CALENDAR_SYNC_WEBHOOK_URL ? 'webhook' : 'disabled',
     missing,
+  };
+}
+
+function getSupabaseStorageProviderMeta() {
+  const missing = [];
+  if (!SUPABASE_URL) missing.push('PBK_SUPABASE_URL');
+  if (!SUPABASE_SERVICE_ROLE_KEY) missing.push('PBK_SUPABASE_SERVICE_ROLE_KEY');
+  return {
+    configured: Boolean(SUPABASE_URL || SUPABASE_SERVICE_ROLE_KEY),
+    ready: missing.length === 0,
+    mode: 'supabase-storage',
+    bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+    signedUrlTtlSeconds: SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS,
+    missing,
+  };
+}
+
+function getN8nWorkflowProviderMeta() {
+  const missing = [];
+  if (!N8N_API_BASE_URL) missing.push('PBK_N8N_API_BASE_URL');
+  if (!N8N_API_KEY) missing.push('PBK_N8N_API_KEY');
+  return {
+    configured: Boolean(N8N_API_BASE_URL || N8N_API_KEY),
+    ready: missing.length === 0,
+    mode: missing.length === 0 ? 'n8n-api' : 'local-draft-store',
+    localDraftStore: true,
+    missing,
+  };
+}
+
+function encodePathSegments(value = '') {
+  return String(value || '')
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function normalizeStoragePath(value = '') {
+  const trimmed = String(value || '').trim().replace(/^\/+/g, '');
+  const bucketPrefix = `${SUPABASE_CALL_RECORDINGS_BUCKET}/`;
+  return trimmed.startsWith(bucketPrefix) ? trimmed.slice(bucketPrefix.length) : trimmed;
+}
+
+function buildRecordingStoragePath(params = {}) {
+  const explicit = normalizeStoragePath(
+    params.storagePath
+      || params.storage_path
+      || params.recordingStoragePath
+      || params.path
+      || '',
+  );
+  if (explicit) return explicit;
+  const context = findLeadContext(params);
+  const leadKey = slugify(context.leadId || context.leadName || context.address || 'lead') || 'lead';
+  const messageKey = slugify(params.messageId || params.id || params.callId || randomUUID()) || randomUUID();
+  const extension = String(params.extension || params.ext || 'mp3').replace(/^\./, '') || 'mp3';
+  return `${leadKey}/${messageKey}.${extension}`;
+}
+
+function findMessageById(messageId = '') {
+  const id = String(messageId || '').trim();
+  if (!id) return null;
+  return state.messages.find((message) => {
+    return message?.id === id
+      || message?.messageId === id
+      || message?.callId === id
+      || message?.telnyxCallControlId === id
+      || message?.telnyxCallSessionId === id;
+  }) || null;
+}
+
+function getMessageRecordingPath(message = {}) {
+  return normalizeStoragePath(
+    message.storagePath
+      || message.storage_path
+      || message.recordingStoragePath
+      || message.recording_storage_path
+      || message.payload?.storagePath
+      || message.payload?.storage_path
+      || '',
+  );
+}
+
+function getMessageRecordingUrl(message = {}) {
+  return String(
+    message.recordingUrl
+      || message.audioUrl
+      || message.playbackUrl
+      || message.url
+      || message.payload?.recordingUrl
+      || message.payload?.audioUrl
+      || '',
+  ).trim();
+}
+
+function getSupabaseStorageHeaders(contentType = 'application/json') {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    ...(contentType ? { 'Content-Type': contentType } : {}),
+  };
+}
+
+async function createSupabaseRecordingSignedUrl(storagePath, expiresIn = SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS) {
+  const meta = getSupabaseStorageProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `Supabase Storage is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  const normalizedPath = normalizeStoragePath(storagePath);
+  if (!normalizedPath) {
+    return { ok: false, error: 'Recording storage_path is missing.' };
+  }
+  const url = `${SUPABASE_URL}/storage/v1/object/sign/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: getSupabaseStorageHeaders(),
+    body: JSON.stringify({ expiresIn }),
+  });
+  const payload = await response.json().catch(async () => ({ error: await response.text().catch(() => '') }));
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: payload?.message || payload?.error || `Supabase signed URL request failed with ${response.status}.`,
+    };
+  }
+  const signedUrl = payload.signedURL || payload.signedUrl || payload.url || '';
+  return {
+    ok: true,
+    bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+    storagePath: normalizedPath,
+    expiresIn,
+    signedUrl: signedUrl && /^https?:\/\//i.test(signedUrl)
+      ? signedUrl
+      : `${SUPABASE_URL}${String(signedUrl || '').startsWith('/') ? '' : '/'}${signedUrl}`,
+  };
+}
+
+async function uploadSupabaseRecording({ storagePath, contentType = 'audio/mpeg', bytes }) {
+  const meta = getSupabaseStorageProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `Supabase Storage is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  const normalizedPath = normalizeStoragePath(storagePath);
+  if (!normalizedPath) return { ok: false, error: 'Recording storage_path is missing.' };
+  if (!bytes?.length) return { ok: false, error: 'Recording bytes are missing.' };
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_CALL_RECORDINGS_BUCKET)}/${encodePathSegments(normalizedPath)}`,
+    {
+      method: 'PUT',
+      headers: {
+        ...getSupabaseStorageHeaders(contentType),
+        'x-upsert': 'true',
+      },
+      body: bytes,
+    },
+  );
+  const responseText = await response.text().catch(() => '');
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: responseText || `Supabase recording upload failed with ${response.status}.`,
+    };
+  }
+  return {
+    ok: true,
+    bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+    storagePath: normalizedPath,
+    response: responseText ? safeJsonParse(responseText, responseText) : {},
+  };
+}
+
+function safeJsonParse(raw, fallback = null) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+async function loadWorkflowDrafts() {
+  await ensureRuntimeDir();
+  try {
+    const raw = await readFile(N8N_WORKFLOW_DRAFTS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.drafts) ? parsed.drafts : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveWorkflowDrafts(drafts = []) {
+  await ensureRuntimeDir();
+  await writeFile(N8N_WORKFLOW_DRAFTS_FILE, jsonStringify({ drafts, updatedAt: isoNow() }), 'utf8');
+}
+
+function normalizeWorkflowDraft(params = {}) {
+  const workflow = params.workflow && typeof params.workflow === 'object' ? params.workflow : params;
+  const name = workflow.name || params.name || 'PBK Workflow Draft';
+  return {
+    id: workflow.id || params.id || `workflow-${slugify(name) || randomUUID()}-${Date.now()}`,
+    name,
+    active: Boolean(workflow.active ?? params.active),
+    nodes: Array.isArray(workflow.nodes) ? workflow.nodes : [],
+    connections: workflow.connections && typeof workflow.connections === 'object' ? workflow.connections : {},
+    settings: workflow.settings && typeof workflow.settings === 'object' ? workflow.settings : {},
+    tags: Array.isArray(workflow.tags) ? workflow.tags : [],
+    metadata: {
+      ...(workflow.metadata && typeof workflow.metadata === 'object' ? workflow.metadata : {}),
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+    },
+    updatedAt: isoNow(),
+  };
+}
+
+async function n8nApiRequest(method, pathname, body = null) {
+  const meta = getN8nWorkflowProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      missing: meta.missing,
+      error: `n8n workflow API is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  const response = await fetch(`${N8N_API_BASE_URL}/api/v1/${String(pathname || '').replace(/^\/+/g, '')}`, {
+    method,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-N8N-API-KEY': N8N_API_KEY,
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await response.text().catch(() => '');
+  const payload = text ? safeJsonParse(text, { raw: text }) : {};
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      error: payload?.message || payload?.error || `n8n API request failed with ${response.status}.`,
+      payload,
+    };
+  }
+  return { ok: true, status: response.status, payload };
+}
+
+async function listWorkflowPersistence() {
+  const drafts = await loadWorkflowDrafts();
+  const meta = getN8nWorkflowProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: true,
+      provider: 'local-draft-store',
+      configured: false,
+      workflows: drafts,
+      drafts,
+      n8n: meta,
+    };
+  }
+  const apiResult = await n8nApiRequest('GET', 'workflows');
+  return {
+    ok: apiResult.ok,
+    provider: apiResult.ok ? 'n8n-api' : 'local-draft-store',
+    configured: true,
+    workflows: apiResult.ok ? (apiResult.payload?.data || apiResult.payload || []) : drafts,
+    drafts,
+    n8n: meta,
+    sync: apiResult,
+  };
+}
+
+async function saveWorkflowPersistence(params = {}) {
+  const draft = normalizeWorkflowDraft(params);
+  const drafts = await loadWorkflowDrafts();
+  const existingIndex = drafts.findIndex((item) => item.id === draft.id);
+  if (existingIndex >= 0) {
+    drafts.splice(existingIndex, 1, { ...drafts[existingIndex], ...draft });
+  } else {
+    drafts.unshift(draft);
+  }
+  await saveWorkflowDrafts(drafts.slice(0, 80));
+
+  let sync = null;
+  if (params.syncToN8n || params.applyToN8n) {
+    const method = draft.id && !String(draft.id).startsWith('workflow-') ? 'PUT' : 'POST';
+    const pathname = method === 'PUT' ? `workflows/${encodeURIComponent(draft.id)}` : 'workflows';
+    sync = await n8nApiRequest(method, pathname, {
+      name: draft.name,
+      nodes: draft.nodes,
+      connections: draft.connections,
+      settings: draft.settings,
+      active: draft.active,
+    });
+  }
+
+  return {
+    ok: true,
+    provider: sync?.ok ? 'n8n-api' : 'local-draft-store',
+    draft,
+    drafts: drafts.slice(0, 80),
+    sync,
   };
 }
 
@@ -8849,6 +9209,8 @@ function buildStateSnapshot() {
         telnyx: getTelnyxProviderMeta(),
         instantly: getInstantlyProviderMeta(),
         googleCalendar: getGoogleCalendarProviderMeta(),
+        supabaseStorage: getSupabaseStorageProviderMeta(),
+        n8nWorkflows: getN8nWorkflowProviderMeta(),
         streak: getStreakProviderMeta(),
         crmSync: getCrmSyncProviderMeta(),
         docusign: getDocuSignProviderMeta(),
@@ -9075,6 +9437,8 @@ const server = createServer(async (request, response) => {
           telnyx: getTelnyxProviderMeta(),
           instantly: getInstantlyProviderMeta(),
           googleCalendar: getGoogleCalendarProviderMeta(),
+          supabaseStorage: getSupabaseStorageProviderMeta(),
+          n8nWorkflows: getN8nWorkflowProviderMeta(),
           streak: getStreakProviderMeta(),
           crmSync: getCrmSyncProviderMeta(),
           docusign: getDocuSignProviderMeta(),
@@ -9144,6 +9508,32 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/workflows', '/api/n8n/workflows'])) {
+      json(response, 200, await listWorkflowPersistence());
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/workflows', '/api/n8n/workflows'])) {
+      const body = await readBody(request);
+      const result = await saveWorkflowPersistence(body);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'n8n',
+          category: 'AUTOMATION',
+          status: result.sync?.ok ? 'synced' : 'saved',
+          text: `${result.draft.name} workflow ${result.sync?.ok ? 'synced to n8n' : 'saved as a local draft'}`,
+          target: result.draft.id,
+        }),
+      );
+      await persistState(state);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/property-data') {
       const result = await toolHandlers.getPropertyData({
         address: url.searchParams.get('address') || '',
@@ -9176,6 +9566,41 @@ const server = createServer(async (request, response) => {
         email: url.searchParams.get('email') || '',
         templateId: url.searchParams.get('templateId') || '',
         requestedBy: url.searchParams.get('requestedBy') || 'api',
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/brain/ingest', '/api/brain/ingest'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.ingestResearchDoc({
+        ...body,
+        source: body.source || body.sourceUrl || body.url || 'brain-api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/brain/query', '/api/brain/query'])) {
+      const result = await toolHandlers.getBrainState({
+        query: url.searchParams.get('q') || url.searchParams.get('query') || '',
+        requestedBy: url.searchParams.get('requestedBy') || 'api',
+        source: 'brain-api',
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/brain/query', '/api/brain/query'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.getBrainState({
+        ...body,
+        query: body.query || body.q || '',
+        requestedBy: body.requestedBy || 'api',
+        source: 'brain-api',
       });
       json(response, 200, result);
       return;
@@ -9649,6 +10074,109 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const recordingMatch = matchPath(pathname, '/api/recordings/:messageId');
+    if (recordingMatch && request.method === 'GET') {
+      const messageId = decodeURIComponent(recordingMatch.groups.messageId || '');
+      const message = findMessageById(messageId);
+      if (!message) {
+        json(response, 404, { ok: false, messageId, error: 'Recording message not found.' });
+        return;
+      }
+      const directUrl = getMessageRecordingUrl(message);
+      if (directUrl) {
+        json(response, 200, {
+          ok: true,
+          messageId,
+          source: 'direct-url',
+          url: directUrl,
+          message,
+        });
+        return;
+      }
+      const storagePath = getMessageRecordingPath(message);
+      const signed = await createSupabaseRecordingSignedUrl(
+        storagePath,
+        Number(url.searchParams.get('expiresIn') || SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS),
+      );
+      json(response, signed.ok ? 200 : 501, {
+        ...signed,
+        messageId,
+        message,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/recordings') {
+      const body = await readBody(request);
+      const messageId = body.messageId || body.id || `msg-recording-${Date.now()}`;
+      const existing = findMessageById(messageId);
+      const storagePath = buildRecordingStoragePath({ ...body, messageId });
+      const contentType = body.contentType || body.audioContentType || 'audio/mpeg';
+      let upload = null;
+      if (body.audioBase64) {
+        const base64 = String(body.audioBase64).replace(/^data:[^;]+;base64,/i, '');
+        upload = await uploadSupabaseRecording({
+          storagePath,
+          contentType,
+          bytes: Buffer.from(base64, 'base64'),
+        });
+        if (upload.ok === false) {
+          json(response, 501, { ...upload, messageId, storagePath });
+          return;
+        }
+      }
+      const message = {
+        ...(existing || createMessageRecord({
+          ...body,
+          id: messageId,
+          channel: body.channel || 'call',
+          direction: body.direction || 'recording',
+          provider: body.provider || 'Telnyx',
+          status: body.status || 'recorded',
+          body: body.body || 'Call recording captured.',
+        })),
+        ...body,
+        id: messageId,
+        channel: body.channel || existing?.channel || 'call',
+        direction: body.direction || existing?.direction || 'recording',
+        provider: body.provider || existing?.provider || 'Telnyx',
+        status: body.status || existing?.status || 'recorded',
+        storagePath,
+        storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+        audioContentType: contentType,
+        durationSeconds: toNumber(body.durationSeconds || body.duration_seconds || existing?.durationSeconds, 0),
+        recordingUrl: body.recordingUrl || body.audioUrl || existing?.recordingUrl || '',
+        payload: {
+          ...(existing?.payload && typeof existing.payload === 'object' ? existing.payload : {}),
+          ...(body.payload && typeof body.payload === 'object' ? body.payload : {}),
+          storagePath,
+          storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+          contentType,
+          upload,
+        },
+        updatedAt: isoNow(),
+      };
+      upsertMessage(state, message);
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'Telnyx',
+          category: 'CALL',
+          status: upload?.ok ? 'uploaded' : 'recorded',
+          text: `Recording metadata saved for ${message.leadName || message.leadId || messageId}`,
+          target: storagePath,
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        message,
+        upload,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/contracts') {
       json(response, 200, {
         ok: true,
@@ -9961,8 +10489,11 @@ const server = createServer(async (request, response) => {
         'GET /api/tools',
         'GET /api/quotas',
         'GET /api/tooling/status',
+        'GET/POST /api/workflows',
         'GET/POST /api/property-data',
         'GET /api/brain/email-context',
+        'POST /brain/ingest',
+        'GET/POST /brain/query',
         'GET /api/participants/profile',
         'GET /api/crm/streak/status',
         'GET /api/crm/streak/bootstrap-plan',
@@ -9993,6 +10524,8 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/calls',
         'POST /api/calls/:id/action',
         'GET/POST /api/messages',
+        'GET /api/recordings/:messageId',
+        'POST /api/recordings',
         'GET/POST /api/contracts',
         'POST /api/contracts/prepare',
         'POST /api/contracts/lawyer-review',

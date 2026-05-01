@@ -20,6 +20,14 @@
     "browseros": {
       "url": "http://127.0.0.1:9000/mcp",
       "note": "Optional browser-native research layer for Rex. Keep surfaced inside the Brain and Settings tooling cards."
+    },
+    "n8n-mcp": {
+      "type": "http",
+      "url": "https://probonokeyrealty1.app.n8n.cloud/mcp-server/http",
+      "headers": {
+        "Authorization": "Bearer __SET_N8N_MCP_BEARER__"
+      },
+      "note": "Production n8n MCP endpoint for PBK workflow tools. Do not commit the real bearer token."
     }
   }
 }

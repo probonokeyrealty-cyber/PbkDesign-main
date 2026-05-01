@@ -9518,6 +9518,7 @@
   const OPENCLAW_STORAGE_KEY = 'pbk-openclaw-config';
   const ANALYZER_STORAGE_KEY = 'pbk-deal-data';
   const BRANDING_STORAGE_KEY = 'pbk-branding';
+  const PBK_UI_SETTINGS_KEY = 'pbk-ui-settings';
 
   function parseJSONSafe(raw, fallback = null) {
     try {
@@ -11642,6 +11643,125 @@
     URL.revokeObjectURL(url);
   }
 
+  function downloadTextFile(filename, text, type = 'text/plain') {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function normalizeControlText(value = '') {
+    return String(value).replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function textWithoutCounts(value = '') {
+    return String(value)
+      .replace(/[—-]\s*\d+.*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function setChipGroupActive(button) {
+    const group = button?.parentElement;
+    group?.querySelectorAll('.chip-btn').forEach((chip) => chip.classList.remove('active'));
+    button?.classList.add('active');
+  }
+
+  function showUtilityModal(title, bodyHtml, actionsHtml = '') {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop open';
+    const modal = document.createElement('div');
+    modal.className = 'modal open';
+    modal.innerHTML = `
+      <h3>${escapeHtml(title)}</h3>
+      <p>${bodyHtml}</p>
+      <div class="modal-actions">
+        ${actionsHtml}
+        <button class="btn btn-primary" type="button" data-modal-close>Close</button>
+      </div>
+    `;
+    const close = () => {
+      modal.remove();
+      backdrop.remove();
+    };
+    backdrop.addEventListener('click', close);
+    modal.addEventListener('click', (event) => {
+      if (event.target.closest('[data-modal-close]')) close();
+    });
+    document.body.append(backdrop, modal);
+    return modal;
+  }
+
+  function rowsToCsv(rows) {
+    return rows.map((row) => row.map((cell) => {
+      const value = String(cell ?? '').replace(/\s+/g, ' ').trim();
+      return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+    }).join(',')).join('\n');
+  }
+
+  function exportTableLikeRows(container, rowSelector, filename) {
+    const rows = Array.from(container?.querySelectorAll(rowSelector) || [])
+      .filter((row) => row.offsetParent !== null)
+      .map((row) => Array.from(row.children).map((cell) => cell.textContent));
+    if (!rows.length) {
+      toast({ type: 'info', title: 'Nothing to export', desc: 'No visible rows matched the current filter.' });
+      return;
+    }
+    downloadTextFile(filename, rowsToCsv(rows), 'text/csv');
+    toast({ type: 'success', title: 'CSV exported', desc: `${rows.length} visible rows were downloaded.` });
+  }
+
+  function filterItemsByText(items, predicate) {
+    let shown = 0;
+    items.forEach((item) => {
+      const visible = predicate(item);
+      item.style.display = visible ? '' : 'none';
+      if (visible) shown += 1;
+    });
+    return shown;
+  }
+
+  function getLeadRows() {
+    return Array.from(document.querySelectorAll('[data-page="leads"] tbody tr.row'));
+  }
+
+  function getSelectedLeadRows() {
+    const selected = getLeadRows().filter((row) => row.querySelector('.checkbox.checked'));
+    return selected.length ? selected : getLeadRows().slice(0, 3);
+  }
+
+  function getLeadRowPayload(row) {
+    const cells = Array.from(row.children);
+    return {
+      score: cells[1]?.textContent?.trim() || '',
+      leadName: cells[2]?.textContent?.trim() || 'Unknown seller',
+      address: cells[3]?.textContent?.trim() || '',
+      phone: cells[4]?.textContent?.trim() || '',
+      arvMao: cells[5]?.textContent?.trim() || '',
+      equity: cells[6]?.textContent?.trim() || '',
+      tags: cells[7]?.textContent?.trim() || '',
+      status: cells[8]?.textContent?.trim() || ''
+    };
+  }
+
+  function exportLeadRows(rows, filename = `pbk-selected-leads-${new Date().toISOString().slice(0, 10)}.csv`) {
+    const payload = rows.map(getLeadRowPayload);
+    downloadTextFile(filename, rowsToCsv([
+      ['Score', 'Lead', 'Address', 'Phone', 'ARV / MAO', 'Equity', 'Tags', 'Status'],
+      ...payload.map((lead) => [lead.score, lead.leadName, lead.address, lead.phone, lead.arvMao, lead.equity, lead.tags, lead.status])
+    ]), 'text/csv');
+    toast({ type: 'success', title: 'Lead export ready', desc: `${payload.length} lead rows were exported.` });
+  }
+
+  function updateBulkCount() {
+    const count = getLeadRows().filter((row) => row.querySelector('.checkbox.checked')).length || 3;
+    document.querySelector('[data-page="leads"] .bulk-count')?.replaceChildren(document.createTextNode(`${count} selected`));
+  }
+
   async function createLeadFromPrompts(source = 'manual') {
     const sellerName = window.prompt('Seller name', 'New PBK lead');
     if (!sellerName) return null;
@@ -12263,6 +12383,628 @@
         });
       }
     });
+  }
+
+  function wireDashboardQuickControls() {
+    const page = getPageNode('dashboard');
+    if (!page || page.dataset.quickWired === 'true') return;
+    page.dataset.quickWired = 'true';
+
+    page.addEventListener('click', async (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent);
+
+      if (label === '+ new') {
+        await createLeadFromPrompts('dashboard-new-lead');
+        return;
+      }
+
+      if (button.closest('.inbox-filters')) {
+        const filter = textWithoutCounts(button.textContent);
+        const shown = filterItemsByText(Array.from(page.querySelectorAll('.inbox-list .msg')), (item) => {
+          const text = normalizeControlText(item.textContent);
+          if (filter === 'all') return true;
+          if (filter === 'unread') return item.classList.contains('unread');
+          if (filter === 'approvals') return text.includes('approve') || text.includes('approval') || item.querySelector('.badge.approve');
+          if (filter === 'hot') return text.includes('hot') || item.querySelector('.badge.hot');
+          return true;
+        });
+        toast({ type: 'info', title: 'Inbox filtered', desc: `${shown} dashboard messages visible.` });
+        return;
+      }
+
+      if (label === 'import csv') {
+        await createLeadFromPrompts('dashboard-csv-import');
+        return;
+      }
+
+      if (label === 'filter') {
+        const query = window.prompt('Filter pipeline by seller, city, status, or phone', 'negotiating');
+        if (!query) return;
+        const needle = normalizeControlText(query);
+        const rows = Array.from(page.querySelectorAll('.table-container tbody tr'));
+        const shown = filterItemsByText(rows, (row) => normalizeControlText(row.textContent).includes(needle));
+        toast({ type: 'info', title: 'Pipeline filtered', desc: `${shown} matching rows visible.` });
+        return;
+      }
+
+      if (label.startsWith('sort:')) {
+        const tbody = page.querySelector('.table-container tbody');
+        const rows = Array.from(tbody?.querySelectorAll('tr') || []);
+        rows
+          .sort((a, b) => Number(b.querySelector('.score span')?.textContent || 0) - Number(a.querySelector('.score span')?.textContent || 0))
+          .forEach((row) => tbody.appendChild(row));
+        toast({ type: 'success', title: 'Pipeline sorted', desc: 'Rows are ordered by highest score.' });
+      }
+    });
+  }
+
+  function wireAgentSideControls() {
+    const page = getPageNode('agent');
+    if (!page || page.dataset.sideWired === 'true') return;
+    page.dataset.sideWired = 'true';
+
+    page.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (button) {
+        const label = normalizeControlText(button.textContent);
+        if (label === 'edit prompt') {
+          showUtilityModal('Ava prompt workspace', 'Prompt editing is routed through the agent command bar for safety. Ask Rex: <code>open wholesale.agent.md for review</code>, then approve the proposed patch.');
+          return;
+        }
+        if (label === 'view logs') {
+          showPage('activity-log');
+          toast({ type: 'info', title: 'Agent logs opened', desc: 'Activity Log is the current live-safe log surface.' });
+          return;
+        }
+        if (label === 'active') {
+          toast({ type: 'success', title: 'Ava is active', desc: 'Agent runtime is approval-first and ready for bridge commands.' });
+          return;
+        }
+      }
+
+      const link = event.target.closest('.side-link-stub');
+      if (!link) return;
+      const label = normalizeControlText(link.textContent);
+      if (label === 'view all') {
+        showPage('brain');
+      } else if (label === 'manage') {
+        showPage('integrations');
+      } else if (label === 'edit') {
+        showPage('settings');
+      } else if (label === 'edit prompt') {
+        showUtilityModal('Persona prompt', 'Ava persona edits stay approval-first. Use the command bar to draft a prompt change, then approve it before it touches <code>wholesale.agent.md</code>.');
+      }
+    });
+  }
+
+  function wireActivityLogControls() {
+    const page = getPageNode('activity-log');
+    if (!page || page.dataset.activityWired === 'true') return;
+    page.dataset.activityWired = 'true';
+    let tailTimer = null;
+
+    page.querySelector('.page-head-actions')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent);
+      const table = page.querySelector('[data-openclaw-activity-log="table"]');
+
+      if (label === 'export csv') {
+        exportTableLikeRows(table, '.alog-row:not(.head)', `pbk-activity-${new Date().toISOString().slice(0, 10)}.csv`);
+        return;
+      }
+
+      if (label === 'webhook') {
+        const base = normalizeOpenClawEndpoint(getOpenClawConfig().endpoint || DEFAULT_OPENCLAW_ENDPOINT);
+        showUtilityModal('Activity webhook', `Runtime events post to <code>${escapeHtml(base)}/events</code> when the bridge is connected. Calendar sync uses the n8n webhook stored in Render as <code>PBK_CALENDAR_SYNC_WEBHOOK</code>.`);
+        return;
+      }
+
+      if (label === 'live tail') {
+        if (tailTimer) {
+          clearInterval(tailTimer);
+          tailTimer = null;
+          button.classList.remove('active');
+          toast({ type: 'info', title: 'Live tail paused', desc: 'Activity log polling is stopped.' });
+          return;
+        }
+        button.classList.add('active');
+        const poll = async () => {
+          try {
+            const snapshot = await syncOpenClawState({ silent: true });
+            renderActivityLog(snapshot || PBK.state.openclawRuntime || {});
+          } catch (error) {
+            toast({ type: 'warning', title: 'Live tail waiting', desc: 'Bridge polling will retry automatically.' });
+          }
+        };
+        await poll();
+        tailTimer = setInterval(poll, 8000);
+        toast({ type: 'success', title: 'Live tail active', desc: 'Activity log is polling the bridge every 8 seconds.' });
+      }
+    });
+  }
+
+  function wireRecordingsControls() {
+    const page = getPageNode('recordings');
+    if (!page || page.dataset.recordingsWired === 'true') return;
+    page.dataset.recordingsWired = 'true';
+    const state = { playing: false, elapsed: 198, duration: 522, speed: 1 };
+    const speeds = [1, 1.25, 1.5, 2];
+
+    const paintScrubber = () => {
+      const pct = Math.max(0, Math.min(100, (state.elapsed / state.duration) * 100));
+      page.querySelector('.scrubber-fill')?.style.setProperty('width', `${pct}%`);
+      page.querySelector('.scrubber-thumb')?.style.setProperty('left', `${pct}%`);
+      const mins = Math.floor(state.elapsed / 60);
+      const secs = String(Math.floor(state.elapsed % 60)).padStart(2, '0');
+      const elapsed = page.querySelector('.t-elapsed');
+      if (elapsed) elapsed.textContent = `${mins}:${secs}`;
+    };
+
+    const exportActiveRecording = (format = 'txt') => {
+      const name = page.querySelector('.rec-item.active .who')?.textContent?.trim() || page.querySelector('.rec-player-head .who')?.textContent?.trim() || 'PBK recording';
+      const transcript = Array.from(page.querySelectorAll('.rec-line')).map((line) => line.textContent.replace(/\s+/g, ' ').trim()).join('\n');
+      downloadTextFile(`${name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pbk-recording'}.${format}`, transcript || `${name}\nNo transcript loaded.`, 'text/plain');
+      toast({ type: 'success', title: 'Recording export ready', desc: 'No audio URL is attached yet, so PBK exported the transcript package.' });
+    };
+
+    page.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent?.trim() ? button.textContent : button.title);
+
+      if (label === 'filter') {
+        const query = window.prompt('Filter recordings by lead, status, or note', 'verbal');
+        if (!query) return;
+        const needle = normalizeControlText(query);
+        const shown = filterItemsByText(Array.from(page.querySelectorAll('.rec-item')), (item) => normalizeControlText(item.textContent).includes(needle));
+        toast({ type: 'info', title: 'Recordings filtered', desc: `${shown} recordings visible.` });
+        return;
+      }
+
+      if (label === 'bulk export' || label === 'download mp3' || label === 'download') {
+        exportActiveRecording(label === 'download mp3' ? 'mp3.txt' : 'txt');
+        return;
+      }
+
+      if (label === 'retention policy') {
+        showUtilityModal('Recording retention', 'Current MVP policy: keep transcripts and call recordings for the selected Settings retention window, then retain summaries only. Persisted provider enforcement is a backend phase.');
+        return;
+      }
+
+      if (label === 'send to lead') {
+        const context = getLeadDetailContext();
+        showUtilityModal('Send recording package', `Draft an email to ${escapeHtml(context.leadName)} with the active recording recap attached. Live sending should stay approval-first until a seller-facing recording URL is available.`);
+        return;
+      }
+
+      if (button.classList.contains('pc-speed')) {
+        state.speed = speeds[(speeds.indexOf(state.speed) + 1) % speeds.length];
+        button.textContent = `${state.speed.toFixed(state.speed % 1 ? 2 : 1)}x`;
+        toast({ type: 'info', title: 'Playback speed updated', desc: `Speed set to ${button.textContent}.` });
+        return;
+      }
+
+      if (button.classList.contains('play')) {
+        state.playing = !state.playing;
+        button.classList.toggle('active', state.playing);
+        toast({ type: 'info', title: state.playing ? 'Playback started' : 'Playback paused', desc: 'Transcript scrubber is synced locally for demo playback.' });
+        return;
+      }
+
+      if (button.classList.contains('pc-btn')) {
+        const direction = normalizeControlText(button.title).includes('forward') ? 15 : -15;
+        state.elapsed = Math.max(0, Math.min(state.duration, state.elapsed + direction));
+        paintScrubber();
+      }
+    });
+  }
+
+  function wireSettingsPersistenceControls() {
+    const page = getPageNode('settings');
+    if (!page || page.dataset.settingsPersistWired === 'true') return;
+    page.dataset.settingsPersistWired = 'true';
+
+    const readDraft = () => parseJSONSafe(localStorage.getItem(PBK_UI_SETTINGS_KEY), {});
+    const writeDraft = (patch) => {
+      const next = { ...readDraft(), ...patch, updatedAt: new Date().toISOString() };
+      localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    };
+    const keyForRow = (row) => row?.querySelector('.setting-label')?.textContent?.replace(/\s+/g, ' ').trim();
+
+    page.querySelectorAll('.setting-row').forEach((row) => {
+      const key = keyForRow(row);
+      if (!key) return;
+      const draft = readDraft()[key];
+      const input = row.querySelector('input, select');
+      const toggle = row.querySelector('.toggle-sw');
+      if (input && draft?.value != null) input.value = draft.value;
+      if (toggle && draft?.enabled != null) toggle.classList.toggle('on', Boolean(draft.enabled));
+
+      input?.addEventListener('change', () => {
+        writeDraft({ [key]: { value: input.value } });
+        toast({ type: 'success', title: 'Setting saved locally', desc: `${key} is remembered on this machine.` });
+      });
+      toggle?.addEventListener('click', () => {
+        setTimeout(() => {
+          writeDraft({ [key]: { enabled: toggle.classList.contains('on') } });
+          toast({ type: 'success', title: 'Setting saved locally', desc: `${key} preference updated.` });
+        }, 0);
+      });
+    });
+
+    page.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button || button.closest('.dnc-list') || button.closest('[data-plugin="openclaw"]')) return;
+      const label = normalizeControlText(button.textContent);
+      if (label === '+ invite teammate') {
+        const email = window.prompt('Teammate email', 'acquisitions@pbk.capital');
+        if (!email) return;
+        writeDraft({ pendingInvite: email });
+        toast({ type: 'success', title: 'Invite staged', desc: `${email} is saved locally until Supabase auth is enabled.` });
+      }
+      if (label === '+ add another plugin') {
+        event.preventDefault();
+        event.stopPropagation();
+        const plugin = window.prompt('Plugin name', 'custom-mcp');
+        if (!plugin) return;
+        writeDraft({ pendingPlugin: plugin });
+        toast({ type: 'success', title: 'Plugin staged', desc: `${plugin} is saved locally for the next OpenClaw plugin pass.` });
+      }
+      if (label === 'edit' || label === 'edit script') {
+        const note = window.prompt('Draft setting update', label === 'edit script' ? 'Update TCPA consent script' : 'Update team role');
+        if (!note) return;
+        writeDraft({ lastSettingsDraft: note });
+        toast({ type: 'success', title: 'Draft saved locally', desc: 'Rex can turn this into a formal admin change when ready.' });
+      }
+    });
+  }
+
+  function wireLeadDetailFilters() {
+    const page = getPageNode('lead-detail');
+    if (!page || page.dataset.timelineWired === 'true') return;
+    page.dataset.timelineWired = 'true';
+    page.querySelector('.ld-timeline-head')?.addEventListener('click', (event) => {
+      const button = event.target.closest('.chip-btn');
+      if (!button) return;
+      setChipGroupActive(button);
+      const filter = textWithoutCounts(button.textContent);
+      const shown = filterItemsByText(Array.from(page.querySelectorAll('.tl-event')), (item) => {
+        if (filter === 'all') return true;
+        const channel = normalizeControlText(item.querySelector('.tl-chan')?.textContent || item.textContent);
+        if (filter === 'calls') return channel.includes('call');
+        if (filter === 'messages') return channel.includes('sms') || channel.includes('message') || channel.includes('email');
+        if (filter === 'system') return channel.includes('system');
+        return true;
+      });
+      toast({ type: 'info', title: 'Timeline filtered', desc: `${shown} events visible.` });
+    });
+  }
+
+  function wireFullscreenCallControls() {
+    const view = document.getElementById('fullscreenCall');
+    if (!view || view.dataset.controlsWired === 'true') return;
+    view.dataset.controlsWired = 'true';
+    view.querySelector('.fc-controls')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent);
+      if (label === 'transfer to manager') {
+        await handleLiveCallAction('transfer', getDashboardCallContext(), 'acquisitions manager');
+        return;
+      }
+      if (['take over', 'mute ai', 'mark dnc', 'end call'].includes(label)) {
+        await handleLiveCallAction(label, getDashboardCallContext());
+      }
+    });
+  }
+
+  function wireInboxFilterControls() {
+    const page = getPageNode('inbox');
+    if (!page || page.dataset.filterWired === 'true') return;
+    page.dataset.filterWired = 'true';
+
+    page.querySelector('.ib-channels')?.addEventListener('click', (event) => {
+      const button = event.target.closest('.chip-btn');
+      if (!button) return;
+      const filter = textWithoutCounts(button.textContent);
+      const shown = filterItemsByText(Array.from(page.querySelectorAll('.ib-item')), (item) => {
+        const text = normalizeControlText(item.textContent);
+        if (filter === 'all') return true;
+        if (filter === 'calls') return text.includes('call') || text.includes('voicemail') || text.includes('verbal');
+        if (filter === 'sms') return text.includes('sms') || text.includes('text') || text.includes('call after');
+        if (filter === 'email') return text.includes('contract') || text.includes('attorney') || text.includes('clause');
+        return true;
+      });
+      toast({ type: 'info', title: 'Inbox filtered', desc: `${shown} conversations visible.` });
+    });
+  }
+
+  function wireLeadBulkControls() {
+    const page = getPageNode('leads');
+    if (!page || page.dataset.bulkWired === 'true') return;
+    page.dataset.bulkWired = 'true';
+    page.addEventListener('click', (event) => {
+      if (event.target.closest('.checkbox')) setTimeout(updateBulkCount, 0);
+    });
+
+    page.querySelector('.bulk-bar')?.addEventListener('click', async (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent);
+      const rows = getSelectedLeadRows();
+      const leads = rows.map(getLeadRowPayload);
+
+      if (label === 'export') {
+        exportLeadRows(rows);
+        return;
+      }
+
+      if (label === 'tag') {
+        const tag = window.prompt('Tag selected leads', 'warm-reply');
+        if (!tag) return;
+        rows.forEach((row) => {
+          const tagCell = row.children[7];
+          if (!tagCell) return;
+          tagCell.insertAdjacentHTML('beforeend', ` <span class="tag absentee">${escapeHtml(tag)}</span>`);
+        });
+        toast({ type: 'success', title: 'Tag applied locally', desc: `${leads.length} leads now show ${tag}.` });
+        return;
+      }
+
+      if (label === 'add to dnc') {
+        for (const lead of leads) {
+          await postRuntimeEvent('dnc-add', {
+            phone: lead.phone,
+            name: lead.leadName,
+            reason: 'Bulk DNC action from Leads page.',
+            source: 'leads-bulk'
+          }, {
+            actionLabel: 'bulk DNC',
+            successTitle: 'DNC row queued',
+            successDesc: `${lead.leadName} was queued for DNC.`,
+            errorTitle: 'Bulk DNC failed'
+          });
+        }
+        return;
+      }
+
+      if (label === 'start campaign') {
+        await invokeRuntimeTool('createApproval', {
+          type: 'campaign',
+          leadName: 'Selected Leads',
+          address: `${leads.length} selected pipeline records`,
+          notes: `Start campaign for: ${leads.map((lead) => lead.leadName).join(', ')}`
+        }, {
+          actionLabel: 'campaign approvals',
+          successTitle: 'Campaign approval queued',
+          successDesc: `${leads.length} leads are waiting for approval before campaign launch.`,
+          errorTitle: 'Campaign approval failed'
+        });
+        return;
+      }
+
+      if (label === 'assign to ava' || label === 'hand to ai agent') {
+        await submitAgentCommand(`${label}: prioritize these selected leads and report back with next best action`, {
+          selectedLeads: leads
+        });
+      }
+    });
+  }
+
+  function wireAutomationsControls() {
+    const page = getPageNode('automations');
+    if (!page || page.dataset.automationsWired === 'true') return;
+    page.dataset.automationsWired = 'true';
+    const saveAutomationDraft = () => {
+      const inspector = page.querySelector('.auto-inspector');
+      const draft = {
+        triggerType: inspector?.querySelectorAll('select')[0]?.value || '',
+        table: inspector?.querySelector('input')?.value || '',
+        event: inspector?.querySelectorAll('select')[1]?.value || '',
+        filter: inspector?.querySelector('textarea')?.value || '',
+        active: inspector?.querySelectorAll('.toggle-sw')[0]?.classList.contains('on') || false,
+        logEveryRun: inspector?.querySelectorAll('.toggle-sw')[1]?.classList.contains('on') || false,
+        slackOnError: inspector?.querySelectorAll('.toggle-sw')[2]?.classList.contains('on') || false,
+        updatedAt: new Date().toISOString()
+      };
+      localStorage.setItem('pbk-automation-draft', JSON.stringify(draft));
+      return draft;
+    };
+
+    page.addEventListener('click', async (event) => {
+      const button = event.target.closest('button, .add-node');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent);
+      if (label === '+ new automation' || label === '+') {
+        showUtilityModal('New automation', 'New n8n-backed automations should be created from the active n8n workflow builder. This PBK canvas now saves inspector drafts locally so we can promote them safely later.');
+        return;
+      }
+      if (label === 'test trigger') {
+        const draft = saveAutomationDraft();
+        await invokeRuntimeTool('createApproval', {
+          type: 'automation-test',
+          leadName: 'Automation Trigger Test',
+          address: draft.table || 'workflow draft',
+          notes: `Test trigger requested for ${draft.triggerType} / ${draft.event}.`
+        }, {
+          actionLabel: 'automation tests',
+          successTitle: 'Automation test queued',
+          successDesc: 'The workflow test is queued through approval-first runtime.',
+          errorTitle: 'Automation test failed'
+        });
+        return;
+      }
+      if (label === 'save changes') {
+        saveAutomationDraft();
+        toast({ type: 'success', title: 'Automation draft saved', desc: 'Inspector values are saved locally for the next n8n sync pass.' });
+      }
+    });
+  }
+
+  function wireAnalyticsControls() {
+    const page = getPageNode('analytics');
+    if (!page || page.dataset.analyticsWired === 'true') return;
+    page.dataset.analyticsWired = 'true';
+    page.querySelector('.page-head-actions')?.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const label = normalizeControlText(button.textContent);
+      if (['7d', '30d', '90d', 'ytd'].includes(label)) {
+        setChipGroupActive(button);
+        localStorage.setItem('pbk-analytics-range', label);
+        toast({ type: 'info', title: 'Analytics range staged', desc: `${button.textContent.trim()} selected for the next bridge analytics pull.` });
+        return;
+      }
+      if (label === 'export csv') {
+        const rows = [['Metric', 'Value']];
+        page.querySelectorAll('.metric-card, .an-card, .stat').forEach((card) => {
+          const text = card.textContent.replace(/\s+/g, ' ').trim();
+          if (text) rows.push([text, '']);
+        });
+        downloadTextFile(`pbk-analytics-${localStorage.getItem('pbk-analytics-range') || '30d'}.csv`, rowsToCsv(rows), 'text/csv');
+        toast({ type: 'success', title: 'Analytics export ready', desc: 'Current analytics cards were exported.' });
+      }
+    });
+  }
+
+  function wireBrainApiButton() {
+    const page = getPageNode('brain');
+    if (!page || page.dataset.apiButtonWired === 'true') return;
+    page.dataset.apiButtonWired = 'true';
+    page.querySelector('.page-head-actions')?.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button || normalizeControlText(button.textContent) !== 'api') return;
+      const base = normalizeOpenClawEndpoint(getOpenClawConfig().endpoint || DEFAULT_OPENCLAW_ENDPOINT);
+      showUtilityModal('Brain API', `
+        <code>GET ${escapeHtml(base)}/health</code><br>
+        <code>POST ${escapeHtml(base)}/invoke</code> with <code>{ "tool": "getBrainState", "params": { "query": "..." } }</code><br>
+        <code>POST ${escapeHtml(base)}/invoke</code> with <code>{ "tool": "ingestResearchDoc", "params": { "title": "...", "summary": "..." } }</code>
+      `);
+    });
+  }
+
+  function wireIntegrationButtons() {
+    const page = getPageNode('integrations');
+    if (!page || page.dataset.integrationsWired === 'true') return;
+    page.dataset.integrationsWired = 'true';
+    page.addEventListener('click', async (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const card = button.closest('.int-card');
+      const provider = card?.querySelector('.int-name')?.textContent?.trim() || 'Provider';
+      const action = normalizeControlText(button.textContent);
+      const base = normalizeOpenClawEndpoint(getOpenClawConfig().endpoint || DEFAULT_OPENCLAW_ENDPOINT);
+
+      if (action === 'open n8n') {
+        window.open('https://probonokeyrealty1.app.n8n.cloud/', '_blank', 'noopener');
+        return;
+      }
+      if (action === 'health') {
+        window.open(`${base}/health`, '_blank', 'noopener');
+        return;
+      }
+      if (action === 'test ping') {
+        await invokeRuntimeTool('slackNotify', {
+          channel: '#alerts',
+          text: 'PBK integration test ping from Command Center.'
+        }, {
+          actionLabel: 'Slack test ping',
+          successTitle: 'Slack ping sent',
+          successDesc: 'The bridge accepted the Slack test request.',
+          errorTitle: 'Slack ping failed'
+        });
+        return;
+      }
+      if (action === 'test call') {
+        await invokeRuntimeTool('createApproval', {
+          type: 'test-call',
+          leadName: 'PBK Test Call',
+          address: 'Provider integration card',
+          notes: 'Telnyx test call requested from Integrations page. Approval required before dialing.'
+        }, {
+          actionLabel: 'Telnyx test call',
+          successTitle: 'Test call approval queued',
+          successDesc: 'No real call was fired without approval.',
+          errorTitle: 'Could not queue test call'
+        });
+        return;
+      }
+      showUtilityModal(`${provider} ${button.textContent.trim()}`, `This control is now routed to the provider action surface. For MVP safety, PBK opens provider dashboards or queues approval-first actions instead of writing credentials directly from the browser.`);
+    });
+  }
+
+  function wireNotificationFilters() {
+    const panel = document.getElementById('notifPanel');
+    if (!panel || panel.dataset.filtersWired === 'true') return;
+    panel.dataset.filtersWired = 'true';
+    panel.addEventListener('click', (event) => {
+      const button = event.target.closest('.np-tabs .chip-btn');
+      if (!button) return;
+      setChipGroupActive(button);
+      const filter = textWithoutCounts(button.textContent);
+      const shown = filterItemsByText(Array.from(panel.querySelectorAll('.np-item')), (item) => {
+        const text = normalizeControlText(item.textContent);
+        if (filter === 'all') return true;
+        if (filter === 'approvals') return text.includes('approval') || text.includes('approve') || text.includes('offer');
+        if (filter === 'calls') return text.includes('call') || text.includes('telnyx');
+        if (filter === 'system') return text.includes('system') || text.includes('sync') || text.includes('guardrail');
+        return true;
+      });
+      toast({ type: 'info', title: 'Notifications filtered', desc: `${shown} notifications visible.` });
+    });
+  }
+
+  function wireTagAndStatusFilters() {
+    if (document.body.dataset.tagFiltersWired === 'true') return;
+    document.body.dataset.tagFiltersWired = 'true';
+
+    document.addEventListener('click', (event) => {
+      const tag = event.target.closest('.tag, .status-chip');
+      if (!tag || tag.closest('.think-stream') || tag.closest('.alog-table')) return;
+      const page = tag.closest('.page');
+      if (!page) return;
+      const value = normalizeControlText(tag.textContent);
+      let shown = 0;
+
+      if (page.dataset.page === 'leads') {
+        shown = filterItemsByText(getLeadRows(), (row) => normalizeControlText(row.textContent).includes(value));
+        toast({ type: 'info', title: 'Lead tag filter applied', desc: `${shown} leads match "${tag.textContent.trim()}".` });
+        return;
+      }
+
+      if (page.dataset.page === 'brain') {
+        shown = filterItemsByText(Array.from(page.querySelectorAll('.insight-row, .lib-card')), (item) => normalizeControlText(item.textContent).includes(value));
+        toast({ type: 'info', title: 'Brain filtered', desc: `${shown} research cards match "${tag.textContent.trim()}".` });
+        return;
+      }
+
+      if (page.dataset.page === 'dashboard') {
+        shown = filterItemsByText(Array.from(page.querySelectorAll('.table-container tbody tr, .msg')), (item) => normalizeControlText(item.textContent).includes(value));
+        toast({ type: 'info', title: 'Dashboard filtered', desc: `${shown} visible items match "${tag.textContent.trim()}".` });
+      }
+    });
+  }
+
+  function wirePriorityOneControls() {
+    wireDashboardQuickControls();
+    wireAgentSideControls();
+    wireActivityLogControls();
+    wireRecordingsControls();
+    wireSettingsPersistenceControls();
+    wireLeadDetailFilters();
+    wireFullscreenCallControls();
+    wireInboxFilterControls();
+    wireLeadBulkControls();
+    wireAutomationsControls();
+    wireAnalyticsControls();
+    wireBrainApiButton();
+    wireIntegrationButtons();
+    wireNotificationFilters();
+    wireTagAndStatusFilters();
   }
 
   function appendBrainMessage(kind, content, citations = []) {
@@ -14043,6 +14785,7 @@
   wireDashboardRuntime();
   wireContractsRuntime();
   wireSettingsRuntime();
+  wirePriorityOneControls();
   mountAnalyzerExperience();
   syncCoreBindings();
   setInterval(syncCoreBindings, 60000);

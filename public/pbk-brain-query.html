@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PBK Local Brain Query</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080b10;
+        --card: #111823;
+        --line: #263243;
+        --text: #e8edf4;
+        --muted: #98a6b8;
+        --sky: #7dd3fc;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top left, rgba(125, 211, 252, 0.14), transparent 34%), var(--bg);
+        color: var(--text);
+        font: 15px/1.5 "Geist", "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(980px, calc(100vw - 28px));
+        margin: 0 auto;
+        padding: 42px 0;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font: 650 40px/1.02 "Fraunces", Georgia, serif;
+        letter-spacing: -0.03em;
+      }
+      p { color: var(--muted); }
+      .panel, .result {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: color-mix(in srgb, var(--card) 92%, transparent);
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.25);
+      }
+      .panel {
+        display: grid;
+        gap: 14px;
+        padding: 18px;
+        margin: 28px 0;
+      }
+      input, textarea, button {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: #0b1119;
+        color: var(--text);
+        padding: 12px 14px;
+        font: inherit;
+      }
+      textarea { min-height: 90px; resize: vertical; }
+      button {
+        width: fit-content;
+        background: linear-gradient(135deg, #7dd3fc, #d6f3ff);
+        color: #06101a;
+        border: 0;
+        cursor: pointer;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .result {
+        padding: 16px;
+        margin: 12px 0;
+        overflow-wrap: anywhere;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      code, pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: #c7f0ff;
+      }
+      @media (max-width: 720px) {
+        main { width: min(100vw - 20px, 980px); padding: 24px 0; }
+        h1 { font-size: clamp(30px, 10vw, 40px); }
+        button { width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PBK Local Brain</h1>
+      <p>Load <code>.pbk-local/brain/knowledge-units.json</code>, ask a question, and search locally in this browser. No network calls.</p>
+      <section class="panel">
+        <label>
+          Knowledge base JSON
+          <input id="file" type="file" accept="application/json,.json" />
+        </label>
+        <label>
+          Question
+          <textarea id="query" placeholder="Example: What is the final formula for flip ROI?"></textarea>
+        </label>
+        <button id="run" type="button">Search Brain</button>
+        <p id="status">No brain loaded yet.</p>
+      </section>
+      <section id="results"></section>
+    </main>
+    <script>
+      const dims = 384;
+      const stopwords = new Set('a an and are as at be but by for from has have i in is it its of on or our that the this to was we with you your'.split(' '));
+      let units = [];
+
+      document.querySelector('#file').addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        units = JSON.parse(await file.text());
+        document.querySelector('#status').textContent = `Loaded ${units.length.toLocaleString()} PBK knowledge units.`;
+      });
+
+      document.querySelector('#run').addEventListener('click', () => {
+        const query = document.querySelector('#query').value.trim();
+        if (!units.length || !query) return;
+        const vector = embed(query);
+        const terms = tokenize(query);
+        const results = units
+          .map((unit) => ({ unit, score: hybridScore(unit, query, terms, vector) }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 5);
+        document.querySelector('#results').innerHTML = results.map(renderResult).join('');
+      });
+
+      function renderResult({ unit, score }, index) {
+        return `
+          <article class="result">
+            <div class="meta">
+              <span>#${index + 1}</span>
+              <span>${escapeHtml(unit.topic)}</span>
+              <span>${score.toFixed(3)}</span>
+              <span>${escapeHtml(unit.status || '')}</span>
+            </div>
+            <h2>${escapeHtml(unit.source?.conversationTitle || unit.topic)}</h2>
+            <p>${escapeHtml(clip(unit.content, 1100))}</p>
+            ${unit.rationale ? `<p><strong>Rationale:</strong> ${escapeHtml(unit.rationale)}</p>` : ''}
+            ${unit.code_snippet ? `<pre><code>${escapeHtml(clip(unit.code_snippet, 1200))}</code></pre>` : ''}
+          </article>`;
+      }
+
+      function embed(text) {
+        const vector = new Array(dims).fill(0);
+        const tokens = tokenize(text);
+        const features = [];
+        tokens.forEach((token, index) => {
+          features.push(token);
+          if (tokens[index + 1]) features.push(`${token}_${tokens[index + 1]}`);
+        });
+        features.forEach((feature) => {
+          const index = hash(feature) % dims;
+          const sign = hash(`sign:${feature}`) % 2 === 0 ? 1 : -1;
+          vector[index] += sign;
+        });
+        const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+        return norm ? vector.map((value) => value / norm) : vector;
+      }
+
+      function hybridScore(unit, query, terms, vector) {
+        return (cosine(vector, unit.embedding || []) * 0.24) + (lexicalScore(unit, query, terms) * 0.76) + intentBoost(unit, terms);
+      }
+
+      function lexicalScore(unit, query, terms) {
+        const unique = [...new Set(terms.filter((term) => term.length > 2))];
+        if (!unique.length) return 0;
+        const searchable = normalize([
+          unit.topic,
+          unit.status,
+          unit.context,
+          unit.content,
+          unit.rationale,
+          unit.code_snippet,
+        ].filter(Boolean).join('\n'));
+        const topic = normalize(unit.topic || '');
+        let matched = 0;
+        let score = 0;
+        unique.forEach((term) => {
+          const count = (searchable.match(new RegExp(`\\b${escapeRegExp(term)}\\b`, 'g')) || []).length;
+          if (count > 0) {
+            matched += 1;
+            score += Math.min(0.2, 0.055 + Math.log1p(count) * 0.035);
+          }
+          if (topic.includes(term)) score += 0.08;
+        });
+        score += (matched / unique.length) * 0.44;
+        const phrase = normalize(query).trim();
+        if (phrase.length > 4 && searchable.includes(phrase)) score += 0.35;
+        for (let i = 0; i < unique.length - 1; i += 1) {
+          if (searchable.includes(`${unique[i]} ${unique[i + 1]}`)) score += 0.14;
+        }
+        if (unique.includes('formula') && unit.code_snippet) score += 0.26;
+        const code = normalize(unit.code_snippet || '');
+        if (unique.includes('roi') && unique.includes('flip') && code.includes('flip roi')) score += 0.38;
+        if (unique.includes('formula') && unique.includes('roi') && unique.includes('flip') && code.includes('gross profit') && code.includes('total cost')) score += 0.44;
+        if (matched >= Math.min(3, unique.length)) score += 0.12;
+        return Math.min(1, score);
+      }
+
+      function intentBoost(unit, terms) {
+        const unique = new Set(terms);
+        const code = normalize(unit.code_snippet || '');
+        let boost = 0;
+        if (unique.has('formula') && unit.source?.derivedType === 'formula-code') boost += 0.16;
+        if (unique.has('flip') && unique.has('roi') && code.includes('gross profit') && code.includes('total cost')) boost += 0.24;
+        if (unique.has('monthly') && unique.has('payment') && code.includes('monthly') && code.includes('price')) boost += 0.26;
+        return boost;
+      }
+
+      function tokenize(text) {
+        return normalize(text)
+          .split(/[^a-z0-9.$%]+/g)
+          .filter((token) => token.length > 1 && !stopwords.has(token));
+      }
+
+      function normalize(text) {
+        return String(text || '')
+          .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+          .toLowerCase()
+          .replace(/[_-]+/g, ' ')
+          .replace(/[`"'’‘“”()[\]{}<>]/g, ' ')
+          .replace(/\s+/g, ' ');
+      }
+
+      function escapeRegExp(value) {
+        return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+
+      function hash(value) {
+        let h = 2166136261;
+        for (let i = 0; i < value.length; i += 1) {
+          h ^= value.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+      }
+
+      function cosine(left, right) {
+        let dot = 0;
+        let l = 0;
+        let r = 0;
+        for (let i = 0; i < Math.min(left.length, right.length); i += 1) {
+          dot += left[i] * right[i];
+          l += left[i] * left[i];
+          r += right[i] * right[i];
+        }
+        return l && r ? dot / (Math.sqrt(l) * Math.sqrt(r)) : 0;
+      }
+
+      function clip(value, max) {
+        const text = String(value || '');
+        return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+      }
+
+      function escapeHtml(value) {
+        return String(value || '').replace(/[&<>"']/g, (char) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        }[char]));
+      }
+    </script>
+  </body>
+</html>

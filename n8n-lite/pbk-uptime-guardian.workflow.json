@@ -1,0 +1,229 @@
+{
+  "name": "PBK Uptime Guardian",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-every-minute",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/health",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "check-bridge",
+      "name": "Check Bridge Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        430,
+        180
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "https://pbkcommandcenter.netlify.app/",
+        "requestMethod": "HEAD",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "check-netlify",
+      "name": "Check Netlify Frontend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        430,
+        340
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const bridge = $items('Check Bridge Health', 0, 0)[0]?.json || {};\nconst netlify = $items('Check Netlify Frontend', 0, 0)[0]?.json || {};\nconst bridgeOk = !bridge.error && (bridge.ok === true || bridge.status === 'ok' || bridge.revision || bridge.providers);\nconst netlifyOk = !netlify.error;\nreturn [{ json: { ok: bridgeOk && netlifyOk, bridgeOk, netlifyOk, bridgeRevision: bridge.revision || null, checkedAt: new Date().toISOString(), bridge, netlify } }];"
+      },
+      "id": "summarize-health",
+      "name": "Summarize Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        690,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.ok}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "health-ok",
+      "name": "All Healthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        930,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.render.com/v1/services/{{$env.PBK_RENDER_SERVICE_ID}}/restart",
+        "requestMethod": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.PBK_RENDER_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "restart-render",
+      "name": "Restart Render Bridge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        380
+      ],
+      "continueOnFail": true,
+      "disabled": true,
+      "notes": "Disabled by default. Enable only after PBK_RENDER_SERVICE_ID and PBK_RENDER_API_KEY are set in n8n."
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_SLACK_ALERT_WEBHOOK}}",
+        "requestMethod": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"text\":\"PBK Uptime Guardian alert: health failed at \" + $json.checkedAt + \". bridgeOk=\" + $json.bridgeOk + \", netlifyOk=\" + $json.netlifyOk + \". Render restart node is disabled until envs are confirmed.\"}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "slack-alert",
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        180
+      ],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Check Bridge Health",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Netlify Frontend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Bridge Health": {
+      "main": [
+        [
+          {
+            "node": "Summarize Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Netlify Frontend": {
+      "main": [
+        [
+          {
+            "node": "Summarize Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Health": {
+      "main": [
+        [
+          {
+            "node": "All Healthy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Healthy?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Restart Render Bridge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "pbk-uptime-guardian-v1"
+}

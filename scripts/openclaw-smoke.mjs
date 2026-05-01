@@ -158,6 +158,74 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const brainIngest = await fetch(`${BASE_URL}/brain/ingest`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        kind: 'note',
+        topic: 'Smoke Test Memory',
+        title: 'Smoke Test Brain Ingest',
+        source: 'bridge-smoke',
+        excerpt: 'Smoke brain memory for recording and workflow endpoint coverage.',
+        tags: ['smoke', 'brain'],
+      }),
+    }).then((response) => response.json());
+    const brainQuery = await fetch(`${BASE_URL}/brain/query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'Smoke Test Brain Ingest recording workflow',
+      }),
+    }).then((response) => response.json());
+    const workflowSave = await fetch(`${BASE_URL}/api/workflows`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        workflow: {
+          name: 'PBK Smoke Workflow',
+          nodes: [],
+          connections: {},
+          settings: { timezone: 'America/New_York' },
+          tags: ['smoke'],
+        },
+      }),
+    }).then((response) => response.json());
+    const workflows = await fetch(`${BASE_URL}/api/workflows`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const recordingSave = await fetch(`${BASE_URL}/api/recordings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        messageId: 'smoke-recording-msg-1',
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        storagePath: 'smoke/smoke-recording-msg-1.mp3',
+        contentType: 'audio/mpeg',
+        durationSeconds: 42,
+      }),
+    }).then((response) => response.json());
+    const recordingLookupResponse = await fetch(`${BASE_URL}/api/recordings/smoke-recording-msg-1`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    });
+    const recordingLookup = await recordingLookupResponse.json();
     const sellerDocs = await fetch(`${BASE_URL}/api/send-seller-docs`, {
       method: 'POST',
       headers: {
@@ -299,6 +367,13 @@ async function main() {
     assert(firstApprovalDecision?.ok === true, 'First approval callback did not succeed.');
     assert(secondApprovalDecision?.replayed === true, 'Second identical approval callback was not treated as a replay.');
     assert(invoke?.ok === true, 'Authenticated /invoke getBrainState did not succeed.');
+    assert(brainIngest?.ok === true, 'Brain ingest endpoint did not succeed.');
+    assert(Array.isArray(brainQuery?.brainDocs), 'Brain query endpoint did not return brainDocs.');
+    assert(workflowSave?.ok === true, 'Workflow persistence endpoint did not save a draft.');
+    assert(Array.isArray(workflows?.workflows), 'Workflow list endpoint did not return workflows.');
+    assert(recordingSave?.ok === true, 'Recording metadata endpoint did not save.');
+    assert([200, 501].includes(recordingLookupResponse.status), `Recording signed URL endpoint returned ${recordingLookupResponse.status}.`);
+    assert(recordingLookup?.messageId === 'smoke-recording-msg-1', 'Recording signed URL endpoint did not echo the messageId.');
     assert(sellerDocs?.ok === true, 'Seller document endpoint did not succeed.');
     assert(typeof browserResearch?.answer === 'string', 'Browser research endpoint did not return a response.');
     assert(adminRequest?.ok === true, 'Admin request endpoint did not succeed.');

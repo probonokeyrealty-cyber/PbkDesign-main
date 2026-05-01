@@ -10707,8 +10707,13 @@
   };
 
   const OPENCLAW_POLL_INTERVAL = 12000;
+  const OPENCLAW_HIDDEN_POLL_INTERVAL = 30000;
+  const OPENCLAW_MAX_RETRY_INTERVAL = 60000;
+  const OPENCLAW_STALE_GRACE_MS = 120000;
   let openClawPollTimer = null;
   let openClawPollFailures = 0;
+  let openClawPollInFlight = false;
+  let openClawLastConnectedAt = 0;
 
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
@@ -11488,44 +11493,121 @@
     return snapshot;
   }
 
+  function getOpenClawLastGoodAt(config = getOpenClawConfig()) {
+    return Math.max(openClawLastConnectedAt || 0, Number(config.lastCheckedAt || 0));
+  }
+
+  function getOpenClawPollDelay() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return OPENCLAW_HIDDEN_POLL_INTERVAL;
+    if (typeof document !== 'undefined' && document.hidden) return OPENCLAW_HIDDEN_POLL_INTERVAL;
+    if (!openClawPollFailures) return OPENCLAW_POLL_INTERVAL;
+    return Math.min(
+      OPENCLAW_MAX_RETRY_INTERVAL,
+      Math.round(OPENCLAW_POLL_INTERVAL * Math.pow(1.6, openClawPollFailures))
+    );
+  }
+
+  function setOpenClawReconnecting(error) {
+    const current = getOpenClawConfig();
+    const lastGoodAt = getOpenClawLastGoodAt(current);
+    const hasFreshSnapshot = lastGoodAt > 0 && Date.now() - lastGoodAt < OPENCLAW_STALE_GRACE_MS;
+    const shouldMarkDown = openClawPollFailures >= 6 && !hasFreshSnapshot;
+    const lastGoodCopy = lastGoodAt ? ` Last live sync ${formatRelativeTime(lastGoodAt)}.` : '';
+    const nextStatus = shouldMarkDown
+      ? 'error'
+      : current.status === 'connected'
+        ? 'connected'
+        : 'saved';
+    const next = saveOpenClawConfig({
+      ...current,
+      status: nextStatus,
+      lastMessage: shouldMarkDown
+        ? `Bridge unreachable after repeated retries. PBK is still retrying in the background.${lastGoodCopy}`
+        : `Reconnecting to the bridge.${lastGoodCopy}`,
+      lastCheckedAt: current.lastCheckedAt || lastGoodAt || Date.now()
+    });
+    reflectOpenClawUI(next);
+    if (shouldMarkDown) PBK.events.emit('openclaw:status', next);
+    console.warn('OpenClaw runtime sync retrying', error);
+  }
+
   function stopOpenClawPolling() {
     if (openClawPollTimer) {
-      clearInterval(openClawPollTimer);
+      clearTimeout(openClawPollTimer);
       openClawPollTimer = null;
     }
   }
 
-  function startOpenClawPolling({ immediate = true } = {}) {
-    if (!PBK.openclaw.isConfigured() || openClawPollTimer) return;
+  function scheduleOpenClawPoll(delay = getOpenClawPollDelay()) {
+    if (!PBK.openclaw.isConfigured()) {
+      stopOpenClawPolling();
+      return;
+    }
+    stopOpenClawPolling();
+    openClawPollTimer = setTimeout(() => {
+      runOpenClawPoll({ silent: true }).catch((error) => {
+        console.error('OpenClaw scheduled poll failed', error);
+      });
+    }, delay);
+  }
 
+  async function runOpenClawPoll({ silent = true } = {}) {
+    if (openClawPollInFlight || !PBK.openclaw.isConfigured()) return null;
+    openClawPollInFlight = true;
+    try {
+      const snapshot = await syncOpenClawState({ silent });
+      openClawLastConnectedAt = Date.now();
+      openClawPollFailures = 0;
+      return snapshot;
+    } catch (error) {
+      openClawPollFailures += 1;
+      setOpenClawReconnecting(error);
+      return null;
+    } finally {
+      openClawPollInFlight = false;
+      if (PBK.openclaw.isConfigured()) scheduleOpenClawPoll();
+    }
+  }
+
+  function startOpenClawPolling({ immediate = true } = {}) {
+    if (!PBK.openclaw.isConfigured()) return;
     if (immediate) {
-      syncOpenClawState({ silent: true }).catch((error) => {
+      runOpenClawPoll({ silent: true }).catch((error) => {
         console.error('Initial OpenClaw state sync failed', error);
       });
+      return;
     }
-
-    openClawPollTimer = setInterval(async () => {
-      try {
-        await syncOpenClawState({ silent: true });
-      } catch (error) {
-        openClawPollFailures += 1;
-        console.error('OpenClaw polling failed', error);
-        if (openClawPollFailures >= 2) {
-          stopOpenClawPolling();
-          const failed = saveOpenClawConfig({
-            ...getOpenClawConfig(),
-            status: 'error',
-            lastMessage: 'Live sync lost. Check the OpenClaw bridge, then reconnect.'
-          });
-          reflectOpenClawUI(failed);
-          PBK.events.emit('openclaw:status', failed);
-        }
-      }
-    }, OPENCLAW_POLL_INTERVAL);
+    scheduleOpenClawPoll();
   }
 
   PBK.openclaw.startPolling = startOpenClawPolling;
   PBK.openclaw.stopPolling = stopOpenClawPolling;
+
+  window.addEventListener('online', () => {
+    openClawPollFailures = 0;
+    startOpenClawPolling({ immediate: true });
+  });
+
+  window.addEventListener('offline', () => {
+    openClawPollFailures += 1;
+    setOpenClawReconnecting(new Error('Browser is offline.'));
+    scheduleOpenClawPoll(OPENCLAW_HIDDEN_POLL_INTERVAL);
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!PBK.openclaw.isConfigured()) return;
+    if (document.hidden) {
+      scheduleOpenClawPoll(OPENCLAW_HIDDEN_POLL_INTERVAL);
+      return;
+    }
+    startOpenClawPolling({ immediate: true });
+  });
+
+  window.addEventListener('storage', (event) => {
+    if (event.key !== OPENCLAW_STORAGE_KEY) return;
+    openClawPollFailures = 0;
+    startOpenClawPolling({ immediate: true });
+  });
 
   async function handleApprovalAction(button, card) {
     const approvalId = card.dataset.approvalId;

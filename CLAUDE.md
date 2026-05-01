@@ -8,7 +8,7 @@
 ### UI/UX Constraints
 - Extend, do not replace.
 - Never redesign the overall PBK Command Center.
-- Read `DESIGN.md` before making frontend or UI changes.
+- Read `DESIGN.md` and `PBK_DESIGN.md` before making frontend or UI changes.
 - All new features must reuse the existing design language:
   - existing CSS variables and color system
   - Fraunces, Geist, and JetBrains Mono typography
@@ -19,9 +19,10 @@
 - Small changes are expected and encouraged, as long as they are implemented inside the existing PBK command-center language.
 
 ### Design Source Of Truth
-- Treat `DESIGN.md` and the GitHub repo itself as the source of truth for PBK visual direction.
+- Treat `DESIGN.md`, `PBK_DESIGN.md`, and the GitHub repo itself as the source of truth for PBK visual direction.
 - Before changing PBK UI, review and align to these in-repo design references:
   - `DESIGN.md`
+  - `PBK_DESIGN.md`
   - `index.html`
   - `index.before-figma.html`
   - `public/legacy/PBK_Command_Center v5.html`
@@ -57,3 +58,8 @@
 - Prefer shared bridge-backed runtime adapters over duplicate client logic.
 - Keep analyzer math and operational state in the bridge.
 - Any new ops feature must work in both the legacy engine and the React shell unless explicitly deferred.
+
+### Memory Scope
+- Supermemory or any external memory layer must be scoped only to PBK Wholesale Paradise.
+- Do not store general coding work, personal assistant memory, or non-PBK project memory in PBK namespaces.
+- Store anonymized summaries, patterns, and lessons. Do not store seller contact info, exact addresses, filled contracts, API keys, webhook URLs, or DocuSign payloads.

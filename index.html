@@ -8298,6 +8298,9 @@
     .ld-info,
     .ld-details,
     .ld-actions,
+    .qcard-actions,
+    [data-page="dashboard"] .call-controls,
+    [data-page="analyzer"] .analyzer-head-actions,
     .ld-card,
     .ld-timeline-head,
     .tl-event {
@@ -8317,6 +8320,9 @@
     .calls-grid,
     .lc-head,
     .lc-ctrls,
+    .qcard-actions,
+    [data-page="dashboard"] .call-controls,
+    [data-page="analyzer"] .analyzer-head-actions,
     .pipeline-stages,
     .chart-panel h4,
     .setting-ctrl,
@@ -8362,9 +8368,13 @@
     .compose-channels,
     .lc-ctrls,
     .ld-actions,
+    .qcard-actions,
+    [data-page="dashboard"] .call-controls,
+    [data-page="analyzer"] .analyzer-head-actions,
     .page-head-actions {
       display: flex !important;
-      gap: var(--s-2) !important;
+      gap: 12px !important;
+      align-items: stretch !important;
     }
 
     .convo-actions .chip-btn,
@@ -8373,6 +8383,9 @@
     .bulk-bar .btn,
     .lc-ctrls .btn,
     .ld-actions .btn,
+    .qcard-actions .btn,
+    [data-page="dashboard"] .call-controls .btn,
+    [data-page="analyzer"] .analyzer-head-actions .btn,
     .page-head-actions .btn,
     .page-head-actions .chip-btn,
     .upload-zone .btn,
@@ -8385,6 +8398,20 @@
       white-space: normal !important;
       overflow-wrap: anywhere !important;
       text-align: center !important;
+    }
+
+    .qcard-actions,
+    [data-page="dashboard"] .call-controls,
+    .ld-actions {
+      flex-direction: column !important;
+      width: 100% !important;
+    }
+
+    .qcard-actions .btn,
+    [data-page="dashboard"] .call-controls .btn,
+    .ld-actions .btn {
+      min-height: 44px !important;
+      padding-block: 12px !important;
     }
 
     .upload-zone {
@@ -9679,6 +9706,35 @@
     if (!inputs) return;
     const result = computeAnalysis(inputs);
     renderAnalysis(result);
+    const deal = normalizeAnalyzerRuntimeDeal({
+      address: inputs.address,
+      type: 'house',
+      contact: 'owner',
+      beds: inputs.beds,
+      baths: inputs.baths,
+      sqft: inputs.sqft,
+      year: inputs.year,
+      arv: result.arv,
+      mao60: result.walkAway,
+      maoRBP: result.maoRbp,
+      offer: result.anchor || result.walkAway,
+      agreedPrice: result.walkAway,
+      fee: result.assignmentFee,
+      repairs: { mid: result.repairs },
+      selectedPath: 'cash',
+      timeline: 'as soon as title clears',
+      source: 'legacy-analyzer'
+    }, result);
+    PBK.state.analyzer = { deal, activeTab: 'analyzer', analyzeStatus: 'Local analyzer complete' };
+    try {
+      localStorage.setItem(ANALYZER_STORAGE_KEY, JSON.stringify(deal));
+    } catch (error) {
+      console.warn('Could not persist analyzer snapshot', error);
+    }
+    PBK.events.emit('analyzer:state', PBK.state.analyzer);
+    syncAnalyzerFrame(false);
+    renderAnalyzerFounderOps();
+    renderContractsExperience();
     if (showToast) {
       toast({
         type: result.walkAway > 0 ? 'success' : 'warning',
@@ -9686,6 +9742,7 @@
         desc: `ARV ${fmt(result.arv)} — MAO ${fmt(result.walkAway)} — profit ${fmt(result.estProfit)}`
       });
     }
+    return { inputs, result, deal };
   }
   window.runAnalyzer = runAnalyzer;
 
@@ -10033,6 +10090,23 @@
       [data-page="analyzer"] .analyzer-frame-wrap,
       [data-page="analyzer"] #pbkAnalyzerFrame {
         min-height: 70vh;
+      }
+    }
+    @media (max-width: 720px) {
+      [data-page="analyzer"] .analyzer-bridge-shell {
+        padding: var(--s-3);
+      }
+      [data-page="analyzer"] .analyzer-bridge-head {
+        padding: var(--s-4);
+      }
+      [data-page="analyzer"] .analyzer-head-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+      [data-page="analyzer"] .analyzer-head-actions .btn {
+        width: 100%;
+        min-height: 44px;
+        justify-content: center;
       }
     }
   `;
@@ -14013,6 +14087,137 @@
     return parseJSONSafe(localStorage.getItem(ANALYZER_STORAGE_KEY), null);
   }
 
+  function normalizeAnalyzerRuntimeDeal(deal = {}, result = null) {
+    const repairsMid = num(deal.repairs?.mid ?? deal.repairsMid ?? deal.repairs ?? result?.repairs ?? 0);
+    const mao = num(deal.mao60 ?? deal.mao ?? result?.walkAway ?? result?.maoCash70 ?? 0);
+    const offer = num(deal.offer ?? deal.agreedPrice ?? result?.anchor ?? result?.targetOffer ?? mao);
+    const fee = num(deal.fee ?? deal.assignmentFee ?? result?.assignmentFee ?? 10000);
+    return {
+      ...deal,
+      address: String(deal.address || '').trim(),
+      type: deal.type || 'house',
+      contact: deal.contact || 'owner',
+      selectedPath: deal.selectedPath || 'cash',
+      arv: num(deal.arv ?? result?.arv ?? 0),
+      mao60: mao,
+      maoRBP: num(deal.maoRBP ?? result?.maoRbp ?? mao),
+      offer,
+      agreedPrice: num(deal.agreedPrice ?? offer),
+      fee,
+      repairs: {
+        ...(typeof deal.repairs === 'object' && deal.repairs ? deal.repairs : {}),
+        mid: repairsMid
+      },
+      timeline: deal.timeline || 'as soon as title clears',
+      updatedAt: deal.updatedAt || new Date().toISOString()
+    };
+  }
+
+  function getCurrentAnalyzerRuntimeSnapshot() {
+    const frame = getAnalyzerFrame();
+    const payload =
+      getAnalyzerFrameApi(frame)?.getState?.() ||
+      PBK.state.analyzer ||
+      { deal: getStoredAnalyzerDeal() || {} };
+    const deal = normalizeAnalyzerRuntimeDeal(payload?.deal || {});
+    return {
+      ...payload,
+      deal,
+      activeTab: payload?.activeTab || 'analyzer'
+    };
+  }
+
+  function persistAnalyzerRuntimeSnapshot(snapshot) {
+    if (!snapshot?.deal) return snapshot;
+    const deal = normalizeAnalyzerRuntimeDeal(snapshot.deal);
+    const next = {
+      ...snapshot,
+      deal,
+      activeTab: snapshot.activeTab || 'analyzer'
+    };
+    PBK.state.analyzer = next;
+    try {
+      localStorage.setItem(ANALYZER_STORAGE_KEY, JSON.stringify(deal));
+    } catch (error) {
+      console.warn('Could not persist analyzer snapshot', error);
+    }
+    PBK.events.emit('analyzer:state', next);
+    renderDashboardFounderOps();
+    renderAnalyzerFounderOps();
+    renderContractsExperience();
+    return next;
+  }
+
+  async function saveAnalyzerSnapshotToLead(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
+    const next = persistAnalyzerRuntimeSnapshot(snapshot);
+    const deal = next?.deal || {};
+    if (!deal.address) {
+      toast({
+        type: 'warning',
+        title: 'Address needed first',
+        desc: 'Enter or sync a property address before saving this analyzer deal to the lead pipeline.'
+      });
+      return null;
+    }
+
+    return postRuntimeEvent('lead-intake', {
+      source: 'analyzer',
+      seller: {
+        name: deal.sellerName || 'Analyzer Lead',
+        phone: deal.sellerPhone || '',
+        email: deal.sellerEmail || ''
+      },
+      property: {
+        address: deal.address,
+        type: deal.type || 'house',
+        beds: deal.beds,
+        baths: deal.baths,
+        sqft: deal.sqft,
+        year: deal.year
+      },
+      analyzer: {
+        arv: deal.arv,
+        mao: deal.mao60,
+        targetOffer: deal.offer,
+        agreedPrice: deal.agreedPrice,
+        repairsMid: deal.repairs?.mid || 0,
+        assignmentFee: deal.fee,
+        selectedPath: deal.selectedPath
+      },
+      tags: ['analyzer', 'saved-analysis']
+    }, {
+      actionLabel: 'analyzer lead saves',
+      successTitle: 'Analyzer saved to lead',
+      successDesc: `${deal.address} was saved into the runtime pipeline.`,
+      errorTitle: 'Could not save analyzer deal'
+    });
+  }
+
+  async function sendAnalyzerSnapshotToAgent(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
+    const next = persistAnalyzerRuntimeSnapshot(snapshot);
+    const deal = next?.deal || {};
+    if (!deal.address) {
+      toast({
+        type: 'warning',
+        title: 'Address needed first',
+        desc: 'Enter or sync a property address before sending analyzer numbers to Ava.'
+      });
+      return null;
+    }
+
+    return invokeRuntimeTool('updateCRM', {
+      target: deal.address,
+      leadId: deal.leadId || deal.address,
+      message: `Analyzer snapshot ready for Ava: ${deal.address} - ARV ${fmt(deal.arv)} - MAO ${fmt(deal.mao60)} - target ${fmt(deal.offer)} - path ${deal.selectedPath || 'cash'}.`,
+      deal
+    }, {
+      actionLabel: 'Ava analyzer handoff',
+      successTitle: 'Analyzer sent to Ava',
+      successDesc: 'Ava can now use the latest ARV, MAO, offer, repair, and path numbers.',
+      errorTitle: 'Could not send analyzer snapshot'
+    });
+  }
+
   function getVisibleAnalyzerFrame() {
     return document.getElementById('pbkAnalyzerFrame');
   }
@@ -14727,10 +14932,8 @@
   function reflectAnalyzerSnapshot(payload) {
     if (!payload?.deal) return;
 
-    PBK.state.analyzer = payload;
-    PBK.events.emit('analyzer:state', payload);
-
-    const deal = payload.deal;
+    const normalized = persistAnalyzerRuntimeSnapshot(payload);
+    const deal = normalized.deal;
     const liveDealMath = document.querySelector('.live-call .deal-math');
     if (liveDealMath) {
       const rows = liveDealMath.querySelectorAll('.deal-row');
@@ -14818,6 +15021,8 @@
           </div>
           <div class="analyzer-head-actions">
             <button class="btn btn-ghost" type="button" data-analyzer-action="sync">Sync latest deal</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="save-lead">Save to lead</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="send-agent">Send to Agent</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="open">Open full analyzer</button>
             <button class="btn btn-primary" type="button" data-analyzer-action="openclaw">Ask OpenClaw to analyze</button>
           </div>
@@ -14867,50 +15072,47 @@
       if (!action) return;
 
       if (action === 'sync') {
+        const snapshot = persistAnalyzerRuntimeSnapshot(getCurrentAnalyzerRuntimeSnapshot());
         syncAnalyzerFrame(true);
+        if (snapshot?.deal?.address) {
+          setAnalyzerRuntimeMeta(`Latest analyzer state is synced for ${snapshot.deal.address}.`);
+        }
       }
 
       if (action === 'open') {
         window.open('/analyzer.html', '_blank', 'noopener');
       }
 
+      if (action === 'save-lead') {
+        await saveAnalyzerSnapshotToLead();
+      }
+
+      if (action === 'send-agent') {
+        await sendAnalyzerSnapshotToAgent();
+      }
+
       if (action === 'openclaw') {
-        try {
-          const frame = getAnalyzerFrame();
-          const payload =
-            getAnalyzerFrameApi(frame)?.getState?.() ||
-            PBK.state.analyzer ||
-            { deal: getStoredAnalyzerDeal() || {} };
-          const address = payload?.deal?.address || '';
+        const payload = persistAnalyzerRuntimeSnapshot(getCurrentAnalyzerRuntimeSnapshot());
+        const address = payload?.deal?.address || '';
 
-          if (!address) {
-            toast({
-              type: 'warning',
-              title: 'Address needed first',
-              desc: 'Open the analyzer, enter a property address, then ask OpenClaw to run the remote tool.'
-            });
-            return;
-          }
-
-          const result = await PBK.openclaw.invoke('analyzeDeal', {
-            address,
-            deal: payload.deal || {}
-          });
-
+        if (!address) {
           toast({
-            type: 'success',
-            title: 'OpenClaw accepted analyzer run',
-            desc: typeof result === 'string'
-              ? result.slice(0, 120)
-              : 'The local brain received the analyzeDeal request.'
+            type: 'warning',
+            title: 'Address needed first',
+            desc: 'Open the analyzer, enter a property address, then ask OpenClaw to run the remote tool.'
           });
-        } catch (error) {
-          toast({
-            type: 'error',
-            title: 'OpenClaw analyzeDeal failed',
-            desc: error?.message || 'The local bridge did not accept the request.'
-          });
+          return;
         }
+
+        await invokeRuntimeTool('analyzeDeal', {
+          address,
+          deal: payload.deal || {}
+        }, {
+          actionLabel: 'remote analyzer runs',
+          successTitle: 'OpenClaw accepted analyzer run',
+          successDesc: 'The local brain received the analyzeDeal request and refreshed runtime state.',
+          errorTitle: 'OpenClaw analyzeDeal failed'
+        });
       }
     });
 

@@ -1,0 +1,104 @@
+{
+  "name": "PBK Brain Blog Harvester",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "every-two-hours",
+      "name": "Every 2 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/brain/blog/harvest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "requestedBy",
+              "value": "n8n-brain-blog-harvester"
+            },
+            {
+              "name": "source",
+              "value": "n8n-lite/brain-blog-harvester.workflow.json"
+            },
+            {
+              "name": "limit",
+              "value": "8"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "harvest-brain-blog",
+      "name": "Harvest Brain Blog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $json || {};\nreturn [{ json: { ok: Boolean(result.ok), added: result.added?.length || 0, skipped: result.skipped || 0, errors: result.errors || [], summary: result.added?.length ? `Brain Blog added ${result.added.length} new post(s).` : 'Brain Blog harvest ran; no new posts added.' } }];"
+      },
+      "id": "summarize-harvest",
+      "name": "Summarize Harvest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [760, 260]
+    }
+  ],
+  "connections": {
+    "Every 2 Hours": {
+      "main": [
+        [
+          {
+            "node": "Harvest Brain Blog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Harvest Brain Blog": {
+      "main": [
+        [
+          {
+            "node": "Summarize Harvest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

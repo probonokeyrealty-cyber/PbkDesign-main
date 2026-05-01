@@ -98,6 +98,9 @@ hydrateWindowsUserEnv([
   'PBK_SUPABASE_SERVICE_ROLE_KEY',
   'PBK_N8N_API_BASE_URL',
   'PBK_N8N_API_KEY',
+  'PBK_SUPERMEMORY_API_KEY',
+  'PBK_SUPERMEMORY_API_URL',
+  'PBK_SUPERMEMORY_SYNC',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -199,6 +202,18 @@ const N8N_API_BASE_URL = String(
   .replace(/\/api\/v1\/?$/i, '')
   .replace(/\/+$/g, '');
 const N8N_API_KEY = String(process.env.PBK_N8N_API_KEY || process.env.N8N_API_KEY || '').trim();
+const SUPERMEMORY_API_KEY = String(process.env.PBK_SUPERMEMORY_API_KEY || process.env.SUPERMEMORY_API_KEY || '').trim();
+const SUPERMEMORY_API_URL = String(process.env.PBK_SUPERMEMORY_API_URL || process.env.SUPERMEMORY_API_URL || '').trim().replace(/\/+$/g, '');
+const SUPERMEMORY_SYNC_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_SUPERMEMORY_SYNC || process.env.SUPERMEMORY_SYNC || '').trim());
+const BRAIN_BLOG_FEEDS_RAW = String(process.env.PBK_BRAIN_BLOG_FEEDS || '').trim();
+const BRAIN_BLOG_DEFAULT_FEEDS = [
+  {
+    url: 'https://www.biggerpockets.com/blog/feed',
+    name: 'BiggerPockets',
+    sourceType: 'rss',
+    revenueStreams: ['Wholesaling', 'Market Reports'],
+  },
+];
 
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
@@ -230,10 +245,22 @@ const TOOL_NAMES = [
   'getStreakBootstrapPlan',
   'bootstrapStreakPipeline',
   'routeAdminCommand',
+  'admin_check_health',
+  'admin_restart_openclaw',
+  'admin_run_away_worker',
+  'admin_update_env_var',
   'createApproval',
   'handleReplyIntent',
   'updateCRM',
   'ingestResearchDoc',
+  'createBrainBlogPost',
+  'trainBrainBlogPost',
+  'harvestBrainBlog',
+  'recordMarketIntel',
+  'planLeadNurture',
+  'simulateDealConfidence',
+  'matchBuyers',
+  'runSystemAudit',
   'getBrainState',
   'checkDNC',
   'sendColdEmail',
@@ -258,6 +285,13 @@ const LIMITS = {
   approvals: 60,
   activity: 160,
   brainDocs: 90,
+  brainBlogPosts: 160,
+  marketIntel: 180,
+  leadNurturePlans: 180,
+  dealSimulations: 120,
+  buyers: 240,
+  buyerMatches: 180,
+  systemAuditReports: 120,
   leadImports: 90,
   analyzerRuns: 90,
   propertyCache: 320,
@@ -269,6 +303,7 @@ const LIMITS = {
   contracts: 90,
   documentDeliveries: 120,
   attachments: 160,
+  browserResearchJobs: 160,
   adminTasks: 90,
   adminAudit: 160,
 };
@@ -328,6 +363,14 @@ function normalizePhone(value = '') {
   if (digits.length === 10) return `+1${digits}`;
   if (digits.startsWith('1') && digits.length === 11) return `+${digits}`;
   return `+${digits}`;
+}
+
+function normalizeStringList(value = []) {
+  const items = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(/[,|]/g);
+  return [...new Set(items.map((item) => String(item || '').trim()).filter(Boolean))];
 }
 
 function getRuntimeWarnings() {
@@ -883,6 +926,15 @@ function currency(value) {
   }).format(toNumber(value, 0));
 }
 
+function formatMoneyCompact(value) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(toNumber(value, 0));
+}
+
 function averagePrices(deal = {}) {
   const prices = ['A', 'B', 'C']
     .map((key) => toMoneyNumber(deal?.comps?.[key]?.price, 0))
@@ -1025,6 +1077,7 @@ async function queueBrowserPropertyResearch({ address = '', requestedBy = 'Analy
     endpoint: browserOs.endpoint || BROWSEROS_MCP_URL,
     cacheKey: normalizeAddressKey(targetLabel),
   };
+  upsertBrowserResearchJob(state, job);
   addActivity(
     state,
     makeActivity({
@@ -1118,6 +1171,7 @@ function makeActivity({
   status = 'success',
   text = '',
   target = '',
+  source = 'runtime',
   at = isoNow(),
 }) {
   return {
@@ -1128,6 +1182,7 @@ function makeActivity({
     status,
     text,
     target,
+    source,
   };
 }
 
@@ -1206,6 +1261,136 @@ function buildDefaultBrainDocs() {
   ];
 }
 
+function buildDefaultBrainBlogPosts() {
+  const now = Date.now();
+  return [
+    {
+      id: 'brain-blog-straight-line-wholesaling',
+      title: 'Straight-Line Persuasion, Adapted for Seller Calls',
+      sourceUrl: 'https://www.jordanbelfort.com/',
+      sourceType: 'manual',
+      sourceName: 'PBK mentor note',
+      salesMentor: 'Jordan Belfort',
+      techniqueType: 'objection_handling',
+      revenueStreams: ['Cash Deals', 'Wholesaling'],
+      content:
+        'Use certainty loops without sounding like a boiler room. Keep the seller certain about three things: PBK is legitimate, the process is simple, and the number is based on the real property math. If the seller says they want to think about it, loop back to the main uncertainty instead of repeating the same offer.',
+      summary:
+        'Apply Straight-Line certainty loops to cash-offer calls: legitimacy, simple process, and math-based offer confidence.',
+      keyTakeaways: [
+        'Do not push price harder until you know which certainty is missing.',
+        'Loop back with a question, not a repeated pitch.',
+        'Use the analyzer math as the calm anchor for the offer.',
+      ],
+      tags: ['Jordan Belfort', 'Objection Handling', 'Cash Deals', 'Wholesaling'],
+      status: 'ready',
+      contentHash: 'seed-straight-line-wholesaling',
+      publishedAt: new Date(now - 1000 * 60 * 75).toISOString(),
+      createdAt: new Date(now - 1000 * 60 * 75).toISOString(),
+      updatedAt: new Date(now - 1000 * 60 * 75).toISOString(),
+    },
+    {
+      id: 'brain-blog-subto-low-rate-seller',
+      title: 'Low-Rate Mortgage Sellers Need Relief, Not a Hard Cash Pitch',
+      sourceUrl: '',
+      sourceType: 'manual',
+      sourceName: 'PBK creative finance playbook',
+      salesMentor: 'Cory Boatright',
+      techniqueType: 'creative_finance',
+      revenueStreams: ['Subject-To', 'Creative Finance'],
+      content:
+        'When a seller has a low mortgage rate and decent payment history, lead with payment relief and certainty of close. Subject-to should be positioned as a way to solve timing, cash-flow, and listing fatigue while preserving clear disclosure and underwriting approval.',
+      summary:
+        'For low-rate sellers, present subject-to as a relief structure after confirming payment, equity, and risk disclosures.',
+      keyTakeaways: [
+        'Ask about payment stress before pitching terms.',
+        'Explain that underwriting must approve the structure.',
+        'Do not frame subject-to as a trick; frame it as a transparent relief path.',
+      ],
+      tags: ['Cory Boatright', 'Subject-To', 'Creative Finance', 'Seller Relief'],
+      status: 'ready',
+      contentHash: 'seed-subto-low-rate-seller',
+      publishedAt: new Date(now - 1000 * 60 * 60 * 22).toISOString(),
+      createdAt: new Date(now - 1000 * 60 * 60 * 22).toISOString(),
+      updatedAt: new Date(now - 1000 * 60 * 60 * 22).toISOString(),
+    },
+  ];
+}
+
+function buildDefaultBuyers() {
+  return [
+    {
+      id: 'buyer-columbus-light-flips',
+      name: 'Columbus Light Flip Buyers',
+      status: 'active',
+      zipCodes: ['43205', '43206', '43207', '43211'],
+      markets: ['Columbus OH'],
+      propertyTypes: ['single-family', 'duplex'],
+      priceMin: 65000,
+      priceMax: 190000,
+      desiredRoi: 0.14,
+      maxRepairs: 55000,
+      notes: 'Likes cosmetic-to-medium rehab near downtown Columbus; avoids full foundation projects.',
+      tags: ['cash-buyer', 'columbus', 'light-flip'],
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
+      updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
+    },
+    {
+      id: 'buyer-akron-rentals',
+      name: 'Akron Rental Hold Group',
+      status: 'active',
+      zipCodes: ['44305', '44306', '44310', '44314'],
+      markets: ['Akron OH'],
+      propertyTypes: ['single-family'],
+      priceMin: 35000,
+      priceMax: 125000,
+      desiredRoi: 0.11,
+      maxRepairs: 45000,
+      notes: 'Prefers rentals with simple turns and conservative all-in basis.',
+      tags: ['cash-buyer', 'akron', 'rental'],
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
+      updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 4).toISOString(),
+    },
+  ];
+}
+
+function buildDefaultMarketIntel() {
+  return [
+    {
+      id: 'market-intel-columbus-43205',
+      market: 'Columbus OH',
+      zipCode: '43205',
+      propertyType: 'single-family',
+      competitiveOfferIndex: 0.74,
+      buyerDemand: 'high',
+      medianInvestorMaoPct: 0.68,
+      daysOnMarketSignal: 18,
+      confidence: 0.62,
+      source: 'PBK seed',
+      notes: 'Seed benchmark until BrowserOS market scrape produces live public data.',
+      status: 'seed',
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 9).toISOString(),
+      updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 9).toISOString(),
+    },
+  ];
+}
+
+function buildDefaultLeadNurturePlans() {
+  return [];
+}
+
+function buildDefaultDealSimulations() {
+  return [];
+}
+
+function buildDefaultBuyerMatches() {
+  return [];
+}
+
+function buildDefaultSystemAuditReports() {
+  return [];
+}
+
 function buildDefaultActivity() {
   return [
     makeActivity({
@@ -1214,6 +1399,7 @@ function buildDefaultActivity() {
       status: 'pending',
       text: 'Requested approval for $78,000 offer - MAO $91,500',
       target: 'Diane Kowalski - 202 Cherry Ln',
+      source: 'demo',
       at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
     }),
     makeActivity({
@@ -1222,6 +1408,7 @@ function buildDefaultActivity() {
       status: 'success',
       text: 'Analyzer ran - ARV $185k - repairs $38k - MAO $91,500',
       target: '202 Cherry Ln',
+      source: 'demo',
       at: new Date(Date.now() - 1000 * 60 * 16).toISOString(),
     }),
     makeActivity({
@@ -1230,6 +1417,7 @@ function buildDefaultActivity() {
       status: 'complete',
       text: 'Lead intake flow normalized 47 fresh probate rows',
       target: 'daily_probate_import.csv',
+      source: 'demo',
       at: new Date(Date.now() - 1000 * 60 * 22).toISOString(),
     }),
     makeActivity({
@@ -1238,6 +1426,7 @@ function buildDefaultActivity() {
       status: 'indexed',
       text: 'Indexed 3 new sources and updated negotiation guidance',
       target: 'Brain library',
+      source: 'demo',
       at: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
     }),
   ];
@@ -1529,6 +1718,14 @@ function buildDefaultState() {
       lastUpdatedAt: isoNow(),
       queryCountToday: 42,
       sourcesIndexed: 247,
+      brainBlogPosts: 2,
+      lastBrainBlogPostAt: null,
+      marketIntelCount: 1,
+      activeNurturePlans: 0,
+      dealSimulations: 0,
+      activeBuyers: 2,
+      buyerMatches: 0,
+      systemAuditReports: 0,
       weeklySources: 47,
       scriptUpdates7d: 8,
       brainSizeMb: 18.4,
@@ -1593,6 +1790,13 @@ function buildDefaultState() {
     approvals: buildDefaultApprovals(),
     activity: buildDefaultActivity(),
     brainDocs: buildDefaultBrainDocs(),
+    brainBlogPosts: buildDefaultBrainBlogPosts(),
+    marketIntel: buildDefaultMarketIntel(),
+    leadNurturePlans: buildDefaultLeadNurturePlans(),
+    dealSimulations: buildDefaultDealSimulations(),
+    buyers: buildDefaultBuyers(),
+    buyerMatches: buildDefaultBuyerMatches(),
+    systemAuditReports: buildDefaultSystemAuditReports(),
     leadImports: buildDefaultLeadImports(),
     analyzerRuns: buildDefaultAnalyzerRuns(),
     propertyCache: [],
@@ -1604,8 +1808,12 @@ function buildDefaultState() {
     contracts: buildDefaultContracts(),
     documentDeliveries: buildDefaultDocumentDeliveries(),
     attachments: [],
+    browserResearchJobs: [],
     settings: {
-      ui: {},
+      ui: {
+        operatingMode: 'approval',
+        approvalGatedProduction: true,
+      },
       updatedAt: isoNow(),
       updatedBy: 'system',
     },
@@ -1801,10 +2009,344 @@ async function persistEmailLogRecord(record = {}) {
   }
 }
 
+async function persistBrainBlogPostRecord(post = {}) {
+  const pool = getPgPool();
+  if (!pool || !post.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.brain_blog_posts (
+        id, title, source_url, source_type, source_name, published_at,
+        content, summary, key_takeaways, tags, revenue_streams, sales_mentor,
+        technique_type, content_hash, status, trained_at, metadata, created_at, updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9::text[], $10::text[], $11::text[], $12,
+        $13, $14, $15, $16, $17::jsonb, $18, $19
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        title = EXCLUDED.title,
+        source_url = EXCLUDED.source_url,
+        source_type = EXCLUDED.source_type,
+        source_name = EXCLUDED.source_name,
+        published_at = EXCLUDED.published_at,
+        content = EXCLUDED.content,
+        summary = EXCLUDED.summary,
+        key_takeaways = EXCLUDED.key_takeaways,
+        tags = EXCLUDED.tags,
+        revenue_streams = EXCLUDED.revenue_streams,
+        sales_mentor = EXCLUDED.sales_mentor,
+        technique_type = EXCLUDED.technique_type,
+        content_hash = EXCLUDED.content_hash,
+        status = EXCLUDED.status,
+        trained_at = EXCLUDED.trained_at,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        post.id,
+        post.title || 'Untitled Brain post',
+        post.sourceUrl || '',
+        post.sourceType || 'manual',
+        post.sourceName || post.source || '',
+        post.publishedAt || null,
+        post.content || '',
+        post.summary || '',
+        normalizeStringList(post.keyTakeaways || []),
+        normalizeStringList(post.tags || []),
+        normalizeStringList(post.revenueStreams || []),
+        post.salesMentor || '',
+        post.techniqueType || '',
+        post.contentHash || '',
+        post.status || 'ready',
+        post.trainedAt || null,
+        JSON.stringify(post.metadata || {}),
+        post.createdAt || isoNow(),
+        post.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] brain blog persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistMarketIntelRecord(entry = {}) {
+  const pool = getPgPool();
+  if (!pool || !entry.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.market_intel (
+        id, market, zip_code, property_type, competitive_offer_index, buyer_demand,
+        median_investor_mao_pct, days_on_market_signal, confidence, source,
+        status, notes, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)
+      ON CONFLICT (id) DO UPDATE SET
+        market = EXCLUDED.market,
+        zip_code = EXCLUDED.zip_code,
+        property_type = EXCLUDED.property_type,
+        competitive_offer_index = EXCLUDED.competitive_offer_index,
+        buyer_demand = EXCLUDED.buyer_demand,
+        median_investor_mao_pct = EXCLUDED.median_investor_mao_pct,
+        days_on_market_signal = EXCLUDED.days_on_market_signal,
+        confidence = EXCLUDED.confidence,
+        source = EXCLUDED.source,
+        status = EXCLUDED.status,
+        notes = EXCLUDED.notes,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        entry.id,
+        entry.market || '',
+        entry.zipCode || '',
+        entry.propertyType || '',
+        entry.competitiveOfferIndex ?? null,
+        entry.buyerDemand || '',
+        entry.medianInvestorMaoPct ?? null,
+        entry.daysOnMarketSignal ?? null,
+        entry.confidence ?? null,
+        entry.source || '',
+        entry.status || 'live',
+        entry.notes || '',
+        JSON.stringify(entry.metadata || {}),
+        entry.createdAt || isoNow(),
+        entry.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] market intel persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistLeadNurturePlanRecord(plan = {}) {
+  const pool = getPgPool();
+  if (!pool || !plan.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.lead_nurture_plans (
+        id, lead_id, lead_name, address, status, cadence_days, channels,
+        steps, approval_id, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::text[],$8::jsonb,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        address = EXCLUDED.address,
+        status = EXCLUDED.status,
+        cadence_days = EXCLUDED.cadence_days,
+        channels = EXCLUDED.channels,
+        steps = EXCLUDED.steps,
+        approval_id = EXCLUDED.approval_id,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        plan.id,
+        plan.leadId || '',
+        plan.leadName || '',
+        plan.address || '',
+        plan.status || 'approval_required',
+        JSON.stringify(plan.cadenceDays || []),
+        normalizeStringList(plan.channels || []),
+        JSON.stringify(plan.steps || []),
+        plan.approvalId || '',
+        JSON.stringify(plan.metadata || {}),
+        plan.createdAt || isoNow(),
+        plan.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] nurture plan persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistDealSimulationRecord(simulation = {}) {
+  const pool = getPgPool();
+  if (!pool || !simulation.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.deal_simulations (
+        id, lead_id, lead_name, address, path_type, base_arv, base_repairs,
+        offer_price, expected_profit, probability_of_loss, profit_range,
+        recommendation, scenarios, assumptions, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb,$14::jsonb,$15,$16)
+      ON CONFLICT (id) DO UPDATE SET
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        address = EXCLUDED.address,
+        path_type = EXCLUDED.path_type,
+        base_arv = EXCLUDED.base_arv,
+        base_repairs = EXCLUDED.base_repairs,
+        offer_price = EXCLUDED.offer_price,
+        expected_profit = EXCLUDED.expected_profit,
+        probability_of_loss = EXCLUDED.probability_of_loss,
+        profit_range = EXCLUDED.profit_range,
+        recommendation = EXCLUDED.recommendation,
+        scenarios = EXCLUDED.scenarios,
+        assumptions = EXCLUDED.assumptions,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        simulation.id,
+        simulation.leadId || '',
+        simulation.leadName || '',
+        simulation.address || '',
+        simulation.pathType || '',
+        simulation.arv ?? null,
+        simulation.repairs ?? null,
+        simulation.offer ?? null,
+        simulation.expectedProfit ?? null,
+        simulation.probabilityOfLoss ?? null,
+        JSON.stringify(simulation.profitRange || {}),
+        simulation.recommendation || '',
+        JSON.stringify(simulation.scenarios || []),
+        JSON.stringify(simulation.assumptions || {}),
+        simulation.createdAt || isoNow(),
+        simulation.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] deal simulation persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistBuyerRecord(buyer = {}) {
+  const pool = getPgPool();
+  if (!pool || !buyer.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.buyers (
+        id, name, status, zip_codes, markets, property_types, price_min,
+        price_max, desired_roi, max_repairs, notes, tags, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4::text[],$5::text[],$6::text[],$7,$8,$9,$10,$11,$12::text[],$13::jsonb,$14,$15)
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        status = EXCLUDED.status,
+        zip_codes = EXCLUDED.zip_codes,
+        markets = EXCLUDED.markets,
+        property_types = EXCLUDED.property_types,
+        price_min = EXCLUDED.price_min,
+        price_max = EXCLUDED.price_max,
+        desired_roi = EXCLUDED.desired_roi,
+        max_repairs = EXCLUDED.max_repairs,
+        notes = EXCLUDED.notes,
+        tags = EXCLUDED.tags,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        buyer.id,
+        buyer.name || 'Buyer',
+        buyer.status || 'active',
+        normalizeStringList(buyer.zipCodes || []),
+        normalizeStringList(buyer.markets || []),
+        normalizeStringList(buyer.propertyTypes || []),
+        buyer.priceMin ?? null,
+        buyer.priceMax ?? null,
+        buyer.desiredRoi ?? null,
+        buyer.maxRepairs ?? null,
+        buyer.notes || '',
+        normalizeStringList(buyer.tags || []),
+        JSON.stringify(buyer.metadata || {}),
+        buyer.createdAt || isoNow(),
+        buyer.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] buyer persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistBuyerMatchRecord(match = {}) {
+  const pool = getPgPool();
+  if (!pool || !match.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.buyer_matches (
+        id, deal, matches, top_buyer, status, created_at, updated_at
+      )
+      VALUES ($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7)
+      ON CONFLICT (id) DO UPDATE SET
+        deal = EXCLUDED.deal,
+        matches = EXCLUDED.matches,
+        top_buyer = EXCLUDED.top_buyer,
+        status = EXCLUDED.status,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        match.id,
+        JSON.stringify(match.deal || {}),
+        JSON.stringify(match.matches || []),
+        JSON.stringify(match.topBuyer || null),
+        match.status || '',
+        match.createdAt || isoNow(),
+        match.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] buyer match persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistSystemAuditReportRecord(report = {}) {
+  const pool = getPgPool();
+  if (!pool || !report.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.system_audit_reports (
+        id, status, estimated_monthly_ai_cost, cost_per_lead, error_rate,
+        avg_latency_ms, recommendations, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7::text[],$8::jsonb,$9,$10)
+      ON CONFLICT (id) DO UPDATE SET
+        status = EXCLUDED.status,
+        estimated_monthly_ai_cost = EXCLUDED.estimated_monthly_ai_cost,
+        cost_per_lead = EXCLUDED.cost_per_lead,
+        error_rate = EXCLUDED.error_rate,
+        avg_latency_ms = EXCLUDED.avg_latency_ms,
+        recommendations = EXCLUDED.recommendations,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        report.id,
+        report.status || 'healthy',
+        report.estimatedMonthlyAiCost ?? null,
+        report.costPerLead ?? null,
+        report.errorRate ?? null,
+        report.avgLatencyMs ?? null,
+        normalizeStringList(report.recommendations || []),
+        JSON.stringify(report.metadata || {}),
+        report.createdAt || isoNow(),
+        report.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] system audit persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
 function limitStateArrays(nextState) {
   nextState.approvals = sortNewest(nextState.approvals).slice(0, LIMITS.approvals);
   nextState.activity = sortNewest(nextState.activity).slice(0, LIMITS.activity);
   nextState.brainDocs = sortNewest(nextState.brainDocs).slice(0, LIMITS.brainDocs);
+  nextState.brainBlogPosts = sortNewest(nextState.brainBlogPosts || []).slice(0, LIMITS.brainBlogPosts);
+  nextState.marketIntel = sortNewest(nextState.marketIntel || []).slice(0, LIMITS.marketIntel);
+  nextState.leadNurturePlans = sortNewest(nextState.leadNurturePlans || []).slice(0, LIMITS.leadNurturePlans);
+  nextState.dealSimulations = sortNewest(nextState.dealSimulations || []).slice(0, LIMITS.dealSimulations);
+  nextState.buyers = sortNewest(nextState.buyers || []).slice(0, LIMITS.buyers);
+  nextState.buyerMatches = sortNewest(nextState.buyerMatches || []).slice(0, LIMITS.buyerMatches);
+  nextState.systemAuditReports = sortNewest(nextState.systemAuditReports || []).slice(0, LIMITS.systemAuditReports);
   nextState.leadImports = sortNewest(nextState.leadImports).slice(0, LIMITS.leadImports);
   nextState.analyzerRuns = sortNewest(nextState.analyzerRuns).slice(0, LIMITS.analyzerRuns);
   nextState.propertyCache = sortNewest(nextState.propertyCache || []).slice(0, LIMITS.propertyCache);
@@ -1816,12 +2358,23 @@ function limitStateArrays(nextState) {
   nextState.contracts = sortNewest(nextState.contracts).slice(0, LIMITS.contracts);
   nextState.documentDeliveries = sortNewest(nextState.documentDeliveries).slice(0, LIMITS.documentDeliveries);
   nextState.attachments = sortNewest(nextState.attachments || []).slice(0, LIMITS.attachments);
+  nextState.browserResearchJobs = sortNewest(nextState.browserResearchJobs || []).slice(0, LIMITS.browserResearchJobs);
   nextState.adminTasks = sortNewest(nextState.adminTasks).slice(0, LIMITS.adminTasks);
   nextState.adminAudit = sortNewest(nextState.adminAudit).slice(0, LIMITS.adminAudit);
 }
 
 function updateDerivedStatus(nextState) {
-  nextState.status.sourcesIndexed = nextState.brainDocs.length;
+  const settings = nextState.settings && typeof nextState.settings === 'object' ? nextState.settings : {};
+  const operatingMode = String(settings.operatingMode || settings.ui?.operatingMode || nextState.status.mode || 'approval').trim();
+  nextState.status.mode = ['autopilot', 'approval', 'manual'].includes(operatingMode) ? operatingMode : 'approval';
+  nextState.status.sourcesIndexed = nextState.brainDocs.length + (nextState.brainBlogPosts || []).length;
+  nextState.status.brainBlogPosts = (nextState.brainBlogPosts || []).length;
+  nextState.status.marketIntelCount = (nextState.marketIntel || []).length;
+  nextState.status.activeNurturePlans = (nextState.leadNurturePlans || []).filter((plan) => ['active', 'queued', 'approval_required'].includes(String(plan.status || '').toLowerCase())).length;
+  nextState.status.dealSimulations = (nextState.dealSimulations || []).length;
+  nextState.status.activeBuyers = (nextState.buyers || []).filter((buyer) => String(buyer.status || 'active').toLowerCase() === 'active').length;
+  nextState.status.buyerMatches = (nextState.buyerMatches || []).length;
+  nextState.status.systemAuditReports = (nextState.systemAuditReports || []).length;
   nextState.status.pendingApprovals = nextState.approvals.filter((approval) => approval.status === 'pending').length;
   nextState.status.pendingAdminTasks = nextState.adminTasks.filter((task) => task.status === 'pending').length;
   nextState.status.activeCalls = nextState.calls.filter((call) => call.status === 'live').length;
@@ -1832,6 +2385,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.contractsOpen = nextState.contracts.filter((contract) => !['completed', 'void', 'rejected'].includes(String(contract.status || '').toLowerCase())).length;
   nextState.status.documentDeliveries = nextState.documentDeliveries.length;
   nextState.status.attachmentsStored = (nextState.attachments || []).length;
+  nextState.status.browserResearchJobs = (nextState.browserResearchJobs || []).length;
+  nextState.status.pendingBrowserResearchJobs = (nextState.browserResearchJobs || []).filter((job) => ['queued', 'running', 'setup-required'].includes(String(job.status || '').toLowerCase())).length;
   nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
   nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
   nextState.status.lastApprovalAt = nextState.approvals[0]?.createdAt || null;
@@ -1846,6 +2401,11 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastContractAt = getItemTimestamp(nextState.contracts[0] || {}) || null;
   nextState.status.lastDocumentDeliveryAt = getItemTimestamp(nextState.documentDeliveries[0] || {}) || null;
   nextState.status.lastAttachmentAt = getItemTimestamp((nextState.attachments || [])[0] || {}) || null;
+  nextState.status.lastBrowserResearchAt = getItemTimestamp((nextState.browserResearchJobs || [])[0] || {}) || nextState.status.lastBrowserResearchAt || null;
+  nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
+  nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
+  nextState.status.lastDealSimulationAt = getItemTimestamp((nextState.dealSimulations || [])[0] || {}) || null;
+  nextState.status.lastSystemAuditAt = getItemTimestamp((nextState.systemAuditReports || [])[0] || {}) || null;
   nextState.status.tools = [...TOOL_NAMES];
   nextState.status.toolUsage = {
     ...buildToolUsageSeed(),
@@ -1875,6 +2435,13 @@ function hydrateState(raw = {}) {
     approvals: trimArray(raw.approvals || defaults.approvals, LIMITS.approvals),
     activity: trimArray(raw.activity || defaults.activity, LIMITS.activity),
     brainDocs: trimArray(raw.brainDocs || defaults.brainDocs, LIMITS.brainDocs),
+    brainBlogPosts: trimArray(raw.brainBlogPosts || defaults.brainBlogPosts, LIMITS.brainBlogPosts),
+    marketIntel: trimArray(raw.marketIntel || defaults.marketIntel, LIMITS.marketIntel),
+    leadNurturePlans: trimArray(raw.leadNurturePlans || defaults.leadNurturePlans, LIMITS.leadNurturePlans),
+    dealSimulations: trimArray(raw.dealSimulations || defaults.dealSimulations, LIMITS.dealSimulations),
+    buyers: trimArray(raw.buyers || defaults.buyers, LIMITS.buyers),
+    buyerMatches: trimArray(raw.buyerMatches || defaults.buyerMatches, LIMITS.buyerMatches),
+    systemAuditReports: trimArray(raw.systemAuditReports || defaults.systemAuditReports, LIMITS.systemAuditReports),
     leadImports: trimArray(raw.leadImports || defaults.leadImports, LIMITS.leadImports),
     analyzerRuns: trimArray(raw.analyzerRuns || defaults.analyzerRuns, LIMITS.analyzerRuns),
     propertyCache: trimArray(raw.propertyCache || defaults.propertyCache, LIMITS.propertyCache),
@@ -1886,6 +2453,7 @@ function hydrateState(raw = {}) {
     contracts: trimArray(raw.contracts || defaults.contracts, LIMITS.contracts),
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
     attachments: trimArray(raw.attachments || defaults.attachments, LIMITS.attachments),
+    browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs),
     settings: {
       ...defaults.settings,
       ...(raw.settings && typeof raw.settings === 'object' ? raw.settings : {}),
@@ -1954,6 +2522,43 @@ function addBrainDoc(stateRef, doc) {
   updateDerivedStatus(stateRef);
 }
 
+function addBrainBlogPost(stateRef, post) {
+  if (!Array.isArray(stateRef.brainBlogPosts)) stateRef.brainBlogPosts = [];
+  const existingIndex = stateRef.brainBlogPosts.findIndex((item) =>
+    item.id === post.id
+    || (post.sourceUrl && item.sourceUrl === post.sourceUrl)
+    || (post.contentHash && item.contentHash === post.contentHash),
+  );
+  if (existingIndex >= 0) {
+    stateRef.brainBlogPosts.splice(existingIndex, 1, {
+      ...stateRef.brainBlogPosts[existingIndex],
+      ...post,
+      updatedAt: post.updatedAt || isoNow(),
+    });
+  } else {
+    stateRef.brainBlogPosts.unshift(post);
+  }
+  limitStateArrays(stateRef);
+  updateDerivedStatus(stateRef);
+}
+
+function upsertById(stateRef, collectionName, item) {
+  if (!Array.isArray(stateRef[collectionName])) stateRef[collectionName] = [];
+  const existingIndex = stateRef[collectionName].findIndex((entry) => entry.id === item.id);
+  if (existingIndex >= 0) {
+    stateRef[collectionName].splice(existingIndex, 1, {
+      ...stateRef[collectionName][existingIndex],
+      ...item,
+      updatedAt: item.updatedAt || isoNow(),
+    });
+  } else {
+    stateRef[collectionName].unshift(item);
+  }
+  limitStateArrays(stateRef);
+  updateDerivedStatus(stateRef);
+  return item;
+}
+
 function addLeadImport(stateRef, leadImport) {
   stateRef.leadImports.unshift(leadImport);
   limitStateArrays(stateRef);
@@ -2012,6 +2617,27 @@ function addAttachmentRecord(stateRef, attachment) {
   stateRef.attachments.unshift(attachment);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
+}
+
+function upsertBrowserResearchJob(stateRef, job) {
+  if (!job?.id) return null;
+  if (!Array.isArray(stateRef.browserResearchJobs)) stateRef.browserResearchJobs = [];
+  const existingIndex = stateRef.browserResearchJobs.findIndex((item) => item.id === job.id);
+  const next = {
+    ...job,
+    updatedAt: isoNow(),
+  };
+  if (existingIndex >= 0) {
+    stateRef.browserResearchJobs.splice(existingIndex, 1, {
+      ...stateRef.browserResearchJobs[existingIndex],
+      ...next,
+    });
+  } else {
+    stateRef.browserResearchJobs.unshift(next);
+  }
+  limitStateArrays(stateRef);
+  updateDerivedStatus(stateRef);
+  return next;
 }
 
 function addLeadStageTransition(stateRef, transition) {
@@ -2206,6 +2832,9 @@ function scoreBrainDocMatch(doc, query) {
     doc.excerpt,
     doc.summary,
     doc.topic,
+    doc.salesMentor,
+    doc.techniqueType,
+    ...(doc.revenueStreams || []),
     ...(doc.tags || []),
   ]
     .join(' ')
@@ -2218,12 +2847,384 @@ function scoreBrainDocMatch(doc, query) {
     .reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
 }
 
+function stripHtml(value = '') {
+  return String(value || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeXmlEntities(value = '') {
+  return String(value || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)));
+}
+
+function inferBrainBlogTags(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  const tags = [];
+  if (/\bprobate|executor|estate\b/.test(normalized)) tags.push('Probate');
+  if (/\bsubject[-\s]?to|subto|mortgage|payment\b/.test(normalized)) tags.push('Subject-To', 'Creative Finance');
+  if (/\bseller finance|owner finance|terms\b/.test(normalized)) tags.push('Seller Financing');
+  if (/\bmao|arv|repair|comp|assignment|cash offer\b/.test(normalized)) tags.push('Cash Deals', 'Analyzer');
+  if (/\bobjection|think about|wife|price|more money|follow up\b/.test(normalized)) tags.push('Objection Handling', 'Negotiation');
+  if (/\btcpa|consent|dnc|compliance|legal\b/.test(normalized)) tags.push('Legal & TCPA');
+  if (/\bmarket|inventory|rates|foreclosure|dom\b/.test(normalized)) tags.push('Market Reports');
+  return normalizeStringList(tags.length ? tags : ['Wholesaling']);
+}
+
+function inferSalesMentor(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  if (normalized.includes('jordan belfort') || normalized.includes('straight line')) return 'Jordan Belfort';
+  if (normalized.includes('alex mineo')) return 'Alex Mineo';
+  if (normalized.includes('cory boatright')) return 'Cory Boatright';
+  if (normalized.includes('brent daniels') || normalized.includes('talk to people') || normalized.includes('ttp')) return 'Brent Daniels';
+  return 'PBK Research';
+}
+
+function inferTechniqueType(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  if (/\bobjection|rebuttal|think about|wife|more money\b/.test(normalized)) return 'objection_handling';
+  if (/\bscript|pitch|talk track|opening\b/.test(normalized)) return 'closing_script';
+  if (/\bfollow up|nurture|sequence\b/.test(normalized)) return 'follow_up';
+  if (/\bsubject[-\s]?to|seller finance|creative finance|terms\b/.test(normalized)) return 'creative_finance';
+  if (/\btcpa|dnc|consent|legal|compliance\b/.test(normalized)) return 'compliance';
+  if (/\bmarket|inventory|rates|dom|foreclosure\b/.test(normalized)) return 'market_research';
+  if (/\bmao|arv|comp|repair|analyzer\b/.test(normalized)) return 'deal_analysis';
+  return 'sales_knowledge';
+}
+
+function inferRevenueStreams(text = '', tags = []) {
+  const normalized = `${String(text || '').toLowerCase()} ${normalizeStringList(tags).join(' ').toLowerCase()}`;
+  const streams = [];
+  if (/\bsubject[-\s]?to|subto\b/.test(normalized)) streams.push('Subject-To');
+  if (/\bseller financing|seller finance|creative finance|terms\b/.test(normalized)) streams.push('Creative Finance', 'Seller Financing');
+  if (/\bcash|mao|arv|repair|assignment|wholesale\b/.test(normalized)) streams.push('Cash Deals', 'Wholesaling');
+  if (/\bnovation\b/.test(normalized)) streams.push('Novation');
+  if (/\bprobate\b/.test(normalized)) streams.push('Probate');
+  if (/\btcpa|compliance|dnc\b/.test(normalized)) streams.push('Legal & TCPA');
+  return normalizeStringList(streams.length ? streams : ['Wholesaling']);
+}
+
+function buildBrainBlogSummary(content = '') {
+  const text = stripHtml(content).slice(0, 900);
+  if (!text) return 'No summary generated yet.';
+  const sentence = text.split(/(?<=[.!?])\s+/).find((item) => item.length > 40) || text;
+  return sentence.slice(0, 320);
+}
+
+function buildBrainBlogTakeaways(content = '', tags = []) {
+  const normalizedTags = normalizeStringList(tags);
+  const takeaways = [];
+  if (normalizedTags.includes('Objection Handling')) takeaways.push('Identify the hidden uncertainty before repeating the offer.');
+  if (normalizedTags.includes('Creative Finance') || normalizedTags.includes('Subject-To')) takeaways.push('Frame terms around relief, risk disclosure, and underwriting approval.');
+  if (normalizedTags.includes('Cash Deals')) takeaways.push('Anchor the offer in ARV, repairs, and exit risk rather than ego or pressure.');
+  if (normalizedTags.includes('Legal & TCPA')) takeaways.push('Keep compliance language explicit before any outreach or AI-assisted call.');
+  if (!takeaways.length) takeaways.push(stripHtml(content).slice(0, 160) || 'Review the full source before applying this tactic.');
+  return takeaways.slice(0, 4);
+}
+
+function normalizeBrainBlogPost(input = {}) {
+  const now = isoNow();
+  const title = String(input.title || input.name || 'Untitled Brain post').trim().slice(0, 180);
+  const rawContent = String(input.content || input.transcript || input.body || input.summary || '').trim();
+  const content = stripHtml(rawContent || input.description || input.excerpt || '');
+  const sourceUrl = String(input.sourceUrl || input.url || input.link || '').trim();
+  const sourceType = String(input.sourceType || input.kind || 'manual').trim().toLowerCase();
+  const sourceName = String(input.sourceName || input.source || input.feedName || 'Brain Blog').trim();
+  const tags = normalizeStringList([
+    ...inferBrainBlogTags(`${title} ${sourceName} ${content}`),
+    ...normalizeStringList(input.tags || []),
+  ]);
+  const salesMentor = String(input.salesMentor || input.mentor || '').trim() || inferSalesMentor(`${title} ${sourceName} ${content}`);
+  const techniqueType = String(input.techniqueType || '').trim() || inferTechniqueType(`${title} ${content}`);
+  const revenueStreams = normalizeStringList(input.revenueStreams || input.revenue_streams || inferRevenueStreams(`${title} ${content}`, tags));
+  const summary = String(input.summary || '').trim() || buildBrainBlogSummary(content);
+  const keyTakeaways = normalizeStringList(input.keyTakeaways || input.key_takeaways || buildBrainBlogTakeaways(content || summary, tags));
+  const contentHash = String(input.contentHash || '').trim()
+    || `blog-${Math.abs(hashString(`${sourceUrl}\n${title}\n${content || summary}`))}`;
+  return {
+    id: String(input.id || `brain-blog-${contentHash.replace(/^blog-/, '')}`).trim(),
+    title,
+    sourceUrl,
+    sourceType,
+    sourceName,
+    salesMentor,
+    techniqueType,
+    revenueStreams,
+    content,
+    summary,
+    keyTakeaways,
+    tags,
+    status: input.status || 'ready',
+    contentHash,
+    metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : {},
+    publishedAt: input.publishedAt || input.published_at || input.pubDate || input.createdAt || now,
+    createdAt: input.createdAt || now,
+    updatedAt: now,
+    trainedAt: input.trainedAt || input.trained_at || null,
+  };
+}
+
+function brainBlogPostToDoc(post = {}) {
+  return {
+    id: post.id,
+    kind: 'brain-blog',
+    topic: (post.revenueStreams || [])[0] || 'Wholesaling',
+    title: post.title,
+    source: post.sourceName || post.sourceUrl || 'Brain Blog',
+    excerpt: post.summary || post.content || '',
+    summary: post.summary || post.content || '',
+    citation: `${post.salesMentor || 'PBK Research'} - ${post.sourceName || post.sourceUrl || 'Brain Blog'}`,
+    tags: normalizeStringList([...(post.tags || []), ...(post.revenueStreams || []), post.salesMentor, post.techniqueType]),
+    createdAt: post.publishedAt || post.createdAt,
+    salesMentor: post.salesMentor,
+    techniqueType: post.techniqueType,
+    revenueStreams: post.revenueStreams || [],
+    blogPost: true,
+  };
+}
+
+function filterBrainBlogPosts(posts = [], filters = {}) {
+  const tag = String(filters.tag || '').trim().toLowerCase();
+  const mentor = String(filters.mentor || filters.salesMentor || '').trim().toLowerCase();
+  const revenueStream = String(filters.revenueStream || filters.stream || '').trim().toLowerCase();
+  const type = String(filters.techniqueType || filters.type || '').trim().toLowerCase();
+  return sortNewest(posts || []).filter((post) => {
+    const tagHaystack = normalizeStringList([...(post.tags || []), ...(post.revenueStreams || [])]).join(' ').toLowerCase();
+    if (tag && !tagHaystack.includes(tag)) return false;
+    if (mentor && !String(post.salesMentor || '').toLowerCase().includes(mentor)) return false;
+    if (revenueStream && !normalizeStringList(post.revenueStreams || []).join(' ').toLowerCase().includes(revenueStream)) return false;
+    if (type && !String(post.techniqueType || '').toLowerCase().includes(type)) return false;
+    return true;
+  });
+}
+
+function extractXmlText(block = '', tagNames = []) {
+  for (const tagName of tagNames) {
+    const match = String(block).match(new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+    if (match) return decodeXmlEntities(match[1]);
+  }
+  return '';
+}
+
+function extractXmlLink(block = '') {
+  const atom = String(block).match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*>/i);
+  if (atom) return decodeXmlEntities(atom[1]);
+  return stripHtml(extractXmlText(block, ['link']));
+}
+
+function parseRssItems(xml = '', feed = {}) {
+  const blocks = [
+    ...(String(xml).match(/<item\b[\s\S]*?<\/item>/gi) || []),
+    ...(String(xml).match(/<entry\b[\s\S]*?<\/entry>/gi) || []),
+  ];
+  return blocks.slice(0, 16).map((block) => {
+    const title = stripHtml(extractXmlText(block, ['title']));
+    const sourceUrl = extractXmlLink(block);
+    const publishedAt = stripHtml(extractXmlText(block, ['pubDate', 'published', 'updated', 'dc:date']));
+    const description = extractXmlText(block, ['content:encoded', 'summary', 'description']);
+    return normalizeBrainBlogPost({
+      title,
+      sourceUrl,
+      sourceType: feed.sourceType || 'rss',
+      sourceName: feed.name || feed.sourceName || feed.url || 'RSS feed',
+      publishedAt,
+      content: stripHtml(description),
+      tags: feed.tags || [],
+      revenueStreams: feed.revenueStreams || [],
+      metadata: { feedUrl: feed.url },
+    });
+  }).filter((post) => post.title && (post.content || post.summary));
+}
+
+function getBrainBlogFeeds(overrideFeeds = null) {
+  if (Array.isArray(overrideFeeds) && overrideFeeds.length) return overrideFeeds;
+  if (BRAIN_BLOG_FEEDS_RAW) {
+    try {
+      const parsed = JSON.parse(BRAIN_BLOG_FEEDS_RAW);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      return BRAIN_BLOG_FEEDS_RAW
+        .split(/\n|,/g)
+        .map((url) => ({ url: url.trim(), name: url.trim(), sourceType: 'rss' }))
+        .filter((feed) => feed.url);
+    }
+  }
+  return BRAIN_BLOG_DEFAULT_FEEDS;
+}
+
+async function harvestBrainBlogFeeds({ feeds = null, limit = 8 } = {}) {
+  const feedList = getBrainBlogFeeds(feeds).slice(0, Math.max(1, Number(limit || 8)));
+  const posts = [];
+  const errors = [];
+  for (const feed of feedList) {
+    const url = String(feed.url || '').trim();
+    if (!url) continue;
+    try {
+      const response = await fetch(url, { headers: { 'User-Agent': 'PBK-Brain-Harvester/1.0' } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const xml = await response.text();
+      posts.push(...parseRssItems(xml, feed));
+    } catch (error) {
+      errors.push({ url, error: error?.message || 'Feed fetch failed.' });
+    }
+  }
+  return { posts: posts.slice(0, Math.max(1, Number(limit || 8))), errors, feeds: feedList };
+}
+
+function extractZipCode(value = '') {
+  const match = String(value || '').match(/\b\d{5}(?:-\d{4})?\b/);
+  return match ? match[0].slice(0, 5) : '';
+}
+
+function normalizePropertyType(value = '') {
+  const raw = String(value || '').toLowerCase();
+  if (raw.includes('duplex')) return 'duplex';
+  if (raw.includes('multi')) return 'multifamily';
+  if (raw.includes('condo')) return 'condo';
+  if (raw.includes('land')) return 'land';
+  return 'single-family';
+}
+
+function buildDealScenarioSet(input = {}) {
+  const arv = Math.max(0, toMoneyNumber(input.arv || input.ARV, 185000));
+  const repairs = Math.max(0, toMoneyNumber(input.repairs || input.repairEstimate || input.repairsMid, 38000));
+  const offer = Math.max(0, toMoneyNumber(input.offer || input.offerPrice || input.targetOffer || input.price, 78000));
+  const assignmentFee = Math.max(0, toMoneyNumber(input.assignmentFee || input.fee, 10000));
+  const holdingCost = Math.max(1000, toMoneyNumber(input.holdingCost, Math.round(arv * 0.015)));
+  const exitCostRate = Math.max(0.04, Math.min(0.12, Number(input.exitCostRate || 0.08)));
+  const scenarios = [
+    { name: 'Pessimistic', arvMultiplier: 0.92, repairsMultiplier: 1.22, probability: 0.25 },
+    { name: 'Most likely', arvMultiplier: 1, repairsMultiplier: 1, probability: 0.55 },
+    { name: 'Optimistic', arvMultiplier: 1.07, repairsMultiplier: 0.86, probability: 0.20 },
+  ].map((scenario) => {
+    const scenarioArv = Math.round(arv * scenario.arvMultiplier);
+    const scenarioRepairs = Math.round(repairs * scenario.repairsMultiplier);
+    const exitCost = Math.round(scenarioArv * exitCostRate);
+    const totalCost = offer + scenarioRepairs + holdingCost + exitCost + assignmentFee;
+    const profit = scenarioArv - totalCost;
+    const roi = totalCost > 0 ? profit / totalCost : 0;
+    return {
+      ...scenario,
+      arv: scenarioArv,
+      repairs: scenarioRepairs,
+      holdingCost,
+      exitCost,
+      assignmentFee,
+      offer,
+      totalCost,
+      profit,
+      roi,
+      verdict: profit < 0 ? 'loss-risk' : roi >= 0.14 ? 'strong' : roi >= 0.08 ? 'thin' : 'counter',
+    };
+  });
+  const profits = scenarios.map((scenario) => scenario.profit);
+  const probabilityOfLoss = scenarios
+    .filter((scenario) => scenario.profit < 0)
+    .reduce((sum, scenario) => sum + scenario.probability, 0);
+  const expectedProfit = Math.round(scenarios.reduce((sum, scenario) => sum + scenario.profit * scenario.probability, 0));
+  const recommendation = probabilityOfLoss > 0.35
+    ? 'walk_or_restructure'
+    : expectedProfit >= 15000
+      ? 'offer'
+      : expectedProfit >= 6000
+        ? 'counter_or_terms'
+        : 'counter_lower';
+  return {
+    arv,
+    repairs,
+    offer,
+    assignmentFee,
+    holdingCost,
+    exitCostRate,
+    scenarios,
+    expectedProfit,
+    profitRange: { low: Math.min(...profits), high: Math.max(...profits) },
+    probabilityOfLoss,
+    recommendation,
+  };
+}
+
+function scoreBuyerMatch(buyer = {}, deal = {}) {
+  const zip = extractZipCode(deal.address || deal.zipCode || '');
+  const propertyType = normalizePropertyType(deal.propertyType || '');
+  const price = toMoneyNumber(deal.offer || deal.offerPrice || deal.price || deal.targetOffer, 0);
+  const repairs = toMoneyNumber(deal.repairs || deal.repairsMid || deal.repairEstimate, 0);
+  let score = 0;
+  const reasons = [];
+  if (!zip || normalizeStringList(buyer.zipCodes || []).includes(zip)) {
+    score += zip ? 30 : 12;
+    reasons.push(zip ? `Zip ${zip} fits criteria.` : 'No zip provided; market criteria not disqualified.');
+  }
+  if (!buyer.propertyTypes?.length || normalizeStringList(buyer.propertyTypes).includes(propertyType)) {
+    score += 20;
+    reasons.push(`${propertyType} fits property type.`);
+  }
+  if (!price || (price >= toNumber(buyer.priceMin, 0) && price <= toNumber(buyer.priceMax, Number.MAX_SAFE_INTEGER))) {
+    score += 25;
+    reasons.push('Offer price fits buyer range.');
+  }
+  if (!repairs || repairs <= toNumber(buyer.maxRepairs, Number.MAX_SAFE_INTEGER)) {
+    score += 15;
+    reasons.push('Repair load fits buyer appetite.');
+  }
+  const roi = Number(deal.roi || deal.expectedRoi || 0);
+  if (!roi || roi >= toNumber(buyer.desiredRoi, 0.1) * 0.85) {
+    score += 10;
+    reasons.push('ROI appears close to target.');
+  }
+  return {
+    buyerId: buyer.id,
+    buyerName: buyer.name,
+    score: Math.min(100, score),
+    status: score >= 70 ? 'strong' : score >= 45 ? 'possible' : 'weak',
+    reasons,
+    buyer,
+  };
+}
+
+function buildSystemAuditReport(stateRef = {}) {
+  const totalLeads = Math.max(1, (stateRef.leadImports || []).length);
+  const activity = stateRef.activity || [];
+  const warnings = activity.filter((item) => ['warning', 'failed', 'error'].includes(String(item.status || '').toLowerCase()));
+  const avgLatencyMs = Math.round(toNumber(stateRef.status?.avgLatencyMs, 420));
+  const estimatedMonthlyAiCost = Math.round((toNumber(stateRef.status?.queryCountToday, 0) * 0.0025 + (stateRef.brainDocs || []).length * 0.0006) * 30 * 100) / 100;
+  const costPerLead = Math.round((estimatedMonthlyAiCost / totalLeads) * 100) / 100;
+  const errorRate = Math.round((warnings.length / Math.max(1, activity.length)) * 1000) / 10;
+  const recommendations = [];
+  if (errorRate > 10) recommendations.push('Error rate is elevated. Check provider auth and fallback routing before scaling outreach.');
+  if (avgLatencyMs > 900) recommendations.push('Latency is high. Prefer cached analyzer results and shorter Rex context for call-time actions.');
+  if (costPerLead > 1.25) recommendations.push('Cost per lead is climbing. Route classification and summary tasks to the cheaper default model.');
+  if (!recommendations.length) recommendations.push('Runtime looks stable. Keep dangerous provider writes approval-gated and continue weekly cost reviews.');
+  return {
+    id: `system-audit-${Date.now()}`,
+    status: errorRate > 10 || avgLatencyMs > 900 ? 'watch' : 'healthy',
+    estimatedMonthlyAiCost,
+    costPerLead,
+    errorRate,
+    avgLatencyMs,
+    recommendations,
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+}
+
 function answerBrainQuery(stateRef, query = '') {
   const trimmed = String(query || '').trim();
-  const matches = stateRef.brainDocs
+  const blogDocs = (stateRef.brainBlogPosts || []).map(brainBlogPostToDoc);
+  const matches = [...(stateRef.brainDocs || []), ...blogDocs]
     .map((doc) => ({
       ...doc,
-      score: scoreBrainDocMatch(doc, trimmed || doc.title),
+      score: scoreBrainDocMatch(doc, trimmed || doc.title) + (doc.blogPost ? 0.25 : 0),
     }))
     .filter((doc) => doc.score > 0 || !trimmed)
     .sort((left, right) => right.score - left.score || String(right.createdAt).localeCompare(String(left.createdAt)))
@@ -2231,7 +3232,9 @@ function answerBrainQuery(stateRef, query = '') {
 
   const top = matches[0];
   const answer = top
-    ? `Best match: ${top.title}. ${top.summary}`
+    ? top.blogPost
+      ? `Best Brain Blog match: ${top.title}. ${top.summary} Source lens: ${top.salesMentor || 'PBK Research'}${top.revenueStreams?.length ? ` for ${top.revenueStreams.join(', ')}` : ''}.`
+      : `Best match: ${top.title}. ${top.summary}`
     : 'No direct match yet. Ingest a new source or try a narrower query like "probate Ohio" or "subject-to".';
 
   return {
@@ -2242,24 +3245,191 @@ function answerBrainQuery(stateRef, query = '') {
   };
 }
 
+function normalizeConversationMessages(messages = []) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .map((message) => ({
+      role: ['user', 'assistant', 'system'].includes(String(message?.role || '').toLowerCase())
+        ? String(message.role).toLowerCase()
+        : 'user',
+      content: String(message?.content || '').trim().slice(0, 4000),
+      at: message?.at || message?.createdAt || null,
+    }))
+    .filter((message) => message.content)
+    .slice(-18);
+}
+
+function getLastUserMessage(messages = [], fallback = '') {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user' && messages[index]?.content) {
+      return messages[index].content;
+    }
+  }
+  return String(fallback || '').trim();
+}
+
+function redactMemoryText(text = '') {
+  return String(text || '')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+    .replace(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/g, '[redacted-phone]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9._-]{20,}|Bearer\s+[A-Za-z0-9._-]{12,})\b/g, '[redacted-secret]');
+}
+
+function buildRexConversationMemoryDoc({ query = '', answer = '', messages = [], sessionId = '', source = 'brain-chat' } = {}) {
+  const cleanedQuery = redactMemoryText(query).slice(0, 2400);
+  const cleanedAnswer = redactMemoryText(answer).slice(0, 3600);
+  const turnCount = normalizeConversationMessages(messages).length;
+  const createdAt = isoNow();
+  const hash = Math.abs(hashString(`${cleanedQuery}\n${cleanedAnswer}`));
+  return {
+    id: `rex-memory-${hash}-${Date.now()}`,
+    kind: 'conversation-memory',
+    topic: 'Rex Conversation Memory',
+    title: cleanedQuery ? `Rex Q&A: ${cleanedQuery.slice(0, 88)}` : 'Rex Q&A memory',
+    source,
+    excerpt: cleanedQuery,
+    summary: `Q: ${cleanedQuery}\nA: ${cleanedAnswer}`,
+    citation: sessionId ? `Rex session ${sessionId}` : 'Rex Brain chat',
+    tags: ['pbk-wholesale', 'pbk-rex-admin', 'conversation-memory'],
+    status: 'indexed',
+    turnCount,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+async function syncRexMemoryToSupermemory(doc = {}) {
+  if (!SUPERMEMORY_SYNC_ENABLED || !SUPERMEMORY_API_KEY || !SUPERMEMORY_API_URL) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: 'Supermemory sync is disabled or not configured.',
+    };
+  }
+
+  try {
+    const response = await fetch(SUPERMEMORY_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${SUPERMEMORY_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: doc.summary,
+        metadata: {
+          id: doc.id,
+          namespace: 'pbk-wholesale',
+          topic: doc.topic,
+          source: doc.source,
+          tags: doc.tags,
+          createdAt: doc.createdAt,
+        },
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+      skipped: false,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      skipped: false,
+      error: error?.message || 'Supermemory sync failed.',
+    };
+  }
+}
+
+async function storeRexConversationMemory(stateRef, params = {}, result = {}) {
+  const query = String(params.query || '').trim();
+  const answer = String(result.answer || '').trim();
+  if (!query || !answer || params.remember === false) {
+    return {
+      stored: false,
+      supermemory: { skipped: true, reason: 'No durable Q&A memory was created.' },
+    };
+  }
+
+  const doc = buildRexConversationMemoryDoc({
+    query,
+    answer,
+    messages: params.messages,
+    sessionId: params.sessionId,
+    source: params.source || 'brain-chat',
+  });
+  addBrainDoc(stateRef, doc);
+  const supermemory = await syncRexMemoryToSupermemory(doc);
+  return {
+    stored: true,
+    docId: doc.id,
+    localBrain: true,
+    supermemory,
+  };
+}
+
 function normalizeLeadIntake(payload = {}) {
   const createdAt = payload.createdAt || isoNow();
+  const seller = payload.seller || {};
+  const property = payload.property || {};
+  const motivation = payload.motivation || {};
+  const compliance = payload.compliance || {};
+  const assignment = payload.assignment || {};
+  const tags = Array.isArray(payload.tags)
+    ? payload.tags.map((tag) => String(tag || '').trim()).filter(Boolean)
+    : String(payload.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean);
   return {
     id: payload.id || randomUUID(),
     leadId: payload.leadId || payload.id || randomUUID(),
-    source: payload.source || 'manual',
+    source: payload.source || payload.leadSource || 'manual',
+    leadSource: payload.leadSource || payload.source || 'manual',
+    status: payload.status || payload.stage || 'new',
+    stage: payload.stage || payload.status || 'new',
+    score: payload.score === undefined ? null : toNumber(payload.score, null),
     seller: {
-      name: payload?.seller?.name || payload.name || 'Unknown seller',
-      phone: payload?.seller?.phone || payload.phone || '',
-      email: payload?.seller?.email || payload.email || '',
+      name: seller.name || payload.name || payload.sellerName || 'Unknown seller',
+      phone: seller.phone || payload.phone || '',
+      email: seller.email || payload.email || '',
+      preferredChannel: seller.preferredChannel || payload.preferredChannel || 'unknown',
+      bestTimeToCall: seller.bestTimeToCall || payload.bestTimeToCall || '',
+      relationshipToProperty: seller.relationshipToProperty || payload.relationshipToProperty || '',
+      notes: seller.notes || payload.sellerNotes || '',
     },
     property: {
-      address: payload?.property?.address || payload.address || '',
-      city: payload?.property?.city || payload.city || '',
-      state: payload?.property?.state || payload.state || '',
+      address: property.address || payload.address || '',
+      city: property.city || payload.city || '',
+      state: property.state || payload.state || '',
+      zip: property.zip || payload.zip || '',
+      occupancy: property.occupancy || payload.occupancy || 'unknown',
+      condition: property.condition || payload.condition || 'unknown',
+      beds: property.beds ?? payload.beds ?? null,
+      baths: property.baths ?? payload.baths ?? null,
+      sqft: property.sqft ?? payload.sqft ?? null,
+      yearBuilt: property.yearBuilt ?? payload.yearBuilt ?? null,
+      estimatedRepairs: property.estimatedRepairs ?? payload.estimatedRepairs ?? null,
+      arv: property.arv ?? payload.arv ?? null,
+      mao: property.mao ?? payload.mao ?? null,
+      mortgageBalance: property.mortgageBalance ?? payload.mortgageBalance ?? null,
+      askingPrice: property.askingPrice ?? payload.askingPrice ?? motivation.askingPrice ?? null,
     },
-    tags: Array.isArray(payload.tags) ? payload.tags : [],
+    motivation: {
+      summary: motivation.summary || payload.motivation || '',
+      timeline: motivation.timeline || payload.timeline || 'unknown',
+      askingPrice: motivation.askingPrice ?? property.askingPrice ?? payload.askingPrice ?? null,
+    },
+    compliance: {
+      consentStatus: compliance.consentStatus || payload.consentStatus || 'unknown',
+      dncStatus: compliance.dncStatus || payload.dncStatus || 'needs_review',
+    },
+    assignment: {
+      assignedAgent: assignment.assignedAgent || payload.assignedAgent || 'Ava',
+      campaign: assignment.campaign || payload.campaign || '',
+    },
+    notes: payload.notes || payload.internalNotes || '',
+    tags,
     createdAt,
+    updatedAt: payload.updatedAt || createdAt,
   };
 }
 
@@ -2926,6 +4096,12 @@ function looksLikeAdminIntent(text = '') {
     'render',
     'env var',
     'restart service',
+    'openclaw',
+    'gateway',
+    'away worker',
+    'away-mode',
+    'system health',
+    'health check',
     'rollback',
     'supabase',
     'migration',
@@ -2987,6 +4163,35 @@ function looksLikeBrowserResearchIntent(text = '') {
 function detectAdminIntent(command = '') {
   const normalized = String(command || '').trim().toLowerCase();
   if (!normalized) return null;
+
+  if (normalized.includes('health check') || normalized.includes('system health') || normalized.includes('check health')) {
+    return {
+      provider: 'system',
+      action: 'check_health',
+      risk: 'low',
+      summary: 'Inspect PBK bridge, provider, and runtime health.',
+    };
+  }
+
+  if (normalized.includes('openclaw') || normalized.includes('gateway')) {
+    return {
+      provider: 'openclaw',
+      action: normalized.includes('restart') ? 'restart_gateway' : 'inspect_gateway',
+      risk: normalized.includes('restart') ? 'medium' : 'low',
+      summary: normalized.includes('restart')
+        ? 'Prepare an OpenClaw gateway restart request.'
+        : 'Inspect OpenClaw gateway status.',
+    };
+  }
+
+  if (normalized.includes('away worker') || normalized.includes('away-mode') || normalized.includes('scheduled task') || normalized.includes('run worker')) {
+    return {
+      provider: 'worker',
+      action: 'run_away_worker',
+      risk: 'medium',
+      summary: 'Prepare an away-mode worker run request.',
+    };
+  }
 
   if (normalized.includes('instantly') || normalized.includes('domain') || normalized.includes('warmup') || normalized.includes('campaign')) {
     const action = normalized.includes('pause')
@@ -3259,7 +4464,7 @@ function buildAdminRoutePreview(route = {}) {
         ? Boolean(TELNYX_API_KEY)
         : providerKey === 'render'
           ? Boolean(RENDER_API_KEY && RENDER_SERVICE_ID)
-          : providerKey === 'contract-admin'
+          : ['contract-admin', 'system', 'openclaw', 'worker'].includes(providerKey)
             ? true
             : providerKey === 'streak'
               ? Boolean(STREAK_API_KEY && STREAK_PIPELINE_KEY)
@@ -3349,6 +4554,21 @@ function classifyExtendedAdminCommand(command = '', detected = null) {
           : adminIntent.action === 'update_outbound_caller_id'
             ? `Prepare a Telnyx caller ID update${callerId ? ` to ${callerId}` : ''}.`
             : `Prepare a Telnyx number purchase${quantity ? ` for ${quantity}` : ''}${areaCode ? ` in area code ${areaCode}` : ''}.`,
+    };
+  }
+
+  if (['system', 'openclaw', 'worker'].includes(adminIntent.provider)) {
+    return {
+      provider: adminIntent.provider,
+      action: adminIntent.action,
+      mode: adminIntent.action === 'check_health' ? 'inspect' : mode,
+      risk: adminIntent.risk,
+      requiresApproval: normalizeApprovalRequired(adminIntent.provider, adminIntent.action),
+      payload: {
+        localOnly: true,
+        source: 'rex-admin',
+      },
+      summary: adminIntent.summary,
     };
   }
 
@@ -3702,6 +4922,9 @@ function normalizeApprovalRequired(provider = '', action = '') {
     'telnyx:purchase_number',
     'render:update_env_var',
     'render:rollback_deploy',
+    'openclaw:restart_gateway',
+    'worker:run_away_worker',
+    'system:update_env_var',
     'supabase:add_column',
     'supabase:run_migration',
     'contract-admin:update_template',
@@ -4499,7 +5722,7 @@ function buildPrometheusMetrics() {
   const openContracts = quotas.docs.openContracts;
   const documentDeliveriesToday = quotas.docs.deliveredToday;
   const totalMessages = state.messages.length;
-  const sourcesIndexed = state.brainDocs.length;
+  const sourcesIndexed = state.brainDocs.length + (state.brainBlogPosts || []).length;
   const analyzeRuns = state.analyzerRuns.length;
   const providerMap = {
     telnyx: getTelnyxProviderMeta(),
@@ -6365,6 +7588,7 @@ async function publishWorkflowPersistence(params = {}) {
   const shouldActivate = params.activate ?? params.active ?? draft.active ?? true;
   let sync = null;
   let activation = null;
+  let verification = null;
 
   const meta = getN8nWorkflowProviderMeta();
   if (!meta.ready) {
@@ -6378,6 +7602,25 @@ async function publishWorkflowPersistence(params = {}) {
     const method = existingN8nId ? 'PUT' : 'POST';
     const pathname = existingN8nId ? `workflows/${encodeURIComponent(existingN8nId)}` : 'workflows';
     const workflowPayload = materializeN8nWorkflow(draft);
+    verification = {
+      ok: Array.isArray(workflowPayload.nodes) && workflowPayload.nodes.length >= 2 && Boolean(workflowPayload.connections),
+      checkedAt: isoNow(),
+      checks: {
+        hasNodes: Array.isArray(workflowPayload.nodes) && workflowPayload.nodes.length >= 2,
+        hasTrigger: workflowPayload.nodes.some((node) => /trigger/i.test(String(node.type || node.name || ''))),
+        hasHandoff: workflowPayload.nodes.some((node) => /PBK Approval Handoff/i.test(String(node.name || ''))),
+        hasConnections: Boolean(workflowPayload.connections && Object.keys(workflowPayload.connections).length),
+      },
+    };
+    verification.ok = Object.values(verification.checks).every(Boolean);
+    if (!verification.ok && params.forcePublish !== true) {
+      sync = {
+        ok: false,
+        configured: true,
+        error: 'Workflow failed PBK sandbox verification. Add a trigger, handoff node, and connection before publishing.',
+        verification,
+      };
+    } else {
     sync = await n8nApiRequest(method, pathname, {
       name: draft.name,
       nodes: workflowPayload.nodes,
@@ -6397,6 +7640,22 @@ async function publishWorkflowPersistence(params = {}) {
       activation = await n8nApiRequest('POST', `workflows/${encodeURIComponent(workflowId)}/activate`);
     }
 
+    if (sync.ok && workflowId) {
+      const fetched = await n8nApiRequest('GET', `workflows/${encodeURIComponent(workflowId)}`);
+      verification = {
+        ...(verification || {}),
+        ok: Boolean(verification?.ok && fetched.ok),
+        checkedAt: isoNow(),
+        workflowId,
+        fetched: {
+          ok: fetched.ok,
+          status: fetched.status,
+          active: Boolean(fetched.payload?.active ?? fetched.payload?.data?.active ?? draft.active),
+          nodeCount: Number((fetched.payload?.nodes || fetched.payload?.data?.nodes || []).length || 0),
+        },
+      };
+    }
+
     if (workflowId) {
       draft.metadata = {
         ...(draft.metadata || {}),
@@ -6406,6 +7665,7 @@ async function publishWorkflowPersistence(params = {}) {
       };
       draft.n8nWorkflowId = workflowId;
       draft.active = Boolean(shouldActivate && (activation?.ok || !activation));
+    }
     }
   }
 
@@ -6423,6 +7683,7 @@ async function publishWorkflowPersistence(params = {}) {
     drafts: drafts.slice(0, 80),
     sync,
     activation,
+    verification,
   };
 }
 
@@ -6461,6 +7722,79 @@ function normalizeSettingsPatch(params = {}) {
     patch[key] = value;
   }
   return patch;
+}
+
+const OPERATING_MODE_GATED_TOOLS = new Set([
+  'sendColdEmail',
+  'telnyx_call',
+  'telnyx_sms',
+  'sendDocuSign',
+  'sendContract',
+  'sendSellerDocs',
+  'skipTrace',
+  'bootstrapStreakPipeline',
+  'admin_restart_openclaw',
+  'admin_run_away_worker',
+  'admin_update_env_var',
+]);
+
+function getRuntimeOperatingMode() {
+  const settings = ensureRuntimeSettings(state);
+  const mode = String(settings.ui?.operatingMode || settings.operatingMode || state.status?.mode || 'approval').toLowerCase();
+  return ['autopilot', 'approval', 'manual'].includes(mode) ? mode : 'approval';
+}
+
+async function enforceOperatingModeForTool(toolName, params = {}) {
+  if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
+  const mode = getRuntimeOperatingMode();
+  if (mode === 'autopilot') return null;
+
+  const label = toolName.replace(/_/g, ' ');
+  if (mode === 'manual') {
+    const event = makeActivity({
+      category: 'Guardrail',
+      actor: 'PBK bridge',
+      text: `Blocked ${label} because Manual mode is active.`,
+      target: params.leadName || params.phone || params.email || params.address || 'provider action',
+      status: 'blocked',
+    }, 'runtime');
+    addActivity(state, event);
+    await persistState(state);
+    return {
+      ok: false,
+      result: 'unavailable',
+      outcome: 'unavailable',
+      mode,
+      toolName,
+      message: `Manual mode blocks ${label}. Switch to Approval or Autopilot to continue.`,
+    };
+  }
+
+  let paramPreview = '';
+  try {
+    paramPreview = JSON.stringify(params || {});
+  } catch {
+    paramPreview = '[unserializable params]';
+  }
+
+  const approval = await toolHandlers.createApproval({
+    type: 'provider-action',
+    leadName: params.leadName || params.name || params.sellerName || label,
+    address: params.address || params.propertyAddress || params.target || '',
+    phone: params.phone || params.to || '',
+    email: params.email || '',
+    notes: `Approval mode intercepted ${label}. Original params: ${paramPreview.slice(0, 900)}`,
+    source: 'operating-mode-guard',
+  });
+  return {
+    ok: true,
+    result: 'queued_for_approval',
+    outcome: 'queued_for_approval',
+    mode,
+    toolName,
+    approval,
+    message: `${label} was queued because Approval mode is active.`,
+  };
 }
 
 function getRangeStart(range = '30d') {
@@ -6542,6 +7876,192 @@ function buildAnalyticsSnapshot(range = '30d') {
       contractCloseRate: contracts.length ? Number(((completedContracts.length / contracts.length) * 100).toFixed(1)) : 0,
     },
     rows,
+  };
+}
+
+function compactSearchText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function collectGlobalSearchRecords(query = '', limit = 12) {
+  const needle = compactSearchText(query).toLowerCase();
+  const records = [];
+  const add = (record) => {
+    const haystack = compactSearchText([
+      record.title,
+      record.subtitle,
+      record.body,
+      record.kind,
+      record.target,
+      ...(Array.isArray(record.tags) ? record.tags : []),
+    ].filter(Boolean).join(' ')).toLowerCase();
+    if (needle && !haystack.includes(needle)) return;
+    records.push({
+      id: record.id || `${record.kind}-${records.length}`,
+      kind: record.kind || 'result',
+      title: compactSearchText(record.title || 'Untitled result'),
+      subtitle: compactSearchText(record.subtitle || ''),
+      body: compactSearchText(record.body || ''),
+      target: record.target || '',
+      page: record.page || 'dashboard',
+      createdAt: record.createdAt || record.at || '',
+      tags: Array.isArray(record.tags) ? record.tags.slice(0, 6) : [],
+    });
+  };
+
+  (state.leadImports || []).forEach((lead) => add({
+    kind: 'lead',
+    id: lead.leadId || lead.id,
+    title: lead.seller?.name || lead.leadName || 'Imported lead',
+    subtitle: lead.property?.address || lead.address || '',
+    body: [lead.seller?.phone, lead.seller?.email, lead.status, lead.source].filter(Boolean).join(' '),
+    page: 'lead-detail',
+    createdAt: lead.createdAt,
+    tags: lead.tags || [],
+  }));
+  (state.calls || []).forEach((call) => add({
+    kind: 'call',
+    id: call.id,
+    title: call.leadName || call.phone || 'Call',
+    subtitle: call.address || call.status || '',
+    body: [call.phone, call.script, call.status, ...(call.transcript || []).map((line) => line.text)].join(' '),
+    page: 'calls',
+    createdAt: call.createdAt || call.startedAt,
+  }));
+  (state.messages || []).forEach((message) => add({
+    kind: 'message',
+    id: message.id,
+    title: message.leadName || message.channel || 'Message',
+    subtitle: `${message.channel || 'message'} - ${message.status || ''}`,
+    body: [message.address, message.phone, message.email, message.body].filter(Boolean).join(' '),
+    page: 'inbox',
+    createdAt: message.createdAt,
+  }));
+  (state.contracts || []).forEach((contract) => add({
+    kind: 'contract',
+    id: contract.id,
+    title: contract.leadName || contract.pathLabel || 'Contract',
+    subtitle: contract.address || contract.status || '',
+    body: [contract.envelopeId, contract.status, contract.pathType, contract.notes].filter(Boolean).join(' '),
+    page: 'contracts',
+    createdAt: contract.createdAt || contract.updatedAt,
+  }));
+  (state.brainDocs || []).forEach((doc) => add({
+    kind: 'brain',
+    id: doc.id,
+    title: doc.title,
+    subtitle: doc.topic || doc.source || '',
+    body: [doc.summary, doc.excerpt, doc.source].filter(Boolean).join(' '),
+    page: 'brain',
+    createdAt: doc.createdAt,
+    tags: doc.tags || [doc.topic].filter(Boolean),
+  }));
+  (state.brainBlogPosts || []).forEach((post) => add({
+    kind: 'brain',
+    id: post.id,
+    title: post.title,
+    subtitle: [post.salesMentor, post.techniqueType].filter(Boolean).join(' - '),
+    body: [post.summary, post.content].filter(Boolean).join(' '),
+    page: 'brain',
+    createdAt: post.publishedAt || post.createdAt,
+    tags: [...(post.revenueStreams || []), ...(post.tags || [])],
+  }));
+  (state.activity || []).forEach((item) => {
+    if (isDemoActivity(item)) return;
+    add({
+      kind: 'activity',
+      id: item.id,
+      title: item.text || item.category || 'Activity',
+      subtitle: [item.actor, item.status].filter(Boolean).join(' - '),
+      body: item.target || '',
+      page: 'activity-log',
+      createdAt: item.at || item.createdAt,
+    });
+  });
+
+  return sortNewest(records).slice(0, Math.max(1, Math.min(40, Number(limit || 12))));
+}
+
+function getMessageCounts() {
+  const messages = Array.isArray(state.messages) ? state.messages : [];
+  const channel = (name) => messages.filter((message) => String(message.channel || '').toLowerCase() === name).length;
+  return {
+    all: messages.length,
+    unread: messages.filter((message) => ['received', 'unread', 'new'].includes(String(message.status || '').toLowerCase())).length,
+    calls: (state.calls || []).length,
+    sms: channel('sms'),
+    email: channel('email'),
+    approvals: (state.approvals || []).filter((approval) => String(approval.status || '').toLowerCase() === 'pending').length
+      + (state.adminTasks || []).filter((task) => String(task.status || '').toLowerCase() === 'pending').length,
+    hot: (state.leadImports || []).filter((lead) => {
+      const tags = Array.isArray(lead.tags) ? lead.tags.join(' ') : '';
+      return /hot|urgent|probate|high-equity/i.test(`${tags} ${lead.status || ''}`);
+    }).length,
+  };
+}
+
+function isDemoActivity(item = {}) {
+  const text = String(item.text || '');
+  return item.source === 'demo'
+    || /Requested approval for \$78,000 offer|Analyzer ran - ARV \$185k|daily_probate_import\.csv|Indexed 3 new sources/i.test(text);
+}
+
+function buildNotificationSnapshot() {
+  const approvals = (state.approvals || [])
+    .filter((approval) => String(approval.status || '').toLowerCase() === 'pending')
+    .slice(0, 8)
+    .map((approval) => ({
+      id: approval.id,
+      type: 'approval',
+      title: `${approval.type || 'Approval'} needed${approval.offerPrice ? ` - ${formatMoneyCompact(approval.offerPrice)}` : ''}`,
+      desc: [approval.leadName, approval.address, approval.notes].filter(Boolean).join(' - '),
+      at: approval.createdAt,
+      unread: true,
+    }));
+  const admin = (state.adminTasks || [])
+    .filter((task) => String(task.status || '').toLowerCase() === 'pending')
+    .slice(0, 6)
+    .map((task) => ({
+      id: task.id,
+      type: 'system',
+      title: `${task.kind || task.action || 'Admin'} approval queued`,
+      desc: task.summary || task.reason || task.notes || 'Admin task waiting for review.',
+      at: task.createdAt,
+      unread: true,
+    }));
+  const calls = (state.calls || [])
+    .slice(0, 5)
+    .map((call) => ({
+      id: call.id,
+      type: 'call',
+      title: `${call.status || 'Call'} - ${call.leadName || call.phone || 'Unknown lead'}`,
+      desc: [call.address, call.phone].filter(Boolean).join(' - '),
+      at: call.updatedAt || call.startedAt || call.createdAt,
+      unread: String(call.status || '').toLowerCase() === 'live',
+    }));
+  const system = (state.activity || [])
+    .filter((item) => !isDemoActivity(item))
+    .slice(0, 10)
+    .map((item) => ({
+      id: item.id,
+      type: String(item.category || 'system').toLowerCase().includes('call') ? 'call' : 'system',
+      title: item.text || item.category || 'Runtime event',
+      desc: [item.actor, item.target].filter(Boolean).join(' - '),
+      at: item.at || item.createdAt,
+      unread: false,
+    }));
+  const notifications = sortNewest([...approvals, ...admin, ...calls, ...system]).slice(0, 16);
+  return {
+    ok: true,
+    result: 'live',
+    counts: {
+      all: notifications.length,
+      approvals: notifications.filter((item) => item.type === 'approval').length,
+      calls: notifications.filter((item) => item.type === 'call').length,
+      system: notifications.filter((item) => item.type === 'system').length,
+      unread: notifications.filter((item) => item.unread).length,
+    },
+    notifications,
   };
 }
 
@@ -7484,6 +9004,34 @@ const toolHandlers = {
         result,
       };
     }
+    if (detected.provider === 'system' && detected.action === 'check_health') {
+      const result = await toolHandlers.admin_check_health({
+        ...params,
+        requestedBy,
+      });
+      return {
+        ok: true,
+        routedTo: 'admin_check_health',
+        provider: 'system',
+        mode: 'inspect',
+        answer: 'I checked PBK runtime health from the live bridge snapshot.',
+        result,
+      };
+    }
+    if (detected.provider === 'openclaw' && detected.action === 'inspect_gateway') {
+      const result = await toolHandlers.admin_check_health({
+        ...params,
+        requestedBy,
+      });
+      return {
+        ok: true,
+        routedTo: 'admin_check_health',
+        provider: 'openclaw',
+        mode: 'inspect',
+        answer: 'I checked the OpenClaw/PBK gateway health from the live bridge snapshot.',
+        result,
+      };
+    }
     const streakRoute = classifyStreakAdminCommand(command);
     const extendedRoute = classifyExtendedAdminCommand(command, detected);
 
@@ -7680,6 +9228,122 @@ const toolHandlers = {
         ? `I prepared a dry run for ${result.task.provider} (${result.task.action}) and queued it for approval.`
         : `I prepared the next admin step inside the bridge.`,
       result,
+    };
+  },
+
+  async admin_check_health(params = {}) {
+    recordToolUse('admin_check_health');
+    const snapshot = buildStateSnapshot();
+    return {
+      ok: true,
+      outcome: 'live',
+      checkedBy: params.requestedBy || 'Rex',
+      checkedAt: isoNow(),
+      service: 'pbk-local-openclaw',
+      stateBackend: STATE_BACKEND,
+      status: snapshot.status,
+      providers: snapshot.status?.providers || {},
+      supermemory: {
+        configured: Boolean(SUPERMEMORY_API_KEY && SUPERMEMORY_API_URL),
+        syncEnabled: SUPERMEMORY_SYNC_ENABLED,
+      },
+      summary: 'PBK bridge health snapshot returned from live runtime state.',
+    };
+  },
+
+  async admin_restart_openclaw(params = {}) {
+    recordToolUse('admin_restart_openclaw');
+    const result = await toolHandlers.requestAdminAction({
+      command: params.command || 'Restart OpenClaw gateway',
+      requestedBy: params.requestedBy || 'Rex',
+      provider: 'openclaw',
+      action: 'restart_gateway',
+      risk: 'medium',
+      summary: 'Restart the OpenClaw gateway/container after approval.',
+      requiresApproval: params.autoApprove === true || params.auto_approve === true ? false : true,
+      dryRun: true,
+      payload: {
+        reason: params.reason || 'Rex admin request',
+        requestedLiveRun: Boolean(params.autoApprove === true || params.auto_approve === true),
+      },
+      detected: {
+        provider: 'openclaw',
+        action: 'restart_gateway',
+        risk: 'medium',
+        summary: 'Restart the OpenClaw gateway/container after approval.',
+      },
+    });
+    return {
+      ...result,
+      outcome: 'queued_for_approval',
+      live: false,
+      summary: 'OpenClaw restart was captured as an approval-gated admin task. No fake restart was claimed.',
+    };
+  },
+
+  async admin_run_away_worker(params = {}) {
+    recordToolUse('admin_run_away_worker');
+    const result = await toolHandlers.requestAdminAction({
+      command: params.command || 'Run PBK away-mode worker',
+      requestedBy: params.requestedBy || 'Rex',
+      provider: 'worker',
+      action: 'run_away_worker',
+      risk: 'medium',
+      summary: 'Run the PBK away-mode worker after approval.',
+      requiresApproval: params.autoApprove === true || params.auto_approve === true ? false : true,
+      dryRun: true,
+      payload: {
+        reason: params.reason || 'Rex admin request',
+        requestedLiveRun: Boolean(params.autoApprove === true || params.auto_approve === true),
+      },
+      detected: {
+        provider: 'worker',
+        action: 'run_away_worker',
+        risk: 'medium',
+        summary: 'Run the PBK away-mode worker after approval.',
+      },
+    });
+    return {
+      ...result,
+      outcome: 'queued_for_approval',
+      live: false,
+      summary: 'Away-mode worker run was captured as an approval-gated admin task. No fake process execution was claimed.',
+    };
+  },
+
+  async admin_update_env_var(params = {}) {
+    recordToolUse('admin_update_env_var');
+    const envVars = Array.isArray(params.envVars)
+      ? params.envVars.map((key) => String(key || '').trim()).filter(Boolean)
+      : params.key
+        ? [String(params.key).trim()]
+        : [];
+    const result = await toolHandlers.requestAdminAction({
+      command: params.command || `Update Render env ${envVars.join(', ') || 'variable'}`,
+      requestedBy: params.requestedBy || 'Rex',
+      provider: 'render',
+      action: 'update_env_var',
+      risk: 'high',
+      summary: `Update Render/OpenClaw environment variable${envVars.length === 1 ? '' : 's'} after approval.`,
+      requiresApproval: true,
+      dryRun: true,
+      payload: {
+        envVars,
+        envAssignments: Object.fromEntries(envVars.map((key) => [key, '[REDACTED]'])),
+        hasSecretValue: Boolean(params.value),
+      },
+      detected: {
+        provider: 'render',
+        action: 'update_env_var',
+        risk: 'high',
+        summary: 'Update Render/OpenClaw environment variables after approval.',
+      },
+    });
+    return {
+      ...result,
+      outcome: 'queued_for_approval',
+      live: false,
+      summary: 'Environment update was queued without storing secret values in browser-visible state.',
     };
   },
 
@@ -8218,9 +9882,310 @@ const toolHandlers = {
     return { ok: true, doc };
   },
 
+  async createBrainBlogPost(params = {}) {
+    recordToolUse('createBrainBlogPost');
+    const post = normalizeBrainBlogPost(params);
+    addBrainBlogPost(state, post);
+    await persistBrainBlogPostRecord(post);
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.requestedBy || 'Rex',
+        category: 'BRAIN_BLOG',
+        status: 'indexed',
+        text: `Published Brain Blog post: ${post.title}`,
+        target: post.salesMentor || post.sourceName || 'Brain Blog',
+      }),
+    );
+    state.status.weeklySources = toNumber(state.status.weeklySources, 0) + 1;
+    await persistState(state);
+    return {
+      ok: true,
+      result: 'live',
+      post,
+    };
+  },
+
+  async trainBrainBlogPost(params = {}) {
+    recordToolUse('trainBrainBlogPost');
+    const postId = String(params.id || params.postId || '').trim();
+    const post = (state.brainBlogPosts || []).find((item) => item.id === postId);
+    if (!post) {
+      return {
+        ok: false,
+        result: 'unavailable',
+        error: 'Brain Blog post not found.',
+      };
+    }
+
+    const doc = {
+      id: `rex-trained-${post.id}-${Date.now()}`,
+      kind: 'coach-memory',
+      topic: (post.revenueStreams || [])[0] || 'Wholesaling',
+      title: `Train Rex: ${post.title}`,
+      source: post.sourceName || 'Brain Blog',
+      excerpt: post.summary,
+      summary: [
+        `Mentor: ${post.salesMentor || 'PBK Research'}`,
+        `Technique: ${post.techniqueType || 'sales_knowledge'}`,
+        `Revenue streams: ${(post.revenueStreams || []).join(', ') || 'Wholesaling'}`,
+        '',
+        post.summary || post.content || '',
+        '',
+        ...(post.keyTakeaways || []).map((item) => `- ${item}`),
+      ].join('\n').trim(),
+      citation: post.sourceUrl || `${post.sourceName || 'Brain Blog'} - ${post.title}`,
+      createdAt: isoNow(),
+      tags: normalizeStringList([...(post.tags || []), ...(post.revenueStreams || []), 'trained-rex', post.salesMentor]),
+      trainedFromBlogPostId: post.id,
+    };
+    addBrainDoc(state, doc);
+    post.trainedAt = isoNow();
+    post.status = 'trained';
+    post.updatedAt = post.trainedAt;
+    addBrainBlogPost(state, post);
+    await persistBrainBlogPostRecord(post);
+    const supermemory = await syncRexMemoryToSupermemory(doc);
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.requestedBy || 'Rex',
+        category: 'BRAIN_BLOG',
+        status: 'trained',
+        text: `Rex trained on Brain Blog post: ${post.title}`,
+        target: post.salesMentor || 'Brain Blog',
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: true,
+      result: 'live',
+      post,
+      doc,
+      supermemory,
+    };
+  },
+
+  async harvestBrainBlog(params = {}) {
+    recordToolUse('harvestBrainBlog');
+    const harvest = await harvestBrainBlogFeeds({
+      feeds: Array.isArray(params.feeds) ? params.feeds : null,
+      limit: params.limit || 8,
+    });
+    const existingKeys = new Set((state.brainBlogPosts || []).flatMap((post) => [post.sourceUrl, post.contentHash, post.id].filter(Boolean)));
+    const added = [];
+    const skipped = [];
+    for (const post of harvest.posts) {
+      if (existingKeys.has(post.sourceUrl) || existingKeys.has(post.contentHash) || existingKeys.has(post.id)) {
+        skipped.push(post);
+        continue;
+      }
+      addBrainBlogPost(state, post);
+      await persistBrainBlogPostRecord(post);
+      existingKeys.add(post.sourceUrl);
+      existingKeys.add(post.contentHash);
+      existingKeys.add(post.id);
+      added.push(post);
+    }
+    if (added.length) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: params.requestedBy || 'Brain Harvester',
+          category: 'BRAIN_BLOG',
+          status: 'indexed',
+          text: `Harvested ${added.length} new Brain Blog post${added.length === 1 ? '' : 's'}.`,
+          target: 'Brain Blog',
+        }),
+      );
+      state.status.weeklySources = toNumber(state.status.weeklySources, 0) + added.length;
+    }
+    await persistState(state);
+    return {
+      ok: harvest.errors.length === 0 || added.length > 0,
+      result: added.length ? 'live' : harvest.errors.length ? 'provider_missing' : 'local_view_only',
+      added,
+      skipped: skipped.length,
+      errors: harvest.errors,
+      feeds: harvest.feeds,
+    };
+  },
+
+  async recordMarketIntel(params = {}) {
+    recordToolUse('recordMarketIntel');
+    const entry = {
+      id: params.id || `market-intel-${Date.now()}`,
+      market: params.market || params.city || 'Unknown market',
+      zipCode: extractZipCode(params.zipCode || params.address || ''),
+      propertyType: normalizePropertyType(params.propertyType || ''),
+      competitiveOfferIndex: Math.max(0, Math.min(1, Number(params.competitiveOfferIndex ?? params.offerIndex ?? 0.5))),
+      buyerDemand: params.buyerDemand || params.demand || 'unknown',
+      medianInvestorMaoPct: Math.max(0, Math.min(1, Number(params.medianInvestorMaoPct ?? params.maoPct ?? 0.65))),
+      daysOnMarketSignal: Math.max(0, Number(params.daysOnMarketSignal ?? params.dom ?? 0)),
+      confidence: Math.max(0, Math.min(1, Number(params.confidence ?? 0.55))),
+      source: params.source || 'manual',
+      status: params.status || 'live',
+      notes: params.notes || 'Market intel captured for Competitive Offer Index.',
+      metadata: params.metadata && typeof params.metadata === 'object' ? params.metadata : {},
+      createdAt: params.createdAt || isoNow(),
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'marketIntel', entry);
+    await persistMarketIntelRecord(entry);
+    addActivity(state, makeActivity({
+      actor: params.requestedBy || 'Market Intel',
+      category: 'MARKET_INTEL',
+      status: 'indexed',
+      text: `Updated Competitive Offer Index for ${entry.zipCode || entry.market}.`,
+      target: entry.market,
+    }));
+    await persistState(state);
+    return { ok: true, result: 'live', entry, state: buildStateSnapshot() };
+  },
+
+  async planLeadNurture(params = {}) {
+    recordToolUse('planLeadNurture');
+    const context = findLeadContext(params);
+    const leadId = params.leadId || context.leadId || `lead-${slugify(context.leadName || params.leadName || 'unknown')}`;
+    const approval = await toolHandlers.createApproval({
+      type: 'lead-nurture',
+      leadId,
+      leadName: context.leadName || params.leadName || 'Lead',
+      address: context.address || params.address || '',
+      notes: 'Lead nurture sequence requested. Email/SMS/voice touches stay approval-gated before provider sends.',
+      source: params.source || 'lead-nurture-agent',
+    });
+    const plan = {
+      id: params.id || `nurture-${leadId}-${Date.now()}`,
+      leadId,
+      leadName: context.leadName || params.leadName || 'Lead',
+      address: context.address || params.address || '',
+      status: 'approval_required',
+      cadenceDays: params.cadenceDays || [7, 14, 30],
+      channels: normalizeStringList(params.channels || ['email', 'sms', 'voice']),
+      steps: params.steps || [
+        { day: 7, channel: 'email', label: 'Market update follow-up', status: 'queued_for_approval' },
+        { day: 14, channel: 'sms', label: 'Short seller check-in', status: 'queued_for_approval' },
+        { day: 30, channel: 'task', label: 'Archive or human handoff review', status: 'queued_for_approval' },
+      ],
+      approvalId: approval?.approval?.id || approval?.id || '',
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'leadNurturePlans', plan);
+    await persistLeadNurturePlanRecord(plan);
+    addActivity(state, makeActivity({
+      actor: 'Lead Nurture',
+      category: 'NURTURE',
+      status: 'queued',
+      text: `Queued approval-gated nurture plan for ${plan.leadName}.`,
+      target: plan.address || plan.leadName,
+    }));
+    await persistState(state);
+    return { ok: true, result: 'queued_for_approval', plan, approval, state: buildStateSnapshot() };
+  },
+
+  async simulateDealConfidence(params = {}) {
+    recordToolUse('simulateDealConfidence');
+    const simulation = {
+      id: params.id || `deal-sim-${Date.now()}`,
+      leadId: params.leadId || '',
+      leadName: params.leadName || '',
+      address: params.address || params.propertyAddress || '',
+      pathType: params.pathType || params.path || 'cash',
+      ...buildDealScenarioSet(params),
+      assumptions: {
+        source: params.source || 'deal-confidence-agent',
+        propertyAge: params.propertyAge || '',
+        condition: params.condition || '',
+      },
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'dealSimulations', simulation);
+    await persistDealSimulationRecord(simulation);
+    addActivity(state, makeActivity({
+      actor: 'Deal Confidence',
+      category: 'SIMULATION',
+      status: simulation.probabilityOfLoss > 0.35 ? 'warning' : 'served',
+      text: `Simulated ${simulation.address || 'deal'}: expected profit ${formatMoneyCompact(simulation.expectedProfit)}, loss risk ${Math.round(simulation.probabilityOfLoss * 100)}%.`,
+      target: simulation.address || simulation.leadName || 'Analyzer',
+    }));
+    await persistState(state);
+    return { ok: true, result: 'live', simulation, state: buildStateSnapshot() };
+  },
+
+  async matchBuyers(params = {}) {
+    recordToolUse('matchBuyers');
+    const deal = {
+      address: params.address || params.propertyAddress || '',
+      zipCode: params.zipCode || extractZipCode(params.address || ''),
+      propertyType: normalizePropertyType(params.propertyType || ''),
+      offer: params.offer || params.offerPrice || params.targetOffer || params.price,
+      repairs: params.repairs || params.repairsMid || params.repairEstimate,
+      roi: params.roi || params.expectedRoi || 0,
+    };
+    if (params.buyer && typeof params.buyer === 'object') {
+      const buyer = {
+        id: params.buyer.id || `buyer-${slugify(params.buyer.name || 'new')}-${Date.now()}`,
+        status: 'active',
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+        ...params.buyer,
+      };
+      upsertById(state, 'buyers', buyer);
+      await persistBuyerRecord(buyer);
+    }
+    const matches = (state.buyers || [])
+      .filter((buyer) => String(buyer.status || 'active').toLowerCase() === 'active')
+      .map((buyer) => scoreBuyerMatch(buyer, deal))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 8);
+    const record = {
+      id: params.id || `buyer-match-${Date.now()}`,
+      deal,
+      matches,
+      topBuyer: matches[0] || null,
+      status: matches[0]?.score >= 70 ? 'strong_match' : matches[0]?.score >= 45 ? 'possible_match' : 'no_strong_match',
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'buyerMatches', record);
+    await persistBuyerMatchRecord(record);
+    addActivity(state, makeActivity({
+      actor: 'Buyer Pipeline',
+      category: 'DISPO',
+      status: record.status === 'strong_match' ? 'success' : 'served',
+      text: record.topBuyer ? `Matched ${record.topBuyer.buyerName} at ${record.topBuyer.score}/100.` : 'No active buyer match found.',
+      target: deal.address || deal.zipCode || 'Buyer Pipeline',
+    }));
+    await persistState(state);
+    return { ok: true, result: 'live', match: record, state: buildStateSnapshot() };
+  },
+
+  async runSystemAudit(params = {}) {
+    recordToolUse('runSystemAudit');
+    const report = {
+      ...buildSystemAuditReport(state),
+      requestedBy: params.requestedBy || 'System Auditor',
+    };
+    upsertById(state, 'systemAuditReports', report);
+    await persistSystemAuditReportRecord(report);
+    addActivity(state, makeActivity({
+      actor: 'System Auditor',
+      category: 'AUDIT',
+      status: report.status === 'healthy' ? 'success' : 'warning',
+      text: `Cost/performance audit complete: ${report.status}, ${report.errorRate}% error rate, ${report.avgLatencyMs}ms avg latency.`,
+      target: 'PBK runtime',
+    }));
+    await persistState(state);
+    return { ok: true, result: 'live', report, state: buildStateSnapshot() };
+  },
+
   async getBrainState(params = {}) {
     recordToolUse('getBrainState');
-    const query = String(params.query || '').trim();
+    const messages = normalizeConversationMessages(params.messages);
+    const query = getLastUserMessage(messages, params.query || params.q || '');
     const isBrowserResearchIntent = looksLikeBrowserResearchIntent(query);
     const isAdminIntent = !isBrowserResearchIntent && looksLikeAdminIntent(query);
     const response = isAdminIntent || isBrowserResearchIntent
@@ -8244,15 +10209,19 @@ const toolHandlers = {
           target: researchResult?.job?.targetLabel || 'BrowserOS',
         }),
       );
-      await persistState(state);
-      return {
+      const result = {
         query,
         answer: researchResult?.answer || 'Browser research request queued.',
         citations: researchResult?.citations || [],
         browserResearch: researchResult?.job || null,
         brainDocs: state.brainDocs.slice(0, 8),
+        brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
         status: state.status,
       };
+      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
+      await persistState(state);
+      result.brainDocs = state.brainDocs.slice(0, 8);
+      return result;
     }
 
     if (isAdminIntent) {
@@ -8271,15 +10240,19 @@ const toolHandlers = {
           target: adminRoute?.provider || 'admin',
         }),
       );
-      await persistState(state);
-      return {
+      const result = {
         query,
         answer: adminRoute?.answer || 'I treated that as an admin request and routed it through the bridge.',
         citations: ['PBK admin runtime', 'OpenClaw bridge'],
         admin: adminRoute,
         brainDocs: state.brainDocs.slice(0, 8),
+        brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
         status: state.status,
       };
+      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
+      await persistState(state);
+      result.brainDocs = state.brainDocs.slice(0, 8);
+      return result;
     }
 
     addActivity(
@@ -8292,10 +10265,13 @@ const toolHandlers = {
         target: 'Brain',
       }),
     );
+    const memory = await storeRexConversationMemory(state, { ...params, query, messages }, response);
     await persistState(state);
     return {
       ...response,
+      memory,
       brainDocs: state.brainDocs.slice(0, 8),
+      brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
       status: state.status,
     };
   },
@@ -8320,6 +10296,7 @@ const toolHandlers = {
       endpoint: browserOs.endpoint || BROWSEROS_MCP_URL,
     };
 
+    upsertBrowserResearchJob(state, job);
     addActivity(
       state,
       makeActivity({
@@ -10144,12 +12121,21 @@ function buildStateSnapshot() {
     approvals: state.approvals,
     activity: state.activity,
     brainDocs: state.brainDocs,
+    brainBlogPosts: state.brainBlogPosts || [],
+    marketIntel: state.marketIntel || [],
+    leadNurturePlans: state.leadNurturePlans || [],
+    dealSimulations: state.dealSimulations || [],
+    buyers: state.buyers || [],
+    buyerMatches: state.buyerMatches || [],
+    systemAuditReports: state.systemAuditReports || [],
     leadImports: state.leadImports,
     analyzerRuns: state.analyzerRuns,
     propertyCache: state.propertyCache || [],
     dncEntries: state.dncEntries,
     calls: state.calls,
     messages: state.messages,
+    messageCounts: getMessageCounts(),
+    notifications: buildNotificationSnapshot(),
     appointments: state.appointments,
     leadStageTransitions: state.leadStageTransitions,
     contracts: state.contracts,
@@ -10169,6 +12155,7 @@ function buildStateSnapshot() {
     },
     documentDeliveries: state.documentDeliveries,
     attachments: state.attachments || [],
+    browserResearchJobs: state.browserResearchJobs || [],
     settings: ensureRuntimeSettings(state),
     adminTasks: state.adminTasks,
     adminAudit: state.adminAudit,
@@ -10560,6 +12547,36 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/search', '/search'])) {
+      const query = url.searchParams.get('q') || url.searchParams.get('query') || '';
+      const limit = Math.max(1, Math.min(40, Number(url.searchParams.get('limit') || 12)));
+      const results = collectGlobalSearchRecords(query, limit);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        query,
+        count: results.length,
+        results,
+        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/messages/counts') {
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        counts: getMessageCounts(),
+        generatedAt: isoNow(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/notifications') {
+      json(response, 200, buildNotificationSnapshot());
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/tooling/status') {
       json(response, 200, {
         ok: true,
@@ -10661,6 +12678,23 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/attachments/status') {
+      const attachments = sortNewest(state.attachments || []);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        bucket: SUPABASE_ATTACHMENTS_BUCKET,
+        counts: {
+          total: attachments.length,
+          indexed: attachments.filter((item) => item.extractionStatus === 'indexed' || item.extraction?.ok).length,
+          storedOnly: attachments.filter((item) => item.extractionStatus === 'stored-only' || item.extractionStatus === 'stored').length,
+          failed: attachments.filter((item) => /fail|error/i.test(String(item.extractionStatus || item.status || ''))).length,
+        },
+        attachments: attachments.slice(0, Math.max(1, Math.min(80, Number(url.searchParams.get('limit') || 20)))),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/attachments') {
       const contentType = String(request.headers['content-type'] || '');
       let file = null;
@@ -10713,6 +12747,66 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/brain/blog', '/brain/blog'])) {
+      const limit = Math.max(1, Math.min(60, Number(url.searchParams.get('limit') || 20)));
+      const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+      const posts = filterBrainBlogPosts(state.brainBlogPosts || [], {
+        tag: url.searchParams.get('tag') || '',
+        mentor: url.searchParams.get('mentor') || '',
+        revenueStream: url.searchParams.get('revenueStream') || url.searchParams.get('stream') || '',
+        techniqueType: url.searchParams.get('techniqueType') || url.searchParams.get('type') || '',
+      });
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        total: posts.length,
+        posts: posts.slice(offset, offset + limit),
+        status: state.status,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/blog', '/brain/blog'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.createBrainBlogPost({
+        ...body,
+        requestedBy: body.requestedBy || 'api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/blog/harvest', '/brain/blog/harvest'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.harvestBrainBlog({
+        ...body,
+        requestedBy: body.requestedBy || 'api',
+      });
+      json(response, result.ok === false ? 502 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const trainBrainBlogMatch = pathname.match(/^\/(?:api\/)?brain\/blog\/([^/]+)\/train$/);
+    if (request.method === 'POST' && trainBrainBlogMatch) {
+      const body = await readBody(request);
+      const result = await toolHandlers.trainBrainBlogPost({
+        ...body,
+        id: decodeURIComponent(trainBrainBlogMatch[1]),
+        requestedBy: body.requestedBy || 'api',
+      });
+      json(response, result.ok === false ? 404 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/brain/query', '/api/brain/query'])) {
       const result = await toolHandlers.getBrainState({
         query: url.searchParams.get('q') || url.searchParams.get('query') || '',
@@ -10732,6 +12826,98 @@ const server = createServer(async (request, response) => {
         source: 'brain-api',
       });
       json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/market-intel') {
+      const zip = String(url.searchParams.get('zip') || url.searchParams.get('zipCode') || '').trim();
+      const market = String(url.searchParams.get('market') || '').trim().toLowerCase();
+      const items = sortNewest(state.marketIntel || []).filter((item) => {
+        if (zip && item.zipCode !== zip) return false;
+        if (market && !String(item.market || '').toLowerCase().includes(market)) return false;
+        return true;
+      });
+      json(response, 200, { ok: true, result: 'live', items, status: state.status });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/market-intel') {
+      const body = await readBody(request);
+      const result = await toolHandlers.recordMarketIntel({ ...body, requestedBy: body.requestedBy || 'api' });
+      json(response, result.ok === false ? 400 : 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/leads/nurture') {
+      const body = await readBody(request);
+      const result = await toolHandlers.planLeadNurture({ ...body, requestedBy: body.requestedBy || 'api' });
+      json(response, result.ok === false ? 400 : 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/leads/nurture') {
+      json(response, 200, { ok: true, result: 'live', plans: sortNewest(state.leadNurturePlans || []), status: state.status });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/deals/simulate') {
+      const body = await readBody(request);
+      const result = await toolHandlers.simulateDealConfidence({ ...body, requestedBy: body.requestedBy || 'api' });
+      json(response, result.ok === false ? 400 : 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/deals/simulations') {
+      json(response, 200, { ok: true, result: 'live', simulations: sortNewest(state.dealSimulations || []), status: state.status });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/buyers') {
+      json(response, 200, { ok: true, result: 'live', buyers: sortNewest(state.buyers || []), status: state.status });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/buyers') {
+      const body = await readBody(request);
+      const buyer = {
+        id: body.id || `buyer-${slugify(body.name || 'new')}-${Date.now()}`,
+        name: body.name || 'New buyer',
+        status: body.status || 'active',
+        zipCodes: normalizeStringList(body.zipCodes || body.zips || []),
+        markets: normalizeStringList(body.markets || []),
+        propertyTypes: normalizeStringList(body.propertyTypes || ['single-family']),
+        priceMin: toMoneyNumber(body.priceMin, 0),
+        priceMax: toMoneyNumber(body.priceMax, 250000),
+        desiredRoi: Number(body.desiredRoi || 0.12),
+        maxRepairs: toMoneyNumber(body.maxRepairs, 60000),
+        notes: body.notes || '',
+        tags: normalizeStringList(body.tags || []),
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+      };
+      upsertById(state, 'buyers', buyer);
+      await persistBuyerRecord(buyer);
+      await persistState(state);
+      json(response, 200, { ok: true, result: 'live', buyer, state: buildStateSnapshot() });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/buyers/match') {
+      const body = await readBody(request);
+      const result = await toolHandlers.matchBuyers({ ...body, requestedBy: body.requestedBy || 'api' });
+      json(response, result.ok === false ? 400 : 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/system/audit') {
+      json(response, 200, { ok: true, result: 'live', reports: sortNewest(state.systemAuditReports || []), status: state.status });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/system/audit') {
+      const body = await readBody(request);
+      const result = await toolHandlers.runSystemAudit({ ...body, requestedBy: body.requestedBy || 'api' });
+      json(response, result.ok === false ? 400 : 200, result);
       return;
     }
 
@@ -10918,6 +13104,22 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/browser-research/jobs') {
+      const jobs = sortNewest(state.browserResearchJobs || []);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        counts: {
+          total: jobs.length,
+          queued: jobs.filter((job) => String(job.status || '').toLowerCase() === 'queued').length,
+          setupRequired: jobs.filter((job) => String(job.status || '').toLowerCase() === 'setup-required').length,
+          complete: jobs.filter((job) => /complete|done|indexed/i.test(String(job.status || ''))).length,
+        },
+        jobs: jobs.slice(0, Math.max(1, Math.min(80, Number(url.searchParams.get('limit') || 20)))),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/invoke', '/api/invoke'])) {
       const body = await readBody(request);
       const toolName = body.toolName;
@@ -10927,6 +13129,17 @@ const server = createServer(async (request, response) => {
           ok: false,
           error: `Unknown tool: ${toolName}`,
           tools: Object.keys(toolHandlers),
+        });
+        return;
+      }
+
+      const guarded = await enforceOperatingModeForTool(toolName, params);
+      if (guarded) {
+        json(response, 200, {
+          ok: Boolean(guarded.ok),
+          toolName,
+          result: guarded,
+          state: buildStateSnapshot(),
         });
         return;
       }
@@ -11611,19 +13824,21 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && pathname === '/api/leads/import') {
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
       json(response, 200, {
         ok: true,
         leadImports: state.leadImports,
+        leads: state.leadImports,
       });
       return;
     }
 
-    if (request.method === 'POST' && pathname === '/api/leads/import') {
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
       const body = await readBody(request);
       const result = await handleEvent('lead-intake', body);
       json(response, result.ok === false ? 404 : 200, {
         ...result,
+        outcome: result.forwarded ? 'queued_for_approval' : 'live',
         state: buildStateSnapshot(),
       });
       return;

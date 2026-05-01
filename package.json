@@ -15,6 +15,7 @@
     "brain:build-conversation": "node ./scripts/build-pbk-conversation-brain.mjs",
     "brain:query": "node ./scripts/query-pbk-brain.mjs",
     "brain:export-supermemory": "node ./scripts/export-pbk-brain-supermemory.mjs",
+    "brain:harvest": "node ./scripts/harvest-brain-content.mjs",
     "agent:export-scenario": "node ./scripts/export-meta-agent-scenario.mjs",
     "research:seed-browser-jobs": "node ./scripts/seed-browser-research-jobs.mjs",
     "monitoring:render-config": "node ./scripts/render-monitoring-config.mjs",

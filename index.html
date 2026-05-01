@@ -5398,6 +5398,76 @@
     }
     .lib-card .meta .src { color: var(--sky); }
 
+    .blog-card {
+      background:
+        radial-gradient(circle at top right, rgba(125,211,252,0.10), transparent 42%),
+        var(--bg-panel);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg);
+      padding: var(--s-4);
+      display: flex; flex-direction: column; gap: var(--s-3);
+      min-width: 0; position: relative; overflow: hidden;
+      transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .blog-card:hover { border-color: var(--sky-dim); transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0,0,0,0.32); }
+    .blog-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+    .blog-date,
+    .blog-mentor,
+    .blog-technique {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-tertiary);
+    }
+    .blog-mentor { color: var(--sky); }
+    .blog-title {
+      font-family: var(--font-display); font-size: 17px; line-height: 1.22;
+      font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere;
+    }
+    .blog-summary { color: var(--text-secondary); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .blog-tags,
+    .blog-actions,
+    .blog-takeaways { display: flex; gap: 6px; flex-wrap: wrap; }
+    .blog-tags .chip { cursor: pointer; }
+    .blog-takeaways { display: block; margin: 0; padding-left: 16px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+    .blog-takeaways li { margin-bottom: 4px; }
+    .blog-actions { margin-top: auto; padding-top: var(--s-2); border-top: 1px dashed var(--border-dim); }
+    .blog-actions .chip-btn { min-height: 30px; }
+    .blog-card[data-trained="true"] { border-color: rgba(163,230,53,0.35); }
+    .blog-card[data-trained="true"]::after {
+      content: "TRAINED"; position: absolute; right: 10px; bottom: 10px;
+      font-family: var(--font-mono); font-size: 9px; color: var(--lime);
+      letter-spacing: 0.12em; opacity: 0.82;
+    }
+
+    .revenue-agent-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: var(--s-3);
+    }
+    .revenue-agent-card {
+      background: var(--bg-panel); border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg); padding: var(--s-4);
+      display: flex; flex-direction: column; gap: var(--s-3);
+      min-width: 0; position: relative; overflow: hidden;
+    }
+    .revenue-agent-card::before {
+      content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+      background: linear-gradient(90deg, var(--sky), transparent);
+      opacity: 0.8;
+    }
+    .revenue-agent-kicker {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-tertiary);
+    }
+    .revenue-agent-title {
+      font-family: var(--font-display); font-size: 16px; line-height: 1.25;
+      font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere;
+    }
+    .revenue-agent-note { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+    .revenue-agent-meta {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary);
+    }
+    .revenue-agent-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+
     /* insight feed */
     .insight-row {
       display: grid; grid-template-columns: 100px 1fr; gap: var(--s-4);
@@ -5563,6 +5633,7 @@
       <p>A research agent that reads everything so your acquisition team doesn't have to. Wholesaling tactics, creative finance, cash deal structures, legal shifts, and local market pulse — all ingested, summarized, and queryable.</p>
     </div>
     <div class="page-head-actions">
+      <button class="btn btn-ghost" data-brain-action="harvest-blog">Harvest now</button>
       <button class="btn btn-ghost" data-brain-action="browser-research">Browser research</button>
       <button class="btn btn-ghost" data-brain-action="export">Export library</button>
       <button class="btn btn-ghost">API</button>
@@ -5730,6 +5801,21 @@
             <div class="excerpt">Psychological research on when homeowners actually sell: 3 triggers (loss, relocation, burden). How to identify them in conversation.</div>
             <div class="meta"><span class="src">Journal — RE Psych</span><span>Paper — Apr 3</span></div>
           </div>
+        </div>
+      </div>
+
+      <!-- REVENUE AGENT STACK -->
+      <div>
+        <div class="brain-panel-title">
+          <h4>? Revenue <em>agents</em></h4>
+          <span class="sub" data-brain-meta="revenue-agents-subtitle">approval-gated production lanes</span>
+        </div>
+        <div class="revenue-agent-grid" data-revenue-agent-stack>
+          <article class="revenue-agent-card">
+            <span class="revenue-agent-kicker">Market Intel</span>
+            <div class="revenue-agent-title">Competitive Offer Index</div>
+            <p class="revenue-agent-note">Waiting on bridge state. Public BrowserOS research can feed zip-level investor demand.</p>
+          </article>
         </div>
       </div>
 
@@ -7718,9 +7804,19 @@
   .modal h3 { font-family: var(--font-display); font-weight: 500; font-size: 22px; margin-bottom: var(--s-2); letter-spacing: -0.02em; }
   .modal p { color: var(--text-secondary); font-size: 13px; line-height: 1.6; margin-bottom: var(--s-4); }
   .modal .modal-actions { display: flex; gap: var(--s-2); justify-content: flex-end; }
-  .pbk-form-modal { width: min(560px, calc(100vw - 40px)); }
+  .pbk-form-modal { width: min(720px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; }
   .pbk-form-modal form { display: grid; gap: var(--s-3); margin-top: var(--s-4); }
   .pbk-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+  .pbk-form-section {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s-2);
+    margin-top: var(--s-2); padding-top: var(--s-2); border-top: 1px solid var(--border-dim);
+    font-family: var(--font-display); font-size: 15px; color: var(--text-primary);
+  }
+  .pbk-form-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+  .pbk-form-section span {
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
+    color: var(--sky); text-transform: uppercase;
+  }
   .pbk-form-field { display: grid; gap: 6px; }
   .pbk-form-field.full { grid-column: 1 / -1; }
   .pbk-form-field label {
@@ -7739,6 +7835,21 @@
   .pbk-form-field select:focus,
   .pbk-form-field textarea:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
   .pbk-form-hint { font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--text-ghost); }
+  .pbk-form-advanced {
+    grid-column: 1 / -1; border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+    background: rgba(255,255,255,0.02); padding: var(--s-3);
+  }
+  .pbk-form-advanced summary {
+    cursor: pointer; user-select: none; font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-secondary);
+  }
+  .pbk-form-advanced[open] summary { margin-bottom: var(--s-3); color: var(--sky); }
+  .pbk-form-error {
+    grid-column: 1 / -1; display: none; border: 1px solid var(--crimson);
+    border-radius: var(--radius); background: var(--crimson-glow); color: var(--crimson);
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.5; padding: 10px 12px;
+  }
+  .pbk-form-error.open { display: block; }
   .pbk-outcome {
     display: inline-flex; align-items: center; gap: 6px; width: fit-content;
     padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border);
@@ -8945,15 +9056,19 @@
     }
   };
 
+  function paintMode(mode) {
+    currentMode = ['autopilot', 'approval', 'manual'].includes(mode) ? mode : 'approval';
+    modeOpts.forEach(o => o.classList.toggle('active', o.dataset.mode === currentMode));
+    mpOptions.forEach(o => o.classList.toggle('selected', o.dataset.mode === currentMode));
+  }
+
   function setMode(mode, skipConfirm = false) {
     if (mode === 'autopilot' && !skipConfirm) {
       confirmModal.classList.add('open');
       modalBackdrop.classList.add('open');
       return;
     }
-    currentMode = mode;
-    modeOpts.forEach(o => o.classList.toggle('active', o.dataset.mode === mode));
-    mpOptions.forEach(o => o.classList.toggle('selected', o.dataset.mode === mode));
+    paintMode(mode);
     persistUiSetting({ operatingMode: mode, approvalGatedProduction: true }, 'Command Center mode picker')
       .then((payload) => {
         toastOutcome({
@@ -9054,13 +9169,26 @@
   const cpModal = document.getElementById('cpModal');
   const cpInput = document.getElementById('cpInput');
   const cpResults = document.getElementById('cpResults');
-  const cpItems = Array.from(cpResults.querySelectorAll('.cp-item'));
+  let cpItems = Array.from(cpResults.querySelectorAll('.cp-item'));
+  let cpSearchTimer = null;
+  let cpSearchSeq = 0;
+
+  function refreshPaletteItems() {
+    cpItems = Array.from(cpResults.querySelectorAll('.cp-item'));
+    return cpItems;
+  }
+
+  function clearCommandPaletteLiveResults() {
+    cpResults.querySelector('[data-cp-live-results]')?.remove();
+    refreshPaletteItems();
+  }
 
   function openPalette() {
     cpBackdrop.classList.add('open');
     cpModal.classList.add('open');
     setTimeout(() => cpInput.focus(), 50);
     cpInput.value = '';
+    clearCommandPaletteLiveResults();
     cpItems.forEach(i => i.style.display = '');
     setFocused(0);
   }
@@ -9104,6 +9232,7 @@
       const anyVisible = g.querySelectorAll('.cp-item:not([style*="display: none"])').length > 0;
       g.style.display = anyVisible ? '' : 'none';
     });
+    scheduleCommandPaletteSearch(q);
     setFocused(0);
   });
 
@@ -9126,6 +9255,58 @@
       }
     });
   });
+
+  function renderCommandPaletteLiveResults(results = [], query = '') {
+    cpResults.querySelector('[data-cp-live-results]')?.remove();
+    if (!query || query.length < 2) {
+      refreshPaletteItems();
+      updatePaletteMeta();
+      return;
+    }
+
+    const group = document.createElement('div');
+    group.className = 'cp-group cp-live-group';
+    group.dataset.cpLiveResults = 'true';
+    group.innerHTML = `
+      <div class="cp-group-label">Live search ${results.length ? `- ${results.length}` : '- no bridge results'}</div>
+      ${results.length
+        ? results.map((item) => `
+          <div class="cp-item" data-live-result="true" data-nav="${escapeHtml(item.page || 'dashboard')}" data-result-kind="${escapeHtml(item.kind || 'result')}" data-keywords="${escapeHtml([item.kind, item.title, item.subtitle, item.body, ...(item.tags || [])].join(' '))}">
+            <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></div>
+            <span class="cp-label">${escapeHtml(item.title || 'Untitled result')}</span>
+            <span class="cp-sub">${escapeHtml([item.kind, item.subtitle].filter(Boolean).join(' - ') || item.body || 'Live bridge result')}</span>
+          </div>
+        `).join('')
+        : `<div class="cp-item" data-live-result="true" data-result-kind="empty" data-keywords="${escapeHtml(query)}" style="pointer-events:none; opacity:.78;">
+            <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg></div>
+            <span class="cp-label">No live result yet</span>
+            <span class="cp-sub">Try seller name, address, call, contract, or brain topic</span>
+          </div>`}
+    `;
+    cpResults.prepend(group);
+    refreshPaletteItems();
+    updatePaletteMeta();
+  }
+
+  function scheduleCommandPaletteSearch(query = '') {
+    clearTimeout(cpSearchTimer);
+    const q = String(query || '').trim();
+    if (q.length < 2) {
+      clearCommandPaletteLiveResults();
+      return;
+    }
+    const seq = ++cpSearchSeq;
+    cpSearchTimer = setTimeout(async () => {
+      try {
+        const payload = await requestOpenClawApi(`/api/search?q=${encodeURIComponent(q)}&limit=6`, { timeout: 5500 });
+        if (seq !== cpSearchSeq) return;
+        renderCommandPaletteLiveResults(Array.isArray(payload?.results) ? payload.results : [], q);
+      } catch (error) {
+        if (seq !== cpSearchSeq) return;
+        renderCommandPaletteLiveResults([], q);
+      }
+    }, 220);
+  }
 
   cpBackdrop.addEventListener('click', closePalette);
 
@@ -10104,6 +10285,50 @@
     .cp-empty.show {
       display: block;
     }
+    .cp-live-group .cp-group-label {
+      color: var(--sky);
+    }
+    .cp-item[data-live-result="true"] .cp-sub {
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .brain-status-list {
+      margin-top: var(--s-3);
+      display: grid;
+      gap: 8px;
+    }
+    .brain-status-item {
+      border: 1px solid var(--border-dim);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      padding: 10px 11px;
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .brain-status-item[data-state="warning"] {
+      border-color: rgba(255,176,32,0.38);
+      background: rgba(255,176,32,0.08);
+    }
+    .brain-status-item[data-state="good"] {
+      border-color: rgba(125,211,252,0.32);
+      background: rgba(125,211,252,0.07);
+    }
+    .brain-status-title {
+      color: var(--text-primary);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .brain-status-meta {
+      font-family: var(--font-mono);
+      color: var(--text-tertiary);
+      font-size: 10px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
     @media (max-width: 900px) {
       [data-page="analyzer"] .analyzer-bridge-head {
         grid-template-columns: 1fr;
@@ -10749,6 +10974,7 @@
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
     contractPreviewId: 'analyzer-draft',
+    rexMessages: [],
     contractPdf: null,
     contractPdfService: {
       status: 'unknown',
@@ -10937,17 +11163,76 @@
     });
   }
 
+  function getFilteredBrainBlogPosts(snapshot) {
+    const posts = Array.isArray(snapshot?.brainBlogPosts) ? snapshot.brainBlogPosts : [];
+    const topic = getSelectedBrainTopic();
+    if (!topic || topic === 'All') return posts;
+    return posts.filter((post) => {
+      const tags = Array.isArray(post.tags) ? post.tags : [];
+      const streams = Array.isArray(post.revenueStreams) ? post.revenueStreams : [];
+      return tags.includes(topic) || streams.includes(topic) || post.techniqueType === topic || post.salesMentor === topic;
+    });
+  }
+
+  function formatBrainBlogDate(value) {
+    if (!value) return 'New';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return formatRelativeTime(value);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function renderBrainBlogCard(post) {
+    const tags = [
+      ...(Array.isArray(post.revenueStreams) ? post.revenueStreams : []),
+      ...(Array.isArray(post.tags) ? post.tags : [])
+    ].filter(Boolean).slice(0, 5);
+    const takeaways = Array.isArray(post.keyTakeaways) ? post.keyTakeaways.slice(0, 3) : [];
+    const trained = Boolean(post.trainedAt || String(post.status || '').toLowerCase() === 'trained');
+    return `
+      <article class="blog-card" data-brain-blog-id="${escapeHtml(post.id)}" data-filter-value="${escapeHtml(tags.join(' '))}" data-trained="${trained ? 'true' : 'false'}">
+        <div class="blog-header">
+          <span class="blog-date">${escapeHtml(formatBrainBlogDate(post.publishedAt || post.createdAt))}</span>
+          <span class="blog-mentor">${escapeHtml(post.salesMentor || 'PBK Research')}</span>
+        </div>
+        <div class="blog-technique">${escapeHtml((post.techniqueType || 'sales_knowledge').replace(/_/g, ' '))}</div>
+        <div class="blog-title">${escapeHtml(post.title || 'Untitled Brain post')}</div>
+        <p class="blog-summary">${escapeHtml(post.summary || post.content || 'No summary generated yet.')}</p>
+        ${takeaways.length ? `<ul class="blog-takeaways">${takeaways.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+        <div class="blog-tags">
+          ${tags.map((tag) => `<span class="chip" data-filter-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}
+        </div>
+        <div class="blog-actions">
+          <button class="chip-btn" data-brain-blog-action="read" data-brain-blog-id="${escapeHtml(post.id)}">Read full</button>
+          <button class="chip-btn" data-brain-blog-action="train" data-brain-blog-id="${escapeHtml(post.id)}">${trained ? 'Trained' : 'Train Rex'}</button>
+          ${post.sourceUrl ? `<a class="chip-btn" href="${escapeHtml(post.sourceUrl)}" target="_blank" rel="noopener">Source</a>` : ''}
+        </div>
+      </article>
+    `;
+  }
+
+  function isDemoRuntimeActivity(item = {}) {
+    const text = String(item.text || '');
+    return item.source === 'demo'
+      || /Requested approval for \$78,000 offer|Analyzer ran - ARV \$185k|daily_probate_import\.csv|Indexed 3 new sources/i.test(text);
+  }
+
+  function getRealRuntimeActivity(snapshot) {
+    return Array.isArray(snapshot?.activity)
+      ? snapshot.activity.filter((item) => !isDemoRuntimeActivity(item))
+      : [];
+  }
+
   function renderActivityFeed(snapshot) {
     const container = document.querySelector('[data-openclaw-feed="activity"]');
     if (!container) return;
 
-    const activity = Array.isArray(snapshot?.activity) ? snapshot.activity.slice(0, 8) : [];
+    const activity = getRealRuntimeActivity(snapshot).slice(0, 8);
     if (!activity.length) {
       container.innerHTML = `
         <div class="activity-row">
           <span class="activity-time">—</span>
           <span class="activity-dot info"></span>
-          <span class="activity-text">No live activity yet. Connect the local OpenClaw bridge to begin.</span>
+          <span class="activity-text">No live activity yet. Real bridge events from calls, messages, approvals, uploads, and automations will appear here.</span>
         </div>
       `;
       return;
@@ -11046,7 +11331,7 @@
     const container = document.querySelector('[data-openclaw-activity-log="table"]');
     if (!container) return;
 
-    const activity = Array.isArray(snapshot?.activity) ? snapshot.activity.slice(0, 14) : [];
+    const activity = getRealRuntimeActivity(snapshot).slice(0, 14);
     const rows = activity.map((item) => `
       <div class="alog-row">
         <span class="alog-time">${escapeHtml(formatRuntimeTime(item.at || item.createdAt))}</span>
@@ -11141,8 +11426,86 @@
     setSelectedBrainTopic(getSelectedBrainTopic());
   }
 
+  function renderRevenueAgentStack(snapshot) {
+    const container = document.querySelector('[data-revenue-agent-stack]');
+    if (!container) return;
+    const status = snapshot?.status || {};
+    const latestIntel = Array.isArray(snapshot?.marketIntel) ? snapshot.marketIntel[0] : null;
+    const latestSimulation = Array.isArray(snapshot?.dealSimulations) ? snapshot.dealSimulations[0] : null;
+    const latestAudit = Array.isArray(snapshot?.systemAuditReports) ? snapshot.systemAuditReports[0] : null;
+    const latestMatch = Array.isArray(snapshot?.buyerMatches) ? snapshot.buyerMatches[0] : null;
+    const cards = [
+      {
+        key: 'market-intel',
+        kicker: 'Market Intel',
+        title: 'Competitive Offer Index',
+        metric: `${status.marketIntelCount || 0} signal${Number(status.marketIntelCount || 0) === 1 ? '' : 's'}`,
+        note: latestIntel
+          ? `${latestIntel.market || 'Market'} ${latestIntel.zipCode || ''}: demand ${latestIntel.buyerDemand || 'unknown'}, index ${Math.round(Number(latestIntel.competitiveOfferIndex || 0) * 100)}%.`
+          : 'No live market intel yet. Queue BrowserOS research or add a manual public signal.',
+        action: 'market-intel',
+        cta: 'Record signal'
+      },
+      {
+        key: 'nurture',
+        kicker: 'Lead Nurture',
+        title: 'Drip and re-engagement',
+        metric: `${status.activeNurturePlans || 0} active/queued`,
+        note: 'Creates an approval-gated 7/14/30-day plan. It does not send SMS or email without provider readiness and approval.',
+        action: 'nurture',
+        cta: 'Plan nurture'
+      },
+      {
+        key: 'simulation',
+        kicker: 'Deal Confidence',
+        title: 'Risk and profit simulator',
+        metric: latestSimulation ? `${Math.round(Number(latestSimulation.probabilityOfLoss || 0) * 100)}% loss risk` : `${status.dealSimulations || 0} simulations`,
+        note: latestSimulation
+          ? `${latestSimulation.recommendation || 'review'} on ${latestSimulation.address || 'latest deal'}; expected profit ${money(latestSimulation.expectedProfit || 0)}.`
+          : 'Runs optimistic, most-likely, and pessimistic scenarios from analyzer numbers.',
+        action: 'simulate',
+        cta: 'Simulate deal'
+      },
+      {
+        key: 'buyers',
+        kicker: 'Buyer Pipeline',
+        title: 'Disposition intelligence',
+        metric: `${status.activeBuyers || 0} active buyers`,
+        note: latestMatch?.topBuyer
+          ? `Top match: ${latestMatch.topBuyer.buyerName} at ${latestMatch.topBuyer.score}/100.`
+          : 'Matches deals to active cash buyer criteria before contract handoff.',
+        action: 'buyer-match',
+        cta: 'Match buyers'
+      },
+      {
+        key: 'audit',
+        kicker: 'System Auditor',
+        title: 'Cost and reliability watchdog',
+        metric: latestAudit ? `${latestAudit.status} - ${latestAudit.errorRate}% errors` : `${status.systemAuditReports || 0} reports`,
+        note: latestAudit?.recommendations?.[0] || 'Tracks cost per lead, error rate, and latency; recommends fallback or cache changes.',
+        action: 'system-audit',
+        cta: 'Run audit'
+      }
+    ];
+    container.innerHTML = cards.map((card) => `
+      <article class="revenue-agent-card" data-agent-card="${escapeHtml(card.key)}">
+        <span class="revenue-agent-kicker">${escapeHtml(card.kicker)}</span>
+        <div class="revenue-agent-title">${escapeHtml(card.title)}</div>
+        <div class="revenue-agent-meta"><span class="chip">${escapeHtml(card.metric)}</span><span class="chip">production-honest</span></div>
+        <p class="revenue-agent-note">${escapeHtml(card.note)}</p>
+        <div class="revenue-agent-actions">
+          <button class="chip-btn" data-revenue-agent-action="${escapeHtml(card.action)}">${escapeHtml(card.cta)}</button>
+        </div>
+      </article>
+    `).join('');
+    document.querySelector('[data-brain-meta="revenue-agents-subtitle"]')?.replaceChildren(
+      document.createTextNode(`${cards.length} lanes - live, queued, or provider-gated`)
+    );
+  }
+
   function renderBrainLibrary(snapshot) {
     const docs = getFilteredBrainDocs(snapshot);
+    const blogPosts = getFilteredBrainBlogPosts(snapshot);
     const library = document.querySelector('[data-brain-library]');
     const insights = document.querySelector('[data-brain-insights]');
     const marketPulse = document.querySelector('[data-brain-market-pulse]');
@@ -11161,7 +11524,7 @@
     if (heroTitle) heroTitle.innerHTML = `Ava read <em>${escapeHtml(String(snapshot?.status?.weeklySources || docs.length))} new sources</em> this week.`;
     const heroCopy = document.querySelector('[data-brain-meta="hero-copy"]');
     if (heroCopy) {
-      const latest = docs[0];
+      const latest = blogPosts[0] || docs[0];
       heroCopy.textContent = latest
         ? `${latest.summary} Latest source: ${latest.title}.`
         : 'Ingest PDFs, deal memos, articles, and voice notes to make Rex smarter on the next call.';
@@ -11182,6 +11545,13 @@
       document.createTextNode(`AI-generated summaries — ${docs.length} active documents`)
     );
 
+    document.querySelector('[data-brain-meta="library-subtitle"]')?.replaceChildren(
+      document.createTextNode(`${activeTopic} - ${blogPosts.length} posts - ${docs.length} source docs`)
+    );
+    document.querySelector('[data-brain-meta="insights-subtitle"]')?.replaceChildren(
+      document.createTextNode(`AI-generated summaries - ${blogPosts.length + docs.length} active knowledge units`)
+    );
+
     if (library) {
       library.innerHTML = docs.length
         ? docs.slice(0, 8).map((doc) => `
@@ -11200,6 +11570,18 @@
               <div class="meta"><span class="src">PBK</span><span>waiting</span></div>
             </div>
           `;
+    }
+
+    if (library && (blogPosts.length || docs.length)) {
+      const docCards = docs.slice(0, Math.max(0, 8 - blogPosts.length)).map((doc) => `
+        <div class="lib-card" data-brain-doc-id="${escapeHtml(doc.id)}" data-filter-value="${escapeHtml([doc.topic, ...(doc.tags || [])].join(' '))}">
+          <span class="lib-type ${escapeHtml(String(doc.kind || 'note').toLowerCase())}">${escapeHtml(doc.kind || 'note')}</span>
+          <div class="title">${escapeHtml(doc.title || 'Untitled source')}</div>
+          <div class="excerpt">${escapeHtml(doc.excerpt || doc.summary || 'No summary provided.')}</div>
+          <div class="meta"><span class="src">${escapeHtml(doc.source || 'Manual')}</span><span>${escapeHtml(formatRelativeTime(doc.createdAt))}</span></div>
+        </div>
+      `).join('');
+      library.innerHTML = `${blogPosts.slice(0, 8).map(renderBrainBlogCard).join('')}${docCards}`;
     }
 
     if (insights) {
@@ -11223,6 +11605,19 @@
               </div>
             </div>
           `;
+    }
+
+    if (insights && blogPosts.length) {
+      insights.innerHTML = blogPosts.slice(0, 5).map((post) => `
+        <div class="insight-row" data-filter-value="${escapeHtml([...(post.revenueStreams || []), ...(post.tags || [])].join(' '))}">
+          <div class="insight-when">${escapeHtml(formatRelativeTime(post.publishedAt || post.createdAt))}</div>
+          <div class="insight-body">
+            <div class="title">${escapeHtml(post.title || 'Untitled Brain post')}</div>
+            <div class="summary">${escapeHtml(post.summary || post.content || 'No insight summary yet.')}</div>
+            <div class="insight-tags">${[...(post.revenueStreams || []), ...(post.tags || [])].slice(0, 4).map((tag) => `<span class="tag probate" data-filter-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}</div>
+          </div>
+        </div>
+      `).join('');
     }
 
     if (marketPulse) {
@@ -11459,6 +11854,185 @@
     });
   }
 
+  function sortRuntimeItems(items = []) {
+    return [...items].sort((a, b) => {
+      const aTime = new Date(a.updatedAt || a.createdAt || a.at || 0).getTime();
+      const bTime = new Date(b.updatedAt || b.createdAt || b.at || 0).getTime();
+      return bTime - aTime;
+    });
+  }
+
+  function getRuntimeMessageCounts(snapshot = {}) {
+    if (snapshot.messageCounts && typeof snapshot.messageCounts === 'object') {
+      return snapshot.messageCounts;
+    }
+    const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+    const calls = Array.isArray(snapshot.calls) ? snapshot.calls : [];
+    const approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
+    const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
+    const channel = (name) => messages.filter((message) => String(message.channel || '').toLowerCase() === name).length;
+    return {
+      all: messages.length,
+      unread: messages.filter((message) => /received|unread|new/i.test(String(message.status || ''))).length,
+      approvals: approvals.length + adminTasks.length,
+      hot: (snapshot.leadImports || []).filter((lead) => /hot|urgent|probate|high-equity/i.test(`${(lead.tags || []).join(' ')} ${lead.status || ''}`)).length,
+      calls: calls.length,
+      sms: channel('sms'),
+      email: channel('email'),
+    };
+  }
+
+  function setCountChip(button, label, count) {
+    if (!button) return;
+    button.textContent = Number.isFinite(Number(count)) ? `${label} - ${Number(count)}` : label;
+  }
+
+  function renderRuntimeCounts(snapshot) {
+    const counts = getRuntimeMessageCounts(snapshot);
+    const dashboardButtons = document.querySelectorAll('[data-page="dashboard"] .inbox-filters .chip-btn');
+    setCountChip(dashboardButtons[0], 'All', counts.all);
+    setCountChip(dashboardButtons[1], 'Unread', counts.unread);
+    setCountChip(dashboardButtons[2], 'Approvals', counts.approvals);
+    setCountChip(dashboardButtons[3], 'Hot', counts.hot);
+    const dashboardInboxCount = document.querySelector('[data-page="dashboard"] .panel-title .tt-count');
+    if (dashboardInboxCount) dashboardInboxCount.textContent = ` - ${counts.all || 0}`;
+
+    const inboxButtons = document.querySelectorAll('[data-page="inbox"] .ib-channels .chip-btn');
+    setCountChip(inboxButtons[0], 'All', counts.all);
+    setCountChip(inboxButtons[1], 'Calls', counts.calls);
+    setCountChip(inboxButtons[2], 'SMS', counts.sms);
+    setCountChip(inboxButtons[3], 'Email', counts.email);
+  }
+
+  function buildRuntimeNotifications(snapshot = {}) {
+    if (Array.isArray(snapshot.notifications?.notifications)) {
+      return {
+        notifications: snapshot.notifications.notifications,
+        counts: snapshot.notifications.counts || {},
+      };
+    }
+    const approvals = (snapshot.approvals || [])
+      .filter((item) => item.status === 'pending')
+      .map((item) => ({
+        type: 'approval',
+        title: `${item.type || 'Approval'} needed`,
+        desc: [item.leadName, item.address, item.notes].filter(Boolean).join(' - '),
+        at: item.createdAt,
+        unread: true,
+      }));
+    const calls = (snapshot.calls || []).slice(0, 5).map((item) => ({
+      type: 'call',
+      title: `${item.status || 'Call'} - ${item.leadName || item.phone || 'Unknown lead'}`,
+      desc: [item.address, item.phone].filter(Boolean).join(' - '),
+      at: item.updatedAt || item.startedAt || item.createdAt,
+      unread: String(item.status || '').toLowerCase() === 'live',
+    }));
+    const system = getRealRuntimeActivity(snapshot).slice(0, 8).map((item) => ({
+      type: String(item.category || '').toLowerCase().includes('call') ? 'call' : 'system',
+      title: item.text || item.category || 'Runtime event',
+      desc: [item.actor, item.target].filter(Boolean).join(' - '),
+      at: item.at || item.createdAt,
+      unread: false,
+    }));
+    const notifications = sortRuntimeItems([...approvals, ...calls, ...system]).slice(0, 16);
+    return {
+      notifications,
+      counts: {
+        all: notifications.length,
+        approvals: notifications.filter((item) => item.type === 'approval').length,
+        calls: notifications.filter((item) => item.type === 'call').length,
+        system: notifications.filter((item) => item.type === 'system').length,
+      },
+    };
+  }
+
+  function renderRuntimeNotifications(snapshot) {
+    const panel = document.getElementById('notifPanel');
+    if (!panel) return;
+    const { notifications, counts } = buildRuntimeNotifications(snapshot);
+    const tabs = panel.querySelectorAll('.np-tabs .chip-btn');
+    setCountChip(tabs[0], 'All', counts.all ?? notifications.length);
+    setCountChip(tabs[1], 'Approvals', counts.approvals ?? 0);
+    setCountChip(tabs[2], 'Calls', counts.calls ?? 0);
+    setCountChip(tabs[3], 'System', counts.system ?? 0);
+
+    const list = panel.querySelector('.np-list');
+    if (!list) return;
+    list.innerHTML = notifications.length
+      ? notifications.map((item) => `
+        <div class="np-item ${item.unread ? 'unread' : ''}" data-notification-type="${escapeHtml(item.type || 'system')}">
+          <span class="np-dot"></span>
+          <div class="np-body">
+            <div class="np-title">${escapeHtml(item.title || 'Runtime notification')}</div>
+            <div class="np-desc">${escapeHtml(item.desc || 'Live PBK event')}</div>
+          </div>
+          <span class="np-time">${escapeHtml(formatRelativeTime(item.at || item.createdAt))}</span>
+        </div>
+      `).join('')
+      : `
+        <div class="np-item" data-notification-type="system">
+          <span class="np-dot"></span>
+          <div class="np-body">
+            <div class="np-title">No live notifications</div>
+            <div class="np-desc">Approvals, calls, provider events, and system alerts will appear here once the bridge emits them.</div>
+          </div>
+          <span class="np-time">now</span>
+        </div>
+      `;
+  }
+
+  function renderBrainOperationalStatus(snapshot = {}) {
+    const upload = document.querySelector('[data-page="brain"] .brain-upload');
+    if (!upload) return;
+    let list = upload.querySelector('[data-brain-operational-status]');
+    if (!list) {
+      list = document.createElement('div');
+      list.className = 'brain-status-list';
+      list.dataset.brainOperationalStatus = 'true';
+      upload.appendChild(list);
+    }
+
+    const attachments = sortRuntimeItems(Array.isArray(snapshot.attachments) ? snapshot.attachments : []).slice(0, 3);
+    const jobs = sortRuntimeItems(Array.isArray(snapshot.browserResearchJobs) ? snapshot.browserResearchJobs : []).slice(0, 3);
+    const attachmentRows = attachments.length
+      ? attachments.map((item) => {
+          const status = item.extractionStatus || (item.extractedText ? 'indexed' : 'stored-only');
+          const state = /indexed|extracted|success/i.test(status) ? 'good' : /fail|error|stored-only|deferred/i.test(status) ? 'warning' : '';
+          return `
+            <div class="brain-status-item" data-state="${escapeHtml(state)}">
+              <div class="brain-status-title">${escapeHtml(item.filename || item.title || 'Uploaded file')}</div>
+              <div class="brain-status-meta">Upload ${escapeHtml(status)} - ${escapeHtml(formatRelativeTime(item.createdAt || item.updatedAt))}</div>
+            </div>
+          `;
+        }).join('')
+      : `
+        <div class="brain-status-item">
+          <div class="brain-status-title">No uploaded files tracked yet</div>
+          <div class="brain-status-meta">PDF/DOCX uploads will show storage and extraction status here.</div>
+        </div>
+      `;
+    const jobRows = jobs.length
+      ? jobs.map((job) => `
+        <div class="brain-status-item" data-state="${/complete|success/i.test(job.status || '') ? 'good' : /fail|error/i.test(job.status || '') ? 'warning' : ''}">
+          <div class="brain-status-title">${escapeHtml(job.targetLabel || job.url || job.query || 'Browser research job')}</div>
+          <div class="brain-status-meta">BrowserOS ${escapeHtml(job.status || 'queued')} - ${escapeHtml(formatRelativeTime(job.updatedAt || job.createdAt))}</div>
+        </div>
+      `).join('')
+      : `
+        <div class="brain-status-item">
+          <div class="brain-status-title">No BrowserOS research jobs yet</div>
+          <div class="brain-status-meta">Structured research requests will report queued, running, or completed status here.</div>
+        </div>
+      `;
+    list.innerHTML = `${attachmentRows}${jobRows}`;
+  }
+
+  function applyRuntimeMode(snapshot = {}) {
+    const mode = snapshot.settings?.ui?.operatingMode || snapshot.settings?.operatingMode || snapshot.status?.mode;
+    if (!['autopilot', 'approval', 'manual'].includes(mode)) return;
+    if (mode !== currentMode) paintMode(mode);
+  }
+
   function renderContractsOpsStrip(runtime = getAnalyzerContractRuntimeSync()) {
     const summary = getFounderRuntimeSummary();
     const strip = document.querySelector('[data-contracts-ops]');
@@ -11479,19 +12053,24 @@
   function renderOpenClawState(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return;
     PBK.state.openclawRuntime = snapshot;
+    applyRuntimeMode(snapshot);
+    renderRuntimeCounts(snapshot);
+    renderRuntimeNotifications(snapshot);
     renderActivityFeed(snapshot);
     renderApprovalQueue(snapshot);
     renderActivityLog(snapshot);
     renderDncList(snapshot);
     renderToolUsage(snapshot);
     renderBrainTopics(snapshot);
+    renderRevenueAgentStack(snapshot);
     renderBrainLibrary(snapshot);
     renderDashboardFounderOps();
     renderAnalyzerFounderOps();
     renderSettingsRuntimeDeck();
     renderBrainOpsStrip();
+    renderBrainOperationalStatus(snapshot);
 
-    const lastActivity = Array.isArray(snapshot.activity) ? snapshot.activity[0] : null;
+    const lastActivity = getRealRuntimeActivity(snapshot)[0] || null;
     if (lastActivity?.text) {
       setBoundValue('dashboard.heroSubtitle', `Live brain sync — ${lastActivity.text}`);
     } else if (getOpenClawConfig().status === 'connected') {
@@ -11617,6 +12196,18 @@
   window.addEventListener('online', () => {
     openClawPollFailures = 0;
     startOpenClawPolling({ immediate: true });
+  });
+
+  cpResults.addEventListener('click', (event) => {
+    const item = event.target.closest('.cp-item[data-live-result="true"]');
+    if (!item) return;
+    if (item.dataset.nav) showPage(item.dataset.nav);
+    closePalette();
+    toastOutcome({
+      outcome: 'live',
+      title: 'Search result opened',
+      desc: item.dataset.resultKind ? `${item.dataset.resultKind} matched live bridge search.` : 'Opened live bridge search result.'
+    });
   });
 
   window.addEventListener('offline', () => {
@@ -12171,17 +12762,24 @@
     return modal;
   }
 
-  function showPbkFormModal({ title, intro = '', fields = [], submitLabel = 'Save', submitClass = 'btn-primary', onSubmit = null }) {
+  function showPbkFormModal({ title, intro = '', fields = [], submitLabel = 'Save', submitClass = 'btn-primary', validate = null, onSubmit = null }) {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop open';
     const modal = document.createElement('div');
     modal.className = 'modal open pbk-form-modal';
-    const fieldHtml = fields.map((field) => {
+    const renderField = (field) => {
+      if (field.type === 'section') {
+        return `<div class="pbk-form-section"><span>${escapeHtml(field.kicker || 'Section')}</span>${escapeHtml(field.label || '')}</div>`;
+      }
       const name = escapeHtml(field.name);
       const value = escapeHtml(field.value || '');
       const required = field.required ? ' required' : '';
       const full = field.full !== false ? ' full' : '';
       const hint = field.hint ? `<span class="pbk-form-hint">${escapeHtml(field.hint)}</span>` : '';
+      const min = field.min !== undefined ? ` min="${escapeHtml(field.min)}"` : '';
+      const max = field.max !== undefined ? ` max="${escapeHtml(field.max)}"` : '';
+      const step = field.step !== undefined ? ` step="${escapeHtml(field.step)}"` : '';
+      const inputMode = field.inputMode ? ` inputmode="${escapeHtml(field.inputMode)}"` : '';
       let control = '';
       if (field.type === 'textarea') {
         control = `<textarea data-field-name="${name}" placeholder="${escapeHtml(field.placeholder || '')}"${required}>${value}</textarea>`;
@@ -12193,7 +12791,7 @@
         }).join('');
         control = `<select data-field-name="${name}"${required}>${options}</select>`;
       } else {
-        control = `<input data-field-name="${name}" type="${escapeHtml(field.type || 'text')}" value="${value}" placeholder="${escapeHtml(field.placeholder || '')}"${required}>`;
+        control = `<input data-field-name="${name}" type="${escapeHtml(field.type || 'text')}" value="${value}" placeholder="${escapeHtml(field.placeholder || '')}"${required}${min}${max}${step}${inputMode}>`;
       }
       return `
         <div class="pbk-form-field${full}">
@@ -12202,12 +12800,23 @@
           ${hint}
         </div>
       `;
-    }).join('');
+    };
+    const primaryFields = fields.filter((field) => !field.advanced).map(renderField).join('');
+    const advancedFields = fields.filter((field) => field.advanced).map(renderField).join('');
     modal.innerHTML = `
       <h3>${escapeHtml(title)}</h3>
       ${intro ? `<p>${intro}</p>` : ''}
       <form>
-        <div class="pbk-form-grid">${fieldHtml}</div>
+        <div class="pbk-form-grid">
+          <div class="pbk-form-error" data-form-error></div>
+          ${primaryFields}
+          ${advancedFields ? `
+            <details class="pbk-form-advanced">
+              <summary>Advanced lead profile</summary>
+              <div class="pbk-form-grid">${advancedFields}</div>
+            </details>
+          ` : ''}
+        </div>
         <div class="modal-actions">
           <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
           <button class="btn ${submitClass}" type="submit">${escapeHtml(submitLabel)}</button>
@@ -12229,6 +12838,16 @@
       modal.querySelectorAll('[data-field-name]').forEach((field) => {
         values[field.dataset.fieldName] = field.value;
       });
+      const errorBox = modal.querySelector('[data-form-error]');
+      const validation = typeof validate === 'function' ? validate(values) : '';
+      if (validation) {
+        if (errorBox) {
+          errorBox.textContent = validation;
+          errorBox.classList.add('open');
+        }
+        return;
+      }
+      errorBox?.classList.remove('open');
       submit.disabled = true;
       try {
         const result = onSubmit ? await onSubmit(values, { modal, close }) : null;
@@ -12266,35 +12885,170 @@
   }
 
   function showLeadModal(source = 'manual', defaults = {}) {
+    const leadSource = source || defaults.source || 'manual';
     return showPbkFormModal({
       title: 'New PBK lead',
-      intro: 'Add a seller lead through the bridge so Ava, Rex, approvals, and the analyzer all see the same record.',
+      intro: 'Capture the full seller profile once. Ava, Rex, approvals, analyzer, and contracts will all read the same bridge record.',
       submitLabel: 'Create lead',
       fields: [
-        { name: 'sellerName', label: 'Seller name', value: defaults.sellerName || '', placeholder: 'Diane Kowalski', required: true, full: false },
-        { name: 'phone', label: 'Phone', value: defaults.phone || '', placeholder: '+1 (614) 555-0199', full: false },
-        { name: 'address', label: 'Property address', value: defaults.address || '', placeholder: '202 Cherry Ln, Columbus OH', required: true },
-        { name: 'email', label: 'Email', value: defaults.email || '', placeholder: 'seller@example.com', full: false },
-        { name: 'tags', label: 'Tags', value: defaults.tags || 'probate, high-equity', placeholder: 'probate, high-equity', full: false }
+        { type: 'section', kicker: 'Seller', label: 'Personal info' },
+        { name: 'sellerName', label: 'Seller name', value: defaults.sellerName || defaults.name || '', placeholder: 'Diane Kowalski', required: true, full: false },
+        { name: 'phone', label: 'Phone', value: defaults.phone || '', placeholder: '+1 (614) 555-0199', full: false, inputMode: 'tel' },
+        { name: 'email', label: 'Email', value: defaults.email || '', placeholder: 'seller@example.com', full: false, type: 'email' },
+        { name: 'preferredChannel', label: 'Preferred channel', value: defaults.preferredChannel || 'phone', type: 'select', full: false, options: [
+          { value: 'phone', label: 'Phone' },
+          { value: 'sms', label: 'SMS' },
+          { value: 'email', label: 'Email' },
+          { value: 'unknown', label: 'Unknown' }
+        ] },
+        { name: 'bestTimeToCall', label: 'Best time to call', value: defaults.bestTimeToCall || '', placeholder: 'Weekdays after 3 PM', full: false },
+        { name: 'relationshipToProperty', label: 'Relationship', value: defaults.relationshipToProperty || 'owner', type: 'select', full: false, options: [
+          { value: 'owner', label: 'Owner' },
+          { value: 'heir', label: 'Heir / probate' },
+          { value: 'agent', label: 'Agent' },
+          { value: 'relative', label: 'Relative' },
+          { value: 'other', label: 'Other' }
+        ] },
+        { type: 'section', kicker: 'Property', label: 'Address and asset details' },
+        { name: 'address', label: 'Property address', value: defaults.address || '', placeholder: '202 Cherry Ln', required: true },
+        { name: 'city', label: 'City', value: defaults.city || '', placeholder: 'Columbus', full: false },
+        { name: 'state', label: 'State', value: defaults.state || '', placeholder: 'OH', full: false },
+        { name: 'zip', label: 'ZIP', value: defaults.zip || '', placeholder: '43215', full: false, inputMode: 'numeric' },
+        { name: 'occupancy', label: 'Occupancy', value: defaults.occupancy || 'unknown', type: 'select', full: false, options: [
+          { value: 'unknown', label: 'Unknown' },
+          { value: 'owner_occupied', label: 'Owner occupied' },
+          { value: 'tenant', label: 'Tenant occupied' },
+          { value: 'vacant', label: 'Vacant' }
+        ] },
+        { name: 'condition', label: 'Condition', value: defaults.condition || 'unknown', type: 'select', full: false, options: [
+          { value: 'unknown', label: 'Unknown' },
+          { value: 'light', label: 'Light repairs' },
+          { value: 'medium', label: 'Medium repairs' },
+          { value: 'heavy', label: 'Heavy repairs' },
+          { value: 'teardown', label: 'Teardown' }
+        ] },
+        { type: 'section', kicker: 'Motivation', label: 'Deal context' },
+        { name: 'motivation', label: 'Motivation', value: defaults.motivation || '', placeholder: 'Needs quick close, inherited property, tired landlord...', type: 'textarea' },
+        { name: 'timeline', label: 'Timeline', value: defaults.timeline || 'unknown', type: 'select', full: false, options: [
+          { value: 'unknown', label: 'Unknown' },
+          { value: 'asap', label: 'ASAP' },
+          { value: '30_days', label: '30 days' },
+          { value: '60_days', label: '60 days' },
+          { value: 'flexible', label: 'Flexible' }
+        ] },
+        { name: 'askingPrice', label: 'Asking price', value: defaults.askingPrice || '', placeholder: '$145,000', full: false, inputMode: 'numeric' },
+        { name: 'tags', label: 'Tags', value: defaults.tags || 'probate, high-equity', placeholder: 'probate, high-equity', full: false, hint: 'Comma-separated tags. These persist on the lead record.' },
+        { name: 'leadSource', label: 'Lead source', value: defaults.leadSource || leadSource, placeholder: 'manual, referral, list, website', full: false },
+        { name: 'stage', label: 'Stage', value: defaults.stage || 'new', type: 'select', full: false, options: [
+          { value: 'new', label: 'New' },
+          { value: 'contacted', label: 'Contacted' },
+          { value: 'appointment', label: 'Appointment' },
+          { value: 'analyzing', label: 'Analyzing' },
+          { value: 'offer', label: 'Offer' }
+        ] },
+        { type: 'section', kicker: 'Compliance', label: 'Safety checks' },
+        { name: 'consentStatus', label: 'TCPA consent', value: defaults.consentStatus || 'unknown', type: 'select', full: false, options: [
+          { value: 'unknown', label: 'Unknown' },
+          { value: 'confirmed', label: 'Confirmed' },
+          { value: 'needs_review', label: 'Needs review' }
+        ] },
+        { name: 'dncStatus', label: 'DNC status', value: defaults.dncStatus || 'needs_review', type: 'select', full: false, options: [
+          { value: 'needs_review', label: 'Needs review' },
+          { value: 'clear', label: 'Clear' },
+          { value: 'dnc', label: 'Do not contact' }
+        ] },
+        { type: 'section', kicker: 'Advanced', label: 'Numbers and assignments', advanced: true },
+        { name: 'beds', label: 'Beds', value: defaults.beds || '', placeholder: '3', type: 'number', full: false, min: 0, step: 1, advanced: true },
+        { name: 'baths', label: 'Baths', value: defaults.baths || '', placeholder: '2', type: 'number', full: false, min: 0, step: 0.5, advanced: true },
+        { name: 'sqft', label: 'Sq ft', value: defaults.sqft || '', placeholder: '1540', type: 'number', full: false, min: 0, step: 1, advanced: true },
+        { name: 'yearBuilt', label: 'Year built', value: defaults.yearBuilt || '', placeholder: '1974', type: 'number', full: false, min: 1800, step: 1, advanced: true },
+        { name: 'estimatedRepairs', label: 'Est. repairs', value: defaults.estimatedRepairs || '', placeholder: '$28,000', full: false, inputMode: 'numeric', advanced: true },
+        { name: 'arv', label: 'ARV', value: defaults.arv || '', placeholder: '$220,000', full: false, inputMode: 'numeric', advanced: true },
+        { name: 'mao', label: 'MAO', value: defaults.mao || '', placeholder: '$118,000', full: false, inputMode: 'numeric', advanced: true },
+        { name: 'mortgageBalance', label: 'Mortgage balance', value: defaults.mortgageBalance || '', placeholder: '$82,000', full: false, inputMode: 'numeric', advanced: true },
+        { name: 'score', label: 'Lead score', value: defaults.score || '', placeholder: '78', type: 'number', full: false, min: 0, max: 100, step: 1, advanced: true },
+        { name: 'assignedAgent', label: 'Assigned agent', value: defaults.assignedAgent || 'Ava', placeholder: 'Ava', full: false, advanced: true },
+        { name: 'sellerNotes', label: 'Seller notes', value: defaults.sellerNotes || '', placeholder: 'Anything Ava should know before the first call.', type: 'textarea', advanced: true },
+        { name: 'internalNotes', label: 'Internal notes', value: defaults.internalNotes || '', placeholder: 'Underwriting, comp, or disposition context.', type: 'textarea', advanced: true }
       ],
+      validate: (values) => {
+        if (!String(values.sellerName || '').trim()) return 'Seller name is required.';
+        if (!String(values.address || '').trim()) return 'Property address is required.';
+        if (!String(values.phone || '').trim() && !String(values.email || '').trim()) return 'Add at least one contact method: phone or email.';
+        if (values.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(values.email).trim())) return 'Email format looks invalid.';
+        if (values.phone && String(values.phone).replace(/\D/g, '').length < 7) return 'Phone number looks too short.';
+        return '';
+      },
       onSubmit: async (values) => {
         const tags = String(values.tags || '').split(',').map((item) => item.trim()).filter(Boolean);
-        const response = await postRuntimeEvent('lead-intake', {
-          source,
+        const numeric = (value) => {
+          if (String(value || '').trim() === '') return undefined;
+          const parsed = num(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        const payload = {
+          source: leadSource,
+          leadSource: values.leadSource || leadSource,
+          stage: values.stage || 'new',
+          status: values.stage || 'new',
+          score: numeric(values.score),
           seller: {
             name: values.sellerName,
             phone: values.phone,
-            email: values.email
+            email: values.email,
+            preferredChannel: values.preferredChannel,
+            bestTimeToCall: values.bestTimeToCall,
+            relationshipToProperty: values.relationshipToProperty,
+            notes: values.sellerNotes
           },
-          property: { address: values.address },
+          property: {
+            address: values.address,
+            city: values.city,
+            state: values.state,
+            zip: values.zip,
+            occupancy: values.occupancy,
+            condition: values.condition,
+            beds: numeric(values.beds),
+            baths: numeric(values.baths),
+            sqft: numeric(values.sqft),
+            yearBuilt: numeric(values.yearBuilt),
+            estimatedRepairs: numeric(values.estimatedRepairs),
+            arv: numeric(values.arv),
+            mao: numeric(values.mao),
+            mortgageBalance: numeric(values.mortgageBalance),
+            askingPrice: numeric(values.askingPrice)
+          },
+          motivation: {
+            summary: values.motivation,
+            timeline: values.timeline,
+            askingPrice: numeric(values.askingPrice)
+          },
+          compliance: {
+            consentStatus: values.consentStatus,
+            dncStatus: values.dncStatus
+          },
+          assignment: {
+            assignedAgent: values.assignedAgent || 'Ava'
+          },
+          notes: values.internalNotes,
           tags
-        }, {
-          actionLabel: 'lead imports',
-          successTitle: 'Lead imported',
-          successDesc: `${values.sellerName} was added through the bridge.`,
-          errorTitle: 'Lead import failed'
+        };
+        const response = await requestOpenClawApi('/api/leads', {
+          method: 'POST',
+          body: payload,
+          timeout: 12000
         });
-        return Boolean(response);
+        await applyRuntimeResponse(response);
+        const outcome = getRuntimeOutcome(response, response?.forwarded ? 'queued_for_approval' : 'live');
+        toastOutcome({
+          outcome,
+          title: 'Lead captured',
+          desc: outcome === 'queued_for_approval'
+            ? `${values.sellerName} was queued through the lead intake workflow.`
+            : `${values.sellerName} is now available to Ava, Rex, and the analyzer.`,
+          response
+        });
+        return true;
       }
     });
   }
@@ -14024,11 +14778,22 @@
             timeout: 18000
           });
           if (result?.state) renderOpenClawState(result.state);
+          const verification = result?.verification || result?.sync?.verification;
+          const blockedByVerification = verification && verification.ok === false && !result?.sync?.ok;
+          const missingChecks = verification?.checks
+            ? Object.entries(verification.checks).filter(([, ok]) => !ok).map(([name]) => name).join(', ')
+            : '';
           toast({
             type: result?.sync?.ok ? 'success' : 'warning',
-            title: result?.sync?.ok ? 'Workflow published' : 'Workflow queued locally',
+            title: result?.sync?.ok
+              ? 'Workflow published'
+              : blockedByVerification
+                ? 'Workflow blocked by sandbox verification'
+                : 'Workflow queued locally',
             desc: result?.sync?.ok
-              ? `n8n workflow ${result?.activation?.ok || !result?.activation ? 'is active' : 'was created but activation needs review'}.`
+              ? `n8n workflow ${result?.activation?.ok || !result?.activation ? 'is active' : 'was created but activation needs review'}. Verification ${verification?.ok === false ? 'needs review' : 'passed'}.`
+              : blockedByVerification
+                ? `${result?.sync?.error || 'PBK did not publish the workflow because it failed verification.'}${missingChecks ? ` Missing: ${missingChecks}.` : ''}`
               : (result?.sync?.error || 'n8n API credentials are not available, so the draft stayed in PBK.')
           });
         } catch (error) {
@@ -14257,7 +15022,7 @@
       }
 
       if (page.dataset.page === 'brain') {
-        shown = filterItemsByText(Array.from(page.querySelectorAll('.insight-row, .lib-card')), (item) => normalizeControlText(item.textContent).includes(value));
+        shown = filterItemsByText(Array.from(page.querySelectorAll('.insight-row, .lib-card, .blog-card')), (item) => normalizeControlText(item.textContent).includes(value));
         showLocalViewToast('Brain filtered', `${shown} research cards match "${tag.textContent.trim()}".`);
         return;
       }
@@ -14313,29 +15078,41 @@
       return;
     }
 
-    if (!PBK.openclaw.isConnected()) {
-      toast({
-        type: 'warning',
-        title: 'OpenClaw connection needed',
-        desc: 'Connect the local brain first, then Rex can answer from the indexed library.'
-      });
-      return;
-    }
-
+    PBK.state.runtime.rexMessages = Array.isArray(PBK.state.runtime.rexMessages)
+      ? PBK.state.runtime.rexMessages.slice(-16)
+      : [];
+    const userMessage = { role: 'user', content: query, at: new Date().toISOString() };
+    PBK.state.runtime.rexMessages.push(userMessage);
     appendBrainMessage('user', query);
     if (input) input.value = '';
 
     try {
-      const response = await PBK.openclaw.invoke('getBrainState', { query });
+      const response = await requestOpenClawApi('/brain/query', {
+        method: 'POST',
+        body: {
+          query,
+          messages: PBK.state.runtime.rexMessages,
+          sessionId: 'pbk-command-center-brain',
+          requestedBy: 'Command Center',
+          source: 'brain-chat'
+        },
+        timeout: 15000
+      });
       const result = response?.result || response;
-      appendBrainMessage('ai', result?.answer || 'Rex did not have a grounded answer yet.', result?.citations || []);
+      const answer = result?.answer || 'Rex did not have a grounded answer yet.';
+      PBK.state.runtime.rexMessages.push({ role: 'assistant', content: answer, at: new Date().toISOString() });
+      PBK.state.runtime.rexMessages = PBK.state.runtime.rexMessages.slice(-18);
+      appendBrainMessage('ai', answer, result?.citations || []);
+      if (result?.memory?.stored) {
+        appendThinkLine('rex memory saved', 'brain');
+      }
       if (response?.state) renderOpenClawState(response.state);
       else await syncOpenClawState({ silent: true });
     } catch (error) {
       toast({
         type: 'error',
         title: 'Rex could not answer',
-        desc: error?.message || 'The local brain did not return a research response.'
+        desc: error?.message || 'The local brain did not return a research response. Check the OpenClaw bridge connection.'
       });
     }
   }
@@ -14461,7 +15238,8 @@
   function exportBrainLibrary() {
     const snapshot = PBK.state.openclawRuntime;
     const docs = Array.isArray(snapshot?.brainDocs) ? snapshot.brainDocs : [];
-    const blob = new Blob([JSON.stringify(docs, null, 2)], { type: 'application/json' });
+    const blogPosts = Array.isArray(snapshot?.brainBlogPosts) ? snapshot.brainBlogPosts : [];
+    const blob = new Blob([JSON.stringify({ docs, blogPosts }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -14471,7 +15249,203 @@
     toast({
       type: 'success',
       title: 'Brain export ready',
-      desc: `${docs.length} indexed sources exported from the current local runtime.`
+      desc: `${docs.length} indexed sources and ${blogPosts.length} Brain Blog posts exported from the current runtime.`
+    });
+  }
+
+  function findBrainBlogPost(postId) {
+    const posts = Array.isArray(PBK.state.openclawRuntime?.brainBlogPosts) ? PBK.state.openclawRuntime.brainBlogPosts : [];
+    return posts.find((post) => post.id === postId);
+  }
+
+  function showBrainBlogPost(postId) {
+    const post = findBrainBlogPost(postId);
+    if (!post) {
+      toast({ type: 'warning', title: 'Post not found', desc: 'Reconnect the bridge and refresh the Brain Blog feed.' });
+      return;
+    }
+    const takeaways = Array.isArray(post.keyTakeaways) ? post.keyTakeaways : [];
+    showUtilityModal(
+      post.title || 'Brain Blog post',
+      `
+        <div style="display:grid; gap: var(--s-4); text-align:left;">
+          <div style="font-family:var(--font-mono); font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--sky);">
+            ${escapeHtml(post.salesMentor || 'PBK Research')} - ${escapeHtml((post.techniqueType || 'sales_knowledge').replace(/_/g, ' '))}
+          </div>
+          <p style="color:var(--text-secondary); line-height:1.6;">${escapeHtml(post.summary || 'No summary generated yet.')}</p>
+          ${takeaways.length ? `<ul class="blog-takeaways">${takeaways.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+          <div class="blog-tags">${[...(post.revenueStreams || []), ...(post.tags || [])].slice(0, 8).map((tag) => `<span class="chip">${escapeHtml(tag)}</span>`).join('')}</div>
+          <div style="max-height:260px; overflow:auto; padding:var(--s-3); border:1px solid var(--border-dim); border-radius:var(--radius-md); background:var(--bg-console); color:var(--text-secondary); line-height:1.55; font-size:12px;">${escapeHtml(post.content || post.summary || 'No full content stored yet.')}</div>
+        </div>
+      `,
+      `<button class="btn btn-primary" data-modal-close>Close</button>`
+    );
+  }
+
+  async function trainRexFromBlogPost(postId) {
+    if (!PBK.openclaw.isConnected()) {
+      toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect the bridge before training Rex on Brain Blog content.' });
+      return;
+    }
+    const post = findBrainBlogPost(postId);
+    try {
+      const response = await requestOpenClawApi(`/api/brain/blog/${encodeURIComponent(postId)}/train`, {
+        method: 'POST',
+        body: { requestedBy: 'Command Center' },
+        timeout: 12000
+      });
+      if (response?.state) renderOpenClawState(response.state);
+      else await syncOpenClawState({ silent: true });
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'live'),
+        title: 'Rex training saved',
+        desc: `${post?.title || 'That Brain Blog post'} is now part of Rex's coach memory lane.`,
+        response
+      });
+    } catch (error) {
+      toast({ type: 'error', title: 'Training failed', desc: error?.message || 'The bridge did not accept the Train Rex request.' });
+    }
+  }
+
+  async function harvestBrainBlogNow() {
+    if (!PBK.openclaw.isConnected()) {
+      toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect Rex before harvesting external sales research.' });
+      return;
+    }
+    try {
+      const response = await requestOpenClawApi('/api/brain/blog/harvest', {
+        method: 'POST',
+        body: { requestedBy: 'Command Center', limit: 8 },
+        timeout: 20000
+      });
+      if (response?.state) renderOpenClawState(response.state);
+      else await syncOpenClawState({ silent: true });
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, response?.added?.length ? 'live' : 'local_view_only'),
+        title: response?.added?.length ? 'Brain Blog harvested' : 'No new posts harvested',
+        desc: response?.added?.length
+          ? `${response.added.length} new sales knowledge post${response.added.length === 1 ? '' : 's'} added for Rex.`
+          : 'The harvester ran safely. Feeds may already be indexed or need provider access.',
+        response
+      });
+    } catch (error) {
+      toast({ type: 'error', title: 'Harvest failed', desc: error?.message || 'The bridge could not reach the configured research feeds.' });
+    }
+  }
+
+  async function runRevenueAgentAction(action) {
+    if (!PBK.openclaw.isConnected()) {
+      toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect the bridge before running revenue agents.' });
+      return;
+    }
+
+    if (action === 'system-audit') {
+      try {
+        const response = await requestOpenClawApi('/api/system/audit', {
+          method: 'POST',
+          body: { requestedBy: 'Command Center' },
+          timeout: 12000
+        });
+        if (response?.state) renderOpenClawState(response.state);
+        toastOutcome({
+          outcome: getRuntimeOutcome(response, 'live'),
+          title: 'System audit complete',
+          desc: response?.report?.recommendations?.[0] || 'Cost and reliability report saved.',
+          response
+        });
+      } catch (error) {
+        toast({ type: 'error', title: 'Audit failed', desc: error?.message || 'The bridge did not return a system audit.' });
+      }
+      return;
+    }
+
+    const modalConfigs = {
+      'market-intel': {
+        title: 'Record market intel signal',
+        intro: 'Use public or approved-source data only. Private community scraping should be queued through BrowserOS with your logged-in session and reviewed before storing.',
+        submitLabel: 'Record signal',
+        endpoint: '/api/market-intel',
+        fields: [
+          { name: 'market', label: 'Market', value: 'Columbus OH', required: true, full: false },
+          { name: 'zipCode', label: 'Zip code', value: '43205', full: false },
+          { name: 'competitiveOfferIndex', label: 'Competitive offer index (0-1)', type: 'number', value: '0.74', min: '0', max: '1', step: '0.01', full: false },
+          { name: 'buyerDemand', label: 'Buyer demand', value: 'high', full: false },
+          { name: 'medianInvestorMaoPct', label: 'Investor MAO %', type: 'number', value: '0.68', min: '0', max: '1', step: '0.01', full: false },
+          { name: 'daysOnMarketSignal', label: 'DOM signal', type: 'number', value: '18', full: false },
+          { name: 'notes', label: 'Source notes', type: 'textarea', value: 'Public marketplace signal reviewed by PBK.', full: true }
+        ]
+      },
+      nurture: {
+        title: 'Plan lead nurture',
+        intro: 'This queues an approval-gated nurture plan. PBK will not send live SMS, email, or voice touches from this modal.',
+        submitLabel: 'Queue nurture approval',
+        endpoint: '/api/leads/nurture',
+        fields: [
+          { name: 'leadName', label: 'Lead name', value: 'Sandbox Lead', required: true, full: false },
+          { name: 'address', label: 'Property/address', value: '202 Cherry Ln, Columbus OH', full: false },
+          { name: 'channels', label: 'Channels', value: 'email,sms,voice', full: false },
+          { name: 'notes', label: 'Nurture notes', type: 'textarea', value: '7-day market update, 14-day SMS check-in, 30-day archive/handoff review.', full: true }
+        ]
+      },
+      simulate: {
+        title: 'Simulate deal confidence',
+        intro: 'Runs deterministic optimistic, most-likely, and pessimistic scenarios from analyzer-style numbers.',
+        submitLabel: 'Run simulation',
+        endpoint: '/api/deals/simulate',
+        fields: [
+          { name: 'address', label: 'Address', value: '202 Cherry Ln, Columbus OH 43205', required: true, full: true },
+          { name: 'arv', label: 'ARV', type: 'number', value: '185000', full: false },
+          { name: 'repairs', label: 'Repairs', type: 'number', value: '38000', full: false },
+          { name: 'offer', label: 'Offer', type: 'number', value: '78000', full: false },
+          { name: 'assignmentFee', label: 'Assignment fee', type: 'number', value: '10000', full: false },
+          { name: 'condition', label: 'Condition notes', value: 'roof + furnace risk', full: true }
+        ]
+      },
+      'buyer-match': {
+        title: 'Match active buyers',
+        intro: 'Checks the deal against buyer criteria stored in PBK. This does not message buyers yet.',
+        submitLabel: 'Match buyers',
+        endpoint: '/api/buyers/match',
+        fields: [
+          { name: 'address', label: 'Address', value: '202 Cherry Ln, Columbus OH 43205', required: true, full: true },
+          { name: 'propertyType', label: 'Property type', value: 'single-family', full: false },
+          { name: 'offer', label: 'Offer', type: 'number', value: '78000', full: false },
+          { name: 'repairs', label: 'Repairs', type: 'number', value: '38000', full: false },
+          { name: 'roi', label: 'Expected ROI decimal', type: 'number', value: '0.15', min: '0', max: '1', step: '0.01', full: false }
+        ]
+      }
+    };
+
+    const config = modalConfigs[action];
+    if (!config) return;
+    showPbkFormModal({
+      title: config.title,
+      intro: config.intro,
+      submitLabel: config.submitLabel,
+      fields: config.fields,
+      onSubmit: async (values) => {
+        try {
+          const response = await requestOpenClawApi(config.endpoint, {
+            method: 'POST',
+            body: { ...values, requestedBy: 'Command Center' },
+            timeout: 12000
+          });
+          if (response?.state) renderOpenClawState(response.state);
+          else await syncOpenClawState({ silent: true });
+          toastOutcome({
+            outcome: getRuntimeOutcome(response, action === 'nurture' ? 'queued_for_approval' : 'live'),
+            title: `${config.title} saved`,
+            desc: action === 'nurture'
+              ? 'Nurture was queued for approval before any provider send.'
+              : 'The agent lane saved a real PBK runtime record.',
+            response
+          });
+          return true;
+        } catch (error) {
+          toast({ type: 'error', title: `${config.title} failed`, desc: error?.message || 'The bridge rejected that agent request.' });
+          return false;
+        }
+      }
     });
   }
 
@@ -14547,6 +15521,20 @@
         return;
       }
 
+      const blogActionButton = event.target.closest('[data-brain-blog-action]');
+      if (blogActionButton) {
+        const postId = blogActionButton.dataset.brainBlogId || blogActionButton.closest('[data-brain-blog-id]')?.dataset.brainBlogId || '';
+        if (blogActionButton.dataset.brainBlogAction === 'read') showBrainBlogPost(postId);
+        if (blogActionButton.dataset.brainBlogAction === 'train') trainRexFromBlogPost(postId);
+        return;
+      }
+
+      const revenueAgentButton = event.target.closest('[data-revenue-agent-action]');
+      if (revenueAgentButton) {
+        runRevenueAgentAction(revenueAgentButton.dataset.revenueAgentAction);
+        return;
+      }
+
       const action = event.target.closest('[data-brain-action]')?.dataset.brainAction;
       if (!action) return;
 
@@ -14561,6 +15549,10 @@
 
       if (action === 'export') {
         exportBrainLibrary();
+      }
+
+      if (action === 'harvest-blog') {
+        harvestBrainBlogNow();
       }
 
       if (action === 'browser-research') {

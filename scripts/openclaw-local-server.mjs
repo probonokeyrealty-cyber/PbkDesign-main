@@ -1587,6 +1587,11 @@ function buildDefaultState() {
     leadStageTransitions: buildDefaultLeadStageTransitions(),
     contracts: buildDefaultContracts(),
     documentDeliveries: buildDefaultDocumentDeliveries(),
+    settings: {
+      ui: {},
+      updatedAt: isoNow(),
+      updatedBy: 'system',
+    },
     adminTasks: buildDefaultAdminTasks(),
     adminAudit: buildDefaultAdminAudit(),
   };
@@ -1738,6 +1743,14 @@ function hydrateState(raw = {}) {
     leadStageTransitions: trimArray(raw.leadStageTransitions || defaults.leadStageTransitions, LIMITS.leadStageTransitions),
     contracts: trimArray(raw.contracts || defaults.contracts, LIMITS.contracts),
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
+    settings: {
+      ...defaults.settings,
+      ...(raw.settings && typeof raw.settings === 'object' ? raw.settings : {}),
+      ui: {
+        ...(defaults.settings?.ui || {}),
+        ...(raw.settings?.ui && typeof raw.settings.ui === 'object' ? raw.settings.ui : {}),
+      },
+    },
     adminTasks: trimArray(raw.adminTasks || defaults.adminTasks, LIMITS.adminTasks),
     adminAudit: trimArray(raw.adminAudit || defaults.adminAudit, LIMITS.adminAudit),
   };
@@ -5587,14 +5600,16 @@ async function createSupabaseRecordingSignedUrl(storagePath, expiresIn = SUPABAS
     };
   }
   const signedUrl = payload.signedURL || payload.signedUrl || payload.url || '';
+  const normalizedSignedUrl = String(signedUrl || '');
+  const absoluteSignedUrl = normalizedSignedUrl && /^https?:\/\//i.test(normalizedSignedUrl)
+    ? normalizedSignedUrl
+    : `${SUPABASE_URL}${normalizedSignedUrl.startsWith('/storage/v1') ? '' : '/storage/v1'}${normalizedSignedUrl.startsWith('/') ? '' : '/'}${normalizedSignedUrl}`;
   return {
     ok: true,
     bucket: SUPABASE_CALL_RECORDINGS_BUCKET,
     storagePath: normalizedPath,
     expiresIn,
-    signedUrl: signedUrl && /^https?:\/\//i.test(signedUrl)
-      ? signedUrl
-      : `${SUPABASE_URL}${String(signedUrl || '').startsWith('/') ? '' : '/'}${signedUrl}`,
+    signedUrl: absoluteSignedUrl,
   };
 }
 
@@ -5769,6 +5784,145 @@ async function saveWorkflowPersistence(params = {}) {
     drafts: drafts.slice(0, 80),
     sync,
   };
+}
+
+function ensureRuntimeSettings(stateRef = state) {
+  if (!stateRef.settings || typeof stateRef.settings !== 'object') {
+    stateRef.settings = {};
+  }
+  if (!stateRef.settings.ui || typeof stateRef.settings.ui !== 'object') {
+    stateRef.settings.ui = {};
+  }
+  if (!stateRef.settings.updatedAt) {
+    stateRef.settings.updatedAt = isoNow();
+  }
+  return stateRef.settings;
+}
+
+function normalizeSettingsPatch(params = {}) {
+  const patch = {};
+  const source = params.settings && typeof params.settings === 'object'
+    ? params.settings
+    : params.patch && typeof params.patch === 'object'
+      ? params.patch
+      : params;
+  if (source.ui && typeof source.ui === 'object') {
+    patch.ui = source.ui;
+  }
+  if (source.key) {
+    patch.ui = {
+      ...(patch.ui || {}),
+      [String(source.key)]: source.value,
+    };
+  }
+  for (const [key, value] of Object.entries(source || {})) {
+    if (['settings', 'patch', 'key', 'value', 'actor', 'updatedBy'].includes(key)) continue;
+    if (key === 'ui') continue;
+    patch[key] = value;
+  }
+  return patch;
+}
+
+function getRangeStart(range = '30d') {
+  const normalized = String(range || '30d').trim().toLowerCase();
+  const now = new Date();
+  if (normalized === 'ytd') return new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const days = normalized === '7d' ? 7 : normalized === '90d' ? 90 : 30;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+function getRecordTimestamp(item = {}) {
+  const raw = item.createdAt
+    || item.updatedAt
+    || item.sentAt
+    || item.startTime
+    || item.completedAt
+    || item.timestamp
+    || item.date
+    || '';
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function filterByAnalyticsRange(items = [], range = '30d') {
+  const startMs = getRangeStart(range).getTime();
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    const ms = getRecordTimestamp(item);
+    return ms && ms >= startMs;
+  });
+}
+
+function average(values = []) {
+  const numeric = values.map((value) => toNumber(value, Number.NaN)).filter((value) => Number.isFinite(value));
+  if (!numeric.length) return 0;
+  return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+}
+
+function buildAnalyticsSnapshot(range = '30d') {
+  const normalizedRange = String(range || '30d').trim().toLowerCase();
+  const leadImports = filterByAnalyticsRange(state.leadImports, normalizedRange);
+  const calls = filterByAnalyticsRange(state.calls, normalizedRange);
+  const messages = filterByAnalyticsRange(state.messages, normalizedRange);
+  const approvals = filterByAnalyticsRange(state.approvals, normalizedRange);
+  const contracts = filterByAnalyticsRange(state.contracts, normalizedRange);
+  const transitions = filterByAnalyticsRange(state.leadStageTransitions, normalizedRange);
+  const analyzerRuns = filterByAnalyticsRange(state.analyzerRuns, normalizedRange);
+  const appointments = filterByAnalyticsRange(state.appointments, normalizedRange);
+  const warmTransitions = transitions.filter((item) => /warm|negotiat|appointment|contract|closed|won/i.test(String(item.toStage || item.stage || item.status || '')));
+  const completedContracts = contracts.filter((item) => /complete|signed|closed|won/i.test(String(item.status || '')));
+  const avgOffer = average(analyzerRuns.map((run) => run.offer || run.targetOffer || run.mao || run.analysis?.targetOffer || run.analysis?.mao));
+  const rows = [
+    ['Range', normalizedRange],
+    ['Lead imports', leadImports.length],
+    ['Calls', calls.length],
+    ['Messages', messages.length],
+    ['Approvals', approvals.length],
+    ['Appointments', appointments.length],
+    ['Warm transitions', warmTransitions.length],
+    ['Contracts', contracts.length],
+    ['Completed contracts', completedContracts.length],
+    ['Average offer', Math.round(avgOffer)],
+  ];
+  return {
+    ok: true,
+    range: normalizedRange,
+    generatedAt: isoNow(),
+    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    summary: {
+      leadImports: leadImports.length,
+      calls: calls.length,
+      messages: messages.length,
+      approvals: approvals.length,
+      appointments: appointments.length,
+      warmTransitions: warmTransitions.length,
+      contracts: contracts.length,
+      completedContracts: completedContracts.length,
+      averageOffer: Math.round(avgOffer),
+      conversionRate: leadImports.length ? Number(((warmTransitions.length / leadImports.length) * 100).toFixed(1)) : 0,
+      contractCloseRate: contracts.length ? Number(((completedContracts.length / contracts.length) * 100).toFixed(1)) : 0,
+    },
+    rows,
+  };
+}
+
+function createSilentWavBuffer(durationSeconds = 0.6, sampleRate = 8000) {
+  const samples = Math.max(1, Math.floor(Math.max(0.1, durationSeconds) * sampleRate));
+  const dataSize = samples * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  return buffer;
 }
 
 function getStreakProviderMeta() {
@@ -9500,6 +9654,55 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/settings') {
+      json(response, 200, {
+        ok: true,
+        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+        settings: ensureRuntimeSettings(state),
+      });
+      return;
+    }
+
+    if (['POST', 'PUT', 'PATCH'].includes(request.method) && pathname === '/api/settings') {
+      const body = await readBody(request);
+      const current = ensureRuntimeSettings(state);
+      const patch = normalizeSettingsPatch(body);
+      const next = {
+        ...current,
+        ...patch,
+        ui: {
+          ...(current.ui || {}),
+          ...(patch.ui || {}),
+        },
+        updatedAt: isoNow(),
+        updatedBy: body.actor || body.updatedBy || 'command-center',
+      };
+      state.settings = next;
+      addActivity(
+        state,
+        makeActivity({
+          actor: next.updatedBy,
+          category: 'SETTINGS',
+          status: 'saved',
+          text: 'Command Center settings persisted to bridge state.',
+          target: STATE_BACKEND === 'postgres' ? 'supabase' : 'local-state',
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+        settings: state.settings,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/analytics') {
+      json(response, 200, buildAnalyticsSnapshot(url.searchParams.get('range') || '30d'));
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/tooling/status') {
       json(response, 200, {
         ok: true,
@@ -10074,6 +10277,90 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/recordings/fixture') {
+      const body = await readBody(request);
+      const messageId = body.messageId || body.id || 'pbk-recording-fixture';
+      const storagePath = buildRecordingStoragePath({
+        ...body,
+        messageId,
+        leadName: body.leadName || 'PBK Sandbox Lead',
+        extension: 'wav',
+      });
+      const audioBytes = createSilentWavBuffer(toNumber(body.durationSeconds || body.duration_seconds, 0.6));
+      const upload = await uploadSupabaseRecording({
+        storagePath,
+        contentType: 'audio/wav',
+        bytes: audioBytes,
+      });
+      if (upload.ok === false) {
+        json(response, 501, {
+          ...upload,
+          messageId,
+          storagePath,
+          fixture: true,
+        });
+        return;
+      }
+      const existing = findMessageById(messageId);
+      const message = {
+        ...(existing || createMessageRecord({
+          ...body,
+          id: messageId,
+          channel: 'call',
+          direction: 'recording',
+          provider: 'PBK Fixture',
+          status: 'recorded',
+          body: 'Sandbox call recording fixture.',
+        })),
+        ...body,
+        id: messageId,
+        leadId: body.leadId || existing?.leadId || 'sandbox-lead',
+        leadName: body.leadName || existing?.leadName || 'PBK Sandbox Lead',
+        address: body.address || existing?.address || 'Sandbox property',
+        channel: 'call',
+        direction: 'recording',
+        provider: 'PBK Fixture',
+        status: 'recorded',
+        storagePath,
+        storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+        audioContentType: 'audio/wav',
+        durationSeconds: toNumber(body.durationSeconds || body.duration_seconds, 0.6),
+        recordingUrl: '',
+        payload: {
+          ...(existing?.payload && typeof existing.payload === 'object' ? existing.payload : {}),
+          fixture: true,
+          storagePath,
+          storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+          contentType: 'audio/wav',
+          upload,
+        },
+        updatedAt: isoNow(),
+      };
+      upsertMessage(state, message);
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'Command Center',
+          category: 'CALL',
+          status: 'uploaded',
+          text: `Sandbox recording fixture uploaded for ${message.leadName}.`,
+          target: storagePath,
+        }),
+      );
+      await persistState(state);
+      const signed = await createSupabaseRecordingSignedUrl(storagePath);
+      json(response, 200, {
+        ok: true,
+        fixture: true,
+        message,
+        upload,
+        signedUrl: signed.ok ? signed.signedUrl : '',
+        signed,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     const recordingMatch = matchPath(pathname, '/api/recordings/:messageId');
     if (recordingMatch && request.method === 'GET') {
       const messageId = decodeURIComponent(recordingMatch.groups.messageId || '');
@@ -10488,6 +10775,8 @@ const server = createServer(async (request, response) => {
         'GET /state',
         'GET /api/tools',
         'GET /api/quotas',
+        'GET/POST /api/settings',
+        'GET /api/analytics',
         'GET /api/tooling/status',
         'GET/POST /api/workflows',
         'GET/POST /api/property-data',
@@ -10525,6 +10814,7 @@ const server = createServer(async (request, response) => {
         'POST /api/calls/:id/action',
         'GET/POST /api/messages',
         'GET /api/recordings/:messageId',
+        'POST /api/recordings/fixture',
         'POST /api/recordings',
         'GET/POST /api/contracts',
         'POST /api/contracts/prepare',

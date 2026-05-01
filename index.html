@@ -3423,6 +3423,19 @@
       display: flex; justify-content: space-between;
     }
     .side-sec .label a { color: var(--sky); text-decoration: none; text-transform: none; letter-spacing: 0; font-size: 11px; }
+    .side-link-stub {
+      color: var(--sky);
+      cursor: pointer;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 11px;
+      border-bottom: 1px solid transparent;
+    }
+    .side-link-stub:hover,
+    .side-link-stub:focus-visible {
+      border-color: var(--sky-dim);
+      outline: none;
+    }
 
     .memory-item {
       background: var(--bg-void); border: 1px solid var(--border-dim);
@@ -3534,7 +3547,7 @@
 
     <aside class="agent-side">
       <div class="side-sec">
-        <div class="label"><span>🧠 Active Memory</span><span class="side-link-stub" title="Coming soon">view all</span></div>
+        <div class="label"><span>🧠 Active Memory</span><span class="side-link-stub" title="Open Brain library" role="button" tabindex="0">view all</span></div>
         <div class="memory-item">
           <div class="who">Diane Kowalski</div>
           <div class="summary">Probate — mother passed — wants quick close — roof & furnace issues — sentiment trending up — executor authority confirmed</div>
@@ -3553,7 +3566,7 @@
       </div>
 
       <div class="side-sec">
-        <div class="label"><span>🔧 Tools Connected</span><span class="side-link-stub" title="Coming soon">manage</span></div>
+        <div class="label"><span>🔧 Tools Connected</span><span class="side-link-stub" title="Open Integrations" role="button" tabindex="0">manage</span></div>
         <div class="tool-item"><span class="tool-name"><span class="tool-status"></span>analyzeDeal</span><span class="tool-count">47×</span></div>
         <div class="tool-item"><span class="tool-name"><span class="tool-status"></span>telnyx_call</span><span class="tool-count">23×</span></div>
         <div class="tool-item"><span class="tool-name"><span class="tool-status"></span>telnyx_sms</span><span class="tool-count">112×</span></div>
@@ -3567,7 +3580,7 @@
       </div>
 
       <div class="side-sec">
-        <div class="label"><span>🛡 Guardrails</span><span class="side-link-stub" title="Coming soon">edit</span></div>
+        <div class="label"><span>🛡 Guardrails</span><span class="side-link-stub" title="Open Settings" role="button" tabindex="0">edit</span></div>
         <div class="tool-item"><span class="tool-name">Max offer</span><span class="tool-count">70% ARV</span></div>
         <div class="tool-item"><span class="tool-name">Min profit</span><span class="tool-count">$15,000</span></div>
         <div class="tool-item"><span class="tool-name">Approval-first</span><span class="tool-count">on</span></div>
@@ -3579,7 +3592,7 @@
       </div>
 
       <div class="side-sec">
-        <div class="label"><span>🎭 Persona</span><span class="side-link-stub" title="Coming soon">edit prompt</span></div>
+        <div class="label"><span>🎭 Persona</span><span class="side-link-stub" title="Open prompt guidance" role="button" tabindex="0">edit prompt</span></div>
         <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); line-height: 1.6;">
           Name: <strong style="color: var(--sky);">Ava</strong><br>
           Voice: warm-midwest-female<br>
@@ -8198,6 +8211,50 @@
 
 <style id="pbk-mobile-overflow-guard">
   @media (max-width: 720px) {
+    .notif-panel {
+      position: fixed;
+      top: 54px;
+      left: var(--s-3);
+      right: var(--s-3);
+      width: auto;
+      max-width: calc(100vw - (var(--s-3) * 2));
+      max-height: calc(100dvh - 126px);
+      border-radius: var(--radius-lg);
+    }
+
+    .np-head,
+    .np-tabs {
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .np-tabs .chip-btn {
+      flex: 1 1 calc(50% - 4px);
+      min-width: 0;
+      justify-content: center;
+      white-space: normal;
+    }
+
+    .np-item {
+      grid-template-columns: 8px minmax(0, 1fr) auto;
+      padding-inline: var(--s-3);
+    }
+
+    .np-title,
+    .np-desc {
+      max-width: 100%;
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
+    .page-head h2,
+    .page-head h2 em {
+      max-width: 100%;
+      overflow-wrap: normal;
+      word-break: keep-all;
+      text-wrap: balance;
+    }
+
     .page.active,
     .page-head,
     .page-head-left,
@@ -8418,8 +8475,36 @@
       min-width: 0 !important;
       max-width: 100% !important;
       white-space: normal !important;
-      overflow-wrap: anywhere !important;
+      overflow-wrap: break-word !important;
       word-break: normal !important;
+    }
+
+    .ld-name {
+      font-size: clamp(28px, 8vw, 34px) !important;
+      line-height: 1.02 !important;
+      letter-spacing: -0.015em !important;
+      overflow-wrap: normal !important;
+      word-break: keep-all !important;
+      text-wrap: balance;
+    }
+
+    .ld-name em,
+    .leads-table-container td strong,
+    [data-page="dashboard"] .live-title .lead-name {
+      overflow-wrap: normal !important;
+      word-break: keep-all !important;
+      white-space: normal !important;
+    }
+
+    .ld-details {
+      column-gap: var(--s-2) !important;
+      row-gap: 6px !important;
+      line-height: 1.45 !important;
+      overflow-wrap: break-word !important;
+    }
+
+    .ld-details .dot {
+      display: none !important;
     }
 
     .chart-panel .chart-big {
@@ -10576,6 +10661,25 @@
     throw lastError || new Error(`OpenClaw did not accept event ${eventType}.`);
   }
 
+  async function requestOpenClawApi(path, { method = 'GET', body = null, timeout = 9000 } = {}) {
+    const config = getOpenClawConfig();
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+    const url = new URL(String(path || '').replace(/^\/+/, ''), `${base}/`).toString();
+    const response = await fetchWithTimeout(url, {
+      method,
+      headers: buildOpenClawHeaders(config, Boolean(body)),
+      ...(body ? { body: JSON.stringify(body) } : {})
+    }, timeout);
+    const type = response.headers.get('content-type') || '';
+    const payload = type.includes('json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
+    if (!response.ok) {
+      const message = payload?.error || payload?.message || `Bridge returned ${response.status}`;
+      throw new Error(message);
+    }
+    return payload;
+  }
+
   PBK.openclaw.getState = async function() {
     return fetchOpenClawState();
   };
@@ -12445,6 +12549,20 @@
     if (!page || page.dataset.sideWired === 'true') return;
     page.dataset.sideWired = 'true';
 
+    const openSideLink = (link) => {
+      if (!link) return;
+      const label = normalizeControlText(link.textContent);
+      if (label === 'view all') {
+        showPage('brain');
+      } else if (label === 'manage') {
+        showPage('integrations');
+      } else if (label === 'edit') {
+        showPage('settings');
+      } else if (label === 'edit prompt') {
+        showUtilityModal('Persona prompt', 'Ava persona edits stay approval-first. Use the command bar to draft a prompt change, then approve it before it touches <code>wholesale.agent.md</code>.');
+      }
+    };
+
     page.addEventListener('click', (event) => {
       const button = event.target.closest('button');
       if (button) {
@@ -12465,16 +12583,15 @@
       }
 
       const link = event.target.closest('.side-link-stub');
-      if (!link) return;
-      const label = normalizeControlText(link.textContent);
-      if (label === 'view all') {
-        showPage('brain');
-      } else if (label === 'manage') {
-        showPage('integrations');
-      } else if (label === 'edit') {
-        showPage('settings');
-      } else if (label === 'edit prompt') {
-        showUtilityModal('Persona prompt', 'Ava persona edits stay approval-first. Use the command bar to draft a prompt change, then approve it before it touches <code>wholesale.agent.md</code>.');
+      openSideLink(link);
+    });
+
+    page.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const link = event.target.closest('.side-link-stub');
+      if (link) {
+        event.preventDefault();
+        openSideLink(link);
       }
     });
   }
@@ -12532,6 +12649,24 @@
     page.dataset.recordingsWired = 'true';
     const state = { playing: false, elapsed: 198, duration: 522, speed: 1 };
     const speeds = [1, 1.25, 1.5, 2];
+    const audio = new Audio();
+    audio.preload = 'metadata';
+
+    const getActiveRecordingContext = () => {
+      const item = page.querySelector('.rec-item.active') || page.querySelector('.rec-item');
+      const name = item?.querySelector('.who')?.textContent?.replace(/\s+/g, ' ').trim()
+        || page.querySelector('.rec-player-head .who')?.textContent?.replace(/\s+/g, ' ').trim()
+        || 'PBK Sandbox Lead';
+      const messageId = item?.dataset.messageId
+        || `pbk-recording-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'sandbox'}`;
+      if (item && !item.dataset.messageId) item.dataset.messageId = messageId;
+      return {
+        item,
+        messageId,
+        leadName: name,
+        address: page.querySelector('.rec-player-head .meta')?.textContent?.split('—')?.pop()?.trim() || 'Sandbox property'
+      };
+    };
 
     const paintScrubber = () => {
       const pct = Math.max(0, Math.min(100, (state.elapsed / state.duration) * 100));
@@ -12550,6 +12685,24 @@
       toast({ type: 'success', title: 'Recording export ready', desc: 'No audio URL is attached yet, so PBK exported the transcript package.' });
     };
 
+    const fetchSignedRecording = async (context) => {
+      try {
+        return await requestOpenClawApi(`/api/recordings/${encodeURIComponent(context.messageId)}?expiresIn=3600`, { timeout: 10000 });
+      } catch (error) {
+        const fixture = await requestOpenClawApi('/api/recordings/fixture', {
+          method: 'POST',
+          body: {
+            messageId: context.messageId,
+            leadName: context.leadName,
+            address: context.address,
+            actor: 'Command Center'
+          },
+          timeout: 15000
+        });
+        return fixture?.signed || fixture;
+      }
+    };
+
     page.addEventListener('click', (event) => {
       const button = event.target.closest('button');
       if (!button) return;
@@ -12565,7 +12718,24 @@
       }
 
       if (label === 'bulk export' || label === 'download mp3' || label === 'download') {
-        exportActiveRecording(label === 'download mp3' ? 'mp3.txt' : 'txt');
+        const context = getActiveRecordingContext();
+        fetchSignedRecording(context)
+          .then((payload) => {
+            const url = payload?.signedUrl || payload?.url || payload?.signed?.signedUrl || '';
+            if (!url) throw new Error(payload?.error || 'No signed recording URL was returned.');
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${context.messageId}.${payload?.message?.audioContentType === 'audio/wav' ? 'wav' : 'mp3'}`;
+            link.rel = 'noreferrer';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            toast({ type: 'success', title: 'Recording download ready', desc: 'PBK fetched a secure signed Supabase URL.' });
+          })
+          .catch((error) => {
+            exportActiveRecording(label === 'download mp3' ? 'mp3.txt' : 'txt');
+            toast({ type: 'warning', title: 'Audio unavailable', desc: error?.message || 'Exported transcript package instead.' });
+          });
         return;
       }
 
@@ -12582,15 +12752,37 @@
 
       if (button.classList.contains('pc-speed')) {
         state.speed = speeds[(speeds.indexOf(state.speed) + 1) % speeds.length];
+        audio.playbackRate = state.speed;
         button.textContent = `${state.speed.toFixed(state.speed % 1 ? 2 : 1)}x`;
         toast({ type: 'info', title: 'Playback speed updated', desc: `Speed set to ${button.textContent}.` });
         return;
       }
 
       if (button.classList.contains('play')) {
-        state.playing = !state.playing;
-        button.classList.toggle('active', state.playing);
-        toast({ type: 'info', title: state.playing ? 'Playback started' : 'Playback paused', desc: 'Transcript scrubber is synced locally for demo playback.' });
+        const context = getActiveRecordingContext();
+        if (state.playing) {
+          audio.pause();
+          state.playing = false;
+          button.classList.remove('active');
+          toast({ type: 'info', title: 'Playback paused', desc: 'Secure recording playback paused.' });
+          return;
+        }
+        fetchSignedRecording(context)
+          .then(async (payload) => {
+            const url = payload?.signedUrl || payload?.url || payload?.signed?.signedUrl || '';
+            if (!url) throw new Error(payload?.error || 'No signed recording URL was returned.');
+            audio.src = url;
+            audio.playbackRate = state.speed;
+            await audio.play();
+            state.playing = true;
+            button.classList.add('active');
+            toast({ type: 'success', title: 'Playback started', desc: 'Streaming from a short-lived Supabase signed URL.' });
+          })
+          .catch((error) => {
+            state.playing = false;
+            button.classList.remove('active');
+            toast({ type: 'warning', title: 'Recording not playable yet', desc: error?.message || 'PBK could not fetch a signed recording URL.' });
+          });
         return;
       }
 
@@ -12600,6 +12792,17 @@
         paintScrubber();
       }
     });
+
+    audio.addEventListener('timeupdate', () => {
+      if (!Number.isFinite(audio.duration) || !audio.duration) return;
+      state.elapsed = audio.currentTime;
+      state.duration = audio.duration;
+      paintScrubber();
+    });
+    audio.addEventListener('ended', () => {
+      state.playing = false;
+      page.querySelector('.pc-btn.play')?.classList.remove('active');
+    });
   }
 
   function wireSettingsPersistenceControls() {
@@ -12608,12 +12811,32 @@
     page.dataset.settingsPersistWired = 'true';
 
     const readDraft = () => parseJSONSafe(localStorage.getItem(PBK_UI_SETTINGS_KEY), {});
-    const writeDraft = (patch) => {
+    const writeDraft = async (patch) => {
       const next = { ...readDraft(), ...patch, updatedAt: new Date().toISOString() };
       localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(next));
+      try {
+        const payload = await requestOpenClawApi('/api/settings', {
+          method: 'POST',
+          body: { settings: { ui: next }, actor: 'Command Center' },
+          timeout: 9000
+        });
+        if (payload?.settings?.ui) {
+          localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(payload.settings.ui));
+        }
+      } catch (error) {
+        console.warn('Settings bridge persistence failed; local draft retained.', error);
+      }
       return next;
     };
     const keyForRow = (row) => row?.querySelector('.setting-label')?.textContent?.replace(/\s+/g, ' ').trim();
+
+    requestOpenClawApi('/api/settings', { timeout: 7000 })
+      .then((payload) => {
+        if (payload?.settings?.ui) {
+          localStorage.setItem(PBK_UI_SETTINGS_KEY, JSON.stringify(payload.settings.ui));
+        }
+      })
+      .catch(() => {});
 
     page.querySelectorAll('.setting-row').forEach((row) => {
       const key = keyForRow(row);
@@ -12626,12 +12849,12 @@
 
       input?.addEventListener('change', () => {
         writeDraft({ [key]: { value: input.value } });
-        toast({ type: 'success', title: 'Setting saved locally', desc: `${key} is remembered on this machine.` });
+        toast({ type: 'success', title: 'Setting saved', desc: `${key} is persisted through the bridge when connected.` });
       });
       toggle?.addEventListener('click', () => {
         setTimeout(() => {
           writeDraft({ [key]: { enabled: toggle.classList.contains('on') } });
-          toast({ type: 'success', title: 'Setting saved locally', desc: `${key} preference updated.` });
+          toast({ type: 'success', title: 'Setting saved', desc: `${key} preference updated through the bridge when connected.` });
         }, 0);
       });
     });
@@ -12644,7 +12867,7 @@
         const email = window.prompt('Teammate email', 'acquisitions@pbk.capital');
         if (!email) return;
         writeDraft({ pendingInvite: email });
-        toast({ type: 'success', title: 'Invite staged', desc: `${email} is saved locally until Supabase auth is enabled.` });
+        toast({ type: 'success', title: 'Invite staged', desc: `${email} is saved to settings state until Supabase auth is enabled.` });
       }
       if (label === '+ add another plugin') {
         event.preventDefault();
@@ -12652,13 +12875,13 @@
         const plugin = window.prompt('Plugin name', 'custom-mcp');
         if (!plugin) return;
         writeDraft({ pendingPlugin: plugin });
-        toast({ type: 'success', title: 'Plugin staged', desc: `${plugin} is saved locally for the next OpenClaw plugin pass.` });
+        toast({ type: 'success', title: 'Plugin staged', desc: `${plugin} is saved to settings state for the next OpenClaw plugin pass.` });
       }
       if (label === 'edit' || label === 'edit script') {
         const note = window.prompt('Draft setting update', label === 'edit script' ? 'Update TCPA consent script' : 'Update team role');
         if (!note) return;
         writeDraft({ lastSettingsDraft: note });
-        toast({ type: 'success', title: 'Draft saved locally', desc: 'Rex can turn this into a formal admin change when ready.' });
+        toast({ type: 'success', title: 'Draft saved', desc: 'Rex can turn this into a formal admin change when ready.' });
       }
     });
   }
@@ -12799,9 +13022,11 @@
     const page = getPageNode('automations');
     if (!page || page.dataset.automationsWired === 'true') return;
     page.dataset.automationsWired = 'true';
-    const saveAutomationDraft = () => {
+    const saveAutomationDraft = async ({ syncToN8n = false } = {}) => {
       const inspector = page.querySelector('.auto-inspector');
       const draft = {
+        id: 'pbk-command-center-draft',
+        name: 'PBK Command Center Draft',
         triggerType: inspector?.querySelectorAll('select')[0]?.value || '',
         table: inspector?.querySelector('input')?.value || '',
         event: inspector?.querySelectorAll('select')[1]?.value || '',
@@ -12809,10 +13034,44 @@
         active: inspector?.querySelectorAll('.toggle-sw')[0]?.classList.contains('on') || false,
         logEveryRun: inspector?.querySelectorAll('.toggle-sw')[1]?.classList.contains('on') || false,
         slackOnError: inspector?.querySelectorAll('.toggle-sw')[2]?.classList.contains('on') || false,
+        nodes: [],
+        connections: {},
+        settings: {},
+        tags: ['pbk', 'command-center'],
         updatedAt: new Date().toISOString()
       };
       localStorage.setItem('pbk-automation-draft', JSON.stringify(draft));
-      return draft;
+      try {
+        const result = await requestOpenClawApi('/api/workflows', {
+          method: 'POST',
+          body: {
+            workflow: {
+              id: draft.id,
+              name: draft.name,
+              active: draft.active,
+              nodes: draft.nodes,
+              connections: draft.connections,
+              settings: {
+                triggerType: draft.triggerType,
+                table: draft.table,
+                event: draft.event,
+                filter: draft.filter,
+                logEveryRun: draft.logEveryRun,
+                slackOnError: draft.slackOnError
+              },
+              tags: draft.tags,
+              metadata: { source: 'command-center-inspector' }
+            },
+            syncToN8n
+          },
+          timeout: 12000
+        });
+        localStorage.setItem('pbk-automation-draft-result', JSON.stringify(result));
+        return { draft, result };
+      } catch (error) {
+        console.warn('Workflow persistence failed; local draft retained.', error);
+        return { draft, error };
+      }
     };
 
     page.addEventListener('click', async (event) => {
@@ -12820,11 +13079,11 @@
       if (!button) return;
       const label = normalizeControlText(button.textContent);
       if (label === '+ new automation' || label === '+') {
-        showUtilityModal('New automation', 'New n8n-backed automations should be created from the active n8n workflow builder. This PBK canvas now saves inspector drafts locally so we can promote them safely later.');
+        showUtilityModal('New automation', 'New n8n-backed automations should be created from the active n8n workflow builder. This PBK canvas now persists inspector drafts through the bridge and can sync once you enable live n8n writes.');
         return;
       }
       if (label === 'test trigger') {
-        const draft = saveAutomationDraft();
+        const { draft } = await saveAutomationDraft({ syncToN8n: false });
         await invokeRuntimeTool('createApproval', {
           type: 'automation-test',
           leadName: 'Automation Trigger Test',
@@ -12839,8 +13098,14 @@
         return;
       }
       if (label === 'save changes') {
-        saveAutomationDraft();
-        toast({ type: 'success', title: 'Automation draft saved', desc: 'Inspector values are saved locally for the next n8n sync pass.' });
+        const { result, error } = await saveAutomationDraft({ syncToN8n: false });
+        toast({
+          type: error ? 'warning' : 'success',
+          title: error ? 'Automation saved locally' : 'Automation draft persisted',
+          desc: result?.provider === 'n8n-api'
+            ? 'Inspector values are synced with the n8n workflow API.'
+            : 'Inspector values are saved in the PBK workflow draft store.'
+        });
       }
     });
   }
@@ -12849,26 +13114,62 @@
     const page = getPageNode('analytics');
     if (!page || page.dataset.analyticsWired === 'true') return;
     page.dataset.analyticsWired = 'true';
-    page.querySelector('.page-head-actions')?.addEventListener('click', (event) => {
+    let latestAnalytics = null;
+    const paintAnalyticsSnapshot = (payload) => {
+      latestAnalytics = payload;
+      const summary = payload?.summary || {};
+      const tag = page.querySelector('.ph-tag');
+      if (tag) tag.textContent = `Reporting — ${payload?.range || '30d'} — live bridge snapshot`;
+      const cards = Array.from(page.querySelectorAll('.metric-card, .an-card, .stat-mini, .stat'));
+      const values = [
+        ['Lead imports', summary.leadImports],
+        ['Calls', summary.calls],
+        ['Messages', summary.messages],
+        ['Approvals', summary.approvals],
+        ['Appointments', summary.appointments],
+        ['Contracts', summary.contracts],
+        ['Close rate', `${summary.contractCloseRate || 0}%`],
+        ['Conversion', `${summary.conversionRate || 0}%`]
+      ];
+      cards.slice(0, values.length).forEach((card, index) => {
+        const valueNode = card.querySelector('.chart-big, .v, strong, .metric-value');
+        if (valueNode && values[index][1] != null) valueNode.textContent = String(values[index][1]);
+      });
+    };
+    const loadAnalyticsRange = async (range) => {
+      const payload = await requestOpenClawApi(`/api/analytics?range=${encodeURIComponent(range)}`, { timeout: 9000 });
+      paintAnalyticsSnapshot(payload);
+      localStorage.setItem('pbk-analytics-range', range);
+      return payload;
+    };
+    page.querySelector('.page-head-actions')?.addEventListener('click', async (event) => {
       const button = event.target.closest('button');
       if (!button) return;
       const label = normalizeControlText(button.textContent);
       if (['7d', '30d', '90d', 'ytd'].includes(label)) {
         setChipGroupActive(button);
-        localStorage.setItem('pbk-analytics-range', label);
-        toast({ type: 'info', title: 'Analytics range staged', desc: `${button.textContent.trim()} selected for the next bridge analytics pull.` });
+        try {
+          await loadAnalyticsRange(label);
+          toast({ type: 'success', title: 'Analytics refreshed', desc: `${button.textContent.trim()} is now using live bridge data.` });
+        } catch (error) {
+          localStorage.setItem('pbk-analytics-range', label);
+          toast({ type: 'warning', title: 'Analytics range saved', desc: error?.message || 'Bridge analytics did not respond yet.' });
+        }
         return;
       }
       if (label === 'export csv') {
-        const rows = [['Metric', 'Value']];
-        page.querySelectorAll('.metric-card, .an-card, .stat').forEach((card) => {
-          const text = card.textContent.replace(/\s+/g, ' ').trim();
-          if (text) rows.push([text, '']);
-        });
+        const rows = latestAnalytics?.rows?.length ? latestAnalytics.rows.map((row) => [...row]) : [['Metric', 'Value']];
+        if (!latestAnalytics?.rows?.length) {
+          page.querySelectorAll('.metric-card, .an-card, .stat').forEach((card) => {
+            const text = card.textContent.replace(/\s+/g, ' ').trim();
+            if (text) rows.push([text, '']);
+          });
+        }
         downloadTextFile(`pbk-analytics-${localStorage.getItem('pbk-analytics-range') || '30d'}.csv`, rowsToCsv(rows), 'text/csv');
-        toast({ type: 'success', title: 'Analytics export ready', desc: 'Current analytics cards were exported.' });
+        toast({ type: 'success', title: 'Analytics export ready', desc: latestAnalytics ? 'Live bridge analytics were exported.' : 'Current analytics cards were exported.' });
       }
     });
+    loadAnalyticsRange(localStorage.getItem('pbk-analytics-range') || '30d').catch(() => {});
   }
 
   function wireBrainApiButton() {
@@ -13298,6 +13599,14 @@
     return getVisibleAnalyzerFrame() || getBackgroundAnalyzerFrame();
   }
 
+  function getAnalyzerFrameApi(frame = getAnalyzerFrame()) {
+    try {
+      return frame?.contentWindow?.PBKAnalyzer || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
   function ensureBackgroundAnalyzerFrame() {
     let frame = getBackgroundAnalyzerFrame();
     if (frame) return frame;
@@ -13326,7 +13635,7 @@
 
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      const api = frame.contentWindow?.PBKAnalyzer;
+      const api = getAnalyzerFrameApi(frame);
       if (api?.getState) return api;
       await new Promise((resolve) => setTimeout(resolve, 160));
     }
@@ -13335,7 +13644,7 @@
   }
 
   function getAnalyzerBridgeApiSync() {
-    return getAnalyzerFrame()?.contentWindow?.PBKAnalyzer || null;
+    return getAnalyzerFrameApi();
   }
 
   function getStoredBranding() {
@@ -14034,8 +14343,9 @@
     };
 
     try {
-      if (frame.contentWindow.PBKAnalyzer?.setState) {
-        frame.contentWindow.PBKAnalyzer.setState(payload);
+      const analyzerApi = getAnalyzerFrameApi(frame);
+      if (analyzerApi?.setState) {
+        analyzerApi.setState(payload);
       }
       frame.contentWindow.postMessage(
         {
@@ -14142,7 +14452,7 @@
         try {
           const frame = getAnalyzerFrame();
           const payload =
-            frame?.contentWindow?.PBKAnalyzer?.getState?.() ||
+            getAnalyzerFrameApi(frame)?.getState?.() ||
             PBK.state.analyzer ||
             { deal: getStoredAnalyzerDeal() || {} };
           const address = payload?.deal?.address || '';

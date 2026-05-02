@@ -16,6 +16,10 @@ PBK_React_Preview_Code_*.zip
 deploy-*.zip
 dist-upload.zip
 artifacts/supabase-*.png
+tmp-*.png
+tmp-*.jpg
+tmp-*.jpeg
+tmp-*.webp
 
 .DS_Store
 Thumbs.db

@@ -854,6 +854,12 @@
       <span class="rail-tooltip">The Brain — Research</span>
     </div>
 
+    <div class="rail-item" data-page="campaigns">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+      <span class="rail-badge amber">2</span>
+      <span class="rail-tooltip">Outreach Campaigns</span>
+    </div>
+
     <div class="rail-spacer"></div>
 
     <div class="rail-item" data-page="integrations">
@@ -6552,6 +6558,442 @@
 <!-- ======================================================
      PAGE 11 — SETTINGS / GUARDRAILS
      ====================================================== -->
+<!-- ======================================================
+     PAGE - OUTREACH CAMPAIGNS
+     ====================================================== -->
+<section class="page" data-page="campaigns">
+  <style>
+    .camp-toolbar {
+      padding: var(--s-4) var(--s-6);
+      background: var(--bg-console);
+      border-bottom: 1px solid var(--border-dim);
+      display: flex;
+      align-items: center;
+      gap: var(--s-3);
+      flex-wrap: wrap;
+    }
+    .camp-search { flex: 1 1 260px; max-width: 360px; position: relative; }
+    .camp-search input {
+      width: 100%; height: 36px; padding: 0 var(--s-3) 0 34px;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text-primary);
+      font-family: var(--font-mono); font-size: 12px;
+    }
+    .camp-search input:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
+    .camp-search svg { position: absolute; left: 11px; top: 10px; width: 14px; height: 14px; color: var(--text-tertiary); }
+    .camp-channel-chip, .camp-view-btn {
+      min-height: 36px; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-secondary); transition: all 0.15s;
+    }
+    .camp-channel-chip:hover, .camp-view-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
+    .camp-channel-chip.active, .camp-view-btn.active { background: var(--sky-glow); color: var(--sky); border-color: var(--sky-dim); }
+    .camp-filter-select {
+      min-height: 36px; padding: 7px 34px 7px 12px; border-radius: 999px;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .camp-filter-select:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); color: var(--text-primary); }
+    .camp-view-toggle { margin-left: auto; display: inline-flex; gap: var(--s-2); }
+    .camp-ops-strip {
+      padding: var(--s-4) var(--s-6) 0; display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3);
+    }
+    .camp-ops-card {
+      border: 1px solid var(--border-dim);
+      background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(8,11,16,0.92));
+      border-radius: 16px; padding: 14px 16px; min-width: 0;
+    }
+    .camp-ops-card[data-state="good"] { border-color: rgba(125,211,252,0.34); background: linear-gradient(180deg, rgba(125,211,252,0.08), rgba(8,11,16,0.92)); }
+    .camp-ops-card[data-state="warning"] { border-color: rgba(255,176,32,0.36); background: linear-gradient(180deg, rgba(255,176,32,0.08), rgba(8,11,16,0.92)); }
+    .camp-ops-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-ghost); margin-bottom: 7px; }
+    .camp-ops-value { color: var(--text-primary); font-family: var(--font-display); font-size: 18px; letter-spacing: -0.02em; line-height: 1.15; overflow-wrap: anywhere; }
+    .camp-ops-note { color: var(--text-tertiary); font-size: 11px; line-height: 1.45; margin-top: 6px; }
+    .camp-grid {
+      padding: var(--s-5) var(--s-6); display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--s-4);
+    }
+    .camp-card {
+      background: var(--bg-panel); border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg); padding: var(--s-5); cursor: pointer;
+      transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+      display: flex; flex-direction: column; gap: var(--s-3); min-width: 0;
+    }
+    .camp-card:hover { border-color: var(--sky-dim); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,0.24); }
+    .camp-card[data-status="pending"] { border-color: rgba(255,176,32,0.58); box-shadow: 0 0 0 1px var(--amber-glow); }
+    .camp-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
+    .camp-card h3 { font-family: var(--font-display); font-weight: 500; font-size: 18px; letter-spacing: -0.01em; color: var(--text-primary); line-height: 1.25; overflow-wrap: anywhere; }
+    .camp-card h3 em { font-style: italic; color: var(--sky); }
+    .camp-channel-badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 5px;
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
+      text-transform: uppercase; font-weight: 700; flex: 0 0 auto;
+    }
+    .camp-channel-badge.email { background: rgba(232,121,249,0.12); color: var(--magenta); border: 1px solid rgba(232,121,249,0.28); }
+    .camp-channel-badge.call { background: rgba(248,113,113,0.12); color: var(--crimson); border: 1px solid rgba(248,113,113,0.28); }
+    .camp-channel-badge.sms { background: rgba(56,189,248,0.12); color: var(--ion); border: 1px solid rgba(56,189,248,0.28); }
+    .camp-channel-badge.mixed { background: var(--sky-glow); color: var(--sky); border: 1px solid var(--sky-dim); }
+    .camp-status-pill {
+      display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 4px 10px;
+      border-radius: 999px; font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700;
+    }
+    .camp-status-pill.active { background: rgba(163,230,53,0.12); color: var(--lime); }
+    .camp-status-pill.active::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--lime); animation: pulse 1.6s ease infinite; }
+    .camp-status-pill.draft { background: var(--bg-hover); color: var(--text-tertiary); }
+    .camp-status-pill.pending { background: rgba(255,176,32,0.12); color: var(--amber); }
+    .camp-status-pill.paused { background: rgba(56,189,248,0.12); color: var(--ion); }
+    .camp-status-pill.completed { background: rgba(125,211,252,0.12); color: var(--sky); }
+    .camp-status-pill.provider { background: rgba(255,176,32,0.12); color: var(--amber); }
+    .camp-status-pill.provider_missing { background: rgba(255,176,32,0.12); color: var(--amber); }
+    .camp-status-pill.archived { background: var(--bg-hover); color: var(--text-ghost); }
+    .camp-card-meta {
+      display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2) var(--s-3);
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+      padding-bottom: var(--s-3); border-bottom: 1px dashed var(--border-dim);
+    }
+    .camp-card-meta strong { color: var(--text-primary); font-weight: 500; }
+    .camp-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-ghost); }
+    .camp-card-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); }
+    .camp-stat { padding: var(--s-2); background: var(--bg-void); border-radius: var(--radius-sm); border: 1px solid var(--border-dim); min-width: 0; }
+    .camp-stat .l { font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 3px; }
+    .camp-stat .v { font-family: var(--font-mono); font-size: 14px; color: var(--text-primary); font-weight: 500; overflow-wrap: anywhere; }
+    .camp-stat .v.good { color: var(--lime); }
+    .camp-stat .v.warn { color: var(--amber); }
+    .camp-progress { height: 4px; background: var(--bg-void); border-radius: 2px; overflow: hidden; position: relative; }
+    .camp-progress-fill { height: 100%; background: linear-gradient(90deg, var(--sky-deep), var(--sky)); border-radius: 2px; transition: width 0.3s; }
+    .camp-progress-meta { display: flex; justify-content: space-between; gap: var(--s-2); font-family: var(--font-mono); font-size: 9px; color: var(--text-tertiary); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 6px; }
+    .camp-card-note { padding: var(--s-3); background: var(--bg-void); border: 1px solid var(--border-dim); border-radius: var(--radius); font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+    .camp-card-note.warning { background: var(--amber-glow); border-color: rgba(255,176,32,0.28); }
+    .camp-card-actions { display: flex; gap: var(--s-2); padding-top: var(--s-2); border-top: 1px dashed var(--border-dim); flex-wrap: wrap; }
+    .camp-table { margin: var(--s-4) var(--s-6); background: var(--bg-panel); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); overflow: auto; }
+    .camp-table-row {
+      display: grid; grid-template-columns: minmax(220px, 1.6fr) 92px 120px 88px 112px 112px 84px;
+      gap: var(--s-3); padding: 12px var(--s-4); align-items: center;
+      border-bottom: 1px solid var(--border-dim); cursor: pointer; transition: background 0.1s;
+      font-family: var(--font-mono); font-size: 12px; min-width: 880px;
+    }
+    .camp-table-row:last-child { border-bottom: none; }
+    .camp-table-row:hover { background: var(--bg-hover); }
+    .camp-table-row.head { background: var(--bg-console); cursor: default; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary); }
+    .camp-table-row .name { display: flex; align-items: center; gap: var(--s-2); min-width: 0; font-family: var(--font-ui); font-size: 13px; color: var(--text-primary); font-weight: 500; }
+    .camp-table-row .name span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .camp-empty { margin: var(--s-5) var(--s-6); border: 1px dashed var(--border); border-radius: var(--radius-lg); padding: var(--s-8); text-align: center; background: var(--bg-panel); color: var(--text-secondary); }
+    .campaign-wizard-backdrop {
+      position: fixed; inset: 0; z-index: 1200; display: none; align-items: center; justify-content: center;
+      padding: 24px; background: rgba(3,5,8,0.76); backdrop-filter: blur(8px);
+    }
+    .campaign-wizard-backdrop.open { display: flex; }
+    .campaign-wizard {
+      width: min(980px, 100%); max-height: calc(100dvh - 48px);
+      background: linear-gradient(180deg, var(--bg-panel), var(--bg-console));
+      border: 1px solid var(--border-bright); border-radius: 24px;
+      box-shadow: 0 26px 90px rgba(0,0,0,0.58); overflow: hidden;
+      display: grid; grid-template-rows: auto 1fr auto;
+    }
+    .campaign-wizard-head { padding: var(--s-5) var(--s-6); border-bottom: 1px solid var(--border-dim); display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-4); }
+    .campaign-wizard-head h3 { font-family: var(--font-display); font-size: 28px; font-weight: 500; letter-spacing: -0.02em; }
+    .campaign-wizard-head p { color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-top: 4px; max-width: 620px; }
+    .campaign-wizard-body { overflow-y: auto; padding: var(--s-6); }
+    .campaign-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-2); margin-bottom: var(--s-5); }
+    .campaign-step { border: 1px solid var(--border-dim); border-radius: 999px; padding: 8px 10px; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary); text-align: center; }
+    .campaign-step.active { background: var(--sky-glow); color: var(--sky); border-color: var(--sky-dim); }
+    .campaign-pane { display: none; }
+    .campaign-pane.active { display: block; }
+    .campaign-option-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
+    .campaign-option, .campaign-template-option, .campaign-source-option {
+      text-align: left; border: 1px solid var(--border-dim); background: var(--bg-void);
+      color: var(--text-primary); border-radius: 18px; padding: var(--s-4);
+      cursor: pointer; transition: all 0.16s;
+    }
+    .campaign-option:hover, .campaign-template-option:hover, .campaign-source-option:hover { border-color: var(--sky-dim); transform: translateY(-1px); }
+    .campaign-option.selected, .campaign-template-option.selected, .campaign-source-option.selected { border-color: var(--sky); background: var(--sky-glow); box-shadow: 0 0 0 1px var(--sky-dim); }
+    .campaign-option h4, .campaign-template-option h4, .campaign-source-option h4 { font-family: var(--font-display); font-size: 18px; font-weight: 500; margin-bottom: 6px; }
+    .campaign-option p, .campaign-template-option p, .campaign-source-option p { color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+    .campaign-source-meta {
+      display: flex; align-items: center; justify-content: space-between; gap: var(--s-2);
+      margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--border-dim);
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary);
+    }
+    .campaign-source-meta strong { color: var(--sky); font-size: 13px; }
+    .campaign-csv-tools {
+      margin-top: var(--s-4); border: 1px dashed var(--border); border-radius: var(--radius-lg);
+      background: var(--bg-void); padding: var(--s-4); display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;
+    }
+    .campaign-csv-status { font-size: 12px; color: var(--text-secondary); line-height: 1.45; overflow-wrap: anywhere; }
+    .campaign-review-warning {
+      margin-top: var(--s-3); padding: var(--s-3); border: 1px solid rgba(255,176,32,0.28);
+      background: var(--amber-glow); border-radius: var(--radius); color: var(--amber);
+      font-family: var(--font-mono); font-size: 10px; line-height: 1.5; letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .campaign-wizard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+    .campaign-field { display: grid; gap: 6px; }
+    .campaign-field.full { grid-column: 1 / -1; }
+    .campaign-field label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary); }
+    .campaign-field input, .campaign-field select, .campaign-field textarea {
+      width: 100%; min-height: 44px; background: var(--bg-void); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text-primary); padding: 10px 12px; font-family: var(--font-ui); font-size: 13px;
+    }
+    .campaign-field textarea { min-height: 110px; resize: vertical; }
+    .campaign-review { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: var(--s-4); }
+    .campaign-review-card { border: 1px solid var(--border-dim); border-radius: var(--radius-lg); padding: var(--s-4); background: var(--bg-void); }
+    .campaign-review-card h4 { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sky); margin-bottom: var(--s-3); }
+    .campaign-review-line { display: flex; justify-content: space-between; gap: var(--s-3); padding: 8px 0; border-bottom: 1px dashed var(--border-dim); font-size: 12px; }
+    .campaign-review-line:last-child { border-bottom: none; }
+    .campaign-review-line span:first-child { color: var(--text-tertiary); font-family: var(--font-mono); }
+    .campaign-review-line span:last-child { color: var(--text-primary); text-align: right; overflow-wrap: anywhere; }
+    .campaign-wizard-actions { padding: var(--s-4) var(--s-6); border-top: 1px solid var(--border-dim); display: flex; gap: var(--s-2); justify-content: flex-end; background: var(--bg-console); }
+    .cd-head { padding: var(--s-5) var(--s-6); background: var(--bg-console); border-bottom: 1px solid var(--border-dim); }
+    .cd-head-top { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; margin-bottom: var(--s-3); }
+    .cd-title { font-family: var(--font-display); font-weight: 500; font-size: 30px; letter-spacing: -0.02em; line-height: 1.2; margin-bottom: var(--s-2); overflow-wrap: anywhere; }
+    .cd-title em { font-style: italic; color: var(--sky); font-weight: 600; }
+    .cd-meta { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+    .cd-meta > span { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.06em; }
+    .cd-actions-bar { display: flex; gap: var(--s-2); padding: var(--s-4) var(--s-6); background: var(--bg-console); border-bottom: 1px solid var(--border-dim); align-items: center; flex-wrap: wrap; }
+    .cd-stats-bar { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; background: var(--border-dim); border-bottom: 1px solid var(--border-dim); }
+    .cd-stat { background: var(--bg-console); padding: var(--s-4) var(--s-5); min-width: 0; }
+    .cd-stat .l { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 6px; }
+    .cd-stat .v { font-family: var(--font-mono); font-size: 23px; color: var(--text-primary); font-weight: 500; line-height: 1; margin-bottom: 5px; overflow-wrap: anywhere; }
+    .cd-stat .v.good { color: var(--lime); }
+    .cd-stat .v.warn { color: var(--amber); }
+    .cd-stat .delta { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.06em; overflow-wrap: anywhere; }
+    .cd-stat .delta.up { color: var(--lime); }
+    .cd-body { padding: var(--s-5) var(--s-6); display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--s-5); align-items: start; }
+    .cd-leads-table { background: var(--bg-panel); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); overflow: auto; }
+    .cd-leads-table .head, .cd-lead-row {
+      display: grid; grid-template-columns: 32px minmax(180px, 1fr) 100px 100px 110px 88px;
+      gap: var(--s-2); padding: 10px var(--s-3); align-items: center;
+      border-bottom: 1px solid var(--border-dim); font-family: var(--font-mono); font-size: 12px; min-width: 720px;
+    }
+    .cd-leads-table .head { background: var(--bg-console); color: var(--text-tertiary); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; }
+    .cd-lead-row:last-child { border-bottom: none; }
+    .cd-lead-row:hover { background: var(--bg-hover); cursor: pointer; }
+    .cd-lead-row .name { font-family: var(--font-ui); font-size: 13px; color: var(--text-primary); overflow-wrap: anywhere; }
+    .cd-lead-row .meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); margin-top: 1px; overflow-wrap: anywhere; }
+    .cd-side { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+    .cd-side-card { background: var(--bg-panel); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); padding: var(--s-4); min-width: 0; }
+    .cd-side-card h4 { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: var(--s-3); }
+    .cd-side-card .row { display: flex; justify-content: space-between; align-items: center; gap: var(--s-3); padding: 8px 0; border-bottom: 1px dashed var(--border-dim); font-size: 12px; }
+    .cd-side-card .row:last-child { border-bottom: none; }
+    .cd-side-card .row .l { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; }
+    .cd-side-card .row .v { color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+    .cd-template-preview { background: var(--bg-void); border: 1px solid var(--border-dim); border-radius: var(--radius); padding: var(--s-3); font-family: var(--font-mono); font-size: 11px; line-height: 1.6; color: var(--text-secondary); max-height: 220px; overflow-y: auto; white-space: pre-wrap; }
+    .cd-template-preview .var { color: var(--sky); background: var(--sky-glow); padding: 1px 4px; border-radius: 3px; }
+    @media (max-width: 1100px) {
+      .camp-ops-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cd-stats-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .cd-body { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .camp-toolbar { padding: var(--s-3); align-items: stretch; }
+      .camp-search { flex-basis: 100%; max-width: none; }
+      .camp-channel-chip { flex: 1 1 calc(50% - var(--s-2)); text-align: center; }
+      .camp-filter-select { width: 100%; min-height: 44px; }
+      .camp-view-toggle { width: 100%; margin-left: 0; display: none; }
+      .camp-grid { grid-template-columns: 1fr; padding: var(--s-3); }
+      .camp-card { padding: var(--s-4); }
+      .camp-card-head { flex-direction: column; }
+      .camp-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .camp-card-actions .chip-btn, .cd-actions-bar .btn { flex: 1 1 100%; justify-content: center; min-height: 44px; }
+      .camp-table { display: none !important; }
+      .camp-ops-strip { grid-template-columns: 1fr; padding: var(--s-3) var(--s-3) 0; }
+      .campaign-wizard-backdrop { align-items: flex-end; padding: 0; }
+      .campaign-wizard { width: 100%; max-height: calc(100dvh - 12px - env(safe-area-inset-top, 0px)); border-radius: 22px 22px 0 0; }
+      .campaign-wizard-head, .campaign-wizard-body, .campaign-wizard-actions { padding-left: var(--s-4); padding-right: var(--s-4); }
+      .campaign-wizard-head { flex-direction: column; }
+      .campaign-steps, .campaign-option-grid, .campaign-wizard-grid, .campaign-review { grid-template-columns: 1fr; }
+      .campaign-wizard-actions { padding-bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)); }
+      .campaign-wizard-actions .btn { flex: 1 1 auto; min-height: 44px; }
+      .campaign-csv-tools { align-items: stretch; }
+      .campaign-csv-tools .btn { width: 100%; justify-content: center; min-height: 44px; }
+      .cd-title { font-size: 24px; }
+      .cd-stats-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cd-body, .cd-head, .cd-actions-bar { padding-left: var(--s-3); padding-right: var(--s-3); }
+      .cd-leads-table { margin-right: calc(-1 * var(--s-3)); }
+    }
+  </style>
+
+  <div class="page-head">
+    <div class="page-head-left">
+      <div class="ph-tag" data-campaign-summary>Campaigns - approval-gated production mode</div>
+      <h2>Outreach <em>campaigns</em>.</h2>
+      <p>Email sequences via <strong>Instantly</strong>. Outbound calls and SMS via <strong>Telnyx</strong>. Every launch, pause, resume, and archive request is approval-gated before it touches providers.</p>
+    </div>
+    <div class="page-head-actions">
+      <button class="btn btn-ghost" type="button" data-campaign-head-action="templates">Templates</button>
+      <button class="btn btn-ghost" type="button" data-campaign-head-action="approvals">Approval queue<span class="badge-count" data-campaign-approval-count>0</span></button>
+      <button class="btn btn-primary" type="button" id="newCampaignBtn" data-campaign-head-action="new">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Campaign
+      </button>
+    </div>
+  </div>
+
+  <div class="camp-ops-strip" data-campaign-ops-strip>
+    <div class="camp-ops-card" data-campaign-ops="mode"><div class="camp-ops-label">Execution mode</div><div class="camp-ops-value">Approval gated</div><div class="camp-ops-note">PBK queues approval before Instantly or Telnyx changes anything.</div></div>
+    <div class="camp-ops-card" data-campaign-ops="email"><div class="camp-ops-label">Email provider</div><div class="camp-ops-value">Checking bridge</div><div class="camp-ops-note">Instantly status updates after runtime sync.</div></div>
+    <div class="camp-ops-card" data-campaign-ops="phone"><div class="camp-ops-label">Call/SMS provider</div><div class="camp-ops-value">Checking bridge</div><div class="camp-ops-note">Telnyx voice and messaging readiness will show here.</div></div>
+    <div class="camp-ops-card" data-campaign-ops="worker"><div class="camp-ops-label">Execution worker</div><div class="camp-ops-value">Ready after approval</div><div class="camp-ops-note">Approved campaigns can create scheduled execution steps.</div></div>
+  </div>
+
+  <div class="camp-toolbar">
+    <div class="camp-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="campaignSearchInput" placeholder="Search campaigns, providers, tags..." autocomplete="off">
+    </div>
+    <select class="camp-filter-select" id="campaignStatusFilter" aria-label="Filter campaigns by status">
+      <option value="all">Status: All</option>
+      <option value="active">Active</option>
+      <option value="pending">Awaiting approval</option>
+      <option value="draft">Draft</option>
+      <option value="paused">Paused</option>
+      <option value="completed">Completed</option>
+      <option value="provider_missing">Provider missing</option>
+      <option value="archived">Archived</option>
+    </select>
+    <button class="camp-channel-chip active" type="button" data-campaign-channel="all">All</button>
+    <button class="camp-channel-chip" type="button" data-campaign-channel="email">Email</button>
+    <button class="camp-channel-chip" type="button" data-campaign-channel="call">Calls</button>
+    <button class="camp-channel-chip" type="button" data-campaign-channel="sms">SMS</button>
+    <button class="camp-channel-chip" type="button" data-campaign-channel="mixed">Mixed</button>
+    <div class="camp-view-toggle" role="group" aria-label="Campaign view">
+      <button class="camp-view-btn active" type="button" data-campaign-view="cards">Cards</button>
+      <button class="camp-view-btn" type="button" data-campaign-view="table">Table</button>
+    </div>
+  </div>
+
+  <div class="camp-empty" id="campaignEmptyState" hidden>
+    <h3 style="font-family:var(--font-display);font-weight:500;margin-bottom:6px;">No campaigns match this view.</h3>
+    <p>Adjust the channel filter or create a new approval-gated campaign.</p>
+  </div>
+
+  <div class="camp-grid" id="campaignCardsView"></div>
+  <div class="camp-table" id="campaignTableView" hidden>
+    <div class="camp-table-row head">
+      <span>Name</span><span>Channel</span><span>Status</span><span>Leads</span><span>Sent/Dialed</span><span>Reply/Verbal</span><span>Action</span>
+    </div>
+    <div id="campaignTableRows"></div>
+  </div>
+</section>
+
+<!-- ======================================================
+     PAGE - CAMPAIGN DETAIL
+     ====================================================== -->
+<section class="page" data-page="campaign-detail">
+  <div class="camp-empty" data-campaign-detail-empty>
+    <h3 style="font-family:var(--font-display);font-weight:500;margin-bottom:6px;">Pick a campaign first.</h3>
+    <p>Open Outreach Campaigns and select a campaign to view leads, schedule, template, compliance, and Rex notes.</p>
+    <button class="btn btn-primary" type="button" data-campaign-detail-action="back">Back to campaigns</button>
+  </div>
+  <div data-campaign-detail-content hidden>
+    <div class="cd-head">
+      <div class="cd-head-top">
+        <button class="btn btn-ghost" type="button" data-campaign-detail-action="back"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>Back to campaigns</button>
+        <span data-detail-channel></span>
+        <span data-detail-status></span>
+      </div>
+      <h1 class="cd-title" data-detail-title>Campaign</h1>
+      <div class="cd-meta" data-detail-meta></div>
+    </div>
+    <div class="cd-actions-bar">
+      <button class="btn btn-ghost" type="button" data-campaign-detail-action="pause">Pause campaign</button>
+      <button class="btn btn-ghost" type="button" data-campaign-detail-action="add-leads">+ Add leads</button>
+      <button class="btn btn-ghost" type="button" data-campaign-detail-action="edit-template">Edit template</button>
+      <button class="btn btn-ghost" type="button" data-campaign-detail-action="clone">Clone</button>
+      <button class="btn btn-ghost" type="button" data-campaign-detail-action="export" style="margin-left:auto;">Export report</button>
+      <button class="btn btn-danger" type="button" data-campaign-detail-action="archive">Archive</button>
+    </div>
+    <div class="cd-stats-bar" data-detail-stats></div>
+    <div class="cd-body">
+      <div>
+        <div style="margin-bottom: var(--s-3); display:flex; align-items:center; justify-content:space-between; gap:var(--s-3); flex-wrap:wrap;">
+          <h3 style="font-family: var(--font-display); font-weight: 500; font-size: 18px; letter-spacing: -0.01em;">Leads in this campaign <span style="color: var(--text-tertiary); font-size: 13px; font-weight: normal;" data-detail-lead-count></span></h3>
+          <div style="display:flex; gap:var(--s-2); flex-wrap:wrap;">
+            <button class="chip-btn" type="button" data-campaign-detail-action="local-touch-filter">All touches</button>
+            <button class="chip-btn" type="button" data-campaign-detail-action="local-status-filter">Status: All</button>
+          </div>
+        </div>
+        <div class="cd-leads-table">
+          <div class="head"><span></span><span>Lead</span><span>Touch</span><span>Last touch</span><span>Status</span><span></span></div>
+          <div data-detail-leads></div>
+        </div>
+      </div>
+      <aside class="cd-side">
+        <div class="cd-side-card"><h4>Schedule</h4><div data-detail-schedule></div></div>
+        <div class="cd-side-card"><h4>Template Preview</h4><div style="font-size:12px;color:var(--text-primary);margin-bottom:8px;font-weight:500;" data-detail-template-name></div><div class="cd-template-preview" data-detail-template></div></div>
+        <div class="cd-side-card"><h4>Compliance</h4><div data-detail-compliance></div></div>
+        <div class="cd-side-card" style="background:var(--sky-glow);border-color:var(--sky-dim);"><h4 style="color:var(--sky);">Rex's take</h4><p style="font-size:12px;line-height:1.6;color:var(--text-secondary);" data-detail-rex></p></div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<div class="campaign-wizard-backdrop" id="campaignWizardBackdrop" aria-hidden="true">
+  <div class="campaign-wizard" role="dialog" aria-modal="true" aria-labelledby="campaignWizardTitle">
+    <div class="campaign-wizard-head">
+      <div>
+        <h3 id="campaignWizardTitle">New outreach campaign</h3>
+        <p>Build the campaign, review cost and provider readiness, then request approval. PBK will not pretend a campaign launched until the bridge confirms it.</p>
+      </div>
+      <button class="btn btn-ghost" type="button" data-campaign-wizard-close>Close</button>
+    </div>
+    <div class="campaign-wizard-body">
+      <div class="campaign-steps" data-campaign-steps>
+        <div class="campaign-step active">1 Channel</div><div class="campaign-step">2 Leads</div><div class="campaign-step">3 Template</div><div class="campaign-step">4 Schedule</div><div class="campaign-step">Review</div>
+      </div>
+      <div class="campaign-pane active" data-campaign-pane="0">
+        <div class="campaign-option-grid">
+          <button class="campaign-option selected" type="button" data-campaign-select="channel" data-value="email"><span class="camp-channel-badge email">Email</span><h4 style="margin-top:12px;">Instantly sequence</h4><p>Cold email campaign with open/reply tracking. Best for probate, absentee, vacant, and follow-up lists.</p></button>
+          <button class="campaign-option" type="button" data-campaign-select="channel" data-value="call"><span class="camp-channel-badge call">Calls</span><h4 style="margin-top:12px;">Telnyx outbound batch</h4><p>Approval-gated calling queue for Ava. Daily caps protect spend and keep call pacing sane.</p></button>
+          <button class="campaign-option" type="button" data-campaign-select="channel" data-value="sms"><span class="camp-channel-badge sms">SMS</span><h4 style="margin-top:12px;">Telnyx SMS drip</h4><p>Short reactivation or appointment-confirmation texts. TCPA and DNC checks stay in the approval path.</p></button>
+        </div>
+      </div>
+      <div class="campaign-pane" data-campaign-pane="1">
+        <div class="campaign-option-grid">
+          <button class="campaign-source-option selected" type="button" data-campaign-select="leadSource" data-value="selected"><h4>Currently selected leads</h4><p>Uses checked leads from the Leads page and stores them with the campaign draft.</p><div class="campaign-source-meta"><span>Selected</span><strong data-campaign-source-count="selected">0</strong></div></button>
+          <button class="campaign-source-option" type="button" data-campaign-select="leadSource" data-value="all-imports"><h4>All imported leads</h4><p>Bridge-backed leads already imported into PBK runtime state.</p><div class="campaign-source-meta"><span>Runtime</span><strong data-campaign-source-count="all-imports">0</strong></div></button>
+          <button class="campaign-source-option" type="button" data-campaign-select="leadSource" data-value="probate-ohio"><h4>Saved filter: Probate Ohio</h4><p>Dynamic saved filter from imported tags, notes, status, and addresses.</p><div class="campaign-source-meta"><span>Matches</span><strong data-campaign-source-count="probate-ohio">0</strong></div></button>
+          <button class="campaign-source-option" type="button" data-campaign-select="leadSource" data-value="absentee-akron"><h4>Saved filter: Absentee Akron</h4><p>Absentee owners near Akron with phones attached. Good for call/SMS tests.</p><div class="campaign-source-meta"><span>Matches</span><strong data-campaign-source-count="absentee-akron">0</strong></div></button>
+          <button class="campaign-source-option" type="button" data-campaign-select="leadSource" data-value="csv-upload"><h4>Upload CSV</h4><p>Parse, validate, and attach a CSV list to this campaign before approval.</p><div class="campaign-source-meta"><span>Parsed</span><strong data-campaign-source-count="csv-upload">0</strong></div></button>
+        </div>
+        <div class="campaign-csv-tools">
+          <button class="btn btn-ghost" type="button" data-campaign-csv-upload>Browse CSV</button>
+          <div class="campaign-csv-status" data-campaign-csv-status>CSV upload is optional. PBK accepts columns like seller/name, address, phone, email, and tags.</div>
+        </div>
+      </div>
+      <div class="campaign-pane" data-campaign-pane="2">
+        <div class="campaign-option-grid">
+          <button class="campaign-template-option selected" type="button" data-campaign-select="template" data-value="probate-empathetic-v3"><h4>Probate empathetic v3</h4><p>Gentle intro, as-is offer, no pressure. Strong reply rate for inherited-property lists.</p></button>
+          <button class="campaign-template-option" type="button" data-campaign-select="template" data-value="absentee-quick-close-v2"><h4>Absentee quick-close v2</h4><p>Direct pain-point opener for tired landlords, vacancy, and deferred maintenance.</p></button>
+          <button class="campaign-template-option" type="button" data-campaign-select="template" data-value="pre-foreclosure-help-v1"><h4>Pre-FC help v1</h4><p>Compliance-first copy for urgent foreclosure timelines. Requires approval before sending.</p></button>
+        </div>
+        <div class="campaign-field full" style="margin-top:var(--s-4);"><label for="campaignCustomTemplate">Optional custom notes</label><textarea id="campaignCustomTemplate" data-campaign-field="customNotes" placeholder="Add template direction, personalization rules, or Rex instructions..."></textarea></div>
+      </div>
+      <div class="campaign-pane" data-campaign-pane="3">
+        <div class="campaign-wizard-grid">
+          <div class="campaign-field"><label for="campaignNameField">Campaign name</label><input id="campaignNameField" data-campaign-field="name" value="Probate Warm-up - Q2"></div>
+          <div class="campaign-field"><label for="campaignStartField">Start</label><select id="campaignStartField" data-campaign-field="start"><option value="after_approval">After approval</option><option value="tomorrow_9am">Tomorrow at 9 AM</option><option value="next_monday">Next Monday</option></select></div>
+          <div class="campaign-field"><label for="campaignWindowField">Send/call window</label><select id="campaignWindowField" data-campaign-field="window"><option value="9-5-est">9 AM - 5 PM EST</option><option value="10-4-est">10 AM - 4 PM EST</option><option value="weekdays">Weekdays only</option></select></div>
+          <div class="campaign-field"><label for="campaignCapField">Daily cap</label><input id="campaignCapField" data-campaign-field="dailyCap" type="number" min="1" max="500" value="50"></div>
+          <div class="campaign-field full"><label for="campaignApprovalField">Approval mode</label><select id="campaignApprovalField" data-campaign-field="approvalMode"><option value="approval_required">Approval required before provider execution</option><option value="approval_plus_review">Approval required + Rex compliance review</option></select></div>
+        </div>
+      </div>
+      <div class="campaign-pane" data-campaign-pane="4">
+        <div class="campaign-review">
+          <div class="campaign-review-card"><h4>Launch review</h4><div data-campaign-review-main></div></div>
+          <div class="campaign-review-card"><h4>Production honesty</h4><div data-campaign-review-readiness></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="campaign-wizard-actions">
+      <button class="btn btn-ghost" type="button" data-campaign-wizard-prev>Back</button>
+      <button class="btn btn-primary" type="button" data-campaign-wizard-next>Next</button>
+    </div>
+  </div>
+</div>
+
 <section class="page" data-page="settings">
   <style>
     .settings-layout {
@@ -8033,6 +8475,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v1a3 3 0 0 0-3 3v2a3 3 0 0 0 1 2.24V17a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-2.76A3 3 0 0 0 19 12v-2a3 3 0 0 0-3-3V6a4 4 0 0 0-4-4z"/></svg>
       <span>Brain</span>
     </div>
+    <div class="mob-sheet-item" data-page="campaigns">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+      <span>Campaigns</span>
+    </div>
     <div class="mob-sheet-item" data-page="integrations">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
       <span>Integrations</span>
@@ -8332,6 +8778,10 @@
         <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></div>
         <span class="cp-label">Add a new lead</span>
       </div>
+      <div class="cp-item" data-action="new-campaign" data-keywords="new campaign outreach email call sms instantly telnyx">
+        <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg></div>
+        <span class="cp-label">Create outreach campaign</span>
+      </div>
       <div class="cp-item" data-action="start-call" data-keywords="call dial telnyx">
         <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
         <span class="cp-label">Start outbound call</span>
@@ -8363,6 +8813,7 @@
       <div class="cp-item" data-nav="analyzer" data-keywords="analyzer deal mao"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg></div><span class="cp-label">Deal Analyzer</span></div>
       <div class="cp-item" data-nav="agent" data-keywords="agent ava console ai"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div><span class="cp-label">AI Agent Console</span></div>
       <div class="cp-item" data-nav="calls" data-keywords="calls live floor"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></div><span class="cp-label">Live Calls</span></div>
+      <div class="cp-item" data-nav="campaigns" data-keywords="campaigns outreach instantly telnyx email call sms"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg></div><span class="cp-label">Outreach Campaigns</span></div>
       <div class="cp-item" data-nav="brain" data-keywords="brain research knowledge rex"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v1a3 3 0 0 0-3 3v2a3 3 0 0 0 1 2.24V17a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-2.76A3 3 0 0 0 19 12v-2a3 3 0 0 0-3-3V6a4 4 0 0 0-4-4z"/></svg></div><span class="cp-label">The Brain — Research</span></div>
       <div class="cp-item" data-nav="contracts" data-keywords="contracts docusign"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div><span class="cp-label">Contracts</span></div>
       <div class="cp-item" data-nav="automations" data-keywords="automations n8n workflows"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/></svg></div><span class="cp-label">Automations</span></div>
@@ -8906,6 +9357,8 @@
     contracts: 'Contracts',
     automations: 'Automations',
     analytics: 'Analytics',
+    campaigns: 'Outreach Campaigns',
+    'campaign-detail': 'Campaign Detail',
     brain: 'The Brain — Research',
     integrations: 'Integrations',
     settings: 'Settings',
@@ -9390,6 +9843,7 @@
   function handleAction(a) {
     if (a === 'run-analyzer') { showPage('analyzer'); toast({ title: 'Analyzer ready', desc: 'Enter an address to run ARV + MAO' }); }
     else if (a === 'new-lead') { showPage('leads'); toast({ title: 'Add a new lead', desc: 'Upload CSV or enter manually' }); }
+    else if (a === 'new-campaign') { showPage('campaigns'); openCampaignWizard(); }
     else if (a === 'start-call') { showPage('calls'); toast({ title: 'Outbound queue open', desc: 'Pick a lead or start a batch' }); }
     else if (a === 'pause-ai') { setMode('manual'); }
     else if (a === 'ask-rex') { showPage('brain'); toast({ type: 'info', title: 'Rex is listening', desc: 'Type a research question in the right panel' }); }
@@ -12174,6 +12628,7 @@
     renderSettingsRuntimeDeck();
     renderBrainOpsStrip();
     renderBrainOperationalStatus(snapshot);
+    renderCampaignsExperience(snapshot);
 
     const lastActivity = getRealRuntimeActivity(snapshot)[0] || null;
     if (lastActivity?.text) {
@@ -13253,6 +13708,1370 @@
       ...payload.map((lead) => [lead.score, lead.leadName, lead.address, lead.phone, lead.arvMao, lead.equity, lead.tags, lead.status])
     ]), 'text/csv');
     toast({ type: 'success', title: 'Lead export ready', desc: `${payload.length} lead rows were exported.` });
+  }
+
+  const CAMPAIGN_TEMPLATES = {
+    'probate-empathetic-v3': {
+      name: 'probate-empathetic-v3',
+      copy: 'Subject: A note about {{property_address}}\n\nHi {{first_name}},\n\nI came across the property at {{property_address}} and wanted to reach out gently. We buy as-is, cash, and can close on whatever timeline works for you.\n\nNo pressure - if it helps to talk through options, reply here or call me.\n\n- PBK Capital'
+    },
+    'absentee-quick-close-v2': {
+      name: 'absentee-quick-close-v2',
+      copy: 'Subject: Quick question about {{property_address}}\n\nHi {{first_name}},\n\nAre you still open to selling {{property_address}}? We help owners skip repairs, tenant turnover, and long listing timelines.\n\nIf a simple as-is offer would help, I can send numbers today.'
+    },
+    'pre-foreclosure-help-v1': {
+      name: 'pre-foreclosure-help-v1',
+      copy: 'Hi {{first_name}}, I saw {{property_address}} may need a fast solution. If you want to compare options before the deadline, PBK can review a cash or creative-finance path. Reply STOP to opt out.'
+    }
+  };
+
+  const CAMPAIGN_SEED = [
+    {
+      id: 'probate-warmup-q2',
+      name: 'Probate Warm-up - Q2',
+      highlight: 'Warm-up',
+      channel: 'email',
+      status: 'active',
+      provider: 'Instantly',
+      leadCount: 247,
+      cadence: '5-touch sequence',
+      started: 'Apr 18, 2026',
+      owner: 'Jordan',
+      templateId: 'probate-empathetic-v3',
+      progress: 74,
+      progressMeta: '74% complete',
+      eta: '~36 hrs left',
+      note: 'Live provider metrics appear when Instantly syncs through the bridge.',
+      stats: [
+        ['Sent', '182'],
+        ['Opens', '94'],
+        ['Replies', '11', 'good'],
+        ['Reply%', '6.0%', 'good']
+      ],
+      detailStats: [
+        ['Leads targeted', '247', 'across 5 touches'],
+        ['Emails sent', '182', '+34 today', 'up'],
+        ['Open rate', '51.6%', '+8.2% vs last', 'good'],
+        ['Reply rate', '6.0%', '11 replies', 'good'],
+        ['Bounce', '2.7%', '5 hard - healthy'],
+        ['Closed deals', '1', '$11,500 fee', 'good']
+      ],
+      leads: [
+        { name: 'Diane Kowalski', meta: '202 Cherry Ln - Columbus', touch: '3 / 5', last: '2h ago', status: 'replied', chip: 'won' },
+        { name: 'Estate of P. Morrison', meta: '1204 Elm St - Dayton', touch: '5 / 5', last: '5h ago', status: 'opened', chip: 'new' },
+        { name: 'Latoya Briggs', meta: '8804 Waterloo - Akron', touch: '2 / 5', last: 'yesterday', status: 'sent', chip: 'new' },
+        { name: 'Robert Chen', meta: '55 Birch Rd - Cincinnati', touch: '-', last: '-', status: 'bounced', chip: 'cold' }
+      ],
+      schedule: {
+        Started: 'Apr 18 - 9:00 AM',
+        Sequence: '5 touches over 14d',
+        Window: '9am-5pm EST',
+        Days: 'Tue-Thu',
+        'Daily cap': '50 emails',
+        Completion: '~36 hrs'
+      },
+      compliance: {
+        'Suppression list': 'applied',
+        'Unsubscribe link': 'included',
+        'CAN-SPAM': 'compliant',
+        'Domain rep': '96 / 100'
+      },
+      rex: 'Strong open rate signals the subject line is working. Reply rate is above cold probate benchmarks. Clone this template for the next inherited-property list once provider metrics confirm quality.'
+    },
+    {
+      id: 'absentee-akron-batch',
+      name: 'Absentee Akron - batch',
+      highlight: 'Akron',
+      channel: 'call',
+      status: 'active',
+      provider: 'Telnyx',
+      leadCount: 89,
+      cadence: 'Ava default script',
+      started: '50/day cap',
+      owner: 'Ava',
+      templateId: 'absentee-quick-close-v2',
+      progress: 70,
+      progressMeta: '62 / 89 dialed',
+      eta: 'est $4.18 spent',
+      note: 'Calls execute only after Telnyx provider checks and approval gating pass.',
+      stats: [
+        ['Dialed', '62'],
+        ['Connected', '19'],
+        ['Verbal', '3', 'good'],
+        ['DNC', '2', 'warn']
+      ],
+      detailStats: [
+        ['Leads targeted', '89', 'phone-ready rows'],
+        ['Dialed', '62', '+18 today'],
+        ['Connect rate', '30.6%', '19 connects', 'good'],
+        ['Verbal OKs', '3', 'manager review', 'good'],
+        ['DNC', '2', 'auto logged', 'warn'],
+        ['Cost', '$4.18', 'estimated']
+      ],
+      leads: [
+        { name: 'Marcus Delaney', meta: '14 Maple Ct - Akron', touch: 'call 1', last: '22m ago', status: 'connected', chip: 'won' },
+        { name: 'Henry Blackwell', meta: '42 Beech St - Akron', touch: 'call 1', last: '1h ago', status: 'voicemail', chip: 'new' },
+        { name: 'Latoya Briggs', meta: '8804 Waterloo - Akron', touch: 'call 2', last: '2h ago', status: 'verbal', chip: 'won' }
+      ],
+      schedule: {
+        Started: 'After approval',
+        Sequence: '1 call + SMS fallback',
+        Window: '10am-4pm EST',
+        Days: 'Weekdays',
+        'Daily cap': '50 calls',
+        Completion: 'today'
+      },
+      compliance: {
+        DNC: 'checked',
+        TCPA: 'approval-gated',
+        Recording: 'enabled if Telnyx is configured',
+        'Human takeover': 'available'
+      },
+      rex: 'Connect rate is strong for absentee owners. Keep the daily cap conservative until call recordings confirm script quality and DNC handling.'
+    },
+    {
+      id: 'pre-fc-blast',
+      name: 'Pre-FC blast - Akron+Canton',
+      highlight: 'blast',
+      channel: 'sms',
+      status: 'pending',
+      provider: 'Telnyx',
+      leadCount: 156,
+      cadence: '3-touch sequence',
+      started: 'awaiting approval',
+      owner: 'Rex review',
+      templateId: 'pre-foreclosure-help-v1',
+      progress: 0,
+      progressMeta: 'Queued',
+      eta: 'approval required',
+      note: 'Awaiting approval. No SMS is sent until the approval task is approved and Telnyx is ready.',
+      stats: [
+        ['Queued', '156'],
+        ['Sent', '-'],
+        ['Replies', '-'],
+        ['Cost', '$4.68', 'warn']
+      ],
+      detailStats: [
+        ['Leads targeted', '156', 'pre-FC list'],
+        ['SMS sent', '0', 'awaiting approval'],
+        ['Reply rate', '-', 'not started'],
+        ['TCPA review', 'required', 'approval gated', 'warn'],
+        ['DNC check', 'pending', 'before send'],
+        ['Cost est', '$4.68', 'before provider fees']
+      ],
+      leads: [],
+      schedule: {
+        Started: 'After approval',
+        Sequence: '3 touches over 7d',
+        Window: '9am-5pm EST',
+        Days: 'Weekdays',
+        'Daily cap': '75 SMS',
+        Completion: 'not started'
+      },
+      compliance: {
+        DNC: 'pending',
+        TCPA: 'requires review',
+        STOP: 'included',
+        Provider: 'Telnyx'
+      },
+      rex: 'Keep this approval-gated. Pre-foreclosure outreach has higher compliance risk and should not launch until the final copy and suppression list are confirmed.'
+    },
+    {
+      id: 'vacant-cleveland',
+      name: 'Vacant Cleveland - sweep',
+      highlight: 'Cleveland',
+      channel: 'email',
+      status: 'paused',
+      provider: 'Instantly',
+      leadCount: 198,
+      cadence: '4-touch sequence',
+      started: 'paused 2 days ago',
+      owner: 'Jordan',
+      templateId: 'absentee-quick-close-v2',
+      progress: 44,
+      progressMeta: '87 / 198 sent',
+      eta: 'review list quality',
+      note: 'Bounce rate elevated. Resume should stay approval-gated until list quality is checked.',
+      stats: [
+        ['Sent', '87'],
+        ['Opens', '41'],
+        ['Replies', '4'],
+        ['Bounce', '9.2%', 'warn']
+      ],
+      detailStats: [
+        ['Leads targeted', '198', 'vacant list'],
+        ['Emails sent', '87', 'paused'],
+        ['Open rate', '47.1%', '41 opens'],
+        ['Reply rate', '4.6%', '4 replies'],
+        ['Bounce', '9.2%', 'quality warning', 'warn'],
+        ['Closed deals', '0', 'not yet']
+      ],
+      leads: [],
+      schedule: {
+        Started: 'Apr 21 - 9:00 AM',
+        Sequence: '4 touches over 12d',
+        Window: '9am-5pm EST',
+        Days: 'Tue-Thu',
+        'Daily cap': '40 emails',
+        Completion: 'paused'
+      },
+      compliance: {
+        'Suppression list': 'applied',
+        Bounce: 'elevated',
+        'Domain rep': 'watch',
+        Provider: 'Instantly'
+      },
+      rex: 'Do not resume automatically. Clean the list or switch to phone-first validation before sending more email from this domain.'
+    },
+    {
+      id: 'probate-followup-cf',
+      name: 'Probate follow-up - CF',
+      highlight: 'follow-up',
+      channel: 'email',
+      status: 'draft',
+      provider: 'Instantly',
+      leadCount: 0,
+      cadence: 'not configured',
+      started: 'created 3h ago',
+      owner: 'Draft',
+      templateId: 'probate-empathetic-v3',
+      progress: 0,
+      progressMeta: 'Draft',
+      eta: 'finish setup',
+      note: 'Finish the wizard to set leads, template, and schedule.',
+      stats: [
+        ['Leads', '-'],
+        ['Sent', '-'],
+        ['Replies', '-'],
+        ['Cost', '-']
+      ],
+      detailStats: [
+        ['Leads targeted', '-', 'draft'],
+        ['Provider', 'not started', 'draft'],
+        ['Template', 'selected', 'needs review'],
+        ['Approval', 'not queued', 'finish setup'],
+        ['Cost est', '-', 'unknown'],
+        ['Status', 'draft', 'not live']
+      ],
+      leads: [],
+      schedule: {
+        Started: 'Not scheduled',
+        Sequence: 'Not configured',
+        Window: 'Not set',
+        Days: 'Not set',
+        'Daily cap': 'Not set',
+        Completion: 'draft'
+      },
+      compliance: {
+        'Suppression list': 'not run',
+        Provider: 'not touched',
+        Approval: 'not queued',
+        Status: 'draft'
+      },
+      rex: 'Good draft candidate for creative-finance follow-up. Add a filtered lead source before requesting approval.'
+    },
+    {
+      id: 'march-warmup',
+      name: 'March warm-up',
+      highlight: 'warm-up',
+      channel: 'email',
+      status: 'completed',
+      provider: 'Instantly',
+      leadCount: 312,
+      cadence: '5-touch sequence',
+      started: 'completed Apr 1',
+      owner: 'Jordan',
+      templateId: 'probate-empathetic-v3',
+      progress: 100,
+      progressMeta: '312 / 312 sent',
+      eta: 'completed',
+      note: 'Historical campaign. Metrics are read-only unless a bridge execution record supersedes it.',
+      stats: [
+        ['Sent', '312'],
+        ['Opens', '151'],
+        ['Replies', '22', 'good'],
+        ['Closed', '2', 'good']
+      ],
+      detailStats: [
+        ['Leads targeted', '312', 'completed'],
+        ['Emails sent', '312', 'complete'],
+        ['Open rate', '48.4%', '151 opens'],
+        ['Reply rate', '7.1%', '22 replies', 'good'],
+        ['Closed deals', '2', '$18,250 fee', 'good'],
+        ['Status', 'complete', 'read-only']
+      ],
+      leads: [],
+      schedule: {
+        Started: 'Mar 4 - 9:00 AM',
+        Sequence: '5 touches over 14d',
+        Window: '9am-5pm EST',
+        Days: 'Tue-Thu',
+        'Daily cap': '60 emails',
+        Completion: 'complete'
+      },
+      compliance: {
+        'Suppression list': 'applied',
+        'Unsubscribe link': 'included',
+        'CAN-SPAM': 'compliant',
+        Status: 'complete'
+      },
+      rex: 'This is the strongest email benchmark in the sample set. Clone the structure, but re-check deliverability before scaling.'
+    },
+    {
+      id: 'probate-toledo-march',
+      name: 'Probate Toledo - March',
+      highlight: 'Toledo',
+      channel: 'call',
+      status: 'completed',
+      provider: 'Telnyx',
+      leadCount: 74,
+      cadence: 'Ava call batch',
+      started: 'completed Mar 26',
+      owner: 'Ava',
+      templateId: 'probate-empathetic-v3',
+      progress: 100,
+      progressMeta: '74 / 74 dialed',
+      eta: 'completed',
+      note: 'Completed call batch. Use recordings/transcripts to tune the next probate script.',
+      stats: [
+        ['Dialed', '74'],
+        ['Connected', '21'],
+        ['Verbal', '4', 'good'],
+        ['DNC', '3', 'warn']
+      ],
+      detailStats: [
+        ['Leads targeted', '74', 'completed'],
+        ['Dialed', '74', 'complete'],
+        ['Connect rate', '28.4%', '21 connects'],
+        ['Verbal OKs', '4', 'handoff ready', 'good'],
+        ['DNC', '3', 'logged', 'warn'],
+        ['Status', 'complete', 'read-only']
+      ],
+      leads: [],
+      schedule: {
+        Started: 'Mar 18 - 10:00 AM',
+        Sequence: '1 call + SMS fallback',
+        Window: '10am-4pm EST',
+        Days: 'Weekdays',
+        'Daily cap': '40 calls',
+        Completion: 'complete'
+      },
+      compliance: {
+        DNC: 'checked',
+        TCPA: 'approval-gated',
+        Recording: 'linked when audio exists',
+        Status: 'complete'
+      },
+      rex: 'Good call conversion for probate. Keep the empathy opener and add a clearer manager handoff line for next batch.'
+    },
+    {
+      id: 'canton-pre-fc',
+      name: 'Canton pre-FC - daily',
+      highlight: 'pre-FC',
+      channel: 'call',
+      status: 'active',
+      provider: 'Telnyx',
+      leadCount: 34,
+      cadence: 'daily cap 20',
+      started: 'started today',
+      owner: 'Ava',
+      templateId: 'pre-foreclosure-help-v1',
+      progress: 35,
+      progressMeta: '12 / 34 dialed',
+      eta: 'est $0.91 spent',
+      note: 'Active high-sensitivity batch. Keep approval gates and DNC checks strict.',
+      stats: [
+        ['Dialed', '12'],
+        ['Connected', '4'],
+        ['Verbal', '1', 'good'],
+        ['DNC', '0']
+      ],
+      detailStats: [
+        ['Leads targeted', '34', 'urgent list'],
+        ['Dialed', '12', 'today'],
+        ['Connect rate', '33.3%', '4 connects', 'good'],
+        ['Verbal OKs', '1', 'review'],
+        ['DNC', '0', 'clear'],
+        ['Cost', '$0.91', 'estimated']
+      ],
+      leads: [],
+      schedule: {
+        Started: 'After approval',
+        Sequence: 'daily call attempts',
+        Window: '10am-4pm EST',
+        Days: 'Weekdays',
+        'Daily cap': '20 calls',
+        Completion: '~2 days'
+      },
+      compliance: {
+        DNC: 'checked',
+        TCPA: 'approval-gated',
+        Urgency: 'review copy',
+        Provider: 'Telnyx'
+      },
+      rex: 'Pre-foreclosure calls can work, but script tone matters. Keep the opening help-first and avoid pressure language.'
+    }
+  ];
+
+  const campaignUiState = {
+    view: 'cards',
+    channel: 'all',
+    status: 'all',
+    query: '',
+    selectedId: 'probate-warmup-q2',
+    wizardStep: 0,
+    wizard: {
+      channel: 'email',
+      leadSource: 'selected',
+      template: 'probate-empathetic-v3',
+      name: 'Probate Warm-up - Q2',
+      start: 'after_approval',
+      window: '9-5-est',
+      dailyCap: '50',
+      approvalMode: 'approval_required',
+      customNotes: '',
+      csvLeads: [],
+      csvFileName: ''
+    },
+    selectedLeadsCache: []
+  };
+
+  const CAMPAIGN_SELECTED_LEADS_STORAGE_KEY = 'pbk-campaign-selected-leads';
+
+  function campaignStatusLabel(status = '') {
+    const labels = {
+      active: 'Active',
+      paused: 'Paused',
+      pending: 'Awaiting approval',
+      draft: 'Draft',
+      completed: 'Completed',
+      archived: 'Archived',
+      provider: 'Provider gaps',
+      provider_missing: 'Provider missing'
+    };
+    return labels[status] || status || 'Draft';
+  }
+
+  function campaignChannelLabel(channel = '') {
+    if (channel === 'call') return 'Calls';
+    if (channel === 'sms') return 'SMS';
+    if (channel === 'mixed') return 'Mixed';
+    return 'Email';
+  }
+
+  function campaignChannelIcon(channel = '') {
+    if (channel === 'call') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg>';
+    if (channel === 'sms') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M22 6 12 13 2 6"/></svg>';
+  }
+
+  function renderCampaignBadge(channel = 'email') {
+    return `<span class="camp-channel-badge ${escapeHtml(channel)}">${campaignChannelIcon(channel)}${escapeHtml(campaignChannelLabel(channel))}</span>`;
+  }
+
+  function renderCampaignStatus(status = 'draft') {
+    return `<span class="camp-status-pill ${escapeHtml(status)}">${escapeHtml(campaignStatusLabel(status))}</span>`;
+  }
+
+  function stylizeCampaignName(campaign = {}) {
+    const safeName = escapeHtml(campaign.name || 'Untitled campaign');
+    const highlight = campaign.highlight ? escapeHtml(campaign.highlight) : '';
+    return highlight ? safeName.replace(highlight, `<em>${highlight}</em>`) : safeName;
+  }
+
+  function normalizeCampaignFromExecution(execution = {}) {
+    const steps = Array.isArray(execution.steps) ? execution.steps : [];
+    const channels = Array.from(new Set(steps.map((step) => String(step.channel || '').toLowerCase()).filter(Boolean)));
+    const channel = channels.length > 1 ? 'mixed' : channels[0] === 'voice' ? 'call' : channels[0] || 'email';
+    const providerMissing = Number(execution.providerMissingCount || 0);
+    const status = providerMissing ? 'provider' : /complete|done/i.test(String(execution.status || '')) ? 'completed' : 'active';
+    const sentSteps = steps.filter((step) => /sent|scheduled|provider/i.test(String(step.status || ''))).length;
+    const leads = Array.isArray(execution.leads) ? execution.leads.map((lead, index) => ({
+      name: lead.leadName || lead.name || `Lead ${index + 1}`,
+      meta: lead.address || lead.phone || lead.email || 'Campaign lead',
+      touch: `${steps.filter((step) => step.leadId === lead.leadId).length || 1} steps`,
+      last: formatRelativeTime(execution.updatedAt || execution.createdAt),
+      status: providerMissing ? 'provider gap' : 'scheduled',
+      chip: providerMissing ? 'cold' : 'new'
+    })) : [];
+    return {
+      id: execution.id || execution.approvalId || `campaign-runtime-${Date.now()}`,
+      name: execution.notes || `Approved campaign ${String(execution.approvalId || '').slice(0, 8)}`,
+      highlight: '',
+      channel,
+      status,
+      provider: execution.instantly?.provider || (channel === 'email' ? 'Instantly' : 'Telnyx'),
+      leadCount: execution.leadCount || leads.length || 0,
+      cadence: `${execution.stepCount || steps.length || 0} scheduled steps`,
+      started: formatRelativeTime(execution.createdAt || execution.updatedAt),
+      owner: execution.actor || 'Campaign worker',
+      templateId: execution.instantly?.request?.templateId || 'probate-empathetic-v3',
+      progress: execution.stepCount ? Math.min(100, Math.round((sentSteps / execution.stepCount) * 100)) : 0,
+      progressMeta: `${sentSteps} / ${execution.stepCount || steps.length || 0} steps`,
+      eta: providerMissing ? `${providerMissing} provider gaps` : 'bridge-backed',
+      note: execution.instantly?.error || execution.verbiage || 'Campaign execution record synced from the bridge.',
+      stats: [
+        ['Leads', String(execution.leadCount || 0)],
+        ['Steps', String(execution.stepCount || steps.length || 0)],
+        ['Provider gaps', String(providerMissing), providerMissing ? 'warn' : 'good'],
+        ['Result', execution.result || 'live']
+      ],
+      detailStats: [
+        ['Leads targeted', String(execution.leadCount || 0), 'bridge execution'],
+        ['Steps', String(execution.stepCount || steps.length || 0), 'scheduled'],
+        ['Provider gaps', String(providerMissing), providerMissing ? 'check envs' : 'none', providerMissing ? 'warn' : 'good'],
+        ['Provider', execution.instantly?.provider || 'mixed', 'runtime'],
+        ['Status', execution.status || 'scheduled', execution.result || 'live'],
+        ['Updated', formatRelativeTime(execution.updatedAt || execution.createdAt), 'bridge sync']
+      ],
+      leads,
+      schedule: {
+        Started: formatRelativeTime(execution.createdAt || execution.updatedAt),
+        Mode: execution.mode || 'approval-gated-production',
+        Steps: String(execution.stepCount || steps.length || 0),
+        'Provider gaps': String(providerMissing),
+        Actor: execution.actor || 'Campaign worker',
+        Updated: formatRelativeTime(execution.updatedAt || execution.createdAt)
+      },
+      compliance: {
+        Approval: execution.approvalId ? 'approved' : 'runtime',
+        Provider: providerMissing ? 'gaps visible' : 'live/scheduled',
+        Audit: 'recorded',
+        Status: execution.result || 'live'
+      },
+      rex: providerMissing
+        ? 'Execution exists, but provider gaps are visible. Check Instantly/Telnyx environment variables before relying on this campaign.'
+        : 'This campaign is bridge-backed. Watch provider logs and PBK activity for completion and replies.'
+    };
+  }
+
+  function normalizeCampaignFromBridge(campaign = {}, snapshot = PBK.state.openclawRuntime) {
+    const leads = (snapshot?.campaignLeads || []).filter((lead) => lead.campaignId === campaign.id);
+    const events = (snapshot?.campaignEvents || []).filter((event) => event.campaignId === campaign.id);
+    const metrics = {
+      ...(campaign.metrics || {})
+    };
+    const sent = Number(metrics.sent || 0);
+    const replies = Number(metrics.replied || metrics.connected || 0);
+    const leadCount = leads.length || Number(campaign.leadCount || metrics.leads || 0);
+    const totalTouches = Number(metrics.estimatedTouches || (campaign.channel === 'email' ? leadCount * 5 : campaign.channel === 'sms' ? leadCount * 3 : leadCount));
+    const progress = totalTouches ? Math.min(100, Math.round((sent / totalTouches) * 100)) : 0;
+    const displayLeads = leads.map((lead) => ({
+      name: lead.leadName || lead.name || 'Unknown seller',
+      meta: lead.address || lead.phone || lead.email || 'Campaign lead',
+      touch: `${lead.touchIndex || 0} touches`,
+      last: lead.lastTouchAt ? formatRelativeTime(lead.lastTouchAt) : 'Not touched',
+      status: lead.status || 'pending',
+      chip: /conflict|failed|bounce/i.test(String(lead.status || '')) ? 'cold' : 'new'
+    }));
+    const providerGap = campaign.status === 'provider_missing';
+    return {
+      id: campaign.id,
+      name: campaign.name || 'Untitled campaign',
+      highlight: campaign.highlight || '',
+      channel: campaign.channel || 'email',
+      status: campaign.status || 'draft',
+      provider: campaign.provider || campaignProviderForChannel(campaign.channel || 'email'),
+      leadCount,
+      cadence: campaign.sequence?.label || `${totalTouches || leadCount || 0} planned touches`,
+      started: campaign.createdAt ? formatRelativeTime(campaign.createdAt) : 'Draft',
+      owner: campaign.createdBy || 'PBK Command Center',
+      templateId: campaign.templateId || 'probate-empathetic-v3',
+      progress,
+      progressMeta: `${sent} / ${totalTouches || leadCount || 0} touches`,
+      eta: campaign.pendingAction ? `${String(campaign.pendingAction).replace(/_/g, ' ')} pending` : campaign.approvalId ? 'approval tracked' : 'draft saved',
+      note: campaign.conflictCount
+        ? `${campaign.conflictCount} lead conflict${campaign.conflictCount === 1 ? '' : 's'} need review before approval.`
+        : campaign.notes || campaign.verbiage || (providerGap ? 'Provider missing. Approval can queue, but execution will not claim success.' : 'Bridge-backed campaign record.'),
+      stats: [
+        ['Leads', String(leadCount)],
+        [campaign.channel === 'email' ? 'Sent' : campaign.channel === 'call' ? 'Dialed' : 'Delivered', String(sent)],
+        [campaign.channel === 'call' ? 'Connected' : 'Replies', String(replies), replies ? 'good' : ''],
+        ['Events', String(events.length)]
+      ],
+      detailStats: [
+        ['Leads targeted', String(leadCount), campaign.leadSource || 'campaign source'],
+        ['Touches', String(totalTouches || 0), 'planned'],
+        [campaign.channel === 'email' ? 'Sent' : campaign.channel === 'call' ? 'Dialed' : 'Delivered', String(sent), 'provider events'],
+        [campaign.channel === 'call' ? 'Connected' : 'Replies', String(replies), replies ? 'live signal' : 'pending', replies ? 'good' : ''],
+        ['Cost', `$${Number(metrics.estimatedCost || 0).toFixed(2)}`, 'estimated'],
+        ['Status', campaignStatusLabel(campaign.status), campaign.result || campaign.approvalStatus || 'bridge']
+      ],
+      leads: displayLeads,
+      schedule: {
+        Started: campaign.schedule?.start || 'After approval',
+        Window: campaign.schedule?.window || 'Not set',
+        Days: campaign.schedule?.days || 'Weekdays',
+        'Daily cap': campaign.schedule?.dailyCap || campaign.schedule?.cap || '50',
+        Approval: campaign.approvalId ? `queued ${String(campaign.approvalId).slice(0, 8)}` : 'not requested',
+        Suppression: campaign.suppressionMode || 'same-channel conflicts checked'
+      },
+      compliance: {
+        DNC: 'checked before execution',
+        Approval: campaign.approvalId ? 'queued' : 'draft only',
+        Provider: providerGap ? 'provider_missing' : campaign.provider || campaignProviderForChannel(campaign.channel),
+        Audit: `${events.length} event${events.length === 1 ? '' : 's'}`
+      },
+      rex: campaign.conflictCount
+        ? 'Rex sees cross-campaign conflicts. Review before approval so a seller does not receive overlapping outreach.'
+        : 'This campaign is bridge-backed. Provider writes remain approval-gated, and event data will update this page as webhooks arrive.'
+    };
+  }
+
+  function getCampaignRecords(snapshot = PBK.state.openclawRuntime) {
+    const persisted = Array.isArray(snapshot?.campaigns)
+      ? snapshot.campaigns.map((campaign) => normalizeCampaignFromBridge(campaign, snapshot))
+      : [];
+    const runtime = Array.isArray(snapshot?.campaignExecutions)
+      ? snapshot.campaignExecutions.map(normalizeCampaignFromExecution)
+      : [];
+    const seenIds = new Set(persisted.map((item) => item.id));
+    const bridgeHasCampaignCollections = Array.isArray(snapshot?.campaigns);
+    const fallback = bridgeHasCampaignCollections ? [] : CAMPAIGN_SEED.filter((item) => !seenIds.has(item.id));
+    return [...persisted, ...runtime.filter((item) => !seenIds.has(item.id)), ...fallback];
+  }
+
+  function getFilteredCampaignRecords(snapshot = PBK.state.openclawRuntime) {
+    const records = getCampaignRecords(snapshot);
+    const q = normalizeControlText(campaignUiState.query);
+    return records.filter((campaign) => {
+      const channelMatch = campaignUiState.channel === 'all' || campaign.channel === campaignUiState.channel;
+      const statusMatch = campaignUiState.status === 'all' || campaign.status === campaignUiState.status;
+      const queryMatch = !q || normalizeControlText([
+        campaign.name,
+        campaign.channel,
+        campaign.status,
+        campaign.provider,
+        campaign.templateId,
+        campaign.note
+      ].join(' ')).includes(q);
+      return channelMatch && statusMatch && queryMatch;
+    });
+  }
+
+  function updateCampaignOps(snapshot = PBK.state.openclawRuntime) {
+    const page = getPageNode('campaigns');
+    if (!page) return;
+    const providers = snapshot?.status?.providers || {};
+    const pendingCount = (snapshot?.approvals || []).filter((approval) =>
+      String(approval.type || '').toLowerCase() === 'campaign'
+      && String(approval.status || '').toLowerCase() === 'pending'
+    ).length;
+    const emailText = JSON.stringify(providers.instantly || {}).toLowerCase();
+    const telnyxText = JSON.stringify(providers.telnyx || {}).toLowerCase();
+    const campaignWorker = providers.campaignWorker || {};
+    const emailReady = /ready|active|configured|green|live/.test(emailText) && !/missing|error/.test(emailText);
+    const phoneReady = /ready|active|configured|green|live/.test(telnyxText) && !/missing|error/.test(telnyxText);
+    const workerReady = Boolean(campaignWorker.ready);
+    page.querySelector('[data-campaign-approval-count]')?.replaceChildren(document.createTextNode(String(pendingCount)));
+    const emailCard = page.querySelector('[data-campaign-ops="email"]');
+    const phoneCard = page.querySelector('[data-campaign-ops="phone"]');
+    const workerCard = page.querySelector('[data-campaign-ops="worker"]');
+    if (emailCard) {
+      emailCard.dataset.state = emailReady ? 'good' : 'warning';
+      emailCard.querySelector('.camp-ops-value').textContent = emailReady ? 'Instantly ready' : 'Instantly needs check';
+      emailCard.querySelector('.camp-ops-note').textContent = emailReady ? 'Email campaigns can execute after approval.' : 'Approval can queue, but execution will show provider_missing until the key is ready.';
+    }
+    if (phoneCard) {
+      phoneCard.dataset.state = phoneReady ? 'good' : 'warning';
+      phoneCard.querySelector('.camp-ops-value').textContent = phoneReady ? 'Telnyx ready' : 'Telnyx needs check';
+      phoneCard.querySelector('.camp-ops-note').textContent = phoneReady ? 'Call/SMS batches can schedule after approval.' : 'Call/SMS launches stay approval-gated and will report provider_missing if Telnyx is not configured.';
+    }
+    if (workerCard) {
+      workerCard.dataset.state = workerReady ? 'good' : 'warning';
+      workerCard.querySelector('.camp-ops-value').textContent = workerReady ? 'Worker live' : 'Dry-run safe';
+      workerCard.querySelector('.camp-ops-note').textContent = workerReady
+        ? `Runner can process up to ${campaignWorker.maxStepsPerRun || 25} due steps per run.`
+        : 'Set campaign worker env gates before automated provider writes. Dry runs still audit due work.';
+    }
+  }
+
+  function renderCampaignCard(campaign) {
+    const status = campaign.status || 'draft';
+    const progress = Math.max(0, Math.min(100, Number(campaign.progress || 0)));
+    const stats = (campaign.stats || []).map(([label, value, tone]) => `
+      <div class="camp-stat"><div class="l">${escapeHtml(label)}</div><div class="v ${escapeHtml(tone || '')}">${escapeHtml(value)}</div></div>
+    `).join('');
+    const actions = status === 'draft'
+      ? ['continue setup', 'clone']
+      : status === 'paused'
+        ? ['view', 'resume', 'archive']
+        : status === 'pending'
+          ? ['review', 'edit', 'cancel']
+          : ['view', 'pause', 'clone'];
+    return `
+      <div class="camp-card" data-campaign-id="${escapeHtml(campaign.id)}" data-status="${escapeHtml(status)}" data-channel="${escapeHtml(campaign.channel)}">
+        <div class="camp-card-head">
+          <div>
+            <h3>${stylizeCampaignName(campaign)}</h3>
+            ${renderCampaignStatus(status)}
+          </div>
+          ${renderCampaignBadge(campaign.channel)}
+        </div>
+        <div class="camp-card-meta">
+          <span><strong>${escapeHtml(String(campaign.leadCount || '-'))}</strong> leads</span>
+          <span class="camp-dot"></span>
+          <span>${escapeHtml(campaign.cadence || 'Sequence pending')}</span>
+          <span class="camp-dot"></span>
+          <span>${escapeHtml(campaign.started || 'Not scheduled')}</span>
+        </div>
+        <div class="camp-card-stats">${stats}</div>
+        <div>
+          <div class="camp-progress"><div class="camp-progress-fill" style="width:${progress}%"></div></div>
+          <div class="camp-progress-meta"><span>${escapeHtml(campaign.progressMeta || `${progress}% complete`)}</span><span>${escapeHtml(campaign.eta || '')}</span></div>
+        </div>
+        <div class="camp-card-note ${status === 'pending' || status === 'provider' ? 'warning' : ''}">${escapeHtml(campaign.note || 'Approval-gated campaign record.')}</div>
+        <div class="camp-card-actions">
+          ${actions.map((action) => `<button class="chip-btn" type="button" data-campaign-action="${escapeHtml(action)}">${escapeHtml(action)}</button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCampaignTableRow(campaign) {
+    const primary = campaign.stats?.[0]?.[1] || '-';
+    const reply = campaign.stats?.[2]?.[1] || '-';
+    return `
+      <div class="camp-table-row" data-campaign-id="${escapeHtml(campaign.id)}" data-channel="${escapeHtml(campaign.channel)}">
+        <div class="name">${renderCampaignBadge(campaign.channel)}<span>${escapeHtml(campaign.name)}</span></div>
+        <span>${escapeHtml(campaignChannelLabel(campaign.channel))}</span>
+        <span>${renderCampaignStatus(campaign.status)}</span>
+        <span>${escapeHtml(String(campaign.leadCount || '-'))}</span>
+        <span>${escapeHtml(primary)}</span>
+        <span>${escapeHtml(reply)}</span>
+        <span><button class="chip-btn" type="button" data-campaign-action="view">View</button></span>
+      </div>
+    `;
+  }
+
+  function renderCampaignsExperience(snapshot = PBK.state.openclawRuntime) {
+    const page = getPageNode('campaigns');
+    if (!page) return;
+    updateCampaignOps(snapshot);
+    const records = getFilteredCampaignRecords(snapshot);
+    const all = getCampaignRecords(snapshot);
+    const active = all.filter((item) => item.status === 'active').length;
+    const draft = all.filter((item) => item.status === 'draft').length;
+    const completed = all.filter((item) => item.status === 'completed').length;
+    page.querySelector('[data-campaign-summary]')?.replaceChildren(document.createTextNode(`Campaigns - ${active} active - ${draft} draft - ${completed} completed`));
+    const statusFilter = page.querySelector('#campaignStatusFilter');
+    if (statusFilter && statusFilter.value !== campaignUiState.status) statusFilter.value = campaignUiState.status;
+    page.querySelectorAll('[data-campaign-channel]').forEach((button) => {
+      const channel = button.dataset.campaignChannel;
+      const count = channel === 'all' ? all.length : all.filter((item) => item.channel === channel).length;
+      const base = channel === 'all' ? 'All' : campaignChannelLabel(channel);
+      button.textContent = `${base} - ${count}`;
+      button.classList.toggle('active', channel === campaignUiState.channel);
+    });
+    const effectiveView = window.matchMedia?.('(max-width: 720px)').matches ? 'cards' : campaignUiState.view;
+    page.querySelectorAll('[data-campaign-view]').forEach((button) => button.classList.toggle('active', button.dataset.campaignView === effectiveView));
+    const cards = document.getElementById('campaignCardsView');
+    const table = document.getElementById('campaignTableView');
+    const rows = document.getElementById('campaignTableRows');
+    const empty = document.getElementById('campaignEmptyState');
+    if (cards) cards.innerHTML = records.map(renderCampaignCard).join('');
+    if (rows) rows.innerHTML = records.map(renderCampaignTableRow).join('');
+    if (cards) cards.hidden = effectiveView !== 'cards';
+    if (table) table.hidden = effectiveView !== 'table';
+    if (empty) empty.hidden = records.length > 0;
+    updateCampaignSourceCounts(snapshot);
+    renderCampaignDetail(campaignUiState.selectedId, snapshot);
+  }
+
+  function renderCampaignDetail(campaignId = campaignUiState.selectedId, snapshot = PBK.state.openclawRuntime) {
+    const page = getPageNode('campaign-detail');
+    if (!page) return;
+    const campaign = getCampaignRecords(snapshot).find((item) => item.id === campaignId) || getCampaignRecords(snapshot)[0];
+    const empty = page.querySelector('[data-campaign-detail-empty]');
+    const content = page.querySelector('[data-campaign-detail-content]');
+    if (!campaign) {
+      if (empty) empty.hidden = false;
+      if (content) content.hidden = true;
+      return;
+    }
+    campaignUiState.selectedId = campaign.id;
+    if (empty) empty.hidden = true;
+    if (content) content.hidden = false;
+    page.querySelector('[data-detail-channel]').innerHTML = renderCampaignBadge(campaign.channel);
+    page.querySelector('[data-detail-status]').innerHTML = renderCampaignStatus(campaign.status);
+    page.querySelector('[data-detail-title]').innerHTML = stylizeCampaignName(campaign);
+    page.querySelector('[data-detail-meta]').innerHTML = [
+      `${campaignProviderForChannel(campaign.channel)} provider: ${campaign.provider}`,
+      `Owner: ${campaign.owner || 'PBK'}`,
+      `Template: ${campaign.templateId || 'pending'}`,
+      `Mode: approval-gated`
+    ].map((item) => `<span>${escapeHtml(item)}</span>`).join('<span>-</span>');
+    page.querySelector('[data-detail-stats]').innerHTML = (campaign.detailStats || []).map(([label, value, delta, tone]) => `
+      <div class="cd-stat"><div class="l">${escapeHtml(label)}</div><div class="v ${escapeHtml(tone === 'good' ? 'good' : tone === 'warn' ? 'warn' : '')}">${escapeHtml(value)}</div><div class="delta ${escapeHtml(tone === 'up' ? 'up' : '')}">${escapeHtml(delta || '')}</div></div>
+    `).join('');
+    page.querySelector('[data-detail-lead-count]').textContent = `(${campaign.leadCount || 0})`;
+    const leads = campaign.leads?.length ? campaign.leads : [{ name: 'No leads attached yet', meta: 'Add leads or wait for approval execution steps.', touch: '-', last: '-', status: 'pending', chip: 'cold' }];
+    page.querySelector('[data-detail-leads]').innerHTML = leads.map((lead) => `
+      <div class="cd-lead-row">
+        <input type="checkbox" aria-label="Select ${escapeHtml(lead.name)}">
+        <div><div class="name">${escapeHtml(lead.name)}</div><div class="meta">${escapeHtml(lead.meta || '')}</div></div>
+        <span>${escapeHtml(lead.touch || '-')}</span>
+        <span>${escapeHtml(lead.last || '-')}</span>
+        <span><span class="status-chip ${escapeHtml(lead.chip || 'new')}">${escapeHtml(lead.status || 'pending')}</span></span>
+        <span><button class="chip-btn" type="button" data-campaign-detail-action="open-lead">Open</button></span>
+      </div>
+    `).join('');
+    page.querySelector('[data-detail-schedule]').innerHTML = Object.entries(campaign.schedule || {}).map(([label, value]) => `<div class="row"><span class="l">${escapeHtml(label)}</span><span class="v">${escapeHtml(value)}</span></div>`).join('');
+    const template = CAMPAIGN_TEMPLATES[campaign.templateId] || CAMPAIGN_TEMPLATES['probate-empathetic-v3'];
+    page.querySelector('[data-detail-template-name]').textContent = template.name;
+    page.querySelector('[data-detail-template]').innerHTML = escapeHtml(template.copy).replace(/\{\{([^}]+)\}\}/g, '<span class="var">{{$1}}</span>');
+    page.querySelector('[data-detail-compliance]').innerHTML = Object.entries(campaign.compliance || {}).map(([label, value]) => `<div class="row"><span class="l">${escapeHtml(label)}</span><span class="v">${escapeHtml(value)}</span></div>`).join('');
+    page.querySelector('[data-detail-rex]').textContent = campaign.rex || 'Rex will add recommendations after the campaign has live provider data.';
+    const pause = page.querySelector('[data-campaign-detail-action="pause"]');
+    if (pause) pause.textContent = campaign.status === 'paused' ? 'Resume campaign' : 'Pause campaign';
+  }
+
+  function campaignProviderForChannel(channel = 'email') {
+    if (channel === 'email') return 'Instantly';
+    if (channel === 'call' || channel === 'sms') return 'Telnyx';
+    return 'Instantly + Telnyx';
+  }
+
+  function getCampaignForEventTarget(target) {
+    const holder = target.closest('[data-campaign-id]');
+    const id = holder?.dataset.campaignId || campaignUiState.selectedId;
+    return getCampaignRecords().find((item) => item.id === id) || CAMPAIGN_SEED[0];
+  }
+
+  function getActuallySelectedLeadRows() {
+    return getLeadRows().filter((row) => row.querySelector('.checkbox.checked'));
+  }
+
+  function getLeadRowCampaignPayload(row, index = 0) {
+    const lead = getLeadRowPayload(row);
+    return {
+      leadId: lead.leadId || `ui-${normalizeControlText(lead.leadName || 'lead').replace(/[^a-z0-9]+/g, '-')}-${index + 1}`,
+      leadName: lead.leadName,
+      address: lead.address,
+      phone: lead.phone,
+      email: lead.email || '',
+      tags: String(lead.tags || '').split(/\s+/).filter(Boolean)
+    };
+  }
+
+  function rememberCampaignSelectedLeads() {
+    const selectedRows = getActuallySelectedLeadRows();
+    const rows = selectedRows.length ? selectedRows : getLeadRows().slice(0, 3);
+    const payload = rows.map(getLeadRowCampaignPayload);
+    campaignUiState.selectedLeadsCache = payload;
+    try {
+      localStorage.setItem(CAMPAIGN_SELECTED_LEADS_STORAGE_KEY, JSON.stringify(payload));
+    } catch {}
+    return payload;
+  }
+
+  function getRememberedCampaignSelectedLeads() {
+    if (campaignUiState.selectedLeadsCache?.length) return campaignUiState.selectedLeadsCache;
+    const stored = parseJSONSafe(localStorage.getItem(CAMPAIGN_SELECTED_LEADS_STORAGE_KEY), []);
+    return Array.isArray(stored) ? stored : [];
+  }
+
+  function getCampaignLeadSources(snapshot = PBK.state.openclawRuntime) {
+    const sources = Array.isArray(snapshot?.campaignLeadSources) ? snapshot.campaignLeadSources : [];
+    const byId = new Map(sources.map((source) => [source.id, source]));
+    const selected = rememberCampaignSelectedLeads().length;
+    const csvCount = Array.isArray(campaignUiState.wizard.csvLeads) ? campaignUiState.wizard.csvLeads.length : 0;
+    return [
+      { id: 'selected', label: 'Selected leads', count: selected, note: 'Selected on Leads page' },
+      { id: 'all-imports', label: 'All imported leads', count: byId.get('all-imports')?.count || 0, note: 'Bridge runtime' },
+      { id: 'probate-ohio', label: 'Probate - Ohio', count: byId.get('probate-ohio')?.count || 0, note: 'Dynamic saved filter' },
+      { id: 'absentee-akron', label: 'Absentee - Akron', count: byId.get('absentee-akron')?.count || 0, note: 'Dynamic saved filter' },
+      { id: 'csv-upload', label: 'CSV upload', count: csvCount, note: campaignUiState.wizard.csvFileName || 'Local CSV preview' }
+    ];
+  }
+
+  function updateCampaignSourceCounts(snapshot = PBK.state.openclawRuntime) {
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (!wizard) return;
+    const sources = getCampaignLeadSources(snapshot);
+    sources.forEach((source) => {
+      const node = wizard.querySelector(`[data-campaign-source-count="${source.id}"]`);
+      if (node) node.textContent = String(source.count || 0);
+    });
+    const status = wizard.querySelector('[data-campaign-csv-status]');
+    if (status) {
+      const csvCount = Array.isArray(campaignUiState.wizard.csvLeads) ? campaignUiState.wizard.csvLeads.length : 0;
+      status.textContent = csvCount
+        ? `${csvCount} CSV lead${csvCount === 1 ? '' : 's'} parsed from ${campaignUiState.wizard.csvFileName || 'uploaded file'}. These will be saved with the campaign draft before approval.`
+        : 'CSV upload is optional. PBK accepts columns like seller/name, address, phone, email, and tags.';
+    }
+  }
+
+  function campaignSelectedLeadPayload(source = 'selected') {
+    if (source === 'csv-upload') return Array.isArray(campaignUiState.wizard.csvLeads) ? campaignUiState.wizard.csvLeads : [];
+    if (source === 'selected') return getRememberedCampaignSelectedLeads().length ? getRememberedCampaignSelectedLeads() : rememberCampaignSelectedLeads();
+    return [];
+  }
+
+  async function queueCampaignApproval(campaign, requestedAction = 'start_campaign', extra = {}) {
+    const selectedLeads = extra.selectedLeads || campaignSelectedLeadPayload(extra.leadSource || 'selected');
+    if (campaign?.id && !String(campaign.id).startsWith('draft-')) {
+      try {
+        const response = await requestOpenClawApi(`/api/campaigns/${encodeURIComponent(campaign.id)}/approval`, {
+          method: 'POST',
+          body: {
+            requestedAction,
+            selectedLeads,
+            ...extra
+          },
+          timeout: 12000
+        });
+        await syncOpenClawState({ silent: true }).catch(() => {});
+        toastOutcome({
+          outcome: getRuntimeOutcome(response, 'queued_for_approval'),
+          title: 'Campaign approval queued',
+          desc: response?.verbiage || 'Approval task created. Provider execution waits for approval.'
+        });
+        return response;
+      } catch (error) {
+        console.warn('[PBK] campaign approval endpoint unavailable; falling back to generic approval tool', error);
+      }
+    }
+    return invokeRuntimeTool('createApproval', {
+      type: 'campaign',
+      leadName: campaign.name || 'Outreach campaign',
+      address: `${campaign.leadCount || selectedLeads.length || 'Filtered'} campaign leads`,
+      templateId: campaign.templateId || extra.templateId || '',
+      approvalAction: requestedAction,
+      notes: `${requestedAction.replace(/_/g, ' ')} for ${campaign.name || 'outreach campaign'}`,
+      metadata: {
+        selectedLeads,
+        requestedAction,
+        campaignId: campaign.id || '',
+        campaignName: campaign.name || '',
+        campaignChannel: campaign.channel || extra.channel || 'email',
+        campaignProvider: campaignProviderForChannel(campaign.channel || extra.channel || 'email'),
+        templateId: campaign.templateId || extra.templateId || '',
+        leadFilter: extra.leadSource || '',
+        schedule: extra.schedule || {},
+        statusMessage: `${requestedAction.replace(/_/g, ' ')} queued for approval`
+      }
+    }, {
+      actionLabel: 'campaign approvals',
+      successTitle: 'Campaign approval queued',
+      successDesc: 'Approval task created. Provider execution will only happen after approval, and missing providers will be reported honestly.',
+      errorTitle: 'Campaign approval failed'
+    });
+  }
+
+  async function requestCampaignAction(campaign, action, extra = {}) {
+    if (!campaign?.id || String(campaign.id).startsWith('draft-')) {
+      return queueCampaignApproval(campaign, `campaign_${String(action || 'update').replace(/\s+/g, '_')}`, extra);
+    }
+    try {
+      const response = await requestOpenClawApi(`/api/campaigns/${encodeURIComponent(campaign.id)}/actions`, {
+        method: 'POST',
+        body: {
+          action,
+          ...extra
+        },
+        timeout: 12000
+      });
+      await syncOpenClawState({ silent: true }).catch(() => {});
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'queued_for_approval'),
+        title: response?.result === 'live' ? 'Campaign updated' : 'Campaign action queued',
+        desc: response?.verbiage || 'Provider-impacting campaign changes require approval.'
+      });
+      renderCampaignsExperience();
+      return response;
+    } catch (error) {
+      toastOutcome({
+        outcome: 'unavailable',
+        title: 'Campaign action unavailable',
+        desc: error?.message || 'The bridge did not accept this campaign action.'
+      });
+      return null;
+    }
+  }
+
+  function exportCampaignReport(campaign) {
+    const rows = [
+      ['Campaign', campaign.name],
+      ['Channel', campaignChannelLabel(campaign.channel)],
+      ['Status', campaignStatusLabel(campaign.status)],
+      ['Provider', campaignProviderForChannel(campaign.channel)],
+      ['Leads', campaign.leadCount || 0],
+      ['Template', campaign.templateId || ''],
+      ['Note', campaign.note || '']
+    ];
+    downloadTextFile(`pbk-campaign-${campaign.id || 'report'}.csv`, rowsToCsv(rows), 'text/csv');
+    toast({ type: 'success', title: 'Campaign export ready', desc: 'CSV report downloaded from the current campaign view.' });
+  }
+
+  function handleCampaignAction(action, campaign) {
+    const normalized = normalizeControlText(action);
+    if (normalized === 'view' || normalized === 'review') {
+      campaignUiState.selectedId = campaign.id;
+      renderCampaignDetail(campaign.id);
+      showPage('campaign-detail');
+      return;
+    }
+    if (normalized === 'clone' || normalized === 'continue setup' || normalized === 'edit') {
+      openCampaignWizard({
+        channel: campaign.channel === 'mixed' ? 'email' : campaign.channel,
+        template: campaign.templateId || 'probate-empathetic-v3',
+        name: `${campaign.name} copy`
+      });
+      return;
+    }
+    if (normalized === 'pause' || normalized === 'resume' || normalized === 'archive' || normalized === 'cancel') {
+      requestCampaignAction(campaign, normalized);
+      return;
+    }
+    if (normalized.includes('leads') || normalized.includes('template')) {
+      requestCampaignAction(campaign, normalized.includes('template') ? 'edit_template' : 'add_leads');
+      return;
+    }
+    if (normalized === 'export') {
+      exportCampaignReport(campaign);
+      return;
+    }
+    if (normalized.includes('filter')) {
+      showLocalViewToast('Campaign view filter', 'This control filters only the current detail view.');
+      return;
+    }
+    if (normalized === 'open') showPage('lead-detail');
+  }
+
+  function wireCampaignsControls() {
+    const page = getPageNode('campaigns');
+    if (page && page.dataset.campaignsWired !== 'true') {
+      page.dataset.campaignsWired = 'true';
+      page.addEventListener('click', (event) => {
+        const head = event.target.closest('[data-campaign-head-action]');
+        if (head) {
+          const action = head.dataset.campaignHeadAction;
+          if (action === 'new') openCampaignWizard();
+          if (action === 'approvals') {
+            showPage('dashboard');
+            toastOutcome({ outcome: 'local_view_only', title: 'Approval queue opened', desc: 'Dashboard approval cards show pending campaign approvals from the bridge.' });
+          }
+          if (action === 'templates') {
+            showUtilityModal('Campaign templates', 'Templates are selected in the campaign wizard. Provider-side template sync remains approval-gated and will not update Instantly/Telnyx without approval.');
+          }
+          return;
+        }
+        const chip = event.target.closest('[data-campaign-channel]');
+        if (chip) {
+          campaignUiState.channel = chip.dataset.campaignChannel || 'all';
+          renderCampaignsExperience();
+          showLocalViewToast('Campaigns filtered', `${chip.textContent.trim()} applies to this page only.`);
+          return;
+        }
+        const view = event.target.closest('[data-campaign-view]');
+        if (view) {
+          campaignUiState.view = view.dataset.campaignView || 'cards';
+          renderCampaignsExperience();
+          return;
+        }
+        const actionButton = event.target.closest('[data-campaign-action]');
+        const card = event.target.closest('[data-campaign-id]');
+        if (actionButton && card) {
+          event.stopPropagation();
+          handleCampaignAction(actionButton.dataset.campaignAction, getCampaignForEventTarget(actionButton));
+          return;
+        }
+        if (card) {
+          const campaign = getCampaignForEventTarget(card);
+          campaignUiState.selectedId = campaign.id;
+          renderCampaignDetail(campaign.id);
+          showPage('campaign-detail');
+        }
+      });
+      page.querySelector('#campaignSearchInput')?.addEventListener('input', (event) => {
+        campaignUiState.query = event.target.value || '';
+        renderCampaignsExperience();
+      });
+      page.querySelector('#campaignStatusFilter')?.addEventListener('change', (event) => {
+        campaignUiState.status = event.target.value || 'all';
+        renderCampaignsExperience();
+        showLocalViewToast('Campaign status filter', 'This filters bridge-backed campaign records in the current view.');
+      });
+    }
+
+    const detail = getPageNode('campaign-detail');
+    if (detail && detail.dataset.campaignDetailWired !== 'true') {
+      detail.dataset.campaignDetailWired = 'true';
+      detail.addEventListener('click', (event) => {
+        const action = event.target.closest('[data-campaign-detail-action]');
+        if (!action) return;
+        const campaign = getCampaignRecords().find((item) => item.id === campaignUiState.selectedId) || CAMPAIGN_SEED[0];
+        const value = action.dataset.campaignDetailAction;
+        if (value === 'back') {
+          showPage('campaigns');
+          return;
+        }
+        handleCampaignAction(value, campaign);
+      });
+    }
+
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (wizard && wizard.dataset.campaignWizardWired !== 'true') {
+      wizard.dataset.campaignWizardWired = 'true';
+      wizard.addEventListener('click', (event) => {
+        if (event.target === wizard || event.target.closest('[data-campaign-wizard-close]')) closeCampaignWizard();
+        const select = event.target.closest('[data-campaign-select]');
+        if (select) {
+          const key = select.dataset.campaignSelect;
+          campaignUiState.wizard[key] = select.dataset.value;
+          wizard.querySelectorAll(`[data-campaign-select="${key}"]`).forEach((item) => item.classList.toggle('selected', item === select));
+          updateCampaignWizardReview();
+        }
+        const csvButton = event.target.closest('[data-campaign-csv-upload]');
+        if (csvButton) {
+          parseCampaignCsvUpload().catch((error) => {
+            toastOutcome({ outcome: 'unavailable', title: 'CSV preview failed', desc: error?.message || 'PBK could not read that CSV file.' });
+          });
+        }
+      });
+      wizard.querySelector('[data-campaign-wizard-prev]')?.addEventListener('click', () => setCampaignWizardStep(campaignUiState.wizardStep - 1));
+      wizard.querySelector('[data-campaign-wizard-next]')?.addEventListener('click', async () => {
+        if (campaignUiState.wizardStep < 4) {
+          setCampaignWizardStep(campaignUiState.wizardStep + 1);
+          return;
+        }
+        await submitCampaignWizard();
+      });
+      wizard.querySelectorAll('[data-campaign-field]').forEach((field) => {
+        field.addEventListener('input', () => {
+          campaignUiState.wizard[field.dataset.campaignField] = field.value;
+          updateCampaignWizardReview();
+        });
+        field.addEventListener('change', () => {
+          campaignUiState.wizard[field.dataset.campaignField] = field.value;
+          updateCampaignWizardReview();
+        });
+      });
+    }
+  }
+
+  async function parseCampaignCsvUpload() {
+    const [file] = await chooseLocalFiles({ accept: '.csv,text/csv,text/plain' });
+    if (!file) return null;
+    const text = await readFileAsText(file, 600000);
+    const parsed = csvRowsToLeadPayloads(parseCsvRows(text), 'campaign-csv-upload');
+    const leads = parsed.map((lead, index) => ({
+      leadId: `csv-${normalizeControlText(lead.seller?.name || lead.property?.address || 'lead').replace(/[^a-z0-9]+/g, '-')}-${index + 1}`,
+      leadName: lead.seller?.name || `CSV Lead ${index + 1}`,
+      address: lead.property?.address || '',
+      phone: lead.seller?.phone || '',
+      email: lead.seller?.email || '',
+      tags: Array.isArray(lead.tags) ? lead.tags : []
+    })).filter((lead) => lead.leadName && (lead.address || lead.email || lead.phone));
+    if (!leads.length) {
+      campaignUiState.wizard.csvLeads = [];
+      campaignUiState.wizard.csvFileName = file.name || '';
+      updateCampaignSourceCounts();
+      updateCampaignWizardReview();
+      toast({
+        type: 'warning',
+        title: 'CSV needs campaign columns',
+        desc: 'Use headers like seller/name, address/property_address, phone, email, and tags.'
+      });
+      return null;
+    }
+    campaignUiState.wizard.csvLeads = leads.slice(0, 1000);
+    campaignUiState.wizard.csvFileName = file.name || 'campaign.csv';
+    campaignUiState.wizard.leadSource = 'csv-upload';
+    document.querySelectorAll('#campaignWizardBackdrop [data-campaign-select="leadSource"]').forEach((item) => {
+      item.classList.toggle('selected', item.dataset.value === 'csv-upload');
+    });
+    updateCampaignSourceCounts();
+    updateCampaignWizardReview();
+    toastOutcome({
+      outcome: 'live',
+      title: 'CSV parsed for campaign',
+      desc: `${campaignUiState.wizard.csvLeads.length} leads are attached to this draft. Nothing is sent until approval.`
+    });
+    return campaignUiState.wizard.csvLeads;
+  }
+
+  function openCampaignWizard(prefill = {}) {
+    wireCampaignsControls();
+    rememberCampaignSelectedLeads();
+    campaignUiState.wizard = {
+      ...campaignUiState.wizard,
+      ...prefill
+    };
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (!wizard) return;
+    wizard.querySelectorAll('[data-campaign-select]').forEach((item) => {
+      const key = item.dataset.campaignSelect;
+      item.classList.toggle('selected', item.dataset.value === campaignUiState.wizard[key]);
+    });
+    wizard.querySelectorAll('[data-campaign-field]').forEach((field) => {
+      if (campaignUiState.wizard[field.dataset.campaignField] !== undefined) field.value = campaignUiState.wizard[field.dataset.campaignField];
+    });
+    wizard.classList.add('open');
+    wizard.setAttribute('aria-hidden', 'false');
+    updateCampaignSourceCounts();
+    setCampaignWizardStep(0);
+  }
+
+  function closeCampaignWizard() {
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (!wizard) return;
+    wizard.classList.remove('open');
+    wizard.setAttribute('aria-hidden', 'true');
+  }
+
+  function setCampaignWizardStep(step) {
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (!wizard) return;
+    campaignUiState.wizardStep = Math.max(0, Math.min(4, Number(step || 0)));
+    wizard.querySelectorAll('.campaign-pane').forEach((pane, index) => pane.classList.toggle('active', index === campaignUiState.wizardStep));
+    wizard.querySelectorAll('.campaign-step').forEach((item, index) => item.classList.toggle('active', index === campaignUiState.wizardStep));
+    const prev = wizard.querySelector('[data-campaign-wizard-prev]');
+    const next = wizard.querySelector('[data-campaign-wizard-next]');
+    if (prev) prev.disabled = campaignUiState.wizardStep === 0;
+    if (next) {
+      next.textContent = campaignUiState.wizardStep === 4 ? 'Request approval' : 'Next';
+      next.classList.toggle('btn-success', campaignUiState.wizardStep === 4);
+      next.classList.toggle('btn-primary', campaignUiState.wizardStep !== 4);
+    }
+    updateCampaignSourceCounts();
+    updateCampaignWizardReview();
+  }
+
+  function campaignWizardEstimate() {
+    const source = campaignUiState.wizard.leadSource;
+    const leadSources = getCampaignLeadSources();
+    const sourceCount = leadSources.find((item) => item.id === source)?.count;
+    const selectedCount = campaignSelectedLeadPayload(source).length;
+    const count = Number(sourceCount || selectedCount || 0);
+    const channel = campaignUiState.wizard.channel;
+    const unit = channel === 'email' ? 0.002 : channel === 'sms' ? 0.007 : 0.014;
+    return {
+      count,
+      cost: Math.max(0.01, count * unit).toFixed(2),
+      touches: channel === 'email' ? count * 5 : channel === 'sms' ? count * 3 : count
+    };
+  }
+
+  function getCampaignConflictCount(source = campaignUiState.wizard.leadSource, channel = campaignUiState.wizard.channel) {
+    const selected = campaignSelectedLeadPayload(source);
+    if (!selected.length) return 0;
+    const keys = new Set(selected.map((lead) => String(lead.leadId || lead.email || lead.phone || lead.address || '').trim().toLowerCase()).filter(Boolean));
+    if (!keys.size) return 0;
+    return getCampaignRecords().filter((campaign) =>
+      campaign.status === 'active'
+      && campaign.channel === channel
+      && Array.isArray(campaign.leads)
+      && campaign.leads.some((lead) => {
+        const key = String(lead.leadId || lead.email || lead.phone || lead.meta || lead.name || '').trim().toLowerCase();
+        return key && keys.has(key);
+      })
+    ).length;
+  }
+
+  function updateCampaignWizardReview() {
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (!wizard) return;
+    const fields = wizard.querySelectorAll('[data-campaign-field]');
+    fields.forEach((field) => {
+      campaignUiState.wizard[field.dataset.campaignField] = field.value;
+    });
+    const estimate = campaignWizardEstimate();
+    const provider = campaignProviderForChannel(campaignUiState.wizard.channel);
+    const main = wizard.querySelector('[data-campaign-review-main]');
+    const ready = wizard.querySelector('[data-campaign-review-readiness]');
+    if (main) {
+      main.innerHTML = [
+        ['Name', campaignUiState.wizard.name || 'Untitled campaign'],
+        ['Channel', `${campaignChannelLabel(campaignUiState.wizard.channel)} via ${provider}`],
+        ['Lead source', campaignUiState.wizard.leadSource],
+        ['Template', campaignUiState.wizard.template],
+        ['Schedule', campaignUiState.wizard.start],
+        ['Daily cap', campaignUiState.wizard.dailyCap || '50'],
+        ['Estimated leads', String(estimate.count)],
+        ['Estimated touches', String(estimate.touches)],
+        ['Estimated provider cost', `$${estimate.cost}`]
+      ].map(([label, value]) => `<div class="campaign-review-line"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`).join('');
+    }
+    if (ready) {
+      const conflicts = getCampaignConflictCount();
+      ready.innerHTML = [
+        ['Launch behavior', 'queued_for_approval'],
+        ['Provider writes', 'after approval only'],
+        ['If provider key missing', 'provider_missing'],
+        ['If bridge offline', 'no fake success'],
+        ['Selected lead rows', String(campaignSelectedLeadPayload(campaignUiState.wizard.leadSource).length)],
+        ['Same-channel conflicts', String(conflicts)]
+      ].map(([label, value]) => `<div class="campaign-review-line"><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}</span></div>`).join('')
+        + (conflicts ? '<div class="campaign-review-warning">Review conflicts before approval. PBK will not put a seller into two active same-channel campaigns silently.</div>' : '');
+    }
+  }
+
+  async function submitCampaignWizard() {
+    const estimate = campaignWizardEstimate();
+    const selectedLeads = campaignSelectedLeadPayload(campaignUiState.wizard.leadSource);
+    const draftPayload = {
+      name: campaignUiState.wizard.name || 'Untitled campaign',
+      channel: campaignUiState.wizard.channel,
+      templateId: campaignUiState.wizard.template,
+      leadSource: campaignUiState.wizard.leadSource,
+      selectedLeads,
+      csvLeads: campaignUiState.wizard.leadSource === 'csv-upload' ? campaignUiState.wizard.csvLeads : [],
+      schedule: {
+        start: campaignUiState.wizard.start,
+        window: campaignUiState.wizard.window,
+        dailyCap: campaignUiState.wizard.dailyCap,
+        approvalMode: campaignUiState.wizard.approvalMode,
+        estimatedLeads: estimate.count,
+        estimatedCost: estimate.cost,
+        customNotes: campaignUiState.wizard.customNotes
+      },
+      sequence: {
+        templateId: campaignUiState.wizard.template,
+        channel: campaignUiState.wizard.channel,
+        label: campaignUiState.wizard.channel === 'email' ? '5-touch email sequence' : campaignUiState.wizard.channel === 'sms' ? '3-touch SMS drip' : 'daily outbound call attempts'
+      },
+      notes: campaignUiState.wizard.customNotes,
+      actor: 'PBK Command Center'
+    };
+    let campaign = null;
+    try {
+      const saved = await requestOpenClawApi('/api/campaigns', {
+        method: 'POST',
+        body: draftPayload,
+        timeout: 15000
+      });
+      campaign = saved?.campaign || {
+        id: `draft-${Date.now()}`,
+        ...draftPayload,
+        leadCount: estimate.count
+      };
+      toastOutcome({
+        outcome: getRuntimeOutcome(saved, 'live'),
+        title: 'Campaign draft saved',
+        desc: saved?.verbiage || 'Draft saved to the bridge before approval.'
+      });
+    } catch (error) {
+      campaign = {
+        id: `draft-${Date.now()}`,
+        ...draftPayload,
+        leadCount: estimate.count
+      };
+      toastOutcome({
+        outcome: 'queued_for_approval',
+        title: 'Bridge campaign draft unavailable',
+        desc: error?.message || 'PBK will still queue a generic approval, but the draft was not persisted.'
+      });
+    }
+    const response = await queueCampaignApproval(campaign, 'start_campaign', {
+      ...draftPayload,
+      selectedLeads,
+      leadSource: campaignUiState.wizard.leadSource
+    });
+    await syncOpenClawState({ silent: true }).catch(() => {});
+    renderCampaignsExperience();
+    if (response) closeCampaignWizard();
   }
 
   function updateBulkCount() {
@@ -15192,6 +17011,7 @@
     wireFullscreenCallControls();
     wireInboxFilterControls();
     wireLeadBulkControls();
+    wireCampaignsControls();
     wireAutomationsControls();
     wireAnalyticsControls();
     wireBrainApiButton();
@@ -17530,6 +19350,7 @@
   wireContractsRuntime();
   wireSettingsRuntime();
   wirePriorityOneControls();
+  renderCampaignsExperience();
   mountAnalyzerExperience();
   syncCoreBindings();
   setInterval(syncCoreBindings, 60000);

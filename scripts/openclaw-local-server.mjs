@@ -162,6 +162,10 @@ const PROPERTY_CACHE_TTL_MS = PROPERTY_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const ANALYZER_RESULT_CACHE_TTL_MS = Math.max(30000, Number(process.env.PBK_ANALYZER_RESULT_CACHE_TTL_MS || 5 * 60 * 1000));
 const DEFAULT_BOOKING_LINK = String(process.env.PBK_BOOKING_LINK || process.env.PBK_CALENDAR_BOOKING_URL || 'https://cal.com/pbk-capital/intro-call').trim();
 const DEFAULT_LEAD_TIMEZONE = String(process.env.PBK_DEFAULT_LEAD_TIMEZONE || 'America/New_York').trim();
+const CAMPAIGN_WORKER_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_CAMPAIGN_WORKER_ENABLED || '').trim());
+const CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES = /^(1|true|yes)$/i.test(String(process.env.PBK_CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES || '').trim());
+const CAMPAIGN_WORKER_MAX_STEPS = Math.max(1, Number(process.env.PBK_CAMPAIGN_WORKER_MAX_STEPS || 25));
+const CAMPAIGN_WORKER_RETRY_PROVIDER_MISSING = /^(1|true|yes)$/i.test(String(process.env.PBK_CAMPAIGN_RETRY_PROVIDER_MISSING || '').trim());
 const AUTO_DIAL_IMMEDIATE_REPLIES = !/^(0|false|no)$/i.test(String(process.env.PBK_REPLY_AUTO_DIAL_IMMEDIATE || 'true').trim());
 const AUTO_SEND_REPLY_FOLLOWUPS = /^(1|true|yes)$/i.test(String(process.env.PBK_REPLY_AUTO_SEND_FOLLOWUPS || '').trim());
 const GOOGLE_CALENDAR_ACCESS_TOKEN = String(process.env.PBK_GOOGLE_CALENDAR_ACCESS_TOKEN || '').trim();
@@ -310,6 +314,10 @@ const LIMITS = {
   documentDeliveries: 120,
   attachments: 160,
   browserResearchJobs: 160,
+  campaigns: 160,
+  campaignLeads: 1200,
+  campaignEvents: 1600,
+  campaignSuppressions: 400,
   campaignExecutions: 120,
   promptPatchApplications: 90,
   recordingRetentionRuns: 90,
@@ -1819,6 +1827,10 @@ function buildDefaultState() {
     documentDeliveries: buildDefaultDocumentDeliveries(),
     attachments: [],
     browserResearchJobs: [],
+    campaigns: [],
+    campaignLeads: [],
+    campaignEvents: [],
+    campaignSuppressions: [],
     campaignExecutions: [],
     promptPatchApplications: [],
     recordingRetentionRuns: [],
@@ -1902,6 +1914,298 @@ async function persistState(nextState) {
   }
   await ensureRuntimeDir();
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
+}
+
+async function persistCampaignRecord(campaign = {}) {
+  const pool = getPgPool();
+  if (!pool || !campaign.id) return false;
+  const channel = normalizeCampaignChannel(campaign.channel || 'email');
+  const dbChannel = ['email', 'call', 'sms', 'mixed'].includes(channel) ? channel : 'mixed';
+  try {
+    await pool.query(
+      `INSERT INTO public.campaigns (
+        id, name, channel, provider, status, template_id, lead_source, lead_filter,
+        schedule, sequence, metrics, approval_id, approval_status, pending_action,
+        execution_id, provider_campaign_id, last_worker_run_at, suppression_mode,
+        conflict_count, notes, created_by, created_at, updated_at, archived_at
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8::jsonb,
+        $9::jsonb,$10::jsonb,$11::jsonb,$12,$13,$14,
+        $15,$16,$17,$18,
+        $19,$20,$21,$22,$23,$24
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        channel = EXCLUDED.channel,
+        provider = EXCLUDED.provider,
+        status = EXCLUDED.status,
+        template_id = EXCLUDED.template_id,
+        lead_source = EXCLUDED.lead_source,
+        lead_filter = EXCLUDED.lead_filter,
+        schedule = EXCLUDED.schedule,
+        sequence = EXCLUDED.sequence,
+        metrics = EXCLUDED.metrics,
+        approval_id = EXCLUDED.approval_id,
+        approval_status = EXCLUDED.approval_status,
+        pending_action = EXCLUDED.pending_action,
+        execution_id = EXCLUDED.execution_id,
+        provider_campaign_id = EXCLUDED.provider_campaign_id,
+        last_worker_run_at = EXCLUDED.last_worker_run_at,
+        suppression_mode = EXCLUDED.suppression_mode,
+        conflict_count = EXCLUDED.conflict_count,
+        notes = EXCLUDED.notes,
+        created_by = EXCLUDED.created_by,
+        updated_at = EXCLUDED.updated_at,
+        archived_at = EXCLUDED.archived_at`,
+      [
+        campaign.id,
+        campaign.name || 'Untitled campaign',
+        dbChannel,
+        campaign.provider || getCampaignProvider(channel),
+        normalizeCampaignStatus(campaign.status || 'draft'),
+        campaign.templateId || campaign.template_id || null,
+        campaign.leadSource || campaign.lead_source || null,
+        JSON.stringify(campaign.leadFilter || campaign.lead_filter || {}),
+        JSON.stringify(campaign.schedule || {}),
+        JSON.stringify(campaign.sequence || {}),
+        JSON.stringify(campaign.metrics || {}),
+        campaign.approvalId || campaign.approval_id || null,
+        campaign.approvalStatus || campaign.approval_status || null,
+        campaign.pendingAction || campaign.pending_action || null,
+        campaign.executionId || campaign.execution_id || null,
+        campaign.providerCampaignId || campaign.provider_campaign_id || null,
+        campaign.lastWorkerRunAt || campaign.last_worker_run_at || null,
+        campaign.suppressionMode || campaign.suppression_mode || 'same_channel_active_campaigns',
+        toNumber(campaign.conflictCount ?? campaign.conflict_count, 0),
+        campaign.notes || null,
+        campaign.createdBy || campaign.created_by || 'PBK Command Center',
+        campaign.createdAt || campaign.created_at || isoNow(),
+        campaign.updatedAt || campaign.updated_at || isoNow(),
+        campaign.archivedAt || campaign.archived_at || null,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistCampaignLeadRecord(lead = {}) {
+  const pool = getPgPool();
+  if (!pool || !lead.id || !lead.campaignId) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.campaign_leads (
+        id, campaign_id, lead_id, lead_name, address, email, phone, tags,
+        status, touch_index, last_touch_at, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::text[],$9,$10,$11,$12::jsonb,$13,$14)
+      ON CONFLICT (id) DO UPDATE SET
+        campaign_id = EXCLUDED.campaign_id,
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        address = EXCLUDED.address,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        tags = EXCLUDED.tags,
+        status = EXCLUDED.status,
+        touch_index = EXCLUDED.touch_index,
+        last_touch_at = EXCLUDED.last_touch_at,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        lead.id,
+        lead.campaignId,
+        lead.leadId || null,
+        lead.leadName || 'Unknown seller',
+        lead.address || null,
+        lead.email || null,
+        lead.phone || null,
+        normalizeStringList(lead.tags || []),
+        lead.status || 'pending',
+        toNumber(lead.touchIndex, 0),
+        lead.lastTouchAt || null,
+        JSON.stringify(lead.metadata || {}),
+        lead.createdAt || isoNow(),
+        lead.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign lead persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistCampaignEventRecord(event = {}) {
+  const pool = getPgPool();
+  if (!pool || !event.id || !event.campaignId) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.campaign_events (
+        id, campaign_id, campaign_lead_id, lead_id, event_type, channel, provider,
+        provider_event_id, provider_status, payload, occurred_at, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        campaign_id = EXCLUDED.campaign_id,
+        campaign_lead_id = EXCLUDED.campaign_lead_id,
+        lead_id = EXCLUDED.lead_id,
+        event_type = EXCLUDED.event_type,
+        channel = EXCLUDED.channel,
+        provider = EXCLUDED.provider,
+        provider_event_id = EXCLUDED.provider_event_id,
+        provider_status = EXCLUDED.provider_status,
+        payload = EXCLUDED.payload,
+        occurred_at = EXCLUDED.occurred_at`,
+      [
+        event.id,
+        event.campaignId,
+        event.campaignLeadId || null,
+        event.leadId || null,
+        event.eventType || 'note',
+        normalizeCampaignChannel(event.channel || 'email'),
+        event.provider || null,
+        event.providerEventId || null,
+        event.providerStatus || null,
+        JSON.stringify(event.payload || {}),
+        event.occurredAt || isoNow(),
+        event.createdAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign event persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistCampaignSuppressionRecord(suppression = {}) {
+  const pool = getPgPool();
+  if (!pool || !suppression.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.campaign_suppressions (
+        id, lead_id, email, phone, address, channel, reason, source, metadata, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+      ON CONFLICT (id) DO UPDATE SET
+        lead_id = EXCLUDED.lead_id,
+        email = EXCLUDED.email,
+        phone = EXCLUDED.phone,
+        address = EXCLUDED.address,
+        channel = EXCLUDED.channel,
+        reason = EXCLUDED.reason,
+        source = EXCLUDED.source,
+        metadata = EXCLUDED.metadata`,
+      [
+        suppression.id,
+        suppression.leadId || suppression.lead_id || null,
+        suppression.email || null,
+        suppression.phone || null,
+        suppression.address || null,
+        suppression.channel || null,
+        suppression.reason || 'suppressed',
+        suppression.source || null,
+        JSON.stringify(suppression.metadata || {}),
+        suppression.createdAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign suppression persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistCampaignExecutionRecord(execution = {}) {
+  const pool = getPgPool();
+  if (!pool || !execution.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.campaign_executions (
+        id, campaign_id, approval_id, provider, provider_campaign_id, status,
+        result, lead_count, request, response, error, actor, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14)
+      ON CONFLICT (id) DO UPDATE SET
+        campaign_id = EXCLUDED.campaign_id,
+        approval_id = EXCLUDED.approval_id,
+        provider = EXCLUDED.provider,
+        provider_campaign_id = EXCLUDED.provider_campaign_id,
+        status = EXCLUDED.status,
+        result = EXCLUDED.result,
+        lead_count = EXCLUDED.lead_count,
+        request = EXCLUDED.request,
+        response = EXCLUDED.response,
+        error = EXCLUDED.error,
+        actor = EXCLUDED.actor,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        execution.id,
+        execution.campaignId || execution.campaign_id || null,
+        execution.approvalId || execution.approval_id || null,
+        execution.provider || execution.instantly?.provider || 'instantly',
+        execution.providerCampaignId || execution.provider_campaign_id || null,
+        execution.status || 'queued',
+        execution.result || null,
+        toNumber(execution.leadCount, 0),
+        JSON.stringify(execution.instantly?.request || execution.request || {}),
+        JSON.stringify(execution.instantly?.response || execution.response || {}),
+        execution.error || execution.instantly?.error || null,
+        execution.actor || null,
+        execution.createdAt || isoNow(),
+        execution.updatedAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign execution persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistCampaignWorkerRunRecord(run = {}) {
+  const pool = getPgPool();
+  if (!pool || !run.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.campaign_worker_runs (
+        id, status, result, dry_run, allow_provider_writes, processed_count,
+        skipped_count, processed, skipped, actor, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11)
+      ON CONFLICT (id) DO UPDATE SET
+        status = EXCLUDED.status,
+        result = EXCLUDED.result,
+        dry_run = EXCLUDED.dry_run,
+        allow_provider_writes = EXCLUDED.allow_provider_writes,
+        processed_count = EXCLUDED.processed_count,
+        skipped_count = EXCLUDED.skipped_count,
+        processed = EXCLUDED.processed,
+        skipped = EXCLUDED.skipped,
+        actor = EXCLUDED.actor`,
+      [
+        run.id,
+        run.status || 'complete',
+        run.result || 'local_view_only',
+        Boolean(run.dryRun),
+        Boolean(run.allowProviderWrites),
+        toNumber(run.processedCount, 0),
+        toNumber(run.skippedCount, 0),
+        JSON.stringify(run.processed || []),
+        JSON.stringify(run.skipped || []),
+        run.actor || 'Campaign worker',
+        run.createdAt || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign worker run persistence skipped:', error?.message || error);
+    return false;
+  }
 }
 
 async function persistAttachmentMetadata(attachment = {}) {
@@ -2490,6 +2794,10 @@ function limitStateArrays(nextState) {
   nextState.documentDeliveries = sortNewest(nextState.documentDeliveries).slice(0, LIMITS.documentDeliveries);
   nextState.attachments = sortNewest(nextState.attachments || []).slice(0, LIMITS.attachments);
   nextState.browserResearchJobs = sortNewest(nextState.browserResearchJobs || []).slice(0, LIMITS.browserResearchJobs);
+  nextState.campaigns = sortNewest(nextState.campaigns || []).slice(0, LIMITS.campaigns);
+  nextState.campaignLeads = sortNewest(nextState.campaignLeads || []).slice(0, LIMITS.campaignLeads);
+  nextState.campaignEvents = sortNewest(nextState.campaignEvents || []).slice(0, LIMITS.campaignEvents);
+  nextState.campaignSuppressions = sortNewest(nextState.campaignSuppressions || []).slice(0, LIMITS.campaignSuppressions);
   nextState.campaignExecutions = sortNewest(nextState.campaignExecutions || []).slice(0, LIMITS.campaignExecutions);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
   nextState.recordingRetentionRuns = sortNewest(nextState.recordingRetentionRuns || []).slice(0, LIMITS.recordingRetentionRuns);
@@ -2521,6 +2829,10 @@ function updateDerivedStatus(nextState) {
   nextState.status.attachmentsStored = (nextState.attachments || []).length;
   nextState.status.browserResearchJobs = (nextState.browserResearchJobs || []).length;
   nextState.status.pendingBrowserResearchJobs = (nextState.browserResearchJobs || []).filter((job) => ['queued', 'running', 'setup-required'].includes(String(job.status || '').toLowerCase())).length;
+  nextState.status.campaigns = (nextState.campaigns || []).length;
+  nextState.status.activeCampaigns = (nextState.campaigns || []).filter((campaign) => String(campaign.status || '').toLowerCase() === 'active').length;
+  nextState.status.pendingCampaigns = (nextState.campaigns || []).filter((campaign) => ['pending', 'approval_required'].includes(String(campaign.status || '').toLowerCase())).length;
+  nextState.status.campaignEvents = (nextState.campaignEvents || []).length;
   nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
   nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
   nextState.status.lastApprovalAt = nextState.approvals[0]?.createdAt || null;
@@ -2536,6 +2848,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastDocumentDeliveryAt = getItemTimestamp(nextState.documentDeliveries[0] || {}) || null;
   nextState.status.lastAttachmentAt = getItemTimestamp((nextState.attachments || [])[0] || {}) || null;
   nextState.status.lastBrowserResearchAt = getItemTimestamp((nextState.browserResearchJobs || [])[0] || {}) || nextState.status.lastBrowserResearchAt || null;
+  nextState.status.lastCampaignAt = getItemTimestamp((nextState.campaigns || [])[0] || {}) || null;
+  nextState.status.lastCampaignEventAt = getItemTimestamp((nextState.campaignEvents || [])[0] || {}) || null;
   nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
   nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
   nextState.status.lastDealSimulationAt = getItemTimestamp((nextState.dealSimulations || [])[0] || {}) || null;
@@ -2588,6 +2902,10 @@ function hydrateState(raw = {}) {
     documentDeliveries: trimArray(raw.documentDeliveries || defaults.documentDeliveries, LIMITS.documentDeliveries),
     attachments: trimArray(raw.attachments || defaults.attachments, LIMITS.attachments),
     browserResearchJobs: trimArray(raw.browserResearchJobs || defaults.browserResearchJobs, LIMITS.browserResearchJobs),
+    campaigns: trimArray(raw.campaigns || defaults.campaigns, LIMITS.campaigns),
+    campaignLeads: trimArray(raw.campaignLeads || defaults.campaignLeads, LIMITS.campaignLeads),
+    campaignEvents: trimArray(raw.campaignEvents || defaults.campaignEvents, LIMITS.campaignEvents),
+    campaignSuppressions: trimArray(raw.campaignSuppressions || defaults.campaignSuppressions, LIMITS.campaignSuppressions),
     campaignExecutions: trimArray(raw.campaignExecutions || defaults.campaignExecutions, LIMITS.campaignExecutions),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
     recordingRetentionRuns: trimArray(raw.recordingRetentionRuns || defaults.recordingRetentionRuns, LIMITS.recordingRetentionRuns),
@@ -5875,9 +6193,10 @@ function buildPrometheusMetrics() {
     streak: getStreakProviderMeta(),
     crmSync: getCrmSyncProviderMeta(),
     docusign: getDocuSignProviderMeta(),
-    batchdata: getBatchDataProviderMeta(),
-    slack: getSlackProviderMeta(),
-    render: getRenderProviderMeta(),
+      batchdata: getBatchDataProviderMeta(),
+      slack: getSlackProviderMeta(),
+      render: getRenderProviderMeta(),
+      campaignWorker: getCampaignWorkerMeta(),
   };
 
   const lines = [
@@ -7393,6 +7712,7 @@ async function captureRecordingFromPayload(input = {}) {
     }),
   );
   await persistState(state);
+  await persistCampaignRecord(nextCampaign);
   return {
     ok: true,
     result: 'live',
@@ -8565,6 +8885,995 @@ function getApprovalCampaignLeads(approval = {}) {
   return matching.length ? matching.map(normalizeCampaignLead) : (state.leadImports || []).slice(0, 5).map(normalizeCampaignLead);
 }
 
+function ensureCampaignCollections() {
+  if (!Array.isArray(state.campaigns)) state.campaigns = [];
+  if (!Array.isArray(state.campaignLeads)) state.campaignLeads = [];
+  if (!Array.isArray(state.campaignEvents)) state.campaignEvents = [];
+  if (!Array.isArray(state.campaignSuppressions)) state.campaignSuppressions = [];
+}
+
+function normalizeCampaignChannel(value = 'email') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['call', 'calls', 'voice', 'phone', 'dialer'].includes(raw)) return 'call';
+  if (['sms', 'text', 'texts', 'messaging'].includes(raw)) return 'sms';
+  if (['contract', 'contracts', 'docusign', 'envelope'].includes(raw)) return 'contract';
+  if (['mixed', 'multi', 'omni', 'omnichannel'].includes(raw)) return 'mixed';
+  return 'email';
+}
+
+function normalizeCampaignStatus(value = 'draft') {
+  const raw = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+  if (['active', 'paused', 'pending', 'draft', 'completed', 'archived', 'provider_missing'].includes(raw)) return raw;
+  if (['approval', 'approval_required', 'queued_for_approval'].includes(raw)) return 'pending';
+  if (['done', 'complete'].includes(raw)) return 'completed';
+  if (['provider', 'missing_provider'].includes(raw)) return 'provider_missing';
+  return 'draft';
+}
+
+function getCampaignProvider(channel = 'email') {
+  const normalized = normalizeCampaignChannel(channel);
+  if (normalized === 'email') return 'Instantly';
+  if (normalized === 'call' || normalized === 'sms') return 'Telnyx';
+  if (normalized === 'contract') return 'DocuSign';
+  return 'Instantly + Telnyx';
+}
+
+function getLeadImportSearchText(lead = {}) {
+  return [
+    lead.leadId,
+    lead.id,
+    lead.leadName,
+    lead.name,
+    lead.seller?.name,
+    lead.seller?.email,
+    lead.seller?.phone,
+    lead.address,
+    lead.property?.address,
+    lead.property?.city,
+    lead.property?.state,
+    lead.status,
+    ...(Array.isArray(lead.tags) ? lead.tags : []),
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function getCampaignLeadSourceOptions() {
+  const imported = Array.isArray(state?.leadImports) ? state.leadImports : [];
+  const countMatching = (predicate) => imported.filter(predicate).length;
+  return [
+    {
+      id: 'selected',
+      label: 'Selected leads',
+      count: 0,
+      source: 'frontend-selection',
+      note: 'Uses leads selected in the PBK Leads table.',
+    },
+    {
+      id: 'all-imports',
+      label: 'All imported leads',
+      count: imported.length,
+      source: 'leadImports',
+      note: 'Bridge-backed lead imports currently in PBK runtime state.',
+    },
+    {
+      id: 'probate-ohio',
+      label: 'Probate - Ohio',
+      count: countMatching((lead) => /probate|executor|estate|ohio|\boh\b/i.test(getLeadImportSearchText(lead))),
+      source: 'leadImports',
+      note: 'Dynamic saved filter from imported lead tags, notes, and addresses.',
+    },
+    {
+      id: 'absentee-akron',
+      label: 'Absentee - Akron',
+      count: countMatching((lead) => /absentee|akron|landlord|tenant/i.test(getLeadImportSearchText(lead))),
+      source: 'leadImports',
+      note: 'Dynamic saved filter from imported lead tags, notes, and addresses.',
+    },
+    {
+      id: 'csv-upload',
+      label: 'CSV upload',
+      count: 0,
+      source: 'client-csv',
+      note: 'Parsed in the browser, then sent to the bridge with the campaign draft.',
+    },
+  ];
+}
+
+function selectCampaignLeadsBySource(source = 'all-imports', limit = 500) {
+  const imported = Array.isArray(state.leadImports) ? state.leadImports : [];
+  const normalizedSource = String(source || '').trim().toLowerCase();
+  let candidates = imported;
+  if (normalizedSource === 'probate-ohio') {
+    candidates = imported.filter((lead) => /probate|executor|estate|ohio|\boh\b/i.test(getLeadImportSearchText(lead)));
+  } else if (normalizedSource === 'absentee-akron') {
+    candidates = imported.filter((lead) => /absentee|akron|landlord|tenant/i.test(getLeadImportSearchText(lead)));
+  } else if (normalizedSource === 'selected' || normalizedSource === 'csv-upload') {
+    candidates = [];
+  }
+  return candidates.slice(0, Math.max(1, Math.min(limit, 1000))).map(normalizeCampaignLead);
+}
+
+function dedupeCampaignLeads(leads = []) {
+  const seen = new Set();
+  return leads.map(normalizeCampaignLead).filter((lead) => {
+    const key = String(lead.leadId || lead.email || lead.phone || lead.address || lead.leadName || '').trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function getCampaignLeads(campaignId = '') {
+  return (state.campaignLeads || []).filter((lead) => String(lead.campaignId || '') === String(campaignId || ''));
+}
+
+function getCampaignEvents(campaignId = '') {
+  return sortNewest((state.campaignEvents || []).filter((event) => String(event.campaignId || '') === String(campaignId || '')));
+}
+
+function calculateCampaignMetrics(campaign = {}) {
+  const leads = getCampaignLeads(campaign.id);
+  const events = getCampaignEvents(campaign.id);
+  const count = (patterns = []) => events.filter((event) => {
+    const text = [event.eventType, event.status, event.providerStatus].filter(Boolean).join(' ').toLowerCase();
+    return patterns.some((pattern) => pattern.test(text));
+  }).length;
+  const leadCount = leads.length || toNumber(campaign.leadCount, 0);
+  const channel = normalizeCampaignChannel(campaign.channel);
+  const touches = channel === 'email' ? leadCount * 5 : channel === 'sms' ? leadCount * 3 : leadCount;
+  const unit = channel === 'email' ? 0.002 : channel === 'sms' ? 0.007 : channel === 'call' ? 0.014 : 0.01;
+  return {
+    leads: leadCount,
+    events: events.length,
+    sent: count([/sent/, /scheduled/, /delivered/, /attempted/, /dialed/]),
+    opened: count([/open/]),
+    clicked: count([/click/]),
+    replied: count([/reply/, /responded/, /interested/]),
+    bounced: count([/bounce/, /failed/, /carrier_error/]),
+    connected: count([/connected/, /answered/, /live_answer/]),
+    dnc: count([/dnc/, /unsubscribe/, /\bstop\b/, /opt_out/]),
+    estimatedTouches: touches,
+    estimatedCost: Number((touches * unit).toFixed(2)),
+  };
+}
+
+function findCampaignConflicts(leads = [], channel = 'email', campaignId = '') {
+  const normalizedChannel = normalizeCampaignChannel(channel);
+  const activeCampaignIds = new Set((state.campaigns || [])
+    .filter((campaign) =>
+      campaign.id !== campaignId
+      && ['active', 'pending'].includes(normalizeCampaignStatus(campaign.status))
+      && normalizeCampaignChannel(campaign.channel) === normalizedChannel)
+    .map((campaign) => campaign.id));
+  if (!activeCampaignIds.size) return [];
+  const keys = new Set(leads.map((lead) => String(lead.leadId || lead.email || lead.phone || lead.address || '').trim().toLowerCase()).filter(Boolean));
+  return (state.campaignLeads || []).filter((lead) => {
+    if (!activeCampaignIds.has(lead.campaignId)) return false;
+    const key = String(lead.leadId || lead.email || lead.phone || lead.address || '').trim().toLowerCase();
+    return key && keys.has(key);
+  });
+}
+
+function recordCampaignEvent(payload = {}) {
+  ensureCampaignCollections();
+  const event = {
+    id: payload.id || payload.providerEventId || `campaign-event-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    campaignId: payload.campaignId || '',
+    campaignLeadId: payload.campaignLeadId || '',
+    leadId: payload.leadId || '',
+    eventType: payload.eventType || payload.type || 'note',
+    channel: normalizeCampaignChannel(payload.channel || payload.payload?.channel || 'email'),
+    provider: payload.provider || '',
+    providerEventId: payload.providerEventId || '',
+    providerStatus: payload.providerStatus || payload.status || '',
+    payload: payload.payload && typeof payload.payload === 'object' ? payload.payload : {},
+    occurredAt: payload.occurredAt || isoNow(),
+    createdAt: payload.createdAt || isoNow(),
+  };
+  upsertById(state, 'campaignEvents', event);
+  void persistCampaignEventRecord(event);
+  return event;
+}
+
+function buildCampaignFromPayload(payload = {}) {
+  const now = isoNow();
+  const channel = normalizeCampaignChannel(payload.channel);
+  const source = String(payload.leadSource || payload.lead_filter?.source || payload.leadFilter?.source || 'selected').trim();
+  const providedLeads = Array.isArray(payload.selectedLeads)
+    ? payload.selectedLeads
+    : Array.isArray(payload.leads)
+      ? payload.leads
+      : Array.isArray(payload.csvLeads)
+        ? payload.csvLeads
+        : [];
+  const fallbackLeads = providedLeads.length ? [] : selectCampaignLeadsBySource(source, toNumber(payload.limit, 500));
+  const leads = dedupeCampaignLeads(providedLeads.length ? providedLeads : fallbackLeads);
+  const id = payload.id || `campaign-${slugify(payload.name || `${channel}-${Date.now()}`) || randomUUID().slice(0, 8)}-${randomUUID().slice(0, 8)}`;
+  const conflicts = findCampaignConflicts(leads, channel, id);
+  const status = normalizeCampaignStatus(payload.status || 'draft');
+  const campaign = {
+    id,
+    name: String(payload.name || 'Untitled campaign').trim() || 'Untitled campaign',
+    channel,
+    provider: payload.provider || getCampaignProvider(channel),
+    status,
+    templateId: payload.templateId || payload.template_id || '',
+    leadSource: source,
+    leadFilter: payload.leadFilter || payload.lead_filter || { source },
+    schedule: payload.schedule && typeof payload.schedule === 'object' ? payload.schedule : {},
+    sequence: payload.sequence && typeof payload.sequence === 'object' ? payload.sequence : {},
+    metrics: payload.metrics && typeof payload.metrics === 'object' ? payload.metrics : {},
+    approvalId: payload.approvalId || '',
+    approvalStatus: payload.approvalStatus || '',
+    pendingAction: payload.pendingAction || '',
+    conflictCount: conflicts.length,
+    suppressionMode: payload.suppressionMode || 'same_channel_active_campaigns',
+    notes: payload.notes || payload.customNotes || '',
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+    createdBy: payload.actor || payload.createdBy || 'PBK Command Center',
+  };
+  return { campaign, leads, conflicts };
+}
+
+async function createCampaignRecord(payload = {}) {
+  ensureCampaignCollections();
+  const { campaign, leads, conflicts } = buildCampaignFromPayload(payload);
+  upsertById(state, 'campaigns', campaign);
+  state.campaignLeads = (state.campaignLeads || []).filter((lead) => lead.campaignId !== campaign.id);
+  leads.forEach((lead, index) => {
+    upsertById(state, 'campaignLeads', {
+      id: `campaign-lead-${campaign.id}-${slugify(lead.leadId || lead.email || lead.phone || lead.address || index) || index}`,
+      campaignId: campaign.id,
+      leadId: lead.leadId || '',
+      leadName: lead.leadName || 'Unknown seller',
+      address: lead.address || '',
+      email: lead.email || '',
+      phone: lead.phone || '',
+      tags: lead.tags || [],
+      status: conflicts.some((conflict) =>
+        String(conflict.leadId || conflict.email || conflict.phone || conflict.address || '').trim().toLowerCase()
+        === String(lead.leadId || lead.email || lead.phone || lead.address || '').trim().toLowerCase())
+        ? 'conflict_review'
+        : 'pending',
+      touchIndex: 0,
+      createdAt: campaign.createdAt,
+      updatedAt: campaign.updatedAt,
+    });
+  });
+  const metrics = calculateCampaignMetrics(campaign);
+  upsertById(state, 'campaigns', {
+    ...campaign,
+    leadCount: leads.length,
+    metrics: {
+      ...metrics,
+      ...(campaign.metrics || {}),
+    },
+  });
+  recordCampaignEvent({
+    campaignId: campaign.id,
+    eventType: 'campaign_created',
+    channel: campaign.channel,
+    provider: campaign.provider,
+    providerStatus: 'draft',
+    payload: {
+      leadSource: campaign.leadSource,
+      leadCount: leads.length,
+      conflictCount: conflicts.length,
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: payload.actor || 'PBK Command Center',
+      category: 'CAMPAIGN',
+      status: campaign.status,
+      text: `Created ${getCampaignProvider(campaign.channel)} campaign "${campaign.name}" with ${leads.length} lead${leads.length === 1 ? '' : 's'}.`,
+      target: campaign.id,
+    }),
+  );
+  await persistState(state);
+  const savedCampaign = state.campaigns.find((item) => item.id === campaign.id) || campaign;
+  const savedLeads = getCampaignLeads(campaign.id);
+  await persistCampaignRecord(savedCampaign);
+  await Promise.all(savedLeads.map((lead) => persistCampaignLeadRecord(lead)));
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Campaign draft saved',
+    campaign: savedCampaign,
+    leads: savedLeads,
+    conflicts,
+  };
+}
+
+async function patchCampaignRecord(campaignId = '', patch = {}) {
+  ensureCampaignCollections();
+  const current = (state.campaigns || []).find((campaign) => campaign.id === campaignId);
+  if (!current) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: 'Campaign record not found.' };
+  }
+  const next = {
+    ...current,
+    ...patch,
+    channel: normalizeCampaignChannel(patch.channel || current.channel),
+    status: normalizeCampaignStatus(patch.status || current.status),
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaigns', next);
+  recordCampaignEvent({
+    campaignId,
+    eventType: 'campaign_updated',
+    channel: next.channel,
+    provider: next.provider,
+    providerStatus: next.status,
+    payload: patch,
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: patch.actor || 'PBK Command Center',
+      category: 'CAMPAIGN',
+      status: 'updated',
+      text: `Updated campaign "${next.name}".`,
+      target: campaignId,
+    }),
+  );
+  await persistState(state);
+  await persistCampaignRecord(next);
+  return { ok: true, result: 'live', verbiage: 'Campaign updated', campaign: next, leads: getCampaignLeads(campaignId) };
+}
+
+async function requestCampaignApproval(campaignId = '', params = {}) {
+  ensureCampaignCollections();
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: 'Campaign record not found.' };
+  }
+  const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
+  const action = params.requestedAction || params.approvalAction || 'start_campaign';
+  const { approval, fanout } = await toolHandlers.createApproval({
+    type: 'campaign',
+    leadName: campaign.name,
+    address: `${selectedLeads.length || campaign.leadCount || 0} campaign leads`,
+    templateId: campaign.templateId || '',
+    approvalAction: action,
+    notes: params.notes || `${String(action).replace(/_/g, ' ')} for ${campaign.name}`,
+    metadata: {
+      selectedLeads,
+      requestedAction: action,
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      campaignChannel: campaign.channel,
+      campaignProvider: campaign.provider || getCampaignProvider(campaign.channel),
+      templateId: campaign.templateId || '',
+      leadFilter: campaign.leadSource || '',
+      schedule: campaign.schedule || {},
+      sequence: campaign.sequence || {},
+      statusMessage: `${String(action).replace(/_/g, ' ')} queued for approval`,
+    },
+  });
+  const nextCampaign = {
+    ...campaign,
+    status: normalizeCampaignStatus(params.status || 'pending'),
+    approvalId: approval.id,
+    approvalStatus: 'pending',
+    pendingAction: action,
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaigns', nextCampaign);
+  recordCampaignEvent({
+    campaignId,
+    eventType: 'approval_requested',
+    channel: campaign.channel,
+    provider: campaign.provider,
+    providerStatus: 'queued_for_approval',
+    payload: { approvalId: approval.id, action, fanout },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'PBK Command Center',
+      category: 'CAMPAIGN',
+      status: 'pending',
+      text: `Campaign "${campaign.name}" queued for approval before provider execution.`,
+      target: campaign.id,
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'queued_for_approval',
+    verbiage: 'Campaign queued for approval',
+    campaign: nextCampaign,
+    approval,
+    fanout,
+  };
+}
+
+async function runCampaignAction(campaignId = '', payload = {}) {
+  const action = String(payload.action || payload.requestedAction || '').trim().toLowerCase().replace(/\s+/g, '_');
+  if (!action) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign action missing', error: 'No action supplied.' };
+  }
+  if (['start', 'start_campaign', 'pause', 'resume', 'archive', 'cancel', 'delete', 'add_leads', 'edit_template', 'campaign_pause', 'campaign_resume', 'campaign_archive', 'campaign_cancel'].includes(action)) {
+    return requestCampaignApproval(campaignId, {
+      ...payload,
+      requestedAction: action.startsWith('campaign_') ? action : `campaign_${action}`,
+    });
+  }
+  if (action === 'save_draft') {
+    return patchCampaignRecord(campaignId, payload.patch || {});
+  }
+  return {
+    ok: false,
+    result: 'unavailable',
+    verbiage: 'Campaign action unavailable',
+    error: `Unsupported campaign action: ${action}`,
+  };
+}
+
+function queryCampaignRecords(searchParams = new URLSearchParams()) {
+  ensureCampaignCollections();
+  const search = String(searchParams.get('search') || searchParams.get('q') || '').trim().toLowerCase();
+  const status = String(searchParams.get('status') || 'all').trim().toLowerCase();
+  const channel = normalizeCampaignChannel(searchParams.get('channel') || 'all');
+  const channelRaw = String(searchParams.get('channel') || 'all').trim().toLowerCase();
+  return sortNewest(state.campaigns || []).filter((campaign) => {
+    const statusMatch = status === 'all' || normalizeCampaignStatus(campaign.status) === status;
+    const channelMatch = channelRaw === 'all' || normalizeCampaignChannel(campaign.channel) === channel;
+    const queryMatch = !search || [
+      campaign.name,
+      campaign.channel,
+      campaign.status,
+      campaign.provider,
+      campaign.templateId,
+      campaign.notes,
+      campaign.leadSource,
+    ].filter(Boolean).join(' ').toLowerCase().includes(search);
+    return statusMatch && channelMatch && queryMatch;
+  }).map((campaign) => ({
+    ...campaign,
+    metrics: {
+      ...calculateCampaignMetrics(campaign),
+      ...(campaign.metrics || {}),
+    },
+    leadCount: getCampaignLeads(campaign.id).length || campaign.leadCount || 0,
+    eventCount: getCampaignEvents(campaign.id).length,
+  }));
+}
+
+function getZonedDatePartsForCampaign(timeZone = DEFAULT_LEAD_TIMEZONE, date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timeZone || DEFAULT_LEAD_TIMEZONE,
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(date);
+  const pick = (type) => parts.find((part) => part.type === type)?.value || '';
+  return {
+    weekday: pick('weekday').toLowerCase(),
+    hour: toNumber(pick('hour'), 0),
+    minute: toNumber(pick('minute'), 0),
+  };
+}
+
+function parseCampaignWindow(windowValue = '') {
+  const normalized = String(windowValue || '').trim().toLowerCase();
+  if (/10.*4/.test(normalized)) return { startHour: 10, endHour: 16, weekdaysOnly: true };
+  if (/8.*9/.test(normalized)) return { startHour: 8, endHour: 21, weekdaysOnly: false };
+  if (/weekdays/.test(normalized)) return { startHour: 9, endHour: 17, weekdaysOnly: true };
+  return { startHour: 9, endHour: 17, weekdaysOnly: true };
+}
+
+function isWithinCampaignWindow(campaign = {}, lead = {}, now = new Date()) {
+  const schedule = campaign.schedule || {};
+  const timezone = lead.timezone || lead.metadata?.timezone || schedule.timezone || schedule.leadTimezone || DEFAULT_LEAD_TIMEZONE;
+  const windowRule = parseCampaignWindow(schedule.window || schedule.callWindow || schedule.sendWindow || '9-5-est');
+  const zoned = getZonedDatePartsForCampaign(timezone, now);
+  const isWeekend = zoned.weekday === 'sat' || zoned.weekday === 'sun';
+  if (windowRule.weekdaysOnly && isWeekend) {
+    return {
+      ok: false,
+      result: 'local_view_only',
+      reason: `Outside campaign days in ${timezone}.`,
+      timezone,
+      zoned,
+    };
+  }
+  const ok = zoned.hour >= windowRule.startHour && zoned.hour < windowRule.endHour;
+  return {
+    ok,
+    result: ok ? 'live' : 'local_view_only',
+    reason: ok ? 'Inside campaign send window.' : `Outside campaign send window (${windowRule.startHour}:00-${windowRule.endHour}:00 ${timezone}).`,
+    timezone,
+    zoned,
+  };
+}
+
+function getCampaignDailyCap(campaign = {}) {
+  return Math.max(1, Math.min(1000, toNumber(campaign.schedule?.dailyCap || campaign.schedule?.cap || 50, 50)));
+}
+
+function getCampaignEventDay(event = {}) {
+  return String(event.occurredAt || event.createdAt || '').slice(0, 10);
+}
+
+function countCampaignEventsToday(campaignId = '', now = new Date()) {
+  const today = now.toISOString().slice(0, 10);
+  return getCampaignEvents(campaignId).filter((event) => {
+    const status = String(event.providerStatus || event.status || event.eventType || '').toLowerCase();
+    return getCampaignEventDay(event) === today && /sent|scheduled|queued|delivered|attempted|dialed|provider_managed/i.test(status);
+  }).length;
+}
+
+function findCampaignSuppressionForLead(lead = {}, channel = '') {
+  const leadKeys = [
+    lead.leadId,
+    lead.email,
+    lead.phone,
+    lead.address,
+  ].map((item) => String(item || '').trim().toLowerCase()).filter(Boolean);
+  return (state.campaignSuppressions || []).find((suppression) => {
+    if (channel && suppression.channel && normalizeCampaignChannel(suppression.channel) !== normalizeCampaignChannel(channel)) return false;
+    const suppressionKey = String(suppression.leadId || suppression.email || suppression.phone || suppression.address || '').trim().toLowerCase();
+    return suppressionKey && leadKeys.includes(suppressionKey);
+  }) || null;
+}
+
+function isCampaignLeadContactable(campaign = {}, lead = {}, channel = '') {
+  const suppression = findCampaignSuppressionForLead(lead, channel);
+  if (suppression) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      status: 'suppressed',
+      reason: suppression.reason || 'Lead is suppressed for this channel.',
+      suppression,
+    };
+  }
+  const dnc = findDncEntryByPhone(lead.phone);
+  if (dnc) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      status: 'dnc_blocked',
+      reason: dnc.reason || 'Lead phone is on DNC.',
+      dnc,
+    };
+  }
+  const windowCheck = isWithinCampaignWindow(campaign, lead);
+  if (!windowCheck.ok) {
+    return {
+      ok: false,
+      result: 'local_view_only',
+      status: 'outside_window',
+      reason: windowCheck.reason,
+      window: windowCheck,
+    };
+  }
+  return { ok: true, result: 'live', status: 'contactable' };
+}
+
+function getCampaignStepChannels(campaign = {}) {
+  const sequenceSteps = Array.isArray(campaign.sequence?.steps) ? campaign.sequence.steps : [];
+  const channels = sequenceSteps.map((step) => normalizeCampaignChannel(step.channel || step.type)).filter(Boolean);
+  if (channels.length) return channels;
+  const channel = normalizeCampaignChannel(campaign.channel || 'email');
+  if (channel === 'mixed') return ['email', 'sms', 'call'];
+  return [channel];
+}
+
+function getNextCampaignChannelForLead(campaign = {}, lead = {}) {
+  const channels = getCampaignStepChannels(campaign);
+  const index = Math.max(0, toNumber(lead.touchIndex, 0));
+  return channels[Math.min(index, channels.length - 1)] || normalizeCampaignChannel(campaign.channel || 'email');
+}
+
+function isCampaignLeadTerminal(lead = {}) {
+  const status = String(lead.status || '').toLowerCase();
+  if (CAMPAIGN_WORKER_RETRY_PROVIDER_MISSING && status === 'provider_missing') return false;
+  return ['sent', 'queued', 'scheduled', 'completed', 'blocked', 'dnc_blocked', 'suppressed', 'provider_managed', 'conflict_review'].includes(status)
+    || /delivered|answered|connected|archived/.test(status);
+}
+
+function buildCampaignOutboundText(campaign = {}, lead = {}, channel = 'email') {
+  const firstName = String(lead.leadName || '').trim().split(/\s+/)[0] || 'there';
+  const address = lead.address || 'your property';
+  if (channel === 'sms') {
+    return `Hi ${firstName}, this is PBK. Are you still open to a simple as-is offer for ${address}? Reply STOP to opt out.`;
+  }
+  if (channel === 'call') {
+    return campaign.sequence?.script || campaign.notes || `Warm, direct campaign opener for ${lead.leadName || 'seller'} at ${address}.`;
+  }
+  return campaign.notes || `Hi ${firstName}, PBK can make a simple as-is offer for ${address}.`;
+}
+
+function patchCampaignLead(leadId = '', patch = {}) {
+  const existing = (state.campaignLeads || []).find((lead) => lead.id === leadId);
+  if (!existing) return null;
+  const next = {
+    ...existing,
+    ...patch,
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaignLeads', next);
+  void persistCampaignLeadRecord(next);
+  return next;
+}
+
+async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
+  const channel = getNextCampaignChannelForLead(campaign, lead);
+  const now = options.now || new Date();
+  const dryRun = Boolean(options.dryRun);
+  const allowProviderWrites = Boolean(options.allowProviderWrites);
+  const targetLabel = lead.address || lead.leadName || lead.email || lead.phone || lead.id;
+  const contactable = isCampaignLeadContactable(campaign, lead, channel);
+
+  if (!contactable.ok) {
+    patchCampaignLead(lead.id, {
+      status: contactable.status,
+      lastTouchAt: now.toISOString(),
+      metadata: {
+        ...(lead.metadata || {}),
+        lastBlockReason: contactable.reason,
+      },
+    });
+    const event = recordCampaignEvent({
+      campaignId: campaign.id,
+      campaignLeadId: lead.id,
+      leadId: lead.leadId,
+      eventType: contactable.status,
+      channel,
+      provider: campaign.provider || getCampaignProvider(channel),
+      providerStatus: contactable.result,
+      payload: {
+        reason: contactable.reason,
+        target: targetLabel,
+      },
+    });
+    addActivity(
+      state,
+      makeActivity({
+        actor: 'Campaign guardrail',
+        category: 'CAMPAIGN',
+        status: contactable.status,
+        text: `Campaign "${campaign.name}" skipped ${targetLabel}: ${contactable.reason}`,
+        target: campaign.id,
+      }),
+    );
+    return { ok: false, result: contactable.result, lead, event, reason: contactable.reason };
+  }
+
+  if (dryRun || !allowProviderWrites) {
+    const event = recordCampaignEvent({
+      campaignId: campaign.id,
+      campaignLeadId: lead.id,
+      leadId: lead.leadId,
+      eventType: 'dry_run_due',
+      channel,
+      provider: campaign.provider || getCampaignProvider(channel),
+      providerStatus: 'dry_run',
+      payload: {
+        target: targetLabel,
+        workerEnabled: CAMPAIGN_WORKER_ENABLED,
+        providerWritesConfirmed: CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES,
+      },
+    });
+    return {
+      ok: true,
+      result: 'local_view_only',
+      dryRun: true,
+      lead,
+      event,
+      verbiage: 'Campaign step due - dry run only',
+    };
+  }
+
+  let delivery = null;
+  if (channel === 'email') {
+    if (campaign.providerCampaignId) {
+      patchCampaignLead(lead.id, {
+        status: 'provider_managed',
+        touchIndex: toNumber(lead.touchIndex, 0) + 1,
+        lastTouchAt: now.toISOString(),
+      });
+      const event = recordCampaignEvent({
+        campaignId: campaign.id,
+        campaignLeadId: lead.id,
+        leadId: lead.leadId,
+        eventType: 'provider_managed',
+        channel,
+        provider: 'Instantly',
+        providerStatus: 'provider_managed',
+        payload: {
+          providerCampaignId: campaign.providerCampaignId,
+          target: targetLabel,
+        },
+      });
+      return { ok: true, result: 'live', lead, event, verbiage: 'Lead is managed by Instantly campaign.' };
+    }
+    delivery = await toolHandlers.sendColdEmail({
+      leadId: lead.leadId,
+      leadName: lead.leadName,
+      address: lead.address,
+      email: lead.email,
+      phone: lead.phone,
+      campaignId: campaign.id,
+      templateId: campaign.templateId,
+      body: buildCampaignOutboundText(campaign, lead, channel),
+      actor: 'Campaign worker',
+    });
+  } else if (channel === 'sms') {
+    delivery = await toolHandlers.telnyx_sms({
+      leadId: lead.leadId,
+      leadName: lead.leadName,
+      address: lead.address,
+      phone: lead.phone,
+      body: buildCampaignOutboundText(campaign, lead, channel),
+      campaignId: campaign.id,
+      actor: 'Campaign worker',
+    });
+  } else if (channel === 'call') {
+    delivery = await toolHandlers.telnyx_call({
+      leadId: lead.leadId,
+      leadName: lead.leadName,
+      address: lead.address,
+      phone: lead.phone,
+      script: buildCampaignOutboundText(campaign, lead, channel),
+      campaignId: campaign.id,
+      record: true,
+      transcription: true,
+      actor: 'Campaign worker',
+    });
+  } else if (channel === 'contract') {
+    delivery = await toolHandlers.sendDocuSign({
+      leadId: lead.leadId,
+      leadName: lead.leadName,
+      address: lead.address,
+      email: lead.email,
+      campaignId: campaign.id,
+      actor: 'Campaign worker',
+    });
+  }
+
+  const live = Boolean(delivery?.telnyx?.live || delivery?.docusign?.live || delivery?.delivery?.live || delivery?.result === 'live');
+  const simulated = Boolean(delivery?.telnyx?.simulated || delivery?.delivery?.live === false || delivery?.docusign?.configured === false);
+  const providerStatus = live && !simulated
+    ? 'sent'
+    : delivery?.blocked
+      ? 'blocked'
+      : delivery?.result === 'provider_missing' || simulated
+        ? 'provider_missing'
+        : delivery?.ok
+          ? 'queued'
+          : 'failed';
+  const nextLead = patchCampaignLead(lead.id, {
+    status: providerStatus,
+    touchIndex: providerStatus === 'sent' || providerStatus === 'queued' ? toNumber(lead.touchIndex, 0) + 1 : toNumber(lead.touchIndex, 0),
+    lastTouchAt: now.toISOString(),
+    metadata: {
+      ...(lead.metadata || {}),
+      lastDelivery: delivery || null,
+    },
+  });
+  const event = recordCampaignEvent({
+    campaignId: campaign.id,
+    campaignLeadId: lead.id,
+    leadId: lead.leadId,
+    eventType: providerStatus === 'provider_missing' ? 'provider_missing' : channel === 'call' ? 'call_attempted' : `${channel}_sent`,
+    channel,
+    provider: campaign.provider || getCampaignProvider(channel),
+    providerStatus,
+    payload: {
+      target: targetLabel,
+      delivery,
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'Campaign worker',
+      category: 'CAMPAIGN',
+      status: providerStatus,
+      text: `Campaign "${campaign.name}" ${providerStatus} for ${targetLabel}.`,
+      target: campaign.id,
+    }),
+  );
+  return {
+    ok: providerStatus === 'sent' || providerStatus === 'queued',
+    result: providerStatus === 'sent' || providerStatus === 'queued' ? 'live' : providerStatus === 'provider_missing' ? 'provider_missing' : 'unavailable',
+    delivery,
+    lead: nextLead || lead,
+    event,
+  };
+}
+
+async function runCampaignScheduler(options = {}) {
+  ensureCampaignCollections();
+  const now = options.now instanceof Date ? options.now : new Date();
+  const dryRun = options.dryRun ?? !(CAMPAIGN_WORKER_ENABLED && CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES);
+  const allowProviderWrites = Boolean(!dryRun && CAMPAIGN_WORKER_ENABLED && (options.confirmProviderWrites || CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES));
+  const limit = Math.max(1, Math.min(250, toNumber(options.limit, CAMPAIGN_WORKER_MAX_STEPS)));
+  const processed = [];
+  const skipped = [];
+
+  for (const campaign of sortNewest(state.campaigns || [])) {
+    if (processed.length >= limit) break;
+    const status = normalizeCampaignStatus(campaign.status);
+    if (status !== 'active') {
+      skipped.push({ campaignId: campaign.id, status, reason: 'Campaign is not active.' });
+      continue;
+    }
+    const dailyCap = getCampaignDailyCap(campaign);
+    const usedToday = countCampaignEventsToday(campaign.id, now);
+    if (usedToday >= dailyCap) {
+      skipped.push({ campaignId: campaign.id, status, reason: `Daily cap reached (${usedToday}/${dailyCap}).` });
+      continue;
+    }
+    const leads = getCampaignLeads(campaign.id).filter((lead) => !isCampaignLeadTerminal(lead));
+    for (const lead of leads) {
+      if (processed.length >= limit) break;
+      if (countCampaignEventsToday(campaign.id, now) >= dailyCap) {
+        skipped.push({ campaignId: campaign.id, leadId: lead.leadId, reason: 'Daily cap reached during run.' });
+        break;
+      }
+      const result = await processCampaignLeadStep(campaign, lead, {
+        now,
+        dryRun,
+        allowProviderWrites,
+      });
+      processed.push({
+        campaignId: campaign.id,
+        campaignName: campaign.name,
+        leadId: lead.leadId || lead.id,
+        leadName: lead.leadName,
+        result: result.result,
+        dryRun: Boolean(result.dryRun),
+        eventId: result.event?.id || '',
+        reason: result.reason || result.verbiage || '',
+      });
+    }
+    const latestCampaign = (state.campaigns || []).find((item) => item.id === campaign.id) || campaign;
+    const campaignPatch = {
+      ...latestCampaign,
+      metrics: calculateCampaignMetrics(latestCampaign),
+      lastWorkerRunAt: now.toISOString(),
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'campaigns', campaignPatch);
+    await persistCampaignRecord(campaignPatch);
+  }
+
+  const run = {
+    id: `campaign-worker-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    status: dryRun ? 'dry-run' : 'complete',
+    result: dryRun ? 'local_view_only' : processed.some((item) => item.result === 'provider_missing') ? 'provider_missing' : 'live',
+    dryRun,
+    allowProviderWrites,
+    processedCount: processed.length,
+    skippedCount: skipped.length,
+    processed,
+    skipped: skipped.slice(0, 40),
+    createdAt: isoNow(),
+    actor: options.actor || 'Campaign worker',
+  };
+  addAdminAudit(state, {
+    id: `audit-${run.id}`,
+    action: 'campaign_worker_run',
+    provider: 'pbk-bridge',
+    actor: run.actor,
+    status: run.status,
+    summary: `Campaign worker ${run.status}: ${processed.length} processed, ${skipped.length} skipped.`,
+    details: run,
+    createdAt: run.createdAt,
+    updatedAt: run.createdAt,
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: run.actor,
+      category: 'CAMPAIGN',
+      status: run.status,
+      text: `Campaign worker ${run.status}: ${processed.length} due step${processed.length === 1 ? '' : 's'} processed.`,
+      target: 'campaign-runner',
+    }),
+  );
+  await persistCampaignWorkerRunRecord(run);
+  await persistState(state);
+  return {
+    ok: true,
+    result: run.result,
+    verbiage: dryRun ? 'Campaign worker dry run complete' : 'Campaign worker run complete',
+    run,
+    state: buildStateSnapshot(),
+  };
+}
+
+function findCampaignByProviderReference(payload = {}) {
+  ensureCampaignCollections();
+  const campaignId = String(payload.campaignId || payload.campaign_id || payload.metadata?.campaignId || payload.data?.campaign_id || '').trim();
+  if (campaignId) {
+    const direct = (state.campaigns || []).find((campaign) => campaign.id === campaignId);
+    if (direct) return direct;
+  }
+  const providerCampaignId = String(
+    payload.providerCampaignId
+      || payload.provider_campaign_id
+      || payload.campaign_id
+      || payload.campaignId
+      || payload.data?.campaign_id
+      || payload.data?.campaignId
+      || '',
+  ).trim();
+  if (!providerCampaignId) return null;
+  return (state.campaigns || []).find((campaign) =>
+    String(campaign.providerCampaignId || '').trim() === providerCampaignId
+    || String(campaign.approvalId || '').trim() === providerCampaignId);
+}
+
+function recordCampaignWebhookFromPayload(provider = '', payload = {}, eventType = '') {
+  const campaign = findCampaignByProviderReference(payload);
+  if (!campaign) return null;
+  const leadId = String(payload.leadId || payload.lead_id || payload.contact?.leadId || payload.contact?.id || payload.data?.lead_id || '').trim();
+  const email = String(payload.email || payload.contact?.email || payload.data?.email || '').trim().toLowerCase();
+  const phone = normalizePhone(payload.phone || payload.to || payload.from || payload.contact?.phone || payload.data?.phone || '');
+  const campaignLead = getCampaignLeads(campaign.id).find((lead) =>
+    (leadId && String(lead.leadId || '') === leadId)
+    || (email && String(lead.email || '').trim().toLowerCase() === email)
+    || (phone && normalizePhone(lead.phone) === phone));
+  const normalizedType = String(eventType || payload.event || payload.type || payload.status || payload.data?.event_type || 'provider_event').toLowerCase();
+  const event = recordCampaignEvent({
+    campaignId: campaign.id,
+    campaignLeadId: campaignLead?.id || '',
+    leadId: campaignLead?.leadId || leadId,
+    eventType: normalizedType,
+    channel: payload.channel || campaign.channel,
+    provider,
+    providerEventId: payload.id || payload.eventId || payload.event_id || payload.data?.id || '',
+    providerStatus: payload.status || payload.data?.status || normalizedType,
+    payload,
+    occurredAt: payload.occurredAt || payload.timestamp || payload.data?.occurred_at || isoNow(),
+  });
+  if (campaignLead) {
+    const status = /reply|open|click|delivered|answered|completed|failed|bounce|unsubscribe|stop|opt_out/.test(normalizedType)
+      ? normalizedType.replace(/[^a-z0-9]+/g, '_')
+      : campaignLead.status;
+    patchCampaignLead(campaignLead.id, {
+      status,
+      lastTouchAt: isoNow(),
+      metadata: {
+        ...(campaignLead.metadata || {}),
+        lastProviderEvent: normalizedType,
+      },
+    });
+  }
+  const updatedCampaign = {
+    ...campaign,
+    metrics: calculateCampaignMetrics(campaign),
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaigns', updatedCampaign);
+  void persistCampaignRecord(updatedCampaign);
+  if (/unsubscribe|stop|opt_out/.test(normalizedType)) {
+    const suppression = {
+      id: `campaign-suppression-${campaign.id}-${campaignLead?.leadId || leadId || email || phone || Date.now()}`,
+      leadId: campaignLead?.leadId || leadId || email || phone || '',
+      email,
+      phone,
+      address: campaignLead?.address || payload.address || payload.contact?.address || '',
+      channel: campaign.channel,
+      reason: normalizedType,
+      source: provider,
+      metadata: { campaignId: campaign.id, eventId: event.id },
+      createdAt: isoNow(),
+    };
+    upsertById(state, 'campaignSuppressions', suppression);
+    void persistCampaignSuppressionRecord(suppression);
+  }
+  return { campaign, campaignLead, event };
+}
+
 function splitLeadName(name = '') {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   return {
@@ -8723,6 +10032,7 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
 
   const execution = {
     id: `campaign-exec-${approval.id || Date.now()}`,
+    campaignId: approval.metadata?.campaignId || '',
     approvalId: approval.id || '',
     result: 'live',
     status: instantlyResult.ok ? 'provider-started' : 'scheduled-with-provider-gaps',
@@ -8740,6 +10050,40 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
     actor: options.actor || approval.actor || 'Approval worker',
   };
   upsertById(state, 'campaignExecutions', execution);
+  await persistCampaignExecutionRecord(execution);
+  const campaignId = approval.metadata?.campaignId || '';
+  if (campaignId) {
+    const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+    if (campaign) {
+      const nextCampaign = {
+        ...campaign,
+        status: instantlyResult.ok ? 'active' : 'provider_missing',
+        approvalStatus: 'approved',
+        pendingAction: '',
+        executionId: execution.id,
+        providerCampaignId: instantlyResult.providerCampaignId || campaign.providerCampaignId || '',
+        metrics: {
+          ...calculateCampaignMetrics(campaign),
+          providerMissingCount: execution.providerMissingCount,
+        },
+        updatedAt: isoNow(),
+      };
+      upsertById(state, 'campaigns', nextCampaign);
+      await persistCampaignRecord(nextCampaign);
+      recordCampaignEvent({
+        campaignId,
+        eventType: 'execution_started',
+        channel: campaign.channel,
+        provider: campaign.provider,
+        providerStatus: instantlyResult.ok ? 'live' : 'provider_missing',
+        payload: {
+          executionId: execution.id,
+          providerCampaignId: instantlyResult.providerCampaignId || '',
+          providerMissingCount: execution.providerMissingCount,
+        },
+      });
+    }
+  }
   addActivity(
     state,
     makeActivity({
@@ -9013,6 +10357,23 @@ function getInstantlyProviderMeta() {
     warmupEndpoint: INSTANTLY_WARMUP_ENABLE_ENDPOINT,
     domainOrderEndpoint: INSTANTLY_DOMAIN_ORDER_ENDPOINT,
     missing: INSTANTLY_API_KEY ? [] : ['PBK_INSTANTLY_API_KEY'],
+  };
+}
+
+function getCampaignWorkerMeta() {
+  const providerWritesReady = Boolean(CAMPAIGN_WORKER_ENABLED && CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES);
+  return {
+    configured: CAMPAIGN_WORKER_ENABLED,
+    ready: providerWritesReady,
+    dryRunDefault: !providerWritesReady,
+    maxStepsPerRun: CAMPAIGN_WORKER_MAX_STEPS,
+    retryProviderMissing: CAMPAIGN_WORKER_RETRY_PROVIDER_MISSING,
+    missing: CAMPAIGN_WORKER_ENABLED
+      ? (CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES ? [] : ['PBK_CAMPAIGN_WORKER_CONFIRM_PROVIDER_WRITES'])
+      : ['PBK_CAMPAIGN_WORKER_ENABLED'],
+    note: providerWritesReady
+      ? 'Campaign runner can perform provider writes when scheduled.'
+      : 'Campaign runner is dry-run/approval-safe until explicitly enabled.',
   };
 }
 
@@ -13071,6 +14432,11 @@ function buildStateSnapshot() {
     documentDeliveries: state.documentDeliveries,
     attachments: state.attachments || [],
     browserResearchJobs: state.browserResearchJobs || [],
+    campaigns: state.campaigns || [],
+    campaignLeads: state.campaignLeads || [],
+    campaignEvents: state.campaignEvents || [],
+    campaignSuppressions: state.campaignSuppressions || [],
+    campaignLeadSources: getCampaignLeadSourceOptions(),
     campaignExecutions: state.campaignExecutions || [],
     promptPatchApplications: state.promptPatchApplications || [],
     recordingRetentionRuns: state.recordingRetentionRuns || [],
@@ -14076,6 +15442,40 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/campaigns/lead-sources') {
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        sources: getCampaignLeadSourceOptions(),
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/campaigns') {
+      const campaigns = queryCampaignRecords(url.searchParams);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        campaigns,
+        leads: state.campaignLeads || [],
+        events: state.campaignEvents || [],
+        sources: getCampaignLeadSourceOptions(),
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/campaigns') {
+      const body = await readBody(request);
+      const result = await createCampaignRecord(body);
+      json(response, result.ok ? 201 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/campaigns/executions') {
       json(response, 200, {
         ok: true,
@@ -14083,6 +15483,116 @@ const server = createServer(async (request, response) => {
         executions: sortNewest(state.campaignExecutions || []),
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    const campaignApprovalMatch = matchPath(pathname, '/api/campaigns/:campaignId/approval');
+    if (campaignApprovalMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await requestCampaignApproval(decodeURIComponent(campaignApprovalMatch.groups.campaignId || ''), body);
+      json(response, result.ok ? 202 : 404, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const campaignActionMatch = matchPath(pathname, '/api/campaigns/:campaignId/actions');
+    if (campaignActionMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await runCampaignAction(decodeURIComponent(campaignActionMatch.groups.campaignId || ''), body);
+      json(response, result.ok ? 202 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const campaignEventsMatch = matchPath(pathname, '/api/campaigns/:campaignId/events');
+    if (campaignEventsMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const campaignId = decodeURIComponent(campaignEventsMatch.groups.campaignId || '');
+      const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+      if (!campaign) {
+        json(response, 404, {
+          ok: false,
+          result: 'unavailable',
+          verbiage: 'Campaign not found',
+          error: 'Cannot attach an event to a missing campaign.',
+        });
+        return;
+      }
+      const event = recordCampaignEvent({
+        ...body,
+        campaignId,
+        channel: body.channel || campaign.channel,
+        provider: body.provider || campaign.provider,
+      });
+      upsertById(state, 'campaigns', {
+        ...campaign,
+        metrics: calculateCampaignMetrics(campaign),
+        updatedAt: isoNow(),
+      });
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || body.provider || 'Campaign provider',
+          category: 'CAMPAIGN',
+          status: body.status || body.eventType || 'event',
+          text: `Campaign "${campaign.name}" received event ${event.eventType}.`,
+          target: campaignId,
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        verbiage: 'Campaign event recorded',
+        event,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const campaignRecordMatch = matchPath(pathname, '/api/campaigns/:campaignId');
+    if (campaignRecordMatch && request.method === 'GET') {
+      const campaignId = decodeURIComponent(campaignRecordMatch.groups.campaignId || '');
+      const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+      json(response, campaign ? 200 : 404, {
+        ok: Boolean(campaign),
+        result: campaign ? 'live' : 'unavailable',
+        verbiage: campaign ? 'Campaign loaded' : 'Campaign not found',
+        campaign: campaign ? {
+          ...campaign,
+          metrics: calculateCampaignMetrics(campaign),
+          leadCount: getCampaignLeads(campaignId).length || campaign.leadCount || 0,
+        } : null,
+        leads: getCampaignLeads(campaignId),
+        events: getCampaignEvents(campaignId),
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (campaignRecordMatch && request.method === 'PATCH') {
+      const body = await readBody(request);
+      const result = await patchCampaignRecord(decodeURIComponent(campaignRecordMatch.groups.campaignId || ''), body);
+      json(response, result.ok ? 200 : 404, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/campaigns/run-due', '/api/workers/campaigns/run-due'])) {
+      const body = await readBody(request);
+      const result = await runCampaignScheduler({
+        dryRun: body.dryRun,
+        confirmProviderWrites: Boolean(body.confirmProviderWrites),
+        limit: body.limit,
+        actor: body.actor || 'Campaign worker',
+      });
+      json(response, 200, result);
       return;
     }
 
@@ -14933,6 +16443,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && pathname === '/api/webhooks/instantly') {
       const body = await readBody(request);
       const eventType = String(body.event || body.type || body.status || '').toLowerCase();
+      const campaignWebhook = recordCampaignWebhookFromPayload('Instantly', body, eventType);
       const context = findLeadContext({
         leadId: body.leadId || body.contact?.leadId,
         leadName: body.name || body.contact?.name,
@@ -14987,6 +16498,7 @@ const server = createServer(async (request, response) => {
       await persistState(state);
       json(response, 200, {
         ok: true,
+        campaignWebhook,
         state: buildStateSnapshot(),
       });
       return;
@@ -15052,10 +16564,15 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && pathname === '/api/webhooks/telnyx') {
       const body = await readBody(request);
       const mapped = mapTelnyxWebhook(body);
+      const campaignWebhook = recordCampaignWebhookFromPayload('Telnyx', {
+        ...body,
+        ...(mapped.payload || {}),
+      }, mapped.eventType);
       const result = await handleEvent(mapped.eventType, mapped.payload);
       json(response, result.ok === false ? 404 : 200, {
         ok: true,
         mappedEvent: mapped.eventType,
+        campaignWebhook,
         result,
         state: buildStateSnapshot(),
       });
@@ -15077,10 +16594,12 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && pathname === '/api/webhooks/docusign') {
       const body = await readBody(request);
       const mapped = mapDocuSignWebhook(body);
+      const campaignWebhook = recordCampaignWebhookFromPayload('DocuSign', body, mapped.eventType);
       const result = await handleEvent(mapped.eventType, mapped.payload);
       json(response, result.ok === false ? 404 : 200, {
         ok: true,
         mappedEvent: mapped.eventType,
+        campaignWebhook,
         result,
         state: buildStateSnapshot(),
       });
@@ -15135,6 +16654,12 @@ const server = createServer(async (request, response) => {
         'POST /api/browser-research/launch',
         'GET/POST /api/browser-research/jobs/:jobId',
         'POST /api/browser-research/complete',
+        'GET/POST/PATCH /api/campaigns',
+        'GET /api/campaigns/lead-sources',
+        'POST /api/campaigns/:campaignId/approval',
+        'POST /api/campaigns/:campaignId/actions',
+        'POST /api/campaigns/:campaignId/events',
+        'POST /api/campaigns/run-due',
         'POST /invoke',
         'POST /events',
         'GET/POST /api/admin/tasks',

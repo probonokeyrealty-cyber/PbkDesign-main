@@ -16,6 +16,8 @@
     "brain:query": "node ./scripts/query-pbk-brain.mjs",
     "brain:export-supermemory": "node ./scripts/export-pbk-brain-supermemory.mjs",
     "brain:harvest": "node ./scripts/harvest-brain-content.mjs",
+    "campaigns:worker": "node ./scripts/campaign-worker.mjs",
+    "campaigns:worker:dry-run": "set PBK_CAMPAIGN_WORKER_DRY_RUN=true&& node ./scripts/campaign-worker.mjs",
     "agent:export-scenario": "node ./scripts/export-meta-agent-scenario.mjs",
     "research:seed-browser-jobs": "node ./scripts/seed-browser-research-jobs.mjs",
     "monitoring:render-config": "node ./scripts/render-monitoring-config.mjs",

@@ -1,0 +1,99 @@
+{
+  "name": "PBK Bridge Keep-Warm",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "keep-warm-every-10",
+      "name": "Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{($env.PBK_BRIDGE_URL || 'http://127.0.0.1:8788').replace(/\\/$/, '') + '/health'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "id": "ping-bridge",
+      "name": "Ping Bridge Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        280
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $json || {};\nreturn [{ json: { ok: !result.error, revision: result.revision || null, stateBackend: result.features?.stateBackend || result.runtime?.stateBackend || null, checkedAt: new Date().toISOString() } }];"
+      },
+      "id": "summarize-keep-warm",
+      "name": "Summarize Keep-Warm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Ping Bridge Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping Bridge Health": {
+      "main": [
+        [
+          {
+            "node": "Summarize Keep-Warm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "pinData": {},
+  "versionId": "pbk-bridge-keep-warm-v1",
+  "meta": {
+    "instanceId": "pbk-local"
+  },
+  "tags": []
+}

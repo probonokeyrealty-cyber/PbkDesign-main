@@ -1,5 +1,5 @@
 {
-  "name": "PBK Uptime Guardian",
+  "name": "PBK Bridge Health Alerts",
   "nodes": [
     {
       "parameters": {
@@ -137,7 +137,7 @@
         "requestMethod": "POST",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"text\":\"PBK Uptime Guardian alert: health failed at \" + $json.checkedAt + \". bridgeOk=\" + $json.bridgeOk + \", netlifyOk=\" + $json.netlifyOk + \". Render restart node is disabled until envs are confirmed.\"}",
+        "jsonBody": "={\"text\":\"PBK Bridge Health Alerts: health failed at \" + $json.checkedAt + \". bridgeOk=\" + $json.bridgeOk + \", netlifyOk=\" + $json.netlifyOk + \". Render restart node is disabled until envs are confirmed.\"}",
         "options": {
           "timeout": 8000
         }

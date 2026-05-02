@@ -1,0 +1,130 @@
+{
+  "name": "PBK Calendar Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pbk-calendar-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "calendar-sync-webhook",
+      "name": "Calendar Sync Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json;\nconst source = input.body ?? input;\nconst appointment = {\n  eventType: 'calendar-sync',\n  payload: {\n    id: source.id || `calendar-${Date.now()}`,\n    leadId: source.leadId || '',\n    leadName: source.leadName || source.name || 'Unknown seller',\n    address: source.address || source.propertyAddress || '',\n    startsAt: source.startsAt || source.start || source.startTime || new Date().toISOString(),\n    endsAt: source.endsAt || source.end || source.endTime || '',\n    timezone: source.timezone || 'America/New_York',\n    source: source.source || 'n8n-calendar-sync',\n    notes: source.notes || ''\n  }\n};\nreturn [{ json: { appointment } }];"
+      },
+      "id": "normalize-calendar-event",
+      "name": "Normalize Calendar Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.PBK_BRIDGE_URL || 'http://127.0.0.1:8788').replace(/\\/$/, '') + '/events'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{$json.appointment}}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "push-calendar-event",
+      "name": "Push Calendar Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        300
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: !$json.error, message: 'Calendar sync accepted by PBK bridge', bridge: $json } }}"
+      },
+      "id": "respond-calendar-sync",
+      "name": "Respond Calendar Sync",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Calendar Sync Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Push Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Respond Calendar Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "pinData": {},
+  "versionId": "pbk-calendar-sync-v1",
+  "meta": {
+    "instanceId": "pbk-local"
+  },
+  "tags": []
+}

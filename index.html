@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
 <title>PBK Wholesale Paradise — Command Center</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2306080B'/%3E%3Cpath d='M14 42V16h21c8 0 13 5 13 12s-5 12-13 12H25v2H14zm11-12h9c2 0 4-1 4-3s-2-3-4-3h-9v6z' fill='%237DD3FC'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://pbk-openclaw-bridge.onrender.com" crossorigin>
@@ -832,6 +832,11 @@
       <span class="rail-badge sky">3</span>
       <span class="rail-tooltip">AI Agent Console</span>
     </div>
+    <div class="rail-item" data-page="fleet">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/><path d="M10 7h4M7 10v4M17 10v4M10 17h4"/></svg>
+      <span class="rail-badge amber">5</span>
+      <span class="rail-tooltip">Agent Fleet</span>
+    </div>
     <div class="rail-item" data-page="calls">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
       <span class="rail-tooltip">Live Calls</span>
@@ -852,6 +857,12 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v1a3 3 0 0 0-3 3v2a3 3 0 0 0 1 2.24V17a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-2.76A3 3 0 0 0 19 12v-2a3 3 0 0 0-3-3V6a4 4 0 0 0-4-4z"/><path d="M12 8v13M9 11h6M9 14h6"/></svg>
       <span class="rail-badge sky">3</span>
       <span class="rail-tooltip">The Brain — Research</span>
+    </div>
+
+    <div class="rail-item" data-page="memory">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7"/><path d="M4.9 4.9l5 5M14.1 14.1l5 5M19.1 4.9l-5 5M9.9 14.1l-5 5"/></svg>
+      <span class="rail-badge sky">+</span>
+      <span class="rail-tooltip">Memory & Analytics</span>
     </div>
 
     <div class="rail-item" data-page="campaigns">
@@ -3510,6 +3521,7 @@
           </div>
         </div>
         <div style="display: flex; gap: var(--s-2);">
+          <button class="chip-btn" onclick="window.showPage('fleet')">Agent Fleet</button>
           <button class="chip-btn">Edit prompt</button>
           <button class="chip-btn">View logs</button>
           <button class="chip-btn active">Active</button>
@@ -3639,7 +3651,192 @@
 </section>
 
 <!-- ======================================================
-     PAGE 6 — LIVE CALLS (multi-call terminal grid)
+     PAGE 5B - AGENT FLEET COMMAND CENTER
+     ====================================================== -->
+<section class="page" data-page="fleet">
+  <style>
+    .fleet-page { padding: var(--s-6); display: flex; flex-direction: column; gap: var(--s-5); }
+    .fleet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-4); flex-wrap: wrap; }
+    .fleet-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+    .fleet-shell { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, .85fr); gap: var(--s-5); align-items: start; }
+    .fleet-left { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+    .fleet-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
+    .fleet-stat { border: 1px solid var(--border-dim); background: var(--bg-panel); border-radius: var(--radius-lg); padding: var(--s-4); min-width: 0; }
+    .fleet-stat .k { font: 10px/1.2 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 6px; }
+    .fleet-stat .v { font-family: var(--font-display); font-size: 26px; line-height: 1; letter-spacing: -.03em; }
+    .fleet-stat .m { font: 11px/1.4 var(--font-mono); color: var(--text-tertiary); margin-top: 6px; overflow-wrap: anywhere; }
+    .fleet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--s-4); }
+    .fleet-card { border: 1px solid var(--border-dim); background: linear-gradient(180deg, var(--bg-panel), rgba(8, 14, 24, .86)); border-radius: var(--radius-xl); padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); cursor: pointer; transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; min-width: 0; }
+    .fleet-card:hover { border-color: var(--border-bright); transform: translateY(-1px); }
+    .fleet-card.selected { border-color: var(--sky-dim); box-shadow: 0 0 0 1px var(--sky-dim), 0 22px 60px rgba(41, 197, 255, .08); }
+    .fleet-card-head { display: flex; align-items: center; gap: var(--s-3); min-width: 0; }
+    .fleet-avatar { width: 52px; height: 52px; border-radius: 18px; background: linear-gradient(135deg, var(--sky), var(--ion)); display: grid; place-items: center; color: var(--bg-void); font: italic 800 28px/1 var(--font-display); position: relative; flex: 0 0 auto; }
+    .fleet-avatar.amber { background: linear-gradient(135deg, var(--amber), #ff7a3d); }
+    .fleet-avatar.purple { background: linear-gradient(135deg, #b692ff, var(--sky)); }
+    .fleet-avatar.lime { background: linear-gradient(135deg, var(--lime), var(--sky)); }
+    .fleet-avatar.gray { background: linear-gradient(135deg, #94a3b8, #475569); }
+    .fleet-dot { position: absolute; right: -2px; bottom: -2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-tertiary); border: 3px solid var(--bg-panel); }
+    .fleet-dot.on_call { background: var(--rose); box-shadow: 0 0 12px var(--rose); animation: pulse 1.7s ease-in-out infinite; }
+    .fleet-dot.learning { background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+    .fleet-dot.running_campaign { background: var(--lime); box-shadow: 0 0 12px var(--lime); }
+    .fleet-dot.building { background: var(--sky); box-shadow: 0 0 12px var(--sky); }
+    .fleet-title { min-width: 0; flex: 1; }
+    .fleet-title strong { display: block; font-size: 17px; color: var(--text-primary); overflow-wrap: anywhere; }
+    .fleet-title span { display: block; font: 11px/1.5 var(--font-mono); color: var(--text-tertiary); overflow-wrap: anywhere; }
+    .fleet-env { font: 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .12em; color: var(--sky); border: 1px solid var(--sky-dim); background: var(--sky-glow); border-radius: 999px; padding: 6px 8px; flex: 0 0 auto; }
+    .fleet-activity { color: var(--text-secondary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+    .fleet-progress { height: 7px; border-radius: 999px; background: var(--bg-void); border: 1px solid var(--border-dim); overflow: hidden; }
+    .fleet-progress span { display: block; height: 100%; width: var(--p, 50%); background: linear-gradient(90deg, var(--sky), var(--lime)); }
+    .fleet-skill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fleet-skill { border: 1px solid var(--border-dim); background: rgba(255,255,255,.03); color: var(--text-secondary); border-radius: 999px; padding: 5px 8px; font: 10px/1.2 var(--font-mono); }
+    .fleet-skill.proven { color: var(--lime); border-color: var(--lime-glow); background: var(--lime-glow); }
+    .fleet-skill.evolving { color: var(--amber); border-color: var(--amber-glow); background: var(--amber-glow); }
+    .fleet-card-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .fleet-card-actions .chip-btn { min-height: 36px; justify-content: center; }
+    .fleet-detail { position: sticky; top: var(--s-5); border: 1px solid var(--border-dim); background: var(--bg-panel); border-radius: var(--radius-xl); overflow: hidden; min-width: 0; }
+    .fleet-detail-head { padding: var(--s-5); border-bottom: 1px solid var(--border-dim); background: radial-gradient(circle at top left, var(--sky-glow), transparent 38%); display: flex; gap: var(--s-3); align-items: center; }
+    .fleet-detail-head .fleet-avatar { width: 60px; height: 60px; font-size: 32px; }
+    .fleet-detail-title { min-width: 0; flex: 1; }
+    .fleet-detail-title h3 { font-family: var(--font-display); font-weight: 400; font-size: 28px; line-height: 1; margin: 0 0 6px; }
+    .fleet-detail-title p { margin: 0; font: 11px/1.5 var(--font-mono); color: var(--text-tertiary); overflow-wrap: anywhere; }
+    .fleet-badges { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 var(--s-5) var(--s-4); border-bottom: 1px solid var(--border-dim); }
+    .fleet-badge { border: 1px solid var(--border-dim); background: rgba(255,255,255,.03); border-radius: 999px; padding: 6px 9px; font: 10px/1 var(--font-mono); color: var(--text-secondary); }
+    .fleet-tabs { display: flex; border-bottom: 1px solid var(--border-dim); overflow-x: auto; }
+    .fleet-tab { appearance: none; border: 0; background: transparent; color: var(--text-tertiary); padding: 12px 14px; font: 11px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; cursor: pointer; border-bottom: 2px solid transparent; }
+    .fleet-tab.active { color: var(--sky); border-bottom-color: var(--sky); background: var(--sky-glow); }
+    .fleet-pane { display: none; padding: var(--s-5); max-height: min(62dvh, 720px); overflow: auto; }
+    .fleet-pane.active { display: block; }
+    .fleet-stream { display: flex; flex-direction: column; gap: 8px; }
+    .fleet-line { display: grid; grid-template-columns: 58px 86px 1fr; gap: 8px; align-items: baseline; font: 11px/1.5 var(--font-mono); border: 1px solid var(--border-dim); background: rgba(255,255,255,.025); border-radius: var(--radius-md); padding: 9px; }
+    .fleet-line .time { color: var(--text-tertiary); }
+    .fleet-line .kind { color: var(--sky); text-transform: uppercase; letter-spacing: .1em; }
+    .fleet-line .copy { color: var(--text-secondary); overflow-wrap: anywhere; }
+    .fleet-skill-card, .fleet-knowledge-card, .fleet-tool-row { border: 1px solid var(--border-dim); background: rgba(255,255,255,.025); border-radius: var(--radius-lg); padding: var(--s-3); margin-bottom: var(--s-3); }
+    .fleet-skill-card h4, .fleet-knowledge-card h4 { font-size: 14px; margin: 0 0 6px; color: var(--text-primary); }
+    .fleet-skill-card p, .fleet-knowledge-card p { color: var(--text-tertiary); font-size: 12px; line-height: 1.6; margin: 0 0 10px; overflow-wrap: anywhere; }
+    .fleet-skill-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+    .fleet-tool-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; font: 12px/1.4 var(--font-mono); }
+    .fleet-modal-backdrop { display: none; position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.62); backdrop-filter: blur(10px); padding: var(--s-5); align-items: center; justify-content: center; }
+    .fleet-modal-backdrop.open { display: flex; }
+    .fleet-modal { width: min(780px, 100%); max-height: min(88dvh, 820px); overflow: auto; border: 1px solid var(--border-bright); border-radius: var(--radius-xl); background: var(--bg-panel); box-shadow: var(--shadow-xl); }
+    .fleet-modal-head { padding: var(--s-5); border-bottom: 1px solid var(--border-dim); display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
+    .fleet-modal-body { padding: var(--s-5); display: grid; gap: var(--s-4); }
+    .fleet-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+    .fleet-field { display: flex; flex-direction: column; gap: 6px; }
+    .fleet-field.full { grid-column: 1 / -1; }
+    .fleet-field label { font: 10px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-tertiary); }
+    .fleet-field input, .fleet-field select, .fleet-field textarea { min-height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-void); color: var(--text-primary); padding: 10px 12px; font: 13px/1.4 var(--font-body); }
+    .fleet-field textarea { min-height: 112px; resize: vertical; }
+    .fleet-modal-foot { padding: var(--s-5); border-top: 1px solid var(--border-dim); display: flex; gap: var(--s-2); justify-content: flex-end; flex-wrap: wrap; }
+    .fleet-mini-input { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s-3); }
+    .fleet-mini-input input { flex: 1 1 260px; min-height: 40px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-void); color: var(--text-primary); padding: 9px 11px; }
+    @media (max-width: 1180px) { .fleet-shell { grid-template-columns: 1fr; } .fleet-detail { position: static; } .fleet-pane { max-height: none; } }
+    @media (max-width: 720px) {
+      .fleet-page { padding: var(--s-4) var(--s-3) calc(84px + env(safe-area-inset-bottom)); }
+      .fleet-head .page-head { width: 100%; min-width: 0; }
+      .fleet-actions { width: 100%; display: grid; grid-template-columns: 1fr; }
+      .fleet-actions .btn { width: 100%; min-height: 44px; justify-content: center; }
+      .fleet-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .fleet-grid { grid-template-columns: 1fr; }
+      .fleet-card-actions { grid-template-columns: 1fr; }
+      .fleet-card-actions .chip-btn { min-height: 44px; }
+      .fleet-line { grid-template-columns: 1fr; gap: 3px; }
+      .fleet-form-grid { grid-template-columns: 1fr; }
+      .fleet-modal-backdrop { align-items: stretch; padding: 0; }
+      .fleet-modal { width: 100%; max-height: 100dvh; border-radius: 0; border-left: 0; border-right: 0; padding-bottom: env(safe-area-inset-bottom); }
+    }
+  </style>
+
+  <div class="fleet-page">
+    <div class="fleet-head">
+      <div class="page-head">
+        <div class="ph-tag" id="fleetTag">Agent Fleet - 3 active - 1 building - skills self-evolving</div>
+        <h2>The <em>agent fleet</em>.</h2>
+        <p>Every AI closer, researcher, and campaign operator in one place. Agents can earn skills from research, call outcomes, analytics, and approved programming changes, then pass proven skills to the next agent.</p>
+      </div>
+      <div class="fleet-actions">
+        <button class="btn btn-ghost" id="fleetSkillsLibBtn">Skills library</button>
+        <button class="btn btn-ghost" id="fleetKnowledgeBtn">Knowledge sources</button>
+        <button class="btn btn-primary" id="deployAgentBtn">+ Deploy new agent</button>
+      </div>
+    </div>
+
+    <div class="fleet-shell">
+      <div class="fleet-left">
+        <div class="fleet-stats" id="fleetStats"></div>
+        <div class="fleet-grid" id="fleetAgentGrid" aria-live="polite"></div>
+      </div>
+
+      <aside class="fleet-detail" id="fleetDetail" aria-live="polite">
+        <div class="fleet-detail-head">
+          <div class="fleet-avatar" id="fleetDetailAvatar">A<span class="fleet-dot on_call"></span></div>
+          <div class="fleet-detail-title">
+            <h3 id="fleetDetailName">Ava</h3>
+            <p id="fleetDetailMeta">v2.1 - production - acquisitions</p>
+          </div>
+        </div>
+        <div class="fleet-badges" id="fleetDetailBadges"></div>
+        <div class="fleet-tabs" role="tablist" aria-label="Agent detail tabs">
+          <button class="fleet-tab active" data-fleet-tab="stream" type="button">Thought stream</button>
+          <button class="fleet-tab" data-fleet-tab="call" type="button">Active call</button>
+          <button class="fleet-tab" data-fleet-tab="skills" type="button">Skills</button>
+          <button class="fleet-tab" data-fleet-tab="knowledge" type="button">Knowledge</button>
+          <button class="fleet-tab" data-fleet-tab="tools" type="button">Tools</button>
+        </div>
+        <div class="fleet-pane active" data-fleet-pane="stream" id="fleetPaneStream"></div>
+        <div class="fleet-pane" data-fleet-pane="call" id="fleetPaneCall"></div>
+        <div class="fleet-pane" data-fleet-pane="skills" id="fleetPaneSkills"></div>
+        <div class="fleet-pane" data-fleet-pane="knowledge" id="fleetPaneKnowledge"></div>
+        <div class="fleet-pane" data-fleet-pane="tools" id="fleetPaneTools"></div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="fleet-modal-backdrop" id="fleetSkillsModal" role="dialog" aria-modal="true" aria-label="Agent skills library">
+    <div class="fleet-modal">
+      <div class="fleet-modal-head">
+        <div>
+          <div class="ph-tag">Fleet skills library</div>
+          <h3>Skills that agents can earn, prove, and transfer.</h3>
+          <p class="note">Candidate skills come from Rex research and analytics. Proven skills need outcome evidence before they can be passed to another agent.</p>
+        </div>
+        <button class="btn btn-ghost" data-fleet-close type="button">Close</button>
+      </div>
+      <div class="fleet-modal-body" id="fleetSkillsLibraryBody"></div>
+    </div>
+  </div>
+
+  <div class="fleet-modal-backdrop" id="fleetDeployModal" role="dialog" aria-modal="true" aria-label="Deploy new agent">
+    <form class="fleet-modal" id="fleetDeployForm">
+      <div class="fleet-modal-head">
+        <div>
+          <div class="ph-tag">Deploy new agent</div>
+          <h3>Clone Ava's blueprint, then let the agent earn their own edge.</h3>
+          <p class="note">Deployment requests are approval-gated. PBK will not spin up a production agent without a recorded approval.</p>
+        </div>
+        <button class="btn btn-ghost" data-fleet-close type="button">Close</button>
+      </div>
+      <div class="fleet-modal-body">
+        <div class="fleet-form-grid">
+          <div class="fleet-field"><label for="fleetNewName">Name</label><input id="fleetNewName" name="name" required placeholder="Nora"></div>
+          <div class="fleet-field"><label for="fleetNewRole">Role</label><select id="fleetNewRole" name="role"><option>Acquisitions</option><option>Closer</option><option>Research</option><option>SMS Nurture</option><option>Spanish Acquisitions</option></select></div>
+          <div class="fleet-field"><label for="fleetNewHometown">Hometown</label><input id="fleetNewHometown" name="hometown" placeholder="Akron, OH"></div>
+          <div class="fleet-field"><label for="fleetNewStyle">Negotiation style</label><select id="fleetNewStyle" name="style"><option>Empathetic</option><option>Direct</option><option>Analytical</option><option>Story-driven</option></select></div>
+          <div class="fleet-field"><label for="fleetNewTarget">Target</label><select id="fleetNewTarget" name="target"><option>local</option><option>production</option></select></div>
+          <div class="fleet-field"><label for="fleetNewBase">Skill inheritance</label><select id="fleetNewBase" name="base"><option>Ava blueprint - proven skills only</option><option>Max closer package</option><option>Rex research package</option><option>Blank generalist</option></select></div>
+          <div class="fleet-field full"><label for="fleetNewStory">Backstory and city connection</label><textarea id="fleetNewStory" name="story" placeholder="Grew up around tired landlords, knows local probate stress, and tells short honest stories that help sellers feel understood."></textarea></div>
+        </div>
+      </div>
+      <div class="fleet-modal-foot">
+        <button class="btn btn-ghost" data-fleet-close type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Request deployment approval</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+<!-- ======================================================
+     PAGE 6 - LIVE CALLS (multi-call terminal grid)
      ====================================================== -->
 <section class="page" data-page="calls">
   <style>
@@ -6807,6 +7004,238 @@
      PAGE 11 — SETTINGS / GUARDRAILS
      ====================================================== -->
 <!-- ======================================================
+     PAGE - MEMORY & ANALYTICS
+     ====================================================== -->
+<section class="page" data-page="memory">
+  <style>
+    [data-page="memory"] .memory-ribbon {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin: var(--s-5) var(--s-6) 0;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg);
+      background: var(--border-dim);
+      overflow: hidden;
+    }
+    [data-page="memory"] .memory-stat { min-width: 0; padding: var(--s-4) var(--s-5); background: var(--bg-panel); }
+    [data-page="memory"] .memory-stat-label { margin-bottom: 7px; font: 9px/1.2 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text-tertiary); }
+    [data-page="memory"] .memory-stat-value { margin-bottom: 5px; font: 500 28px/1 var(--font-mono); color: var(--text-primary); letter-spacing: -.03em; }
+    [data-page="memory"] .memory-stat-value.sky { color: var(--sky); }
+    [data-page="memory"] .memory-stat-value.lime { color: var(--lime); }
+    [data-page="memory"] .memory-stat-delta { font: 10px/1.45 var(--font-mono); color: var(--text-tertiary); overflow-wrap: anywhere; }
+    [data-page="memory"] .memory-stat-delta.up { color: var(--lime); }
+    [data-page="memory"] .memory-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-4); padding: var(--s-5) var(--s-6) var(--s-6); }
+    [data-page="memory"] .memory-card { min-width: 0; overflow: hidden; border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: var(--bg-panel); }
+    [data-page="memory"] .memory-card-head { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border-dim); background: var(--bg-console); }
+    [data-page="memory"] .memory-card-head h3 { flex: 1; margin: 0; font: 11px/1.25 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text-tertiary); overflow-wrap: anywhere; }
+    [data-page="memory"] .memory-card-action { border: 0; background: transparent; color: var(--sky); cursor: pointer; font: 10px/1 var(--font-mono); letter-spacing: .08em; white-space: nowrap; }
+    [data-page="memory"] .memory-card-action:hover { color: var(--text-primary); }
+    [data-page="memory"] .memory-card-body { padding: var(--s-4); }
+    [data-page="memory"] .memory-chart { display: block; width: 100%; height: auto; min-height: 180px; }
+    [data-page="memory"] .memory-chart .grid line { stroke: var(--border-dim); stroke-dasharray: 2 4; }
+    [data-page="memory"] .memory-chart .axis text { fill: var(--text-tertiary); font: 9px var(--font-mono); letter-spacing: .08em; }
+    [data-page="memory"] .memory-chart .area { fill: var(--sky-glow); }
+    [data-page="memory"] .memory-chart .line { fill: none; stroke: var(--sky); stroke-width: 2; }
+    [data-page="memory"] .memory-chart .dot { fill: var(--sky); }
+    [data-page="memory"] .memory-chart .bar { fill: var(--sky); transition: opacity .16s ease; }
+    [data-page="memory"] .memory-chart .bar:hover { opacity: .72; }
+    [data-page="memory"] .memory-chart .bar.amber { fill: var(--amber); }
+    [data-page="memory"] .memory-chart .bar.lime { fill: var(--lime); }
+    [data-page="memory"] .memory-chart-meta { display: flex; justify-content: space-between; gap: var(--s-3); margin-top: var(--s-3); font: 11px/1.45 var(--font-mono); color: var(--text-tertiary); flex-wrap: wrap; }
+    [data-page="memory"] .memory-chart-meta strong { color: var(--text-primary); }
+    [data-page="memory"] .memory-legend { display: flex; flex-wrap: wrap; gap: var(--s-3); margin-top: var(--s-3); font: 10px/1.2 var(--font-mono); letter-spacing: .06em; color: var(--text-tertiary); }
+    [data-page="memory"] .memory-legend i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border-radius: 2px; vertical-align: middle; background: var(--sky); }
+    [data-page="memory"] .memory-legend i.amber { background: var(--amber); }
+    [data-page="memory"] .memory-legend i.lime { background: var(--lime); }
+    [data-page="memory"] .memory-timeline { position: relative; max-height: 486px; overflow: auto; padding-left: 24px; padding-right: 4px; }
+    [data-page="memory"] .memory-timeline::before { content: ""; position: absolute; left: 8px; top: 6px; bottom: 6px; width: 1px; background: var(--border-dim); }
+    [data-page="memory"] .memory-timeline-item { position: relative; display: block; width: 100%; padding: 8px 0 12px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: 11px/1.5 var(--font-mono); }
+    [data-page="memory"] .memory-timeline-item::before { content: ""; position: absolute; left: -20px; top: 13px; width: 8px; height: 8px; border: 2px solid var(--bg-panel); border-radius: 50%; background: var(--sky); }
+    [data-page="memory"] .memory-timeline-item.lime::before { background: var(--lime); }
+    [data-page="memory"] .memory-timeline-item.amber::before { background: var(--amber); }
+    [data-page="memory"] .memory-timeline-item.crimson::before { background: var(--crimson); }
+    [data-page="memory"] .memory-timeline-item.magenta::before { background: var(--magenta); }
+    [data-page="memory"] .memory-timeline-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+    [data-page="memory"] .memory-timeline-actor { color: var(--text-primary); font-weight: 700; font-size: 12px; }
+    [data-page="memory"] .memory-verb { padding: 2px 7px; border-radius: 4px; font-size: 8px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; background: var(--sky-glow); color: var(--sky); }
+    [data-page="memory"] .memory-verb.promote { background: rgba(163, 230, 53, .12); color: var(--lime); }
+    [data-page="memory"] .memory-verb.transfer { background: rgba(125, 211, 252, .12); color: var(--sky); }
+    [data-page="memory"] .memory-verb.ab { background: rgba(232, 121, 249, .12); color: var(--magenta); }
+    [data-page="memory"] .memory-verb.deploy { background: rgba(56, 189, 248, .12); color: var(--ion); }
+    [data-page="memory"] .memory-verb.discover { background: rgba(251, 191, 36, .12); color: var(--amber); }
+    [data-page="memory"] .memory-verb.retire { background: rgba(248, 113, 113, .12); color: var(--crimson); }
+    [data-page="memory"] .memory-verb.pause { background: var(--bg-hover); color: var(--text-tertiary); }
+    [data-page="memory"] .memory-time { margin-left: auto; color: var(--text-ghost); font-size: 9px; letter-spacing: .08em; white-space: nowrap; }
+    [data-page="memory"] .memory-desc { color: var(--text-secondary); overflow-wrap: anywhere; }
+    [data-page="memory"] .memory-desc strong { color: var(--text-primary); }
+    [data-page="memory"] .memory-outcome { display: inline-block; margin-top: 5px; padding: 4px 8px; border-radius: 4px; background: var(--bg-void); color: var(--text-tertiary); font-size: 10px; }
+    [data-page="memory"] .memory-outcome.win { color: var(--lime); }
+    [data-page="memory"] .memory-outcome.loss { color: var(--crimson); }
+    [data-page="memory"] .memory-skill-row { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 88px auto; gap: var(--s-2); align-items: center; padding: 10px 0; border-bottom: 1px dashed var(--border-dim); }
+    [data-page="memory"] .memory-skill-row:last-child { border-bottom: 0; }
+    [data-page="memory"] .memory-skill-name { min-width: 0; font: 600 13px/1.35 var(--font-ui); color: var(--text-primary); overflow-wrap: anywhere; }
+    [data-page="memory"] .memory-skill-source { display: block; margin-top: 2px; font: 9px/1.2 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-tertiary); }
+    [data-page="memory"] .memory-skill-num { text-align: right; font: 12px/1 var(--font-mono); color: var(--text-secondary); }
+    [data-page="memory"] .memory-skill-num.good { color: var(--lime); }
+    [data-page="memory"] .memory-skill-num.warn { color: var(--amber); }
+    [data-page="memory"] .memory-skill-bar { height: 5px; overflow: hidden; border-radius: 99px; background: var(--bg-void); }
+    [data-page="memory"] .memory-skill-bar span { display: block; height: 100%; width: var(--w, 50%); border-radius: inherit; background: linear-gradient(90deg, var(--sky-deep), var(--sky)); }
+    [data-page="memory"] .memory-skill-bar span.lime { background: linear-gradient(90deg, var(--lime), var(--sky)); }
+    [data-page="memory"] .memory-skill-bar span.amber { background: linear-gradient(90deg, var(--crimson), var(--amber)); }
+    [data-page="memory"] .memory-skill-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+    [data-page="memory"] .memory-mini-btn { min-height: 30px; padding: 0 9px; border: 1px solid var(--border-dim); border-radius: 999px; background: var(--bg-void); color: var(--text-secondary); cursor: pointer; font: 10px/1 var(--font-mono); letter-spacing: .04em; }
+    [data-page="memory"] .memory-mini-btn:hover { border-color: var(--sky-dim); color: var(--sky); background: var(--sky-glow); }
+    [data-page="memory"] .memory-tag-copy { margin: 0 0 var(--s-3); color: var(--text-tertiary); font: 10px/1.6 var(--font-mono); letter-spacing: .06em; }
+    [data-page="memory"] .memory-tag-cloud { display: flex; flex-wrap: wrap; gap: 7px; }
+    [data-page="memory"] .memory-tag-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 10px; border: 1px solid var(--border-dim); border-radius: 999px; background: var(--bg-void); color: var(--text-secondary); cursor: pointer; font: 10px/1.2 var(--font-mono); letter-spacing: .04em; }
+    [data-page="memory"] .memory-tag-chip.active, [data-page="memory"] .memory-tag-chip:hover { border-color: var(--sky-dim); background: var(--sky-glow); color: var(--sky); }
+    [data-page="memory"] .memory-tag-chip .count { color: var(--sky); font-weight: 800; }
+    [data-page="memory"] .memory-note { margin-top: var(--s-4); padding: var(--s-3); border: 1px solid var(--border-dim); border-radius: var(--radius); background: var(--bg-void); color: var(--text-secondary); font: 11px/1.65 var(--font-mono); }
+    [data-page="memory"] .memory-note-title { margin-bottom: 7px; color: var(--text-tertiary); font: 10px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+    [data-page="memory"] .memory-note strong { color: var(--sky); }
+    [data-page="memory"] .memory-outcomes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s-3); }
+    [data-page="memory"] .memory-outcome-card { display: block; width: 100%; padding: var(--s-3); border: 1px solid var(--border-dim); border-radius: var(--radius); background: var(--bg-void); color: inherit; text-align: left; cursor: pointer; transition: border-color .16s ease, transform .16s ease, background .16s ease; }
+    [data-page="memory"] .memory-outcome-card:hover { transform: translateY(-1px); border-color: var(--sky-dim); background: var(--sky-glow); }
+    [data-page="memory"] .memory-outcome-card.total { border-color: var(--sky-dim); background: var(--sky-glow); }
+    [data-page="memory"] .memory-agent-head { display: flex; align-items: center; gap: 9px; margin-bottom: var(--s-2); }
+    [data-page="memory"] .memory-agent-avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: 0 0 auto; background: linear-gradient(135deg, var(--sky), var(--ion)); color: var(--bg-void); font: italic 800 14px/1 var(--font-display); }
+    [data-page="memory"] .memory-agent-avatar.amber { background: linear-gradient(135deg, var(--amber), var(--crimson)); }
+    [data-page="memory"] .memory-agent-avatar.purple { background: linear-gradient(135deg, var(--magenta), var(--sky-deep)); }
+    [data-page="memory"] .memory-agent-avatar.lime { background: linear-gradient(135deg, var(--lime), var(--sky)); }
+    [data-page="memory"] .memory-agent-avatar.gray { background: linear-gradient(135deg, var(--text-tertiary), var(--text-ghost)); }
+    [data-page="memory"] .memory-agent-name { display: block; color: var(--text-primary); font-weight: 700; font-size: 13px; }
+    [data-page="memory"] .memory-agent-role { display: block; color: var(--text-tertiary); font: 9px/1.35 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+    [data-page="memory"] .memory-agent-stat { display: flex; justify-content: space-between; gap: var(--s-2); padding: 5px 0; border-bottom: 1px dashed var(--border-dim); font: 11px/1.3 var(--font-mono); }
+    [data-page="memory"] .memory-agent-stat:last-child { border-bottom: 0; }
+    [data-page="memory"] .memory-agent-stat span:first-child { color: var(--text-tertiary); }
+    [data-page="memory"] .memory-agent-stat span:last-child { color: var(--text-primary); font-weight: 700; }
+    [data-page="memory"] .memory-agent-stat .lime { color: var(--lime); }
+    [data-page="memory"] .memory-agent-stat .amber { color: var(--amber); }
+    [data-page="memory"] .memory-info-callout { grid-column: 1 / -1; padding: var(--s-4); border: 1px solid var(--sky-dim); border-radius: var(--radius); background: var(--sky-glow); color: var(--text-secondary); font: 11px/1.65 var(--font-mono); overflow-wrap: anywhere; }
+    [data-page="memory"] .memory-info-callout strong { color: var(--sky); }
+    [data-page="memory"] .memory-info-callout code { color: var(--magenta); }
+    @media (max-width: 1100px) { [data-page="memory"] .memory-body { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) {
+      [data-page="memory"] .page-head-actions { display: grid; grid-template-columns: 1fr; width: 100%; }
+      [data-page="memory"] .page-head-actions .btn, [data-page="memory"] .page-head-actions .filter-dd { width: 100%; min-height: 44px; justify-content: center; }
+      [data-page="memory"] .memory-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: var(--s-4) var(--s-3) 0; }
+      [data-page="memory"] .memory-stat { padding: var(--s-3); }
+      [data-page="memory"] .memory-stat-value { font-size: 23px; }
+      [data-page="memory"] .memory-body { padding: var(--s-4) var(--s-3) calc(92px + env(safe-area-inset-bottom)); gap: var(--s-3); }
+      [data-page="memory"] .memory-card-head { align-items: flex-start; flex-wrap: wrap; }
+      [data-page="memory"] .memory-chart { min-height: 168px; }
+      [data-page="memory"] .memory-timeline-head { display: grid; grid-template-columns: auto auto; }
+      [data-page="memory"] .memory-time { grid-column: 1 / -1; margin-left: 0; }
+      [data-page="memory"] .memory-skill-row { grid-template-columns: 1fr; gap: 7px; }
+      [data-page="memory"] .memory-skill-num { text-align: left; }
+      [data-page="memory"] .memory-skill-actions { justify-content: stretch; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      [data-page="memory"] .memory-mini-btn { min-height: 40px; }
+      [data-page="memory"] .memory-outcomes-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 380px) { [data-page="memory"] .memory-ribbon { grid-template-columns: 1fr; } [data-page="memory"] .memory-skill-actions { grid-template-columns: 1fr; } }
+  </style>
+
+  <div class="page-head">
+    <div class="page-head-left">
+      <div class="ph-tag" data-memory-summary-tag>Self-modifying memory - 4,217 vectors - 218 active skills - 47 agent decisions / 7d</div>
+      <h2>Memory &amp; <em>analytics</em>.</h2>
+      <p>Every decision, skill outcome, and memory update across your fleet. <strong>Rex</strong> learns from each call, promotes what works, and retires what does not. This is the audit trail of the system getting smarter.</p>
+    </div>
+    <div class="page-head-actions">
+      <button class="filter-dd" type="button" data-memory-cycle="range">Range: 7 days<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+      <button class="filter-dd" type="button" data-memory-cycle="agent">Agent: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+      <button class="btn btn-ghost" type="button" data-memory-action="refresh">Refresh live</button>
+      <button class="btn btn-ghost" type="button" data-memory-action="export">Export CSV</button>
+      <button class="btn btn-primary" type="button" data-memory-action="store">Memory store -></button>
+    </div>
+  </div>
+
+  <div class="memory-ribbon" aria-label="Memory stats">
+    <div class="memory-stat"><div class="memory-stat-label">Memories stored</div><div class="memory-stat-value sky" data-memory-stat-value="total">4,217</div><div class="memory-stat-delta up" data-memory-stat-delta="total">+147 last 7d</div></div>
+    <div class="memory-stat"><div class="memory-stat-label">Vector queries / day</div><div class="memory-stat-value" data-memory-stat-value="queries">619</div><div class="memory-stat-delta up" data-memory-stat-delta="queries">+22% week</div></div>
+    <div class="memory-stat"><div class="memory-stat-label">Active skills</div><div class="memory-stat-value lime" data-memory-stat-value="skills">47</div><div class="memory-stat-delta" data-memory-stat-delta="skills">+3 promoted - 1 retired</div></div>
+    <div class="memory-stat"><div class="memory-stat-label">Avg relevance score</div><div class="memory-stat-value" data-memory-stat-value="relevance">0.81</div><div class="memory-stat-delta up" data-memory-stat-delta="relevance">+0.04 vs last week</div></div>
+  </div>
+
+  <div class="memory-body">
+    <article class="memory-card">
+      <div class="memory-card-head"><h3>Memory growth - last 14 days</h3><button class="memory-card-action" type="button" data-memory-action="raw">view raw -></button></div>
+      <div class="memory-card-body">
+        <svg class="memory-chart" viewBox="0 0 480 200" preserveAspectRatio="none" role="img" aria-label="Memory growth from 3,070 to 4,217 memories"><g class="grid"><line x1="0" y1="40" x2="480" y2="40"/><line x1="0" y1="80" x2="480" y2="80"/><line x1="0" y1="120" x2="480" y2="120"/><line x1="0" y1="160" x2="480" y2="160"/></g><path class="area" d="M0,180 L0,170 L34,165 L68,158 L102,148 L137,140 L171,128 L205,118 L240,105 L274,92 L308,80 L343,68 L377,55 L411,42 L446,30 L480,22 L480,180 Z"/><path class="line" d="M0,170 L34,165 L68,158 L102,148 L137,140 L171,128 L205,118 L240,105 L274,92 L308,80 L343,68 L377,55 L411,42 L446,30 L480,22"/><circle class="dot" cx="0" cy="170" r="2"/><circle class="dot" cx="240" cy="105" r="2"/><circle class="dot" cx="480" cy="22" r="3"/><g class="axis"><text x="0" y="195">Apr 18</text><text x="220" y="195">Apr 25</text><text x="430" y="195">May 1</text></g></svg>
+        <div class="memory-chart-meta"><span>Started: <strong>3,070</strong></span><span>Peak: <strong>10:34 AM today</strong></span><span>Now: <strong>4,217</strong></span></div>
+      </div>
+    </article>
+
+    <article class="memory-card">
+      <div class="memory-card-head"><h3>Agent decisions / day</h3><button class="memory-card-action" type="button" data-memory-action="timeline">timeline -></button></div>
+      <div class="memory-card-body">
+        <svg class="memory-chart" viewBox="0 0 480 200" preserveAspectRatio="none" role="img" aria-label="Agent decisions by day"><g class="grid"><line x1="0" y1="50" x2="480" y2="50"/><line x1="0" y1="100" x2="480" y2="100"/><line x1="0" y1="150" x2="480" y2="150"/></g><rect class="bar" x="14" y="120" width="48" height="60"/><rect class="bar" x="80" y="90" width="48" height="90"/><rect class="bar amber" x="146" y="62" width="48" height="118"/><rect class="bar" x="212" y="100" width="48" height="80"/><rect class="bar lime" x="278" y="40" width="48" height="140"/><rect class="bar" x="344" y="78" width="48" height="102"/><rect class="bar" x="410" y="55" width="48" height="125"/><g class="axis"><text x="38" y="115" text-anchor="middle">8</text><text x="104" y="85" text-anchor="middle">12</text><text x="170" y="57" text-anchor="middle">16</text><text x="236" y="95" text-anchor="middle">11</text><text x="302" y="35" text-anchor="middle">19</text><text x="368" y="73" text-anchor="middle">14</text><text x="434" y="50" text-anchor="middle">17</text><text x="38" y="195" text-anchor="middle">Mon</text><text x="104" y="195" text-anchor="middle">Tue</text><text x="170" y="195" text-anchor="middle">Wed</text><text x="236" y="195" text-anchor="middle">Thu</text><text x="302" y="195" text-anchor="middle">Fri</text><text x="368" y="195" text-anchor="middle">Sat</text><text x="434" y="195" text-anchor="middle">Sun</text></g></svg>
+        <div class="memory-legend"><span><i></i>typical</span><span><i class="amber"></i>elevated</span><span><i class="lime"></i>peak</span></div>
+      </div>
+    </article>
+
+    <article class="memory-card">
+      <div class="memory-card-head"><h3>Recent agent decisions</h3><button class="memory-card-action" type="button" data-memory-action="audit">audit log -></button></div>
+      <div class="memory-card-body">
+        <div class="memory-timeline" data-memory-history-list>
+          <button class="memory-timeline-item lime" type="button" data-memory-decision="Rex promoted Tactical Empathy to proven after 187 calls and a 22% close-rate lift."><span class="memory-timeline-head"><span class="memory-timeline-actor">Rex</span><span class="memory-verb promote">PROMOTE</span><span class="memory-time">12 min ago</span></span><span class="memory-desc">Promoted <strong>Tactical Empathy</strong> to proven at 94% confidence. Eligible for fleet-wide transfer.</span><span class="memory-outcome win">+22% close-rate lift over 3 weeks - 187 calls</span></button>
+          <button class="memory-timeline-item" type="button" data-memory-decision="System transferred Mirroring to Max and is waiting for Max's first ten uses."><span class="memory-timeline-head"><span class="memory-timeline-actor">System</span><span class="memory-verb transfer">TRANSFER</span><span class="memory-time">38 min ago</span></span><span class="memory-desc">Auto-synced <strong>Mirroring - last 3 words</strong> to <strong>Max</strong>.</span><span class="memory-outcome">awaiting Max's first 10 uses for outcome data</span></button>
+          <button class="memory-timeline-item magenta" type="button" data-memory-decision="Rex started Ackerman v2 versus v3 A/B test on 50 calls each."><span class="memory-timeline-head"><span class="memory-timeline-actor">Rex</span><span class="memory-verb ab">A/B TEST</span><span class="memory-time">1h ago</span></span><span class="memory-desc">Started <strong>Ackerman v2 vs v3</strong> A/B on 50 calls each.</span><span class="memory-outcome">v3 leading at 24/50 with +8% sentiment lift</span></button>
+          <button class="memory-timeline-item" type="button" data-memory-decision="Jordan deployed Nora, a Spanish acquisitions agent cloned from Ava's proven blueprint."><span class="memory-timeline-head"><span class="memory-timeline-actor">Jordan</span><span class="memory-verb deploy">DEPLOY</span><span class="memory-time">2h ago</span></span><span class="memory-desc">Deployed <strong>Nora</strong> - Spanish acquisitions agent cloned from Ava blueprint.</span><span class="memory-outcome">38 of 47 Ava skills inherited - bilingual EN/ES added</span></button>
+          <button class="memory-timeline-item amber" type="button" data-memory-decision="Ava discovered a candidate phrase for sellers who say let me think about it."><span class="memory-timeline-head"><span class="memory-timeline-actor">Ava</span><span class="memory-verb discover">DISCOVER</span><span class="memory-time">3h ago</span></span><span class="memory-desc">Discovered candidate: <strong>What would need to be true?</strong> for let-me-think responses.</span><span class="memory-outcome">analytics-detected - 22% reply-rate lift - awaiting test</span></button>
+          <button class="memory-timeline-item" type="button" data-memory-decision="Rex ingested negotiation material and converted three principles into candidate skills."><span class="memory-timeline-head"><span class="memory-timeline-actor">Rex</span><span class="memory-verb transfer">INGEST</span><span class="memory-time">5h ago</span></span><span class="memory-desc">Ingested closing research - <strong>7 new principles</strong> extracted.</span><span class="memory-outcome">3 candidate skills - 4 background context memories</span></button>
+          <button class="memory-timeline-item crimson" type="button" data-memory-decision="System retired Hard close at 90s after poor sentiment and low success."><span class="memory-timeline-head"><span class="memory-timeline-actor">System</span><span class="memory-verb retire">RETIRE</span><span class="memory-time">8h ago</span></span><span class="memory-desc">Retired <strong>Hard close at 90s</strong> after success rate fell to 18%.</span><span class="memory-outcome loss">-12% sentiment when used - removed from active prompts</span></button>
+          <button class="memory-timeline-item" type="button" data-memory-decision="Jordan paused Vacant Cleveland until stale emails are cleaned."><span class="memory-timeline-head"><span class="memory-timeline-actor">Jordan</span><span class="memory-verb pause">PAUSE</span><span class="memory-time">yesterday</span></span><span class="memory-desc">Paused <strong>Vacant Cleveland</strong> campaign - bounce rate 9.2% above threshold.</span><span class="memory-outcome">18 stale emails found - cleaning before resume</span></button>
+          <button class="memory-timeline-item lime" type="button" data-memory-decision="Max promoted Contract delivery script v2 after 96% sign rate."><span class="memory-timeline-head"><span class="memory-timeline-actor">Max</span><span class="memory-verb promote">PROMOTE</span><span class="memory-time">yesterday</span></span><span class="memory-desc">Promoted <strong>Contract delivery script v2</strong> after 14 deals.</span><span class="memory-outcome win">$11.5k avg fee - auto-transferred to Ava</span></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="memory-card">
+      <div class="memory-card-head"><h3>Skill performance - top 8</h3><button class="memory-card-action" type="button" data-memory-action="skills">all 47 skills -></button></div>
+      <div class="memory-card-body" data-memory-skills-list>
+        <div class="memory-skill-row" data-memory-skill="Tactical Empathy" data-memory-agent="ava"><div class="memory-skill-name">Tactical Empathy<span class="memory-skill-source">audiobook - Voss</span></div><div class="memory-skill-num">187x</div><div class="memory-skill-num good">71%</div><div class="memory-skill-bar"><span class="lime" style="--w:94%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Contract delivery v2" data-memory-agent="max"><div class="memory-skill-name">Contract delivery v2<span class="memory-skill-source">self-programmed - Max</span></div><div class="memory-skill-num">14x</div><div class="memory-skill-num good">96%</div><div class="memory-skill-bar"><span class="lime" style="--w:96%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Mirroring - last 3 words" data-memory-agent="ava"><div class="memory-skill-name">Mirroring - last 3 words<span class="memory-skill-source">audiobook - Voss</span></div><div class="memory-skill-num">142x</div><div class="memory-skill-num good">68%</div><div class="memory-skill-bar"><span style="--w:88%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Source synthesis" data-memory-agent="rex"><div class="memory-skill-name">Source synthesis<span class="memory-skill-source">research - Rex native</span></div><div class="memory-skill-num">619x</div><div class="memory-skill-num good">93%</div><div class="memory-skill-bar"><span class="lime" style="--w:93%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Ackerman Negotiation v3" data-memory-agent="max"><div class="memory-skill-name">Ackerman Negotiation v3<span class="memory-skill-source">self-programmed - evolving</span></div><div class="memory-skill-num">23x</div><div class="memory-skill-num">52%</div><div class="memory-skill-bar"><span class="amber" style="--w:71%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="What would need to be true" data-memory-agent="ava"><div class="memory-skill-name">What would need to be true?<span class="memory-skill-source">analytics - evolving</span></div><div class="memory-skill-num">11x</div><div class="memory-skill-num warn">45%</div><div class="memory-skill-bar"><span class="amber" style="--w:64%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Direct close" data-memory-agent="max"><div class="memory-skill-name">Direct close<span class="memory-skill-source">trained - Max default</span></div><div class="memory-skill-num">94x</div><div class="memory-skill-num good">62%</div><div class="memory-skill-bar"><span style="--w:91%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Comp analysis" data-memory-agent="rex"><div class="memory-skill-name">Comp analysis<span class="memory-skill-source">tool integration - Rex</span></div><div class="memory-skill-num">412x</div><div class="memory-skill-num good">89%</div><div class="memory-skill-bar"><span class="lime" style="--w:89%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+      </div>
+    </article>
+
+    <article class="memory-card">
+      <div class="memory-card-head"><h3>Top objection patterns - last 30d</h3><button class="memory-card-action" type="button" data-memory-action="browse">browse memory -></button></div>
+      <div class="memory-card-body">
+        <p class="memory-tag-copy">Most frequent objection tags Rex retrieved from memory across all calls. Click any tag to see the playbook Rex built for it.</p>
+        <div class="memory-tag-cloud" aria-label="Objection pattern filters" data-memory-playbook-chips>
+          <button class="memory-tag-chip active" type="button" data-memory-objection="price-too-low">price-too-low <span class="count">82</span></button><button class="memory-tag-chip" type="button" data-memory-objection="need-to-think">need-to-think <span class="count">61</span></button><button class="memory-tag-chip" type="button" data-memory-objection="spouse-decides">spouse-decides <span class="count">47</span></button><button class="memory-tag-chip" type="button" data-memory-objection="recently-listed">recently-listed <span class="count">38</span></button><button class="memory-tag-chip" type="button" data-memory-objection="probate-pending">probate-pending <span class="count">34</span></button><button class="memory-tag-chip" type="button" data-memory-objection="repair-disagreement">repair-disagreement <span class="count">29</span></button><button class="memory-tag-chip" type="button" data-memory-objection="timeline-mismatch">timeline-mismatch <span class="count">22</span></button><button class="memory-tag-chip" type="button" data-memory-objection="trust-issue">trust-issue <span class="count">19</span></button><button class="memory-tag-chip" type="button" data-memory-objection="cash-only-required">cash-only-required <span class="count">17</span></button><button class="memory-tag-chip" type="button" data-memory-objection="subject-to-confused">subject-to-confused <span class="count">14</span></button><button class="memory-tag-chip" type="button" data-memory-objection="scam-suspicion">scam-suspicion <span class="count">11</span></button><button class="memory-tag-chip" type="button" data-memory-objection="attorney-review">attorney-review <span class="count">8</span></button>
+        </div>
+        <div class="memory-note" data-memory-playbook><div class="memory-note-title">Rex note - price-too-low playbook</div>Most-frequent objection this month. Best response: empathy-label first, then walk through repair math. Direct counter-anchors lose 71% of the time. <strong>Tactical Empathy</strong> + <strong>Mirroring</strong> together hit 84% retention.</div>
+      </div>
+    </article>
+
+    <article class="memory-card">
+      <div class="memory-card-head"><h3>Fleet outcomes - per agent - 7d</h3><button class="memory-card-action" type="button" data-memory-action="fleet">agent fleet -></button></div>
+      <div class="memory-card-body">
+        <div class="memory-outcomes-grid" data-memory-fleet-list>
+          <button class="memory-outcome-card" type="button" data-memory-agent-card="ava"><span class="memory-agent-head"><span class="memory-agent-avatar">A</span><span><span class="memory-agent-name">Ava</span><span class="memory-agent-role">Acquisitions</span></span></span><span class="memory-agent-stat"><span>Calls</span><span>187</span></span><span class="memory-agent-stat"><span>Verbal yes</span><span class="lime">14</span></span><span class="memory-agent-stat"><span>Skill hits</span><span>412</span></span><span class="memory-agent-stat"><span>Avg sentiment</span><span>0.61</span></span></button>
+          <button class="memory-outcome-card" type="button" data-memory-agent-card="max"><span class="memory-agent-head"><span class="memory-agent-avatar amber">M</span><span><span class="memory-agent-name">Max</span><span class="memory-agent-role">Closer</span></span></span><span class="memory-agent-stat"><span>Closes attempted</span><span>31</span></span><span class="memory-agent-stat"><span>Signed</span><span class="lime">14</span></span><span class="memory-agent-stat"><span>Sign rate</span><span class="lime">45%</span></span><span class="memory-agent-stat"><span>Revenue</span><span class="lime">$161k</span></span></button>
+          <button class="memory-outcome-card" type="button" data-memory-agent-card="rex"><span class="memory-agent-head"><span class="memory-agent-avatar purple">R</span><span><span class="memory-agent-name">Rex</span><span class="memory-agent-role">Research</span></span></span><span class="memory-agent-stat"><span>Sources ingested</span><span>12</span></span><span class="memory-agent-stat"><span>Skills proposed</span><span>7</span></span><span class="memory-agent-stat"><span>Accepted</span><span class="lime">5</span></span><span class="memory-agent-stat"><span>Vector queries</span><span>619</span></span></button>
+          <button class="memory-outcome-card" type="button" data-memory-agent-card="nora"><span class="memory-agent-head"><span class="memory-agent-avatar lime">N</span><span><span class="memory-agent-name">Nora</span><span class="memory-agent-role">Spanish Acq.</span></span></span><span class="memory-agent-stat"><span>Build progress</span><span class="amber">82%</span></span><span class="memory-agent-stat"><span>Skills inherited</span><span>38 / 47</span></span><span class="memory-agent-stat"><span>Test calls</span><span>0</span></span><span class="memory-agent-stat"><span>Ready in</span><span>~12 min</span></span></button>
+          <button class="memory-outcome-card" type="button" data-memory-agent-card="zed"><span class="memory-agent-head"><span class="memory-agent-avatar gray">Z</span><span><span class="memory-agent-name">Zed</span><span class="memory-agent-role">SMS</span></span></span><span class="memory-agent-stat"><span>SMS sent</span><span>312</span></span><span class="memory-agent-stat"><span>Replies</span><span class="lime">22</span></span><span class="memory-agent-stat"><span>Reply rate</span><span>7.1%</span></span><span class="memory-agent-stat"><span>DNC</span><span class="amber">2</span></span></button>
+          <button class="memory-outcome-card total" type="button" data-memory-agent-card="fleet"><span class="memory-agent-head"><span class="memory-agent-avatar">F</span><span><span class="memory-agent-name">Fleet total</span><span class="memory-agent-role">all agents</span></span></span><span class="memory-agent-stat"><span>Decisions</span><span>97</span></span><span class="memory-agent-stat"><span>Skills active</span><span class="lime">47</span></span><span class="memory-agent-stat"><span>Cost saved</span><span class="lime">$8.4k</span></span><span class="memory-agent-stat"><span>vs human team</span><span class="lime">14x faster</span></span></button>
+        </div>
+      </div>
+    </article>
+
+    <div class="memory-info-callout"><strong>How self-modification works:</strong> Every agent action writes to <code>skill_usage</code> with outcome and profit margin. Skills crossing 85% confidence are eligible for approval-gated promotion. Skills falling below 30% are retired from active prompts. Rex monitors aggregate trends and proposes new candidates from research, audiobooks, call transcripts, and campaign analytics. The system gets smarter without retraining; only approved prompts, skills, and routing rules change.</div>
+  </div>
+</section>
+
+<!-- ======================================================
      PAGE - OUTREACH CAMPAIGNS
      ====================================================== -->
 <section class="page" data-page="campaigns">
@@ -6971,6 +7400,18 @@
       background: var(--bg-void); padding: var(--s-4); display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap;
     }
     .campaign-csv-status { font-size: 12px; color: var(--text-secondary); line-height: 1.45; overflow-wrap: anywhere; }
+    .campaign-provider-panel {
+      margin-top: var(--s-4); border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(5,7,11,0.45)); padding: var(--s-4);
+      display: grid; gap: var(--s-3);
+    }
+    .campaign-provider-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+    .campaign-provider-head span { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sky); }
+    .campaign-provider-head small { color: var(--text-tertiary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .campaign-provider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+    .campaign-provider-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-2); align-items: center; }
+    .campaign-provider-control .chip-btn { min-height: 44px; white-space: nowrap; }
+    .campaign-field small { color: var(--text-tertiary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
     .campaign-review-warning {
       margin-top: var(--s-3); padding: var(--s-3); border: 1px solid rgba(255,176,32,0.28);
       background: var(--amber-glow); border-radius: var(--radius); color: var(--amber);
@@ -7080,6 +7521,9 @@
       .campaign-wizard-head, .campaign-wizard-body, .campaign-wizard-actions { padding-left: var(--s-4); padding-right: var(--s-4); }
       .campaign-wizard-head { flex-direction: column; }
       .campaign-steps, .campaign-option-grid, .campaign-wizard-grid, .campaign-review { grid-template-columns: 1fr; }
+      .campaign-provider-grid { grid-template-columns: 1fr; }
+      .campaign-provider-control { grid-template-columns: 1fr; }
+      .campaign-provider-control .chip-btn { width: 100%; justify-content: center; }
       .campaign-wizard-actions { padding-bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)); }
       .campaign-wizard-actions .btn { flex: 1 1 auto; min-height: 44px; }
       .campaign-csv-tools { align-items: stretch; }
@@ -7250,6 +7694,34 @@
           <button class="campaign-option selected" type="button" data-campaign-select="channel" data-value="email"><span class="camp-channel-badge email">Email</span><h4 style="margin-top:12px;">Instantly sequence</h4><p>Cold email campaign with open/reply tracking. Best for probate, absentee, vacant, and follow-up lists.</p></button>
           <button class="campaign-option" type="button" data-campaign-select="channel" data-value="call"><span class="camp-channel-badge call">Calls</span><h4 style="margin-top:12px;">Telnyx outbound batch</h4><p>Approval-gated calling queue for Ava. Daily caps protect spend and keep call pacing sane.</p></button>
           <button class="campaign-option" type="button" data-campaign-select="channel" data-value="sms"><span class="camp-channel-badge sms">SMS</span><h4 style="margin-top:12px;">Telnyx SMS drip</h4><p>Short reactivation or appointment-confirmation texts. TCPA and DNC checks stay in the approval path.</p></button>
+        </div>
+        <div class="campaign-provider-panel">
+          <div class="campaign-provider-head">
+            <span>Provider routing</span>
+            <small data-campaign-provider-status>Auto-select uses the bridge pool/default sender unless you choose a specific route.</small>
+          </div>
+          <div class="campaign-provider-grid">
+            <div class="campaign-field">
+              <label for="campaignTelnyxNumber">Outbound Number (Telnyx)</label>
+              <div class="campaign-provider-control">
+                <select id="campaignTelnyxNumber" data-campaign-field="telnyxNumber">
+                  <option value="">Auto-select (Telnyx pool/default)</option>
+                </select>
+                <button type="button" class="chip-btn" data-campaign-provider-refresh="telnyx">Refresh</button>
+              </div>
+              <small>Choose a specific call/SMS number, or leave auto for pool/default selection.</small>
+            </div>
+            <div class="campaign-field">
+              <label for="campaignInstantlySender">Sending Email (Instantly)</label>
+              <div class="campaign-provider-control">
+                <select id="campaignInstantlySender" data-campaign-field="instantlySender">
+                  <option value="">Default (primary Instantly inbox)</option>
+                </select>
+                <button type="button" class="chip-btn" data-campaign-provider-refresh="instantly">Refresh</button>
+              </div>
+              <small>Choose which inbox sends email campaigns. Provider writes still wait for approval.</small>
+            </div>
+          </div>
         </div>
       </div>
       <div class="campaign-pane" data-campaign-pane="1">
@@ -8759,7 +9231,11 @@
     </div>
     <div class="mob-sheet-item" data-page="agent">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
-      <span>AI Agent</span>
+      <span>Ava Console</span>
+    </div>
+    <div class="mob-sheet-item" data-page="fleet">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/></svg>
+      <span>Agent Fleet</span>
     </div>
     <div class="mob-sheet-item" data-page="contracts">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
@@ -8776,6 +9252,10 @@
     <div class="mob-sheet-item" data-page="brain">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v1a3 3 0 0 0-3 3v2a3 3 0 0 0 1 2.24V17a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-2.76A3 3 0 0 0 19 12v-2a3 3 0 0 0-3-3V6a4 4 0 0 0-4-4z"/></svg>
       <span>Brain</span>
+    </div>
+    <div class="mob-sheet-item" data-page="memory">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7"/><path d="M4.9 4.9l5 5M14.1 14.1l5 5M19.1 4.9l-5 5M9.9 14.1l-5 5"/></svg>
+      <span>Memory</span>
     </div>
     <div class="mob-sheet-item" data-page="campaigns">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
@@ -9113,10 +9593,12 @@
       <div class="cp-item" data-nav="inbox" data-keywords="inbox messages sms email"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/></svg></div><span class="cp-label">Unified Inbox</span><span class="cp-sub">G I</span></div>
       <div class="cp-item" data-nav="leads" data-keywords="leads pipeline crm"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><span class="cp-label">Leads Pipeline</span><span class="cp-sub">G L</span></div>
       <div class="cp-item" data-nav="analyzer" data-keywords="analyzer deal mao"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg></div><span class="cp-label">Deal Analyzer</span></div>
-      <div class="cp-item" data-nav="agent" data-keywords="agent ava console ai"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div><span class="cp-label">AI Agent Console</span></div>
+      <div class="cp-item" data-nav="agent" data-keywords="agent ava console ai thought stream tools"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div><span class="cp-label">Ava Agent Console</span></div>
+      <div class="cp-item" data-nav="fleet" data-keywords="agent fleet ava max rex skills ai closers"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/></svg></div><span class="cp-label">Agent Fleet</span></div>
       <div class="cp-item" data-nav="calls" data-keywords="calls live floor"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></div><span class="cp-label">Live Calls</span></div>
       <div class="cp-item" data-nav="campaigns" data-keywords="campaigns outreach instantly telnyx email call sms"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg></div><span class="cp-label">Outreach Campaigns</span></div>
       <div class="cp-item" data-nav="brain" data-keywords="brain research knowledge rex"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v1a3 3 0 0 0-3 3v2a3 3 0 0 0 1 2.24V17a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-2.76A3 3 0 0 0 19 12v-2a3 3 0 0 0-3-3V6a4 4 0 0 0-4-4z"/></svg></div><span class="cp-label">The Brain — Research</span></div>
+      <div class="cp-item" data-nav="memory" data-keywords="memory analytics skills decisions outcomes vector store self modifying rex learning"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7"/><path d="M4.9 4.9l5 5M14.1 14.1l5 5M19.1 4.9l-5 5M9.9 14.1l-5 5"/></svg></div><span class="cp-label">Memory & Analytics</span><span class="cp-sub">self-modifying memory</span></div>
       <div class="cp-item" data-nav="contracts" data-keywords="contracts docusign"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div><span class="cp-label">Contracts</span></div>
       <div class="cp-item" data-nav="automations" data-keywords="automations n8n workflows"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/></svg></div><span class="cp-label">Automations</span></div>
       <div class="cp-item" data-nav="analytics" data-keywords="analytics reports metrics"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div><span class="cp-label">Analytics</span></div>
@@ -9655,6 +10137,7 @@
     leads: 'Leads Pipeline',
     analyzer: 'Deal Analyzer',
     agent: 'AI Agent Console',
+    fleet: 'Agent Fleet',
     calls: 'Live Calls',
     contracts: 'Contracts',
     automations: 'Automations',
@@ -9662,6 +10145,7 @@
     campaigns: 'Outreach Campaigns',
     'campaign-detail': 'Campaign Detail',
     brain: 'The Brain — Research',
+    memory: 'Memory & Analytics',
     integrations: 'Integrations',
     settings: 'Settings',
     'lead-detail': 'Lead Detail',
@@ -10200,7 +10684,7 @@
       return;
     }
     if (gPressed) {
-      const map = { d: 'dashboard', i: 'inbox', l: 'leads', a: 'analyzer', v: 'agent', c: 'calls', b: 'brain', s: 'settings' };
+      const map = { d: 'dashboard', i: 'inbox', l: 'leads', a: 'analyzer', v: 'agent', c: 'calls', b: 'brain', m: 'memory', s: 'settings' };
       const k = e.key.toLowerCase();
       if (map[k]) { e.preventDefault(); showPage(map[k]); gPressed = false; }
     }
@@ -11862,6 +12346,586 @@
     return `${diffDays}d ago`;
   }
 
+  // =========================================================
+  // AGENT FLEET - self-learning agents, skills, and handoffs
+  // =========================================================
+  const FLEET_AGENT_SEED = [
+    {
+      id: 'ava',
+      name: 'Ava',
+      avatar: 'A',
+      role: 'Acquisitions',
+      version: 'v2.1',
+      target: 'production',
+      status: 'on_call',
+      activity: 'On call with Diane Kowalski - probate seller - Columbus',
+      lastSeen: new Date(Date.now() - 12000).toISOString(),
+      style: 'Empathetic closer',
+      hometown: 'Akron, OH',
+      campaigns: 2,
+      sentiment: 72,
+      skillsTotal: 47,
+      skillSource: '12 audiobook, 18 call outcomes',
+      skills: [
+        { name: 'Tactical empathy opener', level: 'proven', confidence: 94, evidence: 'Lifted verbal yes rate by 18% on probate calls.' },
+        { name: 'Ackerman price walk', level: 'proven', confidence: 88, evidence: 'Protected MAO on 23 live negotiations.' },
+        { name: 'Grief-safe probate framing', level: 'evolving', confidence: 79, evidence: 'Positive sentiment trend on bereavement calls.' },
+      ],
+      stream: [
+        ['10:33:54', 'emotion', 'Seller mentioned double shift. Ava softened pace and validated the pressure.'],
+        ['10:34:03', 'memory', 'Pulled prior note: seller wants a clean close before June probate hearing.'],
+        ['10:34:19', 'decision', 'Use repair burden story before anchoring. Keep offer below MAO ceiling.'],
+        ['10:34:42', 'tool', 'analyzeDeal refreshed ARV and MAO for Cherry Ln.'],
+      ],
+      call: {
+        transcript: [
+          ['Seller', 'I just do not want to deal with repairs or showings.'],
+          ['Ava', 'I hear you. If the goal is clean and quiet, I can make the numbers simple and you can decide if it helps.'],
+          ['Seller', 'Okay, what would that look like?'],
+        ],
+        math: [['ARV', '$185,000'], ['Repairs', '$38,000'], ['MAO', '$91,500'], ['Current anchor', '$78,000']],
+      },
+      knowledge: [
+        { title: 'Never Split the Difference', meta: 'book principles - labeling, mirroring, calibrated questions', status: 'trained' },
+        { title: 'PBK probate calls', meta: '23 call outcomes - Columbus and Akron', status: 'live evidence' },
+      ],
+      tools: [['Deepgram sentiment', 'online'], ['Telnyx call control', 'provider-gated'], ['Deal analyzer', 'online'], ['DocuSign', 'approval-gated']],
+    },
+    {
+      id: 'max',
+      name: 'Max',
+      avatar: 'M',
+      tone: 'amber',
+      role: 'Closer',
+      version: 'v1.4',
+      target: 'production',
+      status: 'running_campaign',
+      activity: 'Running campaign: Probate Warm-up Q2 - 241 leads',
+      lastSeen: new Date(Date.now() - 45000).toISOString(),
+      style: 'Direct closer',
+      hometown: 'Cleveland, OH',
+      campaigns: 3,
+      sentiment: 66,
+      skillsTotal: 31,
+      skillSource: '8 audiobook, 11 campaign outcomes',
+      skills: [
+        { name: 'Numbers-first counter', level: 'proven', confidence: 91, evidence: 'Raised assignment spread on counter-offer calls.' },
+        { name: 'Urgency without pressure', level: 'proven', confidence: 86, evidence: 'Reduced ghosting after verbal yes.' },
+        { name: 'Walk-away line discipline', level: 'evolving', confidence: 81, evidence: 'Needs more data on high-equity sellers.' },
+      ],
+      stream: [
+        ['10:30:11', 'campaign', 'Outbound batch pacing held under daily cap.'],
+        ['10:31:26', 'decision', 'Move hesitant sellers to Ava follow-up instead of forcing close.'],
+        ['10:32:08', 'tool', 'Checked campaign suppression before next SMS touch.'],
+      ],
+      call: null,
+      knowledge: [
+        { title: 'PBK counter-offer library', meta: 'campaign analytics - 9 winning phrases', status: 'trained' },
+        { title: 'Cleveland investor objections', meta: 'local market memory', status: 'candidate' },
+      ],
+      tools: [['Campaign worker', 'dry-run safe'], ['Instantly', 'provider-gated'], ['Telnyx SMS', 'provider-gated'], ['Slack approvals', 'online']],
+    },
+    {
+      id: 'rex',
+      name: 'Rex',
+      avatar: 'R',
+      tone: 'purple',
+      role: 'Research and strategist',
+      version: 'v3.0',
+      target: 'production',
+      status: 'learning',
+      activity: 'Learning from campaign analytics, Brain Blog posts, and Deepgram sentiment',
+      lastSeen: new Date(Date.now() - 7000).toISOString(),
+      style: 'Analytical strategist',
+      hometown: 'Boston, MA',
+      campaigns: 0,
+      sentiment: 80,
+      skillsTotal: 218,
+      skillSource: 'Brain Blog, Rex decisions, outcome evaluator',
+      skills: [
+        { name: 'Skill discovery from analytics', level: 'proven', confidence: 93, evidence: 'Creates Rex proposals with measurable outcome targets.' },
+        { name: 'Campaign script diagnosis', level: 'proven', confidence: 89, evidence: 'Finds low reply-rate patterns and proposes copy changes.' },
+        { name: 'Local market story mining', level: 'evolving', confidence: 76, evidence: 'Needs more city-specific source material.' },
+      ],
+      stream: [
+        ['09:58:02', 'research', 'Scanned campaign reply-rate drop and sentiment deltas.'],
+        ['09:59:45', 'decision', 'Suggested softening probate email subject line. Awaiting approval.'],
+        ['10:02:14', 'memory', 'Stored outcome baseline for seven-day evaluation.'],
+      ],
+      call: null,
+      knowledge: [
+        { title: 'Rex strategist decisions', meta: 'approval loop - implement and measure', status: 'live' },
+        { title: 'Brain Blog harvester', meta: 'sales and wholesaling knowledge engine', status: 'live' },
+      ],
+      tools: [['VoidLLM gateway', 'online'], ['Supabase analytics', 'online'], ['Slack approvals', 'online'], ['Quartermaster runner', 'planned']],
+    },
+    {
+      id: 'nora',
+      name: 'Nora',
+      avatar: 'N',
+      tone: 'lime',
+      role: 'Spanish acquisitions',
+      version: 'v0.3',
+      target: 'local',
+      status: 'building',
+      activity: 'Inheriting 38 proven Ava skills - Spanish seller empathy pack',
+      lastSeen: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
+      style: 'Empathetic bilingual',
+      hometown: 'San Antonio, TX',
+      campaigns: 0,
+      sentiment: 62,
+      skillsTotal: 0,
+      skillSource: 'Building from Ava blueprint',
+      skills: [
+        { name: 'Spanish warm opener', level: 'candidate', confidence: 61, evidence: 'Needs sandbox calls before promotion.' },
+        { name: 'Ava skill inheritance', level: 'evolving', confidence: 74, evidence: '38 proven Ava skills queued for approval-backed transfer.' },
+      ],
+      stream: [
+        ['10:20:00', 'build', 'Persona draft generated from Ava blueprint.'],
+        ['10:26:18', 'skill', 'Candidate bilingual opener created for review.'],
+      ],
+      call: null,
+      knowledge: [
+        { title: 'Spanish seller empathy pack', meta: 'draft resource - needs review', status: 'candidate' },
+      ],
+      tools: [['Voice profile', 'building'], ['DNC guardrail', 'required'], ['Telnyx call control', 'provider-gated']],
+    },
+    {
+      id: 'zed',
+      name: 'Zed',
+      avatar: 'Z',
+      tone: 'gray',
+      role: 'Outbound SMS',
+      version: 'v1.0',
+      target: 'production',
+      status: 'idle',
+      activity: 'Idle - waiting for approved SMS nurture campaign',
+      lastSeen: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+      style: 'Concise follow-up',
+      hometown: 'Phoenix, AZ',
+      campaigns: 0,
+      sentiment: 55,
+      skillsTotal: 18,
+      skillSource: 'SMS campaign outcomes',
+      skills: [
+        { name: 'One-line reactivation', level: 'proven', confidence: 87, evidence: 'Increased reply rate on 14-day nurture.' },
+        { name: 'STOP-safe compliance copy', level: 'proven', confidence: 96, evidence: 'Maintains opt-out handling in every SMS script.' },
+      ],
+      stream: [
+        ['10:15:12', 'guardrail', 'No active SMS campaign approved. Staying idle.'],
+        ['10:18:40', 'memory', 'Stored latest no-reply cadence results.'],
+      ],
+      call: null,
+      knowledge: [
+        { title: 'SMS compliance memory', meta: 'STOP and DNC handling', status: 'trained' },
+      ],
+      tools: [['Telnyx messaging', 'provider-gated'], ['DNC pre-check', 'online'], ['Campaign worker', 'dry-run safe']],
+    },
+  ];
+
+  const fleetUiState = { selected: 'ava' };
+
+  function showFleetOutcome(outcome, title, desc) {
+    if (typeof toastOutcome === 'function') {
+      toastOutcome({ outcome, title, desc });
+    } else {
+      toast({ type: outcome === 'unavailable' ? 'error' : outcome === 'provider_missing' ? 'warning' : 'info', title, desc });
+    }
+  }
+
+  function normalizeFleetAgentFromRuntime(agent = {}) {
+    return {
+      ...agent,
+      id: agent.id || normalizeControlText(agent.name || 'agent').replace(/\s+/g, '-').toLowerCase(),
+      name: agent.name || 'Agent',
+      avatar: agent.avatar || String(agent.name || 'A').slice(0, 1).toUpperCase(),
+      role: agent.role || 'Operator',
+      version: agent.version || 'v0.1',
+      target: agent.target || 'local',
+      status: agent.status || 'idle',
+      activity: agent.activity || 'Idle - waiting for approved work',
+      lastSeen: agent.lastSeen || agent.updatedAt || new Date().toISOString(),
+      style: agent.style || 'Generalist',
+      hometown: agent.hometown || 'PBK HQ',
+      campaigns: Number(agent.campaigns || 0),
+      sentiment: Number(agent.sentiment || 50),
+      skillsTotal: Number(agent.skillsTotal || (agent.skills || []).length || 0),
+      skillSource: agent.skillSource || 'Bridge runtime',
+      skills: Array.isArray(agent.skills) ? agent.skills : [],
+      stream: Array.isArray(agent.stream) ? agent.stream : [],
+      knowledge: Array.isArray(agent.knowledge) ? agent.knowledge : [],
+      tools: Array.isArray(agent.tools) ? agent.tools : [],
+    };
+  }
+
+  function getFleetAgents() {
+    const runtimeAgents = Array.isArray(PBK.state.openclawRuntime?.agents) ? PBK.state.openclawRuntime.agents : [];
+    if (runtimeAgents.length) {
+      const byId = new Map(FLEET_AGENT_SEED.map((agent) => [agent.id, agent]));
+      return runtimeAgents.map((agent) => ({
+        ...(byId.get(agent.id) || {}),
+        ...normalizeFleetAgentFromRuntime(agent),
+      }));
+    }
+    return FLEET_AGENT_SEED;
+  }
+
+  function getFleetAgent(id = fleetUiState.selected) {
+    return getFleetAgents().find((agent) => agent.id === id) || getFleetAgents()[0];
+  }
+
+  function fleetStatusLabel(status = '') {
+    return String(status || 'idle').replace(/_/g, ' ');
+  }
+
+  function renderFleetStats() {
+    const node = document.getElementById('fleetStats');
+    if (!node) return;
+    const agents = getFleetAgents();
+    const active = agents.filter((agent) => ['on_call', 'running_campaign', 'learning'].includes(agent.status)).length;
+    const proven = agents.flatMap((agent) => agent.skills || []).filter((skill) => skill.level === 'proven').length;
+    const evolving = agents.flatMap((agent) => agent.skills || []).filter((skill) => skill.level !== 'proven').length;
+    node.innerHTML = [
+      ['Active agents', active, 'calls, campaigns, or research'],
+      ['Proven skills', proven, 'eligible for transfer'],
+      ['Evolving skills', evolving, 'need evidence or approval'],
+      ['Approval mode', 'ON', 'no silent behavior changes'],
+    ].map(([k, v, m]) => `
+      <div class="fleet-stat">
+        <div class="k">${escapeHtml(k)}</div>
+        <div class="v">${escapeHtml(v)}</div>
+        <div class="m">${escapeHtml(m)}</div>
+      </div>
+    `).join('');
+  }
+
+  function renderFleetCards() {
+    const grid = document.getElementById('fleetAgentGrid');
+    if (!grid) return;
+    grid.innerHTML = getFleetAgents().map((agent) => `
+      <article class="fleet-card ${agent.id === fleetUiState.selected ? 'selected' : ''}" data-fleet-agent="${escapeHtml(agent.id)}">
+        <div class="fleet-card-head">
+          <div class="fleet-avatar ${escapeHtml(agent.tone || '')}">${escapeHtml(agent.avatar)}<span class="fleet-dot ${escapeHtml(agent.status)}"></span></div>
+          <div class="fleet-title">
+            <strong>${escapeHtml(agent.name)}</strong>
+            <span>${escapeHtml(agent.role)} - ${escapeHtml(agent.version)}</span>
+          </div>
+          <span class="fleet-env">${escapeHtml(agent.target)}</span>
+        </div>
+        <div class="fleet-activity">${escapeHtml(agent.activity)}</div>
+        <div class="fleet-progress" aria-label="Sentiment or readiness score"><span style="--p:${Number(agent.sentiment || 0)}%"></span></div>
+        <div class="fleet-skill-row">
+          ${(agent.skills || []).slice(0, 3).map((skill) => `<span class="fleet-skill ${escapeHtml(skill.level)}">${escapeHtml(skill.name)}</span>`).join('')}
+        </div>
+        <div class="note">${escapeHtml(agent.skillsTotal)} skills - ${escapeHtml(agent.skillSource)} - last seen ${escapeHtml(formatRelativeTime(agent.lastSeen))}</div>
+        <div class="fleet-card-actions">
+          <button class="chip-btn" type="button" data-fleet-action="view" data-agent="${escapeHtml(agent.id)}">View</button>
+          <button class="chip-btn" type="button" data-fleet-action="pause" data-agent="${escapeHtml(agent.id)}">Pause</button>
+          <button class="chip-btn" type="button" data-fleet-action="configure" data-agent="${escapeHtml(agent.id)}">Configure</button>
+        </div>
+      </article>
+    `).join('');
+  }
+
+  function renderFleetDetail(id = fleetUiState.selected) {
+    const agent = getFleetAgent(id);
+    if (!agent) return;
+    fleetUiState.selected = agent.id;
+    const avatar = document.getElementById('fleetDetailAvatar');
+    const name = document.getElementById('fleetDetailName');
+    const meta = document.getElementById('fleetDetailMeta');
+    const badges = document.getElementById('fleetDetailBadges');
+    if (avatar) {
+      avatar.className = `fleet-avatar ${agent.tone || ''}`;
+      avatar.innerHTML = `${escapeHtml(agent.avatar)}<span class="fleet-dot ${escapeHtml(agent.status)}"></span>`;
+    }
+    if (name) name.textContent = agent.name;
+    if (meta) meta.textContent = `${agent.version} - ${agent.target} - ${agent.role}`;
+    if (badges) {
+      badges.innerHTML = [
+        agent.style,
+        agent.hometown,
+        `${agent.campaigns} campaigns`,
+        `${agent.skillsTotal} skills`,
+        fleetStatusLabel(agent.status),
+      ].map((badge) => `<span class="fleet-badge">${escapeHtml(badge)}</span>`).join('');
+    }
+    renderFleetPaneStream(agent);
+    renderFleetPaneCall(agent);
+    renderFleetPaneSkills(agent);
+    renderFleetPaneKnowledge(agent);
+    renderFleetPaneTools(agent);
+    renderFleetCards();
+  }
+
+  function renderFleetPaneStream(agent) {
+    const node = document.getElementById('fleetPaneStream');
+    if (!node) return;
+    node.innerHTML = `<div class="fleet-stream">${(agent.stream || []).map(([time, kind, copy]) => `
+      <div class="fleet-line"><span class="time">${escapeHtml(time)}</span><span class="kind">${escapeHtml(kind)}</span><span class="copy">${escapeHtml(copy)}</span></div>
+    `).join('')}</div>`;
+  }
+
+  function renderFleetPaneCall(agent) {
+    const node = document.getElementById('fleetPaneCall');
+    if (!node) return;
+    if (!agent.call) {
+      node.innerHTML = `<div class="fleet-knowledge-card"><h4>No live call right now</h4><p>${escapeHtml(agent.name)} is ${escapeHtml(fleetStatusLabel(agent.status))}. When a call is active, transcript, sentiment, deal math, and takeover controls appear here.</p></div>`;
+      return;
+    }
+    node.innerHTML = `
+      <div class="fleet-knowledge-card">
+        <h4>Live transcript</h4>
+        ${(agent.call.transcript || []).map(([speaker, text]) => `<p><strong>${escapeHtml(speaker)}:</strong> ${escapeHtml(text)}</p>`).join('')}
+      </div>
+      <div class="fleet-knowledge-card">
+        <h4>Deal math</h4>
+        ${(agent.call.math || []).map(([k, v]) => `<div class="fleet-tool-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}
+      </div>
+      <div class="fleet-card-actions">
+        <button class="chip-btn" type="button" data-fleet-action="takeover" data-agent="${escapeHtml(agent.id)}">Take over</button>
+        <button class="chip-btn" type="button" data-fleet-action="mute" data-agent="${escapeHtml(agent.id)}">Mute AI</button>
+        <button class="chip-btn" type="button" data-fleet-action="end_call" data-agent="${escapeHtml(agent.id)}">End call</button>
+      </div>
+    `;
+  }
+
+  function renderFleetPaneSkills(agent) {
+    const node = document.getElementById('fleetPaneSkills');
+    if (!node) return;
+    node.innerHTML = `
+      ${(agent.skills || []).map((skill) => `
+        <div class="fleet-skill-card">
+          <h4>${escapeHtml(skill.name)}</h4>
+          <div class="fleet-skill-meta">
+            <span class="fleet-skill ${escapeHtml(skill.level)}">${escapeHtml(skill.level)}</span>
+            <span class="fleet-skill">confidence ${Number(skill.confidence || 0)}%</span>
+          </div>
+          <p>${escapeHtml(skill.evidence)}</p>
+          <div class="fleet-card-actions">
+            <button class="chip-btn" type="button" data-fleet-action="transfer_skill" data-agent="${escapeHtml(agent.id)}" data-skill="${escapeHtml(skill.name)}">Pass to agent</button>
+            <button class="chip-btn" type="button" data-fleet-action="promote_skill" data-agent="${escapeHtml(agent.id)}" data-skill="${escapeHtml(skill.name)}">Promote</button>
+            <button class="chip-btn" type="button" data-fleet-action="ab_test_skill" data-agent="${escapeHtml(agent.id)}" data-skill="${escapeHtml(skill.name)}">A/B test</button>
+          </div>
+        </div>
+      `).join('')}
+      <div class="fleet-knowledge-card">
+        <h4>How skills evolve</h4>
+        <p>Rex proposes candidates from analytics and research. Ava, Max, and other agents prove them through call outcomes. Skills above 85% confidence become transferable, but behavior-changing transfers are approval-gated.</p>
+      </div>
+    `;
+  }
+
+  function renderFleetPaneKnowledge(agent) {
+    const node = document.getElementById('fleetPaneKnowledge');
+    if (!node) return;
+    node.innerHTML = `
+      ${(agent.knowledge || []).map((item) => `
+        <div class="fleet-knowledge-card">
+          <h4>${escapeHtml(item.title)}</h4>
+          <p>${escapeHtml(item.meta)}</p>
+          <span class="fleet-skill ${item.status === 'candidate' ? 'evolving' : 'proven'}">${escapeHtml(item.status)}</span>
+        </div>
+      `).join('')}
+      <div class="fleet-knowledge-card">
+        <h4>Add a research source</h4>
+        <p>Save a source into the Brain Blog, then Rex can turn it into candidate skills after review.</p>
+        <div class="fleet-mini-input">
+          <input id="fleetKnowledgeUrl" type="url" placeholder="https://example.com/sales-training-or-market-source">
+          <button class="chip-btn" type="button" data-fleet-action="train_source" data-agent="${escapeHtml(agent.id)}">Train source</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderFleetPaneTools(agent) {
+    const node = document.getElementById('fleetPaneTools');
+    if (!node) return;
+    node.innerHTML = `
+      ${(agent.tools || []).map(([tool, status]) => `<div class="fleet-tool-row"><span>${escapeHtml(tool)}</span><strong>${escapeHtml(status)}</strong></div>`).join('')}
+      <div class="fleet-knowledge-card">
+        <h4>Guardrails</h4>
+        <p>Max offer: MAO ceiling. Required: DNC pre-check, calling hours, provider readiness, and approval before dangerous provider writes or personality/prompt changes.</p>
+      </div>
+    `;
+  }
+
+  function renderFleetSkillsLibrary() {
+    const body = document.getElementById('fleetSkillsLibraryBody');
+    if (!body) return;
+    const allSkills = getFleetAgents().flatMap((agent) => (agent.skills || []).map((skill) => ({ ...skill, agent: agent.name })));
+    body.innerHTML = allSkills.map((skill) => `
+      <div class="fleet-skill-card">
+        <h4>${escapeHtml(skill.name)}</h4>
+        <div class="fleet-skill-meta">
+          <span class="fleet-skill ${escapeHtml(skill.level)}">${escapeHtml(skill.level)}</span>
+          <span class="fleet-skill">${escapeHtml(skill.agent)}</span>
+          <span class="fleet-skill">${Number(skill.confidence || 0)}% confidence</span>
+        </div>
+        <p>${escapeHtml(skill.evidence)}</p>
+      </div>
+    `).join('');
+  }
+
+  async function queueFleetProposal({ tool, params, title, rationale }) {
+    try {
+      const response = await requestOpenClawApi('/api/rex/strategist/proposals', {
+        method: 'POST',
+        body: {
+          requestApproval: true,
+          actor: 'Agent Fleet UI',
+          source: 'agent-fleet',
+          proposals: [{
+            tool,
+            params,
+            rationale,
+            outcomeExpected: title,
+            metadata: { surface: 'agent-fleet' },
+          }],
+        },
+        timeout: 10000,
+      });
+      showFleetOutcome(getRuntimeOutcome(response, 'queued_for_approval'), title, response?.verbiage || 'Queued for approval. No agent behavior changed silently.');
+      return response;
+    } catch (error) {
+      showFleetOutcome('unavailable', `${title} not queued`, error?.message || 'Bridge did not accept the Agent Fleet request.');
+      return null;
+    }
+  }
+
+  async function handleFleetAction(action, agentId, extra = {}) {
+    const agent = getFleetAgent(agentId);
+    if (!agent) return;
+    if (action === 'view') {
+      renderFleetDetail(agent.id);
+      document.getElementById('fleetDetail')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+    if (action === 'pause' || action === 'configure' || action === 'takeover' || action === 'mute' || action === 'end_call') {
+      await queueFleetProposal({
+        tool: `agent_${action}`,
+        params: { agentId: agent.id, agentName: agent.name, status: agent.status },
+        title: `${agent.name} ${action.replace(/_/g, ' ')} requested`,
+        rationale: `${action} was requested from Agent Fleet. Approval is required before runtime behavior changes.`,
+      });
+      return;
+    }
+    if (action === 'transfer_skill' || action === 'promote_skill' || action === 'ab_test_skill') {
+      await queueFleetProposal({
+        tool: action,
+        params: { sourceAgentId: agent.id, sourceAgentName: agent.name, skill: extra.skill || '', targetAgentId: 'next-best-agent' },
+        title: `${extra.skill || 'Skill'} ${action.replace(/_/g, ' ')} queued`,
+        rationale: 'Agent skills can improve wording and deal outcomes, so PBK routes skill promotion and transfer through Rex approval.',
+      });
+      return;
+    }
+    if (action === 'train_source') {
+      const input = document.getElementById('fleetKnowledgeUrl');
+      const sourceUrl = String(input?.value || '').trim();
+      if (!sourceUrl) {
+        showFleetOutcome('unavailable', 'Source URL required', 'Paste a URL before training Rex or the selected agent.');
+        return;
+      }
+      try {
+        const response = await requestOpenClawApi('/api/brain/blog', {
+          method: 'POST',
+          body: {
+            title: `Agent Fleet source for ${agent.name}`,
+            sourceUrl,
+            sourceType: 'agent-fleet',
+            content: `Queued from Agent Fleet for ${agent.name}. Rex should review this source and propose candidate skills only after evidence is available.`,
+            summary: `Agent Fleet research source for ${agent.name}.`,
+            tags: ['agent-fleet', 'skill-candidate', agent.id],
+            requestedBy: 'Agent Fleet UI',
+          },
+          timeout: 10000,
+        });
+        if (input) input.value = '';
+        showFleetOutcome(getRuntimeOutcome(response, 'live'), 'Research source saved', 'The source was saved to the Brain Blog for Rex skill review.');
+      } catch (error) {
+        showFleetOutcome('unavailable', 'Research source not saved', error?.message || 'Bridge did not accept the source.');
+      }
+    }
+  }
+
+  function openFleetModal(id) {
+    document.getElementById(id)?.classList.add('open');
+  }
+
+  function closeFleetModals() {
+    document.querySelectorAll('.fleet-modal-backdrop.open').forEach((modal) => modal.classList.remove('open'));
+  }
+
+  function wireAgentFleet() {
+    const page = document.querySelector('.page[data-page="fleet"]');
+    if (!page || page.dataset.fleetWired === 'true') return;
+    page.dataset.fleetWired = 'true';
+    renderFleetStats();
+    renderFleetCards();
+    renderFleetDetail(fleetUiState.selected);
+    renderFleetSkillsLibrary();
+
+    page.addEventListener('click', async (event) => {
+      const tab = event.target.closest('[data-fleet-tab]');
+      if (tab) {
+        const detail = document.getElementById('fleetDetail');
+        detail?.querySelectorAll('.fleet-tab').forEach((item) => item.classList.toggle('active', item === tab));
+        detail?.querySelectorAll('.fleet-pane').forEach((pane) => pane.classList.toggle('active', pane.dataset.fleetPane === tab.dataset.fleetTab));
+        return;
+      }
+      const card = event.target.closest('[data-fleet-agent]');
+      const actionButton = event.target.closest('[data-fleet-action]');
+      if (actionButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        await handleFleetAction(actionButton.dataset.fleetAction, actionButton.dataset.agent || fleetUiState.selected, {
+          skill: actionButton.dataset.skill || '',
+        });
+        return;
+      }
+      if (card) renderFleetDetail(card.dataset.fleetAgent);
+    });
+
+    document.getElementById('fleetSkillsLibBtn')?.addEventListener('click', () => {
+      renderFleetSkillsLibrary();
+      openFleetModal('fleetSkillsModal');
+    });
+    document.getElementById('fleetKnowledgeBtn')?.addEventListener('click', () => {
+      showPage('brain');
+      showFleetOutcome('local_view_only', 'Knowledge sources opened', 'Brain is the source library. Agent Fleet turns reviewed knowledge into candidate skills.');
+    });
+    document.getElementById('deployAgentBtn')?.addEventListener('click', () => openFleetModal('fleetDeployModal'));
+    page.querySelectorAll('[data-fleet-close]').forEach((button) => button.addEventListener('click', closeFleetModals));
+    page.querySelectorAll('.fleet-modal-backdrop').forEach((modal) => {
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeFleetModals();
+      });
+    });
+    document.getElementById('fleetDeployForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const data = Object.fromEntries(new FormData(form).entries());
+      await queueFleetProposal({
+        tool: 'deploy_agent',
+        params: data,
+        title: `${data.name || 'New agent'} deployment requested`,
+        rationale: 'New AI agents must be approval-gated before inheriting PBK skills or receiving production tools.',
+      });
+      closeFleetModals();
+      form.reset();
+    });
+  }
+
+  function renderAgentFleetExperience() {
+    if (!document.querySelector('.page[data-page="fleet"]')) return;
+    renderFleetStats();
+    renderFleetCards();
+    renderFleetDetail(fleetUiState.selected);
+    renderFleetSkillsLibrary();
+  }
+
+  wireAgentFleet();
+
   function money(value) {
     return typeof fmt === 'function' ? fmt(Number(value || 0)) : new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -11893,9 +12957,20 @@
     return 'new';
   }
 
+  function assertOpenClawAuthReady(config = getOpenClawConfig()) {
+    const authRequired = Boolean(config?.runtimeMeta?.authRequired);
+    const hasApiKey = Boolean(String(config?.apiKey || '').trim());
+    if (!authRequired || hasApiKey) return;
+    const error = new Error('Bridge API key required - add it in Settings to enable this live control.');
+    error.code = 'PBK_BRIDGE_AUTH_REQUIRED';
+    error.result = 'provider_missing';
+    throw error;
+  }
+
   async function fetchOpenClawState(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config);
 
     const attempts = [
       `${base}/state`,
@@ -11921,6 +12996,7 @@
   async function postOpenClawEvent(eventType, payload = {}, config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config);
 
     const attempts = [
       `${base}/events`,
@@ -11949,6 +13025,7 @@
     const config = getOpenClawConfig();
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config);
     const url = new URL(String(path || '').replace(/^\/+/, ''), `${base}/`).toString();
     const response = await fetchWithTimeout(url, {
       method,
@@ -11968,6 +13045,7 @@
     const config = getOpenClawConfig();
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config);
     const url = new URL(String(path || '').replace(/^\/+/, ''), `${base}/`).toString();
     const response = await fetchWithTimeout(url, {
       method,
@@ -13068,6 +14146,7 @@
     renderRexDecisionsPanel(snapshot);
     applyLeadScoringWeightsToRows(snapshot.leadScoringWeights || PBK.state.leadScoringWeights || {});
     renderCampaignsExperience(snapshot);
+    renderAgentFleetExperience();
 
     const lastActivity = getRealRuntimeActivity(snapshot)[0] || null;
     if (lastActivity?.text) {
@@ -14637,9 +15716,15 @@
       window: '9-5-est',
       dailyCap: '50',
       approvalMode: 'approval_required',
+      telnyxNumber: '',
+      instantlySender: '',
       customNotes: '',
       csvLeads: [],
       csvFileName: ''
+    },
+    providerOptions: {
+      telnyxNumbers: [],
+      instantlySenders: []
     },
     selectedLeadsCache: []
   };
@@ -15128,6 +16213,116 @@
     return [];
   }
 
+  function setCampaignProviderStatus(message = '', tone = 'neutral') {
+    const node = document.querySelector('[data-campaign-provider-status]');
+    if (!node) return;
+    node.textContent = message || 'Provider routing ready.';
+    node.style.color = tone === 'good' ? 'var(--lime)' : tone === 'warn' ? 'var(--amber)' : tone === 'bad' ? 'var(--crimson)' : 'var(--text-tertiary)';
+  }
+
+  function normalizeCampaignProviderItems(payload = {}, key = 'numbers') {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.[key])) return payload[key];
+    if (Array.isArray(payload?.data)) return payload.data;
+    return [];
+  }
+
+  function populateCampaignProviderSelect(select, defaultLabel, items, mapItem) {
+    if (!select) return;
+    const current = select.value || '';
+    select.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = defaultLabel;
+    select.appendChild(defaultOption);
+    items.forEach((item) => {
+      const mapped = mapItem(item);
+      if (!mapped?.value) return;
+      const option = document.createElement('option');
+      option.value = mapped.value;
+      option.textContent = mapped.label || mapped.value;
+      select.appendChild(option);
+    });
+    if (current && Array.from(select.options).some((option) => option.value === current)) {
+      select.value = current;
+    } else if (current) {
+      campaignUiState.wizard[select.dataset.campaignField] = '';
+    }
+  }
+
+  async function loadCampaignProviderOptions(kind = 'all', { silent = false } = {}) {
+    const wizard = document.getElementById('campaignWizardBackdrop');
+    if (!wizard) return null;
+    const loadTelnyx = kind === 'all' || kind === 'telnyx';
+    const loadInstantly = kind === 'all' || kind === 'instantly';
+    const buttons = wizard.querySelectorAll(
+      loadTelnyx && loadInstantly
+        ? '[data-campaign-provider-refresh]'
+        : `[data-campaign-provider-refresh="${kind}"]`
+    );
+    buttons.forEach((button) => { button.disabled = true; });
+    setCampaignProviderStatus('Checking bridge provider routes...', 'neutral');
+    const summary = { telnyx: null, instantly: null };
+
+    if (loadTelnyx) {
+      const select = wizard.querySelector('#campaignTelnyxNumber');
+      try {
+        const payload = await requestOpenClawApi('/api/telnyx/numbers', { timeout: 12000 });
+        const numbers = normalizeCampaignProviderItems(payload, 'numbers');
+        campaignUiState.providerOptions.telnyxNumbers = numbers;
+        populateCampaignProviderSelect(select, 'Auto-select (Telnyx pool/default)', numbers, (number) => {
+          const value = number.phone_number || number.phoneNumber || number.number || number.value || '';
+          const labelParts = [value, number.label, number.region || number.region_code].filter(Boolean);
+          return { value, label: labelParts.join(' - ') };
+        });
+        summary.telnyx = payload?.result || (numbers.length ? 'live' : 'provider_missing');
+      } catch (error) {
+        summary.telnyx = 'unavailable';
+        console.warn('[PBK] Could not load Telnyx numbers', error);
+        if (!silent) {
+          toastOutcome({ outcome: 'unavailable', title: 'Telnyx numbers unavailable', desc: error?.message || 'The bridge did not return Telnyx numbers.' });
+        }
+      }
+    }
+
+    if (loadInstantly) {
+      const select = wizard.querySelector('#campaignInstantlySender');
+      try {
+        const payload = await requestOpenClawApi('/api/instantly/senders', { timeout: 12000 });
+        const senders = normalizeCampaignProviderItems(payload, 'senders');
+        campaignUiState.providerOptions.instantlySenders = senders;
+        populateCampaignProviderSelect(select, 'Default (primary Instantly inbox)', senders, (sender) => {
+          const value = sender.email || sender.email_address || sender.address || sender.value || '';
+          const label = [value, sender.provider || sender.type || sender.status].filter(Boolean).join(' - ');
+          return { value, label };
+        });
+        summary.instantly = payload?.result || (senders.length ? 'live' : 'provider_missing');
+      } catch (error) {
+        summary.instantly = 'unavailable';
+        console.warn('[PBK] Could not load Instantly senders', error);
+        if (!silent) {
+          toastOutcome({ outcome: 'unavailable', title: 'Instantly senders unavailable', desc: error?.message || 'The bridge did not return Instantly senders.' });
+        }
+      }
+    }
+
+    buttons.forEach((button) => { button.disabled = false; });
+    const statuses = [
+      summary.telnyx ? `Telnyx: ${summary.telnyx}` : '',
+      summary.instantly ? `Instantly: ${summary.instantly}` : ''
+    ].filter(Boolean);
+    const hasIssue = statuses.some((item) => /missing|unavailable/.test(item));
+    if (statuses.length) setCampaignProviderStatus(statuses.join(' · '), hasIssue ? 'warn' : 'good');
+    if (!silent && statuses.length) {
+      toastOutcome({
+        outcome: hasIssue ? 'provider_missing' : 'live',
+        title: 'Provider routes refreshed',
+        desc: statuses.join(' · ')
+      });
+    }
+    return summary;
+  }
+
   async function queueCampaignApproval(campaign, requestedAction = 'start_campaign', extra = {}) {
     const selectedLeads = extra.selectedLeads || campaignSelectedLeadPayload(extra.leadSource || 'selected');
     if (campaign?.id && !String(campaign.id).startsWith('draft-')) {
@@ -15169,6 +16364,10 @@
         templateId: campaign.templateId || extra.templateId || '',
         leadFilter: extra.leadSource || '',
         schedule: extra.schedule || {},
+        providerConfig: extra.providerConfig || campaign.providerConfig || {},
+        selectedFromNumber: extra.selectedFromNumber || extra.fromNumber || campaign.selectedFromNumber || campaign.fromNumber || '',
+        fromEmail: extra.fromEmail || extra.from_email || extra.instantlySender || campaign.fromEmail || campaign.from_email || '',
+        from_email: extra.from_email || extra.fromEmail || extra.instantlySender || campaign.from_email || campaign.fromEmail || '',
         statusMessage: `${requestedAction.replace(/_/g, ' ')} queued for approval`
       }
     }, {
@@ -15415,6 +16614,10 @@
             toastOutcome({ outcome: 'unavailable', title: 'CSV preview failed', desc: error?.message || 'PBK could not read that CSV file.' });
           });
         }
+        const providerRefresh = event.target.closest('[data-campaign-provider-refresh]');
+        if (providerRefresh) {
+          loadCampaignProviderOptions(providerRefresh.dataset.campaignProviderRefresh || 'all', { silent: false });
+        }
       });
       wizard.querySelector('[data-campaign-wizard-prev]')?.addEventListener('click', () => setCampaignWizardStep(campaignUiState.wizardStep - 1));
       wizard.querySelector('[data-campaign-wizard-next]')?.addEventListener('click', async () => {
@@ -15497,6 +16700,7 @@
     wizard.classList.add('open');
     wizard.setAttribute('aria-hidden', 'false');
     updateCampaignSourceCounts();
+    void loadCampaignProviderOptions('all', { silent: true });
     setCampaignWizardStep(0);
   }
 
@@ -15565,12 +16769,16 @@
     });
     const estimate = campaignWizardEstimate();
     const provider = campaignProviderForChannel(campaignUiState.wizard.channel);
+    const selectedFromNumber = campaignUiState.wizard.telnyxNumber || '';
+    const selectedSender = campaignUiState.wizard.instantlySender || '';
     const main = wizard.querySelector('[data-campaign-review-main]');
     const ready = wizard.querySelector('[data-campaign-review-readiness]');
     if (main) {
       main.innerHTML = [
         ['Name', campaignUiState.wizard.name || 'Untitled campaign'],
         ['Channel', `${campaignChannelLabel(campaignUiState.wizard.channel)} via ${provider}`],
+        ['Outbound number', selectedFromNumber || 'Auto-select (Telnyx pool/default)'],
+        ['Sending inbox', selectedSender || 'Default Instantly inbox'],
         ['Lead source', campaignUiState.wizard.leadSource],
         ['Template', campaignUiState.wizard.template],
         ['Schedule', campaignUiState.wizard.start],
@@ -15597,6 +16805,22 @@
   async function submitCampaignWizard() {
     const estimate = campaignWizardEstimate();
     const selectedLeads = campaignSelectedLeadPayload(campaignUiState.wizard.leadSource);
+    const selectedFromNumber = campaignUiState.wizard.telnyxNumber || '';
+    const fromEmail = campaignUiState.wizard.instantlySender || '';
+    const providerConfig = {
+      selectedFromNumber,
+      fromNumber: selectedFromNumber,
+      fromEmail,
+      from_email: fromEmail,
+      telnyx: {
+        selectedFromNumber,
+        fromNumber: selectedFromNumber
+      },
+      instantly: {
+        fromEmail,
+        from_email: fromEmail
+      }
+    };
     const draftPayload = {
       name: campaignUiState.wizard.name || 'Untitled campaign',
       channel: campaignUiState.wizard.channel,
@@ -15604,6 +16828,12 @@
       leadSource: campaignUiState.wizard.leadSource,
       selectedLeads,
       csvLeads: campaignUiState.wizard.leadSource === 'csv-upload' ? campaignUiState.wizard.csvLeads : [],
+      selectedFromNumber,
+      fromNumber: selectedFromNumber,
+      from_email: fromEmail,
+      fromEmail,
+      instantlySender: fromEmail,
+      providerConfig,
       schedule: {
         start: campaignUiState.wizard.start,
         window: campaignUiState.wizard.window,
@@ -15611,12 +16841,14 @@
         approvalMode: campaignUiState.wizard.approvalMode,
         estimatedLeads: estimate.count,
         estimatedCost: estimate.cost,
+        providerConfig,
         customNotes: campaignUiState.wizard.customNotes
       },
       sequence: {
         templateId: campaignUiState.wizard.template,
         channel: campaignUiState.wizard.channel,
-        label: campaignUiState.wizard.channel === 'email' ? '5-touch email sequence' : campaignUiState.wizard.channel === 'sms' ? '3-touch SMS drip' : 'daily outbound call attempts'
+        label: campaignUiState.wizard.channel === 'email' ? '5-touch email sequence' : campaignUiState.wizard.channel === 'sms' ? '3-touch SMS drip' : 'daily outbound call attempts',
+        providerConfig
       },
       notes: campaignUiState.wizard.customNotes,
       actor: 'PBK Command Center'
@@ -16259,6 +17491,57 @@
       const action = button.dataset.contractAction || '';
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
+      if (!action && label === 'view') {
+        event.preventDefault();
+        event.stopPropagation();
+        const row = button.closest('.contract-row');
+        if (row) {
+          page.querySelectorAll('.contract-row').forEach((item) => item.classList.remove('active'));
+          row.classList.add('active');
+        }
+        page.querySelector('.contract-preview')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        toastOutcome({
+          outcome: 'local_view_only',
+          title: 'Contract preview opened',
+          desc: 'This row opens the current contract preview. Live DocuSign envelope actions stay provider-gated.'
+        });
+        return;
+      }
+
+      if (!action && label === 'docusign') {
+        event.preventDefault();
+        event.stopPropagation();
+        toastOutcome({
+          outcome: 'provider_missing',
+          title: 'DocuSign status requires live envelope',
+          desc: 'Connect or verify DocuSign credentials, then open a real envelope from the analyzer-backed contract packet.'
+        });
+        return;
+      }
+
+      if (!action && label === 'edit') {
+        event.preventDefault();
+        event.stopPropagation();
+        showPage('analyzer');
+        setTimeout(async () => {
+          const api = await ensureAnalyzerBridgeLoaded();
+          syncAnalyzerFrame(true);
+          api?.setActiveTab?.('documents');
+        }, 120);
+        return;
+      }
+
+      if (!action && label === 'open in docusign') {
+        event.preventDefault();
+        event.stopPropagation();
+        toastOutcome({
+          outcome: 'provider_missing',
+          title: 'Live DocuSign envelope needed',
+          desc: 'This static preview has no envelope URL. Generate or send the analyzer-backed packet once DocuSign is verified.'
+        });
+        return;
+      }
+
       if (action === 'focus-contract') {
         PBK.state.runtime.contractPreviewId = button.dataset.contractId || 'analyzer-draft';
         renderContractsExperience();
@@ -16408,6 +17691,21 @@
     });
 
     page.addEventListener('click', (event) => {
+      const stage = event.target.closest('.pstage');
+      if (stage) {
+        page.querySelectorAll('.pstage').forEach((item) => item.classList.remove('active'));
+        stage.classList.add('active');
+        const filter = normalizeControlText(stage.querySelector('.ps-label')?.textContent || '');
+        const rows = Array.from(page.querySelectorAll('.contract-row'));
+        const shown = filterItemsByText(rows, (row) => {
+          if (filter === 'funded mtd') return normalizeControlText(row.textContent).includes('signed');
+          if (filter === 'sent') return true;
+          return normalizeControlText(row.textContent).includes(filter);
+        });
+        showLocalViewToast('Contract stage filtered', `${shown} contract rows match "${stage.querySelector('.ps-label')?.textContent?.trim() || 'stage'}".`);
+        return;
+      }
+
       const row = event.target.closest('.contract-row');
       if (!row) return;
       PBK.state.runtime.contractPreviewId = row.dataset.contractId || 'analyzer-draft';
@@ -16572,6 +17870,16 @@
           .sort((a, b) => Number(b.querySelector('.score span')?.textContent || 0) - Number(a.querySelector('.score span')?.textContent || 0))
           .forEach((row) => tbody.appendChild(row));
         showLocalViewToast('Pipeline sorted', 'Rows are ordered by highest score in the current browser view.');
+        return;
+      }
+
+      if (label === 'live') {
+        showPage('calls');
+        toastOutcome({
+          outcome: 'live',
+          title: 'Live call floor opened',
+          desc: 'The Calls page is the active control surface for take over, mute, transfer, and end actions.'
+        });
       }
     });
   }
@@ -17686,6 +18994,359 @@
     });
   }
 
+  const MEMORY_RANGE_OPTIONS = ['7 days', '14 days', '30 days'];
+  const MEMORY_AGENT_OPTIONS = ['All', 'Ava', 'Max', 'Rex', 'Nora', 'Zed'];
+  const MEMORY_PLAYBOOKS = {
+    'price-too-low': ['Rex note - price-too-low playbook', 'Most-frequent objection this month. Best response: empathy-label first, then walk through repair math. Direct counter-anchors lose 71% of the time. Tactical Empathy + Mirroring together hit 84% retention.'],
+    'need-to-think': ['Rex note - need-to-think playbook', 'Lower the commitment size. Ask what would need to be true, then set a precise follow-up time. Do not hard-close while uncertainty is high.'],
+    'spouse-decides': ['Rex note - spouse-decides playbook', 'Invite the decision maker into the process. Offer a short three-way call, summarize numbers in writing, and ask what their spouse will care about most.'],
+    'recently-listed': ['Rex note - recently-listed playbook', 'Acknowledge MLS exposure, then contrast certainty, repairs, commissions, and close speed. Keep the tone helpful rather than competitive.'],
+    'probate-pending': ['Rex note - probate-pending playbook', 'Slow down, validate the family burden, and avoid legal claims. Offer to coordinate after attorney confirmation and keep next steps simple.'],
+    'repair-disagreement': ['Rex note - repair-disagreement playbook', 'Use specific repair categories instead of arguing total cost. Roof, HVAC, windows, cleanout, and holding costs make the math easier to trust.'],
+    'timeline-mismatch': ['Rex note - timeline-mismatch playbook', 'Do not force urgency. Offer two paths: fast cash close now, or a scheduled check-in when the seller is ready.'],
+    'trust-issue': ['Rex note - trust-issue playbook', 'Use transparent process, references, and no-pressure language. Trust objections respond better to clarity than persuasion.'],
+    'cash-only-required': ['Rex note - cash-only-required playbook', 'Confirm the seller wants certainty, then explain proof of funds, earnest money, and close timeline without overpromising.'],
+    'subject-to-confused': ['Rex note - subject-to-confused playbook', 'Avoid jargon first. Explain the problem it solves, who stays protected, and when a cash offer is simpler.'],
+    'scam-suspicion': ['Rex note - scam-suspicion playbook', 'Step back immediately. Offer company details, written disclosures, and permission to verify. If distrust remains high, end gracefully.'],
+    'attorney-review': ['Rex note - attorney-review playbook', 'Support attorney review. Send a clean summary and ask for a review deadline so the deal does not drift.']
+  };
+
+  function wireMemoryAnalyticsControls() {
+    const page = document.querySelector('section.page[data-page="memory"]');
+    if (!page || page.dataset.memoryWired === 'true') return;
+    page.dataset.memoryWired = 'true';
+
+    const state = { rangeIndex: 0, agentIndex: 0, data: null, loadedAt: '' };
+    const playbook = page.querySelector('[data-memory-playbook]');
+    const formatInt = (value) => Number(value || 0).toLocaleString();
+    const formatPct = (value) => `${Number(value || 0).toFixed(Number(value || 0) % 1 ? 1 : 0)}%`;
+    const compactActionLabel = (value = '') => String(value || 'activity').replace(/^agent_/, '').replace(/_/g, ' ').trim();
+    const memoryToneForAction = (value = '', status = '') => {
+      const raw = `${value} ${status}`.toLowerCase();
+      if (/promote|approved|applied|success|executed|complete/.test(raw)) return 'lime';
+      if (/test|ab|experiment/.test(raw)) return 'magenta';
+      if (/discover|queued|pending|proposed|warning/.test(raw)) return 'amber';
+      if (/retire|reject|fail|error/.test(raw)) return 'crimson';
+      return '';
+    };
+    const memoryVerbClass = (value = '') => {
+      const raw = String(value || '').toLowerCase();
+      if (/promote/.test(raw)) return 'promote';
+      if (/transfer|ingest/.test(raw)) return 'transfer';
+      if (/ab|test/.test(raw)) return 'ab';
+      if (/deploy|create/.test(raw)) return 'deploy';
+      if (/discover|learn|research/.test(raw)) return 'discover';
+      if (/retire|reject|fail/.test(raw)) return 'retire';
+      if (/pause|stop/.test(raw)) return 'pause';
+      return '';
+    };
+    const relativeTime = (value = '') => {
+      const ts = Date.parse(value || '');
+      if (!Number.isFinite(ts)) return 'recently';
+      const diff = Math.max(0, Date.now() - ts);
+      const mins = Math.round(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hours = Math.round(mins / 60);
+      if (hours < 24) return `${hours}h ago`;
+      const days = Math.round(hours / 24);
+      return `${days}d ago`;
+    };
+    const renderEmpty = (message) => `<div class="memory-note"><div class="memory-note-title">No live rows yet</div>${escapeHtml(message)}</div>`;
+
+    const updateMemoryStats = (data) => {
+      const stats = data?.stats || {};
+      const skills = Array.isArray(data?.skills) ? data.skills : [];
+      const history = Array.isArray(data?.history) ? data.history : [];
+      const statValues = {
+        total: formatInt(stats.total),
+        queries: formatInt(stats.vectorQueriesDay),
+        skills: formatInt(stats.activeSkills ?? skills.length),
+        relevance: Number(stats.avgRelevanceScore || 0).toFixed(2),
+      };
+      Object.entries(statValues).forEach(([key, value]) => {
+        const node = page.querySelector(`[data-memory-stat-value="${key}"]`);
+        if (node) node.textContent = value;
+      });
+      const deltas = {
+        total: `+${formatInt(stats.newLastWeek || 0)} last 7d`,
+        queries: stats.vectorQueriesDay ? 'live bridge metric' : 'waiting for query logs',
+        skills: `${formatInt(skills.filter((skill) => /proven|promoted/i.test(`${skill.level || ''} ${skill.status || ''}`)).length)} proven - ${formatInt(skills.filter((skill) => /candidate|evolving/i.test(`${skill.level || ''} ${skill.status || ''}`)).length)} evolving`,
+        relevance: stats.result === 'live' ? 'from coach_memory.score' : 'bridge-state fallback',
+      };
+      Object.entries(deltas).forEach(([key, value]) => {
+        const node = page.querySelector(`[data-memory-stat-delta="${key}"]`);
+        if (node) node.textContent = value;
+      });
+      const summary = page.querySelector('[data-memory-summary-tag]');
+      if (summary) {
+        summary.textContent = `Self-modifying memory - ${formatInt(stats.total)} memories - ${formatInt(stats.activeSkills ?? skills.length)} active skills - ${formatInt(history.length)} agent decisions loaded`;
+      }
+    };
+
+    const renderMemoryHistory = (items = []) => {
+      const list = page.querySelector('[data-memory-history-list]');
+      if (!list) return;
+      if (!items.length) {
+        list.innerHTML = renderEmpty('No agent decisions are available from agent_tasks or Rex decisions yet.');
+        return;
+      }
+      list.innerHTML = items.slice(0, 12).map((item) => {
+        const action = compactActionLabel(item.action || item.verb || item.status);
+        const tone = memoryToneForAction(item.action, item.status);
+        const verb = action.toUpperCase().slice(0, 18);
+        const detail = item.summary || item.target || 'Agent activity recorded.';
+        const outcome = item.success === true
+          ? 'positive outcome recorded'
+          : item.success === false
+            ? 'needs review'
+            : item.status || 'recorded';
+        return `
+          <button class="memory-timeline-item ${tone}" type="button" data-memory-decision="${escapeHtml(`${item.actor || 'PBK'} - ${action}: ${detail}`)}">
+            <span class="memory-timeline-head">
+              <span class="memory-timeline-actor">${escapeHtml(item.actor || 'PBK')}</span>
+              <span class="memory-verb ${memoryVerbClass(item.action)}">${escapeHtml(verb)}</span>
+              <span class="memory-time">${escapeHtml(relativeTime(item.createdAt))}</span>
+            </span>
+            <span class="memory-desc">${escapeHtml(detail)}</span>
+            <span class="memory-outcome ${item.success === true ? 'win' : item.success === false ? 'loss' : ''}">${escapeHtml(outcome)}</span>
+          </button>
+        `;
+      }).join('');
+    };
+
+    const renderSkillOutcomes = (items = []) => {
+      const list = page.querySelector('[data-memory-skills-list]');
+      if (!list) return;
+      if (!items.length) {
+        list.innerHTML = renderEmpty('No skills have been published yet. Agent-created skills will appear after the skills migration and Rex evaluator start writing outcomes.');
+        return;
+      }
+      list.innerHTML = items.slice(0, 10).map((skill) => {
+        const confidence = Math.max(0, Math.min(100, Number(skill.confidence || 0)));
+        const rate = Number(skill.successRate || 0);
+        const barClass = confidence >= 85 ? 'lime' : confidence < 70 ? 'amber' : '';
+        const agentId = String(skill.agentId || skill.agentName || 'agent').toLowerCase();
+        return `
+          <div class="memory-skill-row" data-memory-skill="${escapeHtml(skill.name || 'Skill')}" data-memory-agent="${escapeHtml(agentId)}">
+            <div class="memory-skill-name">${escapeHtml(skill.name || 'Unnamed skill')}<span class="memory-skill-source">${escapeHtml(`${skill.source || 'self-learned'} - ${skill.level || 'candidate'}`)}</span></div>
+            <div class="memory-skill-num">${formatInt(skill.uses)}x</div>
+            <div class="memory-skill-num ${rate >= 60 ? 'good' : rate && rate < 50 ? 'warn' : ''}">${rate ? formatPct(rate) : '--'}</div>
+            <div class="memory-skill-bar"><span class="${barClass}" style="--w:${confidence}%"></span></div>
+            <div class="memory-skill-actions">
+              <button class="memory-mini-btn" type="button" data-memory-skill-action="promote_skill">Promote</button>
+              <button class="memory-mini-btn" type="button" data-memory-skill-action="transfer_skill">Pass</button>
+              <button class="memory-mini-btn" type="button" data-memory-skill-action="ab_test_skill">Test</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    };
+
+    const renderObjectionPlaybooks = (items = []) => {
+      const list = page.querySelector('[data-memory-playbook-chips]');
+      if (!list) return;
+      const playbooks = items.length ? items : Object.entries(MEMORY_PLAYBOOKS).map(([tag, note]) => ({ tag, count: 0, title: note[0], note: note[1] }));
+      playbooks.forEach((item) => {
+        MEMORY_PLAYBOOKS[item.tag] = [item.title || `Rex note - ${item.tag} playbook`, item.note || item.prompt || 'No playbook text yet.'];
+      });
+      list.innerHTML = playbooks.slice(0, 16).map((item, index) => `
+        <button class="memory-tag-chip ${index === 0 ? 'active' : ''}" type="button" data-memory-objection="${escapeHtml(item.tag)}">${escapeHtml(item.tag)} <span class="count">${formatInt(item.count)}</span></button>
+      `).join('');
+      const first = playbooks[0];
+      if (first && playbook) {
+        playbook.innerHTML = `<div class="memory-note-title">${escapeHtml(MEMORY_PLAYBOOKS[first.tag][0])}</div>${escapeHtml(MEMORY_PLAYBOOKS[first.tag][1])}`;
+      }
+    };
+
+    const renderFleetOutcomes = (items = []) => {
+      const list = page.querySelector('[data-memory-fleet-list]');
+      if (!list) return;
+      if (!items.length) {
+        list.innerHTML = renderEmpty('No fleet outcomes are available yet. Agent activity will appear after bridge actions and Rex decisions are recorded.');
+        return;
+      }
+      list.innerHTML = items.map((agent) => {
+        const id = String(agent.agentId || agent.agentName || 'fleet').toLowerCase();
+        const initials = String(agent.agentName || id || 'F').slice(0, 1).toUpperCase();
+        const avatarClass = id.includes('max') ? 'amber' : id.includes('rex') ? 'purple' : id.includes('nora') ? 'lime' : id.includes('zed') ? 'gray' : '';
+        const stats = Array.isArray(agent.stats) ? agent.stats.slice(0, 4) : [];
+        return `
+          <button class="memory-outcome-card ${id === 'fleet' ? 'total' : ''}" type="button" data-memory-agent-card="${escapeHtml(id)}">
+            <span class="memory-agent-head">
+              <span class="memory-agent-avatar ${avatarClass}">${escapeHtml(initials)}</span>
+              <span><span class="memory-agent-name">${escapeHtml(agent.agentName || id)}</span><span class="memory-agent-role">${escapeHtml(agent.role || agent.status || 'agent')}</span></span>
+            </span>
+            ${stats.map((stat) => `<span class="memory-agent-stat"><span>${escapeHtml(stat.label || 'Metric')}</span><span class="${escapeHtml(stat.tone || '')}">${escapeHtml(stat.value ?? '--')}</span></span>`).join('')}
+          </button>
+        `;
+      }).join('');
+    };
+
+    const loadMemoryAnalytics = async ({ silent = false } = {}) => {
+      try {
+        const data = await requestOpenClawApi('/api/memory/analytics?limit=50', { timeout: 12000 });
+        state.data = data;
+        state.loadedAt = new Date().toISOString();
+        updateMemoryStats(data);
+        renderMemoryHistory(data.history || []);
+        renderSkillOutcomes(data.skills || []);
+        renderObjectionPlaybooks(data.playbooks || []);
+        renderFleetOutcomes(data.fleet || []);
+        if (!silent) {
+          toastOutcome({
+            outcome: getRuntimeOutcome(data, data.result || 'live'),
+            title: data.result === 'live' ? 'Memory analytics refreshed' : 'Memory analytics fallback loaded',
+            desc: data.warnings?.length ? data.warnings.slice(0, 2).join(' · ') : 'Pulled Memory & Analytics from bridge endpoints.',
+          });
+        }
+      } catch (error) {
+        if (!silent) {
+          toastOutcome({
+            outcome: 'unavailable',
+            title: 'Memory analytics unavailable',
+            desc: error?.message || 'Bridge did not return memory analytics. Static UI remains visible.',
+          });
+        }
+      }
+    };
+
+    const buildMemoryCsv = () => {
+      const data = state.data || {};
+      const rows = [['section', 'name', 'value', 'detail']];
+      const stats = data.stats || {};
+      rows.push(['stats', 'memories_stored', stats.total ?? '4217', `+${stats.newLastWeek ?? 147} last 7d`]);
+      rows.push(['stats', 'vector_queries_day', stats.vectorQueriesDay ?? '619', stats.source || data.source || 'current view']);
+      rows.push(['stats', 'active_skills', stats.activeSkills ?? ((data.skills || []).length || '47'), 'skills endpoint']);
+      rows.push(['stats', 'avg_relevance_score', stats.avgRelevanceScore ?? '0.81', 'coach_memory score']);
+      (data.skills || []).forEach((skill) => rows.push(['skill', skill.name, `${skill.confidence || 0}% confidence`, `${skill.uses || 0} uses - ${skill.agentName || skill.agentId || 'agent'}`]));
+      (data.history || []).forEach((item) => rows.push(['decision', item.action || item.verb || item.status, item.actor || 'PBK', item.summary || item.target || '']));
+      (data.fleet || []).forEach((agent) => rows.push(['fleet', agent.agentName || agent.agentId, agent.status || '', JSON.stringify(agent.metrics || {})]));
+      (data.playbooks || []).forEach((item) => rows.push(['objection', item.tag, item.count || 0, item.note || item.title || '']));
+      return rows.map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    };
+
+    const setAgentFilter = () => {
+      const selected = MEMORY_AGENT_OPTIONS[state.agentIndex];
+      const button = page.querySelector('[data-memory-cycle="agent"]');
+      if (button) button.childNodes[0].nodeValue = `Agent: ${selected}`;
+      page.querySelectorAll('[data-memory-agent-card]').forEach((card) => {
+        const id = String(card.dataset.memoryAgentCard || '').toLowerCase();
+        card.hidden = selected !== 'All' && id !== selected.toLowerCase() && id !== 'fleet';
+      });
+      showLocalViewToast('Memory filtered', `Local view only - showing ${selected === 'All' ? 'all fleet outcomes' : selected + ' outcomes'}.`);
+    };
+
+    const queueMemorySkillProposal = async (action, row) => {
+      const skill = row?.dataset.memorySkill || 'Skill';
+      const agent = row?.dataset.memoryAgent || 'ava';
+      const title = `${skill} ${action.replace(/_/g, ' ')} requested`;
+      try {
+        const response = await requestOpenClawApi('/api/rex/strategist/proposals', {
+          method: 'POST',
+          body: {
+            requestApproval: true,
+            actor: 'Memory & Analytics UI',
+            source: 'memory-analytics',
+            proposals: [{
+              tool: action,
+              params: { sourceAgentId: agent, sourceAgentName: agent, skill, targetAgentId: action === 'transfer_skill' ? 'next-best-agent' : agent },
+              rationale: 'Memory analytics detected a skill action. PBK routes behavior-changing skill updates through Rex approval.',
+              outcomeExpected: title,
+              metadata: { surface: 'memory-analytics' },
+            }],
+          },
+          timeout: 10000,
+        });
+        toastOutcome({ outcome: getRuntimeOutcome(response, 'queued_for_approval'), title, desc: response?.verbiage || 'Queued for approval. No agent prompt or skill changed silently.' });
+      } catch (error) {
+        toastOutcome({ outcome: 'unavailable', title: `${title} not queued`, desc: error?.message || 'Bridge did not accept the Memory & Analytics request.' });
+      }
+    };
+
+    page.addEventListener('click', async (event) => {
+      const rangeCycle = event.target.closest('[data-memory-cycle="range"]');
+      if (rangeCycle) {
+        state.rangeIndex = (state.rangeIndex + 1) % MEMORY_RANGE_OPTIONS.length;
+        rangeCycle.childNodes[0].nodeValue = `Range: ${MEMORY_RANGE_OPTIONS[state.rangeIndex]}`;
+        showLocalViewToast('Range changed', `Local view only - charts are showing the ${MEMORY_RANGE_OPTIONS[state.rangeIndex]} presentation state.`);
+        return;
+      }
+
+      if (event.target.closest('[data-memory-cycle="agent"]')) {
+        state.agentIndex = (state.agentIndex + 1) % MEMORY_AGENT_OPTIONS.length;
+        setAgentFilter();
+        return;
+      }
+
+      const skillAction = event.target.closest('[data-memory-skill-action]');
+      if (skillAction) {
+        await queueMemorySkillProposal(skillAction.dataset.memorySkillAction, skillAction.closest('[data-memory-skill]'));
+        return;
+      }
+
+      const action = event.target.closest('[data-memory-action]')?.dataset.memoryAction;
+      if (action === 'refresh') {
+        await loadMemoryAnalytics({ silent: false });
+        return;
+      }
+      if (action === 'export') {
+        downloadTextFile('pbk-memory-analytics-export.csv', buildMemoryCsv(), 'text/csv');
+        toastOutcome({ outcome: state.data ? getRuntimeOutcome(state.data, 'live') : 'local_view_only', title: 'CSV exported', desc: state.data ? 'Memory analytics snapshot downloaded from the latest bridge response.' : 'Exported the current static Memory & Analytics view. Click Refresh live for bridge data.' });
+        return;
+      }
+      if (action === 'store' || action === 'browse') {
+        showPage('brain');
+        toastOutcome({ outcome: 'local_view_only', title: 'Opened Brain', desc: 'Memory store navigation is live. Backend memory browsing still depends on the Brain endpoints.' });
+        return;
+      }
+      if (action === 'audit' || action === 'timeline') {
+        showPage('activity-log');
+        toastOutcome({ outcome: 'local_view_only', title: 'Opened Activity Log', desc: 'Use the activity log for the full audit trail. Timeline filtering is local until memory endpoints are live.' });
+        return;
+      }
+      if (action === 'fleet' || action === 'skills') {
+        showPage('fleet');
+        setTimeout(() => {
+          if (action === 'skills') document.getElementById('fleetSkillsLibBtn')?.click();
+        }, 80);
+        return;
+      }
+      if (action === 'raw') {
+        const raw = state.data
+          ? `<pre style="white-space:pre-wrap;max-height:420px;overflow:auto;">${escapeHtml(JSON.stringify(state.data, null, 2).slice(0, 6000))}</pre>`
+          : 'No bridge payload loaded yet. Click <strong>Refresh live</strong> to call <code>/api/memory/analytics</code>.';
+        showUtilityModal('Memory raw data', raw);
+        return;
+      }
+
+      const decision = event.target.closest('[data-memory-decision]');
+      if (decision) {
+        showUtilityModal('Decision detail', escapeHtml(decision.dataset.memoryDecision || 'Decision selected.'));
+        return;
+      }
+
+      const objection = event.target.closest('[data-memory-objection]');
+      if (objection) {
+        page.querySelectorAll('[data-memory-objection]').forEach((chip) => chip.classList.remove('active'));
+        objection.classList.add('active');
+        const note = MEMORY_PLAYBOOKS[objection.dataset.memoryObjection] || MEMORY_PLAYBOOKS['price-too-low'];
+        if (playbook) playbook.innerHTML = `<div class="memory-note-title">${escapeHtml(note[0])}</div>${escapeHtml(note[1])}`;
+        showLocalViewToast('Objection playbook selected', `${objection.dataset.memoryObjection} is a local filter. Rex playbook sync comes from memory endpoints later.`);
+        return;
+      }
+
+      const agentCard = event.target.closest('[data-memory-agent-card]');
+      if (agentCard) {
+        const agentId = agentCard.dataset.memoryAgentCard;
+        showPage('fleet');
+        setTimeout(() => {
+          if (agentId && agentId !== 'fleet' && typeof renderFleetDetail === 'function') renderFleetDetail(agentId);
+        }, 80);
+      }
+    });
+  }
+
   function wirePriorityOneControls() {
     wireDashboardQuickControls();
     wireAgentSideControls();
@@ -17697,6 +19358,7 @@
     wireInboxFilterControls();
     wireLeadBulkControls();
     wireCampaignsControls();
+    wireMemoryAnalyticsControls();
     wireAutomationsControls();
     wireAnalyticsControls();
     wireBrainApiButton();
@@ -17886,6 +19548,8 @@
         }
       }
     });
+
+    loadMemoryAnalytics({ silent: true });
   }
 
   function exportBrainLibrary() {
@@ -20058,5 +21722,65 @@
     syncAnalyzerFrame(false);
   }
 </script>
+<style id="pbk-mobile-messaging-polish">
+  @media (max-width: 720px), (pointer: coarse) {
+    html {
+      -webkit-text-size-adjust: 100%;
+    }
+
+    input,
+    textarea,
+    select,
+    .rc-composer textarea,
+    .command-bar textarea {
+      font-size: 16px !important;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .research-chat {
+      min-height: min(680px, calc(100dvh - 128px));
+      max-height: calc(100dvh - 112px);
+      margin-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .rc-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none !important;
+      padding-bottom: calc(var(--s-4) + 96px + env(safe-area-inset-bottom, 0px)) !important;
+      scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .rc-composer,
+    .command-bar {
+      width: 100%;
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: stretch !important;
+      gap: 10px !important;
+    }
+
+    .rc-composer textarea,
+    .command-bar textarea {
+      width: 100% !important;
+      min-width: 0 !important;
+      min-height: 48px !important;
+      line-height: 1.45 !important;
+      padding: 12px 13px !important;
+    }
+
+    .command-bar textarea {
+      min-height: 76px !important;
+    }
+
+    .rc-composer .btn,
+    .command-bar .btn {
+      width: 100% !important;
+      min-height: 44px !important;
+      justify-content: center !important;
+    }
+  }
+</style>
 </body>
 </html>

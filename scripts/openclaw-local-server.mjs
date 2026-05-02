@@ -134,6 +134,15 @@ hydrateWindowsUserEnv([
   'PBK_SUPERMEMORY_SYNC',
   'PBK_DEEPGRAM_API_KEY',
   'DEEPGRAM_API_KEY',
+  'PBK_HUMAN_AGENT_PHONE',
+  'PBK_UNDERWRITING_AGENT_PHONE',
+  'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER',
+  'PBK_INBOUND_AFTER_HOURS_START',
+  'PBK_INBOUND_AFTER_HOURS_END',
+  'PBK_INBOUND_TIMEZONE',
+  'PBK_TELNYX_AI_ASSISTANT_ID',
+  'TELNYX_AI_ASSISTANT_ID',
+  'PBK_AVA_MEMORY_DAILY_MINUTES',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -154,6 +163,16 @@ const TELNYX_MEDIA_STREAM_TOKEN = String(process.env.PBK_TELNYX_MEDIA_STREAM_TOK
 const DEEPGRAM_STREAM_CALLS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_DEEPGRAM_STREAM_CALLS || '').trim());
 const DEEPGRAM_STREAM_TRACK = String(process.env.PBK_DEEPGRAM_STREAM_TRACK || 'inbound_track').trim();
 const DEEPGRAM_STREAM_CODEC = String(process.env.PBK_DEEPGRAM_STREAM_CODEC || 'PCMU').trim();
+const TELNYX_AI_ASSISTANT_ID = String(process.env.PBK_TELNYX_AI_ASSISTANT_ID || process.env.TELNYX_AI_ASSISTANT_ID || '').trim();
+const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED || '').trim());
+const HUMAN_AGENT_PHONE = normalizePhone(process.env.PBK_HUMAN_AGENT_PHONE || process.env.HUMAN_AGENT_PHONE || '');
+const UNDERWRITING_AGENT_PHONE = normalizePhone(process.env.PBK_UNDERWRITING_AGENT_PHONE || process.env.UNDERWRITING_AGENT_PHONE || HUMAN_AGENT_PHONE || '');
+const INBOUND_QUALIFY_BEFORE_TRANSFER = /^(1|true|yes)$/i.test(String(process.env.PBK_INBOUND_QUALIFY_BEFORE_TRANSFER || '').trim());
+const INBOUND_AFTER_HOURS_START = Math.max(0, Math.min(23, Number(process.env.PBK_INBOUND_AFTER_HOURS_START || 18)));
+const INBOUND_AFTER_HOURS_END = Math.max(0, Math.min(23, Number(process.env.PBK_INBOUND_AFTER_HOURS_END || 8)));
+const INBOUND_TIMEZONE = String(process.env.PBK_INBOUND_TIMEZONE || 'America/New_York').trim();
+const AVA_MEMORY_DAILY_MINUTES = Math.max(1, Math.min(240, Number(process.env.PBK_AVA_MEMORY_DAILY_MINUTES || 60)));
+const AVA_MEMORY_WORKER_LIMIT = Math.max(1, Math.min(200, Number(process.env.PBK_AVA_MEMORY_WORKER_LIMIT || 40)));
 
 // ── DocuSign JWT auth ───────────────────────────────────────────────────────
 const DOCUSIGN_INTEGRATION_KEY = String(process.env.PBK_DOCUSIGN_INTEGRATION_KEY || process.env.DOCUSIGN_INTEGRATION_KEY || '').trim();
@@ -195,6 +214,13 @@ const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || proces
 const INSTANTLY_API_KEY = String(process.env.PBK_INSTANTLY_API_KEY || process.env.INSTANTLY_API_KEY || '').trim();
 const INSTANTLY_BASE_URL = String(process.env.PBK_INSTANTLY_BASE_URL || 'https://api.instantly.ai/api/v2').trim().replace(/\/+$/g, '');
 const INSTANTLY_CAMPAIGN_CREATE_ENDPOINT = String(process.env.PBK_INSTANTLY_CAMPAIGN_CREATE_ENDPOINT || '/campaigns').trim();
+const INSTANTLY_SENDERS_ENDPOINT = String(process.env.PBK_INSTANTLY_SENDERS_ENDPOINT || '/inboxes').trim();
+const INSTANTLY_DEFAULT_FROM_EMAIL = String(
+  process.env.PBK_INSTANTLY_DEFAULT_FROM_EMAIL
+    || process.env.INSTANTLY_DEFAULT_FROM_EMAIL
+    || COLD_CAMPAIGN_EMAIL
+    || '',
+).trim();
 const INSTANTLY_WARMUP_ENABLE_ENDPOINT = String(process.env.PBK_INSTANTLY_WARMUP_ENABLE_ENDPOINT || '/accounts/warmup/enable').trim();
 const INSTANTLY_DOMAIN_ORDER_ENDPOINT = String(process.env.PBK_INSTANTLY_DOMAIN_ORDER_ENDPOINT || '/dfy-email-account-orders').trim();
 const INSTANTLY_DOMAIN_SETUP_WEBHOOK_URL = String(process.env.PBK_INSTANTLY_DOMAIN_SETUP_WEBHOOK || '').trim();
@@ -276,7 +302,21 @@ const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 
 // Endpoints that stay open even when PBK_BRIDGE_API_KEY is set, so external
 // healthchecks (Render, uptime monitors) can still reach the bridge.
-const PUBLIC_PATHS = new Set(['/', '/health', '/status', '/api/health', '/api/status']);
+const PUBLIC_PATHS = new Set([
+  '/',
+  '/health',
+  '/status',
+  '/api/health',
+  '/api/status',
+  // Provider webhooks cannot attach the PBK bridge bearer token. Keep these
+  // open while each handler validates and maps only the expected payload shape.
+  '/api/webhooks/telnyx',
+  '/api/webhooks/telnyx/inbound',
+  '/webhooks/telnyx/inbound',
+  '/api/webhooks/telnyx/recording',
+  '/webhooks/telnyx/recording',
+  '/api/webhooks/docusign',
+]);
 
 // Postgres state backend. When PBK_DATABASE_URL is set the bridge persists
 // state to a 'bridge_state' table (single row, JSONB column) instead of the
@@ -322,6 +362,8 @@ const TOOL_NAMES = [
   'scheduleAppointment',
   'telnyx_call',
   'telnyx_sms',
+  'routeInboundCall',
+  'runAvaMemoryLearning',
   'sendDocuSign',
   'sendContract',
   'skipTrace',
@@ -365,6 +407,9 @@ const LIMITS = {
   campaignSuppressions: 400,
   campaignExecutions: 120,
   rexDecisions: 240,
+  avaActiveMemories: 120,
+  avaLearningSessions: 180,
+  inboundCallRoutes: 180,
   promptPatchApplications: 90,
   recordingRetentionRuns: 90,
   adminTasks: 90,
@@ -1957,6 +2002,124 @@ function buildDefaultAdminAudit() {
   ];
 }
 
+function buildDefaultAgentFleet() {
+  const now = Date.now();
+  return [
+    {
+      id: 'ava',
+      name: 'Ava',
+      avatar: 'A',
+      role: 'Acquisitions',
+      version: 'v2.1',
+      target: 'production',
+      status: 'on_call',
+      activity: 'On call with Diane Kowalski - probate seller - Columbus',
+      lastSeen: new Date(now - 12000).toISOString(),
+      style: 'Empathetic closer',
+      hometown: 'Akron, OH',
+      campaigns: 2,
+      sentiment: 72,
+      skillsTotal: 47,
+      skillSource: '12 audiobook, 18 call outcomes',
+      skills: [
+        { name: 'Tactical empathy opener', level: 'proven', confidence: 94, evidence: 'Lifted verbal yes rate by 18% on probate calls.' },
+        { name: 'Ackerman price walk', level: 'proven', confidence: 88, evidence: 'Protected MAO on 23 live negotiations.' },
+        { name: 'Grief-safe probate framing', level: 'evolving', confidence: 79, evidence: 'Positive sentiment trend on bereavement calls.' },
+      ],
+    },
+    {
+      id: 'max',
+      name: 'Max',
+      avatar: 'M',
+      tone: 'amber',
+      role: 'Closer',
+      version: 'v1.4',
+      target: 'production',
+      status: 'running_campaign',
+      activity: 'Running campaign: Probate Warm-up Q2 - 241 leads',
+      lastSeen: new Date(now - 45000).toISOString(),
+      style: 'Direct closer',
+      hometown: 'Cleveland, OH',
+      campaigns: 3,
+      sentiment: 66,
+      skillsTotal: 31,
+      skillSource: '8 audiobook, 11 campaign outcomes',
+      skills: [
+        { name: 'Numbers-first counter', level: 'proven', confidence: 91, evidence: 'Raised assignment spread on counter-offer calls.' },
+        { name: 'Urgency without pressure', level: 'proven', confidence: 86, evidence: 'Reduced ghosting after verbal yes.' },
+        { name: 'Walk-away line discipline', level: 'evolving', confidence: 81, evidence: 'Needs more data on high-equity sellers.' },
+      ],
+    },
+    {
+      id: 'rex',
+      name: 'Rex',
+      avatar: 'R',
+      tone: 'purple',
+      role: 'Research and strategist',
+      version: 'v3.0',
+      target: 'production',
+      status: 'learning',
+      activity: 'Learning from campaign analytics, Brain Blog posts, and Deepgram sentiment',
+      lastSeen: new Date(now - 7000).toISOString(),
+      style: 'Analytical strategist',
+      hometown: 'Boston, MA',
+      campaigns: 0,
+      sentiment: 80,
+      skillsTotal: 218,
+      skillSource: 'Brain Blog, Rex decisions, outcome evaluator',
+      skills: [
+        { name: 'Skill discovery from analytics', level: 'proven', confidence: 93, evidence: 'Creates Rex proposals with measurable outcome targets.' },
+        { name: 'Campaign script diagnosis', level: 'proven', confidence: 89, evidence: 'Finds low reply-rate patterns and proposes copy changes.' },
+        { name: 'Local market story mining', level: 'evolving', confidence: 76, evidence: 'Needs more city-specific source material.' },
+      ],
+    },
+    {
+      id: 'nora',
+      name: 'Nora',
+      avatar: 'N',
+      tone: 'lime',
+      role: 'Spanish acquisitions',
+      version: 'v0.3',
+      target: 'local',
+      status: 'building',
+      activity: 'Inheriting 38 proven Ava skills - Spanish seller empathy pack',
+      lastSeen: new Date(now - 1000 * 60 * 6).toISOString(),
+      style: 'Empathetic bilingual',
+      hometown: 'San Antonio, TX',
+      campaigns: 0,
+      sentiment: 62,
+      skillsTotal: 0,
+      skillSource: 'Building from Ava blueprint',
+      skills: [
+        { name: 'Spanish warm opener', level: 'candidate', confidence: 61, evidence: 'Needs sandbox calls before promotion.' },
+        { name: 'Ava skill inheritance', level: 'evolving', confidence: 74, evidence: '38 proven Ava skills queued for approval-backed transfer.' },
+      ],
+    },
+    {
+      id: 'zed',
+      name: 'Zed',
+      avatar: 'Z',
+      tone: 'gray',
+      role: 'Outbound SMS',
+      version: 'v1.0',
+      target: 'production',
+      status: 'idle',
+      activity: 'Idle - waiting for approved SMS nurture campaign',
+      lastSeen: new Date(now - 1000 * 60 * 12).toISOString(),
+      style: 'Concise follow-up',
+      hometown: 'Phoenix, AZ',
+      campaigns: 0,
+      sentiment: 55,
+      skillsTotal: 18,
+      skillSource: 'SMS campaign outcomes',
+      skills: [
+        { name: 'One-line reactivation', level: 'proven', confidence: 87, evidence: 'Increased reply rate on 14-day nurture.' },
+        { name: 'STOP-safe compliance copy', level: 'proven', confidence: 96, evidence: 'Maintains opt-out handling in every SMS script.' },
+      ],
+    },
+  ];
+}
+
 function buildDefaultState() {
   return {
     status: {
@@ -2062,7 +2225,13 @@ function buildDefaultState() {
     campaignEvents: [],
     campaignSuppressions: [],
     campaignExecutions: [],
+    agents: buildDefaultAgentFleet(),
+    agentSkillTransfers: [],
+    agentSkillExperiments: [],
     rexDecisions: [],
+    avaActiveMemories: [],
+    avaLearningSessions: [],
+    inboundCallRoutes: [],
     promptPatchApplications: [],
     recordingRetentionRuns: [],
     settings: {
@@ -3116,6 +3285,9 @@ function limitStateArrays(nextState) {
   nextState.campaignSuppressions = sortNewest(nextState.campaignSuppressions || []).slice(0, LIMITS.campaignSuppressions);
   nextState.campaignExecutions = sortNewest(nextState.campaignExecutions || []).slice(0, LIMITS.campaignExecutions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
+  nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
+  nextState.avaLearningSessions = sortNewest(nextState.avaLearningSessions || []).slice(0, LIMITS.avaLearningSessions);
+  nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
   nextState.recordingRetentionRuns = sortNewest(nextState.recordingRetentionRuns || []).slice(0, LIMITS.recordingRetentionRuns);
   nextState.adminTasks = sortNewest(nextState.adminTasks).slice(0, LIMITS.adminTasks);
@@ -3150,6 +3322,9 @@ function updateDerivedStatus(nextState) {
   nextState.status.activeCampaigns = (nextState.campaigns || []).filter((campaign) => String(campaign.status || '').toLowerCase() === 'active').length;
   nextState.status.pendingCampaigns = (nextState.campaigns || []).filter((campaign) => ['pending', 'approval_required'].includes(String(campaign.status || '').toLowerCase())).length;
   nextState.status.campaignEvents = (nextState.campaignEvents || []).length;
+  nextState.status.avaActiveMemories = (nextState.avaActiveMemories || []).length;
+  nextState.status.avaLearningSessions = (nextState.avaLearningSessions || []).length;
+  nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
   nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
   nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
   nextState.status.lastApprovalAt = nextState.approvals[0]?.createdAt || null;
@@ -3167,6 +3342,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastBrowserResearchAt = getItemTimestamp((nextState.browserResearchJobs || [])[0] || {}) || nextState.status.lastBrowserResearchAt || null;
   nextState.status.lastCampaignAt = getItemTimestamp((nextState.campaigns || [])[0] || {}) || null;
   nextState.status.lastCampaignEventAt = getItemTimestamp((nextState.campaignEvents || [])[0] || {}) || null;
+  nextState.status.lastAvaLearningAt = getItemTimestamp((nextState.avaLearningSessions || [])[0] || {}) || nextState.status.lastAvaLearningAt || null;
+  nextState.status.lastInboundRouteAt = getItemTimestamp((nextState.inboundCallRoutes || [])[0] || {}) || nextState.status.lastInboundRouteAt || null;
   nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
   nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
   nextState.status.lastDealSimulationAt = getItemTimestamp((nextState.dealSimulations || [])[0] || {}) || null;
@@ -3225,6 +3402,9 @@ function hydrateState(raw = {}) {
     campaignSuppressions: trimArray(raw.campaignSuppressions || defaults.campaignSuppressions, LIMITS.campaignSuppressions),
     campaignExecutions: trimArray(raw.campaignExecutions || defaults.campaignExecutions, LIMITS.campaignExecutions),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
+    avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
+    avaLearningSessions: trimArray(raw.avaLearningSessions || defaults.avaLearningSessions, LIMITS.avaLearningSessions),
+    inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
     recordingRetentionRuns: trimArray(raw.recordingRetentionRuns || defaults.recordingRetentionRuns, LIMITS.recordingRetentionRuns),
     settings: {
@@ -4855,7 +5035,9 @@ function inferSenderProfile(profile = '') {
   return String(profile || '').trim().toLowerCase() === 'cold' ? 'cold' : 'warm';
 }
 
-function getSenderAddress(profile = '') {
+function getSenderAddress(profile = '', override = '') {
+  const selected = String(override || '').trim();
+  if (selected) return selected;
   return inferSenderProfile(profile) === 'cold' ? COLD_CAMPAIGN_EMAIL : MAIN_BUSINESS_EMAIL;
 }
 
@@ -6675,7 +6857,7 @@ function encodeClientState(payload = {}) {
 }
 
 function getTelnyxFromNumber(params = {}) {
-  return normalizePhone(params.from || params.fromNumber || getEffectiveTelnyxFromNumber());
+  return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || getEffectiveTelnyxFromNumber());
 }
 
 function getTelnyxWebhookUrl(params = {}) {
@@ -6808,11 +6990,851 @@ async function listTelnyxPhoneNumbers(params = {}) {
   return fireTelnyxRequest('GET', '/phone_numbers', undefined, { query });
 }
 
+function normalizeTelnyxNumberRecord(record = {}) {
+  const phoneNumber = record.phone_number || record.phoneNumber || record.number || '';
+  return {
+    id: record.id || phoneNumber,
+    phone_number: phoneNumber,
+    phoneNumber,
+    label: record.name || record.label || record.customer_reference || '',
+    region: record.region_code || record.region || record.country_iso_alpha2 || '',
+    status: record.status || '',
+  };
+}
+
+async function getTelnyxNumberOptions() {
+  const defaultNumber = getEffectiveTelnyxFromNumber();
+  const fallbackNumbers = defaultNumber
+    ? [normalizeTelnyxNumberRecord({ id: 'env-default', phone_number: defaultNumber, label: 'Bridge default', region: 'env' })]
+    : [];
+  if (!TELNYX_API_KEY) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      verbiage: 'Phone provider not configured - add Telnyx API key before loading live numbers.',
+      numbers: fallbackNumbers,
+      defaultNumber,
+      missing: ['PBK_TELNYX_API_KEY'],
+    };
+  }
+  const telnyxResult = await listTelnyxPhoneNumbers();
+  if (!telnyxResult.ok) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      verbiage: telnyxResult.error || 'Telnyx numbers could not be loaded.',
+      numbers: fallbackNumbers,
+      defaultNumber,
+      telnyx: telnyxResult,
+    };
+  }
+  const rawNumbers = Array.isArray(telnyxResult.body?.data) ? telnyxResult.body.data : [];
+  const numbers = rawNumbers.map(normalizeTelnyxNumberRecord).filter((number) => number.phone_number);
+  if (defaultNumber && !numbers.some((number) => normalizePhone(number.phone_number) === normalizePhone(defaultNumber))) {
+    numbers.unshift(fallbackNumbers[0]);
+  }
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: numbers.length ? 'Telnyx numbers loaded' : 'Telnyx is configured but no phone numbers were returned.',
+    numbers,
+    defaultNumber,
+  };
+}
+
+function normalizeInstantlySenderRecord(record = {}) {
+  const email = String(
+    record.email
+      || record.email_address
+      || record.address
+      || record.username
+      || record.smtp_username
+      || '',
+  ).trim();
+  return {
+    id: record.id || record.uuid || email,
+    email,
+    provider: record.provider || record.provider_name || record.type || record.smtp_provider || 'instantly',
+    status: record.status || record.warmup_status || '',
+  };
+}
+
+async function getInstantlySenderOptions() {
+  const defaultEmail = INSTANTLY_DEFAULT_FROM_EMAIL || getSenderAddress('cold');
+  const fallbackSenders = defaultEmail
+    ? [normalizeInstantlySenderRecord({ id: 'env-default', email: defaultEmail, provider: 'bridge default', status: 'default' })]
+    : [];
+  if (!INSTANTLY_API_KEY) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      verbiage: 'Email provider not configured - add PBK_INSTANTLY_API_KEY before loading live senders.',
+      senders: fallbackSenders,
+      defaultEmail,
+      missing: ['PBK_INSTANTLY_API_KEY'],
+    };
+  }
+  const instantlyResult = await fireInstantlyRequest(INSTANTLY_SENDERS_ENDPOINT, undefined, { method: 'GET' });
+  if (!instantlyResult.ok) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      verbiage: instantlyResult.error || 'Instantly sender inboxes could not be loaded.',
+      senders: fallbackSenders,
+      defaultEmail,
+      instantly: instantlyResult,
+    };
+  }
+  const body = instantlyResult.body || {};
+  const rawSenders = Array.isArray(body)
+    ? body
+    : Array.isArray(body.data)
+      ? body.data
+      : Array.isArray(body.inboxes)
+        ? body.inboxes
+        : Array.isArray(body.items)
+          ? body.items
+          : [];
+  const senders = rawSenders.map(normalizeInstantlySenderRecord).filter((sender) => sender.email);
+  if (defaultEmail && !senders.some((sender) => sender.email.toLowerCase() === defaultEmail.toLowerCase())) {
+    senders.unshift(fallbackSenders[0]);
+  }
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: senders.length ? 'Instantly senders loaded' : 'Instantly is configured but no sender inboxes were returned.',
+    senders,
+    defaultEmail,
+  };
+}
+
 async function updateTelnyxPhoneNumber(phoneNumberId, payload = {}) {
   return fireTelnyxRequest('PATCH', `/phone_numbers/${encodeURIComponent(phoneNumberId)}`, payload);
 }
 
 // ── Slack incoming webhook ──────────────────────────────────────────────────
+async function answerTelnyxCall(callControlId = '') {
+  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/answer`, {});
+}
+
+async function speakTelnyxCall(callControlId = '', text = '') {
+  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
+    payload: String(text || '').slice(0, 1500),
+    voice: process.env.PBK_TELNYX_TTS_VOICE || 'female',
+    language: process.env.PBK_TELNYX_TTS_LANGUAGE || 'en-US',
+  });
+}
+
+async function transferTelnyxCall(callControlId = '', to = '') {
+  const target = normalizePhone(to);
+  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  if (!target) return { ok: false, skipped: true, error: 'Missing transfer target phone number.' };
+  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/transfer`, { to: target });
+}
+
+async function recordTelnyxCall(callControlId = '') {
+  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/record_start`, {
+    format: 'mp3',
+    channels: 'single',
+  });
+}
+
+async function startTelnyxAiAssistant(callControlId = '', promptOverride = '') {
+  if (!callControlId) return { ok: false, skipped: true, result: 'unavailable', error: 'Missing Telnyx call_control_id.' };
+  if (!TELNYX_AI_ASSISTANT_ID) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'provider_missing',
+      error: 'TELNYX_AI_ASSISTANT_ID is not configured.',
+      promptOverride,
+    };
+  }
+  if (!TELNYX_AI_ASSISTANT_ACTION_ENABLED) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'queued_for_approval',
+      error: 'Telnyx hosted AI Assistant prompt is prepared but provider-side start is disabled. Set PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED=true after portal verification.',
+      assistantId: TELNYX_AI_ASSISTANT_ID,
+      promptOverride,
+    };
+  }
+  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/ai_assistant_start`, {
+    assistant_id: TELNYX_AI_ASSISTANT_ID,
+    prompt: promptOverride,
+  });
+}
+
+function getLocalDateParts(date = new Date(), timeZone = INBOUND_TIMEZONE) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      weekday: 'short',
+      hour: 'numeric',
+      hour12: false,
+    }).formatToParts(date);
+    return {
+      weekday: parts.find((part) => part.type === 'weekday')?.value || '',
+      hour: Number(parts.find((part) => part.type === 'hour')?.value || date.getHours()),
+    };
+  } catch {
+    return {
+      weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
+      hour: date.getHours(),
+    };
+  }
+}
+
+function isInboundAfterHours(date = new Date()) {
+  const { weekday, hour } = getLocalDateParts(date, INBOUND_TIMEZONE);
+  if (['Sat', 'Sun'].includes(weekday)) return true;
+  if (INBOUND_AFTER_HOURS_START === INBOUND_AFTER_HOURS_END) return false;
+  if (INBOUND_AFTER_HOURS_START > INBOUND_AFTER_HOURS_END) {
+    return hour >= INBOUND_AFTER_HOURS_START || hour < INBOUND_AFTER_HOURS_END;
+  }
+  return hour < INBOUND_AFTER_HOURS_END || hour >= INBOUND_AFTER_HOURS_START;
+}
+
+function parseTelnyxCallPayload(body = {}) {
+  const payload = body.data?.payload || body.payload || body.data || body;
+  const from = Array.isArray(payload.from)
+    ? payload.from[0]?.phone_number || payload.from[0]
+    : payload.from?.phone_number || payload.from || payload.from_phone_number || payload.caller_id_number || '';
+  const to = Array.isArray(payload.to)
+    ? payload.to[0]?.phone_number || payload.to[0]
+    : payload.to?.phone_number || payload.to || payload.to_phone_number || payload.called_party_number || '';
+  return {
+    eventType: String(body.data?.event_type || body.event_type || body.type || '').toLowerCase(),
+    payload,
+    callControlId: payload.call_control_id || payload.callControlId || payload.id || '',
+    callLegId: payload.call_leg_id || payload.callLegId || '',
+    callSessionId: payload.call_session_id || payload.callSessionId || '',
+    from: normalizePhone(from),
+    to: normalizePhone(to),
+    direction: String(payload.direction || payload.call_direction || payload.direction_type || '').toLowerCase(),
+    state: payload.state || payload.status || '',
+  };
+}
+
+function isTelnyxInboundCallWebhook(body = {}) {
+  const parsed = parseTelnyxCallPayload(body);
+  if (!parsed.eventType.includes('call')) return false;
+  if (/(inbound|incoming|terminating)/i.test(parsed.direction)) return true;
+  return Boolean(parsed.from && parsed.to && parsed.eventType.includes('initiated') && normalizePhone(parsed.to) === normalizePhone(TELNYX_FROM_NUMBER));
+}
+
+async function findInboundLeadContext(phone = '') {
+  const normalizedPhone = normalizePhone(phone);
+  const localLead = (state.leadImports || []).find((lead) => {
+    const seller = lead?.seller || {};
+    return normalizePhone(lead.phone || seller.phone || lead.sellerPhone) === normalizedPhone;
+  });
+  if (localLead) {
+    return {
+      found: true,
+      source: 'bridge-state',
+      leadId: localLead.leadId || localLead.id || '',
+      leadName: localLead.seller?.name || localLead.name || 'Returning seller',
+      address: localLead.property?.address || localLead.address || '',
+      phone: normalizedPhone,
+      email: localLead.seller?.email || localLead.email || '',
+      status: localLead.status || localLead.stage || '',
+      motivationScore: toNumber(localLead.motivation_score ?? localLead.motivationScore ?? localLead.score, 0),
+      lastContactAt: localLead.lastContactAt || localLead.updatedAt || localLead.createdAt || '',
+      raw: localLead,
+    };
+  }
+
+  const dbResult = await queryPgRows(
+    `SELECT id, name, full_name, lead_name, address, property_address, phone, email, status, motivation_score, score, updated_at, created_at
+     FROM public.leads
+     WHERE regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g') = regexp_replace($1, '[^0-9]', '', 'g')
+     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+     LIMIT 1`,
+    [normalizedPhone],
+  );
+  if (dbResult.ok && dbResult.rows[0]) {
+    const row = dbResult.rows[0];
+    return {
+      found: true,
+      source: 'supabase-leads',
+      leadId: row.id || '',
+      leadName: row.name || row.full_name || row.lead_name || 'Returning seller',
+      address: row.address || row.property_address || '',
+      phone: normalizedPhone,
+      email: row.email || '',
+      status: row.status || '',
+      motivationScore: toNumber(row.motivation_score ?? row.score, 0),
+      lastContactAt: row.updated_at || row.created_at || '',
+      raw: row,
+    };
+  }
+
+  return {
+    found: false,
+    source: 'new-caller',
+    leadId: `lead-inbound-${slugify(normalizedPhone || randomUUID())}`,
+    leadName: 'New inbound caller',
+    address: '',
+    phone: normalizedPhone,
+    email: '',
+    status: 'new',
+    motivationScore: 0,
+    lastContactAt: '',
+  };
+}
+
+function getAvaActiveMemorySummary(limit = 5) {
+  return sortNewest(state.avaActiveMemories || [])
+    .slice(0, limit)
+    .map((memory) => `- ${memory.objectionTag || memory.memoryType || 'lesson'}: ${memory.response || memory.summary || memory.prompt || ''}`.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from = '', to = '' } = {}) {
+  const guidance = selectNegotiationGuidance({
+    scenario: route === 'transfer_jordan' ? 'closing_hesitation' : 'opening',
+    emotion: lead.motivationScore >= 8 ? 'urgent' : '',
+    sentiment: lead.motivationScore >= 8 ? 'urgent' : 'neutral',
+    transcriptStart: lead.status || '',
+  }, {
+    leadName: lead.leadName,
+    address: lead.address,
+    phone: lead.phone || from,
+  });
+  const memories = getAvaActiveMemorySummary(6);
+  const guidanceLines = [
+    guidance?.promptBrief || '',
+    ...((guidance?.tactics || []).map((item) => `- ${item.principle || item.tacticName || 'Guidance'}: ${item.scriptExample || item.scriptFragment || item.recommendedResponse || ''}`)),
+    guidance?.emotionalRule?.recommendedResponse ? `- Emotional read: ${guidance.emotionalRule.recommendedResponse}` : '',
+  ].filter(Boolean);
+  return [
+    '## Inbound Call Mode - Probono Key Realty',
+    'You are Ava, the acquisition specialist for Probono Key Realty. Sound warm, confident, tactful, and human. Never pretend to be a licensed attorney, never pressure, and transfer immediately when the caller asks for a human.',
+    lead.found
+      ? `Caller context: ${lead.leadName || 'Returning seller'}${lead.address ? ` at ${lead.address}` : ''}. Status: ${lead.status || 'unknown'}. Motivation score: ${lead.motivationScore || 0}.`
+      : `Caller context: new caller from ${from || 'unknown number'} calling ${to || 'PBK'}. Start by asking for the property address and situation.`,
+    route === 'transfer_jordan'
+      ? 'Routing decision: high-intent caller. Explain briefly that you are connecting them to Jordan, then transfer.'
+      : route === 'transfer_underwriting'
+        ? 'Routing decision: contract/underwriting caller. Offer a concise status recap and transfer to underwriting.'
+        : route === 'after_hours_voicemail'
+          ? 'Routing decision: after-hours. Collect name, number, property address, and promise next-business-day callback.'
+          : 'Routing decision: Ava qualifies first. Ask address, timeline, condition, motivation, and whether they want a quick cash analysis or Jordan handoff.',
+    'Negotiation guidance for this moment:',
+    ...guidanceLines,
+    memories ? `Recent self-learned memories:\n${memories}` : 'Recent self-learned memories: none loaded yet.',
+  ].filter(Boolean).join('\n');
+}
+
+async function persistInboundCallRoute(route = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.inbound_call_routes (
+      id, workspace_id, call_control_id, from_phone, to_phone, lead_id, route,
+      reason, status, prompt_context, payload, created_at, updated_at
+    )
+    VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+    ON CONFLICT (id) DO UPDATE SET
+      route = EXCLUDED.route,
+      reason = EXCLUDED.reason,
+      status = EXCLUDED.status,
+      prompt_context = EXCLUDED.prompt_context,
+      payload = EXCLUDED.payload,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      route.id,
+      route.callControlId || '',
+      route.from || '',
+      route.to || '',
+      route.leadId || '',
+      route.route || '',
+      route.reason || '',
+      route.status || '',
+      route.promptContext || '',
+      JSON.stringify(route.payload || {}),
+      route.createdAt || isoNow(),
+      route.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function handleAvaInboundRoute(body = {}, options = {}) {
+  recordToolUse('routeInboundCall');
+  const parsed = parseTelnyxCallPayload(body);
+  const callControlId = parsed.callControlId || body.call_control_id || body.callControlId || '';
+  const lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
+  const afterHours = options.forceAfterHours === true || (options.forceAfterHours !== false && isInboundAfterHours());
+  let route = 'ava_qualify';
+  let reason = lead.found ? 'Returning caller routed to Ava qualification.' : 'New caller routed to Ava qualification.';
+  if (afterHours) {
+    route = 'after_hours_voicemail';
+    reason = `After-hours routing in ${INBOUND_TIMEZONE}.`;
+  } else if (lead.found && String(lead.status || '').toLowerCase() === 'contract_sent') {
+    route = 'transfer_underwriting';
+    reason = 'Contract sent lead routed to underwriting.';
+  } else if (lead.found && lead.motivationScore >= 8 && !INBOUND_QUALIFY_BEFORE_TRANSFER) {
+    route = 'transfer_jordan';
+    reason = 'High-motivation returning lead routed directly to Jordan.';
+  }
+
+  const promptContext = buildAvaInboundPromptContext({ lead, route, from: parsed.from, to: parsed.to });
+  const routeRecord = {
+    id: `inbound-route-${slugify(callControlId || parsed.from || randomUUID())}-${Date.now()}`,
+    callControlId,
+    from: parsed.from,
+    to: parsed.to,
+    leadId: lead.leadId,
+    route,
+    reason,
+    status: 'received',
+    promptContext,
+    payload: body,
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+
+  if (!lead.found && parsed.from) {
+    addLeadImport(state, {
+      id: lead.leadId,
+      leadId: lead.leadId,
+      status: 'callback_requested',
+      source: 'inbound-call',
+      seller: { name: 'New inbound caller', phone: parsed.from, email: '' },
+      property: { address: '' },
+      motivationScore: 0,
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    });
+  }
+
+  const callRecord = createCallRecord({
+    id: callControlId || undefined,
+    leadId: lead.leadId,
+    leadName: lead.leadName,
+    address: lead.address,
+    phone: parsed.from,
+    from: parsed.to,
+    direction: 'inbound',
+    provider: 'Telnyx',
+    status: route.startsWith('transfer_') ? 'transferring' : route === 'after_hours_voicemail' ? 'voicemail' : 'live',
+    telnyxCallControlId: callControlId,
+    telnyxCallLegId: parsed.callLegId,
+    telnyxCallSessionId: parsed.callSessionId,
+    script: promptContext,
+    participantRole: lead.found ? 'returning-seller' : 'new-caller',
+    participantConfidence: lead.found ? 0.78 : 0.52,
+  });
+  upsertCall(state, callRecord);
+
+  const actions = [];
+  if (callControlId) {
+    actions.push({ action: 'answer', result: await answerTelnyxCall(callControlId) });
+    if (route === 'transfer_jordan' || route === 'transfer_underwriting') {
+      const target = route === 'transfer_underwriting' ? UNDERWRITING_AGENT_PHONE : HUMAN_AGENT_PHONE;
+      actions.push({
+        action: 'speak',
+        result: await speakTelnyxCall(callControlId, route === 'transfer_underwriting'
+          ? 'Thanks for calling. I am connecting you to underwriting now. Please hold.'
+          : 'I see you are ready to move fast. I am connecting you to Jordan, our lead acquisition manager. Please hold.'),
+      });
+      actions.push({ action: 'transfer', result: await transferTelnyxCall(callControlId, target) });
+    } else if (route === 'after_hours_voicemail') {
+      actions.push({ action: 'speak', result: await speakTelnyxCall(callControlId, 'You have reached Probono Key Realty after hours. Please leave your name, number, property address, and what you need help with. We will call you back first thing next business day.') });
+      actions.push({ action: 'record', result: await recordTelnyxCall(callControlId) });
+    } else {
+      actions.push({ action: 'start_ai_assistant', result: await startTelnyxAiAssistant(callControlId, promptContext) });
+    }
+  }
+
+  const liveAction = actions.some((item) => item.result?.ok);
+  const missingProvider = actions.some((item) => item.result?.skipped || item.result?.result === 'provider_missing');
+  const result = liveAction ? 'live' : missingProvider ? 'provider_missing' : callControlId ? 'queued_for_approval' : 'local_view_only';
+  routeRecord.status = result;
+  routeRecord.payload = { ...routeRecord.payload, actions };
+  if (!Array.isArray(state.inboundCallRoutes)) state.inboundCallRoutes = [];
+  state.inboundCallRoutes.unshift(routeRecord);
+  await persistInboundCallRoute(routeRecord);
+  addActivity(state, makeActivity({
+    actor: 'Ava',
+    category: 'INBOUND',
+    status: result === 'live' ? 'live' : result === 'provider_missing' ? 'warning' : 'queued',
+    text: `${route.replace(/_/g, ' ')} for ${lead.leadName || parsed.from || 'inbound caller'}: ${reason}`,
+    target: lead.address || parsed.from || callControlId || 'inbound call',
+  }));
+  addAdminAudit(state, {
+    id: `audit-${routeRecord.id}`,
+    actor: options.actor || 'Telnyx inbound webhook',
+    action: 'route_inbound_call',
+    status: result,
+    target: lead.leadName || parsed.from || '',
+    details: reason,
+    metadata: { route, callControlId, from: parsed.from, to: parsed.to },
+    createdAt: isoNow(),
+  });
+  if (['transfer_jordan', 'transfer_underwriting', 'after_hours_voicemail'].includes(route)) {
+    await toolHandlers.slackNotify({
+      channel: route === 'after_hours_voicemail' ? '#voicemails' : '#alerts',
+      text: route === 'after_hours_voicemail'
+        ? `After-hours voicemail flow started for ${parsed.from || 'unknown caller'}.`
+        : `Inbound call routed to ${route === 'transfer_underwriting' ? 'underwriting' : 'Jordan'}: ${lead.leadName || parsed.from || 'caller'}${lead.motivationScore ? ` - score ${lead.motivationScore}` : ''}.`,
+    });
+  }
+  await persistState(state);
+  return {
+    ok: true,
+    result,
+    verbiage: result === 'live' ? 'Inbound route executed' : result === 'provider_missing' ? 'Inbound route recorded - provider missing or disabled' : 'Inbound route prepared',
+    route,
+    reason,
+    lead,
+    call: callRecord,
+    promptContext,
+    actions,
+  };
+}
+
+function classifyAvaObjection(text = '') {
+  const raw = String(text || '').toLowerCase();
+  if (/\b(too low|lowball|worth more|more money|price|offer)\b/.test(raw)) return 'price-too-low';
+  if (/\b(think about|sleep on|not sure|call you back|later)\b/.test(raw)) return 'need-to-think';
+  if (/\b(wife|husband|spouse|partner|kids|family)\b/.test(raw)) return 'spouse-or-family';
+  if (/\b(scared|scam|trust|legit|real company|proof)\b/.test(raw)) return 'trust-issue';
+  if (/\b(foreclosure|auction|eviction|deadline|behind|urgent|asap)\b/.test(raw)) return 'urgency';
+  if (/\b(stop calling|do not call|remove me|unsubscribe)\b/.test(raw)) return 'dnc-request';
+  if (/\b(repairs|condition|roof|foundation|mold|vacant)\b/.test(raw)) return 'repair-risk';
+  if (/\b(probate|inherited|estate|passed away)\b/.test(raw)) return 'probate-empathy';
+  return 'qualification-pattern';
+}
+
+function buildAvaLessonForObjection(objectionTag = '', transcript = '') {
+  const templates = {
+    'price-too-low': {
+      prompt: 'Seller objects that the offer is too low.',
+      response: 'Label the concern, anchor in repairs and speed, then ask what number would make the problem go away without exceeding MAO.',
+      tactic: 'labeling + calibrated question',
+    },
+    'need-to-think': {
+      prompt: 'Seller wants to think about it.',
+      response: 'Give a smaller yes: offer to text the numbers, set a short follow-up, and ask what part they want to think through.',
+      tactic: 'small commitment close',
+    },
+    'spouse-or-family': {
+      prompt: 'Seller needs to talk to spouse or family.',
+      response: 'Respect the decision team, ask who else needs the facts, and offer a summary that makes the math easy to share.',
+      tactic: 'decision-map empathy',
+    },
+    'trust-issue': {
+      prompt: 'Seller questions trust or legitimacy.',
+      response: 'Slow down, explain the process plainly, offer references or a written summary, and never push for a signature.',
+      tactic: 'authority without pressure',
+    },
+    urgency: {
+      prompt: 'Seller signals urgency or deadline.',
+      response: 'Confirm the date first, remove nonessential steps, and route to Jordan when score is high or timeline is under 14 days.',
+      tactic: 'timeline-first qualification',
+    },
+    'dnc-request': {
+      prompt: 'Seller requests no further calls.',
+      response: 'Apologize, confirm opt-out, add DNC immediately, and end gracefully.',
+      tactic: 'compliance-first de-escalation',
+    },
+    'repair-risk': {
+      prompt: 'Seller describes repair or condition problems.',
+      response: 'Ask for the worst known issue, explain that repairs affect risk not judgment, and frame the offer around as-is certainty.',
+      tactic: 'condition-to-risk framing',
+    },
+    'probate-empathy': {
+      prompt: 'Seller mentions inheritance, probate, or family loss.',
+      response: 'Lead with patience and dignity, avoid aggressive urgency, and offer to simplify the next step.',
+      tactic: 'tactical empathy',
+    },
+    'qualification-pattern': {
+      prompt: 'Ava needs to qualify an inbound seller.',
+      response: 'Ask address, condition, timeline, mortgage status, motivation, and decision-makers before discussing a cash range.',
+      tactic: 'structured qualification',
+    },
+  };
+  const selected = templates[objectionTag] || templates['qualification-pattern'];
+  const excerpt = String(transcript || '').replace(/\s+/g, ' ').trim().slice(0, 320);
+  return { ...selected, objectionTag, excerpt };
+}
+
+function extractAvaLessonsFromTranscript(candidate = {}) {
+  const transcript = String(candidate.body || candidate.transcript || candidate.text || '').trim();
+  const objectionTag = classifyAvaObjection(transcript);
+  const base = buildAvaLessonForObjection(objectionTag, transcript);
+  const sentiment = Number(candidate.sentiment ?? candidate.payload?.sentiment?.pbkScore ?? 0.5);
+  const success = /(yes|sounds good|send me|book|schedule|call me|interested|let's talk|accepted|signed)/i.test(transcript);
+  return [{
+    id: `ava-memory-${slugify(candidate.id || randomUUID())}-${objectionTag}`,
+    memoryType: 'ava-call-lesson',
+    objectionTag,
+    pathKey: `${objectionTag}:${success ? 'positive' : sentiment < 0.35 ? 'negative' : 'neutral'}`,
+    prompt: base.prompt,
+    response: base.response,
+    source: 'ava-self-learning',
+    sourceUrl: '',
+    outcome: success ? 'positive_signal' : sentiment < 0.35 ? 'needs_improvement' : 'observed',
+    score: Math.max(0.35, Math.min(0.98, success ? 0.86 : sentiment || 0.55)),
+    summary: `${base.tactic}: ${base.response}`,
+    metadata: {
+      tactic: base.tactic,
+      excerpt: base.excerpt,
+      candidateId: candidate.id || '',
+      leadId: candidate.leadId || '',
+      leadName: candidate.leadName || '',
+      callId: candidate.callId || '',
+      sentiment,
+      success,
+    },
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  }];
+}
+
+async function collectAvaLearningCandidates(limit = AVA_MEMORY_WORKER_LIMIT) {
+  const candidates = [];
+  const dbResult = await queryPgRows(
+    `SELECT id, lead_id, channel, direction, status, provider, body, sentiment, payload, created_at, updated_at
+     FROM public.unified_messages
+     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+       AND channel IN ('call', 'voice', 'recording')
+       AND COALESCE(processed_for_learning, false) = false
+       AND COALESCE(body, '') <> ''
+     ORDER BY created_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+  if (dbResult.ok) {
+    for (const row of dbResult.rows || []) {
+      candidates.push({
+        source: 'supabase',
+        id: row.id,
+        leadId: row.lead_id || '',
+        channel: row.channel,
+        direction: row.direction,
+        status: row.status,
+        provider: row.provider,
+        body: row.body,
+        sentiment: row.sentiment,
+        payload: row.payload && typeof row.payload === 'object' ? row.payload : {},
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    }
+  }
+
+  for (const message of sortNewest(state.messages || [])) {
+    if (candidates.length >= limit) break;
+    const channel = String(message.channel || '').toLowerCase();
+    if (!['call', 'voice', 'recording'].includes(channel)) continue;
+    if (message.payload?.processedForLearning || message.processedForLearning) continue;
+    if (!String(message.body || '').trim()) continue;
+    if (candidates.some((candidate) => candidate.id === message.id)) continue;
+    candidates.push({ ...message, source: 'bridge-state' });
+  }
+  return candidates.slice(0, limit);
+}
+
+async function persistAvaMemoryLesson(lesson = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.coach_memory (
+      id, workspace_id, memory_type, objection_tag, path_key, prompt, response,
+      source, source_url, outcome, score, metadata, created_at, updated_at
+    )
+    VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
+    ON CONFLICT (id) DO UPDATE SET
+      memory_type = EXCLUDED.memory_type,
+      objection_tag = EXCLUDED.objection_tag,
+      path_key = EXCLUDED.path_key,
+      prompt = EXCLUDED.prompt,
+      response = EXCLUDED.response,
+      source = EXCLUDED.source,
+      outcome = EXCLUDED.outcome,
+      score = EXCLUDED.score,
+      metadata = EXCLUDED.metadata,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      lesson.id,
+      lesson.memoryType || 'ava-call-lesson',
+      lesson.objectionTag || '',
+      lesson.pathKey || '',
+      lesson.prompt || '',
+      lesson.response || '',
+      lesson.source || 'ava-self-learning',
+      lesson.sourceUrl || '',
+      lesson.outcome || 'observed',
+      lesson.score ?? 0.5,
+      JSON.stringify(lesson.metadata || {}),
+      lesson.createdAt || isoNow(),
+      lesson.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistAvaLearningSession(session = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.ava_learning_sessions (
+      id, workspace_id, processed_at, minutes_budget, candidates_processed,
+      lessons_extracted, status, summary, metadata, created_at, updated_at
+    )
+    VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+    ON CONFLICT (id) DO UPDATE SET
+      processed_at = EXCLUDED.processed_at,
+      candidates_processed = EXCLUDED.candidates_processed,
+      lessons_extracted = EXCLUDED.lessons_extracted,
+      status = EXCLUDED.status,
+      summary = EXCLUDED.summary,
+      metadata = EXCLUDED.metadata,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      session.id,
+      session.processedAt || isoNow(),
+      session.minutesBudget ?? AVA_MEMORY_DAILY_MINUTES,
+      session.candidatesProcessed ?? 0,
+      session.lessonsExtracted ?? 0,
+      session.status || 'complete',
+      session.summary || '',
+      JSON.stringify(session.metadata || {}),
+      session.createdAt || isoNow(),
+      session.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function markAvaLearningCandidateProcessed(candidate = {}, sessionId = '') {
+  if (candidate.source === 'supabase') {
+    await queryPgRows(
+      `UPDATE public.unified_messages
+       SET processed_for_learning = true,
+           learning_processed_at = NOW(),
+           learning_session_id = $2,
+           learning_metadata = COALESCE(learning_metadata, '{}'::jsonb) || $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [candidate.id, sessionId, JSON.stringify({ processedBy: 'ava-self-learning', processedAt: isoNow() })],
+    );
+  }
+  const localMessage = (state.messages || []).find((message) => message.id === candidate.id);
+  if (localMessage) {
+    upsertMessage(state, {
+      ...localMessage,
+      payload: {
+        ...(localMessage.payload || {}),
+        processedForLearning: true,
+        learningSessionId: sessionId,
+        learningProcessedAt: isoNow(),
+      },
+      updatedAt: isoNow(),
+    });
+  }
+}
+
+function upsertAvaActiveMemory(lesson = {}) {
+  if (!Array.isArray(state.avaActiveMemories)) state.avaActiveMemories = [];
+  const existingIndex = state.avaActiveMemories.findIndex((memory) => memory.id === lesson.id);
+  const memory = {
+    id: lesson.id,
+    memoryType: lesson.memoryType || 'ava-call-lesson',
+    objectionTag: lesson.objectionTag || '',
+    prompt: lesson.prompt || '',
+    response: lesson.response || '',
+    summary: lesson.summary || lesson.response || '',
+    score: lesson.score ?? 0.5,
+    outcome: lesson.outcome || 'observed',
+    source: lesson.source || 'ava-self-learning',
+    metadata: lesson.metadata || {},
+    createdAt: lesson.createdAt || isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (existingIndex >= 0) {
+    state.avaActiveMemories.splice(existingIndex, 1, { ...state.avaActiveMemories[existingIndex], ...memory });
+  } else {
+    state.avaActiveMemories.unshift(memory);
+  }
+  limitStateArrays(state);
+}
+
+async function runAvaMemoryLearning(params = {}) {
+  recordToolUse('runAvaMemoryLearning');
+  const sessionId = params.sessionId || `ava-learning-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const limit = Math.max(1, Math.min(200, Number(params.limit || AVA_MEMORY_WORKER_LIMIT)));
+  const minutesBudget = Math.max(1, Math.min(240, Number(params.minutesBudget || AVA_MEMORY_DAILY_MINUTES)));
+  const candidates = await collectAvaLearningCandidates(limit);
+  const lessons = [];
+  for (const candidate of candidates) {
+    const extracted = extractAvaLessonsFromTranscript(candidate);
+    for (const lesson of extracted) {
+      await persistAvaMemoryLesson(lesson);
+      upsertAvaActiveMemory(lesson);
+      lessons.push(lesson);
+    }
+    await markAvaLearningCandidateProcessed(candidate, sessionId);
+  }
+  const topTags = [...lessons.reduce((map, lesson) => {
+    const key = lesson.objectionTag || 'lesson';
+    map.set(key, (map.get(key) || 0) + 1);
+    return map;
+  }, new Map()).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([tag, count]) => ({ tag, count }));
+  const session = {
+    id: sessionId,
+    processedAt: isoNow(),
+    minutesBudget,
+    candidatesProcessed: candidates.length,
+    lessonsExtracted: lessons.length,
+    status: 'complete',
+    summary: `Ava processed ${candidates.length} call transcript${candidates.length === 1 ? '' : 's'} and learned ${lessons.length} tactic${lessons.length === 1 ? '' : 's'}.`,
+    metadata: {
+      actor: params.actor || 'Ava memory worker',
+      topTags,
+      candidateIds: candidates.map((candidate) => candidate.id).filter(Boolean),
+    },
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (!Array.isArray(state.avaLearningSessions)) state.avaLearningSessions = [];
+  state.avaLearningSessions.unshift(session);
+  await persistAvaLearningSession(session);
+  addActivity(state, makeActivity({
+    actor: 'Ava',
+    category: 'LEARNING',
+    status: lessons.length ? 'complete' : 'idle',
+    text: session.summary,
+    target: topTags[0]?.tag || 'call memory',
+  }));
+  addAdminAudit(state, {
+    id: `audit-${session.id}`,
+    actor: params.actor || 'Ava memory worker',
+    action: 'ava_memory_learning',
+    status: lessons.length ? 'complete' : 'idle',
+    target: topTags[0]?.tag || 'call memory',
+    details: session.summary,
+    metadata: session.metadata,
+    createdAt: isoNow(),
+  });
+  await persistState(state);
+  return {
+    ok: true,
+    result: DATABASE_URL ? 'live' : 'local_view_only',
+    verbiage: 'Ava memory learning run complete',
+    session,
+    lessons,
+    activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 12),
+    warning: DATABASE_URL ? '' : 'PBK_DATABASE_URL is not configured; lessons were stored in bridge state only.',
+  };
+}
+
 async function fireInstantlyRequest(endpoint, payload, options = {}) {
   if (!INSTANTLY_API_KEY) {
     return {
@@ -6824,7 +7846,11 @@ async function fireInstantlyRequest(endpoint, payload, options = {}) {
 
   try {
     const method = String(options.method || 'POST').toUpperCase();
-    const response = await fetch(`${INSTANTLY_BASE_URL}${endpoint}`, {
+    const endpointPath = String(endpoint || '').trim();
+    const url = /^https?:\/\//i.test(endpointPath)
+      ? endpointPath
+      : `${INSTANTLY_BASE_URL}${endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`}`;
+    const response = await fetch(url, {
       method,
       headers: {
         Authorization: `Bearer ${INSTANTLY_API_KEY}`,
@@ -9179,12 +10205,27 @@ function ensureRexCollections() {
   if (!Array.isArray(state.rexDecisions)) state.rexDecisions = [];
 }
 
+function ensureAgentFleetCollections() {
+  if (!Array.isArray(state.agents)) state.agents = buildDefaultAgentFleet();
+  if (!Array.isArray(state.agentSkillTransfers)) state.agentSkillTransfers = [];
+  if (!Array.isArray(state.agentSkillExperiments)) state.agentSkillExperiments = [];
+}
+
 function normalizeRexTool(value = '') {
   const raw = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (['adjust_lead_weight', 'adjust_lead_weights', 'adjust_lead_scoring', 'lead_scoring_weights', 'update_lead_scoring_weights'].includes(raw)) return 'adjust_lead_weight';
   if (['update_campaign_script', 'campaign_script', 'update_script', 'edit_campaign_script'].includes(raw)) return 'update_campaign_script';
   if (['change_follow_up_delay', 'update_campaign_sequence', 'campaign_sequence', 'sequence_delay', 'update_sequence'].includes(raw)) return 'change_follow_up_delay';
   if (['pause_campaign', 'campaign_pause'].includes(raw)) return 'pause_campaign';
+  if (['agent_pause', 'pause_agent'].includes(raw)) return 'agent_pause';
+  if (['agent_configure', 'configure_agent', 'update_agent_config'].includes(raw)) return 'agent_configure';
+  if (['agent_takeover', 'takeover_agent', 'take_over_agent'].includes(raw)) return 'agent_takeover';
+  if (['agent_mute', 'mute_agent'].includes(raw)) return 'agent_mute';
+  if (['agent_end_call', 'end_agent_call'].includes(raw)) return 'agent_end_call';
+  if (['deploy_agent', 'create_agent', 'new_agent'].includes(raw)) return 'deploy_agent';
+  if (['transfer_skill', 'pass_skill', 'agent_skill_transfer'].includes(raw)) return 'transfer_skill';
+  if (['promote_skill', 'agent_skill_promote'].includes(raw)) return 'promote_skill';
+  if (['ab_test_skill', 'a_b_test_skill', 'agent_skill_ab_test'].includes(raw)) return 'ab_test_skill';
   return raw || 'unknown';
 }
 
@@ -9242,6 +10283,13 @@ function summarizeRexDecisionTarget(tool = '', params = {}) {
       targetType: 'lead_scoring',
       targetId: 'lead_scoring_weights',
       targetLabel: 'Lead scoring weights',
+    };
+  }
+  if (String(tool || '').startsWith('agent_') || ['deploy_agent', 'transfer_skill', 'promote_skill', 'ab_test_skill'].includes(tool)) {
+    return {
+      targetType: 'agent_fleet',
+      targetId: params.agentId || params.sourceAgentId || params.name || '',
+      targetLabel: params.agentName || params.sourceAgentName || params.name || 'Agent Fleet',
     };
   }
   return {
@@ -9432,6 +10480,227 @@ async function pauseCampaignFromRex(campaignId = '', params = {}, options = {}) 
   };
 }
 
+function normalizeAgentId(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function findAgentRecord(agentId = '') {
+  ensureAgentFleetCollections();
+  const normalized = normalizeAgentId(agentId);
+  return state.agents.find((agent) => normalizeAgentId(agent.id) === normalized || normalizeAgentId(agent.name) === normalized);
+}
+
+async function applyAgentRuntimeAction(tool = '', params = {}, options = {}) {
+  ensureAgentFleetCollections();
+  const actor = options.actor || params.actor || 'Rex Strategist';
+  const agentId = params.agentId || params.sourceAgentId || params.id || params.name || '';
+  const agent = findAgentRecord(agentId);
+  if (!agent) {
+    return { ok: false, result: 'unavailable', verbiage: 'Agent not found', error: `Agent ${agentId || 'unknown'} was not found.` };
+  }
+  const now = isoNow();
+  const actionLabel = tool.replace(/^agent_/, '').replace(/_/g, ' ');
+  const statusMap = {
+    agent_pause: 'paused',
+    agent_configure: 'configuring',
+    agent_takeover: 'human_takeover',
+    agent_mute: 'muted',
+    agent_end_call: 'idle',
+  };
+  const nextAgent = {
+    ...agent,
+    status: statusMap[tool] || agent.status || 'idle',
+    activity: params.activity || `${actionLabel} applied by ${actor}`,
+    lastSeen: now,
+    updatedAt: now,
+    updatedBy: actor,
+    config: {
+      ...(agent.config || {}),
+      ...(params.config && typeof params.config === 'object' ? params.config : {}),
+      lastAction: tool,
+      lastRationale: params.rationale || options.rationale || '',
+    },
+  };
+  upsertById(state, 'agents', nextAgent);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'AGENT_FLEET',
+    status: 'success',
+    text: `${nextAgent.name} ${actionLabel} applied.`,
+    target: nextAgent.name,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: `Agent ${actionLabel} applied`,
+    agent: nextAgent,
+  };
+}
+
+async function deployAgentFromRex(params = {}, options = {}) {
+  ensureAgentFleetCollections();
+  const actor = options.actor || params.actor || 'Rex Strategist';
+  const name = String(params.name || params.agentName || '').trim();
+  if (!name) {
+    return { ok: false, result: 'unavailable', verbiage: 'Agent name required', error: 'A new agent needs a name before deployment can be staged.' };
+  }
+  const id = normalizeAgentId(params.id || name);
+  const existing = findAgentRecord(id);
+  const now = isoNow();
+  const nextAgent = {
+    ...(existing || {}),
+    id,
+    name,
+    avatar: String(name[0] || 'A').toUpperCase(),
+    role: params.role || existing?.role || 'Acquisitions',
+    version: existing?.version || 'v0.1',
+    target: params.target || existing?.target || 'local',
+    status: 'building',
+    activity: `Deployment staged from ${params.base || 'approved blueprint'}`,
+    lastSeen: now,
+    style: params.style || existing?.style || 'Empathetic',
+    hometown: params.hometown || existing?.hometown || '',
+    campaigns: existing?.campaigns || 0,
+    sentiment: existing?.sentiment || 50,
+    skillsTotal: existing?.skillsTotal || 0,
+    skillSource: params.base || existing?.skillSource || 'New agent blueprint',
+    skills: Array.isArray(existing?.skills) ? existing.skills : [],
+    backstory: params.story || existing?.backstory || '',
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    updatedBy: actor,
+  };
+  upsertById(state, 'agents', nextAgent);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'AGENT_FLEET',
+    status: 'queued',
+    text: `Staged new agent ${nextAgent.name}.`,
+    target: nextAgent.name,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Agent deployment staged',
+    agent: nextAgent,
+  };
+}
+
+function findAgentSkill(agent = {}, skillName = '') {
+  const normalized = String(skillName || '').trim().toLowerCase();
+  return (agent.skills || []).find((skill) => String(skill.name || '').trim().toLowerCase() === normalized);
+}
+
+async function applyAgentSkillAction(tool = '', params = {}, options = {}) {
+  ensureAgentFleetCollections();
+  const actor = options.actor || params.actor || 'Rex Strategist';
+  const source = findAgentRecord(params.sourceAgentId || params.agentId || params.id || '');
+  if (!source) {
+    return { ok: false, result: 'unavailable', verbiage: 'Source agent not found', error: 'PBK could not find the source agent for that skill.' };
+  }
+  const skillName = String(params.skill || params.skillName || '').trim();
+  if (!skillName) {
+    return { ok: false, result: 'unavailable', verbiage: 'Skill missing', error: 'A skill name is required.' };
+  }
+  const now = isoNow();
+  const existingSkill = findAgentSkill(source, skillName) || {
+    name: skillName,
+    level: 'candidate',
+    confidence: 50,
+    evidence: 'Created from approved Agent Fleet action.',
+  };
+
+  if (tool === 'promote_skill') {
+    const nextSkill = {
+      ...existingSkill,
+      level: 'proven',
+      confidence: Math.max(Number(existingSkill.confidence || 0), 86),
+      promotedAt: now,
+      promotedBy: actor,
+    };
+    const nextSource = {
+      ...source,
+      skills: [...(source.skills || []).filter((skill) => skill.name !== existingSkill.name), nextSkill],
+      skillsTotal: Math.max(Number(source.skillsTotal || 0), (source.skills || []).length),
+      updatedAt: now,
+      updatedBy: actor,
+    };
+    upsertById(state, 'agents', nextSource);
+    addActivity(state, makeActivity({
+      actor,
+      category: 'AGENT_FLEET',
+      status: 'success',
+      text: `Promoted ${skillName} for ${source.name}.`,
+      target: source.name,
+    }));
+    await persistState(state);
+    return { ok: true, result: 'live', verbiage: 'Skill promoted', skill: nextSkill, agent: nextSource };
+  }
+
+  if (tool === 'transfer_skill') {
+    const target = findAgentRecord(params.targetAgentId || params.targetAgentName || '')
+      || state.agents.find((agent) => agent.id !== source.id && agent.status !== 'on_call')
+      || source;
+    const transferredSkill = {
+      ...existingSkill,
+      level: existingSkill.level === 'proven' ? 'evolving' : existingSkill.level,
+      transferredFrom: source.id,
+      transferredAt: now,
+      confidence: Math.min(Number(existingSkill.confidence || 50), 82),
+    };
+    const nextTarget = {
+      ...target,
+      skills: [...(target.skills || []).filter((skill) => skill.name !== transferredSkill.name), transferredSkill],
+      skillsTotal: Math.max(Number(target.skillsTotal || 0), (target.skills || []).length + 1),
+      skillSource: `${target.skillSource || 'Agent Fleet'}, inherited from ${source.name}`,
+      updatedAt: now,
+      updatedBy: actor,
+    };
+    upsertById(state, 'agents', nextTarget);
+    const transfer = {
+      id: `skill-transfer-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      sourceAgentId: source.id,
+      targetAgentId: target.id,
+      skill: transferredSkill,
+      status: 'transferred',
+      actor,
+      createdAt: now,
+    };
+    state.agentSkillTransfers.unshift(transfer);
+    addActivity(state, makeActivity({
+      actor,
+      category: 'AGENT_FLEET',
+      status: 'success',
+      text: `Transferred ${skillName} from ${source.name} to ${target.name}.`,
+      target: `${source.name} -> ${target.name}`,
+    }));
+    await persistState(state);
+    return { ok: true, result: 'live', verbiage: 'Skill transferred', transfer, agent: nextTarget };
+  }
+
+  const experiment = {
+    id: `skill-experiment-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    agentId: source.id,
+    skill: existingSkill,
+    status: 'staged',
+    sample: params.sample || '5% sandbox traffic',
+    actor,
+    createdAt: now,
+  };
+  state.agentSkillExperiments.unshift(experiment);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'AGENT_FLEET',
+    status: 'queued',
+    text: `Staged A/B test for ${skillName}.`,
+    target: source.name,
+  }));
+  await persistState(state);
+  return { ok: true, result: 'live', verbiage: 'Skill A/B test staged', experiment };
+}
+
 async function applyRexDecision(decisionOrId = {}, options = {}) {
   ensureRexCollections();
   const decision = typeof decisionOrId === 'string'
@@ -9454,6 +10723,12 @@ async function applyRexDecision(decisionOrId = {}, options = {}) {
     result = await updateCampaignSequence(decision.params?.campaignId || decision.targetId || '', decision.params || {}, { actor, rationale: decision.rationale });
   } else if (tool === 'pause_campaign') {
     result = await pauseCampaignFromRex(decision.params?.campaignId || decision.targetId || '', decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (['agent_pause', 'agent_configure', 'agent_takeover', 'agent_mute', 'agent_end_call'].includes(tool)) {
+    result = await applyAgentRuntimeAction(tool, decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (tool === 'deploy_agent') {
+    result = await deployAgentFromRex(decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (['transfer_skill', 'promote_skill', 'ab_test_skill'].includes(tool)) {
+    result = await applyAgentSkillAction(tool, decision.params || {}, { actor, rationale: decision.rationale });
   } else {
     result = { ok: false, result: 'unavailable', verbiage: 'Rex tool unavailable', error: `Unsupported Rex tool: ${decision.tool}` };
   }
@@ -9613,6 +10888,557 @@ async function updateRexDecisionOutcome(decisionId = '', payload = {}) {
     result: 'live',
     verbiage: 'Rex decision outcome recorded',
     decision: nextDecision,
+  };
+}
+
+async function queryPgRows(sql = '', params = []) {
+  const pool = getPgPool();
+  if (!pool) {
+    return {
+      ok: false,
+      reason: 'no_database',
+      rows: [],
+      error: 'PBK_DATABASE_URL is not configured.',
+    };
+  }
+  try {
+    const result = await pool.query(sql, params);
+    return { ok: true, reason: 'live', rows: result.rows || [] };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'query_failed',
+      rows: [],
+      error: error?.message || String(error),
+      code: error?.code || '',
+    };
+  }
+}
+
+function withinDays(value = '', days = 7) {
+  const ts = Date.parse(value || '');
+  if (!Number.isFinite(ts)) return false;
+  return ts >= Date.now() - days * 24 * 60 * 60 * 1000;
+}
+
+function flattenBridgeSkills() {
+  ensureAgentFleetCollections();
+  return (state.agents || []).flatMap((agent) => (agent.skills || []).map((skill) => ({
+    id: `${normalizeAgentId(agent.id || agent.name)}:${slugify(skill.name || 'skill')}`,
+    name: skill.name || 'Unnamed skill',
+    agentId: agent.id || normalizeAgentId(agent.name || ''),
+    agentName: agent.name || agent.id || 'Agent',
+    role: agent.role || '',
+    source: skill.source || skill.skillSource || agent.skillSource || 'bridge-state',
+    level: skill.level || 'candidate',
+    status: skill.status || 'active',
+    confidence: Math.max(0, Math.min(100, Number(skill.confidence || 0))),
+    uses: Number(skill.uses || skill.usage || skill.used || 0),
+    wins: Number(skill.wins || skill.successes || 0),
+    losses: Number(skill.losses || skill.failures || 0),
+    successRate: Number(skill.successRate || skill.winRate || skill.rate || 0),
+    evidence: skill.evidence || '',
+    lastUsedAt: skill.lastUsedAt || skill.updatedAt || agent.updatedAt || '',
+  })));
+}
+
+function buildFallbackMemoryStats() {
+  const docs = [
+    ...(Array.isArray(state.brainDocs) ? state.brainDocs : []),
+    ...(Array.isArray(state.brainBlogPosts) ? state.brainBlogPosts : []),
+  ];
+  const decisions = Array.isArray(state.rexDecisions) ? state.rexDecisions : [];
+  const skills = flattenBridgeSkills();
+  const tagCounts = new Map();
+  for (const doc of docs) {
+    for (const tag of normalizeStringList(doc.tags || doc.revenueStreams || [doc.topic].filter(Boolean))) {
+      const key = String(tag || '').trim();
+      if (key) tagCounts.set(key, (tagCounts.get(key) || 0) + 1);
+    }
+  }
+  for (const skill of skills) {
+    const key = skill.level || 'candidate';
+    tagCounts.set(key, (tagCounts.get(key) || 0) + 1);
+  }
+  return {
+    ok: true,
+    result: 'local_view_only',
+    source: 'bridge-state-fallback',
+    generatedAt: isoNow(),
+    total: docs.length + decisions.length,
+    newLastWeek: docs.filter((item) => withinDays(item.createdAt || item.publishedAt || item.updatedAt, 7)).length
+      + decisions.filter((item) => withinDays(item.createdAt || item.updatedAt, 7)).length,
+    vectorQueriesDay: Number(state.status?.toolUsage?.brainQuery || state.status?.toolUsage?.queryBrain || 0),
+    activeSkills: skills.filter((skill) => !/retired|disabled/i.test(skill.status || skill.level || '')).length,
+    avgRelevanceScore: skills.length
+      ? Number((skills.reduce((sum, skill) => sum + Number(skill.confidence || 0), 0) / skills.length / 100).toFixed(2))
+      : 0,
+    topTags: Array.from(tagCounts.entries())
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 12),
+    warning: 'Supabase memory tables were unavailable, so this is bridge-state fallback data.',
+  };
+}
+
+async function buildMemoryStats() {
+  const statsResult = await queryPgRows(`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days')::int AS new_last_week,
+      COALESCE(AVG(score), 0)::float AS avg_score
+    FROM public.coach_memory
+    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+  `);
+  if (!statsResult.ok) return buildFallbackMemoryStats();
+  const tagsResult = await queryPgRows(`
+    SELECT objection_tag AS tag, COUNT(*)::int AS count
+    FROM public.coach_memory
+    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+      AND objection_tag IS NOT NULL
+      AND objection_tag <> ''
+    GROUP BY objection_tag
+    ORDER BY count DESC, objection_tag ASC
+    LIMIT 12
+  `);
+  const skillsResult = await queryPgRows(`
+    SELECT COUNT(*)::int AS active_skills
+    FROM public.skills
+    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+      AND COALESCE(status, 'active') NOT IN ('retired', 'disabled')
+  `);
+  const row = statsResult.rows[0] || {};
+  const fallbackSkills = flattenBridgeSkills();
+  const dbActiveSkills = skillsResult.ok ? Number(skillsResult.rows[0]?.active_skills || 0) : 0;
+  return {
+    ok: true,
+    result: 'live',
+    source: 'supabase',
+    generatedAt: isoNow(),
+    total: Number(row.total || 0),
+    newLastWeek: Number(row.new_last_week || 0),
+    vectorQueriesDay: Number(state.status?.toolUsage?.brainQuery || state.status?.toolUsage?.queryBrain || 0),
+    activeSkills: dbActiveSkills || fallbackSkills.length,
+    avgRelevanceScore: Number(Number(row.avg_score || 0).toFixed(2)),
+    topTags: (tagsResult.ok ? tagsResult.rows : []).map((item) => ({
+      tag: item.tag || 'untagged',
+      count: Number(item.count || 0),
+    })),
+    warnings: [
+      ...(skillsResult.ok ? [] : ['skills table unavailable; active skill count came from bridge state']),
+      ...(tagsResult.ok ? [] : ['coach_memory objection tags unavailable']),
+    ],
+  };
+}
+
+function mapHistoryRecord(record = {}, source = 'bridge') {
+  const payload = record.payload && typeof record.payload === 'object' ? record.payload : {};
+  const action = normalizeRexTool(record.action || record.tool || record.category || '');
+  const status = String(record.status || '').toLowerCase();
+  const success = typeof record.success === 'boolean'
+    ? record.success
+    : /success|approved|applied|executed|complete|saved|promoted|transferred/i.test(status);
+  return {
+    id: record.id || `history-${Date.now()}-${randomUUID().slice(0, 6)}`,
+    source,
+    actor: record.actor || record.requested_by || record.proposed_by || record.requestedBy || record.proposedBy || 'PBK',
+    action: action || 'activity',
+    verb: action || 'activity',
+    status: record.status || 'recorded',
+    summary: record.summary || record.rationale || record.text || payload.statusMessage || 'Agent action recorded.',
+    target: record.target || record.target_label || record.targetLabel || record.target_id || record.targetId || payload.agentName || payload.sourceAgentName || payload.skill || '',
+    payload,
+    outcome: record.outcome || record.result || {},
+    success,
+    createdAt: record.created_at || record.createdAt || record.at || isoNow(),
+    updatedAt: record.updated_at || record.updatedAt || '',
+  };
+}
+
+function buildFallbackAgentHistory(limit = 50) {
+  ensureRexCollections();
+  ensureAgentFleetCollections();
+  const history = [
+    ...(state.rexDecisions || []).map((item) => mapHistoryRecord(item, 'rex_decisions')),
+    ...(state.agentSkillTransfers || []).map((item) => mapHistoryRecord({
+      ...item,
+      actor: item.actor || 'Agent Fleet',
+      action: 'transfer_skill',
+      summary: `Transferred ${item.skill?.name || item.skill || 'skill'} between agents.`,
+      target: `${item.sourceAgentId || ''} -> ${item.targetAgentId || ''}`,
+    }, 'agent_skill_transfers')),
+    ...(state.agentSkillExperiments || []).map((item) => mapHistoryRecord({
+      ...item,
+      actor: item.actor || 'Agent Fleet',
+      action: 'ab_test_skill',
+      summary: `Staged A/B test for ${item.skill?.name || item.skill || 'skill'}.`,
+      target: item.agentId || '',
+    }, 'agent_skill_experiments')),
+    ...(state.activity || [])
+      .filter((item) => /rex|agent|fleet|skill|campaign/i.test(`${item.category || ''} ${item.text || ''}`))
+      .map((item) => mapHistoryRecord(item, 'activity')),
+  ];
+  return {
+    ok: true,
+    result: 'local_view_only',
+    source: 'bridge-state-fallback',
+    generatedAt: isoNow(),
+    history: sortNewest(history).slice(0, limit),
+    warning: 'Supabase agent history tables were unavailable, so this is bridge-state fallback data.',
+  };
+}
+
+async function buildAgentHistory(limit = 50) {
+  const safeLimit = Math.max(1, Math.min(200, Number(limit || 50)));
+  const taskResult = await queryPgRows(`
+    SELECT id, requested_by AS actor, action, provider, status, summary, payload, created_at, updated_at
+    FROM public.agent_tasks
+    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+      AND (
+        action ILIKE '%agent%'
+        OR action ILIKE '%skill%'
+        OR action ILIKE '%campaign%'
+        OR action ILIKE '%deploy%'
+        OR action ILIKE '%pause%'
+        OR provider ILIKE '%rex%'
+      )
+    ORDER BY created_at DESC
+    LIMIT $1
+  `, [safeLimit]);
+  const rexResult = await queryPgRows(`
+    SELECT id, proposed_by AS actor, tool AS action, status, rationale AS summary,
+      params AS payload, target_type, target_id, result, outcome, success, created_at, updated_at
+    FROM public.rex_decisions
+    ORDER BY created_at DESC
+    LIMIT $1
+  `, [safeLimit]);
+  if (!taskResult.ok && !rexResult.ok) return buildFallbackAgentHistory(safeLimit);
+  const history = [
+    ...(taskResult.ok ? taskResult.rows.map((row) => mapHistoryRecord(row, 'agent_tasks')) : []),
+    ...(rexResult.ok ? rexResult.rows.map((row) => mapHistoryRecord({
+      ...row,
+      target: row.target_id || row.target_type || '',
+    }, 'rex_decisions')) : []),
+  ];
+  const fallback = buildFallbackAgentHistory(safeLimit).history;
+  const merged = [...history, ...fallback.filter((item) => !history.some((existing) => existing.id === item.id))];
+  return {
+    ok: true,
+    result: 'live',
+    source: 'supabase',
+    generatedAt: isoNow(),
+    history: sortNewest(merged).slice(0, safeLimit),
+    warnings: [
+      ...(taskResult.ok ? [] : ['agent_tasks unavailable']),
+      ...(rexResult.ok ? [] : ['rex_decisions unavailable']),
+    ],
+  };
+}
+
+function normalizeSkillOutcome(row = {}) {
+  const uses = Number(row.uses || 0);
+  const wins = Number(row.wins || 0);
+  const losses = Number(row.losses || 0);
+  const successRate = uses ? Number(((wins / uses) * 100).toFixed(1)) : Number(row.successRate || 0);
+  const confidence = Math.max(0, Math.min(100, Number(row.confidence || (successRate ? successRate : 0))));
+  return {
+    id: row.id || `${row.agentId || row.agent_id || 'agent'}:${slugify(row.name || 'skill')}`,
+    name: row.name || row.skill_name || 'Unnamed skill',
+    agentId: row.agentId || row.agent_id || '',
+    agentName: row.agentName || row.agent_name || row.agentId || row.agent_id || 'Agent',
+    source: row.source || 'self-learned',
+    level: row.level || 'candidate',
+    status: row.status || 'active',
+    confidence,
+    uses,
+    wins,
+    losses,
+    successRate,
+    evidence: row.evidence || '',
+    lastUsedAt: row.lastUsedAt || row.last_used_at || '',
+    updatedAt: row.updatedAt || row.updated_at || '',
+  };
+}
+
+async function buildSkillOutcomes() {
+  const result = await queryPgRows(`
+    SELECT
+      s.id,
+      s.agent_id AS "agentId",
+      s.agent_name AS "agentName",
+      s.name,
+      s.source,
+      s.level,
+      s.status,
+      COALESCE(s.confidence, 0)::float AS confidence,
+      COUNT(u.id)::int AS uses,
+      COUNT(u.id) FILTER (WHERE u.success IS TRUE)::int AS wins,
+      COUNT(u.id) FILTER (WHERE u.success IS FALSE)::int AS losses,
+      MAX(u.used_at) AS "lastUsedAt",
+      s.evidence,
+      s.updated_at AS "updatedAt"
+    FROM public.skills s
+    LEFT JOIN public.skill_usage u
+      ON u.workspace_id = s.workspace_id
+      AND (u.skill_id = s.id OR (u.skill_name = s.name AND u.agent_id = s.agent_id))
+    WHERE COALESCE(s.workspace_id, 'pbk') = 'pbk'
+    GROUP BY s.id, s.agent_id, s.agent_name, s.name, s.source, s.level, s.status, s.confidence, s.evidence, s.updated_at
+    ORDER BY s.confidence DESC, uses DESC, s.updated_at DESC
+    LIMIT 50
+  `);
+  const fallback = flattenBridgeSkills().map(normalizeSkillOutcome);
+  if (!result.ok || !result.rows.length) {
+    return {
+      ok: true,
+      result: result.ok ? 'local_view_only' : 'local_view_only',
+      source: result.ok ? 'supabase-empty+bridge-state' : 'bridge-state-fallback',
+      generatedAt: isoNow(),
+      skills: fallback,
+      warning: result.ok
+        ? 'Supabase skills table is empty; showing bridge-state agent skills.'
+        : 'Supabase skills table was unavailable; showing bridge-state agent skills.',
+    };
+  }
+  const skills = result.rows.map(normalizeSkillOutcome);
+  return {
+    ok: true,
+    result: 'live',
+    source: 'supabase',
+    generatedAt: isoNow(),
+    skills,
+  };
+}
+
+function buildFallbackFleetOutcomes() {
+  ensureAgentFleetCollections();
+  const skills = flattenBridgeSkills();
+  const decisions = Array.isArray(state.rexDecisions) ? state.rexDecisions : [];
+  const outcomes = (state.agents || []).map((agent) => {
+    const agentId = agent.id || normalizeAgentId(agent.name || '');
+    const agentSkills = skills.filter((skill) => normalizeAgentId(skill.agentId) === normalizeAgentId(agentId));
+    const agentDecisions = decisions.filter((decision) => {
+      const params = decision.params || {};
+      return normalizeAgentId(params.agentId || params.sourceAgentId || decision.targetId || '') === normalizeAgentId(agentId);
+    });
+    const applied = agentDecisions.filter((decision) => /applied|approved|measured|success/i.test(decision.status || '')).length;
+    return {
+      agentId,
+      agentName: agent.name || agentId,
+      role: agent.role || '',
+      status: agent.status || '',
+      stats: [
+        { label: 'Decisions', value: agentDecisions.length || Number(agent.decisions || 0) },
+        { label: 'Applied', value: applied, tone: applied ? 'lime' : '' },
+        { label: 'Skills active', value: agentSkills.length || Number(agent.skillsTotal || 0), tone: 'lime' },
+        { label: 'Last seen', value: agent.lastSeen ? 'live' : 'idle' },
+      ],
+      metrics: {
+        decisions: agentDecisions.length,
+        successes: applied,
+        failures: agentDecisions.filter((decision) => /failed|rejected|error/i.test(decision.status || '')).length,
+        pending: agentDecisions.filter((decision) => /pending|queued|proposed/i.test(decision.status || '')).length,
+        skillsActive: agentSkills.length || Number(agent.skillsTotal || 0),
+      },
+      lastActionAt: agent.updatedAt || agent.lastSeen || '',
+    };
+  });
+  const totals = outcomes.reduce((acc, item) => {
+    acc.decisions += Number(item.metrics.decisions || 0);
+    acc.successes += Number(item.metrics.successes || 0);
+    acc.failures += Number(item.metrics.failures || 0);
+    acc.pending += Number(item.metrics.pending || 0);
+    acc.skillsActive += Number(item.metrics.skillsActive || 0);
+    return acc;
+  }, { decisions: 0, successes: 0, failures: 0, pending: 0, skillsActive: 0 });
+  outcomes.push({
+    agentId: 'fleet',
+    agentName: 'Fleet total',
+    role: 'all agents',
+    status: 'aggregate',
+    stats: [
+      { label: 'Decisions', value: totals.decisions },
+      { label: 'Applied', value: totals.successes, tone: 'lime' },
+      { label: 'Pending', value: totals.pending, tone: 'amber' },
+      { label: 'Skills active', value: totals.skillsActive, tone: 'lime' },
+    ],
+    metrics: totals,
+    lastActionAt: isoNow(),
+  });
+  return {
+    ok: true,
+    result: 'local_view_only',
+    source: 'bridge-state-fallback',
+    generatedAt: isoNow(),
+    outcomes,
+    warning: 'Supabase fleet outcome tables were unavailable, so this is bridge-state fallback data.',
+  };
+}
+
+async function buildFleetOutcomes() {
+  const result = await queryPgRows(`
+    SELECT
+      COALESCE(
+        NULLIF(payload->>'agentId', ''),
+        NULLIF(payload->>'sourceAgentId', ''),
+        NULLIF(payload->>'agentName', ''),
+        NULLIF(requested_by, ''),
+        'fleet'
+      ) AS agent_id,
+      COUNT(*)::int AS decisions,
+      COUNT(*) FILTER (WHERE status IN ('approved', 'applied', 'executed', 'complete', 'success', 'saved'))::int AS successes,
+      COUNT(*) FILTER (WHERE status IN ('pending', 'queued', 'queued_for_approval', 'proposed'))::int AS pending,
+      COUNT(*) FILTER (WHERE status IN ('rejected', 'failed', 'error'))::int AS failures,
+      MAX(created_at) AS last_action_at
+    FROM public.agent_tasks
+    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+      AND (
+        action ILIKE '%agent%'
+        OR action ILIKE '%skill%'
+        OR action ILIKE '%deploy%'
+        OR action ILIKE '%pause%'
+        OR provider ILIKE '%rex%'
+      )
+    GROUP BY agent_id
+    ORDER BY last_action_at DESC
+    LIMIT 25
+  `);
+  const fallback = buildFallbackFleetOutcomes();
+  if (!result.ok || !result.rows.length) return fallback;
+  ensureAgentFleetCollections();
+  const skills = flattenBridgeSkills();
+  const outcomes = result.rows.map((row) => {
+    const agent = findAgentRecord(row.agent_id) || {};
+    const agentId = agent.id || normalizeAgentId(row.agent_id || 'fleet');
+    const agentName = agent.name || row.agent_id || 'Fleet';
+    const skillsActive = skills.filter((skill) => normalizeAgentId(skill.agentId) === normalizeAgentId(agentId)).length || Number(agent.skillsTotal || 0);
+    const metrics = {
+      decisions: Number(row.decisions || 0),
+      successes: Number(row.successes || 0),
+      failures: Number(row.failures || 0),
+      pending: Number(row.pending || 0),
+      skillsActive,
+    };
+    return {
+      agentId,
+      agentName,
+      role: agent.role || 'Agent',
+      status: agent.status || '',
+      stats: [
+        { label: 'Decisions', value: metrics.decisions },
+        { label: 'Applied', value: metrics.successes, tone: metrics.successes ? 'lime' : '' },
+        { label: 'Pending', value: metrics.pending, tone: metrics.pending ? 'amber' : '' },
+        { label: 'Skills active', value: metrics.skillsActive, tone: 'lime' },
+      ],
+      metrics,
+      lastActionAt: row.last_action_at || '',
+    };
+  });
+  return {
+    ok: true,
+    result: 'live',
+    source: 'supabase',
+    generatedAt: isoNow(),
+    outcomes,
+  };
+}
+
+function defaultObjectionPlaybooks() {
+  return [
+    {
+      tag: 'price-too-low',
+      count: 0,
+      title: 'Rex note - price-too-low playbook',
+      note: 'No live objection memories were found yet. Starter guidance: empathy-label first, then walk through repair math. Do not hard-close before the seller feels heard.',
+    },
+    {
+      tag: 'need-to-think',
+      count: 0,
+      title: 'Rex note - need-to-think playbook',
+      note: 'Starter guidance: lower the commitment size, ask what would need to be true, and schedule a precise follow-up.',
+    },
+  ];
+}
+
+async function buildObjectionPlaybooks() {
+  const result = await queryPgRows(`
+    SELECT objection_tag, prompt, response, source, outcome, score, updated_at, created_at
+    FROM public.coach_memory
+    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+      AND objection_tag IS NOT NULL
+      AND objection_tag <> ''
+    ORDER BY COALESCE(score, 0) DESC, updated_at DESC, created_at DESC
+    LIMIT 240
+  `);
+  if (!result.ok) {
+    return {
+      ok: true,
+      result: 'local_view_only',
+      source: 'bridge-state-fallback',
+      generatedAt: isoNow(),
+      playbooks: defaultObjectionPlaybooks(),
+      warning: 'coach_memory was unavailable, so starter playbooks are shown.',
+    };
+  }
+  const groups = new Map();
+  for (const row of result.rows) {
+    const tag = String(row.objection_tag || '').trim();
+    if (!tag) continue;
+    const current = groups.get(tag) || {
+      tag,
+      count: 0,
+      title: `Rex note - ${tag} playbook`,
+      note: '',
+      prompt: '',
+      source: '',
+      outcome: '',
+      lastSeenAt: '',
+    };
+    current.count += 1;
+    if (!current.note && row.response) current.note = String(row.response);
+    if (!current.prompt && row.prompt) current.prompt = String(row.prompt);
+    if (!current.source && row.source) current.source = String(row.source);
+    if (!current.outcome && row.outcome) current.outcome = String(row.outcome);
+    current.lastSeenAt = current.lastSeenAt || row.updated_at || row.created_at || '';
+    groups.set(tag, current);
+  }
+  const playbooks = Array.from(groups.values())
+    .map((item) => ({
+      ...item,
+      note: item.note || item.prompt || `Rex has ${item.count} memories for ${item.tag}, but no response summary yet.`,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 20);
+  return {
+    ok: true,
+    result: 'live',
+    source: 'supabase',
+    generatedAt: isoNow(),
+    playbooks: playbooks.length ? playbooks : defaultObjectionPlaybooks(),
+  };
+}
+
+async function buildMemoryAnalyticsBundle(limit = 50) {
+  const [stats, history, skills, fleet, playbooks] = await Promise.all([
+    buildMemoryStats(),
+    buildAgentHistory(limit),
+    buildSkillOutcomes(),
+    buildFleetOutcomes(),
+    buildObjectionPlaybooks(),
+  ]);
+  const liveCount = [stats, history, skills, fleet, playbooks].filter((item) => item.result === 'live').length;
+  return {
+    ok: true,
+    result: liveCount ? 'live' : 'local_view_only',
+    source: liveCount ? 'mixed' : 'bridge-state-fallback',
+    generatedAt: isoNow(),
+    stats,
+    history: history.history || [],
+    skills: skills.skills || [],
+    fleet: fleet.outcomes || [],
+    playbooks: playbooks.playbooks || [],
+    warnings: [stats, history, skills, fleet, playbooks]
+      .flatMap((item) => [item.warning, ...(Array.isArray(item.warnings) ? item.warnings : [])])
+      .filter(Boolean),
   };
 }
 
@@ -9996,6 +11822,55 @@ function getCampaignProvider(channel = 'email') {
   return 'Instantly + Telnyx';
 }
 
+function getCampaignProviderConfig(input = {}) {
+  const providerConfig = input.providerConfig || input.provider_config || {};
+  const sequenceConfig = input.sequence?.providerConfig || input.sequence?.provider_config || {};
+  const scheduleConfig = input.schedule?.providerConfig || input.schedule?.provider_config || {};
+  const telnyxConfig = providerConfig.telnyx || sequenceConfig.telnyx || scheduleConfig.telnyx || {};
+  const instantlyConfig = providerConfig.instantly || sequenceConfig.instantly || scheduleConfig.instantly || {};
+  const selectedFromNumber = normalizePhone(
+    input.selectedFromNumber
+      || input.selected_from_number
+      || input.telnyxNumber
+      || input.fromNumber
+      || input.from
+      || providerConfig.selectedFromNumber
+      || providerConfig.fromNumber
+      || sequenceConfig.selectedFromNumber
+      || scheduleConfig.selectedFromNumber
+      || telnyxConfig.selectedFromNumber
+      || telnyxConfig.fromNumber
+      || '',
+  );
+  const fromEmail = String(
+    input.fromEmail
+      || input.from_email
+      || input.instantlySender
+      || input.senderEmail
+      || providerConfig.fromEmail
+      || providerConfig.from_email
+      || sequenceConfig.fromEmail
+      || scheduleConfig.fromEmail
+      || instantlyConfig.fromEmail
+      || instantlyConfig.from_email
+      || '',
+  ).trim();
+  return {
+    selectedFromNumber,
+    fromNumber: selectedFromNumber,
+    fromEmail,
+    from_email: fromEmail,
+    telnyx: {
+      selectedFromNumber,
+      fromNumber: selectedFromNumber,
+    },
+    instantly: {
+      fromEmail,
+      from_email: fromEmail,
+    },
+  };
+}
+
 function getLeadImportSearchText(lead = {}) {
   return [
     lead.leadId,
@@ -10168,6 +12043,9 @@ function buildCampaignFromPayload(payload = {}) {
   const id = payload.id || `campaign-${slugify(payload.name || `${channel}-${Date.now()}`) || randomUUID().slice(0, 8)}-${randomUUID().slice(0, 8)}`;
   const conflicts = findCampaignConflicts(leads, channel, id);
   const status = normalizeCampaignStatus(payload.status || 'draft');
+  const providerConfig = getCampaignProviderConfig(payload);
+  const schedule = payload.schedule && typeof payload.schedule === 'object' ? payload.schedule : {};
+  const sequence = payload.sequence && typeof payload.sequence === 'object' ? payload.sequence : {};
   const campaign = {
     id,
     name: String(payload.name || 'Untitled campaign').trim() || 'Untitled campaign',
@@ -10177,8 +12055,19 @@ function buildCampaignFromPayload(payload = {}) {
     templateId: payload.templateId || payload.template_id || '',
     leadSource: source,
     leadFilter: payload.leadFilter || payload.lead_filter || { source },
-    schedule: payload.schedule && typeof payload.schedule === 'object' ? payload.schedule : {},
-    sequence: payload.sequence && typeof payload.sequence === 'object' ? payload.sequence : {},
+    schedule: {
+      ...schedule,
+      providerConfig,
+    },
+    sequence: {
+      ...sequence,
+      providerConfig,
+    },
+    providerConfig,
+    selectedFromNumber: providerConfig.selectedFromNumber,
+    fromNumber: providerConfig.fromNumber,
+    fromEmail: providerConfig.fromEmail,
+    from_email: providerConfig.from_email,
     metrics: payload.metrics && typeof payload.metrics === 'object' ? payload.metrics : {},
     approvalId: payload.approvalId || '',
     approvalStatus: payload.approvalStatus || '',
@@ -10309,6 +12198,11 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
   }
   const selectedLeads = getCampaignLeads(campaignId).map(normalizeCampaignLead);
   const action = params.requestedAction || params.approvalAction || 'start_campaign';
+  const providerConfig = getCampaignProviderConfig({
+    ...campaign,
+    ...params,
+    providerConfig: params.providerConfig || campaign.providerConfig,
+  });
   const { approval, fanout } = await toolHandlers.createApproval({
     type: 'campaign',
     leadName: campaign.name,
@@ -10327,6 +12221,11 @@ async function requestCampaignApproval(campaignId = '', params = {}) {
       leadFilter: campaign.leadSource || '',
       schedule: campaign.schedule || {},
       sequence: campaign.sequence || {},
+      providerConfig,
+      selectedFromNumber: providerConfig.selectedFromNumber,
+      fromNumber: providerConfig.fromNumber,
+      fromEmail: providerConfig.fromEmail,
+      from_email: providerConfig.from_email,
       statusMessage: `${String(action).replace(/_/g, ' ')} queued for approval`,
     },
   });
@@ -10585,6 +12484,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
   const now = options.now || new Date();
   const dryRun = Boolean(options.dryRun);
   const allowProviderWrites = Boolean(options.allowProviderWrites);
+  const providerConfig = getCampaignProviderConfig(campaign);
   const targetLabel = lead.address || lead.leadName || lead.email || lead.phone || lead.id;
   const contactable = isCampaignLeadContactable(campaign, lead, channel);
 
@@ -10679,6 +12579,8 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       phone: lead.phone,
       campaignId: campaign.id,
       templateId: campaign.templateId,
+      fromEmail: providerConfig.fromEmail,
+      from_email: providerConfig.fromEmail,
       body: buildCampaignOutboundText(campaign, lead, channel),
       actor: 'Campaign worker',
     });
@@ -10688,6 +12590,8 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       leadName: lead.leadName,
       address: lead.address,
       phone: lead.phone,
+      from: providerConfig.selectedFromNumber,
+      fromNumber: providerConfig.selectedFromNumber,
       body: buildCampaignOutboundText(campaign, lead, channel),
       campaignId: campaign.id,
       actor: 'Campaign worker',
@@ -10698,6 +12602,8 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       leadName: lead.leadName,
       address: lead.address,
       phone: lead.phone,
+      from: providerConfig.selectedFromNumber,
+      fromNumber: providerConfig.selectedFromNumber,
       script: buildCampaignOutboundText(campaign, lead, channel),
       campaignId: campaign.id,
       record: true,
@@ -10962,6 +12868,8 @@ function splitLeadName(name = '') {
 
 function buildInstantlyCampaignPayload({ approval = {}, leads = [] } = {}) {
   const metadata = approval.metadata || {};
+  const providerConfig = getCampaignProviderConfig(metadata);
+  const fromEmail = providerConfig.fromEmail || INSTANTLY_DEFAULT_FROM_EMAIL || getSenderAddress('cold');
   const templateId = metadata.templateId || metadata.campaignTemplateId || approval.templateId || '';
   const campaignName = metadata.campaignName
     || approval.campaignName
@@ -10994,6 +12902,10 @@ function buildInstantlyCampaignPayload({ approval = {}, leads = [] } = {}) {
     campaign_name: campaignName,
     template_id: templateId,
     templateId,
+    from: fromEmail,
+    from_email: fromEmail,
+    sender_email: fromEmail,
+    senderEmail: fromEmail,
     leads: contacts,
     contacts,
     metadata: {
@@ -11001,6 +12913,7 @@ function buildInstantlyCampaignPayload({ approval = {}, leads = [] } = {}) {
       source: 'pbk-approval-worker',
       leadCount: leads.length,
       emailLeadCount: contacts.length,
+      fromEmail,
     },
   };
 }
@@ -11041,6 +12954,7 @@ async function createInstantlyCampaignForApproval({ approval = {}, leads = [] } 
       name: payload.name,
       leadCount: payload.metadata.emailLeadCount,
       templateId: payload.template_id || '',
+      fromEmail: payload.from_email || '',
     },
     response,
     error: response.ok ? '' : response.error || 'Instantly campaign create request failed.',
@@ -11432,6 +13346,8 @@ function getInstantlyProviderMeta() {
     configured: Boolean(INSTANTLY_API_KEY),
     ready: Boolean(INSTANTLY_API_KEY),
     baseUrl: INSTANTLY_BASE_URL,
+    sendersEndpoint: INSTANTLY_SENDERS_ENDPOINT,
+    defaultFromEmail: INSTANTLY_DEFAULT_FROM_EMAIL,
     warmupEndpoint: INSTANTLY_WARMUP_ENABLE_ENDPOINT,
     domainOrderEndpoint: INSTANTLY_DOMAIN_ORDER_ENDPOINT,
     missing: INSTANTLY_API_KEY ? [] : ['PBK_INSTANTLY_API_KEY'],
@@ -13896,6 +15812,8 @@ const toolHandlers = {
     let provider = 'Resend';
     let endpoint = '';
     const instantlyEndpoint = String(process.env.PBK_INSTANTLY_EMAIL_SEND_ENDPOINT || '/emails').trim();
+    const fromEmail = String(params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || '').trim();
+    const senderAddress = getSenderAddress('cold', fromEmail);
 
     if (INSTANTLY_API_KEY) {
       provider = 'Instantly';
@@ -13904,7 +15822,9 @@ const toolHandlers = {
         campaignId: params.campaignId || '',
         leadId: context.leadId,
         templateId,
-        from: getSenderAddress('cold'),
+        from: senderAddress,
+        from_email: senderAddress,
+        sender_email: senderAddress,
         to: email,
         subject: content.subject,
         html: content.html,
@@ -13920,7 +15840,7 @@ const toolHandlers = {
       provider = 'Resend';
       endpoint = 'https://api.resend.com/emails';
       delivery = await sendTransactionalEmail({
-        from: getSenderAddress('cold'),
+        from: senderAddress,
         to: email,
         subject: content.subject,
         html: content.html,
@@ -15706,7 +17626,13 @@ function buildStateSnapshot() {
     campaignSuppressions: state.campaignSuppressions || [],
     campaignLeadSources: getCampaignLeadSourceOptions(),
     campaignExecutions: state.campaignExecutions || [],
+    agents: Array.isArray(state.agents) ? state.agents : buildDefaultAgentFleet(),
+    agentSkillTransfers: state.agentSkillTransfers || [],
+    agentSkillExperiments: state.agentSkillExperiments || [],
     rexDecisions: state.rexDecisions || [],
+    avaActiveMemories: state.avaActiveMemories || [],
+    avaLearningSessions: state.avaLearningSessions || [],
+    inboundCallRoutes: state.inboundCallRoutes || [],
     leadScoringWeights: getLeadScoringWeights(),
     avaNegotiationProfile: {
       persona: buildAvaNegotiationPersona(),
@@ -16437,6 +18363,36 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/memory/stats') {
+      json(response, 200, await buildMemoryStats());
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/agent/history') {
+      json(response, 200, await buildAgentHistory(url.searchParams.get('limit') || 50));
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/skills/outcomes') {
+      json(response, 200, await buildSkillOutcomes());
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/fleet/outcomes') {
+      json(response, 200, await buildFleetOutcomes());
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/objection/playbooks') {
+      json(response, 200, await buildObjectionPlaybooks());
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/memory/analytics') {
+      json(response, 200, await buildMemoryAnalyticsBundle(url.searchParams.get('limit') || 50));
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/lead-scoring/weights') {
       json(response, 200, {
         ok: true,
@@ -16476,6 +18432,79 @@ const server = createServer(async (request, response) => {
         ok: true,
         result: 'live',
         guidance,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/ava/active-memory', '/api/ava/memory'])) {
+      json(response, 200, {
+        ok: true,
+        result: DATABASE_URL ? 'live' : 'local_view_only',
+        activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, Math.max(1, Math.min(120, Number(url.searchParams.get('limit') || 50)))),
+        learningSessions: sortNewest(state.avaLearningSessions || []).slice(0, 20),
+        summary: getAvaActiveMemorySummary(8),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/active-memory', '/api/ava/memory'])) {
+      const body = await readBody(request);
+      const memories = Array.isArray(body.memories) ? body.memories : Array.isArray(body.lessons) ? body.lessons : [body];
+      for (const item of memories.filter(Boolean)) {
+        upsertAvaActiveMemory({
+          id: item.id || `ava-memory-manual-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          memoryType: item.memoryType || item.type || 'manual-guidance',
+          objectionTag: item.objectionTag || item.objection_tag || item.tag || '',
+          prompt: item.prompt || item.trigger || '',
+          response: item.response || item.guidance || item.summary || '',
+          summary: item.summary || item.response || item.guidance || '',
+          score: item.score ?? item.confidence ?? 0.72,
+          outcome: item.outcome || 'approved_memory',
+          source: item.source || 'manual',
+          metadata: item.metadata || {},
+          createdAt: item.createdAt || isoNow(),
+        });
+      }
+      addActivity(state, makeActivity({
+        actor: body.actor || 'Ava Memory',
+        category: 'LEARNING',
+        status: 'saved',
+        text: `Updated Ava active memory with ${memories.length} item${memories.length === 1 ? '' : 's'}.`,
+        target: 'ava-active-memory',
+      }));
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        result: DATABASE_URL ? 'live' : 'local_view_only',
+        verbiage: 'Ava active memory updated',
+        activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 50),
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/learning/run', '/api/ava/memory/run'])) {
+      const body = await readBody(request);
+      const result = await runAvaMemoryLearning({
+        ...body,
+        actor: body.actor || (request.headers['x-rex-agent'] ? 'Rex Strategist' : 'Ava memory worker'),
+      });
+      json(response, 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/inbound/route', '/webhooks/telnyx/inbound', '/api/webhooks/telnyx/inbound'])) {
+      const body = await readBody(request);
+      const result = await handleAvaInboundRoute(body, {
+        actor: pathname.includes('webhooks') ? 'Telnyx inbound webhook' : body.actor || 'PBK Command Center',
+        forceAfterHours: body.forceAfterHours,
+      });
+      json(response, result.result === 'provider_missing' ? 202 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -16575,6 +18604,91 @@ const server = createServer(async (request, response) => {
         ok: result.ok,
         result: result.result,
         update: result.update,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/fleet', '/api/agents'])) {
+      ensureAgentFleetCollections();
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        agents: state.agents,
+        transfers: state.agentSkillTransfers,
+        experiments: state.agentSkillExperiments,
+        status: state.status,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/deploy', '/api/agents/fleet/deploy'])) {
+      const body = await readBody(request);
+      const result = await createRexDecision({
+        tool: 'deploy_agent',
+        params: body,
+        rationale: body.rationale || `Deploy ${body.name || 'new agent'} from Agent Fleet.`,
+        actor: body.actor || 'Agent Fleet UI',
+        source: 'agent-fleet',
+        requestApproval: body.requestApproval !== false,
+      }, {
+        requestApproval: body.requestApproval !== false,
+        actor: body.actor || 'Agent Fleet UI',
+        source: 'agent-fleet',
+      });
+      json(response, 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const agentActionMatch = matchPath(pathname, '/api/agents/:agentId/actions');
+    if (agentActionMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const action = normalizeRexTool(body.action || body.tool || '');
+      const result = await createRexDecision({
+        tool: action.startsWith('agent_') ? action : `agent_${action}`,
+        params: {
+          ...body,
+          agentId: decodeURIComponent(agentActionMatch.groups.agentId || ''),
+        },
+        rationale: body.rationale || `Agent Fleet requested ${body.action || body.tool || 'action'}.`,
+        actor: body.actor || 'Agent Fleet UI',
+        source: 'agent-fleet',
+        requestApproval: body.requestApproval !== false,
+      }, {
+        requestApproval: body.requestApproval !== false,
+        actor: body.actor || 'Agent Fleet UI',
+        source: 'agent-fleet',
+      });
+      json(response, 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const agentSkillActionMatch = matchPath(pathname, '/api/agents/:agentId/skills');
+    if (agentSkillActionMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await createRexDecision({
+        tool: body.action || body.tool || 'transfer_skill',
+        params: {
+          ...body,
+          sourceAgentId: decodeURIComponent(agentSkillActionMatch.groups.agentId || ''),
+        },
+        rationale: body.rationale || `Agent Fleet requested skill action for ${body.skill || 'a skill'}.`,
+        actor: body.actor || 'Agent Fleet UI',
+        source: 'agent-fleet',
+        requestApproval: body.requestApproval !== false,
+      }, {
+        requestApproval: body.requestApproval !== false,
+        actor: body.actor || 'Agent Fleet UI',
+        source: 'agent-fleet',
+      });
+      json(response, 202, {
+        ...result,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -17215,6 +19329,18 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const result = await updateBrowserResearchJobFromPayload(body);
       json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/telnyx/numbers') {
+      const result = await getTelnyxNumberOptions();
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/instantly/senders') {
+      const result = await getInstantlySenderOptions();
+      json(response, 200, result);
       return;
     }
 
@@ -18365,6 +20491,16 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/webhooks/telnyx') {
       const body = await readBody(request);
+      if (isTelnyxInboundCallWebhook(body)) {
+        const result = await handleAvaInboundRoute(body, { actor: 'Telnyx inbound webhook' });
+        json(response, result.result === 'provider_missing' ? 202 : 200, {
+          ok: true,
+          mappedEvent: 'inbound-call-route',
+          result,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const mapped = mapTelnyxWebhook(body);
       const campaignWebhook = recordCampaignWebhookFromPayload('Telnyx', {
         ...body,
@@ -18432,9 +20568,18 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/settings',
         'GET /api/analytics',
         'GET /api/analytics/campaign-drilldown',
+        'GET /api/memory/analytics',
+        'GET /api/memory/stats',
+        'GET /api/agent/history',
+        'GET /api/skills/outcomes',
+        'GET /api/fleet/outcomes',
+        'GET /api/objection/playbooks',
         'GET/POST /api/lead-scoring/weights',
         'GET/POST /api/rex/decisions',
         'POST /api/rex/strategist/proposals',
+        'GET/POST /api/ava/active-memory',
+        'POST /api/ava/learning/run',
+        'POST /api/ava/inbound/route',
         'POST /api/campaigns/:id/script',
         'POST /api/campaigns/:id/sequence',
         'POST /api/slack/interactions',
@@ -18465,6 +20610,8 @@ const server = createServer(async (request, response) => {
         'POST /api/browser-research/launch',
         'GET/POST /api/browser-research/jobs/:jobId',
         'POST /api/browser-research/complete',
+        'GET /api/telnyx/numbers',
+        'GET /api/instantly/senders',
         'GET/POST/PATCH /api/campaigns',
         'GET /api/campaigns/lead-sources',
         'POST /api/campaigns/:campaignId/approval',
@@ -18496,6 +20643,7 @@ const server = createServer(async (request, response) => {
         'POST /api/webhooks/instantly',
         'POST /api/webhooks/email',
         'POST /api/webhooks/telnyx',
+        'POST /api/webhooks/telnyx/inbound',
         'WS /api/webhooks/telnyx/media',
         'POST /webhooks/telnyx/recording',
         'POST /api/webhooks/docusign',

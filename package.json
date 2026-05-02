@@ -18,6 +18,7 @@
     "brain:harvest": "node ./scripts/harvest-brain-content.mjs",
     "campaigns:worker": "node ./scripts/campaign-worker.mjs",
     "campaigns:worker:dry-run": "set PBK_CAMPAIGN_WORKER_DRY_RUN=true&& node ./scripts/campaign-worker.mjs",
+    "ava:memory:worker": "node ./scripts/ava-memory-worker.mjs",
     "infra:up": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 up",
     "infra:down": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 down",
     "infra:check": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 check",

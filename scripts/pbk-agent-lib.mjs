@@ -65,11 +65,42 @@ export function getGitHubToken(env = process.env) {
 }
 
 export function getGoogleApiKey(env = process.env) {
+  if (isVoidLlmEnabled(env)) {
+    return getVoidLlmConfig(env).apiKey;
+  }
+
   const apiKey = String(env.GOOGLE_API_KEY || env.GEMINI_API_KEY || '').trim();
   if (!apiKey) {
     throw new Error('Missing Google API key. Set GOOGLE_API_KEY or GEMINI_API_KEY.');
   }
   return apiKey;
+}
+
+export function isVoidLlmEnabled(env = process.env) {
+  const provider = String(env.PBK_LLM_PROVIDER || env.LLM_PROVIDER || '').trim().toLowerCase();
+  const explicit = String(env.PBK_USE_VOIDLLM || '').trim().toLowerCase();
+  return provider === 'voidllm' || explicit === 'true' || explicit === '1';
+}
+
+export function getVoidLlmConfig(env = process.env) {
+  const baseURL = String(env.PBK_VOIDLLM_BASE_URL || env.VOIDLLM_BASE_URL || 'http://127.0.0.1:8088/v1')
+    .trim()
+    .replace(/\/+$/, '');
+  const apiKey = String(env.PBK_VOIDLLM_API_KEY || env.VOIDLLM_API_KEY || '').trim();
+  const model = String(env.PBK_VOIDLLM_MODEL || env.VOIDLLM_MODEL || 'gemini-2.5-flash').trim();
+  const userId = String(env.PBK_VOIDLLM_USER_ID || env.VOIDLLM_USER_ID || 'pbk-agent-planner').trim();
+
+  if (!baseURL) {
+    throw new Error('Missing VoidLLM base URL. Set PBK_VOIDLLM_BASE_URL or VOIDLLM_BASE_URL.');
+  }
+  if (!apiKey) {
+    throw new Error('Missing VoidLLM user API key. Set PBK_VOIDLLM_API_KEY or VOIDLLM_API_KEY to a vl_uk_... key.');
+  }
+  if (!model) {
+    throw new Error('Missing VoidLLM model. Set PBK_VOIDLLM_MODEL or VOIDLLM_MODEL.');
+  }
+
+  return { baseURL, apiKey, model, userId };
 }
 
 export function getLabelNames(issue = {}) {
@@ -243,6 +274,10 @@ export function extractJsonBlock(value = '') {
 }
 
 export async function callGeminiJson({ apiKey, prompt }) {
+  if (isVoidLlmEnabled()) {
+    return callVoidLlmJson({ apiKey, prompt });
+  }
+
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
@@ -278,6 +313,48 @@ export async function callGeminiJson({ apiKey, prompt }) {
   const text =
     parsed?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('').trim() ||
     parsed?.candidates?.[0]?.output?.trim() ||
+    raw;
+
+  return JSON.parse(extractJsonBlock(text));
+}
+
+export async function callVoidLlmJson({ apiKey, prompt, env = process.env } = {}) {
+  const config = getVoidLlmConfig(env);
+  const response = await fetch(`${config.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${String(apiKey || config.apiKey).trim()}`,
+      'Content-Type': 'application/json',
+      'X-User-Id': config.userId,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a PBK planning assistant. Return valid JSON only, with no Markdown.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+    }),
+  });
+
+  const raw = await response.text();
+  const parsed = tryParseJson(raw);
+
+  if (!response.ok) {
+    throw new Error(`VoidLLM request failed (${response.status}): ${raw.slice(0, 500)}`);
+  }
+
+  const text =
+    parsed?.choices?.[0]?.message?.content?.trim() ||
+    parsed?.choices?.[0]?.text?.trim() ||
+    parsed?.output_text?.trim() ||
     raw;
 
   return JSON.parse(extractJsonBlock(text));

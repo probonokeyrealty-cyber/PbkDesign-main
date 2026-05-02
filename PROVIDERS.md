@@ -60,6 +60,51 @@ The bridge's `mapTelnyxWebhook` handler maps Telnyx events into bridge `eventTyp
 
 ---
 
+## Deepgram (voice transcription + sentiment)
+
+Deepgram is wired through the official JavaScript SDK for both prerecorded smoke tests and Telnyx media-stream transcription.
+
+### Env vars
+
+| Key | Value |
+|-----|-------|
+| `PBK_DEEPGRAM_API_KEY` | Deepgram project API key |
+| `PBK_DEEPGRAM_MODEL` | `nova-2` by default for prerecorded smoke tests |
+| `PBK_DEEPGRAM_LIVE_MODEL` | `nova-2-meeting` by default for live streams |
+| `PBK_DEEPGRAM_TELNYX_ENCODING` | `mulaw` for Telnyx PCMU streams |
+| `PBK_DEEPGRAM_TELNYX_SAMPLE_RATE` | `8000` for Telnyx PCMU streams |
+| `PBK_TELNYX_MEDIA_STREAM_TOKEN` | Random shared token appended to Telnyx `stream_url` |
+| `PBK_DEEPGRAM_STREAM_CALLS` | Set `true` only after the public bridge stream URL is verified |
+| `PBK_DEEPGRAM_ANALYZE_RECORDINGS` | Optional post-call recording transcription/sentiment |
+
+### Verify
+
+```bash
+npm run deepgram:smoke
+```
+
+Expect `provider: "deepgram"`, `mode: "live"`, a transcript preview, and a sentiment object.
+
+For provider readiness:
+
+```bash
+curl -s http://127.0.0.1:8788/api/deepgram/health
+```
+
+### Telnyx live media stream
+
+When the bridge is public, configure Telnyx media streaming to:
+
+```
+wss://<bridge-host>/api/webhooks/telnyx/media?token=<PBK_TELNYX_MEDIA_STREAM_TOKEN>
+```
+
+The bridge forwards Telnyx `media.payload` frames to Deepgram and saves final transcript/sentiment rows into `unified_messages`. Keep the stream token set before exposing the WebSocket endpoint publicly.
+
+Deepgram itself does not require a dashboard-side "connection" for this PBK flow. The required connection is on the Telnyx side: Telnyx streams audio to PBK's WebSocket, and PBK opens the authenticated Deepgram live transcription socket with `PBK_DEEPGRAM_API_KEY`.
+
+---
+
 ## DocuSign (envelope send via JWT auth)
 
 ### What you need
@@ -199,9 +244,12 @@ If `live: false`, check `batchData.error` — most often it's a credit balance i
 
 ---
 
-## Slack (incoming webhook)
+## Slack (incoming webhook + interactive approvals)
 
-The simplest provider. One env var.
+PBK supports two Slack paths:
+
+- Incoming webhook for simple alerts and notifications.
+- Bot token + interactive endpoint for Approve / Reject buttons on approval requests.
 
 ### What you need
 
@@ -215,11 +263,14 @@ A Slack incoming-webhook URL for the channel you want PBK alerts in.
 4. **Add New Webhook to Workspace** → pick the channel (e.g. `#pbk-alerts`) → **Allow**.
 5. Copy the **Webhook URL** (starts with `https://hooks[.]slack[.]com/services/...`).
 
-### Env var
+### Env vars
 
 | Key | Value |
 |-----|-------|
-| `PBK_SLACK_WEBHOOK_URL` | (from step 5) |
+| `PBK_SLACK_WEBHOOK_URL` | Incoming webhook URL for simple notifications |
+| `PBK_SLACK_BOT_TOKEN` | Slack bot token with `chat:write` for interactive approval messages |
+| `PBK_SLACK_APPROVAL_CHANNEL_ID` | Channel ID where PBK should post approval cards |
+| `PBK_SLACK_SIGNING_SECRET` | Slack app signing secret for `/api/slack/interactions` verification |
 
 ### Verify
 
@@ -229,6 +280,16 @@ curl -s https://pbk-openclaw-bridge.onrender.com/health \
 ```
 
 Expect `configured: true`, `ready: true`.
+
+### Interactive approvals
+
+Set the Slack app's Interactivity Request URL to:
+
+```text
+https://<bridge-host>/api/slack/interactions
+```
+
+When `PBK_SLACK_BOT_TOKEN` and `PBK_SLACK_APPROVAL_CHANNEL_ID` are set, `createApproval` posts a Block Kit approval card with **Approve** and **Reject** buttons. Those buttons call the bridge's existing `approval-callback` path, so campaign/provider writes still obey PBK's approval-gated state machine.
 
 ### Test direct notify
 

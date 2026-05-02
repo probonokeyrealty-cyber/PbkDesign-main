@@ -18,6 +18,14 @@
     "brain:harvest": "node ./scripts/harvest-brain-content.mjs",
     "campaigns:worker": "node ./scripts/campaign-worker.mjs",
     "campaigns:worker:dry-run": "set PBK_CAMPAIGN_WORKER_DRY_RUN=true&& node ./scripts/campaign-worker.mjs",
+    "infra:up": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 up",
+    "infra:down": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 down",
+    "infra:check": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 check",
+    "infra:smoke": "node ./scripts/pbk-runtime-smoke.mjs",
+    "llm:smoke": "node ./scripts/pbk-llm-provider-smoke.mjs",
+    "llm:smoke:mock": "node ./scripts/pbk-llm-provider-smoke.mjs --mock",
+    "deepgram:smoke": "node ./scripts/deepgram-smoke.mjs",
+    "deepgram:smoke:mock": "node ./scripts/deepgram-smoke.mjs --mock",
     "agent:export-scenario": "node ./scripts/export-meta-agent-scenario.mjs",
     "research:seed-browser-jobs": "node ./scripts/seed-browser-research-jobs.mjs",
     "monitoring:render-config": "node ./scripts/render-monitoring-config.mjs",
@@ -36,6 +44,7 @@
     "agent:planner": "node ./scripts/pbk-agent-planner.mjs"
   },
   "dependencies": {
+    "@deepgram/sdk": "^5.1.0",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",
@@ -96,7 +105,8 @@
     "sonner": "2.0.3",
     "tailwind-merge": "3.2.0",
     "tw-animate-css": "1.3.8",
-    "vaul": "1.1.2"
+    "vaul": "1.1.2",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",

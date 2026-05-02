@@ -1,0 +1,84 @@
+name: pbk-runtime
+
+services:
+  temporal-postgres:
+    image: postgres:16-alpine
+    container_name: pbk-temporal-postgres
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    ports:
+      - "127.0.0.1:5438:5432"
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: pbk-temporal
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    ports:
+      - "127.0.0.1:7233:7233"
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  temporal-admin-tools:
+    image: temporalio/admin-tools:latest
+    container_name: pbk-temporal-admin-tools
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    stdin_open: true
+    tty: true
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: pbk-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:5174,http://127.0.0.1:5174,http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "127.0.0.1:8233:8080"
+
+  voidllm:
+    image: ghcr.io/voidmind-io/voidllm:latest
+    container_name: pbk-voidllm
+    environment:
+      VOIDLLM_ADMIN_KEY: ${VOIDLLM_ADMIN_KEY}
+      VOIDLLM_ENCRYPTION_KEY: ${VOIDLLM_ENCRYPTION_KEY}
+      VOIDLLM_DATABASE_DSN: /data/voidllm.db
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - ./voidllm.yaml:/etc/voidllm/voidllm.yaml:ro
+      - voidllm-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  temporal-postgres-data:
+  voidllm-data:

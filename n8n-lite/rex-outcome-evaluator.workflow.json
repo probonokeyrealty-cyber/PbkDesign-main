@@ -1,0 +1,229 @@
+{
+  "name": "PBK Rex Outcome Evaluator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      },
+      "id": "daily-trigger",
+      "name": "Daily Evaluation Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Dry Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/rex/decisions?status=applied&limit=100",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "id": "fetch-decisions",
+      "name": "Fetch Applied Decisions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        410
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Rd2GTIySteJRMQoC",
+          "name": "PBK Bridge Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/analytics/campaign-drilldown?range=7d&limit=300",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "id": "current-metrics",
+      "name": "Fetch Current Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        590
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Rd2GTIySteJRMQoC",
+          "name": "PBK Bridge Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const decisions = $items('Fetch Applied Decisions', 0, 0)[0]?.json?.decisions || [];\nconst analytics = $items('Fetch Current Metrics', 0, 0)[0]?.json || {};\nconst now = Date.now();\nconst sevenDays = 7 * 24 * 60 * 60 * 1000;\nreturn decisions\n  .filter((decision) => decision.success == null && decision.appliedAt && now - Date.parse(decision.appliedAt) >= sevenDays)\n  .map((decision) => {\n    const campaignId = decision.targetId || decision.params?.campaignId || '';\n    const rows = (analytics.rows || []).filter((row) => !campaignId || row.campaignId === campaignId);\n    const replyRate = rows.length ? rows.filter((row) => row.replied).length / rows.length : 0;\n    const baselineReplyRate = Number(decision.baseline?.replyRate || 0) / 100;\n    const success = rows.length ? replyRate > baselineReplyRate : false;\n    return {\n      json: {\n        decisionId: decision.id,\n        success,\n        outcome: {\n          measuredAt: new Date().toISOString(),\n          campaignId,\n          rowCount: rows.length,\n          replyRate: Number((replyRate * 100).toFixed(2)),\n          baselineReplyRate: Number((baselineReplyRate * 100).toFixed(2)),\n          deltaReplyRate: Number(((replyRate - baselineReplyRate) * 100).toFixed(2))\n        }\n      }\n    };\n  });"
+      },
+      "id": "evaluate",
+      "name": "Evaluate Outcomes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        790,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com') + '/api/rex/decisions/' + $json.decisionId + '/outcome'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "success",
+              "value": "={{$json.success}}"
+            },
+            {
+              "name": "outcome",
+              "value": "={{$json.outcome}}"
+            },
+            {
+              "name": "actor",
+              "value": "Rex Evaluator"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "id": "record-outcome",
+      "name": "Record Outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        500
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Rd2GTIySteJRMQoC",
+          "name": "PBK Bridge Bearer"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily Evaluation Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Applied Decisions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Current Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Dry Run": {
+      "main": [
+        [
+          {
+            "node": "Fetch Applied Decisions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Current Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Applied Decisions": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Current Metrics": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Record Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "pbk-rex-outcome-evaluator-v1"
+}

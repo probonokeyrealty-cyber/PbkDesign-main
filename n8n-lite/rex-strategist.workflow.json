@@ -1,0 +1,311 @@
+{
+  "name": "PBK Rex Strategist",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "daily-trigger",
+      "name": "Daily 9am Strategy Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        280
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Dry Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/analytics/campaign-drilldown?range=30d&limit=200",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "id": "campaign-analytics",
+      "name": "Fetch Campaign Analytics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        280
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Rd2GTIySteJRMQoC",
+          "name": "PBK Bridge Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/rex/decisions?limit=10",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "id": "past-decisions",
+      "name": "Fetch Past Rex Decisions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        460
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Rd2GTIySteJRMQoC",
+          "name": "PBK Bridge Bearer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const analytics = $items('Fetch Campaign Analytics', 0, 0)[0]?.json || {};\nconst decisions = $items('Fetch Past Rex Decisions', 0, 0)[0]?.json?.decisions || [];\nconst poorCampaigns = (analytics.campaigns || []).filter((campaign) => {\n  const rows = (analytics.rows || []).filter((row) => row.campaignId === campaign.id);\n  const replyRate = rows.length ? rows.filter((row) => row.replied).length / rows.length : 0;\n  return rows.length >= 5 && replyRate < 0.05;\n}).slice(0, 5);\nconst prompt = `You are Rex Strategist for PBK Wholesale Paradise. Propose at most 3 safe, approval-gated optimizations. Return strict JSON only with {\"proposals\":[{\"tool\":\"adjust_lead_weight|update_campaign_script|change_follow_up_delay|pause_campaign\",\"params\":{},\"rationale\":\"\"}]}.\n\nAvailable tools:\n- adjust_lead_weight params: {\"weights\":{\"probate\":1.8}}\n- update_campaign_script params: {\"campaignId\":\"...\",\"subject\":\"...\",\"script\":\"...\"}\n- change_follow_up_delay params: {\"campaignId\":\"...\",\"delayHours\":48,\"stepId\":2}\n- pause_campaign params: {\"campaignId\":\"...\",\"reason\":\"...\"}\n\nCampaign analytics summary: ${JSON.stringify(analytics.summary || {})}\nPoor campaigns: ${JSON.stringify(poorCampaigns)}\nRecent decisions: ${JSON.stringify(decisions.map((d) => ({tool:d.tool,status:d.status,success:d.success,rationale:d.rationale,outcome:d.outcome})))}`;\nreturn [{ json: { prompt, analyticsSummary: analytics.summary || {}, poorCampaigns, decisionCount: decisions.length } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build Rex Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.PBK_VOIDLLM_BASE_URL || 'http://host.docker.internal:8088/v1').replace(/\\/$/, '') + '/chat/completions'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + ($env.PBK_VOIDLLM_API_KEY || $env.VOIDLLM_API_KEY || 'voidllm-local-key')}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{$env.PBK_VOIDLLM_MODEL || 'default'}}"
+            },
+            {
+              "name": "temperature",
+              "value": "0.2"
+            },
+            {
+              "name": "messages",
+              "value": "={{[{role:'system',content:'Return strict JSON only. No prose.'},{role:'user',content:$json.prompt}]}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "voidllm",
+      "name": "Ask VoidLLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json || {};\nconst content = response.choices?.[0]?.message?.content || response.content || '';\nlet parsed = null;\ntry { parsed = JSON.parse(content); } catch (error) { parsed = { proposals: [] }; }\nconst proposals = Array.isArray(parsed.proposals) ? parsed.proposals : [];\nreturn [{ json: { source: 'rex-strategist-n8n', requestApproval: true, proposals: proposals.slice(0, 3) } }];"
+      },
+      "id": "parse-proposals",
+      "name": "Parse Proposals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1290,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/rex/strategist/proposals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "source",
+              "value": "rex-strategist-n8n"
+            },
+            {
+              "name": "requestApproval",
+              "value": "true"
+            },
+            {
+              "name": "proposals",
+              "value": "={{$json.proposals}}"
+            }
+          ]
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth"
+      },
+      "id": "store-proposals",
+      "name": "Store + Queue Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        370
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "Rd2GTIySteJRMQoC",
+          "name": "PBK Bridge Bearer"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 9am Strategy Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Campaign Analytics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Past Rex Decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Dry Run": {
+      "main": [
+        [
+          {
+            "node": "Fetch Campaign Analytics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Past Rex Decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Campaign Analytics": {
+      "main": [
+        [
+          {
+            "node": "Build Rex Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Past Rex Decisions": {
+      "main": [
+        [
+          {
+            "node": "Build Rex Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Rex Prompt": {
+      "main": [
+        [
+          {
+            "node": "Ask VoidLLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask VoidLLM": {
+      "main": [
+        [
+          {
+            "node": "Parse Proposals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Proposals": {
+      "main": [
+        [
+          {
+            "node": "Store + Queue Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "pbk-rex-strategist-v1"
+}

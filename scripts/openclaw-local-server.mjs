@@ -1,15 +1,24 @@
 import { execFileSync } from 'node:child_process';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
-import { createPrivateKey, createSign as __dsCreateSign, randomUUID } from 'node:crypto';
+import { createHmac, createPrivateKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import chromium from '@sparticuz/chromium';
+import { WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer-core';
 import pg from 'pg';
+import {
+  DEEPGRAM_SAMPLE_URL,
+  createDeepgramLiveConnection,
+  getDeepgramProviderMeta,
+  sendDeepgramAudio,
+  transcribeDeepgramFile,
+  transcribeDeepgramUrl,
+} from './pbk-deepgram-client.mjs';
 const { Pool: PgPool } = pg;
 
 httpGlobalAgent.keepAlive = true;
@@ -40,6 +49,28 @@ const RUNTIME_DIR = STATE_DIR_ENV
     : path.resolve(ROOT_DIR, STATE_DIR_ENV)
   : path.join(ROOT_DIR, '.pbk-local');
 const STATE_FILE = path.join(RUNTIME_DIR, 'openclaw-state.json');
+
+function hydrateLocalRuntimeEnv() {
+  const envPath = path.join(RUNTIME_DIR, 'pbk-runtime.env');
+  if (!existsSync(envPath)) return;
+  try {
+    const lines = readFileSync(envPath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+      const index = trimmed.indexOf('=');
+      const key = trimmed.slice(0, index).trim();
+      const value = trimmed.slice(index + 1).trim();
+      if (key && value && !process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] local runtime env hydration skipped:', error?.message || error);
+  }
+}
+
+hydrateLocalRuntimeEnv();
 
 const HOST =
   process.env.PBK_OPENCLAW_HOST ||
@@ -101,6 +132,8 @@ hydrateWindowsUserEnv([
   'PBK_SUPERMEMORY_API_KEY',
   'PBK_SUPERMEMORY_API_URL',
   'PBK_SUPERMEMORY_SYNC',
+  'PBK_DEEPGRAM_API_KEY',
+  'DEEPGRAM_API_KEY',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -117,6 +150,10 @@ const TELNYX_WEBHOOK_URL = String(
 )
   .trim()
   .replace(/\/+$/g, '');
+const TELNYX_MEDIA_STREAM_TOKEN = String(process.env.PBK_TELNYX_MEDIA_STREAM_TOKEN || '').trim();
+const DEEPGRAM_STREAM_CALLS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_DEEPGRAM_STREAM_CALLS || '').trim());
+const DEEPGRAM_STREAM_TRACK = String(process.env.PBK_DEEPGRAM_STREAM_TRACK || 'inbound_track').trim();
+const DEEPGRAM_STREAM_CODEC = String(process.env.PBK_DEEPGRAM_STREAM_CODEC || 'PCMU').trim();
 
 // ── DocuSign JWT auth ───────────────────────────────────────────────────────
 const DOCUSIGN_INTEGRATION_KEY = String(process.env.PBK_DOCUSIGN_INTEGRATION_KEY || process.env.DOCUSIGN_INTEGRATION_KEY || '').trim();
@@ -144,6 +181,14 @@ const BATCHDATA_BASE_URL = String(process.env.PBK_BATCHDATA_BASE_URL || 'https:/
 
 // ── Slack incoming webhook ──────────────────────────────────────────────────
 const SLACK_WEBHOOK_URL = String(process.env.PBK_SLACK_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL || '').trim();
+const SLACK_BOT_TOKEN = String(process.env.PBK_SLACK_BOT_TOKEN || process.env.SLACK_BOT_TOKEN || '').trim();
+const SLACK_APPROVAL_CHANNEL_ID = String(
+  process.env.PBK_SLACK_APPROVAL_CHANNEL_ID
+    || process.env.PBK_SLACK_APPROVAL_CHANNEL
+    || process.env.SLACK_APPROVAL_CHANNEL_ID
+    || '',
+).trim();
+const SLACK_SIGNING_SECRET = String(process.env.PBK_SLACK_SIGNING_SECRET || process.env.SLACK_SIGNING_SECRET || '').trim();
 const RESEND_API_KEY = String(process.env.PBK_RESEND_API_KEY || process.env.RESEND_API_KEY || '').trim();
 const MAIN_BUSINESS_EMAIL = String(process.env.PBK_MAIN_BUSINESS_EMAIL || process.env.MAIN_BUSINESS_EMAIL || 'jordan@pbk.capital').trim();
 const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || process.env.COLD_CAMPAIGN_EMAIL || 'offers@pbkoutreach.local').trim();
@@ -319,6 +364,7 @@ const LIMITS = {
   campaignEvents: 1600,
   campaignSuppressions: 400,
   campaignExecutions: 120,
+  rexDecisions: 240,
   promptPatchApplications: 90,
   recordingRetentionRuns: 90,
   adminTasks: 90,
@@ -662,6 +708,7 @@ function getRuntimeMeta() {
     productionReady: !IS_HOSTED || warnings.length === 0,
     providers: {
       telnyx: getTelnyxProviderMeta(),
+      deepgram: getDeepgramProviderMeta(process.env),
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
       supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -1183,6 +1230,161 @@ function buildToolUsageSeed() {
   return Object.fromEntries(TOOL_NAMES.map((toolName) => [toolName, 0]));
 }
 
+function buildAvaNegotiationPersona() {
+  return {
+    id: 'ava-closer-v1',
+    name: 'Ava',
+    role: 'PBK acquisitions closer',
+    hometown: 'Columbus, Ohio',
+    voice: 'Midwest-warm, direct, emotionally intelligent, and never pushy.',
+    backstory: 'Ava learned negotiation helping her family work through a small-business sale and now uses that same calm, practical style with sellers who need clarity more than pressure.',
+    principles: [
+      'Tactical empathy: label the emotion before solving the problem.',
+      'Mirroring: repeat the last meaningful phrase when the seller is guarded.',
+      'Calibrated questions: use how/what questions to let the seller explain the path.',
+      'Ethical influence: use trust, clarity, proof, and scarcity without manipulation.',
+      'Wholesale discipline: never exceed MAO or hide repair/downside risk.'
+    ],
+  };
+}
+
+function buildDefaultNegotiationTactics() {
+  return [
+    {
+      id: 'tactic-opening-accusation-audit',
+      scenario: 'opening',
+      tacticName: 'Accusation audit',
+      principle: 'Name the seller fear first so the conversation starts honest.',
+      scriptExample: "You may be getting a lot of investor calls, and I would not blame you for wondering if this is just another lowball. I can keep this simple and transparent.",
+      emotionTarget: 'distrust',
+      rank: 10,
+    },
+    {
+      id: 'tactic-price-labeling',
+      scenario: 'objection_price',
+      tacticName: 'Price labeling',
+      principle: 'Label the tension between speed, certainty, and price.',
+      scriptExample: "It sounds like you want the best number possible, but you also do not want repairs, showings, or a long listing process hanging over you.",
+      emotionTarget: 'hesitation',
+      rank: 10,
+    },
+    {
+      id: 'tactic-ackerman-counter',
+      scenario: 'counter_offer',
+      tacticName: 'Ackerman step-up',
+      principle: 'Move in small, justified increments and explain what each concession buys.',
+      scriptExample: "I cannot responsibly get to that number as-is. What I can do is improve the cash offer if we keep the close clean and avoid repair credits.",
+      emotionTarget: 'greed',
+      rank: 9,
+    },
+    {
+      id: 'tactic-close-small-yes',
+      scenario: 'closing_hesitation',
+      tacticName: 'Smaller yes',
+      principle: 'When the seller hesitates, ask for the next low-pressure commitment instead of forcing the close.',
+      scriptExample: "What would need to be true for you to feel comfortable saying yes today, even if that yes is just letting me send the paperwork for review?",
+      emotionTarget: 'fear',
+      rank: 9,
+    },
+    {
+      id: 'tactic-probate-empathy',
+      scenario: 'probate',
+      tacticName: 'Executor empathy',
+      principle: 'Probate sellers often need burden removal and dignity before numbers.',
+      scriptExample: "If you are handling this for the family, I know it can feel like one more heavy thing on top of everything else. We can move at your pace.",
+      emotionTarget: 'grief',
+      rank: 10,
+    },
+    {
+      id: 'tactic-angry-dnc',
+      scenario: 'anger',
+      tacticName: 'Graceful exit',
+      principle: 'Protect trust and compliance when a seller is angry.',
+      scriptExample: "I hear you. I am sorry we bothered you. I can remove this number now so you do not get another outreach from us.",
+      emotionTarget: 'anger',
+      rank: 10,
+    },
+  ];
+}
+
+function buildDefaultEmotionalIntelligenceRules() {
+  return [
+    {
+      id: 'ei-angry',
+      emotion: 'angry',
+      triggerPhrase: 'stop calling, mad, upset, leave me alone',
+      recommendedResponse: 'Slow down, apologize without defensiveness, offer DNC, and end cleanly if requested.',
+      scriptFragment: 'I hear you, and I am sorry. I can remove you from our list right now.',
+    },
+    {
+      id: 'ei-hesitant',
+      emotion: 'hesitant',
+      triggerPhrase: "I don't know, let me think, maybe, not sure",
+      recommendedResponse: 'Label the uncertainty and ask what information would make the decision easier.',
+      scriptFragment: 'It sounds like you are not quite comfortable yet. What would you need to see before this feels safe?',
+    },
+    {
+      id: 'ei-distrustful',
+      emotion: 'distrustful',
+      triggerPhrase: 'how do I know, scam, are you real',
+      recommendedResponse: 'Use proof, process clarity, and transparency. Do not over-defend.',
+      scriptFragment: 'Fair question. I can walk you through exactly who we are, how closing works, and what happens before anything is signed.',
+    },
+    {
+      id: 'ei-urgent',
+      emotion: 'urgent',
+      triggerPhrase: 'need this done, behind, deadline, foreclosure',
+      recommendedResponse: 'Move to clarity, timeline, and immediate next step. Keep tone steady.',
+      scriptFragment: 'Let us focus on the fastest clean path. What date are you trying to solve this before?',
+    },
+  ];
+}
+
+function buildDefaultCityKnowledge() {
+  return [
+    {
+      id: 'city-columbus',
+      city: 'Columbus',
+      state: 'OH',
+      zipPrefixes: ['432'],
+      rapportLine: 'Columbus sellers usually appreciate a clean, no-drama process, especially around probate and older homes.',
+      localStory: 'Ava knows the Short North, German Village brick streets, and the way older Columbus houses can hide repair surprises behind charm.',
+    },
+    {
+      id: 'city-akron',
+      city: 'Akron',
+      state: 'OH',
+      zipPrefixes: ['443'],
+      rapportLine: 'Akron sellers often respond well to practical burden removal: repairs, tenants, taxes, or a timeline that is getting tight.',
+      localStory: 'Ava can reference Akron as a working town where people value straight talk and a buyer who does what they say.',
+    },
+    {
+      id: 'city-cleveland',
+      city: 'Cleveland',
+      state: 'OH',
+      zipPrefixes: ['441'],
+      rapportLine: 'Cleveland conversations should be direct about winter repairs, older mechanicals, and buyer certainty.',
+      localStory: 'Ava can use Cleveland neighborhood familiarity without pretending to be from the exact block.',
+    },
+    {
+      id: 'city-cincinnati',
+      city: 'Cincinnati',
+      state: 'OH',
+      zipPrefixes: ['452'],
+      rapportLine: 'Cincinnati sellers often care about certainty, timing, and whether the buyer understands hillside/older-home repair risks.',
+      localStory: 'Ava can mention that Cincinnati houses can be beautiful but quirky, especially older homes with steps, basements, and deferred maintenance.',
+    },
+    {
+      id: 'city-dayton',
+      city: 'Dayton',
+      state: 'OH',
+      zipPrefixes: ['454'],
+      rapportLine: 'Dayton sellers usually respond to respect, speed, and a realistic as-is number more than flashy investor language.',
+      localStory: 'Ava can connect around Dayton as a practical market where a clean close can matter more than squeezing every last dollar.',
+    },
+  ];
+}
+
 function makeActivity({
   actor = 'System',
   category = 'INFO',
@@ -1233,6 +1435,34 @@ function buildDefaultBrainDocs() {
       citation: 'REtipster - 8 min read',
       createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
       tags: ['Probate', 'Wholesaling', 'Negotiation'],
+    },
+    {
+      id: 'brain-ava-closer-framework',
+      kind: 'note',
+      topic: 'Negotiation',
+      title: 'Ava 7-Figure Closer Framework',
+      source: 'PBK closer playbook',
+      excerpt:
+        'Use tactical empathy, ethical influence, emotional intelligence, and MAO discipline to help sellers feel understood while protecting PBK profit.',
+      summary:
+        'Ava should label emotion, ask calibrated how/what questions, use local rapport sparingly, anchor with repair/certainty logic, and never exceed the walk-away number.',
+      citation: 'PBK closer playbook - v1',
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
+      tags: ['Negotiation', 'Emotional Intelligence', 'Ava', 'Closing'],
+    },
+    {
+      id: 'brain-emotional-intelligence-objections',
+      kind: 'note',
+      topic: 'Negotiation',
+      title: 'Emotional Intelligence Map for Seller Objections',
+      source: 'PBK psychology notes',
+      excerpt:
+        'Anger needs apology and exit safety. Hesitation needs a smaller yes. Distrust needs proof and process clarity. Urgency needs a calm next step.',
+      summary:
+        'Map seller emotion before choosing a tactic: frustration means slow down, hesitation means reduce commitment size, distrust means show process, urgency means clarify dates.',
+      citation: 'PBK EI notes - seller calls',
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
+      tags: ['Emotional Intelligence', 'Objection Handling', 'Voice'],
     },
     {
       id: 'brain-subto-case',
@@ -1832,6 +2062,7 @@ function buildDefaultState() {
     campaignEvents: [],
     campaignSuppressions: [],
     campaignExecutions: [],
+    rexDecisions: [],
     promptPatchApplications: [],
     recordingRetentionRuns: [],
     settings: {
@@ -2204,6 +2435,91 @@ async function persistCampaignWorkerRunRecord(run = {}) {
     return true;
   } catch (error) {
     console.warn('[pbk-local-openclaw] campaign worker run persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistAgentConfigRecord(key = '', value = {}, actor = 'Rex Strategist') {
+  const pool = getPgPool();
+  const normalizedKey = String(key || '').trim();
+  if (!pool || !normalizedKey) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_agent_config (key, value, updated_by, updated_at)
+       VALUES ($1, $2::jsonb, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         value = EXCLUDED.value,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = NOW()`,
+      [normalizedKey, JSON.stringify(value || {}), actor || 'Rex Strategist'],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] agent config persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistRexDecisionRecord(decision = {}) {
+  const pool = getPgPool();
+  if (!pool || !decision.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.rex_decisions (
+        id, source, tool, params, rationale, status, target_type, target_id,
+        approval_id, baseline, outcome, result, success, proposed_by, approved_by,
+        applied_by, created_at, updated_at, applied_at, evaluated_at
+      )
+      VALUES (
+        $1,$2,$3,$4::jsonb,$5,$6,$7,$8,
+        $9,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14,$15,
+        $16,$17,$18,$19,$20
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        source = EXCLUDED.source,
+        tool = EXCLUDED.tool,
+        params = EXCLUDED.params,
+        rationale = EXCLUDED.rationale,
+        status = EXCLUDED.status,
+        target_type = EXCLUDED.target_type,
+        target_id = EXCLUDED.target_id,
+        approval_id = EXCLUDED.approval_id,
+        baseline = EXCLUDED.baseline,
+        outcome = EXCLUDED.outcome,
+        result = EXCLUDED.result,
+        success = EXCLUDED.success,
+        proposed_by = EXCLUDED.proposed_by,
+        approved_by = EXCLUDED.approved_by,
+        applied_by = EXCLUDED.applied_by,
+        updated_at = EXCLUDED.updated_at,
+        applied_at = EXCLUDED.applied_at,
+        evaluated_at = EXCLUDED.evaluated_at`,
+      [
+        decision.id,
+        decision.source || 'rex-strategist',
+        decision.tool || '',
+        JSON.stringify(decision.params || {}),
+        decision.rationale || '',
+        decision.status || 'proposed',
+        decision.targetType || decision.target_type || null,
+        decision.targetId || decision.target_id || null,
+        decision.approvalId || decision.approval_id || null,
+        JSON.stringify(decision.baseline || {}),
+        JSON.stringify(decision.outcome || {}),
+        JSON.stringify(decision.result || {}),
+        typeof decision.success === 'boolean' ? decision.success : null,
+        decision.proposedBy || decision.proposed_by || 'Rex Strategist',
+        decision.approvedBy || decision.approved_by || null,
+        decision.appliedBy || decision.applied_by || null,
+        decision.createdAt || decision.created_at || isoNow(),
+        decision.updatedAt || decision.updated_at || isoNow(),
+        decision.appliedAt || decision.applied_at || null,
+        decision.evaluatedAt || decision.evaluated_at || null,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] Rex decision persistence skipped:', error?.message || error);
     return false;
   }
 }
@@ -2799,6 +3115,7 @@ function limitStateArrays(nextState) {
   nextState.campaignEvents = sortNewest(nextState.campaignEvents || []).slice(0, LIMITS.campaignEvents);
   nextState.campaignSuppressions = sortNewest(nextState.campaignSuppressions || []).slice(0, LIMITS.campaignSuppressions);
   nextState.campaignExecutions = sortNewest(nextState.campaignExecutions || []).slice(0, LIMITS.campaignExecutions);
+  nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
   nextState.recordingRetentionRuns = sortNewest(nextState.recordingRetentionRuns || []).slice(0, LIMITS.recordingRetentionRuns);
   nextState.adminTasks = sortNewest(nextState.adminTasks).slice(0, LIMITS.adminTasks);
@@ -2907,6 +3224,7 @@ function hydrateState(raw = {}) {
     campaignEvents: trimArray(raw.campaignEvents || defaults.campaignEvents, LIMITS.campaignEvents),
     campaignSuppressions: trimArray(raw.campaignSuppressions || defaults.campaignSuppressions, LIMITS.campaignSuppressions),
     campaignExecutions: trimArray(raw.campaignExecutions || defaults.campaignExecutions, LIMITS.campaignExecutions),
+    rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
     recordingRetentionRuns: trimArray(raw.recordingRetentionRuns || defaults.recordingRetentionRuns, LIMITS.recordingRetentionRuns),
     settings: {
@@ -5192,11 +5510,90 @@ function persistParticipantProfile(params = {}) {
   };
 }
 
-function buildCallStrategyFromProfile(profile = null) {
+function inferNegotiationScenario(params = {}, context = {}) {
+  const text = String([
+    params.scenario,
+    params.intent,
+    params.script,
+    params.notes,
+    params.body,
+    params.transcriptStart,
+    context.tags,
+    context.address,
+  ].filter(Boolean).join(' ')).toLowerCase();
+  if (text.includes('probate') || text.includes('estate') || text.includes('executor')) return 'probate';
+  if (text.includes('price') || text.includes('too low') || text.includes('offer') || text.includes('counter')) return 'objection_price';
+  if (text.includes('think') || text.includes('not sure') || text.includes('maybe')) return 'closing_hesitation';
+  if (text.includes('angry') || text.includes('stop calling') || text.includes('mad')) return 'anger';
+  return 'opening';
+}
+
+function inferSellerEmotion(params = {}) {
+  const explicit = String(params.emotion || params.sentimentLabel || '').trim().toLowerCase();
+  if (explicit) return explicit;
+  const sentiment = toNumber(params.sentiment, 0.66);
+  const text = String([params.transcriptStart, params.text, params.body, params.notes].filter(Boolean).join(' ')).toLowerCase();
+  if (text.includes('stop calling') || text.includes('mad') || text.includes('angry')) return 'angry';
+  if (text.includes('scam') || text.includes('how do i know') || text.includes('are you real')) return 'distrustful';
+  if (text.includes("don't know") || text.includes('not sure') || text.includes('think about')) return 'hesitant';
+  if (text.includes('foreclosure') || text.includes('deadline') || text.includes('behind')) return 'urgent';
+  if (sentiment < 0.35) return 'frustrated';
+  if (sentiment < 0.55) return 'hesitant';
+  return 'neutral';
+}
+
+function findCityKnowledgeForContext(context = {}) {
+  const address = String(context.address || '').toLowerCase();
+  const zip = String(context.zip || context.zipCode || '').trim();
+  return buildDefaultCityKnowledge().find((item) => {
+    if (item.city && address.includes(String(item.city).toLowerCase())) return true;
+    if (item.state && address.includes(String(item.state).toLowerCase())) {
+      return item.zipPrefixes?.some((prefix) => zip.startsWith(prefix) || address.includes(prefix));
+    }
+    return item.zipPrefixes?.some((prefix) => zip.startsWith(prefix) || address.includes(prefix));
+  }) || null;
+}
+
+function selectNegotiationGuidance(params = {}, context = {}, profile = null) {
+  const scenario = inferNegotiationScenario(params, context);
+  const emotion = inferSellerEmotion(params);
+  const tactics = buildDefaultNegotiationTactics()
+    .filter((tactic) => tactic.scenario === scenario || tactic.emotionTarget === emotion || (scenario === 'opening' && tactic.scenario === 'opening'))
+    .sort((left, right) => toNumber(right.rank, 0) - toNumber(left.rank, 0))
+    .slice(0, 3);
+  const emotionalRule = buildDefaultEmotionalIntelligenceRules()
+    .find((rule) => rule.emotion === emotion || String(rule.triggerPhrase || '').toLowerCase().split(',').some((phrase) => phrase.trim() && String(params.transcriptStart || params.body || params.notes || '').toLowerCase().includes(phrase.trim())));
+  const city = findCityKnowledgeForContext(context);
+  return {
+    persona: buildAvaNegotiationPersona(),
+    scenario,
+    emotion,
+    city,
+    tactics,
+    emotionalRule: emotionalRule || null,
+    guardrails: [
+      'Never lie about being local; use city context as familiarity, not false identity.',
+      'Never exceed MAO, hide assignment intent, or pressure a distressed seller.',
+      'If the seller requests no contact, stop and mark DNC.',
+      'Use stories only when they help the seller feel understood; keep them short.'
+    ],
+    promptBrief: [
+      `Ava persona: ${buildAvaNegotiationPersona().voice}`,
+      city?.rapportLine ? `Local rapport: ${city.rapportLine}` : '',
+      emotionalRule?.recommendedResponse ? `Emotion read: ${emotion}. ${emotionalRule.recommendedResponse}` : `Emotion read: ${emotion}. Stay calm and curious.`,
+      ...tactics.map((tactic) => `${tactic.tacticName}: ${tactic.scriptExample}`),
+      profile?.strategy ? `Participant strategy: ${profile.strategy}` : '',
+    ].filter(Boolean).join('\n'),
+  };
+}
+
+function buildCallStrategyFromProfile(profile = null, params = {}, context = {}) {
+  const negotiationGuidance = selectNegotiationGuidance(params, context, profile);
   if (!profile?.role) {
     return {
       script: 'standard-acquisition',
       strategy: 'default seller discovery and qualification flow',
+      negotiationGuidance,
     };
   }
 
@@ -5204,6 +5601,7 @@ function buildCallStrategyFromProfile(profile = null) {
     return {
       script: 'agent-net-sheet',
       strategy: 'speak in agent terms, stay concise, and focus on seller timeline, net, and coordination',
+      negotiationGuidance,
     };
   }
 
@@ -5211,6 +5609,7 @@ function buildCallStrategyFromProfile(profile = null) {
     return {
       script: 'expert-numbers-first',
       strategy: 'assume familiarity, get to numbers quickly, and avoid over-explaining basic acquisition terms',
+      negotiationGuidance,
     };
   }
 
@@ -5218,12 +5617,14 @@ function buildCallStrategyFromProfile(profile = null) {
     return {
       script: 'novice-guided-walkthrough',
       strategy: 'slow down, educate, remove jargon, and lead with clarity and reassurance',
+      negotiationGuidance,
     };
   }
 
   return {
     script: 'intermediate-acquisition',
     strategy: 'balance empathy with direct qualification and keep the process simple',
+    negotiationGuidance,
   };
 }
 
@@ -6281,6 +6682,16 @@ function getTelnyxWebhookUrl(params = {}) {
   return String(params.webhookUrl || TELNYX_WEBHOOK_URL || '').trim();
 }
 
+function getTelnyxDeepgramStreamUrl(params = {}) {
+  const explicit = String(params.streamUrl || params.deepgramStreamUrl || '').trim();
+  if (explicit) return explicit;
+  if (!PUBLIC_BASE_URL) return '';
+  const base = PUBLIC_BASE_URL.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+  const url = new URL(`${base}/api/webhooks/telnyx/media`);
+  if (TELNYX_MEDIA_STREAM_TOKEN) url.searchParams.set('token', TELNYX_MEDIA_STREAM_TOKEN);
+  return url.toString();
+}
+
 function extractTelnyxError(body) {
   if (!body) return 'Telnyx request failed.';
   if (typeof body === 'string') return body;
@@ -7285,10 +7696,17 @@ async function syncTransitionToStreak(payload = {}) {
 }
 
 function getSlackProviderMeta() {
+  const missing = [];
+  if (!SLACK_WEBHOOK_URL && !SLACK_BOT_TOKEN) missing.push('PBK_SLACK_WEBHOOK_URL or PBK_SLACK_BOT_TOKEN');
+  if (SLACK_BOT_TOKEN && !SLACK_APPROVAL_CHANNEL_ID) missing.push('PBK_SLACK_APPROVAL_CHANNEL_ID');
   return {
-    configured: Boolean(SLACK_WEBHOOK_URL),
-    ready: Boolean(SLACK_WEBHOOK_URL),
-    missing: SLACK_WEBHOOK_URL ? [] : ['PBK_SLACK_WEBHOOK_URL'],
+    configured: Boolean(SLACK_WEBHOOK_URL || SLACK_BOT_TOKEN),
+    ready: missing.length === 0,
+    webhookReady: Boolean(SLACK_WEBHOOK_URL),
+    interactiveReady: Boolean(SLACK_BOT_TOKEN && SLACK_APPROVAL_CHANNEL_ID),
+    signingSecretConfigured: Boolean(SLACK_SIGNING_SECRET),
+    approvalChannelId: SLACK_APPROVAL_CHANNEL_ID || '',
+    missing,
   };
 }
 
@@ -7646,6 +8064,17 @@ async function captureRecordingFromPayload(input = {}) {
       storagePath,
     };
   }
+  const deepgramMeta = getDeepgramProviderMeta(process.env);
+  const deepgram = deepgramMeta.ready && deepgramMeta.analyzeRecordings
+    ? await transcribeDeepgramFile({
+      bytes,
+      contentType,
+      sentiment: true,
+      utterances: true,
+      paragraphs: true,
+    })
+    : null;
+  const deepgramSummary = deepgram?.ok ? deepgram.summary : null;
 
   const message = {
     ...(findMessageById(messageId) || createMessageRecord({
@@ -7658,7 +8087,7 @@ async function captureRecordingFromPayload(input = {}) {
       direction: 'recording',
       provider: 'Telnyx',
       status: 'recorded',
-      body: 'Production call recording captured and stored.',
+      body: deepgramSummary?.transcript || 'Production call recording captured and stored.',
     })),
     ...params,
     id: messageId,
@@ -7675,6 +8104,8 @@ async function captureRecordingFromPayload(input = {}) {
     durationSeconds: toNumber(params.durationSeconds, 0),
     recordingUrl: '',
     callId: params.callId || existingCall?.id || '',
+    body: deepgramSummary?.transcript || params.body || 'Production call recording captured and stored.',
+    sentiment: deepgramSummary?.sentiment?.pbkScore ?? params.sentiment ?? null,
     payload: {
       ...(params.payload && typeof params.payload === 'object' ? params.payload : {}),
       sourceEventType: params.eventType,
@@ -7682,6 +8113,21 @@ async function captureRecordingFromPayload(input = {}) {
       storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
       contentType,
       upload,
+      deepgram: deepgram
+        ? {
+          ok: deepgram.ok,
+          result: deepgram.result,
+          model: deepgram.model,
+          error: deepgram.error || '',
+          summary: deepgramSummary,
+        }
+        : {
+          ok: false,
+          skipped: true,
+          reason: deepgramMeta.ready
+            ? 'PBK_DEEPGRAM_ANALYZE_RECORDINGS is not enabled.'
+            : `Deepgram not configured (${deepgramMeta.missing.join(', ') || 'missing credentials'}).`,
+        },
     },
     updatedAt: isoNow(),
   };
@@ -7712,12 +8158,12 @@ async function captureRecordingFromPayload(input = {}) {
     }),
   );
   await persistState(state);
-  await persistCampaignRecord(nextCampaign);
   return {
     ok: true,
     result: 'live',
     message,
     upload,
+    deepgram,
     storagePath,
     callId: params.callId,
   };
@@ -8573,6 +9019,638 @@ function buildAnalyticsSnapshot(range = '30d') {
       contractCloseRate: contracts.length ? Number(((completedContracts.length / contracts.length) * 100).toFixed(1)) : 0,
     },
     rows,
+  };
+}
+
+function getCampaignLeadKey(lead = {}) {
+  return String(lead.leadId || lead.id || lead.email || lead.phone || lead.address || lead.leadName || '')
+    .trim()
+    .toLowerCase();
+}
+
+function findLeadImportForCampaignLead(campaignLead = {}) {
+  const leadKey = getCampaignLeadKey(campaignLead);
+  return (state.leadImports || []).find((lead) => {
+    const normalized = normalizeCampaignLead(lead);
+    return leadKey && getCampaignLeadKey(normalized) === leadKey;
+  }) || null;
+}
+
+function getLeadSourceLabel(lead = {}, fallback = 'unknown') {
+  const source = lead.source
+    || lead.leadSource
+    || lead.metadata?.source
+    || lead.payload?.source
+    || lead.seller?.source
+    || lead.property?.source
+    || lead.importSource
+    || '';
+  if (source) return compactSearchText(source).toLowerCase();
+  const tags = normalizeStringList(lead.tags || []);
+  if (tags.some((tag) => /probate|estate|executor/i.test(tag))) return 'probate';
+  if (tags.some((tag) => /absentee|landlord/i.test(tag))) return 'absentee';
+  return fallback;
+}
+
+function summarizeCampaignLeadEvents(campaign = {}, campaignLead = {}, range = '30d') {
+  const events = filterByAnalyticsRange(getCampaignEvents(campaign.id), range).filter((event) => {
+    const eventLeadKey = getCampaignLeadKey({
+      leadId: event.leadId || event.payload?.leadId || '',
+      id: event.campaignLeadId || '',
+      email: event.payload?.email || '',
+      phone: event.payload?.phone || '',
+      address: event.payload?.address || '',
+      leadName: event.payload?.leadName || '',
+    });
+    return (event.campaignLeadId && event.campaignLeadId === campaignLead.id)
+      || (event.leadId && campaignLead.leadId && event.leadId === campaignLead.leadId)
+      || (eventLeadKey && eventLeadKey === getCampaignLeadKey(campaignLead));
+  });
+  const has = (pattern) => events.some((event) => pattern.test([
+    event.eventType,
+    event.status,
+    event.providerStatus,
+    event.payload?.status,
+  ].filter(Boolean).join(' ').toLowerCase()));
+  return {
+    events,
+    sent: has(/sent|scheduled|delivered|attempted|dialed/),
+    opened: has(/open/),
+    replied: has(/reply|responded|interested/),
+    connected: has(/connected|answered|live_answer/),
+    dnc: has(/dnc|unsubscribe|\bstop\b|opt_out/),
+    lastEvent: events[0] || null,
+  };
+}
+
+function buildCampaignAnalyticsDrilldown(searchParams = new URLSearchParams()) {
+  ensureCampaignCollections();
+  const range = String(searchParams.get('range') || '30d').trim().toLowerCase();
+  const campaignId = String(searchParams.get('campaignId') || searchParams.get('campaign') || 'all').trim();
+  const source = String(searchParams.get('source') || 'all').trim().toLowerCase();
+  const channelRaw = String(searchParams.get('channel') || 'all').trim().toLowerCase();
+  const statusRaw = String(searchParams.get('status') || 'all').trim().toLowerCase();
+  const limit = Math.max(1, Math.min(500, Number(searchParams.get('limit') || 120)));
+  const campaigns = queryCampaignRecords(new URLSearchParams({
+    channel: channelRaw,
+    status: statusRaw,
+  })).filter((campaign) => campaignId === 'all' || campaign.id === campaignId);
+  const campaignIds = new Set(campaigns.map((campaign) => campaign.id));
+  const rows = [];
+  for (const lead of state.campaignLeads || []) {
+    if (!campaignIds.has(lead.campaignId)) continue;
+    const campaign = campaigns.find((item) => item.id === lead.campaignId);
+    if (!campaign) continue;
+    const importedLead = findLeadImportForCampaignLead(lead);
+    const leadSource = getLeadSourceLabel(importedLead || lead, campaign.leadSource || 'campaign');
+    if (source !== 'all' && leadSource !== source) continue;
+    const eventSummary = summarizeCampaignLeadEvents(campaign, lead, range);
+    rows.push({
+      id: lead.id,
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      campaignStatus: normalizeCampaignStatus(campaign.status),
+      channel: normalizeCampaignChannel(campaign.channel),
+      provider: campaign.provider || getCampaignProvider(campaign.channel),
+      leadId: lead.leadId || importedLead?.leadId || importedLead?.id || '',
+      leadName: lead.leadName || importedLead?.leadName || importedLead?.seller?.name || 'Unknown seller',
+      address: lead.address || importedLead?.address || importedLead?.property?.address || '',
+      source: leadSource,
+      email: lead.email || importedLead?.email || importedLead?.seller?.email || '',
+      phone: lead.phone || importedLead?.phone || importedLead?.seller?.phone || '',
+      leadStatus: lead.status || importedLead?.status || 'pending',
+      tags: Array.from(new Set([
+        ...normalizeStringList(lead.tags || []),
+        ...normalizeStringList(importedLead?.tags || []),
+      ])).slice(0, 8),
+      events: eventSummary.events.length,
+      sent: eventSummary.sent,
+      opened: eventSummary.opened,
+      replied: eventSummary.replied,
+      connected: eventSummary.connected,
+      dnc: eventSummary.dnc,
+      lastEventType: eventSummary.lastEvent?.eventType || '',
+      lastEventAt: eventSummary.lastEvent?.occurredAt || eventSummary.lastEvent?.createdAt || lead.updatedAt || '',
+      updatedAt: eventSummary.lastEvent?.occurredAt || eventSummary.lastEvent?.createdAt || lead.updatedAt || lead.createdAt || '',
+      routeContext: `campaign:${campaign.id}:lead:${lead.id}`,
+    });
+  }
+  const sortedRows = sortNewest(rows, 'lastEventAt').slice(0, limit);
+  const sourceOptions = Array.from(new Set(rows.map((row) => row.source).filter(Boolean))).sort();
+  const rowCost = rows.reduce((sum, row) => {
+    if (row.channel === 'email') return sum + (5 * 0.002);
+    if (row.channel === 'sms') return sum + (3 * 0.007);
+    if (row.channel === 'call') return sum + 0.014;
+    return sum + 0.01;
+  }, 0);
+  return {
+    ok: true,
+    result: 'live',
+    range,
+    generatedAt: isoNow(),
+    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    filters: { campaignId, source, channel: channelRaw, status: statusRaw, limit },
+    summary: {
+      campaigns: campaigns.length,
+      leads: rows.length,
+      sent: rows.filter((row) => row.sent).length,
+      opened: rows.filter((row) => row.opened).length,
+      replied: rows.filter((row) => row.replied).length,
+      connected: rows.filter((row) => row.connected).length,
+      dnc: rows.filter((row) => row.dnc).length,
+      estimatedCost: Number(rowCost.toFixed(2)),
+      replyRate: rows.length ? Number(((rows.filter((row) => row.replied).length / rows.length) * 100).toFixed(1)) : 0,
+      connectRate: rows.length ? Number(((rows.filter((row) => row.connected).length / rows.length) * 100).toFixed(1)) : 0,
+    },
+    campaigns: campaigns.map((campaign) => ({
+      id: campaign.id,
+      name: campaign.name,
+      channel: normalizeCampaignChannel(campaign.channel),
+      status: normalizeCampaignStatus(campaign.status),
+      provider: campaign.provider || getCampaignProvider(campaign.channel),
+      leadCount: getCampaignLeads(campaign.id).length || campaign.leadCount || 0,
+    })),
+    sources: sourceOptions,
+    rows: sortedRows,
+  };
+}
+
+function ensureRexCollections() {
+  if (!Array.isArray(state.rexDecisions)) state.rexDecisions = [];
+}
+
+function normalizeRexTool(value = '') {
+  const raw = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['adjust_lead_weight', 'adjust_lead_weights', 'adjust_lead_scoring', 'lead_scoring_weights', 'update_lead_scoring_weights'].includes(raw)) return 'adjust_lead_weight';
+  if (['update_campaign_script', 'campaign_script', 'update_script', 'edit_campaign_script'].includes(raw)) return 'update_campaign_script';
+  if (['change_follow_up_delay', 'update_campaign_sequence', 'campaign_sequence', 'sequence_delay', 'update_sequence'].includes(raw)) return 'change_follow_up_delay';
+  if (['pause_campaign', 'campaign_pause'].includes(raw)) return 'pause_campaign';
+  return raw || 'unknown';
+}
+
+function getLeadScoringWeights() {
+  const settings = ensureRuntimeSettings(state);
+  const weights = settings.leadScoring?.weights || settings.leadScoringWeights || {};
+  return weights && typeof weights === 'object' ? weights : {};
+}
+
+function normalizeLeadScoringWeights(input = {}) {
+  const source = input.weights && typeof input.weights === 'object' ? input.weights : input;
+  const skip = new Set(['actor', 'reason', 'rationale', 'metadata', 'requestApproval', 'baseline', 'decisionId']);
+  return Object.fromEntries(Object.entries(source || {})
+    .filter(([key, value]) => key && !skip.has(key) && Number.isFinite(Number(value)))
+    .map(([key, value]) => [String(key).trim().toLowerCase().replace(/\s+/g, '_'), Number(Number(value).toFixed(3))]));
+}
+
+function buildRexDecisionBaseline(tool = '', params = {}) {
+  const campaignId = String(params.campaignId || params.campaign_id || params.id || '').trim();
+  const campaign = campaignId ? (state.campaigns || []).find((item) => item.id === campaignId) : null;
+  if (!campaign) {
+    return {
+      capturedAt: isoNow(),
+      leadScoringWeights: getLeadScoringWeights(),
+    };
+  }
+  const metrics = calculateCampaignMetrics(campaign);
+  const leads = getCampaignLeads(campaign.id);
+  return {
+    capturedAt: isoNow(),
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    status: campaign.status,
+    channel: normalizeCampaignChannel(campaign.channel),
+    leadCount: leads.length || campaign.leadCount || 0,
+    metrics,
+    replyRate: metrics.leads ? Number(((metrics.replied / metrics.leads) * 100).toFixed(2)) : 0,
+    connectRate: metrics.leads ? Number(((metrics.connected / metrics.leads) * 100).toFixed(2)) : 0,
+    tool,
+  };
+}
+
+function summarizeRexDecisionTarget(tool = '', params = {}) {
+  const campaignId = String(params.campaignId || params.campaign_id || params.id || '').trim();
+  const campaign = campaignId ? (state.campaigns || []).find((item) => item.id === campaignId) : null;
+  if (campaign) {
+    return {
+      targetType: 'campaign',
+      targetId: campaign.id,
+      targetLabel: campaign.name || campaign.id,
+    };
+  }
+  if (tool === 'adjust_lead_weight') {
+    return {
+      targetType: 'lead_scoring',
+      targetId: 'lead_scoring_weights',
+      targetLabel: 'Lead scoring weights',
+    };
+  }
+  return {
+    targetType: 'pbk_runtime',
+    targetId: '',
+    targetLabel: 'PBK runtime',
+  };
+}
+
+async function updateLeadScoringWeights(params = {}, options = {}) {
+  const incoming = normalizeLeadScoringWeights(params);
+  if (!Object.keys(incoming).length) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      verbiage: 'Lead scoring weights unchanged',
+      error: 'At least one numeric lead-scoring weight is required.',
+    };
+  }
+  const actor = options.actor || params.actor || 'Rex Strategist';
+  const settings = ensureRuntimeSettings(state);
+  const previous = getLeadScoringWeights();
+  const nextWeights = {
+    ...previous,
+    ...incoming,
+  };
+  state.settings = {
+    ...settings,
+    leadScoring: {
+      ...(settings.leadScoring || {}),
+      weights: nextWeights,
+      updatedAt: isoNow(),
+      updatedBy: actor,
+      reason: params.reason || params.rationale || options.rationale || '',
+    },
+    updatedAt: isoNow(),
+    updatedBy: actor,
+  };
+  await persistAgentConfigRecord('lead_scoring_weights', state.settings.leadScoring, actor);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'REX',
+    status: 'saved',
+    text: `Updated lead scoring weights: ${Object.keys(incoming).join(', ')}`,
+    target: 'lead_scoring_weights',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Lead scoring weights updated',
+    previous,
+    weights: nextWeights,
+    changed: incoming,
+  };
+}
+
+async function updateCampaignScript(campaignId = '', params = {}, options = {}) {
+  ensureCampaignCollections();
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: `Campaign ${campaignId} was not found.` };
+  }
+  const actor = options.actor || params.actor || 'Rex Strategist';
+  const script = String(params.script || params.body || params.copy || params.message || '').trim();
+  const subject = String(params.subject || params.emailSubject || '').trim();
+  if (!script && !subject) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign script unchanged', error: 'Script body or subject is required.' };
+  }
+  const sequence = {
+    ...(campaign.sequence || {}),
+    ...(params.sequence && typeof params.sequence === 'object' ? params.sequence : {}),
+    script: script || campaign.sequence?.script || '',
+    subject: subject || campaign.sequence?.subject || '',
+    updatedBy: actor,
+    updatedAt: isoNow(),
+    rationale: params.rationale || options.rationale || '',
+  };
+  const nextCampaign = {
+    ...campaign,
+    sequence,
+    pendingAction: '',
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaigns', nextCampaign);
+  await persistCampaignRecord(nextCampaign);
+  recordCampaignEvent({
+    campaignId,
+    eventType: 'script_updated',
+    channel: campaign.channel,
+    provider: campaign.provider || getCampaignProvider(campaign.channel),
+    providerStatus: 'bridge_state_updated',
+    payload: { subject, scriptPreview: script.slice(0, 180), actor },
+  });
+  addActivity(state, makeActivity({
+    actor,
+    category: 'REX',
+    status: 'saved',
+    text: `Updated campaign script for ${campaign.name}.`,
+    target: campaign.name,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Campaign script updated',
+    campaign: nextCampaign,
+  };
+}
+
+async function updateCampaignSequence(campaignId = '', params = {}, options = {}) {
+  ensureCampaignCollections();
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: `Campaign ${campaignId} was not found.` };
+  }
+  const actor = options.actor || params.actor || 'Rex Strategist';
+  const currentSequence = campaign.sequence || {};
+  const delayHours = params.delayHours ?? params.delay_hours ?? params.followUpDelayHours ?? params.follow_up_delay_hours;
+  const sequencePatch = params.sequence && typeof params.sequence === 'object' ? params.sequence : {};
+  let steps = Array.isArray(sequencePatch.steps)
+    ? sequencePatch.steps
+    : Array.isArray(currentSequence.steps)
+      ? [...currentSequence.steps]
+      : [];
+  if (delayHours !== undefined) {
+    if (!steps.length) {
+      steps = [{ step: 1, delayHours: Number(delayHours) }];
+    } else {
+      const stepId = params.stepId || params.step || params.index || 1;
+      steps = steps.map((step, index) => {
+        const isMatch = String(step.id || step.step || index + 1) === String(stepId);
+        return isMatch ? { ...step, delayHours: Number(delayHours) } : step;
+      });
+    }
+  }
+  const nextSequence = {
+    ...currentSequence,
+    ...sequencePatch,
+    ...(steps.length ? { steps } : {}),
+    ...(delayHours !== undefined ? { delayHours: Number(delayHours) } : {}),
+    updatedBy: actor,
+    updatedAt: isoNow(),
+    rationale: params.rationale || options.rationale || '',
+  };
+  const nextCampaign = {
+    ...campaign,
+    sequence: nextSequence,
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaigns', nextCampaign);
+  await persistCampaignRecord(nextCampaign);
+  recordCampaignEvent({
+    campaignId,
+    eventType: 'sequence_updated',
+    channel: campaign.channel,
+    provider: campaign.provider || getCampaignProvider(campaign.channel),
+    providerStatus: 'bridge_state_updated',
+    payload: { delayHours, actor, sequenceKeys: Object.keys(sequencePatch) },
+  });
+  addActivity(state, makeActivity({
+    actor,
+    category: 'REX',
+    status: 'saved',
+    text: `Updated campaign sequence for ${campaign.name}.`,
+    target: campaign.name,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Campaign sequence updated',
+    campaign: nextCampaign,
+  };
+}
+
+async function pauseCampaignFromRex(campaignId = '', params = {}, options = {}) {
+  const patch = await patchCampaignRecord(campaignId, {
+    status: 'paused',
+    pendingAction: '',
+    approvalStatus: 'approved',
+    notes: params.reason || params.rationale || 'Paused by Rex Strategist after approval.',
+    actor: options.actor || params.actor || 'Rex Strategist',
+  });
+  return {
+    ...patch,
+    verbiage: patch.ok ? 'Campaign paused' : patch.verbiage,
+  };
+}
+
+async function applyRexDecision(decisionOrId = {}, options = {}) {
+  ensureRexCollections();
+  const decision = typeof decisionOrId === 'string'
+    ? state.rexDecisions.find((item) => item.id === decisionOrId)
+    : decisionOrId;
+  if (!decision?.id) {
+    return { ok: false, result: 'unavailable', verbiage: 'Rex decision not found', error: 'No Rex decision was found.' };
+  }
+  if (decision.status === 'applied' && decision.result?.ok) {
+    return { ok: true, result: 'live', verbiage: 'Rex decision already applied', decision, replayed: true };
+  }
+  const actor = options.actor || decision.approvedBy || decision.proposedBy || 'Rex Strategist';
+  const tool = normalizeRexTool(decision.tool);
+  let result = null;
+  if (tool === 'adjust_lead_weight') {
+    result = await updateLeadScoringWeights(decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (tool === 'update_campaign_script') {
+    result = await updateCampaignScript(decision.params?.campaignId || decision.targetId || '', decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (tool === 'change_follow_up_delay') {
+    result = await updateCampaignSequence(decision.params?.campaignId || decision.targetId || '', decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (tool === 'pause_campaign') {
+    result = await pauseCampaignFromRex(decision.params?.campaignId || decision.targetId || '', decision.params || {}, { actor, rationale: decision.rationale });
+  } else {
+    result = { ok: false, result: 'unavailable', verbiage: 'Rex tool unavailable', error: `Unsupported Rex tool: ${decision.tool}` };
+  }
+  const nextDecision = {
+    ...decision,
+    tool,
+    status: result.ok ? 'applied' : 'failed',
+    result,
+    appliedAt: result.ok ? isoNow() : decision.appliedAt || null,
+    appliedBy: actor,
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'rexDecisions', nextDecision);
+  await persistRexDecisionRecord(nextDecision);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'REX',
+    status: result.ok ? 'success' : 'warning',
+    text: result.ok ? `Applied Rex decision: ${tool}` : `Rex decision failed: ${tool}`,
+    target: nextDecision.targetLabel || nextDecision.targetId || tool,
+  }));
+  await persistState(state);
+  return {
+    ok: result.ok,
+    result: result.ok ? 'live' : result.result || 'unavailable',
+    verbiage: result.verbiage || (result.ok ? 'Rex decision applied' : 'Rex decision failed'),
+    decision: nextDecision,
+    appliedResult: result,
+  };
+}
+
+async function createRexDecision(payload = {}, options = {}) {
+  ensureRexCollections();
+  const tool = normalizeRexTool(payload.tool || payload.action);
+  const params = payload.params && typeof payload.params === 'object' ? payload.params : {};
+  const target = summarizeRexDecisionTarget(tool, params);
+  const decision = {
+    id: payload.id || `rex-decision-${slugify(tool)}-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    source: payload.source || options.source || 'rex-strategist',
+    tool,
+    params,
+    rationale: String(payload.rationale || payload.reason || '').trim(),
+    status: payload.status || 'proposed',
+    targetType: payload.targetType || target.targetType,
+    targetId: payload.targetId || target.targetId,
+    targetLabel: payload.targetLabel || target.targetLabel,
+    baseline: payload.baseline && typeof payload.baseline === 'object'
+      ? payload.baseline
+      : buildRexDecisionBaseline(tool, params),
+    outcome: payload.outcome && typeof payload.outcome === 'object' ? payload.outcome : {},
+    result: payload.result && typeof payload.result === 'object' ? payload.result : {},
+    success: typeof payload.success === 'boolean' ? payload.success : null,
+    proposedBy: payload.proposedBy || payload.actor || options.actor || 'Rex Strategist',
+    createdAt: payload.createdAt || isoNow(),
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'rexDecisions', decision);
+  await persistRexDecisionRecord(decision);
+  let approvalResult = null;
+  if (payload.requestApproval !== false && options.requestApproval !== false) {
+    approvalResult = await toolHandlers.createApproval({
+      type: 'rex-decision',
+      leadName: 'Rex Strategist',
+      address: decision.targetLabel || decision.targetId || 'PBK runtime',
+      approvalAction: 'rex_apply',
+      notes: decision.rationale || `Rex proposes ${tool}.`,
+      metadata: {
+        decisionId: decision.id,
+        tool,
+        params,
+        rationale: decision.rationale,
+        baseline: decision.baseline,
+        statusMessage: `Rex proposes ${tool}`,
+      },
+    });
+    decision.approvalId = approvalResult?.approval?.id || '';
+    decision.status = approvalResult?.approval?.id ? 'queued_for_approval' : decision.status;
+    decision.updatedAt = isoNow();
+    upsertById(state, 'rexDecisions', decision);
+    await persistRexDecisionRecord(decision);
+  }
+  addActivity(state, makeActivity({
+    actor: decision.proposedBy,
+    category: 'REX',
+    status: decision.status === 'queued_for_approval' ? 'pending' : 'proposed',
+    text: `Rex proposed ${tool}: ${decision.rationale || 'No rationale provided.'}`,
+    target: decision.targetLabel || decision.targetId || tool,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: decision.status === 'queued_for_approval' ? 'queued_for_approval' : 'live',
+    verbiage: decision.status === 'queued_for_approval' ? 'Rex proposal queued for approval' : 'Rex decision recorded',
+    decision,
+    approval: approvalResult?.approval || null,
+    approvalResult,
+  };
+}
+
+async function handleRexDecisionApproval(approval = {}, options = {}) {
+  ensureRexCollections();
+  const decisionId = approval.metadata?.decisionId || '';
+  const decision = state.rexDecisions.find((item) => item.id === decisionId || item.approvalId === approval.id);
+  if (!decision) {
+    return { ok: false, result: 'unavailable', verbiage: 'Rex decision not found', error: 'Approved Rex decision could not be found.' };
+  }
+  if (String(approval.status || '').toLowerCase() !== 'approved') {
+    const nextDecision = {
+      ...decision,
+      status: 'rejected',
+      approvedBy: approval.actor || options.actor || '',
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'rexDecisions', nextDecision);
+    await persistRexDecisionRecord(nextDecision);
+    return { ok: true, result: 'queued_for_approval', verbiage: 'Rex decision rejected', decision: nextDecision };
+  }
+  const approvedDecision = {
+    ...decision,
+    status: 'approved',
+    approvedBy: approval.actor || options.actor || 'Slack',
+    approvalId: approval.id || decision.approvalId || '',
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'rexDecisions', approvedDecision);
+  await persistRexDecisionRecord(approvedDecision);
+  return applyRexDecision(approvedDecision, { actor: approval.actor || options.actor || 'Slack' });
+}
+
+async function updateRexDecisionOutcome(decisionId = '', payload = {}) {
+  ensureRexCollections();
+  const decision = state.rexDecisions.find((item) => item.id === decisionId);
+  if (!decision) {
+    return { ok: false, result: 'unavailable', verbiage: 'Rex decision not found', error: `Decision ${decisionId} was not found.` };
+  }
+  const outcome = payload.outcome && typeof payload.outcome === 'object' ? payload.outcome : payload;
+  const nextDecision = {
+    ...decision,
+    outcome,
+    success: typeof payload.success === 'boolean' ? payload.success : decision.success,
+    status: 'measured',
+    evaluatedAt: payload.evaluatedAt || isoNow(),
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'rexDecisions', nextDecision);
+  await persistRexDecisionRecord(nextDecision);
+  addActivity(state, makeActivity({
+    actor: payload.actor || 'Rex Evaluator',
+    category: 'REX',
+    status: nextDecision.success === true ? 'success' : nextDecision.success === false ? 'warning' : 'measured',
+    text: `Measured Rex decision ${decision.tool}: ${nextDecision.success === true ? 'improved' : nextDecision.success === false ? 'did not improve' : 'outcome recorded'}.`,
+    target: decision.targetLabel || decision.targetId || decision.tool,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: 'Rex decision outcome recorded',
+    decision: nextDecision,
+  };
+}
+
+async function requestRexDecisionModificationFromApproval(approval = {}, options = {}) {
+  ensureRexCollections();
+  const decisionId = approval.metadata?.decisionId || '';
+  const decision = state.rexDecisions.find((item) => item.id === decisionId || item.approvalId === approval.id);
+  if (!decision) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      verbiage: 'Rex decision not found',
+      error: 'Rex proposal could not be found for modification.',
+    };
+  }
+  const actor = approval.actor || options.actor || 'Slack';
+  const nextDecision = {
+    ...decision,
+    status: 'needs_modification',
+    modifiedBy: actor,
+    modificationNotes: approval.notes || 'Slack requested changes before approval.',
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'rexDecisions', nextDecision);
+  await persistRexDecisionRecord(nextDecision);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'REX',
+    status: 'warning',
+    text: `Rex proposal needs modification: ${decision.tool}`,
+    target: decision.targetLabel || decision.targetId || decision.tool,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'queued_for_approval',
+    verbiage: 'Rex proposal sent back for modification',
+    decision: nextDecision,
   };
 }
 
@@ -10413,6 +11491,165 @@ async function fireSlackWebhook(payload) {
 }
 
 // ── BatchData skip-trace ────────────────────────────────────────────────────
+function compactSlackText(value = '', fallback = '') {
+  return String(value || fallback || '').replace(/\s+/g, ' ').trim().slice(0, 2900);
+}
+
+async function fireSlackApi(method = '', payload = {}) {
+  if (!SLACK_BOT_TOKEN) {
+    return { ok: false, skipped: true, result: 'provider_missing', error: 'PBK_SLACK_BOT_TOKEN is not set.' };
+  }
+  try {
+    const response = await fetch(`https://slack.com/api/${method}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${SLACK_BOT_TOKEN}`,
+        'Content-Type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify(payload),
+    });
+    const responseText = await response.text();
+    let body = {};
+    try {
+      body = JSON.parse(responseText || '{}');
+    } catch {
+      body = { raw: responseText };
+    }
+    return {
+      ok: response.ok && body?.ok !== false,
+      status: response.status,
+      body,
+      error: response.ok && body?.ok !== false ? '' : (body?.error || `Slack API returned ${response.status}`),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Slack API request failed.' };
+  }
+}
+
+function buildSlackApprovalBlocks(approval = {}) {
+  const approvalType = compactSlackText(approval.type || 'approval', 'approval');
+  const actionLabel = compactSlackText(approval.approvalAction || approval.metadata?.requestedAction || 'approval_required');
+  const amount = toNumber(approval.offerPrice, 0) ? currency(approval.offerPrice) : 'n/a';
+  const campaignName = approval.metadata?.campaignName || approval.metadata?.campaignId || '';
+  const summary = [
+    `*Seller:* ${compactSlackText(approval.leadName, 'Unknown seller')}`,
+    `*Property:* ${compactSlackText(approval.address, 'Unknown property')}`,
+    `*Action:* ${actionLabel}`,
+    campaignName ? `*Campaign:* ${compactSlackText(campaignName)}` : '',
+    amount !== 'n/a' ? `*Offer:* ${amount}` : '',
+  ].filter(Boolean).join('\n');
+  const notes = compactSlackText(approval.notes || approval.metadata?.statusMessage || '');
+  return [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: `PBK ${approvalType} approval`, emoji: false },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `${summary}${notes ? `\n\n_${notes}_` : ''}` },
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: `Approval ID \`${approval.id || 'pending'}\` - PBK will only execute after an approved callback.`,
+        },
+      ],
+    },
+    {
+      type: 'actions',
+      block_id: `pbk_approval_${String(approval.id || '').slice(0, 40) || 'pending'}`,
+      elements: [
+        {
+          type: 'button',
+          action_id: 'pbk_approval_approve',
+          text: { type: 'plain_text', text: 'Approve', emoji: false },
+          style: 'primary',
+          value: approval.id || '',
+        },
+        {
+          type: 'button',
+          action_id: 'pbk_approval_reject',
+          text: { type: 'plain_text', text: 'Reject', emoji: false },
+          style: 'danger',
+          value: approval.id || '',
+        },
+        {
+          type: 'button',
+          action_id: 'pbk_approval_modify',
+          text: { type: 'plain_text', text: 'Modify', emoji: false },
+          value: approval.id || '',
+        },
+      ],
+    },
+  ];
+}
+
+async function postSlackApproval(approval = {}) {
+  if (!SLACK_BOT_TOKEN || !SLACK_APPROVAL_CHANNEL_ID) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'provider_missing',
+      error: 'Slack interactive approvals need PBK_SLACK_BOT_TOKEN and PBK_SLACK_APPROVAL_CHANNEL_ID.',
+    };
+  }
+  const result = await fireSlackApi('chat.postMessage', {
+    channel: SLACK_APPROVAL_CHANNEL_ID,
+    text: `PBK approval needed: ${approval.type || 'approval'} for ${approval.leadName || approval.address || approval.id}`,
+    blocks: buildSlackApprovalBlocks(approval),
+    metadata: {
+      event_type: 'pbk_approval_request',
+      event_payload: {
+        approvalId: approval.id || '',
+        approvalType: approval.type || '',
+      },
+    },
+  });
+  if (result.ok) {
+    approval.slackMessage = {
+      channel: result.body?.channel || SLACK_APPROVAL_CHANNEL_ID,
+      ts: result.body?.ts || '',
+      postedAt: isoNow(),
+    };
+  }
+  return {
+    ...result,
+    result: result.ok ? 'queued_for_approval' : (result.result || 'provider_missing'),
+    verbiage: result.ok ? 'Slack approval posted' : 'Slack approval not posted',
+  };
+}
+
+async function updateSlackApprovalMessage({ channel = '', ts = '', approval = {}, status = '', actor = '' } = {}) {
+  if (!SLACK_BOT_TOKEN || !channel || !ts) {
+    return { ok: false, skipped: true, error: 'Slack message update skipped.' };
+  }
+  const normalizedStatus = String(status || approval.status || '').toLowerCase();
+  const approved = normalizedStatus === 'approved';
+  const rejected = normalizedStatus === 'rejected';
+  const needsRevision = normalizedStatus === 'needs_revision' || normalizedStatus === 'needs_modification';
+  const label = approved ? 'approved' : rejected ? 'rejected' : needsRevision ? 'sent back for modification' : normalizedStatus || 'updated';
+  return fireSlackApi('chat.update', {
+    channel,
+    ts,
+    text: `PBK approval ${label}: ${approval.leadName || approval.address || approval.id}`,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*PBK approval ${label}*\n${compactSlackText(approval.leadName || approval.address || approval.id)}\nActor: ${compactSlackText(actor || approval.actor || 'Slack')}`,
+        },
+      },
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `Approval ID \`${approval.id || ''}\` - ${isoNow()}` }],
+      },
+    ],
+  });
+}
+
 async function syncCalendarEvent(event = {}) {
   const providerMeta = getGoogleCalendarProviderMeta();
   if (!providerMeta.ready) {
@@ -12040,7 +13277,21 @@ const toolHandlers = {
       );
       await persistState(state);
     }
-    return { approval, fanout };
+    const slack = await postSlackApproval(approval);
+    if (slack.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Slack',
+          category: 'APPROVAL',
+          status: 'queued',
+          text: `Interactive approval posted for ${approval.leadName} at ${approval.address}`,
+          target: approval.id,
+        }),
+      );
+      await persistState(state);
+    }
+    return { approval, fanout, slack };
   },
 
   async updateCRM(params = {}) {
@@ -12757,7 +14008,7 @@ const toolHandlers = {
       address: context.address,
       email: params.email || context.email,
     });
-    const callStrategy = buildCallStrategyFromProfile(participantProfile);
+    const callStrategy = buildCallStrategyFromProfile(participantProfile, params, context);
     const phone = normalizePhone(params.phone || params.to || context.phone || inferSkipTraceContact(context).phone);
     const fromNumber = getTelnyxFromNumber(params);
     const telnyxMeta = getTelnyxProviderMeta();
@@ -12821,6 +14072,14 @@ const toolHandlers = {
       if (webhookUrl) {
         requestPayload.webhook_url = webhookUrl;
         requestPayload.webhook_url_method = 'POST';
+      }
+      const shouldStreamSentiment = Boolean(params.deepgramSentiment || params.streamSentiment || DEEPGRAM_STREAM_CALLS_ENABLED);
+      const deepgramMeta = getDeepgramProviderMeta(process.env);
+      const deepgramStreamUrl = shouldStreamSentiment && deepgramMeta.ready ? getTelnyxDeepgramStreamUrl(params) : '';
+      if (deepgramStreamUrl) {
+        requestPayload.stream_url = deepgramStreamUrl;
+        requestPayload.stream_track = params.streamTrack || DEEPGRAM_STREAM_TRACK;
+        requestPayload.stream_codec = params.streamCodec || DEEPGRAM_STREAM_CODEC;
       }
 
       const telnyxResponse = await fireTelnyxRequest('POST', '/calls', requestPayload);
@@ -13915,6 +15174,7 @@ async function handleEvent(eventType, payload = {}) {
     let contractResult = null;
     let campaignResult = null;
     let promptResult = null;
+    let rexDecisionResult = null;
     if (approval.type === 'contract' && approval.contractId) {
       const contract = state.contracts.find((item) => item.id === approval.contractId);
       if (contract) {
@@ -13981,6 +15241,13 @@ async function handleEvent(eventType, payload = {}) {
       promptResult = await applyApprovedPromptPatch(approval, { actor: incomingActor });
     }
 
+    if (
+      String(approval.type || '').toLowerCase() === 'rex-decision'
+      || String(approval.approvalAction || '').toLowerCase() === 'rex_apply'
+    ) {
+      rexDecisionResult = await handleRexDecisionApproval(approval, { actor: incomingActor });
+    }
+
     addActivity(
       state,
       makeActivity({
@@ -13999,6 +15266,7 @@ async function handleEvent(eventType, payload = {}) {
       contractResult,
       campaignResult,
       promptResult,
+      rexDecisionResult,
     };
   }
 
@@ -14438,6 +15706,14 @@ function buildStateSnapshot() {
     campaignSuppressions: state.campaignSuppressions || [],
     campaignLeadSources: getCampaignLeadSourceOptions(),
     campaignExecutions: state.campaignExecutions || [],
+    rexDecisions: state.rexDecisions || [],
+    leadScoringWeights: getLeadScoringWeights(),
+    avaNegotiationProfile: {
+      persona: buildAvaNegotiationPersona(),
+      tactics: buildDefaultNegotiationTactics(),
+      emotionalIntelligence: buildDefaultEmotionalIntelligenceRules(),
+      cityKnowledge: buildDefaultCityKnowledge(),
+    },
     promptPatchApplications: state.promptPatchApplications || [],
     recordingRetentionRuns: state.recordingRetentionRuns || [],
     settings: ensureRuntimeSettings(state),
@@ -14510,6 +15786,140 @@ async function readBody(request) {
   } catch {
     return { raw };
   }
+}
+
+function verifySlackRequestSignature(headers = {}, rawBody = '') {
+  if (!SLACK_SIGNING_SECRET) {
+    return {
+      ok: !IS_HOSTED,
+      skipped: true,
+      error: IS_HOSTED ? 'PBK_SLACK_SIGNING_SECRET is required for hosted Slack interactions.' : '',
+    };
+  }
+  const timestamp = String(headers['x-slack-request-timestamp'] || '').trim();
+  const signature = String(headers['x-slack-signature'] || '').trim();
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!timestamp || !signature) {
+    return { ok: false, error: 'Slack signature headers are missing.' };
+  }
+  if (Math.abs(nowSeconds - Number(timestamp)) > 60 * 5) {
+    return { ok: false, error: 'Slack signature timestamp is too old.' };
+  }
+  const expected = `v0=${createHmac('sha256', SLACK_SIGNING_SECRET)
+    .update(`v0:${timestamp}:${rawBody}`)
+    .digest('hex')}`;
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== actualBuffer.length) {
+    return { ok: false, error: 'Slack signature length mismatch.' };
+  }
+  const ok = timingSafeEqual(expectedBuffer, actualBuffer);
+  return {
+    ok,
+    error: ok ? '' : 'Slack signature verification failed.',
+  };
+}
+
+async function readSlackInteractionRequest(request) {
+  const buffer = await readRawBodyBuffer(request);
+  const raw = buffer.toString('utf8');
+  const signature = verifySlackRequestSignature(request.headers || {}, raw);
+  if (!signature.ok) {
+    return { ok: false, status: 401, signature, payload: null };
+  }
+  let payload = null;
+  const contentType = String(request.headers['content-type'] || '');
+  try {
+    if (/application\/x-www-form-urlencoded/i.test(contentType)) {
+      const params = new URLSearchParams(raw);
+      payload = JSON.parse(params.get('payload') || '{}');
+    } else {
+      payload = JSON.parse(raw || '{}');
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 400,
+      signature,
+      payload: null,
+      error: error instanceof Error ? error.message : 'Slack payload parse failed.',
+    };
+  }
+  return { ok: true, status: 200, signature, payload };
+}
+
+async function handleSlackApprovalInteraction(payload = {}) {
+  const action = Array.isArray(payload.actions) ? payload.actions[0] : null;
+  const actionId = String(action?.action_id || '').trim();
+  const approvalId = String(
+    action?.value
+      || payload.private_metadata
+      || payload.message?.metadata?.event_payload?.approvalId
+      || '',
+  ).trim();
+  if (!approvalId || !/^pbk_approval_(approve|reject|modify)$/i.test(actionId)) {
+    return {
+      ok: false,
+      status: 400,
+      text: 'PBK could not identify this approval action.',
+      error: 'Unsupported Slack approval action.',
+    };
+  }
+  const actor = payload.user?.username || payload.user?.name || payload.user?.id || 'slack';
+  const isModify = /modify/i.test(actionId);
+  const status = isModify ? 'needs_revision' : /reject/i.test(actionId) ? 'rejected' : 'approved';
+  let result = null;
+  if (isModify) {
+    const approval = state.approvals.find((item) => item.id === approvalId);
+    if (!approval) {
+      result = { ok: false, error: `Approval ${approvalId} was not found.` };
+    } else {
+      approval.status = status;
+      approval.actor = actor;
+      approval.actedAt = isoNow();
+      approval.notes = 'Slack requested changes before approval.';
+      const rexDecisionResult = (
+        String(approval.type || '').toLowerCase() === 'rex-decision'
+        || String(approval.approvalAction || '').toLowerCase() === 'rex_apply'
+      )
+        ? await requestRexDecisionModificationFromApproval(approval, { actor })
+        : null;
+      addActivity(state, makeActivity({
+        actor,
+        category: 'APPROVAL',
+        status: 'warning',
+        text: `${approval.type || 'Approval'} sent back for modification`,
+        target: approval.address || approval.leadName || approval.id,
+      }));
+      await persistState(state);
+      result = { ok: true, approval, rexDecisionResult };
+    }
+  } else {
+    result = await handleEvent('approval-callback', {
+      id: approvalId,
+      status,
+      actor,
+      actedAt: isoNow(),
+      notes: `Slack interactive approval ${status}.`,
+    });
+  }
+  const update = await updateSlackApprovalMessage({
+    channel: payload.channel?.id || payload.container?.channel_id || payload.message?.channel || '',
+    ts: payload.message?.ts || payload.container?.message_ts || '',
+    approval: result.approval || { id: approvalId, status },
+    status,
+    actor,
+  });
+  const ok = result.ok !== false;
+  return {
+    ok,
+    status: ok ? 200 : 404,
+    text: ok
+      ? `PBK approval ${status === 'needs_revision' ? 'sent back for modification' : status}.`
+      : (result.error || 'PBK approval was not found.'),
+    result,
+    update,
+  };
 }
 
 function parseMultipartContentDisposition(value = '') {
@@ -14678,6 +16088,189 @@ function mapDocuSignWebhook(body = {}) {
   };
 }
 
+function normalizeDeepgramLiveSentiment(data = {}) {
+  const alt = data?.channel?.alternatives?.[0] || {};
+  const words = Array.isArray(alt.words) ? alt.words : [];
+  const scoredWord = words.find((word) => Number.isFinite(Number(word?.sentiment_score)));
+  const score = Number(
+    data?.results?.sentiments?.average?.sentiment_score
+      ?? data?.sentiments?.average?.sentiment_score
+      ?? scoredWord?.sentiment_score,
+  );
+  const label = data?.results?.sentiments?.average?.sentiment
+    || data?.sentiments?.average?.sentiment
+    || scoredWord?.sentiment
+    || (Number.isFinite(score) ? (score >= 0.333333333 ? 'positive' : score <= -0.333333333 ? 'negative' : 'neutral') : 'unknown');
+  return {
+    label,
+    score: Number.isFinite(score) ? Number(score.toFixed(4)) : null,
+    pbkScore: Number.isFinite(score) ? Number(((Math.max(-1, Math.min(1, score)) + 1) / 2).toFixed(3)) : null,
+  };
+}
+
+async function handleTelnyxDeepgramMediaSocket(socket, request) {
+  const meta = getDeepgramProviderMeta(process.env);
+  const session = {
+    id: `dg-stream-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    callId: '',
+    streamId: '',
+    frameCount: 0,
+    transcript: [],
+    sentiment: null,
+    startedAt: isoNow(),
+  };
+
+  if (!meta.ready) {
+    socket.close(1011, 'Deepgram not configured');
+    return;
+  }
+
+  let deepgramConnection = null;
+  let finalized = false;
+
+  const finalize = async (reason = 'closed') => {
+    if (finalized) return;
+    finalized = true;
+    try {
+      deepgramConnection?.close?.();
+    } catch {
+      // Closing best-effort; Telnyx already ended the stream.
+    }
+
+    const transcriptText = session.transcript
+      .filter((item) => item.transcript && (item.isFinal || item.speechFinal))
+      .map((item) => item.transcript)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const contextCall = getCallById(session.callId);
+    const message = createMessageRecord({
+      id: `msg-deepgram-live-${slugify(session.callId || session.streamId || session.id)}-${Date.now()}`,
+      leadId: contextCall?.leadId || '',
+      leadName: contextCall?.leadName || 'Unknown seller',
+      address: contextCall?.address || '',
+      phone: contextCall?.phone || '',
+      channel: 'call',
+      direction: 'transcription',
+      provider: 'Deepgram',
+      status: transcriptText ? 'transcribed' : 'no_transcript',
+      body: transcriptText || `Deepgram live stream closed (${reason}) before a final transcript was available.`,
+      sentiment: session.sentiment?.pbkScore ?? null,
+      callId: session.callId || contextCall?.id || '',
+      payload: {
+        source: 'telnyx-media-stream',
+        streamId: session.streamId,
+        frameCount: session.frameCount,
+        reason,
+        startedAt: session.startedAt,
+        endedAt: isoNow(),
+        sentiment: session.sentiment,
+        transcript: session.transcript.slice(-50),
+      },
+    });
+    upsertMessage(state, message);
+    await persistUnifiedMessageRecord(message);
+
+    if (contextCall) {
+      upsertCall(state, {
+        ...contextCall,
+        transcript: [
+          ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
+          ...session.transcript.slice(-25),
+        ],
+        sentiment: session.sentiment?.pbkScore ?? contextCall.sentiment,
+        updatedAt: isoNow(),
+      });
+    }
+
+    addActivity(
+      state,
+      makeActivity({
+        actor: 'Deepgram',
+        category: 'CALL',
+        status: transcriptText ? 'transcribed' : 'warning',
+        text: transcriptText
+          ? `Live voice sentiment captured for ${message.leadName || session.callId || session.streamId}.`
+          : `Deepgram media stream ended without a final transcript (${reason}).`,
+        target: session.callId || session.streamId || session.id,
+      }),
+    );
+    await persistState(state);
+  };
+
+  try {
+    deepgramConnection = await createDeepgramLiveConnection({}, process.env);
+    deepgramConnection.on('message', (data) => {
+      if (data?.type !== 'Results') return;
+      const alt = data.channel?.alternatives?.[0] || {};
+      const transcript = String(alt.transcript || '').trim();
+      if (!transcript) return;
+      const sentiment = normalizeDeepgramLiveSentiment(data);
+      if (sentiment.pbkScore !== null) session.sentiment = sentiment;
+      session.transcript.push({
+        transcript,
+        confidence: Number.isFinite(Number(alt.confidence)) ? Number(alt.confidence) : null,
+        isFinal: Boolean(data.is_final),
+        speechFinal: Boolean(data.speech_final),
+        start: data.start ?? null,
+        duration: data.duration ?? null,
+        sentiment,
+        capturedAt: isoNow(),
+      });
+    });
+    deepgramConnection.on('error', (error) => {
+      console.warn('[pbk-local-openclaw] Deepgram live stream error:', error?.message || error);
+    });
+    deepgramConnection.connect();
+    await deepgramConnection.waitForOpen();
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] Deepgram live stream could not start:', error?.message || error);
+    socket.close(1011, 'Deepgram connection failed');
+    return;
+  }
+
+  socket.on('message', (raw) => {
+    let event = {};
+    try {
+      event = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return;
+    }
+
+    if (event.event === 'start') {
+      session.streamId = event.stream_id || event.start?.stream_id || session.streamId;
+      session.callId = event.start?.call_control_id
+        || event.start?.callControlId
+        || event.start?.call_session_id
+        || event.start?.callSessionId
+        || event.call_control_id
+        || session.callId;
+      return;
+    }
+
+    if (event.event === 'media' && event.media?.payload) {
+      const frame = Buffer.from(String(event.media.payload), 'base64');
+      session.frameCount += 1;
+      sendDeepgramAudio(deepgramConnection, frame);
+      return;
+    }
+
+    if (event.event === 'stop') {
+      session.streamId = event.stream_id || event.stop?.stream_id || session.streamId;
+      session.callId = event.stop?.call_control_id || event.stop?.callControlId || session.callId;
+      void finalize('telnyx-stop');
+    }
+  });
+
+  socket.on('close', () => {
+    void finalize('websocket-close');
+  });
+  socket.on('error', (error) => {
+    console.warn('[pbk-local-openclaw] Telnyx media socket error:', error?.message || error);
+    void finalize('websocket-error');
+  });
+}
+
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
@@ -14724,6 +16317,7 @@ const server = createServer(async (request, response) => {
         n8n: state.status.n8n,
         providers: {
           telnyx: getTelnyxProviderMeta(),
+          deepgram: getDeepgramProviderMeta(process.env),
           instantly: getInstantlyProviderMeta(),
           googleCalendar: getGoogleCalendarProviderMeta(),
           supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -14835,6 +16429,188 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && pathname === '/api/analytics') {
       json(response, 200, buildAnalyticsSnapshot(url.searchParams.get('range') || '30d'));
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/analytics/campaign-drilldown') {
+      json(response, 200, buildCampaignAnalyticsDrilldown(url.searchParams));
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/lead-scoring/weights') {
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        weights: getLeadScoringWeights(),
+        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/lead-scoring/weights') {
+      const body = await readBody(request);
+      const result = await updateLeadScoringWeights(body, {
+        actor: request.headers['x-rex-agent'] ? 'Rex Strategist' : body.actor || 'PBK Command Center',
+      });
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/ava/negotiation-guidance') {
+      const context = findLeadContext({
+        leadName: url.searchParams.get('leadName') || '',
+        address: url.searchParams.get('address') || '',
+        phone: url.searchParams.get('phone') || '',
+        email: url.searchParams.get('email') || '',
+      });
+      const guidance = selectNegotiationGuidance({
+        scenario: url.searchParams.get('scenario') || '',
+        emotion: url.searchParams.get('emotion') || '',
+        sentiment: url.searchParams.get('sentiment') || '',
+        transcriptStart: url.searchParams.get('text') || '',
+      }, context);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        guidance,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/rex/decisions') {
+      ensureRexCollections();
+      const status = String(url.searchParams.get('status') || 'all').toLowerCase();
+      const decisions = sortNewest(state.rexDecisions || []).filter((decision) => status === 'all' || String(decision.status || '').toLowerCase() === status);
+      json(response, 200, {
+        ok: true,
+        result: 'live',
+        decisions: decisions.slice(0, Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 100)))),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/rex/decisions', '/api/rex/strategist/proposals'])) {
+      const body = await readBody(request);
+      const proposals = Array.isArray(body.proposals) ? body.proposals : Array.isArray(body.decisions) ? body.decisions : [body];
+      const results = [];
+      for (const proposal of proposals) {
+        results.push(await createRexDecision({
+          ...proposal,
+          requestApproval: body.requestApproval ?? proposal.requestApproval,
+          actor: proposal.actor || body.actor || 'Rex Strategist',
+        }, {
+          requestApproval: body.requestApproval !== false,
+          actor: body.actor || 'Rex Strategist',
+          source: body.source || 'rex-strategist',
+        }));
+      }
+      json(response, 202, {
+        ok: true,
+        result: 'queued_for_approval',
+        verbiage: 'Rex proposal recorded',
+        decisions: results.map((item) => item.decision),
+        results,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const rexDecisionMatch = matchPath(pathname, '/api/rex/decisions/:decisionId');
+    if (rexDecisionMatch && request.method === 'GET') {
+      const decisionId = decodeURIComponent(rexDecisionMatch.groups.decisionId || '');
+      const decision = (state.rexDecisions || []).find((item) => item.id === decisionId);
+      json(response, decision ? 200 : 404, {
+        ok: Boolean(decision),
+        result: decision ? 'live' : 'unavailable',
+        decision,
+        error: decision ? '' : 'Rex decision not found.',
+      });
+      return;
+    }
+
+    const rexDecisionApplyMatch = matchPath(pathname, '/api/rex/decisions/:decisionId/apply');
+    if (rexDecisionApplyMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await applyRexDecision(decodeURIComponent(rexDecisionApplyMatch.groups.decisionId || ''), {
+        actor: request.headers['x-rex-agent'] ? 'Rex Strategist' : body.actor || 'api',
+      });
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const rexDecisionOutcomeMatch = matchPath(pathname, '/api/rex/decisions/:decisionId/outcome');
+    if (rexDecisionOutcomeMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await updateRexDecisionOutcome(decodeURIComponent(rexDecisionOutcomeMatch.groups.decisionId || ''), body);
+      json(response, result.ok ? 200 : 404, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/slack/interactions', '/api/webhooks/slack/interactive'])) {
+      const slackRequest = await readSlackInteractionRequest(request);
+      if (!slackRequest.ok) {
+        json(response, slackRequest.status || 400, {
+          ok: false,
+          error: slackRequest.error || slackRequest.signature?.error || 'Slack interaction rejected.',
+          signature: {
+            verified: false,
+            skipped: Boolean(slackRequest.signature?.skipped),
+          },
+        });
+        return;
+      }
+      const result = await handleSlackApprovalInteraction(slackRequest.payload || {});
+      json(response, result.status || (result.ok ? 200 : 400), {
+        response_type: 'ephemeral',
+        text: result.text || (result.ok ? 'PBK approval updated.' : 'PBK approval failed.'),
+        ok: result.ok,
+        result: result.result,
+        update: result.update,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/deepgram/health', '/api/voice/deepgram/health'])) {
+      json(response, 200, {
+        ok: true,
+        provider: 'deepgram',
+        ...getDeepgramProviderMeta(process.env),
+        telnyxMediaStreamPath: '/api/webhooks/telnyx/media',
+        telnyxStreamCallsEnabled: DEEPGRAM_STREAM_CALLS_ENABLED,
+        telnyxStreamTrack: DEEPGRAM_STREAM_TRACK,
+        telnyxStreamCodec: DEEPGRAM_STREAM_CODEC,
+        telnyxStreamTokenConfigured: Boolean(TELNYX_MEDIA_STREAM_TOKEN),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, [
+      '/api/deepgram/transcribe-url',
+      '/api/voice/deepgram/transcribe-url',
+      '/api/voice/sentiment/test',
+    ])) {
+      const body = await readBody(request);
+      const result = await transcribeDeepgramUrl({
+        url: body.url || (body.sample ? DEEPGRAM_SAMPLE_URL : ''),
+        model: body.model,
+        language: body.language,
+        smartFormat: body.smartFormat ?? body.smart_format,
+        sentiment: body.sentiment ?? true,
+        utterances: body.utterances ?? true,
+        paragraphs: body.paragraphs ?? true,
+        diarize: body.diarize ?? false,
+        includeRaw: Boolean(body.includeRaw),
+      }, process.env);
+      json(response, result.ok ? 200 : result.result === 'unavailable' ? 400 : 503, result);
       return;
     }
 
@@ -15502,6 +17278,32 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const result = await runCampaignAction(decodeURIComponent(campaignActionMatch.groups.campaignId || ''), body);
       json(response, result.ok ? 202 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const campaignScriptMatch = matchPath(pathname, '/api/campaigns/:campaignId/script');
+    if (campaignScriptMatch && ['POST', 'PATCH'].includes(request.method)) {
+      const body = await readBody(request);
+      const result = await updateCampaignScript(decodeURIComponent(campaignScriptMatch.groups.campaignId || ''), body, {
+        actor: request.headers['x-rex-agent'] ? 'Rex Strategist' : body.actor || 'PBK Command Center',
+      });
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const campaignSequenceMatch = matchPath(pathname, '/api/campaigns/:campaignId/sequence');
+    if (campaignSequenceMatch && ['POST', 'PATCH'].includes(request.method)) {
+      const body = await readBody(request);
+      const result = await updateCampaignSequence(decodeURIComponent(campaignSequenceMatch.groups.campaignId || ''), body, {
+        actor: request.headers['x-rex-agent'] ? 'Rex Strategist' : body.actor || 'PBK Command Center',
+      });
+      json(response, result.ok ? 200 : 400, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -16629,6 +18431,15 @@ const server = createServer(async (request, response) => {
         'GET /api/quotas',
         'GET/POST /api/settings',
         'GET /api/analytics',
+        'GET /api/analytics/campaign-drilldown',
+        'GET/POST /api/lead-scoring/weights',
+        'GET/POST /api/rex/decisions',
+        'POST /api/rex/strategist/proposals',
+        'POST /api/campaigns/:id/script',
+        'POST /api/campaigns/:id/sequence',
+        'POST /api/slack/interactions',
+        'GET /api/deepgram/health',
+        'POST /api/deepgram/transcribe-url',
         'GET /api/tooling/status',
         'GET/POST /api/workflows',
         'GET/POST /api/property-data',
@@ -16685,6 +18496,7 @@ const server = createServer(async (request, response) => {
         'POST /api/webhooks/instantly',
         'POST /api/webhooks/email',
         'POST /api/webhooks/telnyx',
+        'WS /api/webhooks/telnyx/media',
         'POST /webhooks/telnyx/recording',
         'POST /api/webhooks/docusign',
         'POST /api/docusign/callback',
@@ -16702,6 +18514,33 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 server.requestTimeout = 120000;
 server.maxRequestsPerSocket = 1000;
+
+const telnyxDeepgramWss = new WebSocketServer({ noServer: true });
+telnyxDeepgramWss.on('connection', (socket, request) => {
+  void handleTelnyxDeepgramMediaSocket(socket, request);
+});
+
+server.on('upgrade', (request, socket, head) => {
+  const upgradeUrl = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
+  const upgradePath = upgradeUrl.pathname.replace(/\/+$/, '') || '/';
+  if (!matchesPath(upgradePath, ['/api/webhooks/telnyx/media', '/webhooks/telnyx/media'])) {
+    socket.destroy();
+    return;
+  }
+
+  if (TELNYX_MEDIA_STREAM_TOKEN) {
+    const providedToken = upgradeUrl.searchParams.get('token') || String(request.headers['x-pbk-stream-token'] || '').trim();
+    if (providedToken !== TELNYX_MEDIA_STREAM_TOKEN) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+  }
+
+  telnyxDeepgramWss.handleUpgrade(request, socket, head, (ws) => {
+    telnyxDeepgramWss.emit('connection', ws, request);
+  });
+});
 
 server.listen(PORT, HOST, () => {
   startContractTemplateWatcher();

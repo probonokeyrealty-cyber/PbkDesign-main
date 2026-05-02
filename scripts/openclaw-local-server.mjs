@@ -2403,6 +2403,42 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.agent_tasks (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      requested_by TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT 'pbk-bridge',
+      status TEXT NOT NULL DEFAULT 'complete',
+      summary TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.rex_decisions (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'rex-strategist',
+      tool TEXT NOT NULL DEFAULT '',
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      rationale TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'proposed',
+      target_type TEXT,
+      target_id TEXT,
+      approval_id TEXT,
+      baseline JSONB NOT NULL DEFAULT '{}'::jsonb,
+      outcome JSONB NOT NULL DEFAULT '{}'::jsonb,
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      success BOOLEAN,
+      proposed_by TEXT NOT NULL DEFAULT 'Rex Strategist',
+      approved_by TEXT,
+      applied_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      applied_at TIMESTAMPTZ,
+      evaluated_at TIMESTAMPTZ
+    );
+
     CREATE INDEX IF NOT EXISTS coach_memory_workspace_idx
       ON public.coach_memory (workspace_id, created_at DESC);
 
@@ -2437,6 +2473,12 @@ async function ensurePgSchema() {
       ON public.inbound_call_routes (workspace_id, call_control_id)
       WHERE call_control_id <> '';
 
+    CREATE INDEX IF NOT EXISTS agent_tasks_memory_idx
+      ON public.agent_tasks (workspace_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS rex_decisions_created_idx
+      ON public.rex_decisions (created_at DESC);
+
     DROP TRIGGER IF EXISTS coach_memory_set_updated_at ON public.coach_memory;
     CREATE TRIGGER coach_memory_set_updated_at
       BEFORE UPDATE ON public.coach_memory
@@ -2461,7 +2503,86 @@ async function ensurePgSchema() {
     CREATE TRIGGER inbound_call_routes_set_updated_at
       BEFORE UPDATE ON public.inbound_call_routes
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS agent_tasks_set_updated_at ON public.agent_tasks;
+    CREATE TRIGGER agent_tasks_set_updated_at
+      BEFORE UPDATE ON public.agent_tasks
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
   `);
+}
+
+async function seedMemoryAnalyticsStateToPg() {
+  const pool = getPgPool();
+  if (!pool) return false;
+  try {
+    const skills = flattenBridgeSkills();
+    for (const skill of skills) {
+      await pool.query(
+        `INSERT INTO public.skills (
+          id, workspace_id, agent_id, agent_name, name, source, level, status,
+          confidence, evidence, metadata, created_at, updated_at
+        )
+        VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
+        ON CONFLICT (workspace_id, agent_id, name) DO UPDATE SET
+          source = EXCLUDED.source,
+          level = EXCLUDED.level,
+          status = EXCLUDED.status,
+          confidence = EXCLUDED.confidence,
+          evidence = EXCLUDED.evidence,
+          metadata = public.skills.metadata || EXCLUDED.metadata,
+          updated_at = NOW()`,
+        [
+          skill.id || `${skill.agentId || 'agent'}:${slugify(skill.name || 'skill')}`,
+          skill.agentId || '',
+          skill.agentName || skill.agentId || 'Agent',
+          skill.name || 'Unnamed skill',
+          skill.source || 'bridge-state',
+          skill.level || 'candidate',
+          skill.status || 'active',
+          Number(skill.confidence || 0),
+          skill.evidence || '',
+          JSON.stringify({ seededFrom: 'bridge-state', seededAt: isoNow() }),
+        ],
+      );
+    }
+
+    const history = buildFallbackAgentHistory(50).history || [];
+    for (const item of history) {
+      await pool.query(
+        `INSERT INTO public.agent_tasks (
+          id, workspace_id, requested_by, action, provider, status, summary, payload, created_at, updated_at
+        )
+        VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+        ON CONFLICT (id) DO UPDATE SET
+          requested_by = EXCLUDED.requested_by,
+          action = EXCLUDED.action,
+          provider = EXCLUDED.provider,
+          status = EXCLUDED.status,
+          summary = EXCLUDED.summary,
+          payload = EXCLUDED.payload,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          item.id || `memory-history-${hashString(JSON.stringify(item)).slice(0, 12)}`,
+          item.actor || item.agentName || 'PBK bridge',
+          item.action || item.verb || 'agent_memory_event',
+          item.source || item.provider || 'pbk-bridge',
+          item.status || 'complete',
+          item.summary || item.description || item.title || '',
+          JSON.stringify({
+            ...item,
+            agentId: item.agentId || item.targetAgentId || item.target || '',
+            agentName: item.agentName || item.actor || '',
+          }),
+          item.createdAt || item.updatedAt || isoNow(),
+          item.updatedAt || item.createdAt || isoNow(),
+        ],
+      );
+    }
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] memory analytics seed skipped:', error?.message || error);
+    return false;
+  }
 }
 
 async function loadStateFromDb() {
@@ -14134,6 +14255,7 @@ async function fireDocuSignEnvelope(params = {}) {
 }
 
 let state = await loadState();
+await seedMemoryAnalyticsStateToPg();
 const analyzerResultCache = new Map();
 
 function buildAnalyzerCacheKey(params = {}) {

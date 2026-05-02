@@ -2274,11 +2274,193 @@ async function ensurePgSchema() {
   const pool = getPgPool();
   if (!pool) return;
   await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE OR REPLACE FUNCTION public.pbk_set_updated_at()
+    RETURNS TRIGGER
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$;
+
     CREATE TABLE IF NOT EXISTS bridge_state (
       id TEXT PRIMARY KEY,
       data JSONB NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS public.coach_memory (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      memory_type TEXT NOT NULL DEFAULT 'general',
+      objection_tag TEXT NOT NULL DEFAULT '',
+      path_key TEXT NOT NULL DEFAULT '',
+      prompt TEXT NOT NULL DEFAULT '',
+      response TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'bridge',
+      source_url TEXT NOT NULL DEFAULT '',
+      outcome TEXT NOT NULL DEFAULT 'observed',
+      score NUMERIC NOT NULL DEFAULT 0,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.coach_memory
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS memory_type TEXT NOT NULL DEFAULT 'general',
+      ADD COLUMN IF NOT EXISTS objection_tag TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS path_key TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS prompt TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS response TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'bridge',
+      ADD COLUMN IF NOT EXISTS source_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'observed',
+      ADD COLUMN IF NOT EXISTS score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.skills (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      agent_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'self-learned',
+      level TEXT NOT NULL DEFAULT 'candidate',
+      status TEXT NOT NULL DEFAULT 'active',
+      confidence NUMERIC NOT NULL DEFAULT 0,
+      evidence TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, agent_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS public.skill_usage (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      skill_id TEXT REFERENCES public.skills(id) ON DELETE SET NULL,
+      skill_name TEXT NOT NULL DEFAULT '',
+      agent_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT '',
+      outcome TEXT NOT NULL DEFAULT 'unknown',
+      success BOOLEAN,
+      confidence NUMERIC,
+      profit_margin NUMERIC,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.ava_learning_sessions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      minutes_budget INTEGER NOT NULL DEFAULT 60,
+      candidates_processed INTEGER NOT NULL DEFAULT 0,
+      lessons_extracted INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'complete',
+      summary TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.ava_active_memories (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      memory_type TEXT NOT NULL DEFAULT 'ava-call-lesson',
+      objection_tag TEXT NOT NULL DEFAULT '',
+      prompt TEXT NOT NULL DEFAULT '',
+      response TEXT NOT NULL DEFAULT '',
+      summary TEXT NOT NULL DEFAULT '',
+      score NUMERIC NOT NULL DEFAULT 0,
+      outcome TEXT NOT NULL DEFAULT 'observed',
+      source TEXT NOT NULL DEFAULT 'ava-self-learning',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.inbound_call_routes (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      call_control_id TEXT NOT NULL DEFAULT '',
+      from_phone TEXT NOT NULL DEFAULT '',
+      to_phone TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      route TEXT NOT NULL DEFAULT 'ava_qualify',
+      reason TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'received',
+      prompt_context TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS coach_memory_workspace_idx
+      ON public.coach_memory (workspace_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS coach_memory_objection_idx
+      ON public.coach_memory (workspace_id, objection_tag, score DESC);
+
+    CREATE INDEX IF NOT EXISTS skills_workspace_agent_idx
+      ON public.skills (workspace_id, agent_id, status);
+
+    CREATE INDEX IF NOT EXISTS skills_workspace_confidence_idx
+      ON public.skills (workspace_id, confidence DESC);
+
+    CREATE INDEX IF NOT EXISTS skill_usage_workspace_agent_idx
+      ON public.skill_usage (workspace_id, agent_id, used_at DESC);
+
+    CREATE INDEX IF NOT EXISTS skill_usage_skill_idx
+      ON public.skill_usage (skill_id, used_at DESC);
+
+    CREATE INDEX IF NOT EXISTS skill_usage_success_idx
+      ON public.skill_usage (workspace_id, success, used_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ava_learning_sessions_workspace_idx
+      ON public.ava_learning_sessions (workspace_id, processed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ava_active_memories_lookup_idx
+      ON public.ava_active_memories (workspace_id, objection_tag, score DESC);
+
+    CREATE INDEX IF NOT EXISTS inbound_call_routes_workspace_idx
+      ON public.inbound_call_routes (workspace_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS inbound_call_routes_call_control_idx
+      ON public.inbound_call_routes (workspace_id, call_control_id)
+      WHERE call_control_id <> '';
+
+    DROP TRIGGER IF EXISTS coach_memory_set_updated_at ON public.coach_memory;
+    CREATE TRIGGER coach_memory_set_updated_at
+      BEFORE UPDATE ON public.coach_memory
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS skills_set_updated_at ON public.skills;
+    CREATE TRIGGER skills_set_updated_at
+      BEFORE UPDATE ON public.skills
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS ava_learning_sessions_set_updated_at ON public.ava_learning_sessions;
+    CREATE TRIGGER ava_learning_sessions_set_updated_at
+      BEFORE UPDATE ON public.ava_learning_sessions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS ava_active_memories_set_updated_at ON public.ava_active_memories;
+    CREATE TRIGGER ava_active_memories_set_updated_at
+      BEFORE UPDATE ON public.ava_active_memories
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS inbound_call_routes_set_updated_at ON public.inbound_call_routes;
+    CREATE TRIGGER inbound_call_routes_set_updated_at
+      BEFORE UPDATE ON public.inbound_call_routes
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
   `);
 }
 

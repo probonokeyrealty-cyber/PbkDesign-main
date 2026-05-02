@@ -5,6 +5,7 @@
 #   - @sparticuz/chromium  (Chrome binary for serverless/container PDF rendering)
 #   - puppeteer-core       (Puppeteer that talks to an external Chrome binary)
 #   - pg                   (Postgres client for durable state when PBK_DATABASE_URL is set)
+#   - @deepgram/sdk        (Deepgram transcription/sentiment bridge helpers)
 #
 # Alpine + glibc-built chromium do not mix; use the Debian slim base so the
 # Sparticuz Chromium binary can find its libc and X11 deps.
@@ -56,10 +57,12 @@ WORKDIR /app
 # Pinned versions for reproducibility.
 RUN npm install --no-save --no-audit --no-fund --loglevel=error \
       @sparticuz/chromium@147.0.1 \
+      @deepgram/sdk@5.1.0 \
       puppeteer-core@24.41.0 \
       pg@8.13.1
 
 # Copy the bridge source last so dependency installation caches across rebuilds.
+COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 
 # Default to the persistent state path for file-mode fallback. When

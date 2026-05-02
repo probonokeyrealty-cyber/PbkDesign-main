@@ -2439,6 +2439,20 @@ async function ensurePgSchema() {
       evaluated_at TIMESTAMPTZ
     );
 
+    CREATE TABLE IF NOT EXISTS public.campaign_worker_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      status TEXT NOT NULL,
+      result TEXT NOT NULL,
+      dry_run BOOLEAN NOT NULL DEFAULT TRUE,
+      allow_provider_writes BOOLEAN NOT NULL DEFAULT FALSE,
+      processed_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      processed JSONB NOT NULL DEFAULT '[]'::JSONB,
+      skipped JSONB NOT NULL DEFAULT '[]'::JSONB,
+      actor TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS coach_memory_workspace_idx
       ON public.coach_memory (workspace_id, created_at DESC);
 
@@ -2478,6 +2492,9 @@ async function ensurePgSchema() {
 
     CREATE INDEX IF NOT EXISTS rex_decisions_created_idx
       ON public.rex_decisions (created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS campaign_worker_runs_created_at_idx
+      ON public.campaign_worker_runs (created_at DESC);
 
     DROP TRIGGER IF EXISTS coach_memory_set_updated_at ON public.coach_memory;
     CREATE TRIGGER coach_memory_set_updated_at

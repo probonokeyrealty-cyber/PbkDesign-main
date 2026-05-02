@@ -11579,30 +11579,57 @@ function buildFallbackFleetOutcomes() {
 
 async function buildFleetOutcomes() {
   const result = await queryPgRows(`
+    WITH task_rollups AS (
+      SELECT
+        COALESCE(
+          NULLIF(payload->>'agentId', ''),
+          NULLIF(payload->>'sourceAgentId', ''),
+          NULLIF(payload->>'agentName', ''),
+          NULLIF(requested_by, ''),
+          'fleet'
+        ) AS agent_id,
+        COUNT(*)::int AS decisions,
+        COUNT(*) FILTER (WHERE status IN ('approved', 'applied', 'executed', 'complete', 'success', 'saved'))::int AS successes,
+        COUNT(*) FILTER (WHERE status IN ('pending', 'queued', 'queued_for_approval', 'proposed'))::int AS pending,
+        COUNT(*) FILTER (WHERE status IN ('rejected', 'failed', 'error'))::int AS failures,
+        MAX(created_at) AS last_action_at
+      FROM public.agent_tasks
+      WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+        AND (
+          action ILIKE '%agent%'
+          OR action ILIKE '%skill%'
+          OR action ILIKE '%deploy%'
+          OR action ILIKE '%pause%'
+          OR provider ILIKE '%rex%'
+        )
+      GROUP BY agent_id
+    ),
+    skill_rollups AS (
+      SELECT
+        COALESCE(NULLIF(agent_id, ''), NULLIF(agent_name, ''), 'fleet') AS agent_id,
+        COUNT(*) FILTER (WHERE status NOT IN ('retired', 'disabled'))::int AS skills_active,
+        MAX(updated_at) AS last_skill_at
+      FROM public.skills
+      WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+      GROUP BY COALESCE(NULLIF(agent_id, ''), NULLIF(agent_name, ''), 'fleet')
+    ),
+    agent_ids AS (
+      SELECT agent_id FROM task_rollups
+      UNION
+      SELECT agent_id FROM skill_rollups
+    )
     SELECT
-      COALESCE(
-        NULLIF(payload->>'agentId', ''),
-        NULLIF(payload->>'sourceAgentId', ''),
-        NULLIF(payload->>'agentName', ''),
-        NULLIF(requested_by, ''),
-        'fleet'
-      ) AS agent_id,
-      COUNT(*)::int AS decisions,
-      COUNT(*) FILTER (WHERE status IN ('approved', 'applied', 'executed', 'complete', 'success', 'saved'))::int AS successes,
-      COUNT(*) FILTER (WHERE status IN ('pending', 'queued', 'queued_for_approval', 'proposed'))::int AS pending,
-      COUNT(*) FILTER (WHERE status IN ('rejected', 'failed', 'error'))::int AS failures,
-      MAX(created_at) AS last_action_at
-    FROM public.agent_tasks
-    WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
-      AND (
-        action ILIKE '%agent%'
-        OR action ILIKE '%skill%'
-        OR action ILIKE '%deploy%'
-        OR action ILIKE '%pause%'
-        OR provider ILIKE '%rex%'
-      )
-    GROUP BY agent_id
-    ORDER BY last_action_at DESC
+      agent_ids.agent_id,
+      COALESCE(task_rollups.decisions, 0)::int AS decisions,
+      COALESCE(task_rollups.successes, 0)::int AS successes,
+      COALESCE(task_rollups.pending, 0)::int AS pending,
+      COALESCE(task_rollups.failures, 0)::int AS failures,
+      COALESCE(skill_rollups.skills_active, 0)::int AS skills_active,
+      COALESCE(task_rollups.last_action_at, skill_rollups.last_skill_at) AS last_action_at
+    FROM agent_ids
+    LEFT JOIN task_rollups ON task_rollups.agent_id = agent_ids.agent_id
+    LEFT JOIN skill_rollups ON skill_rollups.agent_id = agent_ids.agent_id
+    ORDER BY last_action_at DESC NULLS LAST, agent_ids.agent_id ASC
     LIMIT 25
   `);
   const fallback = buildFallbackFleetOutcomes();
@@ -11619,7 +11646,7 @@ async function buildFleetOutcomes() {
       successes: Number(row.successes || 0),
       failures: Number(row.failures || 0),
       pending: Number(row.pending || 0),
-      skillsActive,
+      skillsActive: Number(row.skills_active || 0) || skillsActive,
     };
     return {
       agentId,

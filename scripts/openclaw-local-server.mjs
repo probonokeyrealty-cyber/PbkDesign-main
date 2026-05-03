@@ -16159,29 +16159,39 @@ const toolHandlers = {
     let delivery = null;
     let provider = 'Resend';
     let endpoint = '';
-    const instantlyEndpoint = String(process.env.PBK_INSTANTLY_EMAIL_SEND_ENDPOINT || '/emails').trim();
+    const instantlyEndpoint = String(process.env.PBK_INSTANTLY_EMAIL_SEND_ENDPOINT || '/emails/test').trim();
     const fromEmail = String(params.fromEmail || params.from_email || params.instantlySender || params.senderEmail || '').trim();
     const senderAddress = getSenderAddress('cold', fromEmail);
 
     if (INSTANTLY_API_KEY) {
       provider = 'Instantly';
       endpoint = instantlyEndpoint;
-      delivery = await fireInstantlyRequest(instantlyEndpoint, {
-        campaignId: params.campaignId || '',
-        leadId: context.leadId,
-        templateId,
-        from: senderAddress,
-        from_email: senderAddress,
-        sender_email: senderAddress,
-        to: email,
-        subject: content.subject,
-        html: content.html,
-        text: content.text,
-        metadata: {
-          address: context.address,
-          ownerName: context.leadName,
-        },
-      });
+      const instantlyPayload = instantlyEndpoint.toLowerCase().includes('/emails/test')
+        ? {
+            eaccount: senderAddress,
+            to_address_email_list: email,
+            subject: content.subject,
+            body: {
+              html: content.html,
+            },
+          }
+        : {
+            campaignId: params.campaignId || '',
+            leadId: context.leadId,
+            templateId,
+            from: senderAddress,
+            from_email: senderAddress,
+            sender_email: senderAddress,
+            to: email,
+            subject: content.subject,
+            html: content.html,
+            text: content.text,
+            metadata: {
+              address: context.address,
+              ownerName: context.leadName,
+            },
+          };
+      delivery = await fireInstantlyRequest(instantlyEndpoint, instantlyPayload);
     }
 
     if (!delivery || (!delivery.ok && params.allowResendFallback !== false)) {

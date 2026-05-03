@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
-import { createHmac, createPrivateKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -151,6 +151,7 @@ const PUBLIC_BASE_URL = String(process.env.PBK_PUBLIC_BASE_URL || process.env.PB
   .trim()
   .replace(/\/+$/g, '');
 const TELNYX_API_KEY = String(process.env.PBK_TELNYX_API_KEY || process.env.TELNYX_API_KEY || '').trim();
+const TELNYX_PUBLIC_KEY = String(process.env.PBK_TELNYX_PUBLIC_KEY || process.env.TELNYX_PUBLIC_KEY || '').trim();
 const TELNYX_CONNECTION_ID = String(process.env.PBK_TELNYX_CONNECTION_ID || '').trim();
 const TELNYX_FROM_NUMBER = String(process.env.PBK_TELNYX_FROM_NUMBER || '').trim();
 const TELNYX_MESSAGING_PROFILE_ID = String(process.env.PBK_TELNYX_MESSAGING_PROFILE_ID || '').trim();
@@ -315,6 +316,10 @@ const PUBLIC_PATHS = new Set([
   '/webhooks/telnyx/inbound',
   '/api/webhooks/telnyx/recording',
   '/webhooks/telnyx/recording',
+  // Slack cannot attach the PBK bridge bearer token to Block Kit button
+  // callbacks. This route validates Slack's signing secret instead.
+  '/api/slack/interactions',
+  '/api/webhooks/slack/interactive',
   '/api/webhooks/docusign',
 ]);
 
@@ -705,6 +710,7 @@ function getTelnyxProviderMeta() {
   const effectiveFromNumber = getEffectiveTelnyxFromNumber();
   const fromNumberConfigured = Boolean(effectiveFromNumber);
   const webhookConfigured = Boolean(TELNYX_WEBHOOK_URL);
+  const publicKeyConfigured = Boolean(TELNYX_PUBLIC_KEY);
   const messagingReady = Boolean(TELNYX_API_KEY && fromNumberConfigured);
   const voiceReady = Boolean(messagingReady && TELNYX_CONNECTION_ID);
 
@@ -730,6 +736,8 @@ function getTelnyxProviderMeta() {
     connectionIdConfigured: Boolean(TELNYX_CONNECTION_ID),
     messagingProfileConfigured: Boolean(TELNYX_MESSAGING_PROFILE_ID),
     webhookConfigured,
+    publicKeyConfigured,
+    webhookSignatureReady: publicKeyConfigured,
     publicBaseUrlConfigured: Boolean(PUBLIC_BASE_URL),
     messagingReady,
     voiceReady,
@@ -737,9 +745,14 @@ function getTelnyxProviderMeta() {
     messagingMissing,
     voiceMissing,
     warnings:
-      messagingReady && !webhookConfigured
-        ? ['PBK_TELNYX_WEBHOOK_URL or PBK_PUBLIC_BASE_URL is not set; Telnyx state updates rely on provider-side defaults.']
-        : [],
+      [
+        ...(messagingReady && !webhookConfigured
+          ? ['PBK_TELNYX_WEBHOOK_URL or PBK_PUBLIC_BASE_URL is not set; Telnyx state updates rely on provider-side defaults.']
+          : []),
+        ...(IS_HOSTED && !publicKeyConfigured
+          ? ['PBK_TELNYX_PUBLIC_KEY is not set; hosted Telnyx webhooks will be rejected.']
+          : []),
+      ],
   };
 }
 
@@ -18072,6 +18085,83 @@ async function readBody(request) {
   }
 }
 
+function createTelnyxPublicKeyObject(publicKeyValue = TELNYX_PUBLIC_KEY) {
+  const value = String(publicKeyValue || '').trim();
+  if (!value) return null;
+  if (/-----BEGIN PUBLIC KEY-----/.test(value)) {
+    return createPublicKey(value);
+  }
+  let decoded = null;
+  const compact = value.replace(/\s+/g, '');
+  if (/^[a-f0-9]{64}$/i.test(compact)) {
+    decoded = Buffer.from(compact, 'hex');
+  } else {
+    const normalizedBase64 = compact.replace(/-/g, '+').replace(/_/g, '/');
+    decoded = Buffer.from(normalizedBase64, 'base64');
+  }
+  if (decoded.length === 32) {
+    // DER SubjectPublicKeyInfo prefix for Ed25519 raw public keys.
+    decoded = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), decoded]);
+  }
+  return createPublicKey({ key: decoded, format: 'der', type: 'spki' });
+}
+
+function verifyTelnyxRequestSignature(headers = {}, rawBody = '') {
+  if (!TELNYX_PUBLIC_KEY) {
+    return {
+      ok: !IS_HOSTED,
+      skipped: true,
+      error: IS_HOSTED ? 'PBK_TELNYX_PUBLIC_KEY is required for hosted Telnyx webhooks.' : '',
+    };
+  }
+  const timestamp = String(headers['telnyx-timestamp'] || '').trim();
+  const signature = String(headers['telnyx-signature-ed25519'] || '').trim();
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!timestamp || !signature) {
+    return { ok: false, error: 'Telnyx signature headers are missing.' };
+  }
+  if (Math.abs(nowSeconds - Number(timestamp)) > 60 * 5) {
+    return { ok: false, error: 'Telnyx signature timestamp is too old.' };
+  }
+  try {
+    const publicKey = createTelnyxPublicKeyObject();
+    const signedPayload = Buffer.from(`${timestamp}|${rawBody}`, 'utf8');
+    const signatureBuffer = Buffer.from(signature.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const ok = verifySignature(null, signedPayload, publicKey, signatureBuffer);
+    return { ok, error: ok ? '' : 'Telnyx signature verification failed.' };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Telnyx signature verification failed.',
+    };
+  }
+}
+
+async function readTelnyxWebhookRequest(request) {
+  const buffer = await readRawBodyBuffer(request);
+  const raw = buffer.toString('utf8');
+  const signature = verifyTelnyxRequestSignature(request.headers || {}, raw);
+  if (!signature.ok) {
+    return { ok: false, status: 401, signature, payload: null };
+  }
+  try {
+    return {
+      ok: true,
+      status: 200,
+      signature,
+      payload: raw ? JSON.parse(raw) : {},
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 400,
+      signature,
+      payload: null,
+      error: error instanceof Error ? error.message : 'Telnyx payload parse failed.',
+    };
+  }
+}
+
 function verifySlackRequestSignature(headers = {}, rawBody = '') {
   if (!SLACK_SIGNING_SECRET) {
     return {
@@ -18855,7 +18945,20 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/inbound/route', '/webhooks/telnyx/inbound', '/api/webhooks/telnyx/inbound'])) {
-      const body = await readBody(request);
+      const telnyxWebhookPath = pathname.includes('/webhooks/telnyx/');
+      const telnyxRequest = telnyxWebhookPath ? await readTelnyxWebhookRequest(request) : null;
+      if (telnyxRequest && !telnyxRequest.ok) {
+        json(response, telnyxRequest.status || 401, {
+          ok: false,
+          error: telnyxRequest.error || telnyxRequest.signature?.error || 'Telnyx webhook rejected.',
+          signature: {
+            verified: false,
+            skipped: Boolean(telnyxRequest.signature?.skipped),
+          },
+        });
+        return;
+      }
+      const body = telnyxRequest ? telnyxRequest.payload : await readBody(request);
       const result = await handleAvaInboundRoute(body, {
         actor: pathname.includes('webhooks') ? 'Telnyx inbound webhook' : body.actor || 'PBK Command Center',
         forceAfterHours: body.forceAfterHours,
@@ -20888,7 +20991,19 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && pathname === '/api/webhooks/telnyx') {
-      const body = await readBody(request);
+      const telnyxRequest = await readTelnyxWebhookRequest(request);
+      if (!telnyxRequest.ok) {
+        json(response, telnyxRequest.status || 401, {
+          ok: false,
+          error: telnyxRequest.error || telnyxRequest.signature?.error || 'Telnyx webhook rejected.',
+          signature: {
+            verified: false,
+            skipped: Boolean(telnyxRequest.signature?.skipped),
+          },
+        });
+        return;
+      }
+      const body = telnyxRequest.payload || {};
       if (isTelnyxInboundCallWebhook(body)) {
         const result = await handleAvaInboundRoute(body, { actor: 'Telnyx inbound webhook' });
         json(response, result.result === 'provider_missing' ? 202 : 200, {
@@ -20916,7 +21031,19 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/webhooks/telnyx/recording', '/api/webhooks/telnyx/recording'])) {
-      const body = await readBody(request);
+      const telnyxRequest = await readTelnyxWebhookRequest(request);
+      if (!telnyxRequest.ok) {
+        json(response, telnyxRequest.status || 401, {
+          ok: false,
+          error: telnyxRequest.error || telnyxRequest.signature?.error || 'Telnyx webhook rejected.',
+          signature: {
+            verified: false,
+            skipped: Boolean(telnyxRequest.signature?.skipped),
+          },
+        });
+        return;
+      }
+      const body = telnyxRequest.payload || {};
       const result = await captureRecordingFromPayload(body);
       json(response, result.ok ? 200 : 501, {
         ok: Boolean(result.ok),

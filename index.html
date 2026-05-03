@@ -157,6 +157,13 @@
   .mobile-nav-item svg { width: 20px; height: 20px; }
   @media (max-width: 720px) {
     html, body { max-width: 100%; overflow-x: hidden; }
+    input,
+    textarea,
+    select,
+    .rc-composer textarea {
+      font-size: 16px !important;
+      -webkit-text-size-adjust: 100%;
+    }
     .mobile-nav { display: flex; }
     .rail { display: none !important; }
     .app { grid-template-columns: 1fr !important; width: 100%; overflow-x: hidden; }
@@ -167,6 +174,12 @@
     .topbar-right { flex: 0 0 auto; gap: var(--s-2); margin-left: 0; min-width: 0; }
     .topbar-right .mode-picker { display: none; }
     .main { width: 100%; min-width: 0; padding-bottom: 80px; overflow-x: hidden; }
+    .btn,
+    .chip-btn,
+    .filter-dd {
+      min-width: 0;
+      max-width: 100%;
+    }
     .hero {
       width: 100%;
       max-width: 100vw;
@@ -3508,6 +3521,45 @@
       .agent-side { border-left: none; border-top: 1px solid var(--border-dim); }
       .agent-stats { grid-template-columns: repeat(2, 1fr); }
     }
+    @media (max-width: 720px) {
+      .agent-layout { min-height: auto; }
+      .agent-main { padding: var(--s-4) var(--s-3) calc(92px + env(safe-area-inset-bottom)); gap: var(--s-4); }
+      .agent-header-row { display: grid; grid-template-columns: 1fr; gap: var(--s-3); }
+      .agent-brand { align-items: flex-start; gap: var(--s-3); min-width: 0; }
+      .agent-avatar { width: 56px; height: 56px; border-radius: 16px; font-size: 30px; }
+      .agent-brand h2 { font-size: clamp(25px, 8vw, 31px); line-height: 1.06; overflow-wrap: anywhere; }
+      .agent-brand .meta { line-height: 1.55; overflow-wrap: anywhere; }
+      .agent-header-row > div[style*="display: flex"] {
+        width: 100%;
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px !important;
+      }
+      .agent-header-row .chip-btn { min-height: 44px; justify-content: center; white-space: normal; text-align: center; }
+      .agent-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .agent-stat { padding: var(--s-3); }
+      .agent-stat .s-label { font-size: 9px; line-height: 1.35; }
+      .agent-stat .s-val { font-size: 20px; }
+      .think-panel { min-height: 320px; }
+      .think-panel-head { align-items: flex-start; gap: var(--s-2); flex-wrap: wrap; }
+      .think-stream { max-height: 48dvh; font-size: 11px; line-height: 1.65; }
+      .think-line { display: grid; grid-template-columns: 1fr; gap: 2px; }
+      .think-ts { width: auto; padding-top: 0; }
+      .quick-commands { display: grid; grid-template-columns: 1fr; }
+      .qcmd { display: flex; align-items: center; min-height: 40px; white-space: normal; }
+      .command-bar { grid-template-columns: 1fr; align-items: stretch; }
+      .command-bar textarea { width: 100%; min-height: 96px; font-size: 16px; }
+      .command-bar .btn { width: 100%; min-height: 44px; justify-content: center; }
+      .agent-side { max-width: 100%; overflow: visible; }
+      .side-sec { padding: var(--s-4) var(--s-3); }
+      .side-sec .label { align-items: flex-start; gap: var(--s-2); flex-wrap: wrap; }
+      .tool-item { gap: var(--s-2); overflow-wrap: anywhere; }
+      .tool-item .tool-name { min-width: 0; overflow-wrap: anywhere; }
+    }
+    @media (max-width: 380px) {
+      .agent-stats { grid-template-columns: 1fr; }
+      .agent-header-row > div[style*="display: flex"] { grid-template-columns: 1fr; }
+    }
   </style>
 
   <div class="agent-layout">
@@ -3733,17 +3785,41 @@
     @media (max-width: 1180px) { .fleet-shell { grid-template-columns: 1fr; } .fleet-detail { position: static; } .fleet-pane { max-height: none; } }
     @media (max-width: 720px) {
       .fleet-page { padding: var(--s-4) var(--s-3) calc(84px + env(safe-area-inset-bottom)); }
+      .fleet-head { flex-direction: column; align-items: stretch; }
       .fleet-head .page-head { width: 100%; min-width: 0; }
       .fleet-actions { width: 100%; display: grid; grid-template-columns: 1fr; }
       .fleet-actions .btn { width: 100%; min-height: 44px; justify-content: center; }
+      .fleet-shell { gap: var(--s-4); }
       .fleet-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .fleet-grid { grid-template-columns: 1fr; }
+      .fleet-card { padding: var(--s-3); }
+      .fleet-card-head { align-items: flex-start; flex-wrap: wrap; }
+      .fleet-title { flex-basis: calc(100% - 66px); }
+      .fleet-env { margin-left: 66px; }
       .fleet-card-actions { grid-template-columns: 1fr; }
       .fleet-card-actions .chip-btn { min-height: 44px; }
+      .fleet-detail { width: 100%; overflow: hidden; }
+      .fleet-detail-head { align-items: flex-start; padding: var(--s-4); }
+      .fleet-detail-head .fleet-avatar { width: 52px; height: 52px; border-radius: 16px; font-size: 28px; }
+      .fleet-detail-title h3 { font-size: 24px; overflow-wrap: anywhere; }
+      .fleet-badges { padding: 0 var(--s-4) var(--s-3); }
+      .fleet-tabs { scroll-snap-type: x proximity; }
+      .fleet-tab { flex: 0 0 auto; min-height: 44px; scroll-snap-align: start; }
+      .fleet-pane { padding: var(--s-4); max-height: none; }
       .fleet-line { grid-template-columns: 1fr; gap: 3px; }
       .fleet-form-grid { grid-template-columns: 1fr; }
       .fleet-modal-backdrop { align-items: stretch; padding: 0; }
       .fleet-modal { width: 100%; max-height: 100dvh; border-radius: 0; border-left: 0; border-right: 0; padding-bottom: env(safe-area-inset-bottom); }
+      .fleet-modal-head { flex-direction: column; align-items: stretch; padding: var(--s-4); }
+      .fleet-modal-head .btn,
+      .fleet-modal-foot .btn { width: 100%; min-height: 44px; justify-content: center; }
+      .fleet-modal-body { padding: var(--s-4); }
+      .fleet-modal-foot { padding: var(--s-4); display: grid; grid-template-columns: 1fr; }
+    }
+    @media (max-width: 380px) {
+      .fleet-stats { grid-template-columns: 1fr; }
+      .fleet-card-head { display: grid; grid-template-columns: 52px minmax(0, 1fr); }
+      .fleet-env { grid-column: 1 / -1; margin-left: 0; justify-self: start; }
     }
   </style>
 

@@ -9056,15 +9056,21 @@ async function syncTransitionToStreak(payload = {}) {
 
 function getSlackProviderMeta() {
   const missing = [];
+  const interactiveMissing = [];
   if (!SLACK_WEBHOOK_URL && !SLACK_BOT_TOKEN) missing.push('PBK_SLACK_WEBHOOK_URL or PBK_SLACK_BOT_TOKEN');
   if (SLACK_BOT_TOKEN && !SLACK_APPROVAL_CHANNEL_ID) missing.push('PBK_SLACK_APPROVAL_CHANNEL_ID');
+  if (!SLACK_BOT_TOKEN) interactiveMissing.push('PBK_SLACK_BOT_TOKEN');
+  if (!SLACK_APPROVAL_CHANNEL_ID) interactiveMissing.push('PBK_SLACK_APPROVAL_CHANNEL_ID');
+  if (!SLACK_SIGNING_SECRET) interactiveMissing.push('PBK_SLACK_SIGNING_SECRET');
+  if (SLACK_BOT_TOKEN && !SLACK_SIGNING_SECRET) missing.push('PBK_SLACK_SIGNING_SECRET');
   return {
     configured: Boolean(SLACK_WEBHOOK_URL || SLACK_BOT_TOKEN),
     ready: missing.length === 0,
     webhookReady: Boolean(SLACK_WEBHOOK_URL),
-    interactiveReady: Boolean(SLACK_BOT_TOKEN && SLACK_APPROVAL_CHANNEL_ID),
+    interactiveReady: interactiveMissing.length === 0,
     signingSecretConfigured: Boolean(SLACK_SIGNING_SECRET),
     approvalChannelId: SLACK_APPROVAL_CHANNEL_ID || '',
+    interactiveMissing,
     missing,
   };
 }

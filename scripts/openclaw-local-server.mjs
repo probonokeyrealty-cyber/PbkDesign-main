@@ -214,7 +214,7 @@ const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || proces
 const INSTANTLY_API_KEY = String(process.env.PBK_INSTANTLY_API_KEY || process.env.INSTANTLY_API_KEY || '').trim();
 const INSTANTLY_BASE_URL = String(process.env.PBK_INSTANTLY_BASE_URL || 'https://api.instantly.ai/api/v2').trim().replace(/\/+$/g, '');
 const INSTANTLY_CAMPAIGN_CREATE_ENDPOINT = String(process.env.PBK_INSTANTLY_CAMPAIGN_CREATE_ENDPOINT || '/campaigns').trim();
-const INSTANTLY_SENDERS_ENDPOINT = String(process.env.PBK_INSTANTLY_SENDERS_ENDPOINT || '/inboxes').trim();
+const INSTANTLY_SENDERS_ENDPOINT = String(process.env.PBK_INSTANTLY_SENDERS_ENDPOINT || '/accounts').trim();
 const INSTANTLY_DEFAULT_FROM_EMAIL = String(
   process.env.PBK_INSTANTLY_DEFAULT_FROM_EMAIL
     || process.env.INSTANTLY_DEFAULT_FROM_EMAIL
@@ -19585,6 +19585,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/send-seller-docs') {
       const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('sendSellerDocs', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const result = await toolHandlers.sendSellerDocs(body);
       json(response, result.ok === false ? 400 : 200, {
         ...result,
@@ -19595,6 +19603,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/cold-email/send') {
       const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('sendColdEmail', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const result = await toolHandlers.sendColdEmail(body);
       json(response, result.ok === false ? 400 : 200, {
         ...result,
@@ -20193,6 +20209,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/calls') {
       const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('telnyx_call', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const result = await toolHandlers.telnyx_call(body);
       json(response, result.ok === false ? 409 : 200, {
         ...result,
@@ -20227,6 +20251,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/messages') {
       const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('telnyx_sms', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const result = await toolHandlers.telnyx_sms(body);
       json(response, result.ok === false ? 409 : 200, {
         ...result,
@@ -20579,6 +20611,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/contracts') {
       const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('sendDocuSign', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const result = await toolHandlers.sendDocuSign(body);
       json(response, 200, {
         ...result,

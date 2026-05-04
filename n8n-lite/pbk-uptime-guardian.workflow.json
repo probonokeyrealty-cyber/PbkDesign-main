@@ -43,7 +43,7 @@
       "typeVersion": 4.2,
       "position": [
         430,
-        180
+        260
       ],
       "continueOnFail": true
     },
@@ -60,21 +60,21 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        430,
-        340
+        690,
+        260
       ],
       "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "const bridge = $items('Check Bridge Health', 0, 0)[0]?.json || {};\nconst netlify = $items('Check Netlify Frontend', 0, 0)[0]?.json || {};\nconst bridgeOk = !bridge.error && (bridge.ok === true || bridge.status === 'ok' || bridge.revision || bridge.providers);\nconst netlifyOk = !netlify.error;\nreturn [{ json: { ok: bridgeOk && netlifyOk, bridgeOk, netlifyOk, bridgeRevision: bridge.revision || null, checkedAt: new Date().toISOString(), bridge, netlify } }];"
+        "jsCode": "const readNode = (name) => {\n  try {\n    return $items(name, 0, 0)[0]?.json || {};\n  } catch (error) {\n    return { error: error.message || String(error), skipped: true };\n  }\n};\nconst bridge = readNode('Check Bridge Health');\nconst netlify = readNode('Check Netlify Frontend');\nconst bridgeOk = !bridge.error && (bridge.ok === true || bridge.status === 'ok' || bridge.revision || bridge.providers);\nconst netlifyOk = !netlify.error && !netlify.skipped;\nreturn [{ json: { ok: Boolean(bridgeOk && netlifyOk), bridgeOk: Boolean(bridgeOk), netlifyOk: Boolean(netlifyOk), bridgeRevision: bridge.revision || null, checkedAt: new Date().toISOString(), bridge, netlify } }];"
       },
       "id": "summarize-health",
       "name": "Summarize Health",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        690,
+        950,
         260
       ]
     },
@@ -84,7 +84,8 @@
           "boolean": [
             {
               "value1": "={{$json.ok}}",
-              "operation": "isTrue"
+              "operation": "equal",
+              "value2": true
             }
           ]
         }
@@ -94,7 +95,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        930,
+        1190,
         260
       ]
     },
@@ -124,7 +125,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1180,
+        1440,
         380
       ],
       "continueOnFail": true,
@@ -147,7 +148,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1180,
+        1440,
         180
       ],
       "continueOnFail": true
@@ -161,11 +162,6 @@
             "node": "Check Bridge Health",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Check Netlify Frontend",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -174,7 +170,7 @@
       "main": [
         [
           {
-            "node": "Summarize Health",
+            "node": "Check Netlify Frontend",
             "type": "main",
             "index": 0
           }

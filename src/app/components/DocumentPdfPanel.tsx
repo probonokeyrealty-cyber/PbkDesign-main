@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Download, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { DealData, PBKPath } from '../types';
 import { PBKBranding, buildMasterPackageParams, getPathLabel } from '../utils/pbk';
+import { buildRuntimeHeaders, buildRuntimeUrl } from '../utils/runtimeBridge';
 
 interface DocumentPdfPanelProps {
   deal: DealData;
   selectedPath: PBKPath;
   branding: PBKBranding;
+  onPdfAction?: (action: 'refresh' | 'download' | 'open') => void;
 }
 
 type SyncStatus = 'queued' | 'syncing' | 'ready' | 'error';
@@ -20,6 +22,7 @@ export function DocumentPdfPanel({
   deal,
   selectedPath,
   branding,
+  onPdfAction,
 }: DocumentPdfPanelProps) {
   const [status, setStatus] = useState<SyncStatus>('queued');
   const [pdfUrl, setPdfUrl] = useState('');
@@ -35,7 +38,7 @@ export function DocumentPdfPanel({
     }
   }, []);
 
-  const generatePdf = useCallback(async () => {
+  const generatePdf = useCallback(async (source: 'auto' | 'refresh' = 'auto') => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -44,9 +47,9 @@ export function DocumentPdfPanel({
     setError('');
 
     try {
-      const response = await fetch('/api/documents/pdf', {
+      const response = await fetch(buildRuntimeUrl('/api/documents/pdf'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildRuntimeHeaders({ json: true, accept: 'application/pdf' }),
         body: JSON.stringify({
           documentType: 'masterPackage',
           documentTitle: 'PBK Master Deal Package',
@@ -83,12 +86,15 @@ export function DocumentPdfPanel({
       setPdfUrl(nextUrl);
       setUpdatedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
       setStatus('ready');
+      if (source === 'refresh') {
+        onPdfAction?.('refresh');
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       setStatus('error');
       setError(err instanceof Error ? err.message : 'PDF generation failed');
     }
-  }, [branding, deal, revokeCurrentUrl, selectedPath]);
+  }, [branding, deal, onPdfAction, revokeCurrentUrl, selectedPath]);
 
   useEffect(() => {
     setStatus('queued');
@@ -107,25 +113,28 @@ export function DocumentPdfPanel({
   const downloadName = getDownloadName(deal.address);
   const statusText =
     status === 'ready'
-      ? `Latest PDF synced${updatedAt ? ` at ${updatedAt}` : ''}`
+      ? `PDF ready${updatedAt ? ` at ${updatedAt}` : ''}`
     : status === 'syncing'
-        ? 'Regenerating the real PBK master package PDF...'
+        ? 'Generating PDF...'
         : status === 'error'
-          ? 'PDF sync needs attention'
-          : 'Waiting for your edits to settle...';
+          ? 'PDF service offline'
+          : 'Generating PDF...';
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="mb-2 text-[9px] font-semibold uppercase tracking-[0.18em] text-emerald-500">
-            Documents PDF Sync
+            PDF Sync
           </div>
           <div className="text-[16px] font-semibold tracking-tight text-gray-900 dark:text-gray-100">
-            Live Master Package PDF
+            Master PDF Preview
           </div>
           <div className="mt-1 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-            Auto-regenerates the same PBK master package output used by the premium packet, without changing Preview or Print.
+            Auto-regenerates the same PBK master package output used by the selected-path packet, without changing Preview or Print.
+          </div>
+          <div className="mt-2 inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+            Path locked: {getPathLabel(selectedPath)}
           </div>
         </div>
         <div
@@ -157,7 +166,7 @@ export function DocumentPdfPanel({
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => void generatePdf()}
+          onClick={() => void generatePdf('refresh')}
           className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-semibold text-gray-700 transition-all hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-200 dark:hover:bg-slate-800"
         >
           <RefreshCw size={14} />
@@ -166,6 +175,13 @@ export function DocumentPdfPanel({
         <a
           href={pdfUrl || undefined}
           download={downloadName}
+          onClick={(event) => {
+            if (!pdfUrl) {
+              event.preventDefault();
+              return;
+            }
+            onPdfAction?.('download');
+          }}
           className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-semibold transition-all ${
             pdfUrl
               ? 'bg-emerald-500 text-white hover:bg-emerald-600'
@@ -179,6 +195,13 @@ export function DocumentPdfPanel({
           href={pdfUrl || undefined}
           target="_blank"
           rel="noreferrer"
+          onClick={(event) => {
+            if (!pdfUrl) {
+              event.preventDefault();
+              return;
+            }
+            onPdfAction?.('open');
+          }}
           className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-semibold transition-all ${
             pdfUrl
               ? 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300'

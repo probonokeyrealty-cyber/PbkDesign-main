@@ -17,6 +17,7 @@ interface ScriptBundle {
   opening: string;
   acquisition: string;
   closing: string;
+  objections?: string;
 }
 
 interface PathWorkflowPanelProps {
@@ -698,11 +699,11 @@ export function PathWorkflowPanel({
   const landScripts = buildLandScripts(deal, landAgentMode);
   const landObjections = buildLandObjectionsV5(deal, landAgentMode);
 
-  const [activeTab, setActiveTab] = useState<string>('open');
+  const [activeTab, setActiveTab] = useState<string>('scripts');
 
   useEffect(() => {
-    if (activePath === 'cf') setActiveTab('analysis');
-    else if (activePath === 'mt') setActiveTab('analysis');
+    if (activePath === 'cf') setActiveTab('scripts');
+    else if (activePath === 'mt') setActiveTab('script');
     else if (isLandPath(activePath)) setActiveTab('scripts');
   }, [activePath]);
 
@@ -782,8 +783,8 @@ export function PathWorkflowPanel({
 
   if (activePath === 'cf') {
     const tabs = [
-      { id: 'analysis', label: 'Analysis' },
       { id: 'scripts', label: 'Scripts' },
+      { id: 'analysis', label: 'Analysis' },
       { id: 'objections', label: 'Objections' },
     ];
 
@@ -912,8 +913,8 @@ export function PathWorkflowPanel({
 
   if (activePath === 'mt') {
     const tabs = [
-      { id: 'analysis', label: 'Deal Analysis' },
       { id: 'script', label: 'Call Script' },
+      { id: 'analysis', label: 'Deal Analysis' },
       { id: 'objections', label: 'Objections' },
     ];
 

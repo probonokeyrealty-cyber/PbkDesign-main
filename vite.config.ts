@@ -3,6 +3,22 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+const devBridgeTarget =
+  process.env.PBK_DEV_BRIDGE_URL ||
+  process.env.PBK_BRIDGE_URL ||
+  process.env.PBK_HOSTED_BRIDGE_URL ||
+  'http://127.0.0.1:8788'
+
+const devBridgeApiKey =
+  process.env.PBK_DEV_BRIDGE_API_KEY ||
+  process.env.PBK_BRIDGE_API_KEY ||
+  process.env.PBK_OPENCLAW_API_KEY ||
+  process.env.OPENCLAW_API_KEY ||
+  ''
+
+const devBridgeProxyHeaders = devBridgeApiKey
+  ? { Authorization: `Bearer ${devBridgeApiKey}` }
+  : undefined
 
 function figmaAssetResolver() {
   return {
@@ -33,6 +49,31 @@ export default defineConfig({
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
+
+  server: {
+    proxy: {
+      '/api': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        headers: devBridgeProxyHeaders,
+      },
+      '/invoke': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        headers: devBridgeProxyHeaders,
+      },
+      '/state': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        headers: devBridgeProxyHeaders,
+      },
+      '/events': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        headers: devBridgeProxyHeaders,
+      },
+    },
+  },
 
   // Multi-page build:
   //   - index.html       → Paradise design (vanilla, the new Command Center)

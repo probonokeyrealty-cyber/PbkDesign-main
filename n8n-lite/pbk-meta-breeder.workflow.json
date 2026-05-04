@@ -1,0 +1,274 @@
+{
+  "name": "PBK Meta-Agent Breeder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "id": "daily-trigger",
+      "name": "Daily Breeder Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        280
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Dry Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const candidates = [\n  { archetype: 'empathetic', gender: 'female', region: 'midwest', experience: 8, simulatedTranscript: 'Seller: I am nervous this is a scam but thanks for explaining it. Ava: I understand. You can verify us first. Seller: Great, sounds good, send me the details.', outcome: 'seller agreed to receive details', durationSeconds: 420, sentimentStart: 0.35, sentimentEnd: 0.78 },\n  { archetype: 'direct', gender: 'male', region: 'ohio', experience: 10, simulatedTranscript: 'Seller: What is your number? Agent: Before I give a fair number, I need to know who decides and your timeline. Seller: My wife and I decide and we need this done in weeks. Thanks for being clear.', outcome: 'qualified authority and timeline', durationSeconds: 360, sentimentStart: 0.42, sentimentEnd: 0.72 },\n  { archetype: 'analytical', gender: 'neutral', region: 'columbus', experience: 9, simulatedTranscript: 'Seller: The roof is bad and I need to know if selling as-is makes sense. Agent: Let us separate facts from pressure. Seller: That is helpful, yes, schedule a call.', outcome: 'meeting scheduled', durationSeconds: 480, sentimentStart: 0.46, sentimentEnd: 0.82 }\n];\nreturn candidates.map((candidate) => ({ json: candidate }));"
+      },
+      "id": "build-candidates",
+      "name": "Build Candidate Matrix",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/persona/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "archetype",
+              "value": "={{$json.archetype}}"
+            },
+            {
+              "name": "gender",
+              "value": "={{$json.gender}}"
+            },
+            {
+              "name": "region",
+              "value": "={{$json.region}}"
+            },
+            {
+              "name": "experience",
+              "value": "={{$json.experience}}"
+            },
+            {
+              "name": "actor",
+              "value": "Meta-Agent Breeder"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "generate-persona",
+      "name": "Generate Persona",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const generated = $json || {};\nconst source = $('Build Candidate Matrix').item.json || {};\nreturn [{ json: {\n  versionId: generated.version?.id || generated.persona?.id || '',\n  agentName: generated.persona?.name || '',\n  transcript: source.simulatedTranscript || '',\n  outcome: source.outcome || '',\n  durationSeconds: source.durationSeconds || 0,\n  sentimentStart: source.sentimentStart || 0.5,\n  sentimentEnd: source.sentimentEnd || 0.5,\n  outcomeScore: /meeting|agreed|scheduled|qualified/i.test(source.outcome || '') ? 0.88 : 0.65,\n  actor: 'Meta-Agent Evaluator'\n} }];"
+      },
+      "id": "build-score",
+      "name": "Build Score Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com'}}/api/agent/likability-score",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Rex-Agent",
+              "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "versionId",
+              "value": "={{$json.versionId}}"
+            },
+            {
+              "name": "agentName",
+              "value": "={{$json.agentName}}"
+            },
+            {
+              "name": "transcript",
+              "value": "={{$json.transcript}}"
+            },
+            {
+              "name": "outcome",
+              "value": "={{$json.outcome}}"
+            },
+            {
+              "name": "durationSeconds",
+              "value": "={{$json.durationSeconds}}"
+            },
+            {
+              "name": "sentimentStart",
+              "value": "={{$json.sentimentStart}}"
+            },
+            {
+              "name": "sentimentEnd",
+              "value": "={{$json.sentimentEnd}}"
+            },
+            {
+              "name": "outcomeScore",
+              "value": "={{$json.outcomeScore}}"
+            },
+            {
+              "name": "actor",
+              "value": "Meta-Agent Evaluator"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "score-likability",
+      "name": "Score Likability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        370
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.all().map((item) => item.json || {});\nconst promoted = results.filter((item) => Number(item.score || 0) >= 8.5);\nreturn [{ json: {\n  checkedAt: new Date().toISOString(),\n  result: promoted.length ? 'promote_candidates_found' : 'needs_more_runs',\n  candidatesScored: results.length,\n  promoted: promoted.map((item) => ({ score: item.score, version: item.version?.id, agentName: item.version?.agentName || item.version?.persona?.name || '' }))\n} }];"
+      },
+      "id": "summarize",
+      "name": "Summarize Breeder Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1660,
+        370
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Breeder Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Candidate Matrix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Dry Run": {
+      "main": [
+        [
+          {
+            "node": "Build Candidate Matrix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Candidate Matrix": {
+      "main": [
+        [
+          {
+            "node": "Generate Persona",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Persona": {
+      "main": [
+        [
+          {
+            "node": "Build Score Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Score Payload": {
+      "main": [
+        [
+          {
+            "node": "Score Likability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Likability": {
+      "main": [
+        [
+          {
+            "node": "Summarize Breeder Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "pbk-meta-agent-breeder-v1"
+}

@@ -246,13 +246,13 @@ export function DealScoring({ deal }: DealScoringProps) {
                 </>
               ) : score >= 60 ? (
                 <>
-                  <strong>GOOD DEAL - WORTH PURSUING</strong><br />
+                  <strong>Go - Worth Pursuing</strong><br />
                   Solid fundamentals with good profit potential. Review strategy options 
                   and present offer within 24-48 hours.
                 </>
               ) : score >= 40 ? (
                 <>
-                  <strong>MARGINAL DEAL - NEGOTIATE HARD</strong><br />
+                  <strong>Review - Negotiate Hard</strong><br />
                   Deal has potential but needs better terms. Focus on price reduction 
                   or creative finance to improve margins.
                 </>

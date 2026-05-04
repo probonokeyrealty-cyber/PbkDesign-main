@@ -41,11 +41,13 @@
             {
               "name": "X-Rex-Agent",
               "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
             }
           ]
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth"
+        }
       },
       "id": "fetch-decisions",
       "name": "Fetch Applied Decisions",
@@ -54,13 +56,7 @@
       "position": [
         500,
         410
-      ],
-      "credentials": {
-        "httpBearerAuth": {
-          "id": "Rd2GTIySteJRMQoC",
-          "name": "PBK Bridge Bearer"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -71,11 +67,13 @@
             {
               "name": "X-Rex-Agent",
               "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
             }
           ]
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth"
+        }
       },
       "id": "current-metrics",
       "name": "Fetch Current Metrics",
@@ -84,13 +82,7 @@
       "position": [
         500,
         590
-      ],
-      "credentials": {
-        "httpBearerAuth": {
-          "id": "Rd2GTIySteJRMQoC",
-          "name": "PBK Bridge Bearer"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -115,6 +107,10 @@
             {
               "name": "X-Rex-Agent",
               "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
             }
           ]
         },
@@ -134,9 +130,7 @@
               "value": "Rex Evaluator"
             }
           ]
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth"
+        }
       },
       "id": "record-outcome",
       "name": "Record Outcome",
@@ -145,13 +139,7 @@
       "position": [
         1060,
         500
-      ],
-      "credentials": {
-        "httpBearerAuth": {
-          "id": "Rd2GTIySteJRMQoC",
-          "name": "PBK Bridge Bearer"
-        }
-      }
+      ]
     }
   ],
   "connections": {

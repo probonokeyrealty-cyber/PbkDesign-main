@@ -2,6 +2,20 @@ import { useState } from 'react';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { updateApprovalDecision } from '../utils/runtimeBridge';
 
+function formatRuntimeStatus(status: unknown) {
+  const normalized = String(status || 'sent').toLowerCase();
+  if (normalized === 'provider_missing') return 'Provider key missing';
+  if (normalized === 'queued') return 'Queued to send';
+  if (normalized === 'queued_for_approval') return 'Queued for approval';
+  if (normalized === 'sent') return 'Sent';
+  if (normalized === 'failed') return 'Delivery failed';
+  if (normalized === 'pending') return 'Waiting';
+  if (normalized === 'approved') return 'Approved';
+  if (normalized === 'rejected') return 'Declined';
+  if (normalized === 'needs-revision') return 'Needs Revision';
+  return normalized ? normalized.replace(/_/g, ' ') : 'No data yet';
+}
+
 export function Inbox() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
@@ -18,7 +32,7 @@ export function Inbox() {
     try {
       await updateApprovalDecision(approvalId, status);
       await refresh().catch(() => null);
-      setActionStatus(status === 'approved' ? 'Approval sent to Ava.' : 'Decision sent to Ava.');
+      setActionStatus(status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.');
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Approval update failed.');
     } finally {
@@ -48,8 +62,8 @@ export function Inbox() {
 
       <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
         <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <h2 className="text-sm font-semibold text-slate-100">Approval Queue</h2>
-          <p className="mt-1 text-xs text-slate-500">Manual review items from Ava and Rex.</p>
+          <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
+          <p className="mt-1 text-xs text-slate-500">Items Ava/Rex need you to approve before sending.</p>
           <div className="mt-3 space-y-2">
             {approvals.map((approval) => (
               <div
@@ -83,7 +97,7 @@ export function Inbox() {
                     }}
                     className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                   >
-                    {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Reject'}
+                    {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Decline'}
                   </button>
                 </div>
               </div>
@@ -116,7 +130,7 @@ export function Inbox() {
                   <div className="mt-1 text-xs text-slate-400">{String(message.body || '(empty message)')}</div>
                 </div>
                 <div className="text-xs text-slate-500 md:text-right">
-                  {String(message.status || 'sent')}
+                  {formatRuntimeStatus(message.status)}
                 </div>
               </div>
             ))}

@@ -41,11 +41,13 @@
             {
               "name": "X-Rex-Agent",
               "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
             }
           ]
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth"
+        }
       },
       "id": "campaign-analytics",
       "name": "Fetch Campaign Analytics",
@@ -54,13 +56,7 @@
       "position": [
         500,
         280
-      ],
-      "credentials": {
-        "httpBearerAuth": {
-          "id": "Rd2GTIySteJRMQoC",
-          "name": "PBK Bridge Bearer"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -71,11 +67,13 @@
             {
               "name": "X-Rex-Agent",
               "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
             }
           ]
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth"
+        }
       },
       "id": "past-decisions",
       "name": "Fetch Past Rex Decisions",
@@ -84,13 +82,7 @@
       "position": [
         500,
         460
-      ],
-      "credentials": {
-        "httpBearerAuth": {
-          "id": "Rd2GTIySteJRMQoC",
-          "name": "PBK Bridge Bearer"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -175,6 +167,10 @@
             {
               "name": "X-Rex-Agent",
               "value": "true"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
             }
           ]
         },
@@ -194,9 +190,7 @@
               "value": "={{$json.proposals}}"
             }
           ]
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpBearerAuth"
+        }
       },
       "id": "store-proposals",
       "name": "Store + Queue Approval",
@@ -205,13 +199,7 @@
       "position": [
         1540,
         370
-      ],
-      "credentials": {
-        "httpBearerAuth": {
-          "id": "Rd2GTIySteJRMQoC",
-          "name": "PBK Bridge Bearer"
-        }
-      }
+      ]
     }
   ],
   "connections": {

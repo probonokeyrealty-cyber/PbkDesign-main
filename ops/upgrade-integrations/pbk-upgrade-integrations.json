@@ -1,0 +1,150 @@
+{
+  "version": "2026-05-03",
+  "mode": "setup-gated",
+  "policy": {
+    "summary": "Candidate Ava brain/data upgrades are staged here before any package install, clone, provider write, or production dependency is enabled.",
+    "rules": [
+      "Do not mark an integration Ready until a local or sandbox round trip succeeds.",
+      "Do not expose provider keys in frontend code.",
+      "Do not let external CRM/data tools replace PBK's canonical lead, deal, script, or activity state.",
+      "Do not use scraping tools against sites, logins, or endpoints where automation is not allowed.",
+      "Store source URLs and confidence with any property facts Ava uses."
+    ]
+  },
+  "integrations": {
+    "propertyData": {
+      "purpose": "Feed Ava/Rex structured listings, comps, public record context, and on-demand property research.",
+      "items": [
+        {
+          "id": "homeharvest",
+          "label": "HomeHarvest",
+          "role": "Structured Realtor.com-style lead and comps feed",
+          "installCommand": "python -m pip install -U homeharvest",
+          "status": "candidate",
+          "risk": "medium",
+          "readyWhen": [
+            "Package is installed in the intended Python environment",
+            "A dry-run property query returns JSON",
+            "Results dedupe into Supabase or local lead import without provider writes"
+          ],
+          "env": [
+            "PBK_HOMEHARVEST_ENABLED",
+            "PBK_HOMEHARVEST_ENDPOINT"
+          ]
+        },
+        {
+          "id": "scrapling",
+          "label": "Scrapling MCP",
+          "role": "On-demand browser/data extraction fallback for Rex and property research",
+          "installCommand": "python -m pip install -U scrapling",
+          "serverCommand": "scrapling mcp",
+          "status": "candidate",
+          "risk": "high",
+          "readyWhen": [
+            "MCP server starts locally",
+            "One allowed public property page returns structured output",
+            "Browser research records source URLs and obeys source rules"
+          ],
+          "env": [
+            "PBK_SCRAPLING_MCP_URL",
+            "PBK_SCRAPLING_ENDPOINT"
+          ]
+        }
+      ]
+    },
+    "pipelineMemory": {
+      "purpose": "Give Ava long-term pipeline context without replacing PBK's canonical CRM/activity model.",
+      "items": [
+        {
+          "id": "insula-crm",
+          "label": "InsulaCRM",
+          "role": "Self-hosted wholesaling CRM memory source",
+          "status": "candidate",
+          "risk": "high",
+          "readyWhen": [
+            "Deployed on a PBK-controlled subdomain",
+            "Bidirectional sync is tested with a non-production lead",
+            "DNC/TCPA status is checked before Ava calls"
+          ],
+          "env": [
+            "PBK_INSULA_CRM_BASE_URL",
+            "PBK_INSULA_CRM_API_KEY"
+          ]
+        },
+        {
+          "id": "realtorspal",
+          "label": "RealtorsPal AI",
+          "role": "Optional research candidate only until primary documentation and API surface are verified",
+          "status": "research-only",
+          "risk": "high",
+          "readyWhen": [
+            "Primary source documentation is verified",
+            "API authentication and data export terms are reviewed",
+            "A sandbox sync is tested without mutating PBK lead state"
+          ],
+          "env": [
+            "PBK_REALTORSPAL_BASE_URL",
+            "PBK_REALTORSPAL_API_KEY"
+          ]
+        }
+      ]
+    },
+    "voiceFallback": {
+      "purpose": "Provide local/offline voice resilience if cloud TTS is unavailable.",
+      "items": [
+        {
+          "id": "moss-tts",
+          "label": "MOSS-TTS",
+          "role": "Local TTS fallback endpoint candidate",
+          "status": "candidate",
+          "risk": "medium",
+          "readyWhen": [
+            "Model assets are installed on the intended machine",
+            "Local endpoint returns playable audio",
+            "Bridge fallback does not interrupt active Telnyx calls"
+          ],
+          "env": [
+            "PBK_MOSS_TTS_BASE_URL",
+            "PBK_TTS_FALLBACK_BASE_URL"
+          ]
+        },
+        {
+          "id": "zerovox",
+          "label": "ZeroVOX",
+          "role": "Emergency CPU/offline TTS fallback candidate",
+          "status": "candidate",
+          "risk": "medium",
+          "readyWhen": [
+            "Local wrapper returns playable audio",
+            "Latency is acceptable for fallback use",
+            "Generated voice is clearly approved for business calls"
+          ],
+          "env": [
+            "PBK_ZEROVOX_BASE_URL",
+            "PBK_TTS_FALLBACK_BASE_URL"
+          ]
+        }
+      ]
+    },
+    "desktopCopilot": {
+      "purpose": "Optional local sidecar for Jordan during high-stakes calls; not a production dependency.",
+      "items": [
+        {
+          "id": "clickui",
+          "label": "ClickUi",
+          "role": "Local AI desktop assistant and research sidecar",
+          "status": "candidate",
+          "risk": "medium",
+          "readyWhen": [
+            "Runs locally without blocking PBK runtime",
+            "Can call PBK analyzer or bridge in read-only mode",
+            "Any scraped facts are copied into PBK with source URLs"
+          ],
+          "env": [
+            "PBK_CLICKUI_BASE_URL"
+          ]
+        }
+      ]
+    }
+  }
+}

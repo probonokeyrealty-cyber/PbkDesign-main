@@ -33,6 +33,20 @@ function mapCallStatus(status: unknown): LiveCallState['status'] {
   return 'idle';
 }
 
+function formatRuntimeStatus(status: unknown) {
+  const normalized = String(status || 'pending').toLowerCase();
+  if (normalized === 'provider_missing') return 'Provider key missing';
+  if (normalized === 'queued') return 'Queued for worker';
+  if (normalized === 'queued_for_approval') return 'Queued for approval';
+  if (normalized === 'pending') return 'Waiting';
+  if (normalized === 'approved') return 'Approved';
+  if (normalized === 'rejected') return 'Declined';
+  if (normalized === 'needs-revision') return 'Needs Revision';
+  if (normalized === 'complete') return 'Complete';
+  if (normalized === 'failed') return 'Delivery failed';
+  return normalized ? normalized.replace(/_/g, ' ') : 'No data yet';
+}
+
 function mapTranscriptLine(line: unknown, index: number): TranscriptLine | null {
   if (!line || typeof line !== 'object') return null;
   const item = line as Record<string, unknown>;
@@ -98,13 +112,16 @@ export function CommandCenter() {
     { label: 'Meta-Agent', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
     { label: 'BrowserOS Agent', meta: tooling?.browserOs as Record<string, unknown> | undefined },
     { label: 'Browser Research', meta: tooling?.browserResearch as Record<string, unknown> | undefined },
+    { label: 'Property Data', meta: tooling?.propertyData as Record<string, unknown> | undefined },
+    { label: 'Pipeline Memory', meta: tooling?.pipelineMemory as Record<string, unknown> | undefined },
+    { label: 'Voice Fallback', meta: tooling?.voiceFallback as Record<string, unknown> | undefined },
     { label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
   ];
 
   const kpis = [
     { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
     { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
-    { label: 'Approvals Pending', value: String(approvals.filter((item) => item.status === 'pending').length), hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin tasks waiting` },
+    { label: 'Approvals Needed', value: String(approvals.filter((item) => item.status === 'pending').length), hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting` },
     { label: 'Deals in Pipeline', value: String((snapshot?.contracts || []).length), hint: 'prepared, sent, or signed contracts' },
     { label: 'Tooling Ready', value: `${String(toolingSummary.readyCount || 0)}/${String(toolingSummary.totalCount || 0)}`, hint: 'advanced systems available in repo' },
   ];
@@ -219,7 +236,7 @@ export function CommandCenter() {
                       {String(task.provider || 'admin')} · {String(task.action || 'review')}
                     </div>
                     <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                      {String(task.status || 'pending')}
+                      {formatRuntimeStatus(task.status)}
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-slate-400">{String(task.summary || task.command || 'Administrative action')}</div>
@@ -245,13 +262,13 @@ export function CommandCenter() {
                         onClick={() => {
                           const taskId = String(task.id || '');
                           if (!taskId) return;
-                          void runRuntimeAction(`admin:${taskId}:rejected`, 'Admin task rejected.', async () => {
+                          void runRuntimeAction(`admin:${taskId}:rejected`, 'Admin task declined.', async () => {
                             await updateAdminTaskDecision(taskId, 'rejected');
                           });
                         }}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Reject
+                        Decline
                       </button>
                     </div>
                   )}
@@ -259,7 +276,7 @@ export function CommandCenter() {
               ))}
               {!adminTasks.length && (
                 <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                  No admin tasks queued yet.
+                  No admin approvals are needed.
                 </div>
               )}
             </div>
@@ -283,11 +300,11 @@ export function CommandCenter() {
                     key={item.label}
                     className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-medium text-slate-200">{item.label}</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0 text-xs font-medium text-slate-200">{item.label}</div>
                       <span
                         className={[
-                          'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
+                          'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
                           ready
                             ? 'bg-emerald-500/10 text-emerald-300'
                             : 'bg-slate-800 text-slate-400',
@@ -300,10 +317,10 @@ export function CommandCenter() {
                             ready ? 'bg-emerald-400' : 'bg-slate-500',
                           ].join(' ')}
                         />
-                        {ready ? 'Ready' : 'Setup'}
+                        {ready ? 'Ready' : 'Needs setup'}
                       </span>
                     </div>
-                    <div className="mt-2 text-xs text-slate-400">{String(item.meta?.note || 'Waiting on bridge status.')}</div>
+                    <div className="mt-2 break-words text-xs text-slate-400">{String(item.meta?.note || 'Waiting on bridge status.')}</div>
                   </div>
                 );
               })}
@@ -346,8 +363,8 @@ export function CommandCenter() {
           <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold text-slate-100">Approval Queue</h2>
-                <p className="text-xs text-slate-500">Offer, contract, and outbound decisions waiting on a human.</p>
+                <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
+                <p className="text-xs text-slate-500">Items Ava/Rex need you to approve before sending.</p>
               </div>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -370,7 +387,7 @@ export function CommandCenter() {
                       onClick={() => {
                         const approvalId = String(approval.id || '');
                         if (!approvalId) return;
-                        void runRuntimeAction(`approval:${approvalId}:approved`, 'Approval decision sent to Ava.', async () => {
+                        void runRuntimeAction(`approval:${approvalId}:approved`, 'Approved. Ava can continue.', async () => {
                           await updateApprovalDecision(approvalId, 'approved');
                         });
                       }}
@@ -385,13 +402,13 @@ export function CommandCenter() {
                         const approvalId = String(approval.id || '');
                         if (!approvalId) return;
                         const rejectionStatus = String(approval.type || '').toLowerCase() === 'contract' ? 'needs-revision' : 'rejected';
-                        void runRuntimeAction(`approval:${approvalId}:rejected`, 'Approval rejection sent to Ava.', async () => {
+                        void runRuntimeAction(`approval:${approvalId}:rejected`, 'Decision sent to Ava.', async () => {
                           await updateApprovalDecision(approvalId, rejectionStatus);
                         });
                       }}
                       className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Reject'}
+                      {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Decline'}
                     </button>
                   </div>
                 </div>

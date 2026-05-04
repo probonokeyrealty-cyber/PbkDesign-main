@@ -66,36 +66,36 @@ export const calculateVerdict = (
 export const getVerdictProps = (verdict: 'none' | 'green' | 'yellow' | 'red') => {
   const props = {
     none: {
-      label: '—',
+      label: 'Not analyzed',
       emoji: '',
       color: 'gray',
       bgClass: 'bg-gray-100 dark:bg-gray-900',
       textClass: 'text-gray-600 dark:text-gray-400',
-      message: 'No data',
+      message: 'Add property details to analyze this deal.',
     },
     green: {
-      label: '✅ GO',
-      emoji: '✅',
+      label: 'Go',
+      emoji: '',
       color: 'green',
       bgClass: 'bg-green-100 dark:bg-green-900/20',
       textClass: 'text-green-800 dark:text-green-400',
       message: 'Great deal! Price is at or below RBP',
     },
     yellow: {
-      label: '⚠️ MAYBE',
-      emoji: '⚠️',
+      label: 'Review',
+      emoji: '',
       color: 'yellow',
       bgClass: 'bg-yellow-100 dark:bg-yellow-900/20',
       textClass: 'text-yellow-800 dark:text-yellow-400',
-      message: 'Marginal deal — Price is workable but tight',
+      message: 'Marginal deal - price is workable but tight',
     },
     red: {
-      label: '🛑 STOP',
-      emoji: '🛑',
+      label: 'Pass',
+      emoji: '',
       color: 'red',
       bgClass: 'bg-red-100 dark:bg-red-900/20',
       textClass: 'text-red-800 dark:text-red-400',
-      message: 'Overpriced — List price exceeds safe margins',
+      message: 'Overpriced - list price exceeds safe margins',
     },
   };
 

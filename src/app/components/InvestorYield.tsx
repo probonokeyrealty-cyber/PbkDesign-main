@@ -116,10 +116,10 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
   const monthlyCashflow = Math.round(metrics.cashflow / 12);
   const verdict =
     metrics.coc >= targetCoc && metrics.dscr >= 1.25 && monthlyCashflow >= 200
-      ? { label: 'GO - Strong Hold', tone: 'text-emerald-700 dark:text-emerald-300', card: 'border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-900/10' }
+      ? { label: 'Go - Strong Hold', tone: 'text-emerald-700 dark:text-emerald-300', card: 'border-emerald-200 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-900/10' }
       : metrics.coc >= 12
-        ? { label: 'NEGOTIATE - Workable', tone: 'text-amber-700 dark:text-amber-300', card: 'border-amber-200 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/10' }
-        : { label: 'NO DEAL - Pass', tone: 'text-rose-700 dark:text-rose-300', card: 'border-rose-200 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-900/10' };
+        ? { label: 'Review - Workable', tone: 'text-amber-700 dark:text-amber-300', card: 'border-amber-200 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/10' }
+        : { label: 'Pass - No Deal', tone: 'text-rose-700 dark:text-rose-300', card: 'border-rose-200 bg-rose-50 dark:border-rose-800/60 dark:bg-rose-900/10' };
 
   return (
     <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">

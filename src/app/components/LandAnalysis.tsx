@@ -343,10 +343,10 @@ export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
                 : 'text-red-800 dark:text-red-300'
             }`}>
               {spread >= builderTotal * 0.20
-                ? '✅ EXCELLENT DEAL — 20%+ spread provides strong profit margin for assignment to builder.'
+                ? 'Go - Excellent land spread. 20%+ spread provides strong profit margin for assignment to builder.'
                 : spread >= builderTotal * 0.15
-                ? '⚠️ WORKABLE DEAL — 15-20% spread is acceptable. Negotiate for better terms if possible.'
-                : '🛑 THIN MARGINS — Less than 15% spread. Need better spread or pass on this deal.'}
+                ? 'Review - Workable land spread. 15-20% spread is acceptable. Negotiate for better terms if possible.'
+                : 'Pass - Thin margins. Less than 15% spread. Need better spread or pass on this deal.'}
             </div>
           </div>
 

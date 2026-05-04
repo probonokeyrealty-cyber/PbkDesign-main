@@ -35,7 +35,7 @@ interface ConfirmBadgeProps {
 }
 
 const LIVE_PATH_NAMES: Record<LiveInputPath, string> = {
-  cash: 'Cash Wholesale',
+  cash: 'Cash Offer',
   creative_finance: 'Creative Finance',
   subject_to: 'Mortgage Takeover (Subject-To)',
   rbp: 'Retail Buyer Program',
@@ -752,7 +752,7 @@ export function LiveCallInputs({
         <div className="mt-4 p-3 rounded-lg border-2 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10">
           <div className="text-[10px] font-bold uppercase tracking-wide text-green-600 dark:text-green-400 mb-2 flex items-center gap-1.5">
             <DollarSign size={14} />
-            Cash Wholesale Terms
+            Cash Offer Terms
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>

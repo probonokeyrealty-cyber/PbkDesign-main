@@ -85,7 +85,7 @@ Assignment Spread:               ${formatCurrency(deal.builderTotal - deal.offer
 DEAL VERDICT
 ───────────────────────────────────────────────────────────────────
 
-${deal.verdict === 'green' ? '✓ GO - STRONG DEAL' : deal.verdict === 'yellow' ? '⚠ MAYBE - MARGINAL DEAL' : deal.verdict === 'red' ? '✗ NO GO - OVERPRICED' : '- NO VERDICT'}
+${deal.verdict === 'green' ? 'Go - Strong Deal' : deal.verdict === 'yellow' ? 'Review - Marginal Deal' : deal.verdict === 'red' ? 'Pass - Overpriced' : 'Not analyzed'}
 
 ${deal.verdict === 'green' ? 
   'This property presents an excellent investment opportunity with strong profit margins.' :

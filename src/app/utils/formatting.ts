@@ -61,8 +61,8 @@ export const sanitizeLegacyCopy = (text: string): string => {
     ['ðŸ¤', ''],
     ['ðŸ“§', ''],
     ['ðŸ“‹', ''],
-    ['ðŸ›‘', 'STOP'],
-    ['âš ï¸', 'MAYBE'],
+    ['ðŸ›‘', 'Pass'],
+    ['âš ï¸', 'Review'],
     ['ï¸', ''],
     ['â†’', '->'],
   ];
@@ -74,6 +74,6 @@ export const sanitizeLegacyCopy = (text: string): string => {
     .replace(/â€“|â€”/g, '-')
     .replace(/â†’/g, '->')
     .replace(/âœ…|ðŸ“ž|ðŸŽ¯|ðŸ“Š|ðŸ“ˆ|ðŸŒ³|ðŸ‘¤|ðŸ¤|ðŸ“§|ðŸ“‹/g, '')
-    .replace(/ðŸ›‘/g, 'STOP')
+    .replace(/ðŸ›‘/g, 'Pass')
     .replace(/âš ï¸/g, 'Warning');
 };

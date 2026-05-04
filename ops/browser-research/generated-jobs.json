@@ -1,9 +1,29 @@
 {
-  "exportedAt": "2026-04-29T23:36:50.254Z",
+  "exportedAt": "2026-05-04T06:46:09.134Z",
   "source": "C:\\Users\\Dell\\Documents\\New project 2\\PbkDesign-main\\.pbk-local\\openclaw-state.json",
   "jobs": [
     {
       "id": "browser-job-1",
+      "leadId": "smoke-lead-1",
+      "sellerName": "Smoke Test Seller",
+      "address": "808 Smoke Test Ave, Columbus OH",
+      "city": "Columbus",
+      "state": "OH",
+      "source": "smoke-test",
+      "priority": "normal",
+      "tags": [
+        "smoke",
+        "qa"
+      ],
+      "tasks": [
+        "public-records-owner-verify",
+        "property-photos-and-condition-pass",
+        "distress-signal-scan",
+        "recent-listing-and-agent-scan"
+      ]
+    },
+    {
+      "id": "browser-job-2",
       "leadId": "lead-diane-kowalski",
       "sellerName": "Diane Kowalski",
       "address": "202 Cherry Ln, Columbus OH",

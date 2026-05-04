@@ -1,5 +1,5 @@
 {
-  "exportedAt": "2026-04-29T23:36:50.183Z",
+  "exportedAt": "2026-05-04T06:46:07.377Z",
   "source": "C:\\Users\\Dell\\Documents\\New project 2\\PbkDesign-main\\.pbk-local\\openclaw-state.json",
   "runtime": {
     "revision": "",
@@ -8,6 +8,17 @@
     "pendingAdminTasks": 1
   },
   "leads": [
+    {
+      "leadId": "smoke-lead-1",
+      "sellerName": "Smoke Test Seller",
+      "phone": "+1 (614) 555-0199",
+      "address": "808 Smoke Test Ave, Columbus OH",
+      "tags": [
+        "smoke",
+        "qa"
+      ],
+      "source": "smoke-test"
+    },
     {
       "leadId": "lead-diane-kowalski",
       "sellerName": "Diane Kowalski",
@@ -23,31 +34,41 @@
   ],
   "calls": [
     {
-      "id": "call-diane-live",
-      "leadId": "lead-diane-kowalski",
-      "leadName": "Diane Kowalski",
-      "address": "202 Cherry Ln, Columbus OH",
-      "status": "live",
-      "sentiment": 0.72
-    },
-    {
       "id": "call-john-live",
       "leadId": "lead-john-smith",
       "leadName": "John Smith",
       "address": "123 Main St, Akron OH",
       "status": "live",
       "sentiment": 0.55
+    },
+    {
+      "id": "call-diane-live",
+      "leadId": "lead-diane-kowalski",
+      "leadName": "Diane Kowalski",
+      "address": "202 Cherry Ln, Columbus OH",
+      "status": "live",
+      "sentiment": 0.72
     }
   ],
   "approvals": [
     {
-      "id": "approval-offer-202-cherry",
-      "type": "offer",
-      "leadName": "Diane Kowalski",
-      "address": "202 Cherry Ln, Columbus OH",
-      "offerPrice": 78000,
-      "mao": 91500,
-      "notes": "Quick-close empathy anchor after probate rapport.",
+      "id": "1482f715-080b-4111-92e8-990a33e1dccf",
+      "type": "provider-action",
+      "leadName": "Smoke Test Seller",
+      "address": "808 Smoke Test Ave, Columbus OH",
+      "offerPrice": 0,
+      "mao": 0,
+      "notes": "Approval mode intercepted sendSellerDocs. Original params: {\"leadId\":\"smoke-lead-1\",\"leadName\":\"Smoke Test Seller\",\"address\":\"808 Smoke Test Ave, Columbus OH\",\"email\":\"smoke@example.com\",\"senderProfile\":\"warm\",\"selectedDocuments\":[\"seller\",\"loi\"],\"documentSet\":{\"seller\":\"Smoke seller guide content.\",\"loi\":\"Smoke letter of interest content.\"}}",
+      "status": "pending"
+    },
+    {
+      "id": "approval-batch-akron",
+      "type": "outbound",
+      "leadName": "Akron Probate Batch",
+      "address": "Akron list",
+      "offerPrice": 0,
+      "mao": 0,
+      "notes": "Start outbound campaign on 47 fresh probate leads using approval-first mode.",
       "status": "pending"
     },
     {
@@ -61,17 +82,57 @@
       "status": "pending"
     },
     {
-      "id": "approval-batch-akron",
-      "type": "outbound",
-      "leadName": "Akron Probate Batch",
-      "address": "Akron list",
-      "offerPrice": 0,
-      "mao": 0,
-      "notes": "Start outbound campaign on 47 fresh probate leads using approval-first mode.",
-      "status": "pending"
+      "id": "approval-offer-202-cherry",
+      "type": "offer",
+      "leadName": "Diane Kowalski",
+      "address": "202 Cherry Ln, Columbus OH",
+      "offerPrice": 78000,
+      "mao": 91500,
+      "notes": "Quick-close empathy anchor after probate rapport.",
+      "status": "approved"
     }
   ],
   "recentMessages": [
+    {
+      "id": "draft-1777877166768-smoke-test-seller",
+      "direction": "outbound",
+      "channel": "email",
+      "leadName": "Smoke Test Seller",
+      "body": "Hi Smoke,\n\nThanks for getting back to me.\nWe can keep this simple and walk through the property without any pressure.\nHere is the quickest way to lock a time with us: https://cal.com/pbk-capital/intro-call\n\nBest,\nPBK Capital",
+      "status": "drafted"
+    },
+    {
+      "id": "msg-1777877166756-smoke-test-seller",
+      "direction": "inbound",
+      "channel": "email",
+      "leadName": "Smoke Test Seller",
+      "body": "I am interested and ready for a call.",
+      "status": "received"
+    },
+    {
+      "id": "draft-1777877166725-smoke-test-seller",
+      "direction": "outbound",
+      "channel": "email",
+      "leadName": "Smoke Test Seller",
+      "body": "Hi Smoke,\n\nThanks for getting back to me.\nWe can keep this simple and walk through the property without any pressure.\nHere is the quickest way to lock a time with us: https://cal.com/pbk-capital/intro-call\n\nBest,\nPBK Capital",
+      "status": "drafted"
+    },
+    {
+      "id": "msg-1777877166701-smoke-test-seller",
+      "direction": "inbound",
+      "channel": "email",
+      "leadName": "Smoke Test Seller",
+      "body": "Yes, tell me more.",
+      "status": "received"
+    },
+    {
+      "id": "smoke-recording-msg-1",
+      "direction": "recording",
+      "channel": "call",
+      "leadName": "Smoke Test Seller",
+      "body": "Call recording captured.",
+      "status": "recorded"
+    },
     {
       "id": "sms-diane-1",
       "direction": "inbound",
@@ -82,6 +143,38 @@
     }
   ],
   "brainHighlights": [
+    {
+      "id": "rex-memory-1245303958-1777877164383",
+      "title": "Rex Q&A: Smoke Test Brain Ingest recording workflow",
+      "topic": "Rex Conversation Memory",
+      "summary": "Q: Smoke Test Brain Ingest recording workflow\nA: Best match: Smoke Test Brain Ingest. Smoke brain memory for recording and workflow endpoint coverage.",
+      "tags": [
+        "pbk-wholesale",
+        "pbk-rex-admin",
+        "conversation-memory"
+      ]
+    },
+    {
+      "id": "8589a012-ba45-44b0-ad65-fb6f2dec5abc",
+      "title": "Smoke Test Brain Ingest",
+      "topic": "Smoke Test Memory",
+      "summary": "Smoke brain memory for recording and workflow endpoint coverage.",
+      "tags": [
+        "smoke",
+        "brain"
+      ]
+    },
+    {
+      "id": "rex-memory-1994858007-1777877164348",
+      "title": "Rex Q&A: What is the current bridge state?",
+      "topic": "Rex Conversation Memory",
+      "summary": "Q: What is the current bridge state?\nA: Best match: Ava 7-Figure Closer Framework. Ava should label emotion, ask calibrated how/what questions, use local rapport sparingly, anchor with repair/certainty logic, and never exceed the walk-away number.",
+      "tags": [
+        "pbk-wholesale",
+        "pbk-rex-admin",
+        "conversation-memory"
+      ]
+    },
     {
       "id": "brain-70-rule",
       "title": "The 70% Rule: When to Break It and When to Obey It",
@@ -94,47 +187,15 @@
       ]
     },
     {
-      "id": "brain-probate-2026",
-      "title": "Why Probate Is Still a Great Lead Source",
-      "topic": "Probate",
-      "summary": "Probate leads remain high-signal when outreach is empathetic and executor authority is confirmed before price talk.",
-      "tags": [
-        "Probate",
-        "Wholesaling",
-        "Negotiation"
-      ]
-    },
-    {
-      "id": "brain-subto-case",
-      "title": "$47k Assignment Fee on a Subject-To Deal",
-      "topic": "Subject-To",
-      "summary": "Use subject-to when the debt is attractive, the seller wants speed, and the buyer can absorb payment risk with clear disclosure.",
-      "tags": [
-        "Subject-To",
-        "Creative Finance",
-        "Case Study"
-      ]
-    },
-    {
-      "id": "brain-tcpa-consent",
-      "title": "TCPA One-to-One Consent for Wholesalers",
-      "topic": "Legal & TCPA",
-      "summary": "Keep one-to-one consent language on every lead form, store consent timestamps, and start every AI call with clear disclosure.",
-      "tags": [
-        "Compliance",
-        "Legal & TCPA",
-        "Voice"
-      ]
-    },
-    {
-      "id": "brain-akron-notes",
-      "title": "Jordan's notes: Akron vs Columbus seller psychology",
-      "topic": "Market Reports",
-      "summary": "Route scripts by sub-market. Akron can take firmer anchors sooner. Columbus needs more relationship framing first.",
+      "id": "brain-ava-closer-framework",
+      "title": "Ava 7-Figure Closer Framework",
+      "topic": "Negotiation",
+      "summary": "Ava should label emotion, ask calibrated how/what questions, use local rapport sparingly, anchor with repair/certainty logic, and never exceed the walk-away number.",
       "tags": [
         "Negotiation",
-        "Market Reports",
-        "Wholesaling"
+        "Emotional Intelligence",
+        "Ava",
+        "Closing"
       ]
     }
   ],

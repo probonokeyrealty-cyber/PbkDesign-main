@@ -25,6 +25,7 @@ interface PathDeliverablesProps {
     selectedDocuments: QuickDocumentType[];
     senderProfile: 'warm' | 'cold';
   }) => void | Promise<void>;
+  onPdfAction?: (action: 'refresh' | 'download' | 'open') => void;
 }
 
 const documentLabels: Record<QuickDocumentType, string> = {
@@ -74,15 +75,23 @@ export function PathDeliverables({
   onPrint,
   onGenerate,
   onEmailDocuments,
+  onPdfAction,
 }: PathDeliverablesProps) {
+  const documentDeal = useMemo(
+    () => ({
+      ...deal,
+      selectedPath,
+    }),
+    [deal, selectedPath],
+  );
   const generatedDocuments = useMemo(
-    () => buildDocumentSet(deal, branding),
-    [deal, branding],
+    () => buildDocumentSet(documentDeal, branding),
+    [documentDeal, branding],
   );
   const [editableDocuments, setEditableDocuments] = useState<Record<QuickDocumentType, string>>(generatedDocuments);
   const [selectedDocuments, setSelectedDocuments] = useState<QuickDocumentType[]>(['seller', 'loi']);
   const [senderProfile, setSenderProfile] = useState<'warm' | 'cold'>('warm');
-  const readiness = getPdfReadiness(deal);
+  const readiness = getPdfReadiness(documentDeal);
 
   useEffect(() => {
     setEditableDocuments(generatedDocuments);
@@ -235,7 +244,7 @@ export function PathDeliverables({
                 ))}
               </div>
               <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[10.5px] text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-400">
-                Click inside the document below to refine wording before you export. The premium PDF still uses the locked PBK
+                Click inside the document below to refine wording before you export. The Master PDF still uses the locked PBK
                 path logic and master template.
               </div>
             </div>
@@ -256,7 +265,7 @@ export function PathDeliverables({
               Export
             </div>
             <div className="text-[16px] font-semibold tracking-tight mb-2">
-              Premium PDF
+              Master Deal PDF
             </div>
             <div className="rounded-xl bg-white/8 px-3 py-2 text-[10.5px] leading-5 text-white/76">
               {exportStatus}
@@ -276,7 +285,7 @@ export function PathDeliverables({
               }`}
             >
               <Send size={14} />
-              Generate Selected-Path Premium PDF
+              Generate Master PDF
             </button>
           </div>
 
@@ -353,9 +362,10 @@ export function PathDeliverables({
           </div>
 
           <DocumentPdfPanel
-            deal={deal}
+            deal={documentDeal}
             selectedPath={selectedPath}
             branding={branding}
+            onPdfAction={onPdfAction}
           />
 
           <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 shadow-sm">

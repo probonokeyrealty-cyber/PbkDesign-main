@@ -5,6 +5,8 @@ type RuntimeConfig = {
   apiKey?: string;
 };
 
+const DEFAULT_HOSTED_BRIDGE_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com';
+
 export type RuntimeSnapshot = {
   status?: Record<string, unknown>;
   approvals?: Array<Record<string, unknown>>;
@@ -65,8 +67,24 @@ function buildLocalBridgeFallback() {
   const isLocalPreview = host === '127.0.0.1' || host === 'localhost';
   if (!isLocalPreview) return null;
   return {
-    endpoint: `${window.location.protocol}//${host}:8788`,
+    // Keep local browser traffic on the Vite origin so the dev proxy can
+    // attach the private bridge API key without exposing it to frontend JS.
+    endpoint: window.location.origin,
     apiKey: '',
+  };
+}
+
+function getEnvRuntimeConfig(): RuntimeConfig | null {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+  const endpoint =
+    env.VITE_PBK_BRIDGE_URL ||
+    env.VITE_PBK_OPENCLAW_URL ||
+    env.VITE_PBK_OPENCLAW_ENDPOINT;
+  if (!endpoint) return null;
+
+  return {
+    endpoint,
+    apiKey: env.VITE_PBK_BRIDGE_API_KEY || env.VITE_PBK_OPENCLAW_API_KEY || '',
   };
 }
 
@@ -97,8 +115,11 @@ export function getRuntimeConfig(): RuntimeConfig {
   const localFallback = buildLocalBridgeFallback();
   if (localFallback) return localFallback;
 
+  const envConfig = getEnvRuntimeConfig();
+  if (envConfig?.endpoint) return envConfig;
+
   return {
-    endpoint: window.location.origin,
+    endpoint: DEFAULT_HOSTED_BRIDGE_ENDPOINT || window.location.origin,
     apiKey: '',
   };
 }
@@ -109,11 +130,21 @@ export function hasRuntimeConnection(): boolean {
 }
 
 function buildHeaders(withJson = false) {
+  return buildRuntimeHeaders({ json: withJson });
+}
+
+export function buildRuntimeHeaders({
+  json = false,
+  accept = 'application/json',
+}: {
+  json?: boolean;
+  accept?: string;
+} = {}) {
   const config = getRuntimeConfig();
   const headers: Record<string, string> = {
-    Accept: 'application/json',
+    Accept: accept,
   };
-  if (withJson) headers['Content-Type'] = 'application/json';
+  if (json) headers['Content-Type'] = 'application/json';
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
   return headers;
 }
@@ -122,6 +153,10 @@ function buildUrl(path: string) {
   const config = getRuntimeConfig();
   const endpoint = String(config.endpoint || window.location.origin).replace(/\/+$/g, '');
   return `${endpoint}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+export function buildRuntimeUrl(path: string) {
+  return buildUrl(path);
 }
 
 export async function bridgeRequest<T = unknown>({
@@ -242,6 +277,34 @@ export async function sendSellerDocsRequest(body: Record<string, unknown>) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/send-seller-docs',
+    body,
+  });
+}
+
+export async function fetchLeadFullRequest(leadId: string) {
+  return bridgeRequest<Record<string, unknown>>({
+    path: `/api/leads/${encodeURIComponent(leadId)}/full`,
+  });
+}
+
+export async function fetchLeadLastCallRequest(leadId: string) {
+  return bridgeRequest<Record<string, unknown>>({
+    path: `/api/leads/${encodeURIComponent(leadId)}/last-call`,
+  });
+}
+
+export async function patchLeadRequest(leadId: string, body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'PATCH',
+    path: `/api/leads/${encodeURIComponent(leadId)}`,
+    body,
+  });
+}
+
+export async function sendLeadContractRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/contract/send',
     body,
   });
 }

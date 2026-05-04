@@ -329,6 +329,71 @@
   [data-theme="light"] .strategy-card {
     box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
   }
+  [data-theme="light"] .fleet-card {
+    background: linear-gradient(180deg, #FFFFFF, #F8FAFC);
+  }
+  [data-theme="light"] .fleet-skill,
+  [data-theme="light"] .fleet-badge,
+  [data-theme="light"] .fleet-progress,
+  [data-theme="light"] .fleet-line,
+  [data-theme="light"] .fleet-skill-card,
+  [data-theme="light"] .fleet-knowledge-card,
+  [data-theme="light"] .fleet-tool-row {
+    background: rgba(15, 23, 42, 0.022);
+    box-shadow: none;
+  }
+  [data-theme="light"] .fleet-detail,
+  [data-theme="light"] [data-page="analyzer"] .analyzer-ops-card,
+  [data-theme="light"] .camp-stat,
+  [data-theme="light"] .camp-card-note {
+    box-shadow: none;
+  }
+  [data-theme="light"] [data-page="analyzer"] .analyzer-ops-card {
+    background: linear-gradient(180deg, #FFFFFF, #F8FAFC);
+  }
+  [data-theme="light"] [data-page="analyzer"] .analyzer-ops-card[data-state="warning"] {
+    background: linear-gradient(180deg, rgba(255, 176, 32, 0.10), #FFFFFF);
+  }
+  [data-theme="light"] [data-page="analyzer"] .analyzer-ops-card[data-state="good"] {
+    background: linear-gradient(180deg, rgba(125, 211, 252, 0.12), #FFFFFF);
+  }
+  [data-theme="light"] .fleet-detail-head,
+  [data-theme="light"] [data-page="analyzer"] .analyzer-frame-wrap {
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  }
+  [data-theme="light"] .fleet-tool-row strong,
+  [data-theme="light"] .fleet-skill-card h4,
+  [data-theme="light"] .fleet-knowledge-card h4,
+  [data-theme="light"] .camp-stat .v,
+  [data-theme="light"] [data-page="analyzer"] .analyzer-ops-value {
+    color: #0F172A;
+  }
+  [data-theme="light"] .fleet-card.selected {
+    box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.35), 0 10px 28px rgba(15, 23, 42, 0.08);
+  }
+  [data-theme="light"] .camp-ops-card[data-state="good"] {
+    background: linear-gradient(180deg, rgba(14, 165, 233, 0.08), #FFFFFF);
+  }
+  [data-theme="light"] .camp-ops-card[data-state="warning"] {
+    background: linear-gradient(180deg, rgba(180, 83, 9, 0.08), #FFFFFF);
+  }
+  [data-theme="light"] .campaign-provider-panel {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.08), #FFFFFF);
+  }
+  [data-theme="light"] .camp-card:hover,
+  [data-theme="light"] .lib-card:hover,
+  [data-theme="light"] .blog-card:hover {
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  }
+  [data-theme="light"] .campaign-wizard,
+  [data-theme="light"] .toast,
+  [data-theme="light"] .user-menu,
+  [data-theme="light"] .fleet-modal {
+    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
+  }
+  [data-theme="light"] .mode-popover {
+    box-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
+  }
   /* light theme: cp-doc preview keeps its own paper look */
   [data-theme="light"] .cp-doc { background: #FFFFFF; border: 1px solid var(--border-dim); }
 
@@ -944,7 +1009,7 @@
 
             <div class="mp-option selected" data-mode="approval">
               <div class="mp-title"><span class="mp-dot"></span>Approval — via Slack or Telegram</div>
-              <div class="mp-desc">Ava does the work but pings you before any offer, contract, or outbound batch. Approve/reject with one tap in chat.</div>
+              <div class="mp-desc">Ava does the work but pings you before any offer, contract, or outbound batch. Approve/decline with one tap in chat.</div>
               <div class="mp-channel-row">
                 <div class="mp-chan on">? Slack #deals</div>
                 <div class="mp-chan">Telegram</div>
@@ -1327,7 +1392,7 @@
 [data-page="dashboard"] .btn-takeover { background: var(--magenta); color: var(--bg-void); }
 [data-page="dashboard"] .btn-takeover:hover { opacity: 0.9; }
 /* ========================================================
-     RIGHT COLUMN — activity + approval queue
+     RIGHT COLUMN — activity + approvals needed
      ======================================================== */
 [data-page="dashboard"] .right-col { display: flex; flex-direction: column; gap: var(--s-4); }
 [data-page="dashboard"] .activity-feed {
@@ -1353,7 +1418,7 @@
 [data-page="dashboard"] .activity-dot.err { background: var(--crimson); }
 [data-page="dashboard"] .activity-text { color: var(--text-secondary); font-size: 11px; }
 [data-page="dashboard"] .activity-text strong { color: var(--text-primary); font-weight: 500; }
-/* --- Approval queue cards --- */
+/* --- Approvals needed cards --- */
 [data-page="dashboard"] .queue { padding: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
 [data-page="dashboard"] .qcard {
     background: var(--bg-panel-elevated);
@@ -1853,7 +1918,7 @@
           <div class="transcript" id="transcript">
             <div class="turn ai">
               <div class="turn-speaker">AI — Acquisition</div>
-              <div class="turn-text">Hi Diane, this is Ava calling from PBK Capital. I know you mentioned you were working a double today — is now a bad time? I can be brief.</div>
+              <div class="turn-text">Hi Diane, this is Ava calling from Probono Key Realty. I know you mentioned you were working a double today — is now a bad time? I can be brief.</div>
             </div>
             <div class="turn seller">
               <div class="turn-speaker">Seller</div>
@@ -1961,7 +2026,7 @@
 
         <div class="panel">
           <div class="panel-head">
-            <div class="panel-title">Approval Queue <span class="tt-count" data-openclaw-count="approvals">— 3</span></div>
+            <div class="panel-title">Approvals Needed <span class="tt-count" data-openclaw-count="approvals">— 3</span></div>
           </div>
           <div class="queue" data-openclaw-feed="approvals">
 
@@ -1976,7 +2041,7 @@
               </div>
               <div class="qcard-actions">
                 <button class="btn btn-primary">Approve</button>
-                <button class="btn btn-ghost">Reject</button>
+                <button class="btn btn-ghost">Decline</button>
               </div>
             </div>
 
@@ -2137,7 +2202,7 @@
           <div class="think-line"><span class="think-ts">10:34:06</span><span class="think-body"><span class="tag tool">tool</span>calling <code>telnyx_call</code>(+16145550142) — script: "grief-aware, repair-anchored"</span></div>
           <div class="think-line"><span class="think-ts">10:34:12</span><span class="think-body">call connected — seller answered on second ring</span></div>
           <div class="think-line"><span class="think-ts">10:34:48</span><span class="think-body"><span class="tag memory">memory</span>new context: probate, bad roof, furnace out — sentiment climbing to 0.72</span></div>
-          <div class="think-line"><span class="think-ts">10:35:06</span><span class="think-body"><span class="tag alert">approval</span>before making $78k offer, requesting user authorization — see approval queue</span></div>
+          <div class="think-line"><span class="think-ts">10:35:06</span><span class="think-body"><span class="tag alert">approval</span>before making $78k offer, requesting user authorization — see Approvals Needed</span></div>
         </div>
 
         <div class="command-bar">
@@ -2711,6 +2776,20 @@
     .tag.vacant { background: var(--amber-glow); color: var(--amber); border-color: rgba(255, 176, 32, 0.3); }
     .tag.pre-fc { background: var(--crimson-glow); color: var(--crimson); border-color: rgba(248, 113, 113, 0.3); }
 
+    .lead-name-cell { display: grid; gap: 5px; min-width: 160px; }
+    .lead-type-badges { display: flex; gap: 5px; flex-wrap: wrap; }
+    .lead-type-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 7px; border-radius: 4px;
+      font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;
+      border: 1px solid transparent; white-space: nowrap;
+    }
+    .lead-type-badge.homeowner { background: rgba(163, 230, 53, 0.12); color: var(--lime); border-color: rgba(163, 230, 53, 0.24); }
+    .lead-type-badge.agent { background: rgba(56, 189, 248, 0.12); color: var(--ion); border-color: rgba(56, 189, 248, 0.28); }
+    .lead-type-badge.unknown { background: var(--bg-void); color: var(--text-tertiary); border-color: var(--border-dim); }
+    .lead-type-badge.property { color: var(--sky); background: var(--sky-glow); border-color: var(--sky-dim); }
+
     .bulk-bar {
       position: sticky; bottom: var(--s-4); margin: 0 var(--s-6);
       background: var(--bg-panel-elevated);
@@ -2759,6 +2838,8 @@
     <div class="filter-dd">Tag: Any<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="filter-dd">Equity: &gt;50%<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="filter-dd">Assigned: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
+    <div class="filter-dd deal-ui-filter">Lead type: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
+    <div class="filter-dd deal-ui-filter">Property: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="filter-dd" style="color: var(--sky); border-color: var(--sky-dim);">+ Add filter</div>
     <div style="margin-left: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px;">
       Showing <strong style="color: var(--text-primary)">247</strong> of <strong style="color: var(--text-primary)">1,247</strong>
@@ -2787,7 +2868,7 @@
           <tr class="row" data-lead-detail="true">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>94</span><span class="score-bar"><span class="score-fill" style="width:94%"></span></span></div></td>
-            <td><strong>Diane Kowalski</strong></td>
+            <td><div class="lead-name-cell"><strong>Diane Kowalski</strong><span class="lead-type-badges"><span class="lead-type-badge homeowner">&#127968; Owner</span><span class="lead-type-badge property">Single family</span></span></div></td>
             <td>202 Cherry Ln, Columbus OH</td>
             <td class="mono">+1 614-555-0142</td>
             <td class="mono">$185k / $91.5k</td>
@@ -2800,7 +2881,7 @@
           <tr class="row">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>91</span><span class="score-bar"><span class="score-fill" style="width:91%"></span></span></div></td>
-            <td><strong>Robert Chen</strong></td>
+            <td><div class="lead-name-cell"><strong>Robert Chen</strong><span class="lead-type-badges"><span class="lead-type-badge agent">&#129309; Agent</span><span class="lead-type-badge property">Multi-family</span></span></div></td>
             <td>55 Birch Rd, Cincinnati OH</td>
             <td class="mono">+1 513-555-0177</td>
             <td class="mono">$142k / $99.4k</td>
@@ -2813,7 +2894,7 @@
           <tr class="row">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>88</span><span class="score-bar"><span class="score-fill" style="width:88%"></span></span></div></td>
-            <td><strong>Sarah Jones</strong></td>
+            <td><div class="lead-name-cell"><strong>Sarah Jones</strong><span class="lead-type-badges"><span class="lead-type-badge homeowner">&#127968; Owner</span><span class="lead-type-badge property">Condo</span></span></div></td>
             <td>456 Oak Ave, Toledo OH</td>
             <td class="mono">+1 419-555-0208</td>
             <td class="mono">$162k / $113k</td>
@@ -2826,7 +2907,7 @@
           <tr class="row">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>82</span><span class="score-bar"><span class="score-fill" style="width:82%"></span></span></div></td>
-            <td><strong>Marcus Delaney</strong></td>
+            <td><div class="lead-name-cell"><strong>Marcus Delaney</strong><span class="lead-type-badges"><span class="lead-type-badge unknown">? Unknown</span><span class="lead-type-badge property">Single family</span></span></div></td>
             <td>14 Maple Ct, Akron OH</td>
             <td class="mono">+1 330-555-0812</td>
             <td class="mono">$178k / $124.6k</td>
@@ -2839,7 +2920,7 @@
           <tr class="row">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>76</span><span class="score-bar"><span class="score-fill mid" style="width:76%"></span></span></div></td>
-            <td><strong>John Smith</strong></td>
+            <td><div class="lead-name-cell"><strong>John Smith</strong><span class="lead-type-badges"><span class="lead-type-badge agent">&#129309; Agent</span><span class="lead-type-badge property">Single family</span></span></div></td>
             <td>123 Main St, Akron OH</td>
             <td class="mono">+1 330-555-0119</td>
             <td class="mono">$215k / $150.5k</td>
@@ -2852,7 +2933,7 @@
           <tr class="row">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>71</span><span class="score-bar"><span class="score-fill mid" style="width:71%"></span></span></div></td>
-            <td><strong>Latoya Briggs</strong></td>
+            <td><div class="lead-name-cell"><strong>Latoya Briggs</strong><span class="lead-type-badges"><span class="lead-type-badge homeowner">&#127968; Owner</span><span class="lead-type-badge property">Land</span></span></div></td>
             <td>8804 Waterloo, Akron OH</td>
             <td class="mono">+1 330-555-0447</td>
             <td class="mono">$132k / $92.4k</td>
@@ -3172,8 +3253,29 @@
       background: var(--bg-void); border-radius: var(--radius);
       padding: var(--s-3); font-family: var(--font-mono); font-size: 11px;
       color: var(--text-secondary); line-height: 1.6; margin-bottom: var(--s-3);
+      white-space: pre-wrap; max-height: 360px; overflow: auto;
     }
     .script-preview strong { color: var(--sky); }
+    .script-path-toolbar {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-2);
+      align-items: center; margin-bottom: var(--s-3);
+    }
+    .script-path-select {
+      width: 100%; min-width: 0; background: var(--bg-void); color: var(--text-primary);
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 10px;
+      font-family: var(--font-mono); font-size: 11px; outline: none;
+    }
+    .script-mode-tabs { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-bottom: var(--s-3); }
+    .script-tab {
+      border: 1px solid var(--border); background: var(--bg-void); color: var(--text-secondary);
+      border-radius: 999px; padding: 7px 10px; font-family: var(--font-mono);
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer;
+    }
+    .script-tab.active {
+      background: var(--sky); border-color: var(--sky); color: var(--bg-void);
+      box-shadow: 0 0 18px var(--sky-glow);
+    }
+    .script-path-note { color: var(--text-tertiary); font-size: 11px; line-height: 1.5; margin: -2px 0 var(--s-3); }
 
     @media (max-width: 1280px) {
       .analyzer-layout { grid-template-columns: 380px 1fr; }
@@ -3183,6 +3285,9 @@
     @media (max-width: 900px) {
       .analyzer-layout { grid-template-columns: 1fr; }
       .verdict-value { font-size: 48px; }
+      .script-path-toolbar { grid-template-columns: 1fr; }
+      .script-mode-tabs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+      .script-tab { flex: 0 0 auto; }
     }
   </style>
 
@@ -3210,7 +3315,7 @@
 
       <div class="field">
         <div class="field-label"><span>Property Address</span><span class="hint">autocomplete</span></div>
-        <input type="text" value="202 Cherry Ln, Columbus, OH 43215"/>
+        <input type="text" id="analyzerAddress" value="202 Cherry Ln, Columbus, OH 43215" placeholder="Enter property address manually or select a lead"/>
       </div>
 
       <div class="field field-row">
@@ -3237,7 +3342,7 @@
 
       <div class="field">
         <div class="field-label"><span>ARV (auto from comps)</span><span class="hint">override if needed</span></div>
-        <input type="text" value="$185,000" readonly/>
+        <input type="text" id="analyzerArv" value="$185,000" placeholder="$0"/>
       </div>
 
       <div class="repair-list">
@@ -3416,6 +3521,28 @@
       </div>
 
       <div class="scripts-teaser">
+        <div class="label">PBK Path Script Library - analyzer call mode</div>
+        <div class="script-path-toolbar">
+          <select class="script-path-select" id="analyzerScriptPath" aria-label="Analyzer script path">
+            <option value="cash">Cash Offer</option>
+            <option value="rbp">Retail Buyer Program</option>
+            <option value="cf">Creative Finance</option>
+            <option value="mt">Mortgage Takeover</option>
+            <option value="land">Land</option>
+          </select>
+          <button class="chip-btn" type="button" id="analyzerScriptVariant">Owner mode</button>
+        </div>
+        <div class="script-path-note" id="analyzerScriptNote">Opening first, acquisition second, objections third. Same PBK path logic Ava uses.</div>
+        <div class="script-mode-tabs" role="tablist" aria-label="Analyzer script sections">
+          <button class="script-tab active" type="button" data-analyzer-script-tab="opening">Opening</button>
+          <button class="script-tab" type="button" data-analyzer-script-tab="acquisition">Acquisition</button>
+          <button class="script-tab" type="button" data-analyzer-script-tab="objections">Objections</button>
+        </div>
+        <div class="script-preview" id="analyzerScriptPreview"></div>
+        <button class="btn btn-primary" id="pushAnalyzerScriptBtn" type="button" style="width: 100%; justify-content: center;">Push current script to Ava</button>
+      </div>
+
+      <div class="scripts-teaser" hidden>
         <div class="label">? AI Negotiation Script — preview</div>
         <div class="script-preview">
           <strong>OPEN:</strong> Hi Diane, pulled comps on Cherry Ln — I can close in 14 days, cash, you don't lift a finger.<br><br>
@@ -3579,6 +3706,9 @@
     }
     .side-sec .label a { color: var(--sky); text-decoration: none; text-transform: none; letter-spacing: 0; font-size: 11px; }
     .side-link-stub {
+      background: transparent;
+      border: 0;
+      padding: 0;
       color: var(--sky);
       cursor: pointer;
       text-transform: none;
@@ -3591,6 +3721,33 @@
       border-color: var(--sky-dim);
       outline: none;
     }
+
+    .path-strategy {
+      border-color: var(--sky-dim);
+      box-shadow: inset 0 0 0 1px var(--sky-glow);
+      background:
+        radial-gradient(circle at top right, var(--sky-glow), transparent 42%),
+        var(--bg-panel);
+    }
+    .path-strategy .path-title-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
+    }
+    .path-strategy .path-title {
+      font-family: var(--font-display); font-weight: 600; font-style: italic;
+      font-size: 18px; color: var(--sky);
+    }
+    .path-strategy .confidence-pill {
+      padding: 2px 8px; background: var(--sky-glow); border: 1px solid var(--sky-dim);
+      border-radius: 999px; font-family: var(--font-mono); font-size: 9px;
+      color: var(--sky); letter-spacing: 0.1em; white-space: nowrap;
+    }
+    .path-rules {
+      list-style: none; padding: 0; margin: 0;
+      font-family: var(--font-mono); font-size: 11px; line-height: 1.7; color: var(--text-secondary);
+    }
+    .path-rules li { display: flex; gap: 6px; align-items: flex-start; }
+    .path-rules .do { color: var(--sky); }
+    .path-rules .dont { color: var(--crimson); }
 
     .memory-item {
       background: var(--bg-void); border: 1px solid var(--border-dim);
@@ -3741,6 +3898,21 @@
     </div>
 
     <aside class="agent-side">
+      <div class="side-sec path-strategy">
+        <div class="label"><span>Current path strategy</span><button type="button" class="side-link-stub" data-path-override>override -></button></div>
+        <div class="path-title-row">
+          <span class="path-title" data-current-path-title>Cash Offer</span>
+          <span class="confidence-pill">88% confidence</span>
+        </div>
+        <ul class="path-rules">
+          <li><span class="do">▸</span><span>Emphasize <strong style="color: var(--text-primary);">speed</strong> · 14-21 day close</span></li>
+          <li><span class="do">▸</span><span><strong style="color: var(--text-primary);">As-is purchase</strong> · no repairs needed</span></li>
+          <li><span class="do">▸</span><span>Hard MAO cap · <strong style="color: var(--lime);">$91,500</strong></span></li>
+          <li><span class="dont">x</span><span>Never say <strong style="color: var(--text-primary);">wholesaler</strong></span></li>
+          <li><span class="do">▸</span><span>Lead with empathy on probate</span></li>
+        </ul>
+      </div>
+
       <div class="side-sec">
         <div class="label"><span>🧠 Active Memory</span><span class="side-link-stub" title="Open Brain library" role="button" tabindex="0">view all</span></div>
         <div class="memory-item">
@@ -4630,7 +4802,7 @@
         </div>
         <div class="cp-doc">
           <h4>Purchase & Sale Agreement</h4>
-          <p style="margin-bottom: 12px;">This Agreement is entered into on <strong>April 22, 2026</strong> between <strong>Robert Chen</strong> ("Seller") and <strong>PBK Capital LLC</strong> ("Buyer").</p>
+          <p style="margin-bottom: 12px;">This Agreement is entered into on <strong>April 22, 2026</strong> between <strong>Robert Chen</strong> ("Seller") and <strong>Probono Key Realty</strong> ("Buyer").</p>
           <p style="margin-bottom: 12px;"><strong>1. Property.</strong> 55 Birch Rd, Cincinnati, OH 45202, parcel 147-22-038.</p>
           <p style="margin-bottom: 12px;"><strong>2. Purchase Price.</strong> Buyer agrees to purchase the Property for the sum of <strong>Ninety-Eight Thousand Five Hundred Dollars ($98,500.00)</strong>, all cash at closing.</p>
           <p style="margin-bottom: 12px;"><strong>3. Earnest Money.</strong> $500 due within 48 hours of execution, deposited with <strong>Ohio Title Co</strong>.</p>
@@ -4641,7 +4813,7 @@
           <div class="sig-line"></div>
           <p style="font-size: 10px; margin-top: 4px;">Robert Chen — Seller — date</p>
           <div class="sig-line"></div>
-          <p style="font-size: 10px; margin-top: 4px;">Jordan — PBK Capital LLC — date</p>
+          <p style="font-size: 10px; margin-top: 4px;">Jordan — Probono Key Realty — date</p>
         </div>
         <div class="cp-footer">
           <button class="btn btn-ghost">Edit</button>
@@ -5108,6 +5280,47 @@
     .perf-row .v { color: var(--text-secondary); text-align: right; }
     .perf-row .v.good { color: var(--sky); }
 
+    .path-performance { padding: 0; overflow: hidden; }
+    .path-performance-head {
+      padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-dim);
+      display: flex; align-items: center; gap: var(--s-2);
+    }
+    .path-performance-head h4 { margin: 0; flex: 1; }
+    .path-performance-scroll { overflow-x: auto; }
+    .path-performance table {
+      width: 100%; min-width: 760px; border-collapse: collapse;
+      font-family: var(--font-mono); font-size: 12px;
+    }
+    .path-performance th {
+      text-align: right; padding: 10px var(--s-3); font-weight: 600;
+      background: var(--bg-console); color: var(--text-tertiary);
+      font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+    }
+    .path-performance th:first-child,
+    .path-performance td:first-child { text-align: left; padding-left: var(--s-5); }
+    .path-performance th:last-child,
+    .path-performance td:last-child { padding-right: var(--s-5); }
+    .path-performance td {
+      text-align: right; padding: 12px var(--s-3);
+      border-bottom: 1px dashed var(--border-dim); color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .path-performance tr:last-child td { border-bottom: none; }
+    .path-performance tbody tr { cursor: pointer; transition: background .15s ease; }
+    .path-performance tbody tr:hover { background: var(--bg-hover); }
+    .path-performance tr.best { background: rgba(163, 230, 53, 0.04); }
+    .path-main { display: grid; gap: 2px; }
+    .path-main strong { color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; }
+    .path-main span { font-size: 9px; color: var(--text-tertiary); letter-spacing: 0.06em; }
+    .path-performance .good { color: var(--lime); font-weight: 700; }
+    .path-performance .bad { color: var(--crimson); }
+    .rex-take {
+      padding: var(--s-3) var(--s-5); background: var(--sky-glow);
+      border-top: 1px solid var(--sky-dim); font-family: var(--font-mono);
+      font-size: 11px; color: var(--sky); display: flex; align-items: center; gap: 12px;
+    }
+    .rex-take span:last-child { color: var(--text-secondary); line-height: 1.5; }
+
     .analytics-drill { display: grid; gap: var(--s-4); }
     .analytics-drill-intro { color: var(--text-secondary); font-size: 13px; line-height: 1.55; max-width: 820px; }
     .analytics-drill-controls { display: grid; grid-template-columns: 1.2fr repeat(3, minmax(130px, 0.7fr)) auto; gap: var(--s-2); align-items: end; }
@@ -5148,6 +5361,8 @@
       .analytics-drill-controls, .analytics-drill-kpis { grid-template-columns: 1fr; }
       .analytics-drill-controls .btn { min-height: 44px; justify-content: center; }
       .analytics-drill-field select { min-height: 44px; }
+      .path-performance-head { align-items: flex-start; flex-direction: column; }
+      .rex-take { align-items: flex-start; flex-direction: column; }
     }
   </style>
 
@@ -5334,6 +5549,78 @@
       </div>
       <div style="margin-top: var(--s-3); padding: var(--s-3); background: var(--sky-glow); border-radius: var(--radius); font-family: var(--font-mono); font-size: 11px; color: var(--sky);">
         ? Peak: <strong>11am—1pm</strong> and <strong>5pm—7pm</strong> — 32% higher connect rate
+      </div>
+    </div>
+    <div class="chart-panel an-full path-performance">
+      <div class="path-performance-head">
+        <h4><span>Deal path performance · last 30 days</span></h4>
+        <button type="button" class="filter-dd deal-path-sort">Sort: Conv rate<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+      </div>
+      <div class="path-performance-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Path</th>
+              <th>Leads</th>
+              <th>Converted</th>
+              <th>Conv. rate</th>
+              <th>Avg profit</th>
+              <th>Avg days</th>
+              <th>Trend</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-path-row="cash">
+              <td><span class="path-main"><strong>Cash Offer</strong><span>14-21 day close · as-is</span></span></td>
+              <td>124</td>
+              <td class="good">18</td>
+              <td><strong style="color: var(--text-primary);">14.5%</strong></td>
+              <td class="good">$12,400</td>
+              <td>16</td>
+              <td class="good">up +2.1%</td>
+            </tr>
+            <tr data-path-row="rbp">
+              <td><span class="path-main"><strong>Retail Buyer Program</strong><span>finance any condition</span></span></td>
+              <td>56</td>
+              <td class="good">7</td>
+              <td><strong style="color: var(--text-primary);">12.5%</strong></td>
+              <td class="good">$15,200</td>
+              <td>42</td>
+              <td>flat</td>
+            </tr>
+            <tr class="best" data-path-row="cf">
+              <td><span class="path-main"><strong>Creative Finance</strong><span>seller finance / sub-to · best margin</span></span></td>
+              <td>23</td>
+              <td class="good">4</td>
+              <td class="good">17.4%</td>
+              <td class="good">$18,100</td>
+              <td>28</td>
+              <td class="good">up +5.4%</td>
+            </tr>
+            <tr data-path-row="mt">
+              <td><span class="path-main"><strong>Mortgage Takeover</strong><span>subject-to existing loan · highest conv</span></span></td>
+              <td>12</td>
+              <td class="good">3</td>
+              <td class="good">25.0%</td>
+              <td><strong style="color: var(--text-primary);">$9,800</strong></td>
+              <td>21</td>
+              <td class="good">up +3.2%</td>
+            </tr>
+            <tr data-path-row="land">
+              <td><span class="path-main"><strong>Land</strong><span>per-acre offer · builder fee model</span></span></td>
+              <td>8</td>
+              <td>1</td>
+              <td><strong style="color: var(--text-primary);">12.5%</strong></td>
+              <td>$6,500</td>
+              <td>35</td>
+              <td class="bad">down -1.8%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="rex-take">
+        <span>Rex's take:</span>
+        <span><strong style="color: var(--text-primary);">Mortgage Takeover</strong> wins on conversion rate · <strong style="color: var(--text-primary);">Creative Finance</strong> wins on dollars per deal. Push more probate leads into <strong style="color: var(--text-primary);">CF</strong>; they qualify 2.4x more often.</span>
       </div>
     </div>
   </div>
@@ -6385,7 +6672,7 @@
           <div class="rex-setup-chip"><strong>n8n envs</strong><br>PBK_BRIDGE_URL, PBK_BRIDGE_API_KEY, PBK_VOIDLLM_BASE_URL, PBK_VOIDLLM_MODEL</div>
           <div class="rex-setup-chip"><strong>Workflows</strong><br>Import rex-strategist and rex-outcome-evaluator, then activate after a dry run.</div>
           <div class="rex-setup-chip"><strong>Provider writes</strong><br>Keep Instantly, Telnyx, and DocuSign in sandbox until one verified live test passes.</div>
-          <div class="rex-setup-chip"><strong>Slack</strong><br>Approve, Reject, and Modify proposal actions are audit-backed.</div>
+          <div class="rex-setup-chip"><strong>Slack</strong><br>Approve, Decline, and Modify proposal actions are audit-backed.</div>
         </div>
       </section>
 
@@ -7157,7 +7444,7 @@
       </div>
 
       <div class="rec-transcript-pane">
-        <div class="rec-line ai"><span class="ts">0:00</span><span class="speaker">Ava</span><span class="text">Hi Diane, this is Ava calling from PBK Capital. Is now an OK time?</span></div>
+        <div class="rec-line ai"><span class="ts">0:00</span><span class="speaker">Ava</span><span class="text">Hi Diane, this is Ava calling from Probono Key Realty. Is now an OK time?</span></div>
         <div class="rec-line seller"><span class="ts">0:08</span><span class="speaker">Diane</span><span class="text">Uh, what's this about?</span></div>
         <div class="rec-line ai"><span class="ts">0:11</span><span class="speaker">Ava</span><span class="text">You filled out a form last week about the property on Cherry Lane. We buy houses as-is, cash. I pulled up the address — looks like ARV could be around $185k. What's your situation?</span></div>
         <div class="rec-line seller"><span class="ts">0:38</span><span class="speaker">Diane</span><span class="text">It was my mother's place. She passed last month. Honestly I just want it gone.</span></div>
@@ -7719,7 +8006,7 @@
     </div>
     <div class="page-head-actions">
       <button class="btn btn-ghost" type="button" data-campaign-head-action="templates">Templates</button>
-      <button class="btn btn-ghost" type="button" data-campaign-head-action="approvals">Approval queue<span class="badge-count" data-campaign-approval-count>0</span></button>
+      <button class="btn btn-ghost" type="button" data-campaign-head-action="approvals">Approvals needed<span class="badge-count" data-campaign-approval-count>0</span></button>
       <button class="btn btn-primary" type="button" id="newCampaignBtn" data-campaign-head-action="new">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         New Campaign
@@ -8732,6 +9019,25 @@
       display: flex; gap: var(--s-4); flex-wrap: wrap;
     }
     .ld-details .dot { color: var(--text-ghost); }
+    .ld-type-row {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;
+    }
+    .ld-type-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 5px 10px; background: var(--bg-void);
+      border: 1px solid var(--border); border-radius: 999px;
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease;
+      min-height: 32px;
+    }
+    .ld-type-pill:hover,
+    .ld-type-pill:focus-visible { border-color: var(--sky-dim); color: var(--text-primary); outline: none; }
+    .ld-type-pill .lt-icon { font-size: 12px; }
+    .ld-type-pill .lt-label {
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary);
+    }
+    .ld-type-pill .lt-value { color: var(--text-primary); font-weight: 500; }
+    .ld-type-pill svg { width: 10px; height: 10px; opacity: 0.6; }
     .ld-score-ring {
       width: 80px; height: 80px; position: relative;
     }
@@ -8813,9 +9119,129 @@
     .ld-field .l { color: var(--text-tertiary); }
     .ld-field .v { color: var(--text-primary); font-weight: 500; }
 
+    .mobile-path-selector {
+      display: none; gap: 6px; padding: 12px var(--s-3); margin: 0 0 var(--s-4);
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+      background: var(--bg-console);
+    }
+    .mobile-path-selector::-webkit-scrollbar { display: none; }
+    .mobile-path-selector .path-chip {
+      flex-shrink: 0; padding: 8px 14px; border-radius: 999px;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      color: var(--text-secondary); font-family: var(--font-mono);
+      font-size: 11px; letter-spacing: 0.06em; cursor: pointer;
+      white-space: nowrap;
+    }
+    .mobile-path-selector .path-chip.active {
+      background: var(--sky); color: var(--bg-void); border-color: var(--sky);
+      font-weight: 700;
+    }
+
+    .deal-path-card {
+      background: var(--bg-panel); border: 1px solid var(--sky-dim);
+      box-shadow: 0 0 0 1px var(--sky-glow);
+      border-radius: var(--radius-lg); margin-bottom: var(--s-4);
+      overflow: hidden;
+    }
+    .deal-path-head {
+      padding: var(--s-3) var(--s-4); background: var(--bg-console);
+      border-bottom: 1px solid var(--border-dim);
+      display: flex; align-items: center; gap: var(--s-2);
+    }
+    .deal-path-head h3 {
+      font-family: var(--font-display); font-weight: 500; font-size: 16px;
+      letter-spacing: -0.01em; flex: 1; margin: 0;
+    }
+    .deal-path-head h3 em { font-style: italic; color: var(--sky); }
+    .deal-path-head .auto-pill {
+      padding: 3px 8px; background: var(--sky-glow); color: var(--sky);
+      border: 1px solid var(--sky-dim);
+      border-radius: 4px; font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.12em; font-weight: 700; white-space: nowrap;
+    }
+    .deal-path-body { padding: var(--s-4); }
+    .deal-path-fields {
+      display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3);
+      margin-bottom: var(--s-3);
+    }
+    .deal-path-card .form-field label {
+      display: block; font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-tertiary); margin-bottom: 6px;
+    }
+    .deal-path-card .form-field input,
+    .deal-path-card .form-field select,
+    .deal-path-card .form-field textarea {
+      width: 100%; background: var(--bg-void); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 9px 12px;
+      color: var(--text-primary); font-family: var(--font-mono); font-size: 12px;
+    }
+    .deal-path-card .form-field input:focus,
+    .deal-path-card .form-field select:focus,
+    .deal-path-card .form-field textarea:focus {
+      outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow);
+    }
+    .deal-path-card .form-field select { cursor: pointer; }
+    .deal-path-card .form-field textarea { resize: vertical; min-height: 60px; line-height: 1.5; }
+    .deal-path-card .suggested-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 12px; background: var(--sky-glow);
+      border: 1px solid var(--sky-dim); border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--sky); width: 100%;
+    }
+    .deal-path-card .suggested-badge .conf {
+      margin-left: auto; padding: 2px 6px; background: var(--sky); color: var(--bg-void);
+      border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+    }
+    .deal-path-foot {
+      display: flex; gap: var(--s-3); align-items: center;
+      padding-top: var(--s-3); border-top: 1px dashed var(--border-dim);
+      margin-top: var(--s-2);
+    }
+    .deal-path-foot .estim {
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+      letter-spacing: 0.04em; line-height: 1.5; flex: 1;
+    }
+    .deal-path-foot .estim strong { color: var(--text-primary); }
+    .deal-path-foot .estim .lime { color: var(--lime); }
+    .confirm-btn {
+      padding: 12px 22px; background: var(--lime); color: var(--bg-void);
+      border: 1px solid var(--lime); border-radius: var(--radius);
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
+      text-transform: uppercase; font-weight: 700; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      transition: all 0.15s ease; white-space: nowrap;
+    }
+    .confirm-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(163, 230, 53, 0.3); }
+    .confirm-btn svg { width: 14px; height: 14px; }
+
     @media (max-width: 1000px) {
       .ld-layout { grid-template-columns: 1fr; }
       .ld-stats { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 720px) {
+      .ld-layout { padding: var(--s-4) var(--s-3) calc(92px + env(safe-area-inset-bottom)); }
+      .ld-hero-top { display: grid; gap: var(--s-3); padding: var(--s-4); }
+      .ld-info { min-width: 0; }
+      .ld-name { font-size: clamp(28px, 9vw, 34px); }
+      .ld-details { gap: 8px 12px; }
+      .ld-actions { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .ld-actions .btn { min-height: 44px; justify-content: center; padding-inline: 8px; }
+      .ld-type-pill { flex: 1 1 100%; justify-content: space-between; font-size: 12px; }
+      .mobile-path-selector { display: flex; }
+      .deal-path-head { align-items: flex-start; flex-direction: column; }
+      .deal-path-fields { grid-template-columns: 1fr; }
+      .deal-path-card .form-field input,
+      .deal-path-card .form-field select,
+      .deal-path-card .form-field textarea { font-size: 16px; min-height: 44px; }
+      .deal-path-foot { flex-direction: column; align-items: stretch; }
+      .confirm-btn { width: 100%; min-height: 46px; }
+    }
+    @media (max-width: 380px) {
+      .ld-stats { grid-template-columns: 1fr; }
+      .ld-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 
@@ -8835,10 +9261,25 @@
               <span class="dot">—</span>
               <span style="color: var(--sky);">Score 94</span>
             </div>
+            <div class="ld-type-row">
+              <button type="button" class="ld-type-pill" data-type="leadtype" data-value="homeowner">
+                <span class="lt-icon">&#127968;</span>
+                <span class="lt-label">Lead type</span>
+                <span class="lt-value">Home Owner</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <button type="button" class="ld-type-pill" data-type="proptype" data-value="single-family">
+                <span class="lt-icon">&#127969;</span>
+                <span class="lt-label">Property</span>
+                <span class="lt-value">Single Family</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
           </div>
           <div class="ld-actions">
             <button class="btn btn-ghost">Call</button>
             <button class="btn btn-ghost">Text</button>
+            <button class="btn btn-ghost">Email</button>
             <button class="btn btn-primary">Send to Ava</button>
           </div>
         </div>
@@ -8858,6 +9299,66 @@
           <div class="ld-stat">
             <div class="l">Touches</div>
             <div class="v">4</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mobile-path-selector" aria-label="Deal path quick selector">
+        <button type="button" class="path-chip active" data-path="cash">Cash</button>
+        <button type="button" class="path-chip" data-path="rbp">RBP</button>
+        <button type="button" class="path-chip" data-path="cf">CF</button>
+        <button type="button" class="path-chip" data-path="mt">MT</button>
+        <button type="button" class="path-chip" data-path="land">Land</button>
+      </div>
+
+      <div class="deal-path-card">
+        <div class="deal-path-head">
+          <h3>Deal <em>path</em> &amp; offer</h3>
+          <span class="auto-pill">AI-suggested · 88%</span>
+        </div>
+        <div class="deal-path-body">
+          <div class="deal-path-fields">
+            <div class="form-field">
+              <label>AI suggested path</label>
+              <div class="suggested-badge">
+                <span>Cash Offer · empathetic / probate angle</span>
+                <span class="conf">88%</span>
+              </div>
+            </div>
+            <div class="form-field">
+              <label for="selectedPath">Selected path (override)</label>
+              <select id="selectedPath">
+                <option value="cash" selected>Cash Offer · 14-21 day close</option>
+                <option value="rbp">Retail Buyer Program · finance any condition</option>
+                <option value="cf">Creative Finance · seller finance / sub-to</option>
+                <option value="mt">Mortgage Takeover · subject-to existing loan</option>
+                <option value="land">Land · per-acre offer</option>
+              </select>
+            </div>
+          </div>
+          <div class="deal-path-fields">
+            <div class="form-field">
+              <label for="finalOffer">Final offer amount</label>
+              <input type="text" id="finalOffer" value="$78,000" placeholder="$0"/>
+            </div>
+            <div class="form-field">
+              <label for="closingDate">Closing date</label>
+              <input type="date" id="closingDate" value="2026-05-15"/>
+            </div>
+          </div>
+          <div class="form-field" style="margin-bottom: var(--s-3);">
+            <label for="avaNotes">Notes for Ava (optional)</label>
+            <textarea id="avaNotes" rows="2" placeholder="Lead with empathy on the loss. Float $78k anchor below repair-adjusted MAO. Do not mention wholesaler.">Lead with empathy on her mother's passing. Float $78k anchor - do not go above $84k. Mention the roof + furnace burden. Hard cap at $91,500 MAO.</textarea>
+          </div>
+          <div class="deal-path-foot">
+            <div class="estim">
+              On confirm -> Ava calls within 60s · script auto-injects path + notes · contract template prepped<br>
+              <strong>$78k offer</strong> = <strong>$13.5k profit</strong> after repairs &amp; assignment fee · <span class="lime">qualifies under 70% MAO rule</span>
+            </div>
+            <button class="confirm-btn" type="button" id="confirmDealBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              Confirm &amp; call back
+            </button>
           </div>
         </div>
       </div>
@@ -8885,7 +9386,7 @@
           <div class="tl-when">10:33 — 1m ago</div>
           <div class="tl-dot warn"></div>
           <div class="tl-body">
-            <div class="tl-title">Approval queued <span class="tl-chan sys">System</span></div>
+            <div class="tl-title">Queued for approval <span class="tl-chan sys">System</span></div>
             <div class="tl-desc">$78,000 anchor offer pending your OK — task <em>#t-4821</em></div>
           </div>
         </div>
@@ -9266,6 +9767,95 @@
     font-family: var(--font-mono); font-size: 11px; line-height: 1.5; padding: 10px 12px;
   }
   .pbk-form-error.open { display: block; }
+  .pbk-modal-toolbar {
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3);
+    margin-bottom: var(--s-3);
+  }
+  .pbk-checkbox-row {
+    display: flex; align-items: flex-start; gap: 9px;
+    border: 1px solid var(--border-dim); border-radius: var(--radius);
+    padding: 10px 12px; background: rgba(255,255,255,0.02);
+    color: var(--text-secondary); font-size: 12px; line-height: 1.5;
+  }
+  .pbk-checkbox-row input { width: auto; margin-top: 2px; accent-color: var(--sky); }
+  .ai-context-card,
+  .signer-slot {
+    border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+    background: rgba(255,255,255,0.02); padding: var(--s-3);
+  }
+  .ai-context-card {
+    display: grid; gap: 4px; margin-bottom: var(--s-3);
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);
+  }
+  .ai-context-card strong { color: var(--text-primary); font-family: var(--font-display); font-size: 15px; font-weight: 500; }
+  .ai-message-modal textarea[data-message-content] { min-height: 150px; }
+  .contract-template-banner {
+    display: flex; justify-content: space-between; gap: var(--s-3); align-items: center;
+    border: 1px solid var(--sky-dim); border-radius: var(--radius-lg);
+    padding: var(--s-3); background: var(--sky-glow); margin: var(--s-3) 0;
+  }
+  .contract-template-banner .k {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-tertiary);
+  }
+  .contract-template-banner .v { font-family: var(--font-display); font-size: 17px; color: var(--text-primary); }
+  .contract-template-banner .pill {
+    font-family: var(--font-mono); font-size: 10px; color: var(--sky);
+    border: 1px solid var(--sky-dim); background: var(--bg-void);
+    border-radius: 999px; padding: 5px 8px; white-space: nowrap;
+  }
+  .contract-signer-grid { display: grid; gap: var(--s-3); }
+  .signer-slot.locked { opacity: 0.82; }
+  .signer-slot-head {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s-2);
+    margin-bottom: var(--s-2);
+  }
+  .signer-slot-title {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-tertiary);
+  }
+  .signer-slot-role {
+    font-family: var(--font-mono); font-size: 9px; color: var(--sky);
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px 7px;
+  }
+  .signer-slot-fields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
+  .signer-slot input,
+  .ai-message-modal select,
+  .ai-message-modal textarea,
+  .contract-signer-modal input {
+    width: 100%; min-width: 0; background: var(--bg-void); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 11px; color: var(--text-primary);
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .signer-slot input:disabled { color: var(--text-tertiary); border-color: var(--border-dim); background: rgba(255,255,255,0.02); }
+  .analyzer-sidecar-panel {
+    border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.08), rgba(255,255,255,0.018));
+    padding: var(--s-4); display: grid; gap: var(--s-3);
+  }
+  .analyzer-sidecar-head {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-3);
+  }
+  .analyzer-sidecar-head h4 {
+    font-family: var(--font-display); font-weight: 500; font-size: 18px;
+    letter-spacing: -0.02em; margin-bottom: 2px;
+  }
+  .analyzer-sidecar-head h4 em { color: var(--sky); font-style: italic; }
+  .analyzer-sidecar-head p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+  .analyzer-sidecar-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: var(--s-3); }
+  .analyzer-sidecar-grid textarea,
+  .analyzer-sidecar-grid input,
+  .analyzer-sidecar-grid select {
+    width: 100%; min-width: 0; background: var(--bg-void); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 11px; color: var(--text-primary);
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .analyzer-sidecar-grid textarea { min-height: 100px; resize: vertical; }
+  .analyzer-sidecar-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+  .tl-dot.note { background: var(--ion); box-shadow: 0 0 0 4px var(--ion-glow); }
+  .tl-dot.followup { background: var(--amber); box-shadow: 0 0 0 4px var(--amber-glow); }
+  .tl-chan.note { color: var(--ion); border-color: var(--ion); background: var(--ion-glow); }
+  .tl-chan.followup { color: var(--amber); border-color: var(--amber); background: var(--amber-glow); }
   .pbk-outcome {
     display: inline-flex; align-items: center; gap: 6px; width: fit-content;
     padding: 4px 8px; border-radius: 999px; border: 1px solid var(--border);
@@ -9279,6 +9869,11 @@
   .pbk-outcome.local_view_only { color: var(--text-tertiary); border-color: var(--border-bright); }
   @media (max-width: 720px) {
     .pbk-form-grid { grid-template-columns: 1fr; }
+    .pbk-modal-toolbar,
+    .signer-slot-fields,
+    .analyzer-sidecar-grid { grid-template-columns: 1fr; }
+    .contract-template-banner { align-items: flex-start; flex-direction: column; }
+    .analyzer-sidecar-actions .btn { width: 100%; justify-content: center; }
     .modal .modal-actions { flex-direction: column-reverse; }
     .modal .modal-actions .btn { width: 100%; justify-content: center; }
     .qcard-actions,
@@ -9319,7 +9914,7 @@
     <div class="fc-transcript">
       <div style="margin-bottom: 24px;">
         <div style="font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--sky); font-weight: 700; margin-bottom: 6px;">Ava — Acquisition</div>
-        <div style="color: var(--text-secondary);">Hi Diane, this is Ava calling from PBK Capital. I know you mentioned you were working a double today — is now a bad time? I can be brief.</div>
+        <div style="color: var(--text-secondary);">Hi Diane, this is Ava calling from Probono Key Realty. I know you mentioned you were working a double today — is now a bad time? I can be brief.</div>
       </div>
       <div style="margin-bottom: 24px;">
         <div style="font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ion); font-weight: 700; margin-bottom: 6px;">Diane — Seller</div>
@@ -10479,6 +11074,510 @@
   }
   window.toast = toast;
 
+  // =========================================================
+  // MINOR UX: lead type, property type, deal path controls
+  // =========================================================
+  const LEAD_TYPE_OPTIONS = [
+    { label: 'Home Owner', value: 'homeowner', icon: '&#127968;' },
+    { label: 'Real Estate Agent', value: 'agent', icon: '&#129309;' },
+    { label: 'Unknown', value: 'unknown', icon: '?' }
+  ];
+  const PROP_TYPE_OPTIONS = [
+    { label: 'Single Family', value: 'single-family', icon: '&#127969;' },
+    { label: 'Multi-family (2-4)', value: 'multi-family-2-4', icon: '2-4' },
+    { label: 'Multi-family (5+)', value: 'multi-family-5-plus', icon: '5+' },
+    { label: 'Land', value: 'land', icon: 'LA' },
+    { label: 'Condo', value: 'condo', icon: 'CO' },
+    { label: 'Other', value: 'other', icon: 'OT' }
+  ];
+  const DEAL_PATH_LABELS = {
+    cash: 'Cash Offer',
+    rbp: 'Retail Buyer Program',
+    cf: 'Creative Finance',
+    mt: 'Mortgage Takeover',
+    land: 'Land'
+  };
+  const PBK_ANALYZER_SCRIPT_LIBRARY = {
+    cash: {
+      owner: {
+        opening: `CASH OFFER - OWNER OPENING
+
+"Hey [SELLER_NAME], this is [YOUR_NAME] with Probono Key Realty. I know this is a little random. Did I catch you at a horrible time?"
+
+"I am looking at the property on [PROPERTY_ADDRESS]. I work with a small group of local buyers. We are looking for a few more houses in the area, and I wanted to see if you have ever thought about a simple, as-is cash sale: no repairs, no agent fees, no waiting."
+
+"Before I go any further, can you tell me a little about the property? Is it sitting empty, rented, or are you living there? What is the overall condition like?"
+
+Pass-off: "I am not the final decision-maker on pricing. I am the scout. I pass opportunities to our acquisitions team. They run the final numbers, build the offer package, and make the call."`,
+        acquisition: `CASH OFFER - OWNER ACQUISITION
+
+"Before we get into anything, if we agree on a price that works for both of us today, is there anything that would stop you from moving forward?"
+
+Discovery:
+- What is making you consider selling [PROPERTY_ADDRESS] right now?
+- What shape is the property in?
+- Is it occupied or vacant?
+- How soon are you looking to move?
+- What do you need to get out of this property?
+
+Deal analysis:
+ARV: [ARV]
+MAO Cash: [MAO_CASH]
+Repairs: [REPAIRS]
+
+Offer delivery:
+"Based on the condition, the work it needs, and recent comps, we would need to be around [AGREED_PRICE] to make it work. Close: [TIMELINE]. Earnest: [EARNEST_DAYS]."
+
+RBP pivot:
+"If the cash number is not quite there and you have a few extra weeks, I have a program that could get you to [MAO_RBP]. That is [RBP_GAIN] more. Want me to walk you through it?"`,
+        objections: `CASH OFFER - OBJECTIONS
+
+"I need to think about it."
+Acknowledge: "Of course. This is a big decision."
+Reframe: "Is it the price or the timing?"
+Authority close: "What would make you feel completely comfortable moving forward today?"
+
+"Your number is too low."
+Acknowledge: "I hear you."
+Reframe: "Help me understand how you came up with your number."
+Authority close: "If I show the exact comps and repair math, would you look at it before deciding?"
+
+"I have a higher offer."
+Acknowledge: "That is great if it closes."
+Reframe: "Is it cash or financed? Proof of funds? Earnest money down?"
+Authority close: "Would you keep my offer as a backup?"
+
+"How do I know you can close?"
+Acknowledge: "Fair question."
+Reframe: "I can send proof of funds and put earnest money into escrow."
+Authority close: "Would escrowed earnest within 24 hours make you comfortable?"`
+      },
+      agent: {
+        opening: `CASH OFFER - AGENT OPENING
+
+"Hey [AGENT_NAME], this is [YOUR_NAME] with Probono Key Realty. I know you get a ton of calls from investors, so I will be quick. Did I catch you at a decent time?"
+
+"I am looking at your listing at [PROPERTY_ADDRESS] that has been on the market for [DOM] days. I specialize in moving inventory that has stalled out."
+
+"My buyer can make a clean, all-cash offer as-is, close in [TIMELINE], and you keep your full commission. The seller gets a guaranteed exit, and you get paid on a deal that may be sitting with no end in sight."`,
+        acquisition: `CASH OFFER - AGENT ACQUISITION
+
+"I am not the final decision-maker. I am the scout. Let me pass this listing to our acquisitions team. They will call you within a few hours with a cash offer, email the PDF package, and schedule a time to review it with your seller."
+
+Deal analysis:
+ARV: [ARV]
+MAO Cash: [MAO_CASH]
+Repairs: [REPAIRS]
+Close: [TIMELINE]
+
+Close:
+"What is the best email and phone for the acquisitions team to reach you?"`,
+        objections: `CASH OFFER - AGENT OBJECTIONS
+
+"I already work with investors."
+Acknowledge: "That is smart."
+Reframe: "Do they protect your full commission and close without retrading?"
+Authority close: "Would you be opposed to having me as a backup?"
+
+"We will just list it."
+Acknowledge: "Listing is valid."
+Reframe: "For distressed inventory, DOM can run 90 to 120+ days."
+Authority close: "What if I gave the seller a cash backstop today?"
+
+"My broker does not allow referral fees."
+Acknowledge: "That is a real constraint."
+Reframe: "We can structure it through proper broker channels."
+Authority close: "Would you let me speak with the broker for two minutes?"`
+      }
+    },
+    rbp: {
+      owner: {
+        opening: `RETAIL BUYER PROGRAM - OWNER OPENING
+
+"Hey [SELLER_NAME], this is [YOUR_NAME] with Probono Key Realty. I know this is out of the blue. Did I catch you at a bad time?"
+
+"Most investors call with a low cash offer because they want to flip it. That is not what we do."
+
+"We have a Retail Buyer Program. We bring in qualified end buyers who can pay much closer to market value. We handle repairs, staging, marketing, and closing costs. You pay nothing out of pocket. The tradeoff is timing: about 30 to 60 days instead of 14."
+
+"If you had to choose, do you care more about the highest possible price or getting it sold as fast as possible?"`,
+        acquisition: `RETAIL BUYER PROGRAM - ACQUISITION
+
+"Based on what I am seeing, your property qualifies for our Retail Buyer Program, and it could put significantly more money in your pocket. Can I take 60 seconds to walk you through how it works?"
+
+"Rather than a straight cash close, we bring in a qualified retail buyer who wants to live in the home. We cover repairs, inspections, appraisal, Realtor commissions, buyer concessions, and all closing costs."
+
+Offer:
+RBP offer: [MAO_RBP]
+Cash alternative: [MAO_CASH]
+Gain over cash: [RBP_GAIN]
+Timeline: 30 to 60 days
+
+Key phrase:
+"More money. Zero extra work. Just access and a signature."`,
+        objections: `RBP - OBJECTIONS
+
+"Why would I get more money through your program?"
+Acknowledge: "Fair question."
+Reframe: "A retail buyer can pay more because they plan to live there. An investor has to buy at a discount."
+Authority close: "Would you like a cash-versus-RBP side-by-side?"
+
+"I do not want to wait 60 days."
+Acknowledge: "I understand. Time is money."
+Reframe: "The extra time is what creates [RBP_GAIN] more in your pocket."
+Authority close: "If we can tighten it closer to 30 days, is the higher net worth considering?"
+
+"What if appraisal comes in low?"
+Acknowledge: "That is a real concern."
+Reframe: "Your offer is locked in. The appraisal affects the buyer loan, not the number we protect for you."
+Authority close: "Would a net-proceeds guarantee make this feel safer?"`
+      },
+      agent: null
+    },
+    cf: {
+      agent: {
+        opening: `CREATIVE FINANCE - AGENT OPENING
+
+"Hey [AGENT_NAME], this is [YOUR_NAME] with Probono Key Realty. I know you get a ton of calls from investors, so I will be quick. Did I catch you at a decent time?"
+
+"I am looking at your listing at [PROPERTY_ADDRESS]. I ran the numbers, and at today's rates, a conventional financed buyer is going to be underwater on cash flow. That means most traditional offers will not actually close. The lender will kill it."
+
+"My buyer can pay close to your seller's asking price, but we have to structure it: seller carry, wrap, or subject-to. The seller gets their number, but over time instead of all cash upfront."`,
+        acquisition: `CREATIVE FINANCE - CHECKMATE ACQUISITION
+
+"The way I buy is simple. I either close cash or go through my lender. My lender wants the property to at least break even or cash flow."
+
+Create the problem:
+"If I put 20 percent down at today's rates, my payment is roughly [MARKET_PAYMENT]/mo. Rent supports about [RENT]/mo. From day one, a financed buyer is underwater. My lender will not approve that."
+
+Cash option:
+"I could buy it cash, but I would have to be around [MAO_CASH] to justify it. Is your seller open to that?"
+
+Checkmate:
+"So we have a problem. It does not work with financing, and it does not work in cash at that price. How are you planning to get this one sold?"
+
+Structure:
+"The only way I can make this work at your number is if we structure it. Has your seller considered seller financing?"
+
+Offer:
+Purchase price: [AGREED_PRICE]
+Down: [DOWN_PAYMENT]
+Rate: [INTEREST_RATE]
+Monthly interest: [MONTHLY_INTEREST]`,
+        objections: `CREATIVE FINANCE - OBJECTIONS
+
+"My seller will not do seller financing."
+Acknowledge: "That is a fair reaction."
+Reframe: "What specifically concerns them: default risk, tax treatment, or the loan staying in their name?"
+Authority close: "Title transfers on day one and the note is secured. Would deed-in-lieu language help?"
+
+"Seller needs all cash."
+Acknowledge: "Understood."
+Reframe: "I can sometimes increase down payment to cover an immediate need."
+Authority close: "What is the minimum cash at close that would make this work?"
+
+"What if you stop paying?"
+Acknowledge: "That is exactly the right question."
+Reframe: "A third-party servicer tracks payments and deed-in-lieu protects the seller."
+Authority close: "Should I send the exact protection language?"`
+      }
+    },
+    mt: {
+      agent: {
+        opening: `MORTGAGE TAKEOVER - AGENT OPENING
+
+"Hey [AGENT_NAME], this is [YOUR_NAME] with Probono Key Realty. I will be fast. I am looking at your listing at [PROPERTY_ADDRESS] that has been on the market for [DOM] days. Did I catch you at an okay time?"
+
+"I noticed the existing loan has a rate of [EXISTING_RATE]%. In today's market, that rate is essentially irreplaceable. A conventional buyer would be paying [MARKET_PAYMENT]/mo. My buyer can step into the existing loan, seller stops paying immediately, gets cash at closing, and the loan stays in place."
+
+"We have a mortgage takeover program: subject-to or formal assumption. Our acquisitions team handles loan verification, title, and offer structure."`,
+        acquisition: `MORTGAGE TAKEOVER - ACQUISITION
+
+Rate value:
+"The existing mortgage is at [EXISTING_RATE]%. A conventional buyer at 7.5 percent would pay [MARKET_PAYMENT]/mo. The buyer who steps into the existing loan pays [EXISTING_PAYMENT]/mo. That savings of [SAVINGS]/mo means I can pay your seller's price where a conventional offer cannot."
+
+Options:
+Option A - Subject-to:
+Purchase price [AGREED_PRICE], [DOWN_PAYMENT] to seller at closing, buyer steps into existing payments.
+
+Option B - Formal assumption:
+If FHA/VA and assumable, seller can be removed from loan after buyer qualifies.
+
+Option C - Seller carry note:
+Same price, same down, title transfers, note secured by property.
+
+Close:
+"Which of these makes your seller feel most comfortable?"`,
+        objections: `MORTGAGE TAKEOVER - OBJECTIONS
+
+"Due-on-sale clause."
+Acknowledge: "You are right to ask."
+Reframe: "Lenders care most that payments stay current."
+Authority close: "Would a written lender-risk plan satisfy your seller?"
+
+"Seller needs all cash."
+Acknowledge: "Understood."
+Reframe: "I can increase upfront to [STRETCH_PRICE] and carry the rest."
+Authority close: "What minimum cash at closing makes this a yes?"
+
+"What if you stop paying?"
+Acknowledge: "Fair concern."
+Reframe: "Deed-in-lieu, third-party servicing, and real money down protect the seller."
+Authority close: "Can I send the protection language for attorney review?"`
+      }
+    },
+    land: {
+      owner: {
+        opening: `LAND - OWNER OPENING
+
+"Hey, is this the owner of the land at [PROPERTY_ADDRESS]? My name is [YOUR_NAME] with Probono Key Realty. Did I catch you at a bad time?"
+
+"I buy land in this area and came across your lot. I wanted to reach out directly because I may be able to make you a quick cash offer: no agent, no commission, no headaches."`,
+        acquisition: `LAND - OWNER ACQUISITION
+
+Qualify:
+- Is the lot actively listed or off-market?
+- Have you had any offers, or has it been sitting?
+- How long have you owned it?
+- Is it fully buildable, or are approvals needed?
+
+Offer frame:
+"I have to work backwards from what a builder will pay me once I have it under contract. I may not be the number you hoped for, but I can be the number that actually moves."
+
+Verbal offer:
+"I would be at [OFFER_TO_SELLER] cash. I can close in [TIMELINE]. Title handles everything. You just sign. Zero fees or commissions out of your pocket."
+
+RBP pivot:
+"If the cash number is not right and you can wait a few extra weeks, I have a Retail Buyer Program that could get you closer to [BUILDER_PAYS]. Want me to walk you through it?"`,
+        objections: `LAND - OBJECTIONS
+
+"We already have offers."
+Acknowledge: "Totally fair. Anybody can write a bigger number on paper."
+Reframe: "The number that matters is the one that closes after diligence."
+Authority close: "Would you present mine alongside the others?"
+
+"Your offer is too low."
+Acknowledge: "I understand."
+Reframe: "My number is based on site work, approvals, utilities, and builder margin."
+Authority close: "What number would the seller realistically consider?"
+
+"Are you a wholesaler?"
+Acknowledge: "I source lots for myself and builder partners depending on the deal."
+Reframe: "What matters is certainty of close."
+Authority close: "What matters most: number, timeline, or certainty?"`
+      },
+      agent: {
+        opening: `LAND - AGENT OPENING
+
+"Hey [AGENT_NAME], this is [YOUR_NAME] with Probono Key Realty calling about your land listing at [PROPERTY_ADDRESS]. Did I catch you at an okay time for a quick question?"
+
+"I work with cash buyers focused on buildable and near-buildable [LOT_SIZE] lots. I reviewed this one and wanted to ask a couple quick questions before putting together an offer."`,
+        acquisition: `LAND - AGENT ACQUISITION
+
+Qualify:
+- Is it buildable as-is, or are approvals needed?
+- Has soil or perc work been done?
+- Is electric at the street?
+- Well/septic or public utilities?
+- Wetlands, flood zone, deed restrictions, or HOA?
+- Any serious offers in hand?
+
+Offer frame:
+"I may not be the highest number on paper, but I try to be the cleanest number that actually closes. I have to account for site work, approvals, utilities, and build margin."
+
+Verbal offer:
+"If the seller is open to it, I would be at [OFFER_TO_SELLER] cash, close in about [TIMELINE], subject to clear title. I can put up earnest money of [EARNEST_DAYS]."`,
+        objections: `LAND - AGENT OBJECTIONS
+
+"Multiple offers."
+Acknowledge: "That is good activity."
+Reframe: "Land offers often fall apart once diligence hits utilities, site work, or zoning."
+Authority close: "Would you present mine as the clean certainty option?"
+
+"Seller wants full ask."
+Acknowledge: "If they can get it, they should."
+Reframe: "My number is based on actual build math."
+Authority close: "Can I check back in a couple weeks if things change?"
+
+"Are you a wholesaler?"
+Acknowledge: "I source lots for myself and builder partners depending on the deal."
+Reframe: "If it fits, we move quickly."
+Authority close: "What matters most to your seller: number, timeline, or certainty?"`
+      }
+    }
+  };
+
+  function cycleLeadTypePill(pill) {
+    const valueEl = pill.querySelector('.lt-value');
+    const iconEl = pill.querySelector('.lt-icon');
+    const options = pill.dataset.type === 'leadtype' ? LEAD_TYPE_OPTIONS : PROP_TYPE_OPTIONS;
+    const current = valueEl ? valueEl.textContent.trim() : '';
+    const idx = Math.max(0, options.findIndex((opt) => opt.label === current));
+    const next = options[(idx + 1) % options.length];
+    if (valueEl) valueEl.textContent = next.label;
+    if (iconEl) iconEl.innerHTML = next.icon;
+    pill.dataset.value = next.value;
+    toast({
+      type: 'info',
+      title: pill.dataset.type === 'leadtype' ? 'Lead type updated' : 'Property type updated',
+      desc: `Set to "${next.label}" - Ava's next script preview will adapt.`
+    });
+  }
+
+  function syncDealPathControls(value = 'cash', announce = false) {
+    const key = DEAL_PATH_LABELS[value] ? value : 'cash';
+    const dropdown = document.getElementById('selectedPath');
+    if (dropdown && dropdown.value !== key) dropdown.value = key;
+    document.querySelectorAll('.mobile-path-selector .path-chip').forEach((chip) => {
+      chip.classList.toggle('active', chip.dataset.path === key);
+    });
+    document.querySelectorAll('[data-current-path-title]').forEach((el) => {
+      el.textContent = DEAL_PATH_LABELS[key];
+    });
+    if (announce) {
+      toast({ type: 'info', title: 'Path switched', desc: `Now using ${DEAL_PATH_LABELS[key]} - Ava notified locally.` });
+    }
+  }
+
+  document.querySelectorAll('.ld-type-pill').forEach((pill) => {
+    pill.addEventListener('click', () => cycleLeadTypePill(pill));
+  });
+
+  document.querySelectorAll('.mobile-path-selector .path-chip').forEach((chip) => {
+    chip.addEventListener('click', () => syncDealPathControls(chip.dataset.path, true));
+  });
+
+  const selectedPathControl = document.getElementById('selectedPath');
+  if (selectedPathControl) {
+    selectedPathControl.addEventListener('change', () => syncDealPathControls(selectedPathControl.value, true));
+  }
+
+  let analyzerScriptTab = 'opening';
+  let analyzerScriptVariant = 'owner';
+
+  function getAnalyzerScriptVariant(path) {
+    if (path === 'cf' || path === 'mt') return 'agent';
+    if (path === 'rbp') return 'owner';
+    return analyzerScriptVariant;
+  }
+
+  function renderAnalyzerScriptPanel() {
+    const pathSelect = document.getElementById('analyzerScriptPath');
+    const variantBtn = document.getElementById('analyzerScriptVariant');
+    const preview = document.getElementById('analyzerScriptPreview');
+    const note = document.getElementById('analyzerScriptNote');
+    if (!pathSelect || !variantBtn || !preview) return;
+
+    const path = pathSelect.value || 'cash';
+    const variant = getAnalyzerScriptVariant(path);
+    const pathSet = PBK_ANALYZER_SCRIPT_LIBRARY[path] || PBK_ANALYZER_SCRIPT_LIBRARY.cash;
+    const bundle = pathSet[variant] || pathSet.owner || pathSet.agent || PBK_ANALYZER_SCRIPT_LIBRARY.cash.owner;
+    const pathLabel = DEAL_PATH_LABELS[path] || 'Cash Offer';
+    const variantLabel = variant === 'agent' ? 'Agent mode' : 'Owner mode';
+
+    variantBtn.textContent = variantLabel;
+    variantBtn.disabled = path === 'cf' || path === 'mt' || path === 'rbp';
+    variantBtn.style.opacity = variantBtn.disabled ? '0.58' : '1';
+    preview.textContent = bundle[analyzerScriptTab] || bundle.opening;
+    if (note) {
+      note.textContent = `${pathLabel} - ${variantLabel}. Opening first, acquisition second, objections third. Ava should not mix this path with another path.`;
+    }
+
+    document.querySelectorAll('[data-analyzer-script-tab]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.analyzerScriptTab === analyzerScriptTab);
+    });
+  }
+
+  const analyzerScriptPath = document.getElementById('analyzerScriptPath');
+  if (analyzerScriptPath) {
+    analyzerScriptPath.addEventListener('change', () => {
+      renderAnalyzerScriptPanel();
+      toast({ type: 'info', title: 'Analyzer script path updated', desc: `Loaded ${DEAL_PATH_LABELS[analyzerScriptPath.value] || 'PBK'} call mode.` });
+    });
+  }
+
+  const analyzerScriptVariantBtn = document.getElementById('analyzerScriptVariant');
+  if (analyzerScriptVariantBtn) {
+    analyzerScriptVariantBtn.addEventListener('click', () => {
+      if (analyzerScriptVariantBtn.disabled) return;
+      analyzerScriptVariant = analyzerScriptVariant === 'owner' ? 'agent' : 'owner';
+      renderAnalyzerScriptPanel();
+      toast({ type: 'info', title: 'Analyzer script variant updated', desc: analyzerScriptVariant === 'agent' ? 'Agent partnership script loaded.' : 'Owner direct script loaded.' });
+    });
+  }
+
+  document.querySelectorAll('[data-analyzer-script-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      analyzerScriptTab = btn.dataset.analyzerScriptTab || 'opening';
+      renderAnalyzerScriptPanel();
+    });
+  });
+
+  const pushAnalyzerScriptBtn = document.getElementById('pushAnalyzerScriptBtn');
+  if (pushAnalyzerScriptBtn) {
+    pushAnalyzerScriptBtn.addEventListener('click', () => {
+      const path = document.getElementById('analyzerScriptPath')?.value || 'cash';
+      toast({
+        type: 'success',
+        title: 'Script pushed to Ava locally',
+        desc: `${DEAL_PATH_LABELS[path] || 'PBK'} ${analyzerScriptTab} guidance is now the active call-mode reference.`
+      });
+    });
+  }
+
+  renderAnalyzerScriptPanel();
+
+  const confirmDealBtn = document.getElementById('confirmDealBtn');
+  if (confirmDealBtn) {
+    confirmDealBtn.addEventListener('click', () => {
+      const path = document.getElementById('selectedPath')?.value || 'cash';
+      const offer = document.getElementById('finalOffer')?.value || '$0';
+      const date = document.getElementById('closingDate')?.value || 'TBD';
+      toast({
+        type: 'success',
+        title: 'Deal confirmed - Ava dialing',
+        desc: `${offer} - ${DEAL_PATH_LABELS[path] || path.toUpperCase()} - close ${date} - contract template prepped`,
+        ms: 5000
+      });
+      setTimeout(() => {
+        toast({
+          type: 'info',
+          title: 'Ava connecting...',
+          desc: 'Outbound call preview - TCPA window verified - recording disclosure ready',
+          ms: 4000
+        });
+      }, 1800);
+    });
+  }
+
+  document.querySelectorAll('[data-path-override]').forEach((button) => {
+    button.addEventListener('click', () => {
+      showPage('lead-detail');
+      setTimeout(() => document.getElementById('selectedPath')?.focus(), 80);
+      toast({ type: 'info', title: 'Deal path override opened', desc: 'Use the selected-path dropdown or mobile chips to change Ava strategy.' });
+    });
+  });
+
+  document.querySelectorAll('.deal-ui-filter').forEach((filter) => {
+    filter.addEventListener('click', () => {
+      toast({ type: 'info', title: 'Lead filter ready', desc: `${filter.textContent.trim()} is a local UI filter preview for lead-type routing.` });
+    });
+  });
+
+  document.querySelectorAll('.path-performance [data-path-row]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const path = DEAL_PATH_LABELS[row.dataset.pathRow] || row.dataset.pathRow;
+      toast({ type: 'info', title: 'Path performance selected', desc: `${path} rows are ready for the next analytics drill-down.` });
+    });
+  });
+
+  document.querySelectorAll('.deal-path-sort').forEach((button) => {
+    button.addEventListener('click', () => {
+      toast({ type: 'info', title: 'Path table sorted', desc: 'Rows are shown by conversion strength in this local view.' });
+    });
+  });
+  syncDealPathControls('cash', false);
+
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('.qcard-actions .btn');
     if (!btn) return;
@@ -10502,7 +11601,7 @@
     toast({
       type: 'warning',
       title: 'Approval needs live bridge data',
-      desc: 'This visible card is a static fallback. Connect OpenClaw or wait for the approval queue to sync before approving or rejecting.'
+      desc: 'This visible card is a static fallback. Connect OpenClaw or wait for approvals to sync before approving or declining.'
     });
   });
 
@@ -10885,7 +11984,7 @@
       toast({
         type: 'info',
         title: 'Keyboard shortcuts',
-        desc: '?K palette — G+D/L/I/B navigate — A approve — R reject — ? this'
+        desc: '?K palette — G+D/L/I/B navigate — A approve — R decline — ? this'
       });
     }
 
@@ -10902,7 +12001,7 @@
       if (map[k]) { e.preventDefault(); showPage(map[k]); gPressed = false; }
     }
 
-    // A approve / R reject first visible qcard
+    // A approve / R decline first visible qcard
     if (e.key.toLowerCase() === 'a') {
       const firstApprove = document.querySelector('.page.active .qcard .btn-primary');
       if (firstApprove) { e.preventDefault(); firstApprove.click(); }
@@ -11099,7 +12198,7 @@
     },
     {
       title: 'The <em>command center</em>',
-      body: 'Start every morning here. Stats ribbon shows yesterday\'s wins — live call panel shows whatever Ava is on right now — approval queue waits for your tap on offers and contracts.',
+      body: 'Start every morning here. Stats ribbon shows yesterday\'s wins — live call panel shows whatever Ava is on right now — Approvals Needed waits for your tap on offers and contracts.',
       page: 'dashboard'
     },
     {
@@ -13440,7 +14539,7 @@
         ? 'Edit'
         : type === 'outbound'
           ? 'Later'
-          : 'Reject';
+          : 'Decline';
       const accent = type === 'contract'
         ? 'var(--ion)'
         : type === 'outbound'
@@ -13797,7 +14896,7 @@
       measured: 'Measured',
       needs_modification: 'Modify',
       failed: 'Failed',
-      rejected: 'Rejected'
+      rejected: 'Declined'
     };
     return labels[normalized] || normalized.replace(/_/g, ' ') || 'Unknown';
   }
@@ -13896,7 +14995,7 @@
       }
       if (action === 'open-approvals') {
         showPage('dashboard');
-        toastOutcome({ outcome: 'local_view_only', title: 'Approval queue opened', desc: 'Approve, reject, or modify Rex proposals from the approval queue or Slack.' });
+        toastOutcome({ outcome: 'local_view_only', title: 'Approvals opened', desc: 'Approve, decline, or modify Rex proposals from Approvals Needed or Slack.' });
         return;
       }
       if (action === 'revise') {
@@ -14631,11 +15730,12 @@
   function getDashboardCallContext() {
     const liveCall = (PBK.state.openclawRuntime?.calls || []).find((call) => call.status === 'live') || {};
     return {
-      id: liveCall.id || '',
       leadId: liveCall.leadId || 'lead-diane-kowalski',
+      id: liveCall.id || '',
       leadName: liveCall.leadName || 'Diane Kowalski',
       address: liveCall.address || PBK.state.analyzer?.deal?.address || '202 Cherry Ln, Columbus OH',
       phone: liveCall.phone || '+1 (614) 555-0142',
+      email: liveCall.email || ''
     };
   }
 
@@ -14648,11 +15748,12 @@
     }) || {};
 
     return {
-      id: liveCall.id || '',
       leadId: liveCall.leadId || '',
+      id: liveCall.id || '',
       leadName,
       address: liveCall.address || meta.address || 'Unknown property',
       phone: liveCall.phone || meta.phone || '',
+      email: liveCall.email || ''
     };
   }
 
@@ -14661,9 +15762,11 @@
     const name = page?.querySelector('.convo-who')?.textContent?.trim() || 'Diane Kowalski';
     const meta = parseMetaLine(page?.querySelector('.convo-meta')?.textContent || '');
     return {
+      leadId: 'lead-diane-kowalski',
       leadName: name,
       address: meta.address || '202 Cherry Ln, Columbus OH',
       phone: meta.phone || '+1 (614) 555-0142',
+      email: ''
     };
   }
 
@@ -14673,9 +15776,11 @@
     const details = page?.querySelector('.ld-details')?.textContent || '';
     const meta = parseMetaLine(details);
     return {
+      leadId: 'lead-diane-kowalski',
       leadName: name,
       address: meta.address || '202 Cherry Ln, Columbus OH',
       phone: meta.phone || '+1 (614) 555-0142',
+      email: ''
     };
   }
 
@@ -14871,6 +15976,257 @@
 
   function buildSmsDraft(context) {
     return `Hi ${getFirstName(context.leadName)} - this is Ava with PBK. I can call after 5pm tomorrow about ${context.address}. If another time works better, text me here.`;
+  }
+
+  const MESSAGE_STAGE_LABELS = {
+    opening: 'Opening',
+    followup: 'Follow-up',
+    negotiating: 'Negotiating',
+    closing: 'Closing',
+    contract: 'Contract sent',
+    lost: 'Lost'
+  };
+
+  const DOCUSIGN_TEMPLATE_NAMES = {
+    cash: 'PBK_Cash_Offer_v1',
+    rbp: 'PBK_RBP_v1',
+    cf: 'PBK_Creative_Finance_v1',
+    mt: 'PBK_Mortgage_Takeover_v1',
+    land: 'PBK_Land_v1'
+  };
+
+  function withLeadId(context = {}) {
+    return {
+      leadId: context.leadId || `lead-${String(context.leadName || context.address || 'pbk-lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'pbk-lead'}`,
+      ...context
+    };
+  }
+
+  function getRecentActivitySummaryForLead(context = {}) {
+    const domEvents = Array.from(document.querySelectorAll('[data-page="lead-detail"] .tl-event'))
+      .slice(0, 5)
+      .map((event) => {
+        const title = event.querySelector('.tl-title')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+        const desc = event.querySelector('.tl-desc')?.textContent?.replace(/\s+/g, ' ').trim() || '';
+        return [title, desc].filter(Boolean).join(': ');
+      })
+      .filter(Boolean);
+
+    const runtimeEvents = (PBK.state.openclawRuntime?.activity || [])
+      .filter((item) => {
+        const target = [item.leadName, item.target, item.address, item.text].filter(Boolean).join(' ').toLowerCase();
+        return !context.leadName || target.includes(String(context.leadName).toLowerCase().split(/\s+/)[0] || '');
+      })
+      .slice(0, 5)
+      .map((item) => `${item.category || 'Activity'}: ${item.text || item.target || 'Runtime event'}`);
+
+    return [...runtimeEvents, ...domEvents].slice(0, 5).join('\n');
+  }
+
+  function buildLocalMessageDraft(context = {}, channel = 'sms', stage = 'followup', activity = '') {
+    const firstName = getFirstName(context.leadName || 'there');
+    const address = context.address || 'the property';
+    const stageLabel = MESSAGE_STAGE_LABELS[stage] || 'Follow-up';
+    const activityHint = activity ? ' I also reviewed the latest notes so this lines up with our last touch.' : '';
+    const drafts = {
+      opening: `Hi ${firstName}, this is Ava with Probono Key Realty. We are interested in possibly purchasing ${address} as-is. Is now a good time to talk for two minutes?`,
+      followup: `Hi ${firstName}, this is Ava with Probono Key Realty checking back on ${address}.${activityHint} Would today or tomorrow be better for a quick update?`,
+      negotiating: `Hi ${firstName}, I reviewed the numbers again on ${address}. If we can keep this simple, as-is, and on your timeline, I think we can move this forward. What would need to be true for you to feel good about the next step?`,
+      closing: `Hi ${firstName}, underwriting has the file ready on ${address}. I can send the summary and walk you through the contract whenever you have five minutes.`,
+      contract: `Hi ${firstName}, the contract packet for ${address} is ready. I can send it now and stay available to walk through each page with you.`,
+      lost: `Hi ${firstName}, I know the timing may not have been right on ${address}. If anything changes, I am happy to revisit the numbers with no pressure.`
+    };
+    const message = drafts[stage] || drafts.followup;
+    if (channel === 'email') {
+      return `${stageLabel} update for ${address}\n\n${message}\n\nBest,\nAva\nProbono Key Realty`;
+    }
+    return message;
+  }
+
+  async function generateLeadMessageDraft({ context = {}, channel = 'sms', stage = 'followup', includeActivity = false } = {}) {
+    const safeContext = withLeadId(context);
+    const activity = includeActivity ? getRecentActivitySummaryForLead(safeContext) : '';
+    try {
+      const response = await requestOpenClawApi('/api/lead/generate-message', {
+        method: 'POST',
+        body: {
+          ...safeContext,
+          channel,
+          stage,
+          includeActivity,
+          activity
+        },
+        timeout: 12000
+      });
+      return response?.message || buildLocalMessageDraft(safeContext, channel, stage, activity);
+    } catch (error) {
+      console.warn('AI message generation fell back to local draft', error);
+      return buildLocalMessageDraft(safeContext, channel, stage, activity);
+    }
+  }
+
+  async function sendLeadMessageViaBridge({ context = {}, channel = 'sms', stage = 'followup', message = '', includeActivity = false } = {}) {
+    const safeContext = withLeadId(context);
+    try {
+      const response = await requestOpenClawApi('/api/lead/send-message', {
+        method: 'POST',
+        body: {
+          ...safeContext,
+          channel,
+          stage,
+          message,
+          includeActivity,
+          activity: includeActivity ? getRecentActivitySummaryForLead(safeContext) : ''
+        },
+        timeout: 15000
+      });
+      if (response?.state) renderOpenClawState(response.state);
+      appendLeadActivityEvent({
+        action: channel === 'email' ? 'EMAIL' : 'SMS',
+        label: channel === 'email' ? 'Email' : 'SMS',
+        text: message,
+        status: response?.result || 'sent'
+      });
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, response?.delivery?.live === false ? 'provider_missing' : 'live'),
+        title: channel === 'email' ? 'Email request complete' : 'SMS request complete',
+        desc: response?.verbiage || `PBK recorded the ${channel.toUpperCase()} request for ${safeContext.leadName || 'this lead'}.`,
+        response
+      });
+      return response;
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: channel === 'email' ? 'Email failed' : 'SMS failed',
+        desc: error?.message || 'The bridge did not accept the message request.'
+      });
+      return null;
+    }
+  }
+
+  function appendLeadActivityEvent({ action = 'NOTE', label = 'Note', text = '', status = 'saved' } = {}) {
+    const page = getPageNode('lead-detail');
+    const timeline = page?.querySelector('.ld-timeline');
+    const firstEvent = timeline?.querySelector('.tl-event');
+    if (!timeline || !firstEvent) return;
+    const normalized = String(action || '').toLowerCase();
+    const dotClass = normalized.includes('follow') ? 'followup' : normalized.includes('note') ? 'note' : normalized.includes('email') || normalized.includes('sms') ? 'done' : 'warn';
+    const chanClass = normalized.includes('follow') ? 'followup' : normalized.includes('note') ? 'note' : normalized.includes('email') ? 'email' : normalized.includes('sms') ? 'sms' : 'sys';
+    const event = document.createElement('div');
+    event.className = 'tl-event';
+    event.innerHTML = `
+      <div class="tl-when">${escapeHtml(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))} - now</div>
+      <div class="tl-dot ${escapeHtml(dotClass)}"></div>
+      <div class="tl-body">
+        <div class="tl-title">${escapeHtml(label)} <span class="tl-chan ${escapeHtml(chanClass)}">${escapeHtml(status)}</span></div>
+        <div class="tl-desc">${escapeHtml(text)}</div>
+      </div>
+    `;
+    firstEvent.before(event);
+    const count = timeline.querySelector('.tt-count');
+    const current = Number((count?.textContent || '').match(/\d+/)?.[0] || 0);
+    if (count && current) count.textContent = `- ${current + 1} events`;
+  }
+
+  function openLeadMessageModal({ context = getLeadDetailContext(), channel = 'sms', stage = 'followup' } = {}) {
+    const safeContext = withLeadId(context);
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop open';
+    const modal = document.createElement('div');
+    modal.className = 'modal open pbk-form-modal ai-message-modal';
+    const stageOptions = Object.entries(MESSAGE_STAGE_LABELS)
+      .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === stage ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+      .join('');
+    modal.innerHTML = `
+      <h3>Message ${escapeHtml(safeContext.leadName || 'lead')}</h3>
+      <p>Generate SMS or email copy from lead status plus recent activity, then edit before sending.</p>
+      <div class="ai-context-card">
+        <strong>${escapeHtml(safeContext.leadName || 'Lead')}</strong>
+        <span>${escapeHtml(safeContext.address || 'No property loaded')}</span>
+        <span>${escapeHtml(safeContext.phone || safeContext.email || 'No direct contact saved')}</span>
+      </div>
+      <div class="pbk-modal-toolbar">
+        <div class="pbk-form-field">
+          <label>Channel</label>
+          <select data-message-channel>
+            <option value="sms"${channel === 'sms' ? ' selected' : ''}>SMS</option>
+            <option value="email"${channel === 'email' ? ' selected' : ''}>Email</option>
+          </select>
+        </div>
+        <div class="pbk-form-field">
+          <label>Stage</label>
+          <select data-message-stage>${stageOptions}</select>
+        </div>
+      </div>
+      <label class="pbk-checkbox-row">
+        <input type="checkbox" data-message-activity>
+        <span>Include the last five timeline/activity rows so Ava can reference the real status without inventing history.</span>
+      </label>
+      <div class="pbk-form-field full" style="margin-top: var(--s-3);">
+        <label>Message</label>
+        <textarea data-message-content placeholder="Write your message or click AI Generate..."></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn-ghost" type="button" data-message-generate>AI Generate</button>
+        <button class="btn btn-primary" type="button" data-message-send>Send Message</button>
+      </div>
+    `;
+    const close = () => {
+      modal.remove();
+      backdrop.remove();
+    };
+    backdrop.addEventListener('click', close);
+    modal.addEventListener('click', async (event) => {
+      if (event.target.closest('[data-modal-close]')) {
+        close();
+        return;
+      }
+      const generate = event.target.closest('[data-message-generate]');
+      const send = event.target.closest('[data-message-send]');
+      if (!generate && !send) return;
+      const channelValue = modal.querySelector('[data-message-channel]')?.value || 'sms';
+      const stageValue = modal.querySelector('[data-message-stage]')?.value || 'followup';
+      const includeActivity = Boolean(modal.querySelector('[data-message-activity]')?.checked);
+      const textarea = modal.querySelector('[data-message-content]');
+      if (generate) {
+        generate.disabled = true;
+        generate.textContent = 'Generating...';
+        const draft = await generateLeadMessageDraft({
+          context: safeContext,
+          channel: channelValue,
+          stage: stageValue,
+          includeActivity
+        });
+        if (textarea) textarea.value = draft;
+        generate.disabled = false;
+        generate.textContent = 'AI Generate';
+        toast({
+          type: 'success',
+          title: 'Draft ready',
+          desc: `${MESSAGE_STAGE_LABELS[stageValue] || 'Follow-up'} copy loaded for ${safeContext.leadName || 'this lead'}.`
+        });
+        return;
+      }
+      const body = textarea?.value?.trim() || '';
+      if (!body) {
+        toast({ type: 'warning', title: 'Message is empty', desc: 'Write a message or generate one before sending.' });
+        return;
+      }
+      send.disabled = true;
+      const response = await sendLeadMessageViaBridge({
+        context: safeContext,
+        channel: channelValue,
+        stage: stageValue,
+        message: body,
+        includeActivity
+      });
+      send.disabled = false;
+      if (response) close();
+    });
+    document.body.append(backdrop, modal);
+    setTimeout(() => modal.querySelector('[data-message-content]')?.focus(), 40);
+    return modal;
   }
 
   async function submitAgentCommand(command, extra = {}) {
@@ -15512,7 +16868,7 @@
   const CAMPAIGN_TEMPLATES = {
     'probate-empathetic-v3': {
       name: 'probate-empathetic-v3',
-      copy: 'Subject: A note about {{property_address}}\n\nHi {{first_name}},\n\nI came across the property at {{property_address}} and wanted to reach out gently. We buy as-is, cash, and can close on whatever timeline works for you.\n\nNo pressure - if it helps to talk through options, reply here or call me.\n\n- PBK Capital'
+      copy: 'Subject: A note about {{property_address}}\n\nHi {{first_name}},\n\nI came across the property at {{property_address}} and wanted to reach out gently. We buy as-is, cash, and can close on whatever timeline works for you.\n\nNo pressure - if it helps to talk through options, reply here or call me.\n\n- Probono Key Realty'
     },
     'absentee-quick-close-v2': {
       name: 'absentee-quick-close-v2',
@@ -16552,7 +17908,7 @@
         await syncOpenClawState({ silent: true }).catch(() => {});
         toastOutcome({
           outcome: getRuntimeOutcome(response, 'queued_for_approval'),
-          title: 'Campaign approval queued',
+          title: 'Campaign queued for approval',
           desc: response?.verbiage || 'Approval task created. Provider execution waits for approval.'
         });
         return response;
@@ -16585,7 +17941,7 @@
       }
     }, {
       actionLabel: 'campaign approvals',
-      successTitle: 'Campaign approval queued',
+      successTitle: 'Campaign queued for approval',
       successDesc: 'Approval task created. Provider execution will only happen after approval, and missing providers will be reported honestly.',
       errorTitle: 'Campaign approval failed'
     });
@@ -16748,7 +18104,7 @@
           if (action === 'new') openCampaignWizard();
           if (action === 'approvals') {
             showPage('dashboard');
-            toastOutcome({ outcome: 'local_view_only', title: 'Approval queue opened', desc: 'Dashboard approval cards show pending campaign approvals from the bridge.' });
+            toastOutcome({ outcome: 'local_view_only', title: 'Approvals opened', desc: 'Dashboard approval cards show pending campaign approvals from the bridge.' });
           }
           if (action === 'templates') {
             showUtilityModal('Campaign templates', 'Templates are selected in the campaign wizard. Provider-side template sync remains approval-gated and will not update Instantly/Telnyx without approval.');
@@ -17377,7 +18733,13 @@
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
       if (label === 'ask ai') {
-        if (textarea) textarea.value = buildSmsDraft(context);
+        const draft = await generateLeadMessageDraft({
+          context,
+          channel: channel === 'email' ? 'email' : 'sms',
+          stage: 'followup',
+          includeActivity: true
+        });
+        if (textarea) textarea.value = draft;
         toast({
           type: 'success',
           title: 'Draft ready',
@@ -17403,20 +18765,21 @@
             errorTitle: 'Inbox call failed'
           });
         } else if (channel === 'email') {
-          await submitAgentCommand(`send an email update to ${context.leadName} about ${context.address}`, context);
+          const response = await sendLeadMessageViaBridge({
+            context,
+            channel: 'email',
+            stage: 'followup',
+            message: body,
+            includeActivity: true
+          });
+          if (response && textarea) textarea.value = '';
         } else {
-          const response = await invokeRuntimeTool('telnyx_sms', {
-            leadName: context.leadName,
-            address: context.address,
-            phone: context.phone,
-            body
-          }, {
-            actionLabel: 'outbound SMS',
-            successTitle: 'SMS request complete',
-            successDesc: (response, outcome) => outcome === 'live'
-              ? `${context.leadName} received the follow-up through the live SMS provider.`
-              : `${context.leadName}'s SMS request was captured without pretending delivery happened.`,
-            errorTitle: 'SMS send failed'
+          const response = await sendLeadMessageViaBridge({
+            context,
+            channel: 'sms',
+            stage: 'followup',
+            message: body,
+            includeActivity: true
           });
           if (response && textarea) textarea.value = '';
         }
@@ -17571,27 +18934,12 @@
       }
 
       if (label === 'text') {
-        showTextareaActionModal({
-          title: `Text ${context.leadName}`,
-          intro: 'PBK will send only if Telnyx messaging is configured; otherwise the action reports provider_missing.',
-          label: 'SMS body',
-          value: buildSmsDraft(context),
-          submitLabel: 'Send SMS',
-          onSubmit: async (body) => {
-            const response = await invokeRuntimeTool('telnyx_sms', {
-              ...context,
-              body
-            }, {
-              actionLabel: 'outbound SMS',
-              successTitle: 'SMS request complete',
-              successDesc: (payload, outcome) => outcome === 'live'
-                ? `${context.leadName} received the latest follow-up.`
-                : `${context.leadName}'s follow-up is not live because the messaging provider is missing.`,
-              errorTitle: 'Lead SMS failed'
-            });
-            return Boolean(response);
-          }
-        });
+        openLeadMessageModal({ context, channel: 'sms', stage: 'followup' });
+        return;
+      }
+
+      if (label === 'email') {
+        openLeadMessageModal({ context, channel: 'email', stage: 'followup' });
         return;
       }
 
@@ -17655,7 +19003,7 @@
         }, {
           actionLabel: 'outbound approvals',
           successTitle: 'Outbound batch queued',
-          successDesc: 'The next outbound batch is waiting in the approval queue.',
+          successDesc: 'The next outbound batch is waiting in Approvals Needed.',
           errorTitle: 'Could not queue outbound batch'
         });
       }
@@ -17838,36 +19186,7 @@
 
         if (!pdf?.runtime) return;
 
-        await invokeRuntimeTool('sendDocuSign', {
-          leadName: pdf.runtime.leadName,
-          address: pdf.runtime.address,
-          amount: pdf.runtime.amount,
-          email: pdf.runtime.email,
-          phone: pdf.runtime.phone,
-          selectedPath: pdf.runtime.selectedPath,
-          selectedPathLabel: pdf.runtime.selectedPathLabel,
-          timeline: pdf.runtime.timeline,
-          earnestDeposit: pdf.runtime.earnestDeposit,
-          previewUrl: pdf.runtime.previewUrl,
-          masterPackageQuery: pdf.runtime.masterPackageQuery,
-          pdfGeneratedAt: pdf.syncedAt,
-          documentTitle: 'PBK Master Deal Package',
-          pdfStatus: pdf.fallback ? 'preview-fallback' : 'generated',
-          notes: `Contract sent from analyzer-backed contract preview (${pdf.runtime.selectedPathLabel}${pdf.fallback ? ', preview fallback active' : ''}).`
-        }, {
-          actionLabel: 'contracts',
-          successTitle: 'DocuSign request complete',
-          successDesc: (response, outcome) => {
-            if (outcome === 'live') {
-              return pdf.fallback
-                ? `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed using the analyzer preview while the PDF renderer catches up.`
-                : `The ${pdf.runtime.selectedPathLabel} packet for ${pdf.runtime.leadName} was pushed to the live bridge.`;
-            }
-            return `The ${pdf.runtime.selectedPathLabel} packet request was captured without claiming DocuSign delivery.`;
-          },
-          errorTitle: 'DocuSign send failed'
-        });
-        renderContractsExperience();
+        openDocuSignSignerModal(pdf);
         return;
       }
 
@@ -18557,7 +19876,7 @@
               notes: `Install or configure OpenClaw plugin: ${plugin}`
             }, {
               actionLabel: 'plugin approvals',
-              successTitle: 'Plugin approval queued',
+              successTitle: 'Plugin queued for approval',
               successDesc: `${plugin} is queued for approval before runtime changes.`,
               errorTitle: 'Plugin approval failed'
             });
@@ -18581,7 +19900,7 @@
               notes: note
             }, {
               actionLabel: 'settings approvals',
-              successTitle: 'Change approval queued',
+              successTitle: 'Change queued for approval',
               successDesc: 'The change is queued for approval instead of being silently applied.',
               errorTitle: 'Change approval failed'
             });
@@ -19112,7 +20431,7 @@
           notes: 'Telnyx test call requested from Integrations page. Approval required before dialing.'
         }, {
           actionLabel: 'Telnyx test call',
-          successTitle: 'Test call approval queued',
+          successTitle: 'Test call queued for approval',
           successDesc: 'No real call was fired without approval.',
           errorTitle: 'Could not queue test call'
         });
@@ -19134,7 +20453,7 @@
               approvalAction: action
             }, {
               actionLabel: `${provider} provider approvals`,
-              successTitle: 'Provider approval queued',
+              successTitle: 'Provider queued for approval',
               successDesc: 'Approval required before PBK performs this provider write.',
               errorTitle: 'Provider approval failed'
             });
@@ -20336,6 +21655,37 @@
     return next;
   }
 
+  function clearAnalyzerRuntimeDeal() {
+    if (!confirm('Clear the current analyzer deal? CRM saved deals and notes will stay intact.')) return;
+
+    const payload = { deal: {}, activeTab: 'analyzer', analyzeStatus: 'Analyzer cleared' };
+    PBK.state.analyzer = payload;
+    try {
+      localStorage.removeItem(ANALYZER_STORAGE_KEY);
+    } catch (error) {
+      console.warn('Could not clear analyzer storage', error);
+    }
+
+    try {
+      const frame = getAnalyzerFrame();
+      const analyzerApi = getAnalyzerFrameApi(frame);
+      if (analyzerApi?.setState) analyzerApi.setState(payload);
+      frame?.contentWindow?.postMessage(
+        { type: 'pbk:analyzer:set-state', payload },
+        window.location.origin
+      );
+    } catch (error) {
+      console.warn('Could not reset embedded analyzer state', error);
+    }
+
+    PBK.events.emit('analyzer:state', payload);
+    renderDashboardFounderOps();
+    renderAnalyzerFounderOps();
+    renderContractsExperience();
+    setAnalyzerRuntimeMeta('Analyzer cleared. Start a new deal when ready.');
+    toast({ type: 'info', title: 'Analyzer cleared', desc: 'Start a fresh deal when ready.' });
+  }
+
   async function saveAnalyzerSnapshotToLead(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
     const next = persistAnalyzerRuntimeSnapshot(snapshot);
     const deal = next?.deal || {};
@@ -20348,7 +21698,7 @@
       return null;
     }
 
-    return postRuntimeEvent('lead-intake', {
+    const response = await postRuntimeEvent('lead-intake', {
       source: 'analyzer',
       seller: {
         name: deal.sellerName || 'Analyzer Lead',
@@ -20379,6 +21729,90 @@
       successDesc: `${deal.address} was saved into the runtime pipeline.`,
       errorTitle: 'Could not save analyzer deal'
     });
+    if (response) await saveAnalyzerSidecarFields(next);
+    return response;
+  }
+
+  function getAnalyzerLeadContext(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
+    const deal = snapshot?.deal || {};
+    return withLeadId({
+      leadId: deal.leadId || '',
+      leadName: deal.sellerName || deal.leadName || 'Analyzer Lead',
+      address: deal.address || '',
+      phone: deal.sellerPhone || deal.phone || '',
+      email: deal.sellerEmail || deal.email || ''
+    });
+  }
+
+  function getAnalyzerSidecarValues() {
+    return {
+      note: document.getElementById('analyzerNotes')?.value?.trim() || '',
+      dueDate: document.getElementById('analyzerFollowUpDate')?.value || '',
+      reminderType: document.getElementById('analyzerReminderType')?.value || 'call'
+    };
+  }
+
+  async function saveAnalyzerNote(snapshot = getCurrentAnalyzerRuntimeSnapshot(), { clear = true, quiet = false } = {}) {
+    const context = getAnalyzerLeadContext(snapshot);
+    const { note } = getAnalyzerSidecarValues();
+    if (!note) {
+      if (!quiet) toast({ type: 'warning', title: 'Empty note', desc: 'Write a note before saving it to the lead timeline.' });
+      return null;
+    }
+    if (!context.address && !context.leadName) {
+      toast({ type: 'warning', title: 'Lead context needed', desc: 'Sync or enter a seller/property before adding analyzer notes.' });
+      return null;
+    }
+    try {
+      const response = await requestOpenClawApi('/api/leads/add-note', {
+        method: 'POST',
+        body: { ...context, note, source: 'analyzer' },
+        timeout: 10000
+      });
+      if (response?.state) renderOpenClawState(response.state);
+      appendLeadActivityEvent({ action: 'note', label: 'Analyzer note', text: note, status: 'saved' });
+      if (clear) document.getElementById('analyzerNotes').value = '';
+      if (!quiet) toast({ type: 'success', title: 'Note added', desc: 'The analyzer note is now in the lead activity trail.' });
+      return response;
+    } catch (error) {
+      toast({ type: 'error', title: 'Note failed', desc: error?.message || 'The bridge did not save the analyzer note.' });
+      return null;
+    }
+  }
+
+  async function saveAnalyzerFollowUp(snapshot = getCurrentAnalyzerRuntimeSnapshot(), { clear = true, quiet = false } = {}) {
+    const context = getAnalyzerLeadContext(snapshot);
+    const { dueDate, reminderType } = getAnalyzerSidecarValues();
+    if (!dueDate) {
+      if (!quiet) toast({ type: 'warning', title: 'No follow-up date', desc: 'Choose a date before setting the reminder.' });
+      return null;
+    }
+    try {
+      const response = await requestOpenClawApi('/api/leads/set-followup', {
+        method: 'POST',
+        body: { ...context, dueDate, reminderType, source: 'analyzer' },
+        timeout: 10000
+      });
+      if (response?.state) renderOpenClawState(response.state);
+      appendLeadActivityEvent({
+        action: 'followup_created',
+        label: 'Follow-up',
+        text: `Follow-up set for ${dueDate} via ${reminderType}.`,
+        status: 'pending'
+      });
+      if (clear) document.getElementById('analyzerFollowUpDate').value = '';
+      if (!quiet) toast({ type: 'success', title: 'Follow-up set', desc: `Reminder saved for ${dueDate}.` });
+      return response;
+    } catch (error) {
+      toast({ type: 'error', title: 'Follow-up failed', desc: error?.message || 'The bridge did not save the reminder.' });
+      return null;
+    }
+  }
+
+  async function saveAnalyzerSidecarFields(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
+    const { note, dueDate } = getAnalyzerSidecarValues();
+    if (note) await saveAnalyzerNote(snapshot, { clear: true, quiet: true });
+    if (dueDate) await saveAnalyzerFollowUp(snapshot, { clear: true, quiet: true });
   }
 
   async function sendAnalyzerSnapshotToAgent(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
@@ -20495,6 +21929,178 @@
       'rbp-land': 'Land RBP Backup'
     };
     return labels[path] || 'Cash Offer';
+  }
+
+  function getDocuSignTemplateKeyForPath(path = 'cash') {
+    const normalized = String(path || 'cash').toLowerCase();
+    if (normalized.includes('land')) return 'land';
+    if (normalized.includes('rbp') || normalized.includes('retail')) return 'rbp';
+    if (normalized === 'cf' || normalized.includes('creative')) return 'cf';
+    if (normalized === 'mt' || normalized.includes('mortgage') || normalized.includes('takeover')) return 'mt';
+    return 'cash';
+  }
+
+  function isValidEmail(value = '') {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+  }
+
+  function openDocuSignSignerModal(pdf) {
+    const runtime = pdf?.runtime || getAnalyzerContractRuntimeSync();
+    const templateKey = getDocuSignTemplateKeyForPath(runtime.selectedPath || 'cash');
+    const templateName = DOCUSIGN_TEMPLATE_NAMES[templateKey] || DOCUSIGN_TEMPLATE_NAMES.cash;
+    const isRbp = templateKey === 'rbp';
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop open';
+    const modal = document.createElement('div');
+    modal.className = 'modal open pbk-form-modal contract-signer-modal';
+    modal.innerHTML = `
+      <h3>Send contract - ${escapeHtml(runtime.selectedPathLabel || getContractPathLabel(templateKey))}</h3>
+      <p>PBK will use the path-specific DocuSign template and fixed routing order: company signer first, then buyer/manager if needed, then sellers.</p>
+      <div class="contract-template-banner">
+        <div>
+          <div class="k">Template</div>
+          <div class="v">${escapeHtml(templateName)}</div>
+        </div>
+        <span class="pill">${escapeHtml(templateKey.toUpperCase())}</span>
+      </div>
+      <div class="contract-signer-grid">
+        <div class="signer-slot locked">
+          <div class="signer-slot-head">
+            <span class="signer-slot-title">1. Buyer signer</span>
+            <span class="signer-slot-role">Signer1</span>
+          </div>
+          <div class="signer-slot-fields">
+            <input value="Probono Key Realty" disabled>
+            <input value="info@probonokeyrealty.com" disabled>
+          </div>
+        </div>
+        <div class="signer-slot">
+          <div class="signer-slot-head">
+            <span class="signer-slot-title">${isRbp ? '2. RBP manager' : '2. Buyer signer 2'}</span>
+            <span class="signer-slot-role">Signer2</span>
+          </div>
+          <div class="signer-slot-fields">
+            <input data-slot2-name value="${isRbp ? '' : 'Probono Key Realty'}" placeholder="${isRbp ? 'RBP manager name' : 'Name'}">
+            <input data-slot2-email value="${isRbp ? '' : 'info@probonokeyrealty.com'}" placeholder="${isRbp ? 'RBP manager email' : 'Email'}">
+          </div>
+          <span class="pbk-form-hint">${isRbp ? 'Required for Retail Buyer Program contracts.' : 'Optional second company signer; change if another signer owns this packet.'}</span>
+        </div>
+        <div class="signer-slot">
+          <div class="signer-slot-head">
+            <span class="signer-slot-title">3. Seller 1 required</span>
+            <span class="signer-slot-role">Signer3</span>
+          </div>
+          <div class="signer-slot-fields">
+            <input data-seller1-name value="${escapeHtml(runtime.leadName === 'Seller not entered' ? '' : runtime.leadName)}" placeholder="Seller full name">
+            <input data-seller1-email value="${escapeHtml(runtime.email || '')}" placeholder="seller@email.com">
+          </div>
+        </div>
+        <div class="signer-slot">
+          <div class="signer-slot-head">
+            <span class="signer-slot-title">4. Seller 2 optional</span>
+            <span class="signer-slot-role">Signer4</span>
+          </div>
+          <div class="signer-slot-fields">
+            <input data-seller2-name placeholder="Second seller name">
+            <input data-seller2-email placeholder="second@email.com">
+          </div>
+        </div>
+      </div>
+      <div class="pbk-form-error" data-contract-error></div>
+      <div class="modal-actions" style="margin-top: var(--s-4);">
+        <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn-primary" type="button" data-contract-send-final>Send via DocuSign</button>
+      </div>
+    `;
+    const close = () => {
+      modal.remove();
+      backdrop.remove();
+    };
+    const showError = (message) => {
+      const box = modal.querySelector('[data-contract-error]');
+      if (box) {
+        box.textContent = message;
+        box.classList.add('open');
+      }
+    };
+    const value = (selector) => modal.querySelector(selector)?.value?.trim() || '';
+    backdrop.addEventListener('click', close);
+    modal.addEventListener('click', async (event) => {
+      if (event.target.closest('[data-modal-close]')) {
+        close();
+        return;
+      }
+      const send = event.target.closest('[data-contract-send-final]');
+      if (!send) return;
+      const slot2Name = value('[data-slot2-name]');
+      const slot2Email = value('[data-slot2-email]');
+      const seller1Name = value('[data-seller1-name]');
+      const seller1Email = value('[data-seller1-email]');
+      const seller2Name = value('[data-seller2-name]');
+      const seller2Email = value('[data-seller2-email]');
+
+      if (isRbp && (!slot2Name || !isValidEmail(slot2Email))) {
+        showError('RBP contracts require a valid RBP manager name and email for Signer2.');
+        return;
+      }
+      if (!seller1Name || !isValidEmail(seller1Email)) {
+        showError('Seller 1 name and a valid email are required before sending.');
+        return;
+      }
+      if ((seller2Name || seller2Email) && (!seller2Name || !isValidEmail(seller2Email))) {
+        showError('Seller 2 is optional, but both name and a valid email are required if used.');
+        return;
+      }
+
+      const signers = [
+        { roleName: 'Signer1', routingOrder: '1', recipientId: '1', name: 'Probono Key Realty', email: 'info@probonokeyrealty.com' }
+      ];
+      if (slot2Name && slot2Email) {
+        signers.push({ roleName: 'Signer2', routingOrder: '2', recipientId: '2', name: slot2Name, email: slot2Email });
+      }
+      signers.push({ roleName: 'Signer3', routingOrder: '3', recipientId: '3', name: seller1Name, email: seller1Email });
+      if (seller2Name && seller2Email) {
+        signers.push({ roleName: 'Signer4', routingOrder: '4', recipientId: '4', name: seller2Name, email: seller2Email });
+      }
+
+      send.disabled = true;
+      const response = await invokeRuntimeTool('sendDocuSign', {
+        leadName: runtime.leadName,
+        address: runtime.address,
+        amount: runtime.amount,
+        email: seller1Email,
+        phone: runtime.phone,
+        selectedPath: runtime.selectedPath,
+        selectedPathLabel: runtime.selectedPathLabel,
+        contractPath: templateKey,
+        docusignTemplateKey: templateKey,
+        docusignTemplateName: templateName,
+        timeline: runtime.timeline,
+        earnestDeposit: runtime.earnestDeposit,
+        previewUrl: runtime.previewUrl,
+        masterPackageQuery: runtime.masterPackageQuery,
+        pdfGeneratedAt: pdf?.syncedAt,
+        documentTitle: 'PBK Master Deal Package',
+        pdfStatus: pdf?.fallback ? 'preview-fallback' : 'generated',
+        signers,
+        notes: `Contract sent from path-based DocuSign modal (${templateName}, ${runtime.selectedPathLabel}${pdf?.fallback ? ', preview fallback active' : ''}).`
+      }, {
+        actionLabel: 'contracts',
+        successTitle: 'DocuSign request complete',
+        successDesc: (payload, outcome) => outcome === 'live'
+          ? `${runtime.selectedPathLabel} packet was sent with ${signers.length} signer${signers.length === 1 ? '' : 's'}.`
+          : `${runtime.selectedPathLabel} packet was captured without claiming DocuSign delivery.`,
+        errorTitle: 'DocuSign send failed'
+      });
+      send.disabled = false;
+      if (response) {
+        renderContractsExperience();
+        close();
+      }
+    });
+    document.body.append(backdrop, modal);
+    setTimeout(() => modal.querySelector('[data-seller1-name]')?.focus(), 40);
+    return modal;
   }
 
   function getContractAgreedPrice(deal = {}) {
@@ -21209,7 +22815,8 @@
           </div>
           <div class="analyzer-head-actions">
             <button class="btn btn-ghost" type="button" data-analyzer-action="sync">Sync latest deal</button>
-            <button class="btn btn-ghost" type="button" data-analyzer-action="save-lead">Save to lead</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="save-lead">Save Deal</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="clear-analyzer">Clear Analyzer</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="send-agent">Send to Agent</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="open">Open full analyzer</button>
             <button class="btn btn-primary" type="button" data-analyzer-action="openclaw">Ask OpenClaw to analyze</button>
@@ -21273,6 +22880,10 @@
 
       if (action === 'save-lead') {
         await saveAnalyzerSnapshotToLead();
+      }
+
+      if (action === 'clear-analyzer') {
+        clearAnalyzerRuntimeDeal();
       }
 
       if (action === 'send-agent') {
@@ -21710,7 +23321,7 @@
     const approvalCards = approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
       const primaryLabel = type === 'contract' ? 'Send Contract' : type === 'outbound' ? 'Start' : 'Approve';
-      const secondaryLabel = type === 'contract' ? 'Edit' : type === 'outbound' ? 'Later' : 'Reject';
+      const secondaryLabel = type === 'contract' ? 'Edit' : type === 'outbound' ? 'Later' : 'Decline';
       const accent = type === 'contract' ? 'var(--ion)' : type === 'outbound' ? 'var(--magenta)' : 'var(--amber)';
       return `
         <div class="qcard" data-approval-id="${escapeHtml(approval.id)}" style="border-left-color: ${accent};">
@@ -21747,7 +23358,7 @@
           </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-admin-action="approved">Approve</button>
-            <button class="btn btn-ghost" data-admin-action="rejected">Reject</button>
+            <button class="btn btn-ghost" data-admin-action="rejected">Decline</button>
           </div>
         </div>
       `;
@@ -21787,7 +23398,7 @@
       setTimeout(() => card.remove(), 300);
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin approval removed locally' : 'Admin rejection removed locally',
+        title: action === 'approved' ? 'Admin approval removed locally' : 'Admin decline removed locally',
         desc: 'Reconnect the OpenClaw bridge to replay this as a live admin callback.'
       });
       return;
@@ -21799,7 +23410,7 @@
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin action sent to OpenClaw' : 'Admin task rejected',
+        title: action === 'approved' ? 'Admin action sent to OpenClaw' : 'Admin task declined',
         desc: 'Rex and the bridge audit log were updated.'
       });
     } catch (error) {

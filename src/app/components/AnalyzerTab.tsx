@@ -14,6 +14,9 @@ interface AnalyzerTabProps {
   onDealChange: (updates: Partial<DealData>) => void;
   onAnalyze: () => void | Promise<void>;
   onSendToAgent: () => void | Promise<void>;
+  onSaveDeal: () => void | Promise<void>;
+  onClearDeal: () => void;
+  onSelectPath: (path: PBKPath) => void;
   onOpenCallMode: (path: PBKPath) => void;
   analyzeStatus: string;
 }
@@ -24,6 +27,9 @@ export function AnalyzerTab({
   onDealChange,
   onAnalyze,
   onSendToAgent,
+  onSaveDeal,
+  onClearDeal,
+  onSelectPath,
   onOpenCallMode,
   analyzeStatus,
 }: AnalyzerTabProps) {
@@ -46,6 +52,14 @@ export function AnalyzerTab({
   const arv = deal.arv || calculateARV(deal.comps);
   const analyzeReadiness = getAnalyzeReadiness(deal);
   const analyzeCtaLabel = analyzeReadiness.ready && deal.isAnalyzed ? 'Open Call Mode ->' : 'Analyze Deal ->';
+  const handleAnalyzeCta = () => {
+    if (analyzeReadiness.ready && deal.isAnalyzed) {
+      onOpenCallMode(selectedPath);
+      return;
+    }
+
+    onAnalyze();
+  };
   const verdictTone =
     deal.verdict === 'green'
       ? {
@@ -71,11 +85,29 @@ export function AnalyzerTab({
   return (
     <div className="p-3.5">
       <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-          <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
-            Step 1 - Enter Property Details
-          </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
+            <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
+              Step 1 - Enter Property Details
+            </h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onSaveDeal}
+              className="rounded-full bg-blue-500 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-600"
+            >
+              Save Deal
+            </button>
+            <button
+              type="button"
+              onClick={onClearDeal}
+              className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-[11px] font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-300 dark:hover:bg-slate-800"
+            >
+              Clear
+            </button>
+          </div>
         </div>
 
         <div className="mb-3">
@@ -243,17 +275,17 @@ export function AnalyzerTab({
               <div className="flex items-start gap-2">
                 <div className="flex-1">
                   <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
-                    ARV (auto from comps)
-                    <small className="block text-[10px] text-gray-400">Average of Comp A+B+C</small>
+                    ARV
+                    <small className="block text-[10px] text-gray-400">Auto from comps, editable when underwriting overrides it</small>
                   </label>
                 </div>
                 <div className="w-32">
                   <input
                     type="number"
                     value={arv || ''}
-                    readOnly
+                    onChange={(e) => handleInputChange('arv', parseFloat(e.target.value) || 0)}
                     placeholder="0"
-                    className="w-full h-9 pl-5 pr-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-100 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] cursor-default"
+                    className="w-full h-9 pl-5 pr-3 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 transition-all"
                   />
                   <span className="absolute left-2 top-2 text-[12px] text-gray-500">$</span>
                 </div>
@@ -437,7 +469,7 @@ export function AnalyzerTab({
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <button
-          onClick={onAnalyze}
+          onClick={handleAnalyzeCta}
           className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md"
         >
           {analyzeCtaLabel}
@@ -467,6 +499,7 @@ export function AnalyzerTab({
           <StrategySelector
             deal={deal}
             selectedPath={selectedPath}
+            onSelectPath={onSelectPath}
             onOpenCallMode={onOpenCallMode}
           />
           <UnderwritingControls deal={deal} onDealChange={onDealChange} />

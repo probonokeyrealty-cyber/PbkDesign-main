@@ -335,6 +335,8 @@ const TOOL_NAMES = [
   'analyzeDeal',
   'getPropertyData',
   'cachePropertyData',
+  'scrape_property',
+  'import_leads',
   'classifyParticipant',
   'getParticipantProfile',
   'getBrainEmailContext',
@@ -350,6 +352,7 @@ const TOOL_NAMES = [
   'admin_run_away_worker',
   'admin_update_env_var',
   'createApproval',
+  'createApprovalTask',
   'handleReplyIntent',
   'updateCRM',
   'ingestResearchDoc',
@@ -367,8 +370,12 @@ const TOOL_NAMES = [
   'scheduleAppointment',
   'telnyx_call',
   'telnyx_sms',
+  'send_verification_sms',
   'routeInboundCall',
   'runAvaMemoryLearning',
+  'generatePersona',
+  'scoreAgentLikability',
+  'prepare_and_send_contract',
   'sendDocuSign',
   'sendContract',
   'skipTrace',
@@ -414,6 +421,8 @@ const LIMITS = {
   rexDecisions: 240,
   avaActiveMemories: 120,
   avaLearningSessions: 180,
+  avaStories: 160,
+  agentVersions: 240,
   inboundCallRoutes: 180,
   promptPatchApplications: 90,
   recordingRetentionRuns: 90,
@@ -427,7 +436,11 @@ const CONTRACTS_DIR = path.join(ROOT_DIR, 'contracts');
 const META_AGENT_SCENARIO_FILE = path.join(ROOT_DIR, 'labs', 'meta-agent', 'generated', 'latest-scenario.json');
 const BROWSER_RESEARCH_JOBS_FILE = path.join(ROOT_DIR, 'ops', 'browser-research', 'generated-jobs.json');
 const BROWSER_RESEARCH_TARGETS_FILE = path.join(ROOT_DIR, 'ops', 'browser-research', 'targets.example.json');
+const UPGRADE_INTEGRATIONS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'pbk-upgrade-integrations.json');
+const PROPERTY_DATA_LOCAL_STATUS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'local-property-data-status.json');
+const PROPERTY_DATA_ADAPTER_SCRIPT = path.join(ROOT_DIR, 'scripts', 'property-data-adapter.mjs');
 const MCP_REGISTRY_FILE = path.join(ROOT_DIR, 'mcp-servers', 'registry.example.json');
+const MCP_RESEARCH_CANDIDATES_FILE = path.join(ROOT_DIR, 'mcp-servers', 'research-candidates.example.json');
 const N8N_TOOLING_WORKFLOW_FILE = path.join(ROOT_DIR, 'n8n-lite', 'tooling-health-check.json');
 const N8N_WORKFLOW_DRAFTS_FILE = path.join(RUNTIME_DIR, 'n8n-workflow-drafts.json');
 const OBSERVABILITY_COMPOSE_FILE = path.join(ROOT_DIR, 'ops', 'monitoring', 'docker-compose.observability.yml');
@@ -1290,18 +1303,29 @@ function buildToolUsageSeed() {
 
 function buildAvaNegotiationPersona() {
   return {
-    id: 'ava-closer-v1',
-    name: 'Ava',
-    role: 'PBK acquisitions closer',
+    id: 'ava-closer-v2',
+    name: 'Ava Chen',
+    role: 'Senior Acquisition Specialist, Probono Key Realty',
     hometown: 'Columbus, Ohio',
-    voice: 'Midwest-warm, direct, emotionally intelligent, and never pushy.',
-    backstory: 'Ava learned negotiation helping her family work through a small-business sale and now uses that same calm, practical style with sellers who need clarity more than pressure.',
+    experienceYears: 8,
+    closedDeals: 200,
+    voice: 'Warm, confident, tactful, emotionally intelligent, and never rushed.',
+    backstory: 'Ava started as a real estate agent, then moved into acquisitions after helping close 200+ cash and creative-finance deals. She is calm under pressure and focuses on giving overwhelmed sellers a clear, respectful path.',
+    values: ['transparency', 'honesty', 'respect', 'compliance', 'clear next steps'],
+    unknownAnswer: 'I do not have that information right now, but I can find out for you. Give me one moment.',
+    scamHandler: 'Acknowledge the concern, offer verifiable proof, explain that PBK never asks for money or sensitive personal information upfront, then exit gracefully if trust is not restored.',
+    noWholesalerPositioning: 'PBK is an investment realty buying agency with private investment partners. Ava never calls PBK a wholesaler.',
+    bantPillars: ['budget', 'authority', 'need', 'timeline', 'urgency'],
     principles: [
+      'BANT+ before offer: never present seller-facing price, MAO, or target offer until budget, authority, need, timeline, and urgency are known.',
       'Tactical empathy: label the emotion before solving the problem.',
       'Mirroring: repeat the last meaningful phrase when the seller is guarded.',
       'Calibrated questions: use how/what questions to let the seller explain the path.',
       'Ethical influence: use trust, clarity, proof, and scarcity without manipulation.',
-      'Wholesale discipline: never exceed MAO or hide repair/downside risk.'
+      'Data-driven confidence: use analyzer numbers only after qualification and explain tradeoffs clearly.',
+      'PBK path discipline: Cash Offer, RBP, Creative Finance, Mortgage Takeover, and Land are the core business paths. Never mix path scripts; match the script to caller type, property type, motivation, financing facts, and underwriting.',
+      'Path routing: owners usually start Cash then RBP; RBP is owner/direct-seller; agent-listed structure leads should use CF or MT; land leads qualify buildability, utilities, zoning, access, and builder math first.',
+      'Escalation discipline: transfer to Jordan or underwriting for legal, title, probate, foreclosure, or emotional edge cases.',
     ],
   };
 }
@@ -1441,6 +1465,252 @@ function buildDefaultCityKnowledge() {
       localStory: 'Ava can connect around Dayton as a practical market where a clean close can matter more than squeezing every last dollar.',
     },
   ];
+}
+
+function buildDefaultAvaStories() {
+  return [
+    {
+      id: 'ava-story-repairs-columbus',
+      topic: 'repairs',
+      market: 'Columbus',
+      triggerKeywords: ['roof', 'furnace', 'repairs', 'condition'],
+      storyText: 'I remember a Columbus seller who felt buried by roof and furnace repairs. We kept the process simple, bought as-is, and they were able to move without managing contractors.',
+      source: 'pbk-default',
+      score: 0.82,
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    },
+    {
+      id: 'ava-story-probate-akron',
+      topic: 'probate',
+      market: 'Akron',
+      triggerKeywords: ['probate', 'estate', 'executor', 'family'],
+      storyText: 'Just last month, an Akron family wanted dignity and speed more than a complicated listing. We slowed the conversation down, explained every step, and made the close feel manageable.',
+      source: 'pbk-default',
+      score: 0.85,
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    },
+    {
+      id: 'ava-story-timing-cleveland',
+      topic: 'timeline',
+      market: 'Cleveland',
+      triggerKeywords: ['quick', 'deadline', 'foreclosure', 'taxes', 'vacant'],
+      storyText: 'I have seen Cleveland sellers choose certainty because every extra month meant taxes, utilities, and stress. A clean date mattered as much as the number.',
+      source: 'pbk-default',
+      score: 0.8,
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    },
+  ];
+}
+
+function selectAvaStoryForContext(context = {}) {
+  const text = [
+    context.transcript,
+    context.objection,
+    context.address,
+    context.market,
+    context.topic,
+  ].filter(Boolean).join(' ').toLowerCase();
+  const stories = Array.isArray(state?.avaStories) && state.avaStories.length
+    ? state.avaStories
+    : buildDefaultAvaStories();
+  const scored = stories.map((story) => {
+    const keywords = normalizeStringList(story.triggerKeywords || story.keywords || story.tags || []);
+    const keywordHits = keywords.filter((keyword) => keyword && text.includes(String(keyword).toLowerCase())).length;
+    const topicHit = story.topic && text.includes(String(story.topic).toLowerCase()) ? 1 : 0;
+    const marketHit = story.market && text.includes(String(story.market).toLowerCase()) ? 1 : 0;
+    return {
+      story,
+      score: keywordHits * 3 + topicHit * 2 + marketHit + Number(story.score || 0),
+    };
+  }).sort((left, right) => right.score - left.score);
+  return scored[0]?.score > 0 ? scored[0].story : null;
+}
+
+const BANT_FIELDS = ['budget', 'authority', 'need', 'timeline', 'urgency'];
+const BANT_FIELD_LABELS = {
+  budget: 'Budget',
+  authority: 'Authority',
+  need: 'Need',
+  timeline: 'Timeline',
+  urgency: 'Urgency',
+};
+
+function normalizeBantValue(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'object') {
+    return String(value.value || value.answer || value.summary || value.text || '').trim();
+  }
+  return String(value).trim();
+}
+
+function normalizeBantInfo(...sources) {
+  const bant = {};
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    const raw = source.bant && typeof source.bant === 'object' ? source.bant : source;
+    for (const field of BANT_FIELDS) {
+      const value = normalizeBantValue(raw[field] ?? raw[`bant_${field}`] ?? raw[`bant${field[0].toUpperCase()}${field.slice(1)}`]);
+      if (value) bant[field] = value;
+    }
+  }
+  return bant;
+}
+
+function getMissingBantFields(bant = {}) {
+  return BANT_FIELDS.filter((field) => !normalizeBantValue(bant[field]));
+}
+
+function extractBantFromTranscript(transcript = '', existing = {}) {
+  const text = String(transcript || '').trim();
+  const lower = text.toLowerCase();
+  const extracted = normalizeBantInfo(existing);
+  const moneyMatch = text.match(/(?:\$|want|need|asking|happy with|walk away|take)\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand)?)/i);
+  if (!extracted.budget && moneyMatch) extracted.budget = moneyMatch[0].trim();
+  if (!extracted.authority && /\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text)) {
+    extracted.authority = text.match(/.{0,40}\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
+  }
+  if (!extracted.need && /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b/i.test(text)) {
+    extracted.need = text.match(/.{0,40}\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b.{0,80}/i)?.[0]?.trim() || 'seller need mentioned';
+  }
+  if (!extracted.timeline && /\b(asap|soon|quick|days|weeks|months|close|closing|deadline|by [a-z]+|before)\b/i.test(text)) {
+    extracted.timeline = text.match(/.{0,40}\b(asap|soon|quick|days|weeks|months|close|closing|deadline|before)\b.{0,80}/i)?.[0]?.trim() || 'timeline mentioned';
+  }
+  if (!extracted.urgency && /\b(if it does not sell|cannot wait|need this done|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b/i.test(lower)) {
+    extracted.urgency = text.match(/.{0,50}\b(cannot wait|need this done|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b.{0,80}/i)?.[0]?.trim() || 'urgency mentioned';
+  }
+  return extracted;
+}
+
+function shouldEnforceBantForAnalyze(params = {}) {
+  if (params.enforceBant === false || params.internalOnly === true) return false;
+  if (params.requireBant === true || params.sellerFacing === true || params.presentOffer === true) return true;
+  const stage = String(params.stage || params.intent || params.mode || params.source || '').toLowerCase();
+  return /\b(seller[-_ ]?facing|present[-_ ]?offer|make[-_ ]?offer|closing|contract|call[-_ ]offer|ava[-_ ]call)\b/.test(stage);
+}
+
+function buildBantRequiredResult(params = {}, missing = [], bant = {}) {
+  const labels = missing.map((field) => BANT_FIELD_LABELS[field] || field);
+  return {
+    ok: false,
+    result: 'qualification_required',
+    qualificationRequired: true,
+    missingBant: missing,
+    missingBantLabels: labels,
+    bant,
+    error: `Missing BANT+ info: ${labels.join(', ')}. Complete qualification before presenting seller-facing numbers.`,
+    recommendedQuestion: missing[0] === 'budget'
+      ? 'To make sure I am not wasting your time, what number would make you happy to sell today?'
+      : missing[0] === 'authority'
+        ? 'Will you be making the final decision yourself, or do we need to include a spouse, partner, attorney, or co-owner?'
+        : missing[0] === 'need'
+          ? 'What is the main reason you are considering selling? Is it the property condition, a life change, or something else?'
+          : missing[0] === 'timeline'
+            ? 'When would you ideally want to close, in weeks, months, or as soon as possible?'
+            : 'What happens if the property does not sell in the next 3 months?',
+    leadId: params.leadId || '',
+    address: params.address || params.propertyAddress || '',
+  };
+}
+
+function calculateLikabilityScore(params = {}) {
+  const transcript = String(params.transcript || params.body || '').toLowerCase();
+  const sentimentStart = Math.max(0, Math.min(1, Number(params.sentimentStart ?? params.startSentiment ?? 0.5)));
+  const sentimentEnd = Math.max(0, Math.min(1, Number(params.sentimentEnd ?? params.endSentiment ?? params.sentiment ?? 0.5)));
+  const sentimentImprovement = Math.max(0, sentimentEnd - sentimentStart);
+  const durationSeconds = Math.max(0, Number(params.durationSeconds || params.duration_seconds || 0));
+  const durationScore = Math.min(1, durationSeconds / 480);
+  const outcomeText = String(params.outcome || params.result || '').toLowerCase();
+  const agreed = /(meeting|appointment|yes|offer|accepted|contract|signed|verbal|send)/i.test(`${outcomeText} ${transcript}`);
+  const positiveWords = (transcript.match(/\b(great|thanks|thank you|sounds good|helpful|appreciate|okay|yes)\b/g) || []).length;
+  const score = (sentimentImprovement * 3)
+    + (durationScore * 2)
+    + (agreed ? 4 : 0)
+    + Math.min(1, positiveWords / 5);
+  return Math.max(0, Math.min(10, Number(score.toFixed(1))));
+}
+
+function buildGeneratedPersona(params = {}) {
+  const archetype = String(params.archetype || 'empathetic').toLowerCase();
+  const gender = String(params.gender || 'female').toLowerCase();
+  const region = String(params.region || 'midwest').toLowerCase();
+  const experienceYears = Math.max(1, Math.min(30, Number(params.experience || params.experienceYears || 8)));
+  const firstNames = gender === 'male' ? ['Marcus', 'Caleb', 'Evan'] : gender === 'neutral' ? ['Riley', 'Quinn', 'Jordan'] : ['Ava', 'Maya', 'Nora'];
+  const lastNames = ['Chen', 'Brooks', 'Hale', 'Morgan', 'Reed'];
+  const name = `${firstNames[hashString(`${archetype}:${region}`) % firstNames.length]} ${lastNames[hashString(`${gender}:${experienceYears}`) % lastNames.length]}`;
+  const voiceMap = {
+    empathetic: 'warm, patient, reassuring, and good with hesitant sellers',
+    direct: 'clear, concise, confident, and respectful under pressure',
+    analytical: 'calm, data-driven, precise, and comfortable explaining tradeoffs',
+  };
+  return {
+    id: `persona-${slugify(`${name}-${archetype}-${region}`)}-${Date.now()}`,
+    name,
+    archetype,
+    gender,
+    region,
+    experience_years: experienceYears,
+    backstory: `${name} has ${experienceYears} years of real estate acquisition experience and specializes in ${archetype} seller conversations across the ${region}. They learned to blend practical deal math with human respect so sellers feel informed, not pressured.`,
+    voice_style: voiceMap[archetype] || voiceMap.empathetic,
+    small_talk_examples: [
+      `I know sellers in the ${region} usually want straight answers before they talk numbers.`,
+      'I want to make this simple enough that you can compare your options without pressure.',
+      'If I do not know an answer, I will say so and get the right person involved.',
+    ],
+    unique_phrase: archetype === 'analytical' ? 'Let us separate the facts from the pressure.' : archetype === 'direct' ? 'Let us keep this clean and clear.' : 'Let us slow it down and make this easier.',
+    promptPatch: {
+      replacePersonaName: name,
+      voiceStyle: voiceMap[archetype] || voiceMap.empathetic,
+      inheritsFrom: 'ava-closer-v2',
+    },
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+}
+
+async function persistAgentVersionRecord(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.agent_versions (
+      id, workspace_id, agent_name, parent_agent, persona, archetype, region,
+      likability_score, outcome_score, status, metadata, created_at, updated_at
+    )
+    VALUES ($1,'pbk',$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+    ON CONFLICT (id) DO UPDATE SET
+      persona = EXCLUDED.persona,
+      likability_score = EXCLUDED.likability_score,
+      outcome_score = EXCLUDED.outcome_score,
+      status = EXCLUDED.status,
+      metadata = EXCLUDED.metadata,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.agentName || record.persona?.name || '',
+      record.parentAgent || 'ava-closer-v2',
+      JSON.stringify(record.persona || {}),
+      record.persona?.archetype || record.archetype || '',
+      record.persona?.region || record.region || '',
+      record.likabilityScore ?? null,
+      record.outcomeScore ?? null,
+      record.status || 'candidate',
+      JSON.stringify(record.metadata || {}),
+      record.createdAt || isoNow(),
+      record.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+function upsertAgentVersion(record = {}) {
+  if (!Array.isArray(state.agentVersions)) state.agentVersions = [];
+  const existingIndex = state.agentVersions.findIndex((item) => item.id === record.id);
+  if (existingIndex >= 0) {
+    state.agentVersions.splice(existingIndex, 1, { ...state.agentVersions[existingIndex], ...record, updatedAt: isoNow() });
+  } else {
+    state.agentVersions.unshift({ ...record, createdAt: record.createdAt || isoNow(), updatedAt: record.updatedAt || isoNow() });
+  }
+  limitStateArrays(state);
 }
 
 function makeActivity({
@@ -2241,9 +2511,11 @@ function buildDefaultState() {
     agents: buildDefaultAgentFleet(),
     agentSkillTransfers: [],
     agentSkillExperiments: [],
+    agentVersions: [],
     rexDecisions: [],
     avaActiveMemories: [],
     avaLearningSessions: [],
+    avaStories: buildDefaultAvaStories(),
     inboundCallRoutes: [],
     promptPatchApplications: [],
     recordingRetentionRuns: [],
@@ -2622,6 +2894,81 @@ async function loadStateFromDb() {
   return result.rows[0]?.data || null;
 }
 
+let activityLogPersistenceWarned = false;
+
+async function persistActivityLogRecord(entry = {}) {
+  const pool = getPgPool();
+  if (!pool || !entry?.id) return false;
+  const createdAt = entry.at || entry.createdAt || entry.created_at || isoNow();
+  const metadata = {
+    ...entry,
+    leadId: entry.leadId || entry.lead_id || '',
+    leadName: entry.leadName || entry.lead_name || '',
+    address: entry.address || '',
+    target: entry.target || '',
+  };
+  try {
+    await pool.query(
+      `INSERT INTO public.activity_log (
+        id, workspace_id, lead_id, lead_name, address, actor, category, status,
+        text, target, source, metadata, created_at, updated_at
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,
+        $9,$10,$11,$12::jsonb,$13,$14
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        workspace_id = EXCLUDED.workspace_id,
+        lead_id = EXCLUDED.lead_id,
+        lead_name = EXCLUDED.lead_name,
+        address = EXCLUDED.address,
+        actor = EXCLUDED.actor,
+        category = EXCLUDED.category,
+        status = EXCLUDED.status,
+        text = EXCLUDED.text,
+        target = EXCLUDED.target,
+        source = EXCLUDED.source,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        entry.id,
+        entry.workspaceId || entry.workspace_id || 'pbk',
+        entry.leadId || entry.lead_id || null,
+        entry.leadName || entry.lead_name || '',
+        entry.address || '',
+        entry.actor || 'System',
+        entry.category || 'INFO',
+        entry.status || 'success',
+        entry.text || '',
+        entry.target || '',
+        entry.source || 'runtime',
+        JSON.stringify(metadata),
+        createdAt,
+        entry.updatedAt || entry.updated_at || isoNow(),
+      ],
+    );
+    return true;
+  } catch (error) {
+    if (!activityLogPersistenceWarned) {
+      console.warn('[pbk-local-openclaw] activity_log persistence skipped:', error?.message || error);
+      activityLogPersistenceWarned = true;
+    }
+    return false;
+  }
+}
+
+async function persistActivityLogRecords(entries = []) {
+  if (!Array.isArray(entries) || entries.length === 0) return false;
+  const seen = new Set();
+  const uniqueEntries = entries
+    .filter((entry) => entry?.id && !seen.has(entry.id) && seen.add(entry.id))
+    .slice(0, 100);
+  for (const entry of uniqueEntries) {
+    await persistActivityLogRecord(entry);
+  }
+  return uniqueEntries.length > 0;
+}
+
 async function persistStateToDb(nextState) {
   const pool = getPgPool();
   if (!pool) return false;
@@ -2631,6 +2978,7 @@ async function persistStateToDb(nextState) {
      ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
     [JSON.stringify(nextState)],
   );
+  await persistActivityLogRecords(nextState.activity || []);
   return true;
 }
 
@@ -3617,9 +3965,11 @@ function limitStateArrays(nextState) {
   nextState.campaignEvents = sortNewest(nextState.campaignEvents || []).slice(0, LIMITS.campaignEvents);
   nextState.campaignSuppressions = sortNewest(nextState.campaignSuppressions || []).slice(0, LIMITS.campaignSuppressions);
   nextState.campaignExecutions = sortNewest(nextState.campaignExecutions || []).slice(0, LIMITS.campaignExecutions);
+  nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
   nextState.avaLearningSessions = sortNewest(nextState.avaLearningSessions || []).slice(0, LIMITS.avaLearningSessions);
+  nextState.avaStories = sortNewest(nextState.avaStories || []).slice(0, LIMITS.avaStories);
   nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
   nextState.recordingRetentionRuns = sortNewest(nextState.recordingRetentionRuns || []).slice(0, LIMITS.recordingRetentionRuns);
@@ -3657,6 +4007,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.campaignEvents = (nextState.campaignEvents || []).length;
   nextState.status.avaActiveMemories = (nextState.avaActiveMemories || []).length;
   nextState.status.avaLearningSessions = (nextState.avaLearningSessions || []).length;
+  nextState.status.avaStories = (nextState.avaStories || []).length;
+  nextState.status.agentVersions = (nextState.agentVersions || []).length;
   nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
   nextState.status.propertyCacheCount = (nextState.propertyCache || []).length;
   nextState.status.propertyCacheTtlDays = PROPERTY_CACHE_TTL_DAYS;
@@ -3734,9 +4086,11 @@ function hydrateState(raw = {}) {
     campaignEvents: trimArray(raw.campaignEvents || defaults.campaignEvents, LIMITS.campaignEvents),
     campaignSuppressions: trimArray(raw.campaignSuppressions || defaults.campaignSuppressions, LIMITS.campaignSuppressions),
     campaignExecutions: trimArray(raw.campaignExecutions || defaults.campaignExecutions, LIMITS.campaignExecutions),
+    agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
     avaLearningSessions: trimArray(raw.avaLearningSessions || defaults.avaLearningSessions, LIMITS.avaLearningSessions),
+    avaStories: trimArray(raw.avaStories || defaults.avaStories, LIMITS.avaStories),
     inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
     recordingRetentionRuns: trimArray(raw.recordingRetentionRuns || defaults.recordingRetentionRuns, LIMITS.recordingRetentionRuns),
@@ -4037,6 +4391,317 @@ function findLeadContext(params = {}) {
     email: params.email || fallbackImport?.seller?.email || '',
   };
   return fallback;
+}
+
+function getRecentLeadActivity(context = {}, explicitActivity = '') {
+  if (explicitActivity) {
+    return String(explicitActivity).split('\n').map((item) => item.trim()).filter(Boolean).slice(0, 5);
+  }
+  const search = [context.leadId, context.leadName, context.address]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return (state.activity || [])
+    .filter((item) => {
+      if (!search) return true;
+      const haystack = [item.leadId, item.leadName, item.target, item.address, item.text, item.category]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(context.leadId || '__no_lead__')
+        || (context.leadName && haystack.includes(String(context.leadName).toLowerCase().split(/\s+/)[0]))
+        || (context.address && haystack.includes(String(context.address).toLowerCase().split(',')[0]));
+    })
+    .slice(0, 5)
+    .map((item) => `${item.category || 'Activity'}: ${item.text || item.target || 'Runtime event'}`);
+}
+
+function compactObject(input = {}) {
+  return Object.fromEntries(
+    Object.entries(input || {}).filter(([, value]) => value !== undefined),
+  );
+}
+
+function normalizeLeadLookupValue(value = '') {
+  return String(value || '').trim();
+}
+
+function findLeadImportByLookup(value = '') {
+  const raw = normalizeLeadLookupValue(value);
+  if (!raw) return null;
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  const normalized = decoded.toLowerCase();
+  const addressKey = normalizeAddressKey(decoded);
+  return (state.leadImports || []).find((lead) => {
+    const candidates = [
+      lead.id,
+      lead.leadId,
+      lead.externalId,
+      lead.external_id,
+      lead.seller?.email,
+      lead.seller?.phone,
+      lead.seller?.name,
+      lead.property?.address,
+      slugify(lead.property?.address || ''),
+      normalizeAddressKey(lead.property?.address || ''),
+    ]
+      .filter(Boolean)
+      .map((item) => String(item || '').trim().toLowerCase());
+    return candidates.includes(normalized) || (addressKey && candidates.includes(addressKey));
+  }) || null;
+}
+
+function normalizePbkDealPath(value = '', fallback = 'cash') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (/\b(rbp|retail buyer|retail-buyer)\b/.test(raw)) return 'rbp';
+  if (/\b(cf|creative finance|seller finance|seller-finance|wrap)\b/.test(raw)) return 'cf';
+  if (/\b(mt|mortgage takeover|subject to|subject-to|subto|sub-to|takeover)\b/.test(raw)) return 'mt';
+  if (/\b(land|parcel|acreage|lot)\b/.test(raw)) return 'land';
+  if (/\b(cash|as-is|as is|wholesale|standard-purchase|cash-offer)\b/.test(raw)) return 'cash';
+  return fallback;
+}
+
+function getPathDisplayLabel(pathValue = 'cash') {
+  const normalized = normalizePbkDealPath(pathValue);
+  const labels = {
+    cash: 'Cash Offer',
+    rbp: 'Retail Buyer Program',
+    cf: 'Creative Finance',
+    mt: 'Mortgage Takeover',
+    land: 'Land',
+  };
+  return labels[normalized] || labels.cash;
+}
+
+function getPathDocuSignTemplateName(pathValue = 'cash') {
+  const normalized = normalizePbkDealPath(pathValue);
+  const templateNames = {
+    cash: 'PBK_Cash_Offer_v1',
+    rbp: 'PBK_RBP_v1',
+    cf: 'PBK_Creative_Finance_v1',
+    mt: 'PBK_Mortgage_Takeover_v1',
+    land: 'PBK_Land_v1',
+  };
+  return templateNames[normalized] || templateNames.cash;
+}
+
+function inferLeadSelectedPath(lead = {}, fallback = 'cash') {
+  const callContext = lead.callContext || lead.call_context || {};
+  const property = lead.property || {};
+  const rawPath = [
+    lead.selectedPath,
+    lead.selected_path,
+    lead.path,
+    lead.dealPath,
+    callContext.selectedPath,
+    callContext.selected_path,
+    callContext.path,
+    callContext.dealPath,
+    callContext.contractPath,
+    callContext.selectedPathLabel,
+  ].find(Boolean);
+  if (rawPath) return normalizePbkDealPath(rawPath, fallback);
+  if (/land|parcel|acreage/i.test([property.type, property.propertyType, property.address, lead.type].filter(Boolean).join(' '))) {
+    return 'land';
+  }
+  return fallback;
+}
+
+function normalizeLeadTags(value = []) {
+  return Array.isArray(value)
+    ? value.map((tag) => String(tag || '').trim()).filter(Boolean)
+    : String(value || '').split(',').map((tag) => tag.trim()).filter(Boolean);
+}
+
+function parseBantPayload(value, fallback = {}) {
+  if (value === undefined) return fallback || {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  const raw = String(value || '').trim();
+  if (!raw) return fallback || {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : (fallback || {});
+  } catch {
+    return fallback || {};
+  }
+}
+
+function getLeadActivityItems(context = {}) {
+  const search = [context.leadId, context.leadName, context.address]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return sortNewest(state.activity || []).filter((item) => {
+    if (!search) return false;
+    const haystack = [item.leadId, item.leadName, item.target, item.address, item.text, item.category]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return (context.leadId && haystack.includes(String(context.leadId).toLowerCase()))
+      || (context.leadName && haystack.includes(String(context.leadName).toLowerCase().split(/\s+/)[0]))
+      || (context.address && haystack.includes(String(context.address).toLowerCase().split(',')[0]));
+  });
+}
+
+function buildLeadFullView(leadOrId = {}) {
+  const lead = typeof leadOrId === 'string' ? findLeadImportByLookup(leadOrId) : leadOrId;
+  if (!lead) return null;
+  const seller = lead.seller || {};
+  const property = lead.property || {};
+  const selectedPath = inferLeadSelectedPath(lead);
+  const callContext = {
+    ...(lead.call_context || {}),
+    ...(lead.callContext || {}),
+    selected_path: selectedPath,
+    selectedPath,
+    selectedPathLabel: getPathDisplayLabel(selectedPath),
+  };
+  const context = findLeadContext({
+    leadId: lead.leadId || lead.id,
+    leadName: seller.name || lead.leadName || lead.name,
+    address: property.address || lead.address,
+    phone: seller.phone || lead.phone,
+    email: seller.email || lead.email,
+  });
+  const calls = sortNewest(state.calls || []).filter((call) =>
+    (context.leadId && call.leadId === context.leadId)
+    || (context.address && String(call.address || '').toLowerCase() === String(context.address).toLowerCase())
+    || (context.phone && normalizePhone(call.phone) === normalizePhone(context.phone))
+    || (context.leadName && String(call.leadName || '').toLowerCase() === String(context.leadName).toLowerCase())
+  );
+  const messages = sortNewest(state.messages || []).filter((message) =>
+    (context.leadId && message.leadId === context.leadId)
+    || (context.address && String(message.address || '').toLowerCase() === String(context.address).toLowerCase())
+    || (context.email && String(message.email || '').toLowerCase() === String(context.email).toLowerCase())
+    || (context.phone && normalizePhone(message.phone) === normalizePhone(context.phone))
+  );
+  const contracts = sortNewest(state.contracts || []).filter((contract) =>
+    (context.leadId && contract.leadId === context.leadId)
+    || (context.address && String(contract.address || '').toLowerCase() === String(context.address).toLowerCase())
+    || (context.email && String(contract.email || '').toLowerCase() === String(context.email).toLowerCase())
+  );
+  const analyzerRuns = sortNewest(state.analyzerRuns || []).filter((run) =>
+    (context.leadId && run.leadId === context.leadId)
+    || (context.address && String(run.address || '').toLowerCase() === String(context.address).toLowerCase())
+  );
+  const activity = getLeadActivityItems(context);
+  const fullLead = {
+    ...lead,
+    id: lead.id || context.leadId,
+    leadId: lead.leadId || context.leadId,
+    name: seller.name || lead.name || context.leadName,
+    phone: seller.phone || lead.phone || context.phone,
+    email: seller.email || lead.email || context.email,
+    address: property.address || lead.address || context.address,
+    property_type: property.propertyType || property.type || lead.property_type || (selectedPath === 'land' ? 'Land' : 'Single Family'),
+    motivation_score: lead.motivation_score ?? lead.motivationScore ?? lead.score ?? null,
+    selected_path: selectedPath,
+    selectedPath,
+    selectedPathLabel: getPathDisplayLabel(selectedPath),
+    docusignTemplateName: getPathDocuSignTemplateName(selectedPath),
+    seller,
+    property,
+    callContext,
+    call_context: callContext,
+    bant: normalizeBantInfo(lead.bant || {}, callContext.bant || {}),
+    activity,
+    calls,
+    messages,
+    contracts,
+    analyzerRuns,
+  };
+  return {
+    ok: true,
+    lead: fullLead,
+    calls,
+    messages,
+    contracts,
+    activity,
+    analyzerRuns,
+  };
+}
+
+function summarizeTranscriptForLead(call = {}, fallbackSummary = '') {
+  if (fallbackSummary) return String(fallbackSummary).trim();
+  if (Array.isArray(call.transcript) && call.transcript.length) {
+    const text = call.transcript
+      .map((line) => String(line?.text || line?.body || '').trim())
+      .filter(Boolean)
+      .slice(-4)
+      .join(' ');
+    if (text) return text.slice(0, 420);
+  }
+  return String(call.body || call.script || 'No summary captured yet.').slice(0, 420);
+}
+
+function buildLeadLastCallDetails(leadId = '') {
+  const full = buildLeadFullView(leadId);
+  if (!full) return null;
+  const lead = full.lead || {};
+  const callContext = lead.callContext || {};
+  const latestCall = full.calls?.[0] || full.messages?.find((message) => String(message.channel || '').toLowerCase() === 'call') || null;
+  if (!latestCall && !Object.keys(callContext).length) {
+    return {
+      ok: true,
+      leadId: lead.leadId || lead.id || leadId,
+      call: null,
+    };
+  }
+  const transcript = Array.isArray(latestCall?.transcript) ? latestCall.transcript : [];
+  const sentiment = callContext.sentiment ?? callContext.sentimentScore ?? latestCall?.sentiment ?? null;
+  const lastOffer = callContext.last_offer ?? callContext.lastOffer ?? callContext.offer ?? latestCall?.lastOffer ?? null;
+  const summary = summarizeTranscriptForLead(latestCall || {}, callContext.summary || callContext.callSummary || '');
+  return {
+    ok: true,
+    leadId: lead.leadId || lead.id || leadId,
+    call: latestCall
+      ? {
+        ...latestCall,
+        transcript,
+        summary,
+        sentiment,
+        last_offer: lastOffer,
+      }
+      : {
+        id: `call-context-${lead.leadId || lead.id || leadId}`,
+        status: 'context-only',
+        transcript,
+        summary,
+        sentiment,
+        last_offer: lastOffer,
+      },
+    last_offer: lastOffer,
+    sentiment,
+    summary,
+    transcript,
+    call_context: callContext,
+  };
+}
+
+function buildLeadMessageDraft({ context = {}, channel = 'sms', stage = 'followup', activity = [] } = {}) {
+  const firstName = String(context.leadName || 'there').trim().split(/\s+/)[0] || 'there';
+  const address = context.address || 'the property';
+  const hasActivity = Array.isArray(activity) && activity.length > 0;
+  const activitySuffix = hasActivity ? ' I reviewed the latest notes so this matches where we left off.' : '';
+  const drafts = {
+    opening: `Hi ${firstName}, this is Ava with Probono Key Realty. We are interested in possibly purchasing ${address} as-is. Is now a good time to talk for two minutes?`,
+    followup: `Hi ${firstName}, this is Ava with Probono Key Realty checking back on ${address}.${activitySuffix} Would today or tomorrow be better for a quick update?`,
+    negotiating: `Hi ${firstName}, I reviewed the numbers again on ${address}. If we keep this simple, as-is, and on your timeline, what would need to be true for you to feel good about moving forward?`,
+    closing: `Hi ${firstName}, underwriting has the file ready on ${address}. I can send the summary and walk you through the contract whenever you have five minutes.`,
+    contract: `Hi ${firstName}, the contract packet for ${address} is ready. I can send it now and stay available to walk through each page with you.`,
+    lost: `Hi ${firstName}, I know the timing may not have been right on ${address}. If anything changes, I am happy to revisit the numbers with no pressure.`,
+  };
+  const body = drafts[stage] || drafts.followup;
+  if (channel === 'email') {
+    return `Subject: Quick update on ${address}\n\n${body}\n\nBest,\nAva\nProbono Key Realty`;
+  }
+  return body;
 }
 
 function extractCommandContext(command = '') {
@@ -4698,6 +5363,7 @@ function normalizeLeadIntake(payload = {}) {
       mao: property.mao ?? payload.mao ?? null,
       mortgageBalance: property.mortgageBalance ?? payload.mortgageBalance ?? null,
       askingPrice: property.askingPrice ?? payload.askingPrice ?? motivation.askingPrice ?? null,
+      propertyType: property.propertyType || property.type || payload.property_type || payload.propertyType || payload.type || '',
     },
     motivation: {
       summary: motivation.summary || payload.motivation || '',
@@ -4713,6 +5379,10 @@ function normalizeLeadIntake(payload = {}) {
       campaign: assignment.campaign || payload.campaign || '',
     },
     notes: payload.notes || payload.internalNotes || '',
+    bant: normalizeBantInfo(payload.bant || {}, payload),
+    callContext: payload.callContext || payload.call_context || {},
+    selectedPath: payload.selectedPath || payload.selected_path || payload.path || payload.dealPath || '',
+    selected_path: payload.selected_path || payload.selectedPath || payload.path || payload.dealPath || '',
     tags,
     createdAt,
     updatedAt: payload.updatedAt || createdAt,
@@ -6865,6 +7535,33 @@ function normalizeContractPathKey(value = '') {
     .replace(/sub-to/g, 'subto');
 }
 
+function normalizeDocuSignTemplateKey(params = {}) {
+  const fragments = [
+    params.docusignTemplateKey,
+    params.contractPath,
+    params.pathId,
+    params.path,
+    params.selectedPath,
+    params.selectedPathLabel,
+    params.contractType,
+    params.templateName,
+    params.docusignTemplateName,
+  ].flat().filter(Boolean).join(' ').toLowerCase();
+
+  if (/\b(rbp|retail buyer|retail-buyer)\b/.test(fragments)) return 'RBP';
+  if (/\b(cf|creative finance|seller finance|seller-finance)\b/.test(fragments)) return 'CF';
+  if (/\b(mt|mortgage takeover|takeover|subject to|subject-to|subto)\b/.test(fragments)) return 'MT';
+  if (/\b(land|parcel|acreage)\b/.test(fragments)) return 'LAND';
+  return 'CASH';
+}
+
+function getDocuSignTemplateIdForPath(params = {}) {
+  const explicit = String(params.docusignTemplateId || params.docuSignTemplateId || '').trim();
+  if (explicit) return explicit;
+  const key = normalizeDocuSignTemplateKey(params);
+  return String(process.env[`DOCUSIGN_TEMPLATE_${key}`] || '').trim();
+}
+
 function inferContractPathFromParams(params = {}) {
   const fragments = [
     params.contractPath,
@@ -6980,16 +7677,196 @@ async function readJsonIfExists(filePath) {
   }
 }
 
+function hasAnyEnv(keys = []) {
+  return keys.some((key) => Boolean(String(process.env[key] || '').trim()));
+}
+
+function countManifestItems(manifest, group) {
+  const items = manifest?.integrations?.[group]?.items;
+  return Array.isArray(items) ? items.length : 0;
+}
+
+function parseJsonFromCommandOutput(output = '') {
+  const text = String(output || '').trim();
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    } catch {
+      // Fall back to line scanning below.
+    }
+  }
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line.startsWith('{') && !line.startsWith('[')) continue;
+    try {
+      return JSON.parse(line);
+    } catch {
+      // Continue scanning; some tools log before/after JSON.
+    }
+  }
+  return null;
+}
+
+function runPropertyDataAdapter(args = []) {
+  if (!existsSync(PROPERTY_DATA_ADAPTER_SCRIPT)) {
+    return {
+      ok: false,
+      error: 'Property data adapter script is missing.',
+    };
+  }
+  try {
+    const output = execFileSync(process.execPath, [PROPERTY_DATA_ADAPTER_SCRIPT, ...args.map(String)], {
+      cwd: ROOT_DIR,
+      encoding: 'utf8',
+      timeout: 180000,
+      maxBuffer: 20 * 1024 * 1024,
+      env: {
+        ...process.env,
+        PYTHONUTF8: '1',
+      },
+    });
+    return parseJsonFromCommandOutput(output) || {
+      ok: false,
+      error: 'Property data adapter did not return JSON.',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      stdout: String(error?.stdout || '').slice(-2000),
+      stderr: String(error?.stderr || '').slice(-2000),
+    };
+  }
+}
+
+async function persistPropertyCacheRowToDb(item = {}, source = 'property-data') {
+  const address = String(item.address || item.propertyAddress || '').trim();
+  if (!address) return { ok: false, reason: 'missing_address' };
+  return queryPgRows(
+    `INSERT INTO public.property_cache (address, workspace_id, source, data, status, expires_at, fetched_at, updated_at)
+     VALUES ($1, 'pbk', $2, $3::jsonb, $4, $5, NOW(), NOW())
+     ON CONFLICT (address) DO UPDATE SET
+       source = EXCLUDED.source,
+       data = EXCLUDED.data,
+       status = EXCLUDED.status,
+       expires_at = EXCLUDED.expires_at,
+       fetched_at = NOW(),
+       updated_at = NOW()`,
+    [
+      address,
+      source,
+      JSON.stringify(item),
+      item.status || 'fresh',
+      item.expiresAt || item.expires_at || null,
+    ],
+  );
+}
+
+async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
+  const property = lead.property || {};
+  const seller = lead.seller || {};
+  const leadId = String(lead.leadId || lead.id || '').trim();
+  if (!leadId) return { ok: false, reason: 'missing_lead_id' };
+  return queryPgRows(
+    `INSERT INTO public.lead_profiles (
+       id, workspace_id, external_id, source, status, stage, temperature,
+       lead_name, first_name, last_name, email, phone, address, city, state,
+       postal_code, owner_type, participant_role, motivation_score, dnc,
+       dnc_reason, assigned_agent, raw, created_at, updated_at
+     )
+     VALUES (
+       $1, 'pbk', $2, $3, $4, $5, $6,
+       $7, $8, $9, $10, $11, $12, $13, $14,
+       $15, $16, $17, $18, $19,
+       $20, $21, $22::jsonb, NOW(), NOW()
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       external_id = EXCLUDED.external_id,
+       source = EXCLUDED.source,
+       status = EXCLUDED.status,
+       stage = EXCLUDED.stage,
+       temperature = EXCLUDED.temperature,
+       lead_name = EXCLUDED.lead_name,
+       email = EXCLUDED.email,
+       phone = EXCLUDED.phone,
+       address = EXCLUDED.address,
+       city = EXCLUDED.city,
+       state = EXCLUDED.state,
+       postal_code = EXCLUDED.postal_code,
+       owner_type = EXCLUDED.owner_type,
+       participant_role = EXCLUDED.participant_role,
+       motivation_score = EXCLUDED.motivation_score,
+       dnc = EXCLUDED.dnc,
+       dnc_reason = EXCLUDED.dnc_reason,
+       assigned_agent = EXCLUDED.assigned_agent,
+       raw = EXCLUDED.raw,
+       updated_at = NOW()`,
+    [
+      leadId,
+      lead.externalId || lead.external_id || leadId,
+      source,
+      lead.status || 'new',
+      lead.stage || 'property-data',
+      lead.temperature || 'cold',
+      seller.name || lead.leadName || 'Unknown seller',
+      String(seller.name || '').split(/\s+/)[0] || '',
+      String(seller.name || '').split(/\s+/).slice(1).join(' ') || '',
+      seller.email || lead.email || '',
+      seller.phone || lead.phone || '',
+      property.address || lead.address || '',
+      property.city || lead.city || '',
+      property.state || lead.state || '',
+      property.zip || lead.zip || '',
+      seller.relationshipToProperty || '',
+      seller.relationshipToProperty || '',
+      toNumber(lead.motivationScore || lead.score, 0),
+      String(lead.compliance?.dncStatus || lead.dncStatus || '').toLowerCase() === 'dnc',
+      lead.compliance?.dncStatus || lead.dncReason || '',
+      lead.assignment?.assignedAgent || 'Ava',
+      JSON.stringify(lead),
+    ],
+  );
+}
+
 async function buildToolingStatus() {
-  const [scenario, researchJobs, mcpRegistry, dashboard] = await Promise.all([
+  const [scenario, researchJobs, upgradeManifest, propertyDataLocalStatus, mcpRegistry, mcpResearchCandidates, dashboard] = await Promise.all([
     readJsonIfExists(META_AGENT_SCENARIO_FILE),
     readJsonIfExists(BROWSER_RESEARCH_JOBS_FILE),
+    readJsonIfExists(UPGRADE_INTEGRATIONS_FILE),
+    readJsonIfExists(PROPERTY_DATA_LOCAL_STATUS_FILE),
     readJsonIfExists(MCP_REGISTRY_FILE),
+    readJsonIfExists(MCP_RESEARCH_CANDIDATES_FILE),
     readJsonIfExists(OBSERVABILITY_DASHBOARD_FILE),
   ]);
 
   const mcpServers = mcpRegistry?.mcpServers || {};
+  const candidateMcpServers = mcpResearchCandidates?.mcpServers || {};
   const browserOsRegistry = mcpServers.browseros || mcpServers.browserOs || null;
+  const propertyDataConfigured =
+    existsSync(UPGRADE_INTEGRATIONS_FILE) ||
+    Boolean(propertyDataLocalStatus) ||
+    Boolean(candidateMcpServers.scrapling || candidateMcpServers.homeharvest);
+  const propertyDataReady =
+    Boolean(propertyDataLocalStatus?.ok) ||
+    hasAnyEnv(['PBK_HOMEHARVEST_ENABLED', 'PBK_HOMEHARVEST_ENDPOINT']) ||
+    hasAnyEnv(['PBK_SCRAPLING_MCP_URL', 'PBK_SCRAPLING_ENDPOINT']);
+  const pipelineMemoryConfigured =
+    hasAnyEnv(['PBK_INSULA_CRM_BASE_URL', 'PBK_REALTORSPAL_BASE_URL']) ||
+    countManifestItems(upgradeManifest, 'pipelineMemory') > 0;
+  const pipelineMemoryReady =
+    hasAnyEnv(['PBK_INSULA_CRM_BASE_URL']) &&
+    hasAnyEnv(['PBK_INSULA_CRM_API_KEY']);
+  const voiceFallbackConfigured =
+    hasAnyEnv(['PBK_MOSS_TTS_BASE_URL', 'PBK_ZEROVOX_BASE_URL', 'PBK_TTS_FALLBACK_BASE_URL']) ||
+    countManifestItems(upgradeManifest, 'voiceFallback') > 0;
+  const voiceFallbackReady = hasAnyEnv(['PBK_MOSS_TTS_BASE_URL', 'PBK_ZEROVOX_BASE_URL', 'PBK_TTS_FALLBACK_BASE_URL']);
+  const desktopCopilotConfigured =
+    hasAnyEnv(['PBK_CLICKUI_BASE_URL']) ||
+    countManifestItems(upgradeManifest, 'desktopCopilot') > 0;
+  const desktopCopilotReady = hasAnyEnv(['PBK_CLICKUI_BASE_URL']);
   const metricsUrl = PUBLIC_BASE_URL
     ? `${PUBLIC_BASE_URL}/metrics`
     : `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}/metrics`;
@@ -7018,6 +7895,53 @@ async function buildToolingStatus() {
       note: existsSync(BROWSER_RESEARCH_JOBS_FILE)
         ? 'Research jobs are ready for browser-native enrichment runs.'
         : 'Run npm run research:seed-browser-jobs to generate the first queue.',
+    },
+    propertyData: {
+      ready: propertyDataReady,
+      configured: propertyDataConfigured,
+      localSmokePassed: Boolean(propertyDataLocalStatus?.ok),
+      localSmokeAt: propertyDataLocalStatus?.generatedAt || null,
+      packages: propertyDataLocalStatus?.packages || null,
+      registryConfigured: Boolean(candidateMcpServers.scrapling || candidateMcpServers.homeharvest),
+      targetsConfigured: existsSync(BROWSER_RESEARCH_TARGETS_FILE),
+      candidateCount: countManifestItems(upgradeManifest, 'propertyData'),
+      note: propertyDataReady
+        ? (propertyDataLocalStatus?.ok
+            ? 'HomeHarvest and Scrapling are installed and smoke-tested locally. Supabase/Rex production wiring is still gated.'
+            : 'Property data providers are connected for lead/comps enrichment.')
+        : propertyDataConfigured
+          ? 'HomeHarvest and Scrapling are staged as setup-gated candidates. Install and env wiring are still required.'
+          : 'Stage HomeHarvest for structured listings and Scrapling for on-demand research before enabling provider calls.',
+    },
+    pipelineMemory: {
+      ready: pipelineMemoryReady,
+      configured: pipelineMemoryConfigured,
+      candidateCount: countManifestItems(upgradeManifest, 'pipelineMemory'),
+      note: pipelineMemoryReady
+        ? 'External pipeline memory is connected for Ava pre-call context.'
+        : pipelineMemoryConfigured
+          ? 'Pipeline memory candidates are documented; connect the CRM base URL and API key before Ava relies on them.'
+          : 'Add a pipeline-memory CRM connector only as a supporting source, not a PBK CRM replacement.',
+    },
+    voiceFallback: {
+      ready: voiceFallbackReady,
+      configured: voiceFallbackConfigured,
+      candidateCount: countManifestItems(upgradeManifest, 'voiceFallback'),
+      note: voiceFallbackReady
+        ? 'Offline/local TTS fallback endpoint is configured.'
+        : voiceFallbackConfigured
+          ? 'MOSS-TTS and ZeroVOX are staged as fallback candidates. Do not mark live until a local audio round trip passes.'
+          : 'Stage a local TTS fallback only after the primary Telnyx/Deepgram voice path is stable.',
+    },
+    desktopCopilot: {
+      ready: desktopCopilotReady,
+      configured: desktopCopilotConfigured,
+      candidateCount: countManifestItems(upgradeManifest, 'desktopCopilot'),
+      note: desktopCopilotReady
+        ? 'Local desktop copilot endpoint is available for sidecar research.'
+        : desktopCopilotConfigured
+          ? 'ClickUi is documented as an operator sidecar. Keep it separate until an endpoint is explicitly configured.'
+          : 'Optional local sidecar; no production dependency.',
     },
     context7: {
       ready: Boolean(mcpServers.context7),
@@ -7578,15 +8502,18 @@ async function findInboundLeadContext(phone = '') {
       status: localLead.status || localLead.stage || '',
       motivationScore: toNumber(localLead.motivation_score ?? localLead.motivationScore ?? localLead.score, 0),
       lastContactAt: localLead.lastContactAt || localLead.updatedAt || localLead.createdAt || '',
+      bant: normalizeBantInfo(localLead.bant || {}, localLead),
+      callContext: localLead.callContext || localLead.call_context || {},
       raw: localLead,
     };
   }
 
   const dbResult = await queryPgRows(
-    `SELECT id, name, full_name, lead_name, address, property_address, phone, email, status, motivation_score, score, updated_at, created_at
-     FROM public.leads
-     WHERE regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g') = regexp_replace($1, '[^0-9]', '', 'g')
-     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+    `SELECT l.id, l.name, l.full_name, l.lead_name, l.address, l.property_address, l.phone, l.email,
+            l.status, l.motivation_score, l.score, l.updated_at, l.created_at, to_jsonb(l.*) AS raw
+     FROM public.leads l
+     WHERE regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g') = regexp_replace($1, '[^0-9]', '', 'g')
+     ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC NULLS LAST
      LIMIT 1`,
     [normalizedPhone],
   );
@@ -7603,7 +8530,9 @@ async function findInboundLeadContext(phone = '') {
       status: row.status || '',
       motivationScore: toNumber(row.motivation_score ?? row.score, 0),
       lastContactAt: row.updated_at || row.created_at || '',
-      raw: row,
+      bant: normalizeBantInfo(row.raw?.bant || {}, row.raw || {}),
+      callContext: row.raw?.call_context || row.raw?.callContext || {},
+      raw: row.raw || row,
     };
   }
 
@@ -7630,6 +8559,13 @@ function getAvaActiveMemorySummary(limit = 5) {
 }
 
 function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from = '', to = '' } = {}) {
+  const bant = normalizeBantInfo(lead.bant || {}, lead.raw?.bant || {}, lead.raw || {});
+  const missingBant = getMissingBantFields(bant);
+  const callContext = lead.callContext || lead.raw?.call_context || lead.raw?.callContext || {};
+  const story = selectAvaStoryForContext({
+    transcript: [lead.status, lead.address, callContext.lastObjection, callContext.summary].filter(Boolean).join(' '),
+    address: lead.address,
+  });
   const guidance = selectNegotiationGuidance({
     scenario: route === 'transfer_jordan' ? 'closing_hesitation' : 'opening',
     emotion: lead.motivationScore >= 8 ? 'urgent' : '',
@@ -7652,6 +8588,9 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
     lead.found
       ? `Caller context: ${lead.leadName || 'Returning seller'}${lead.address ? ` at ${lead.address}` : ''}. Status: ${lead.status || 'unknown'}. Motivation score: ${lead.motivationScore || 0}.`
       : `Caller context: new caller from ${from || 'unknown number'} calling ${to || 'PBK'}. Start by asking for the property address and situation.`,
+    `BANT+ status: ${missingBant.length ? `missing ${missingBant.join(', ')}` : 'complete'}. Never present seller-facing numbers until all five pillars are complete.`,
+    Object.keys(bant).length ? `Known BANT+: ${JSON.stringify(bant)}` : '',
+    Object.keys(callContext || {}).length ? `Prior call context: ${JSON.stringify(callContext).slice(0, 900)}` : '',
     route === 'transfer_jordan'
       ? 'Routing decision: high-intent caller. Explain briefly that you are connecting them to Jordan, then transfer.'
       : route === 'transfer_underwriting'
@@ -7660,7 +8599,10 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
           ? 'Routing decision: after-hours. Collect name, number, property address, and promise next-business-day callback.'
           : 'Routing decision: Ava qualifies first. Ask address, timeline, condition, motivation, and whether they want a quick cash analysis or Jordan handoff.',
     'Negotiation guidance for this moment:',
+    'Core rules: detect whether the caller is homeowner, agent, family, executor, or attorney; never say wholesaler; use the scam/fake handler when trust is challenged; say you do not know instead of guessing.',
+    'PBK core path library: Cash Offer = speed/as-is/certainty; RBP = higher owner net with 30-60 day timeline; Creative Finance = agent-listed cash-flow problem solved by seller carry/wrap/subject-to; Mortgage Takeover = agent-listed low-rate loan asset solved by sub-to/assumption/carry gap; Land = buildability/utilities/zoning/access/builder math first. These are the heart of the business. Do not blend scripts across paths.',
     ...guidanceLines,
+    story ? `Relevant Ava story to use only if natural: ${story.storyText}` : '',
     memories ? `Recent self-learned memories:\n${memories}` : 'Recent self-learned memories: none loaded yet.',
   ].filter(Boolean).join('\n');
 }
@@ -7903,6 +8845,14 @@ function extractAvaLessonsFromTranscript(candidate = {}) {
   const objectionTag = classifyAvaObjection(transcript);
   const base = buildAvaLessonForObjection(objectionTag, transcript);
   const sentiment = Number(candidate.sentiment ?? candidate.payload?.sentiment?.pbkScore ?? 0.5);
+  const bant = extractBantFromTranscript(transcript, candidate.payload?.bant || {});
+  const likabilityScore = calculateLikabilityScore({
+    transcript,
+    sentimentStart: candidate.payload?.sentiment?.start ?? 0.5,
+    sentimentEnd: candidate.payload?.sentiment?.end ?? sentiment,
+    sentiment,
+    durationSeconds: candidate.durationSeconds || candidate.payload?.durationSeconds || 0,
+  });
   const success = /(yes|sounds good|send me|book|schedule|call me|interested|let's talk|accepted|signed)/i.test(transcript);
   return [{
     id: `ava-memory-${slugify(candidate.id || randomUUID())}-${objectionTag}`,
@@ -7925,6 +8875,8 @@ function extractAvaLessonsFromTranscript(candidate = {}) {
       callId: candidate.callId || '',
       sentiment,
       success,
+      bant,
+      likabilityScore,
     },
     createdAt: isoNow(),
     updatedAt: isoNow(),
@@ -8071,6 +9023,71 @@ async function markAvaLearningCandidateProcessed(candidate = {}, sessionId = '')
   }
 }
 
+async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '') {
+  const transcript = String(candidate.body || candidate.transcript || candidate.text || '').trim();
+  const leadId = String(candidate.leadId || candidate.payload?.leadId || '').trim();
+  if (!leadId || !transcript) {
+    return { ok: false, reason: 'missing_lead_or_transcript' };
+  }
+  const bant = extractBantFromTranscript(transcript, candidate.payload?.bant || {});
+  const hasBant = Object.keys(bant).length > 0;
+  const callContext = {
+    lastLearningSessionId: sessionId,
+    lastTranscriptId: candidate.id || '',
+    lastTranscriptSummary: transcript.slice(0, 500),
+    lastObjection: classifyAvaObjection(transcript),
+    likabilityScore: calculateLikabilityScore({
+      transcript,
+      sentimentStart: candidate.payload?.sentiment?.start ?? 0.5,
+      sentimentEnd: candidate.payload?.sentiment?.end ?? candidate.sentiment ?? 0.5,
+      sentiment: candidate.sentiment ?? 0.5,
+      durationSeconds: candidate.durationSeconds || candidate.payload?.durationSeconds || 0,
+    }),
+    updatedAt: isoNow(),
+  };
+
+  const existingLead = findLatestLeadImport({ leadId }) || {};
+  const mergedBant = {
+    ...(existingLead.bant || {}),
+    ...bant,
+  };
+  const localLead = patchLeadImport(state, { leadId }, {
+    bant: mergedBant,
+    callContext: {
+      ...(existingLead.callContext || {}),
+      ...callContext,
+      bant: mergedBant,
+    },
+  });
+
+  await queryPgRows(
+    `UPDATE public.lead_profiles
+     SET bant = COALESCE(bant, '{}'::jsonb) || $2::jsonb,
+         call_context = COALESCE(call_context, '{}'::jsonb) || $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, bant: mergedBant })],
+  );
+  await queryPgRows(
+    `UPDATE public.leads
+     SET bant = COALESCE(bant, '{}'::jsonb) || $2::jsonb,
+         call_context = COALESCE(call_context, '{}'::jsonb) || $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [leadId, JSON.stringify(bant), JSON.stringify({ ...callContext, bant: mergedBant })],
+  );
+
+  return {
+    ok: true,
+    result: DATABASE_URL ? 'live' : 'local_view_only',
+    leadId,
+    bant: mergedBant,
+    callContext: { ...callContext, bant: mergedBant },
+    hasBant,
+    localUpdated: Boolean(localLead),
+  };
+}
+
 function upsertAvaActiveMemory(lesson = {}) {
   if (!Array.isArray(state.avaActiveMemories)) state.avaActiveMemories = [];
   const existingIndex = state.avaActiveMemories.findIndex((memory) => memory.id === lesson.id);
@@ -8103,7 +9120,9 @@ async function runAvaMemoryLearning(params = {}) {
   const minutesBudget = Math.max(1, Math.min(240, Number(params.minutesBudget || AVA_MEMORY_DAILY_MINUTES)));
   const candidates = await collectAvaLearningCandidates(limit);
   const lessons = [];
+  const contextUpdates = [];
   for (const candidate of candidates) {
+    contextUpdates.push(await updateLeadBantContextFromTranscript(candidate, sessionId));
     const extracted = extractAvaLessonsFromTranscript(candidate);
     for (const lesson of extracted) {
       await persistAvaMemoryLesson(lesson);
@@ -8132,6 +9151,7 @@ async function runAvaMemoryLearning(params = {}) {
       actor: params.actor || 'Ava memory worker',
       topTags,
       candidateIds: candidates.map((candidate) => candidate.id).filter(Boolean),
+      contextUpdates,
     },
     createdAt: isoNow(),
     updatedAt: isoNow(),
@@ -8163,6 +9183,7 @@ async function runAvaMemoryLearning(params = {}) {
     verbiage: 'Ava memory learning run complete',
     session,
     lessons,
+    contextUpdates,
     activeMemories: sortNewest(state.avaActiveMemories || []).slice(0, 12),
     warning: DATABASE_URL ? '' : 'PBK_DATABASE_URL is not configured; lessons were stored in bridge state only.',
   };
@@ -10236,8 +11257,10 @@ const OPERATING_MODE_GATED_TOOLS = new Set([
   'sendColdEmail',
   'telnyx_call',
   'telnyx_sms',
+  'send_verification_sms',
   'sendDocuSign',
   'sendContract',
+  'prepare_and_send_contract',
   'sendSellerDocs',
   'skipTrace',
   'bootstrapStreakPipeline',
@@ -14216,6 +15239,60 @@ async function fireDocuSignEnvelope(params = {}) {
     return { ok: false, error: error instanceof Error ? error.message : 'DocuSign auth failed.' };
   }
 
+  const signers = Array.isArray(params.signers) && params.signers.length
+    ? params.signers
+    : [{ name: params.leadName || 'Recipient', email: params.email || params.recipientEmail || '' }];
+  if (!signers[0].email) {
+    return { ok: false, error: 'DocuSign envelope requires a signer email (params.signers[0].email or params.email).' };
+  }
+
+  const docusignTemplateId = String(params.docusignTemplateId || '').trim();
+  if (docusignTemplateId) {
+    const envelopeBody = {
+      emailSubject: params.emailSubject || `${params.selectedPathLabel || params.docusignTemplateName || 'PBK Contract'} - ${params.address || params.leadName || 'Probono Key Realty'}`,
+      templateId: docusignTemplateId,
+      status: params.dryRun ? 'created' : 'sent',
+      templateRoles: signers.map((signer, idx) => ({
+        email: signer.email,
+        name: signer.name || `Recipient ${idx + 1}`,
+        roleName: signer.roleName || `Signer${idx + 1}`,
+        recipientId: String(signer.recipientId || idx + 1),
+        routingOrder: String(signer.routingOrder || idx + 1),
+      })),
+    };
+
+    try {
+      const response = await fetch(`${DOCUSIGN_REST_BASE}/v2.1/accounts/${DOCUSIGN_ACCOUNT_ID}/envelopes`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(envelopeBody),
+      });
+      const text = await response.text();
+      let body = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+      if (!response.ok) {
+        return { ok: false, status: response.status, body, error: body?.errorCode || body?.message || `DocuSign template envelope create returned ${response.status}` };
+      }
+      return {
+        ok: true,
+        status: response.status,
+        envelope: {
+          envelopeId: body.envelopeId,
+          uri: body.uri,
+          statusDateTime: body.statusDateTime,
+          status: body.status,
+        },
+        templateId: docusignTemplateId,
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'DocuSign template envelope failed.' };
+    }
+  }
+
   let documentBase64 = params.documentBase64 || '';
   let documentName = params.documentName || 'PBK Master Deal Package.pdf';
   if (!documentBase64 && params.templatePath && /\.pdf$/i.test(String(params.templatePath))) {
@@ -14250,13 +15327,6 @@ async function fireDocuSignEnvelope(params = {}) {
     } catch (error) {
       return { ok: false, error: `PDF generation for envelope failed: ${error instanceof Error ? error.message : error}` };
     }
-  }
-
-  const signers = Array.isArray(params.signers) && params.signers.length
-    ? params.signers
-    : [{ name: params.leadName || 'Recipient', email: params.email || params.recipientEmail || '' }];
-  if (!signers[0].email) {
-    return { ok: false, error: 'DocuSign envelope requires a signer email (params.signers[0].email or params.email).' };
   }
 
   const envelopeBody = {
@@ -14390,6 +15460,26 @@ function setAnalyzerResultCache(params = {}, result = {}) {
 const toolHandlers = {
   async analyzeDeal(params = {}) {
     recordToolUse('analyzeDeal');
+    if (shouldEnforceBantForAnalyze(params)) {
+      const leadImport = findLatestLeadImport(params);
+      const bant = normalizeBantInfo(params.bant || {}, params, leadImport?.bant || {}, leadImport?.callContext?.bant || {});
+      const missingBant = getMissingBantFields(bant);
+      if (missingBant.length) {
+        const result = buildBantRequiredResult(params, missingBant, bant);
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Ava Guardrail',
+            category: 'QUALIFY',
+            status: 'blocked',
+            text: result.error,
+            target: params.address || params.propertyAddress || leadImport?.property?.address || params.leadName || 'seller-facing analyzer',
+          }),
+        );
+        await persistState(state);
+        return result;
+      }
+    }
     const cached = getAnalyzerResultCache(params);
     if (cached) return cached.result;
 
@@ -14399,6 +15489,11 @@ const toolHandlers = {
       propertyData: propertyResolution.propertyData,
       enrichment: propertyResolution.enrichment,
     });
+    const bant = normalizeBantInfo(params.bant || {}, params);
+    if (Object.keys(bant).length) {
+      run.bant = bant;
+      run.bantComplete = getMissingBantFields(bant).length === 0;
+    }
     addAnalyzerRun(state, run);
     addActivity(
       state,
@@ -14482,6 +15577,222 @@ const toolHandlers = {
         ttlDays: PROPERTY_CACHE_TTL_DAYS,
         expiresAt: entry.expiresAt,
       },
+    };
+  },
+
+  async scrape_property(params = {}) {
+    recordToolUse('scrape_property');
+    const provider = String(params.provider || (params.url ? 'scrapling' : 'homeharvest')).trim().toLowerCase();
+    const requestedBy = params.requestedBy || params.actor || 'Rex';
+    let args;
+    if (provider === 'scrapling') {
+      args = [
+        'scrapling',
+        '--url',
+        params.url || params.sourceUrl || 'https://example.com',
+        '--mode',
+        params.mode || params.scrapeMode || params.scrape_mode || 'auto',
+        '--timeout',
+        Math.max(5000, Math.min(180000, Number(params.timeout || params.timeoutMs || 45000))),
+        '--wait',
+        Math.max(0, Math.min(30000, Number(params.wait || params.waitMs || 3000))),
+      ];
+      if (params.proxy) args.push('--proxy', params.proxy);
+      if (params.networkIdle || params.network_idle) args.push('--network-idle');
+      if (params.realChrome || params.real_chrome) args.push('--real-chrome');
+      if (params.solveCloudflare || params.solve_cloudflare) args.push('--solve-cloudflare');
+      if (params.disableResources || params.disable_resources) args.push('--disable-resources');
+      if (params.hideCanvas || params.hide_canvas) args.push('--hide-canvas');
+      if (params.blockWebrtc || params.block_webrtc) args.push('--block-webrtc');
+    } else {
+      args = [
+        'homeharvest',
+        '--location',
+        params.location || params.zip || params.zipCode || '43215',
+        '--listing-type',
+        params.listingType || params.listing_type || 'for_sale',
+        '--limit',
+        Math.max(1, Math.min(50, Number(params.limit || 10))),
+      ];
+    }
+    const result = runPropertyDataAdapter(args);
+    if (!result.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: requestedBy,
+          category: 'PROPERTY_DATA',
+          status: 'failed',
+          text: `Property scrape failed via ${provider}: ${result.error || 'unknown error'}`,
+          target: params.location || params.zip || params.url || 'property data',
+        }),
+      );
+      await persistState(state);
+      return result;
+    }
+
+    let cachedCount = 0;
+    const cacheItems = Array.isArray(result.propertyCache) ? result.propertyCache : [];
+    if (params.cache !== false) {
+      for (const item of cacheItems) {
+        const entry = upsertPropertyCacheEntry({
+          address: item.address,
+          data: item,
+          source: result.provider || provider,
+          provider: result.provider || provider,
+          status: 'ready',
+        });
+        if (entry) cachedCount += 1;
+      }
+    }
+
+    let importResult = null;
+    if (params.importLeads || params.import_leads) {
+      importResult = await toolHandlers.import_leads({
+        leads: result.leads || [],
+        propertyCache: cacheItems,
+        source: result.provider || provider,
+        requestedBy,
+      });
+    } else {
+      addActivity(
+        state,
+        makeActivity({
+          actor: requestedBy,
+          category: 'PROPERTY_DATA',
+          status: 'success',
+          text: `Fetched ${result.count ?? cacheItems.length ?? 0} property records via ${result.provider || provider}; cached ${cachedCount}.`,
+          target: result.location || result.url || params.location || params.zip || 'property data',
+        }),
+      );
+      await persistState(state);
+    }
+
+    return {
+      ...result,
+      ok: true,
+      cachedCount,
+      importResult,
+      state: params.includeState ? buildStateSnapshot() : undefined,
+    };
+  },
+
+  async import_leads(params = {}) {
+    recordToolUse('import_leads');
+    const requestedBy = params.requestedBy || params.actor || 'Rex';
+    const source = params.source || params.provider || 'property-data';
+    const leads = Array.isArray(params.leads)
+      ? params.leads
+      : Array.isArray(params.leadImports)
+        ? params.leadImports
+        : [];
+    const propertyCache = Array.isArray(params.propertyCache) ? params.propertyCache : [];
+    let importedCount = 0;
+    let updatedCount = 0;
+    let cachedCount = 0;
+    let supabaseLeadUpserts = 0;
+    let supabaseCacheUpserts = 0;
+    const supabaseErrors = [];
+    const imported = [];
+    const updated = [];
+
+    for (const payload of leads) {
+      const normalized = normalizeLeadIntake({
+        ...payload,
+        source: payload.source || source,
+        leadSource: payload.leadSource || source,
+      });
+      const existing = patchLeadImport(
+        state,
+        {
+          leadId: normalized.leadId,
+          address: normalized.property?.address,
+          email: normalized.seller?.email,
+          leadName: normalized.seller?.name,
+        },
+        normalized,
+      );
+      if (existing) {
+        updatedCount += 1;
+        updated.push(existing.leadId);
+      } else {
+        addLeadImport(state, normalized);
+        importedCount += 1;
+        imported.push(normalized.leadId);
+      }
+
+      const propertyData = payload.propertyData || payload.property_data || null;
+      if (propertyData?.address || normalized.property?.address) {
+        const entry = upsertPropertyCacheEntry({
+          address: propertyData?.address || normalized.property.address,
+          data: propertyData || normalized.property,
+          source,
+          provider: source,
+          status: 'ready',
+        });
+        if (entry) cachedCount += 1;
+      }
+
+      const dbLead = await persistLeadProfileRowToDb(normalized, source);
+      if (dbLead.ok) {
+        supabaseLeadUpserts += 1;
+      } else if (dbLead.reason !== 'no_database') {
+        supabaseErrors.push({ target: normalized.leadId, error: dbLead.error || dbLead.reason });
+      }
+      const dbCache = await persistPropertyCacheRowToDb(propertyData || normalized.property || {}, source);
+      if (dbCache.ok) {
+        supabaseCacheUpserts += 1;
+      } else if (!['no_database', 'missing_address'].includes(dbCache.reason)) {
+        supabaseErrors.push({ target: normalized.property?.address || normalized.leadId, error: dbCache.error || dbCache.reason });
+      }
+    }
+
+    for (const item of propertyCache) {
+      const entry = upsertPropertyCacheEntry({
+        address: item.address,
+        data: item,
+        source,
+        provider: source,
+        status: 'ready',
+      });
+      if (entry) cachedCount += 1;
+      const dbCache = await persistPropertyCacheRowToDb(item, source);
+      if (dbCache.ok) {
+        supabaseCacheUpserts += 1;
+      } else if (!['no_database', 'missing_address'].includes(dbCache.reason)) {
+        supabaseErrors.push({ target: item.address || 'property-cache', error: dbCache.error || dbCache.reason });
+      }
+    }
+
+    addActivity(
+      state,
+      makeActivity({
+        actor: requestedBy,
+        category: 'IMPORT',
+        status: 'complete',
+        text: `Imported ${importedCount} property-data leads, refreshed ${updatedCount}, cached ${cachedCount} property records from ${source}.`,
+        target: params.location || params.zip || source,
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: true,
+      source,
+      importedCount,
+      updatedCount,
+      cachedCount,
+      imported,
+      updated,
+      supabase: {
+        backend: STATE_BACKEND,
+        leadUpserts: supabaseLeadUpserts,
+        propertyCacheUpserts: supabaseCacheUpserts,
+        errors: supabaseErrors,
+        note: STATE_BACKEND === 'postgres'
+          ? 'Lead profiles and property_cache upserts attempted.'
+          : 'Local file backend: Supabase table upserts are skipped until PBK_DATABASE_URL is configured.',
+      },
+      state: params.includeState ? buildStateSnapshot() : undefined,
     };
   },
 
@@ -15575,6 +16886,11 @@ const toolHandlers = {
       await persistState(state);
     }
     return { approval, fanout, slack };
+  },
+
+  async createApprovalTask(params = {}) {
+    recordToolUse('createApprovalTask');
+    return toolHandlers.createApproval(params);
   },
 
   async updateCRM(params = {}) {
@@ -16678,17 +17994,206 @@ const toolHandlers = {
     };
   },
 
+  async send_verification_sms(params = {}) {
+    recordToolUse('send_verification_sms');
+    const officePhone = String(
+      params.officePhone
+      || process.env.PBK_OFFICE_PHONE
+      || process.env.PBK_MAIN_OFFICE_PHONE
+      || process.env.PBK_HUMAN_AGENT_PHONE
+      || '',
+    ).trim();
+    const website = String(params.website || process.env.PBK_COMPANY_WEBSITE || 'https://probonokeyrealty.com').trim();
+    const body = String(params.body || params.message || '').trim() || [
+      'This is Probono Key Realty.',
+      `You can verify us at ${website}${officePhone ? ` or call our main office at ${officePhone}` : ''}.`,
+      'We will never ask for banking information, a Social Security number, or money upfront by text.',
+    ].join(' ');
+    return toolHandlers.telnyx_sms({
+      ...params,
+      body,
+      message: body,
+      intent: 'verification',
+      actor: params.actor || 'Ava verification',
+    });
+  },
+
+  async generatePersona(params = {}) {
+    recordToolUse('generatePersona');
+    const persona = buildGeneratedPersona(params);
+    const version = {
+      id: params.versionId || persona.id,
+      agentName: persona.name,
+      parentAgent: params.parentAgent || 'ava-closer-v2',
+      persona,
+      archetype: persona.archetype,
+      region: persona.region,
+      likabilityScore: null,
+      outcomeScore: null,
+      status: params.status || 'candidate',
+      metadata: {
+        requestedBy: params.actor || params.requestedBy || 'meta-agent-breeder',
+        breeder: 'pbk-meta-agent',
+        inheritsGuardrails: true,
+      },
+      createdAt: isoNow(),
+      updatedAt: isoNow(),
+    };
+    upsertAgentVersion(version);
+    await persistAgentVersionRecord(version);
+    addActivity(state, makeActivity({
+      actor: params.actor || 'Meta-Agent Breeder',
+      category: 'AGENT',
+      status: 'generated',
+      text: `Generated ${persona.name}, a ${persona.archetype} ${persona.region} acquisition persona inheriting Ava 2.0 guardrails.`,
+      target: persona.name,
+    }));
+    await persistState(state);
+    return {
+      ok: true,
+      result: DATABASE_URL ? 'live' : 'local_view_only',
+      persona,
+      version,
+    };
+  },
+
+  async scoreAgentLikability(params = {}) {
+    recordToolUse('scoreAgentLikability');
+    const score = calculateLikabilityScore(params);
+    const versionId = String(params.versionId || params.agentVersionId || params.id || '').trim();
+    let version = null;
+    if (versionId) {
+      version = (state.agentVersions || []).find((item) => item.id === versionId) || null;
+      if (version) {
+        version = {
+          ...version,
+          likabilityScore: score,
+          outcomeScore: params.outcomeScore ?? version.outcomeScore ?? null,
+          status: score >= 8.5 ? 'promote_candidate' : score < 4 ? 'reject_candidate' : 'needs_more_runs',
+          metadata: {
+            ...(version.metadata || {}),
+            lastScoreInput: {
+              outcome: params.outcome || '',
+              durationSeconds: params.durationSeconds || 0,
+              sentimentStart: params.sentimentStart ?? params.startSentiment ?? null,
+              sentimentEnd: params.sentimentEnd ?? params.endSentiment ?? params.sentiment ?? null,
+            },
+          },
+          updatedAt: isoNow(),
+        };
+        upsertAgentVersion(version);
+        await persistAgentVersionRecord(version);
+      }
+    }
+    addActivity(state, makeActivity({
+      actor: params.actor || 'Meta-Agent Evaluator',
+      category: 'AGENT',
+      status: score >= 8.5 ? 'promote_candidate' : score < 4 ? 'needs-work' : 'scored',
+      text: `Likability score ${score}/10${version?.agentName ? ` for ${version.agentName}` : ''}.`,
+      target: version?.agentName || params.agentName || 'agent-version',
+    }));
+    await persistState(state);
+    return {
+      ok: true,
+      result: DATABASE_URL ? 'live' : 'local_view_only',
+      score,
+      version,
+    };
+  },
+
+  async prepare_and_send_contract(params = {}) {
+    recordToolUse('prepare_and_send_contract');
+    const leadLookup = params.leadId || params.lead_id || params.id || params.address || params.email || '';
+    const full = leadLookup ? buildLeadFullView(String(leadLookup)) : null;
+    const lead = full?.lead || {};
+    const seller = lead.seller || {};
+    const property = lead.property || {};
+    const callContext = lead.callContext || lead.call_context || {};
+    const selectedPath = normalizePbkDealPath(
+      params.path || params.selectedPath || params.selected_path || lead.selectedPath || lead.selected_path || callContext.selectedPath || callContext.selected_path,
+      inferLeadSelectedPath(lead),
+    );
+    const pathLabel = params.selectedPathLabel || getPathDisplayLabel(selectedPath);
+    const templateName = params.docusignTemplateName || params.templateName || getPathDocuSignTemplateName(selectedPath);
+    const seller1Name = String(params.seller1Name || params.sellerName || params.leadName || lead.name || seller.name || 'Seller').trim();
+    const seller1Email = String(params.seller1Email || params.sellerEmail || params.email || lead.email || seller.email || '').trim();
+    const seller2Name = String(params.seller2Name || params.secondSellerName || lead.second_seller_name || callContext.seller2Name || '').trim();
+    const seller2Email = String(params.seller2Email || params.secondSellerEmail || lead.second_seller_email || callContext.seller2Email || '').trim();
+    const slot2Name = String(
+      params.slot2Name
+        || params.rbpManagerName
+        || (selectedPath === 'rbp' ? process.env.RBP_MANAGER_NAME : '')
+        || 'Probono Key Realty',
+    ).trim();
+    const slot2Email = String(
+      params.slot2Email
+        || params.rbpManagerEmail
+        || (selectedPath === 'rbp' ? process.env.RBP_MANAGER_EMAIL : '')
+        || 'info@probonokeyrealty.com',
+    ).trim();
+    const companyEmail = String(params.companyEmail || process.env.PBK_CONTRACT_COMPANY_EMAIL || 'info@probonokeyrealty.com').trim();
+    const companyName = String(params.companyName || 'Probono Key Realty').trim();
+    const providedSigners = Array.isArray(params.signers) ? params.signers.filter((signer) => signer?.email) : [];
+    const signers = providedSigners.length
+      ? providedSigners
+      : [
+        { roleName: 'Signer1', recipientId: '1', routingOrder: '1', name: companyName, email: companyEmail },
+        ...(slot2Email ? [{ roleName: 'Signer2', recipientId: '2', routingOrder: '2', name: slot2Name, email: slot2Email }] : []),
+        ...(seller1Email ? [{ roleName: 'Signer3', recipientId: '3', routingOrder: '3', name: seller1Name, email: seller1Email }] : []),
+        ...(seller2Email ? [{ roleName: 'Signer4', recipientId: '4', routingOrder: '4', name: seller2Name || 'Seller 2', email: seller2Email }] : []),
+      ];
+
+    const payload = {
+      ...params,
+      leadId: params.leadId || lead.leadId || lead.id || leadLookup,
+      leadName: seller1Name,
+      sellerName: seller1Name,
+      email: seller1Email,
+      phone: params.phone || lead.phone || seller.phone || '',
+      address: params.address || lead.address || property.address || '',
+      amount: params.amount || params.offerPrice || callContext.last_offer || callContext.lastOffer || property.askingPrice || 0,
+      timeline: params.timeline || callContext.timeline || lead.motivation?.timeline || '',
+      earnestDeposit: params.earnestDeposit || callContext.earnestDeposit || '',
+      selectedPath,
+      selectedPathLabel: pathLabel,
+      path: selectedPath,
+      contractPath: selectedPath,
+      docusignTemplateName: templateName,
+      templateName,
+      signers,
+      notes: params.notes || `Path-aware contract prepared from lead detail (${pathLabel}, ${templateName}).`,
+    };
+
+    const result = await toolHandlers.sendDocuSign(payload);
+    return {
+      ...result,
+      preparedFromLead: Boolean(full),
+      lead: full?.lead || null,
+      signers,
+      selectedPath,
+      selectedPathLabel: pathLabel,
+      docusignTemplateName: templateName,
+    };
+  },
+
   async sendDocuSign(params = {}) {
     recordToolUse('sendDocuSign');
     const docusignMeta = getDocuSignProviderMeta();
     const templates = await getContractTemplateLibrary();
     const template = selectContractTemplate(templates, params);
     const selectedPath = template.pathId || template.id || inferContractPathFromParams(params);
+    const docusignTemplateId = getDocuSignTemplateIdForPath({
+      ...params,
+      selectedPath,
+      selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
+    });
     const contract = createContractRecord({
       ...params,
       selectedPath,
       selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
       templateId: params.templateId || template.id,
+      docusignTemplateId,
+      docusignTemplateName: params.docusignTemplateName || params.templateName || '',
       templateFields: params.templateFields || template.fields || {},
       templateFieldMap: params.templateFieldMap || template.fieldMap || template.fields || {},
       contractPath: selectedPath,
@@ -16708,6 +18213,7 @@ const toolHandlers = {
         ...params,
         ...contract,
         signers: params.signers,
+        docusignTemplateId,
         documentBase64: params.documentBase64,
         documentName: params.documentName,
       });
@@ -16725,20 +18231,22 @@ const toolHandlers = {
 
     upsertContract(state, contract);
     const queueOnly = !docusignMeta.configured;
-    addActivity(
-      state,
-      makeActivity({
-        actor: 'DocuSign',
-        category: 'CONTRACT',
-        status: live ? contract.status : (queueOnly ? 'pending' : 'warning'),
-        text: live
-          ? `Sent contract to ${contract.leadName}${contract.amount ? ` for ${currency(contract.amount)}` : ''} (envelope ${envelope?.envelopeId?.slice(0, 12) || ''})`
-          : (queueOnly
-              ? `DocuSign queued for ${contract.leadName} - DocuSign env not configured.`
-              : `DocuSign envelope failed for ${contract.leadName}: ${providerError}`),
-        target: contract.address,
-      }),
-    );
+    const contractActivity = makeActivity({
+      actor: 'DocuSign',
+      category: 'DOCUMENT',
+      status: live ? contract.status : (queueOnly ? 'pending' : 'warning'),
+      text: live
+        ? `Sent ${contract.selectedPathLabel || 'contract'} to ${contract.leadName}${contract.amount ? ` for ${currency(contract.amount)}` : ''} (envelope ${envelope?.envelopeId?.slice(0, 12) || ''})`
+        : (queueOnly
+            ? `DocuSign queued for ${contract.leadName} - DocuSign env not configured.`
+            : `DocuSign envelope failed for ${contract.leadName}: ${providerError}`),
+      target: contract.address,
+    });
+    contractActivity.leadId = contract.leadId;
+    contractActivity.leadName = contract.leadName;
+    contractActivity.address = contract.address;
+    contractActivity.contractId = contract.id;
+    addActivity(state, contractActivity);
     await persistState(state);
     return {
       ok: live || queueOnly,
@@ -16986,18 +18494,20 @@ const toolHandlers = {
         provider: delivery.provider,
       }),
     );
-    addActivity(
-      state,
-      makeActivity({
-        actor: 'PBK Docs',
-        category: 'EMAIL',
-        status: emailResult.ok ? 'sent' : 'warning',
-        text: emailResult.ok
-          ? `Sent ${documents.length} seller document${documents.length === 1 ? '' : 's'} from the ${senderProfile} sender profile.`
-          : `Seller document send failed: ${emailResult.error || 'unknown email error'}`,
-        target: context.address || recipientEmail || context.leadName,
-      }),
-    );
+    const docsActivity = makeActivity({
+      actor: 'PBK Docs',
+      category: 'DOCUMENT',
+      status: emailResult.ok ? 'sent' : 'warning',
+      text: emailResult.ok
+        ? `Sent ${documents.length} seller document${documents.length === 1 ? '' : 's'} from the ${senderProfile} sender profile.`
+        : `Seller document send failed: ${emailResult.error || 'unknown email error'}`,
+      target: context.address || recipientEmail || context.leadName,
+    });
+    docsActivity.leadId = context.leadId;
+    docsActivity.leadName = context.leadName;
+    docsActivity.address = context.address;
+    docsActivity.deliveryId = delivery.id;
+    addActivity(state, docsActivity);
     await persistState(state);
 
     return {
@@ -17037,16 +18547,18 @@ const toolHandlers = {
     contract.underwritingStatus = 'pending';
 
     upsertContract(state, contract);
-    addActivity(
-      state,
-      makeActivity({
-        actor: 'Underwriting',
-        category: 'CONTRACT',
-        status: 'queued',
-        text: `Prepared ${template.name} for underwriting review.`,
-        target: contract.address || contract.leadName,
-      }),
-    );
+    const prepareActivity = makeActivity({
+      actor: 'Underwriting',
+      category: 'DOCUMENT',
+      status: 'queued',
+      text: `Prepared ${template.name} for underwriting review.`,
+      target: contract.address || contract.leadName,
+    });
+    prepareActivity.leadId = contract.leadId;
+    prepareActivity.leadName = contract.leadName;
+    prepareActivity.address = contract.address;
+    prepareActivity.contractId = contract.id;
+    addActivity(state, prepareActivity);
     await persistState(state);
 
     return {
@@ -17223,8 +18735,23 @@ const toolHandlers = {
 
     let routedTo = 'updateCRM';
     let response = null;
+    const urlMatch = command.match(/https?:\/\/[^\s)]+/i);
+    const zipMatch = command.match(/\b\d{5}(?:-\d{4})?\b/);
+    const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(command);
 
-    if (looksLikeBrowserResearchIntent(command)) {
+    if (isPropertyDataIntent) {
+      routedTo = 'scrape_property';
+      response = await toolHandlers.scrape_property({
+        provider: lower.includes('scrapling') || urlMatch ? 'scrapling' : 'homeharvest',
+        url: urlMatch?.[0] || params.url || '',
+        location: params.location || params.zip || zipMatch?.[0] || context.zip || '43215',
+        listingType: params.listingType || params.listing_type || 'for_sale',
+        limit: params.limit || 10,
+        importLeads: params.importLeads ?? (lower.includes('import leads') || lower.includes('pull listings')),
+        requestedBy: params.actor || 'Jordan',
+        source: 'agent-console',
+      });
+    } else if (looksLikeBrowserResearchIntent(command)) {
       routedTo = 'launchBrowserResearch';
       response = await toolHandlers.launchBrowserResearch({
         query: command,
@@ -18006,9 +19533,11 @@ function buildStateSnapshot() {
     agents: Array.isArray(state.agents) ? state.agents : buildDefaultAgentFleet(),
     agentSkillTransfers: state.agentSkillTransfers || [],
     agentSkillExperiments: state.agentSkillExperiments || [],
+    agentVersions: state.agentVersions || [],
     rexDecisions: state.rexDecisions || [],
     avaActiveMemories: state.avaActiveMemories || [],
     avaLearningSessions: state.avaLearningSessions || [],
+    avaStories: state.avaStories || buildDefaultAvaStories(),
     inboundCallRoutes: state.inboundCallRoutes || [],
     leadScoringWeights: getLeadScoringWeights(),
     avaNegotiationProfile: {
@@ -18016,6 +19545,11 @@ function buildStateSnapshot() {
       tactics: buildDefaultNegotiationTactics(),
       emotionalIntelligence: buildDefaultEmotionalIntelligenceRules(),
       cityKnowledge: buildDefaultCityKnowledge(),
+      stories: state.avaStories || buildDefaultAvaStories(),
+      bant: {
+        fields: BANT_FIELDS,
+        enforcement: 'seller-facing analyzer output is blocked until all BANT+ fields are present',
+      },
     },
     promptPatchApplications: state.promptPatchApplications || [],
     recordingRetentionRuns: state.recordingRetentionRuns || [],
@@ -18847,6 +20381,84 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/persona/versions') {
+      json(response, 200, {
+        ok: true,
+        result: DATABASE_URL ? 'live' : 'local_view_only',
+        versions: sortNewest(state.agentVersions || []).slice(0, Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 100)))),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/persona/generate') {
+      const body = await readBody(request);
+      const result = await toolHandlers.generatePersona({
+        ...body,
+        actor: body.actor || (request.headers['x-rex-agent'] ? 'Rex Strategist' : 'Meta-Agent Breeder'),
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agent/likability-score', '/api/persona/score'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.scoreAgentLikability({
+        ...body,
+        actor: body.actor || (request.headers['x-rex-agent'] ? 'Rex Evaluator' : 'Meta-Agent Evaluator'),
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/calls/extract-bant', '/api/ava/extract-bant'])) {
+      const body = await readBody(request);
+      const result = await updateLeadBantContextFromTranscript({
+        ...body,
+        body: body.transcript || body.body || body.text || '',
+        payload: body.payload || {
+          sentiment: body.sentiment || {},
+          bant: body.bant || {},
+        },
+      }, body.sessionId || `manual-bant-${Date.now()}`);
+      addActivity(state, makeActivity({
+        actor: body.actor || 'Ava',
+        category: 'QUALIFY',
+        status: result.hasBant ? 'updated' : 'observed',
+        text: result.hasBant ? `Updated BANT+ context for ${result.leadId}.` : 'No BANT+ fields detected in transcript.',
+        target: result.leadId || body.leadName || 'call transcript',
+      }));
+      await persistState(state);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/send-verification-sms', '/api/lead/send-verification-sms'])) {
+      const body = await readBody(request);
+      const guarded = await enforceOperatingModeForTool('send_verification_sms', body);
+      if (guarded) {
+        json(response, guarded.ok === false ? 409 : 202, {
+          ...guarded,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const result = await toolHandlers.send_verification_sms(body);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/lead-scoring/weights') {
       json(response, 200, {
         ok: true,
@@ -19296,6 +20908,61 @@ const server = createServer(async (request, response) => {
       const result = await toolHandlers.cachePropertyData({
         ...body,
         source: body.source || 'api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/property-data/scrape', '/api/property-data/homeharvest'])) {
+      const result = await toolHandlers.scrape_property({
+        provider: url.searchParams.get('provider') || (url.searchParams.get('url') ? 'scrapling' : 'homeharvest'),
+        location: url.searchParams.get('location') || url.searchParams.get('zip') || '43215',
+        listingType: url.searchParams.get('listingType') || url.searchParams.get('listing_type') || 'for_sale',
+        limit: url.searchParams.get('limit') || 10,
+        url: url.searchParams.get('url') || '',
+        mode: url.searchParams.get('mode') || url.searchParams.get('scrapeMode') || 'auto',
+        timeout: url.searchParams.get('timeout') || url.searchParams.get('timeoutMs') || 45000,
+        wait: url.searchParams.get('wait') || url.searchParams.get('waitMs') || 3000,
+        proxy: url.searchParams.get('proxy') || '',
+        networkIdle: /^(1|true|yes)$/i.test(String(url.searchParams.get('networkIdle') || url.searchParams.get('network_idle') || '').trim()),
+        realChrome: /^(1|true|yes)$/i.test(String(url.searchParams.get('realChrome') || url.searchParams.get('real_chrome') || '').trim()),
+        solveCloudflare: /^(1|true|yes)$/i.test(String(url.searchParams.get('solveCloudflare') || url.searchParams.get('solve_cloudflare') || '').trim()),
+        disableResources: /^(1|true|yes)$/i.test(String(url.searchParams.get('disableResources') || url.searchParams.get('disable_resources') || '').trim()),
+        importLeads: /^(1|true|yes)$/i.test(String(url.searchParams.get('importLeads') || url.searchParams.get('import_leads') || '').trim()),
+        cache: !/^(0|false|no)$/i.test(String(url.searchParams.get('cache') || '').trim()),
+        requestedBy: url.searchParams.get('requestedBy') || 'api',
+        source: 'api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/property-data/scrape', '/api/property-data/homeharvest'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.scrape_property({
+        ...body,
+        requestedBy: body.requestedBy || 'api',
+        source: body.source || 'api',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/property-data/import', '/api/leads/import/property-data'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.import_leads({
+        ...body,
+        requestedBy: body.requestedBy || 'api',
+        source: body.source || 'property-data',
       });
       json(response, result.ok === false ? 400 : 200, {
         ...result,
@@ -20746,6 +22413,24 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/contract/send') {
+      const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('sendDocuSign', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const result = await toolHandlers.prepare_and_send_contract(body);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/contracts/prepare') {
       const body = await readBody(request);
       const result = await toolHandlers.prepareContract(body);
@@ -20835,11 +22520,325 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const leadFullMatch = matchPath(pathname, '/api/leads/:id/full');
+    if (leadFullMatch && request.method === 'GET') {
+      const full = buildLeadFullView(leadFullMatch.groups.id);
+      if (!full) {
+        json(response, 404, {
+          ok: false,
+          error: 'Lead not found.',
+        });
+        return;
+      }
+      json(response, 200, full);
+      return;
+    }
+
+    const leadLastCallMatch = matchPath(pathname, '/api/leads/:id/last-call');
+    if (leadLastCallMatch && request.method === 'GET') {
+      const details = buildLeadLastCallDetails(leadLastCallMatch.groups.id);
+      if (!details) {
+        json(response, 404, {
+          ok: false,
+          error: 'Lead not found.',
+        });
+        return;
+      }
+      json(response, 200, details);
+      return;
+    }
+
+    const leadPatchMatch = matchPath(pathname, '/api/leads/:id');
+    if (leadPatchMatch && request.method === 'PATCH') {
+      const body = await readBody(request);
+      const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      const currentCallContext = existing?.callContext || existing?.call_context || {};
+      const selectedPath = normalizePbkDealPath(
+        body.selected_path || body.selectedPath || body.path || currentCallContext.selected_path || currentCallContext.selectedPath,
+        existing ? inferLeadSelectedPath(existing) : 'cash',
+      );
+      const callContextPatch = {
+        ...currentCallContext,
+        selected_path: selectedPath,
+        selectedPath,
+        selectedPathLabel: getPathDisplayLabel(selectedPath),
+      };
+      if (body.last_offer !== undefined || body.lastOffer !== undefined) {
+        callContextPatch.last_offer = body.last_offer ?? body.lastOffer;
+        callContextPatch.lastOffer = body.last_offer ?? body.lastOffer;
+      }
+      if (body.sentiment !== undefined) {
+        callContextPatch.sentiment = body.sentiment;
+      }
+      if (body.summary !== undefined || body.callSummary !== undefined) {
+        callContextPatch.summary = body.summary ?? body.callSummary;
+      }
+      const nextLead = normalizeLeadIntake({
+        ...(existing || {}),
+        id: existing?.id || leadPatchMatch.groups.id,
+        leadId: existing?.leadId || leadPatchMatch.groups.id,
+        source: existing?.source || body.source || 'manual',
+        status: body.status || existing?.status || existing?.stage || 'working',
+        stage: body.stage || existing?.stage || existing?.status || 'working',
+        score: body.motivation_score ?? body.motivationScore ?? existing?.score,
+        seller: {
+          ...(existing?.seller || {}),
+          ...compactObject({
+            name: body.name ?? body.leadName,
+            phone: body.phone,
+            email: body.email,
+            notes: body.sellerNotes,
+          }),
+        },
+        property: {
+          ...(existing?.property || {}),
+          ...compactObject({
+            address: body.address ?? body.propertyAddress,
+            propertyType: body.property_type ?? body.propertyType,
+            type: body.property_type ?? body.propertyType,
+            askingPrice: body.askingPrice,
+          }),
+        },
+        motivation: {
+          ...(existing?.motivation || {}),
+          ...compactObject({
+            summary: body.motivation || body.motivation_summary,
+            timeline: body.timeline,
+          }),
+        },
+        tags: body.tags !== undefined ? normalizeLeadTags(body.tags) : existing?.tags,
+        notes: body.notes !== undefined ? body.notes : existing?.notes,
+        bant: parseBantPayload(body.bant, existing?.bant || {}),
+        callContext: callContextPatch,
+        selectedPath,
+        selected_path: selectedPath,
+        updatedAt: isoNow(),
+      });
+
+      const patched = existing
+        ? patchLeadImport(
+          state,
+          {
+            leadId: existing.leadId || leadPatchMatch.groups.id,
+            address: existing.property?.address,
+            email: existing.seller?.email,
+            leadName: existing.seller?.name,
+          },
+          {
+            ...nextLead,
+            callContext: callContextPatch,
+            call_context: callContextPatch,
+            selectedPath,
+            selected_path: selectedPath,
+          },
+        )
+        : (addLeadImport(state, nextLead), nextLead);
+
+      await persistLeadProfileRowToDb(patched || nextLead, 'lead-detail-edit');
+      const activity = makeActivity({
+        actor: body.actor || 'Lead Detail',
+        category: 'CRM',
+        status: 'saved',
+        text: `Updated lead details for ${patched?.seller?.name || nextLead.seller?.name || 'seller'}.`,
+        target: patched?.property?.address || nextLead.property?.address || patched?.seller?.email || nextLead.seller?.email || '',
+      });
+      activity.leadId = patched?.leadId || nextLead.leadId;
+      activity.leadName = patched?.seller?.name || nextLead.seller?.name;
+      activity.address = patched?.property?.address || nextLead.property?.address;
+      addActivity(state, activity);
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        lead: buildLeadFullView((patched || nextLead).leadId || (patched || nextLead).id)?.lead || patched || nextLead,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
       json(response, 200, {
         ok: true,
         leadImports: state.leadImports,
         leads: state.leadImports,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/lead/generate-message') {
+      const body = await readBody(request);
+      const context = findLeadContext(body);
+      const stage = String(body.stage || 'followup').trim().toLowerCase();
+      const channel = String(body.channel || 'sms').trim().toLowerCase() === 'email' ? 'email' : 'sms';
+      const activity = getRecentLeadActivity(context, body.includeActivity ? body.activity : '');
+      const message = buildLeadMessageDraft({ context, channel, stage, activity });
+      addActivity(state, makeActivity({
+        actor: 'Ava',
+        category: 'MESSAGE',
+        status: 'drafted',
+        text: `Generated ${channel.toUpperCase()} ${stage} draft for ${context.leadName}.`,
+        target: context.address || context.email || context.phone,
+      }));
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        message,
+        channel,
+        stage,
+        activity,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/lead/send-message') {
+      const body = await readBody(request);
+      const context = findLeadContext(body);
+      const channel = String(body.channel || 'sms').trim().toLowerCase() === 'email' ? 'email' : 'sms';
+      const messageBody = String(body.message || body.body || '').trim();
+      if (!messageBody) {
+        json(response, 400, { ok: false, error: 'Message body is required.' });
+        return;
+      }
+      const guard = await enforceOperatingModeForTool(channel === 'email' ? 'sendColdEmail' : 'telnyx_sms', {
+        ...body,
+        ...context,
+        body: messageBody,
+      });
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+
+      if (channel === 'sms') {
+        const result = await toolHandlers.telnyx_sms({
+          ...body,
+          ...context,
+          body: messageBody,
+        });
+        json(response, result.ok === false ? 400 : 200, {
+          ...result,
+          result: result.telnyx?.live ? 'live' : result.result || 'provider_missing',
+          verbiage: result.telnyx?.live
+            ? 'SMS sent or queued through Telnyx.'
+            : 'SMS was recorded without claiming carrier delivery.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+
+      const explicitSubjectMatch = messageBody.match(/^subject:\s*(.+)$/im);
+      const subject = body.subject || explicitSubjectMatch?.[1]?.trim() || `Message from Probono Key Realty`;
+      const cleanText = messageBody
+        .replace(/^subject:\s*.+\r?\n*/i, '')
+        .trim();
+      const recipient = body.email || context.email || inferSkipTraceContact(context).email;
+      const senderAddress = getSenderAddress('cold', body.fromEmail || body.from_email || body.senderEmail || '');
+      const delivery = await sendTransactionalEmail({
+        from: senderAddress,
+        to: recipient,
+        subject,
+        text: cleanText,
+        html: `<p>${escapeHtml(cleanText).replace(/\n/g, '<br>')}</p>`,
+      });
+      const message = createMessageRecord({
+        ...body,
+        ...context,
+        email: recipient,
+        channel: 'email',
+        direction: 'outbound',
+        subject,
+        body: cleanText,
+        status: delivery.ok ? 'sent' : 'queued',
+        provider: delivery.ok ? 'Resend' : 'PBK',
+      });
+      upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
+      addActivity(state, makeActivity({
+        actor: delivery.ok ? 'Ava' : 'Email',
+        category: 'EMAIL',
+        status: delivery.ok ? (delivery.live === false ? 'prepared' : 'sent') : 'warning',
+        text: delivery.ok
+          ? `Outbound email ${delivery.live === false ? 'prepared' : 'sent'} to ${context.leadName}.`
+          : `Outbound email could not send for ${context.leadName}: ${delivery.error || 'provider missing'}`,
+        target: context.address || recipient || context.leadName,
+      }));
+      await persistState(state);
+      json(response, delivery.ok ? 200 : 400, {
+        ok: delivery.ok,
+        result: delivery.ok ? (delivery.live === false ? 'provider_missing' : 'live') : delivery.result || 'provider_missing',
+        verbiage: delivery.ok ? 'Email sent or prepared.' : delivery.error || 'Email provider missing.',
+        delivery,
+        message,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/leads/add-note') {
+      const body = await readBody(request);
+      const note = String(body.note || '').trim();
+      if (!note) {
+        json(response, 400, { ok: false, error: 'Missing note.' });
+        return;
+      }
+      const context = findLeadContext(body);
+      const activity = makeActivity({
+        actor: body.actor || 'Analyzer',
+        category: 'NOTE',
+        status: 'saved',
+        text: note,
+        target: context.address || context.leadName,
+      });
+      activity.leadId = context.leadId;
+      activity.leadName = context.leadName;
+      addActivity(state, activity);
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        activity,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/leads/set-followup') {
+      const body = await readBody(request);
+      const dueDate = String(body.dueDate || body.due_date || '').trim();
+      if (!dueDate) {
+        json(response, 400, { ok: false, error: 'Missing dueDate.' });
+        return;
+      }
+      const context = findLeadContext(body);
+      const reminderType = String(body.reminderType || body.reminder_type || 'call').trim().toLowerCase();
+      const followUp = createAppointmentRecord({
+        ...body,
+        ...context,
+        id: body.id || `followup-${slugify(context.leadName || context.address || 'lead')}-${Date.now()}`,
+        startTime: dueDate,
+        source: 'analyzer-followup',
+        status: 'pending',
+        notes: `Follow-up via ${reminderType}`,
+      });
+      upsertAppointment(state, followUp);
+      const activity = makeActivity({
+        actor: body.actor || 'Analyzer',
+        category: 'FOLLOWUP',
+        status: 'pending',
+        text: `Follow-up set for ${dueDate} via ${reminderType}.`,
+        target: context.address || context.leadName,
+      });
+      activity.leadId = context.leadId;
+      activity.leadName = context.leadName;
+      addActivity(state, activity);
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        followUp,
+        activity,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -21168,7 +23167,11 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/contracts',
         'POST /api/contracts/prepare',
         'POST /api/contracts/lawyer-review',
+        'POST /api/contract/send',
         'POST /api/underwriting/sign',
+        'GET /api/leads/:id/full',
+        'PATCH /api/leads/:id',
+        'GET /api/leads/:id/last-call',
         'GET/POST /api/leads/import',
         'POST /api/webhooks/booking',
         'POST /api/webhooks/instantly',

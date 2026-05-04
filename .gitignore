@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.venv/
 .netlify/
 .tmp/
 .pbk-local/
@@ -16,6 +17,7 @@ PBK_React_Preview_Code_*.zip
 deploy-*.zip
 dist-upload.zip
 artifacts/supabase-*.png
+ops/upgrade-integrations/local-property-data-status.json
 tmp-*.png
 tmp-*.jpg
 tmp-*.jpeg

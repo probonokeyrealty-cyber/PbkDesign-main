@@ -6,6 +6,7 @@ import { formatCurrency } from '../utils/formatting';
 interface StrategySelectorProps {
   deal: DealData;
   selectedPath: PBKPath;
+  onSelectPath: (path: PBKPath) => void;
   onOpenCallMode: (path: PBKPath) => void;
 }
 
@@ -101,7 +102,7 @@ function getStrategies(deal: DealData): StrategyCard[] {
     {
       path: 'cash',
       icon: DollarSign,
-      title: 'Cash Wholesale',
+      title: 'Cash Offer',
       badge: 'FAST CLOSE',
       tone: 'green',
       description: 'Use the fastest path when the seller wants certainty, speed, and an as-is exit.',
@@ -205,6 +206,7 @@ function getUnderwritingRules(deal: DealData, strategies: StrategyCard[]) {
 export function StrategySelector({
   deal,
   selectedPath,
+  onSelectPath,
   onOpenCallMode,
 }: StrategySelectorProps) {
   const [showUnderwriting, setShowUnderwriting] = useState(false);
@@ -213,7 +215,7 @@ export function StrategySelector({
   const underwriting = getUnderwritingRules(deal, strategies);
 
   const handleStrategyClick = (path: PBKPath) => {
-    onOpenCallMode(path);
+    onSelectPath(path);
   };
 
   return (
@@ -259,14 +261,21 @@ export function StrategySelector({
           const isSelected = strategy.path === selectedPath;
 
           return (
-            <button
-              key={strategy.path}
-              type="button"
-              onClick={() => handleStrategyClick(strategy.path)}
-              className={`relative text-left border rounded-2xl p-4 transition-all bg-gradient-to-br ${tone.card} ${
-                isSelected
-                  ? 'ring-2 ring-offset-2 ring-blue-500 dark:ring-blue-400 shadow-lg scale-[1.01]'
-                  : 'hover:shadow-md hover:-translate-y-0.5'
+              <article
+                key={strategy.path}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleStrategyClick(strategy.path)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleStrategyClick(strategy.path);
+                  }
+                }}
+                className={`relative cursor-pointer text-left border rounded-2xl p-4 transition-all bg-gradient-to-br ${tone.card} ${
+                  isSelected
+                    ? 'ring-2 ring-offset-2 ring-blue-500 dark:ring-blue-400 shadow-lg scale-[1.01]'
+                    : 'hover:shadow-md hover:-translate-y-0.5'
               }`}
             >
               <div className="flex items-start justify-between gap-3 mb-3">
@@ -313,14 +322,26 @@ export function StrategySelector({
 
               <div className="flex items-center justify-between gap-3">
                 <div className={`text-[10px] font-semibold ${strategy.viable ? tone.accent : 'text-amber-700 dark:text-amber-300'}`}>
-                  {strategy.viable ? 'Ready to work this path' : 'Path available - complete missing inputs in Call Mode'}
+                  {strategy.viable ? 'Ready for Call Mode' : 'Needs inputs'}
                 </div>
-                <div className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white ${tone.button}`}>
-                  Open Call Mode
-                  <ArrowRight size={12} />
+                <div className="flex items-center gap-2">
+                  <div className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold ${isSelected ? 'bg-white text-gray-900' : 'bg-white/70 text-gray-700 dark:bg-slate-900/70 dark:text-gray-200'}`}>
+                    {isSelected ? 'Selected' : 'Select Path'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenCallMode(strategy.path);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold text-white ${tone.button}`}
+                  >
+                    Call Mode
+                    <ArrowRight size={12} />
+                  </button>
                 </div>
               </div>
-            </button>
+            </article>
           );
         })}
       </div>

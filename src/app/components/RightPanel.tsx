@@ -70,7 +70,7 @@ export function RightPanel({
             }`}
           >
             <Send size={14} />
-            Generate Premium PDF
+            Generate Master PDF
           </button>
           <button
             onClick={onPreview}
@@ -175,7 +175,7 @@ export function RightPanel({
                       : 'text-gray-500 dark:text-gray-400'
               }`}
             >
-              {deal.verdict === 'green' ? 'GO' : deal.verdict === 'yellow' ? 'MAYBE' : deal.verdict === 'red' ? 'STOP' : '—'}
+              {deal.verdict === 'green' ? 'Go' : deal.verdict === 'yellow' ? 'Review' : deal.verdict === 'red' ? 'Pass' : 'Not analyzed'}
             </strong>
           </div>
         </div>

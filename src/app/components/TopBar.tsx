@@ -31,10 +31,10 @@ export function TopBar({
   };
 
   const verdictText = {
-    none: 'No verdict',
-    green: 'GO',
-    yellow: 'MAYBE',
-    red: 'NO GO',
+    none: 'Not analyzed',
+    green: 'Go',
+    yellow: 'Review',
+    red: 'Pass',
   };
 
   return (

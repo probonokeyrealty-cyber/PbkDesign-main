@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "homeharvest": {
+      "candidate": true,
+      "type": "stdio-or-http-wrapper",
+      "command": "python",
+      "args": [
+        "-m",
+        "pbk_homeharvest_mcp"
+      ],
+      "note": "Candidate wrapper only. Do not register in the active MCP registry until the package is installed and a dry-run query succeeds."
+    },
+    "scrapling": {
+      "candidate": true,
+      "type": "stdio",
+      "command": "scrapling",
+      "args": [
+        "mcp"
+      ],
+      "note": "Candidate MCP server for allowed public-page research. Keep setup-gated until a local MCP handshake and source-compliant scrape pass."
+    }
+  }
+}

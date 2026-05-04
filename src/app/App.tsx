@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
@@ -15,11 +15,13 @@ import {
   buildMasterPackageParams,
   getDefaultSelectedPath,
   getAnalyzeReadiness,
+  getPathLabel,
   getPdfReadiness,
   normalizeSelectedPath,
   openMasterPackageWindow,
 } from './utils/pbk';
 import { sendDealToAgent, sendSellerDocsRequest, syncDealAnalysis } from './utils/runtimeBridge';
+import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
 
 const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'address',
@@ -142,7 +144,18 @@ export default function App() {
   const [exportStatus, setExportStatus] = useState('Select a path and complete seller info to generate.');
   const [analyzeStatus, setAnalyzeStatus] = useState('');
   const [documentDeliveryStatus, setDocumentDeliveryStatus] = useState('Choose the documents you want to email from the PBK business sender.');
-  const generatedDocuments = buildDocumentSet(deal, branding);
+  const activeSelectedPath = normalizeSelectedPath(deal);
+  const activeDeal = useMemo(
+    () => ({
+      ...deal,
+      selectedPath: activeSelectedPath,
+    }),
+    [deal, activeSelectedPath],
+  );
+  const generatedDocuments = useMemo(
+    () => buildDocumentSet(activeDeal, branding),
+    [activeDeal, branding],
+  );
 
   const buildMergedDealState = (base: DealData, incoming: Partial<DealData> = {}): DealData => {
     const next: DealData = {
@@ -262,8 +275,8 @@ export default function App() {
 
   // Save data to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('pbk-deal-data', JSON.stringify(deal));
-  }, [deal]);
+    localStorage.setItem('pbk-deal-data', JSON.stringify(activeDeal));
+  }, [activeDeal]);
 
   useEffect(() => {
     localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(branding));
@@ -480,19 +493,20 @@ export default function App() {
       );
     }
 
-    setActiveTab('callmode');
-    setRightPanelOpen(false);
+    setAnalyzeStatus((prev) =>
+      prev ? `${prev} Call Mode is ready when you choose a path.` : 'Analysis ready. Choose a path or open Call Mode when ready.',
+    );
   };
 
   const handleSendToAgent = async () => {
-    if (!deal.address.trim()) {
+    if (!activeDeal.address.trim()) {
       setAnalyzeStatus('Enter a property address before sending this deal to Ava.');
       setActiveTab('analyzer');
       return;
     }
 
     try {
-      await sendDealToAgent(deal);
+      await sendDealToAgent(activeDeal);
       setAnalyzeStatus('Analyzer snapshot sent to Ava and the runtime CRM queue.');
     } catch (error) {
       setAnalyzeStatus(
@@ -506,6 +520,53 @@ export default function App() {
       setDeal(initialDealData);
       localStorage.removeItem('pbk-deal-data');
     }
+  };
+
+  const handleClearAnalyzer = () => {
+    if (confirm('Clear the current analyzer deal? CRM saved deals and notes will stay intact.')) {
+      setDeal(initialDealData);
+      localStorage.removeItem('pbk-deal-data');
+      setAnalyzeStatus('Analyzer cleared. Start a new deal when ready.');
+      setActiveTab('analyzer');
+    }
+  };
+
+  const handleSaveDeal = async () => {
+    try {
+      const saved = upsertSavedDeal(activeDeal);
+      localStorage.setItem('pbk-deal-data', JSON.stringify(activeDeal));
+      window.dispatchEvent(new CustomEvent('pbk:deal-saved', { detail: saved }));
+      appendSavedDealActivity(activeDeal, {
+        type: 'note',
+        content: `Analyzer deal saved with path ${getPathLabel(activeSelectedPath)}.`,
+      });
+      setAnalyzeStatus(`${saved.address}: Saved locally · Bridge sync pending.`);
+      try {
+        await sendDealToAgent(activeDeal);
+        appendSavedDealActivity(activeDeal, {
+          type: 'note',
+          content: `Activity saved to team CRM for ${getPathLabel(activeSelectedPath)}.`,
+        });
+        setAnalyzeStatus(`${saved.address}: Saved locally · runtime CRM synced for ${getPathLabel(activeSelectedPath)}.`);
+      } catch (syncError) {
+        setAnalyzeStatus(
+          syncError instanceof Error
+            ? `${saved.address}: Saved locally · Bridge sync pending: ${syncError.message}`
+            : `${saved.address}: Saved locally · Bridge sync pending.`,
+        );
+      }
+    } catch (error) {
+      setAnalyzeStatus(error instanceof Error ? error.message : 'Could not save this deal.');
+      setActiveTab('analyzer');
+    }
+  };
+
+  const handleLoadSavedDeal = (savedDeal: DealData) => {
+    const merged = buildMergedDealState(initialDealData, savedDeal);
+    setDeal(merged);
+    localStorage.setItem('pbk-deal-data', JSON.stringify(merged));
+    setAnalyzeStatus(`${merged.address || 'Saved deal'} loaded into the analyzer.`);
+    setActiveTab('analyzer');
   };
 
   const setSelectedPath = (selectedPath: DealData['selectedPath']) => {
@@ -531,43 +592,55 @@ export default function App() {
   };
 
   const handlePreview = () => {
-    const popup = openMasterPackageWindow(deal, branding, false);
+    const popup = openMasterPackageWindow(activeDeal, branding, false);
     if (!popup) {
       setExportStatus('Preview was blocked. Allow popups and try again.');
     } else {
-      setExportStatus('Preview opened in a new tab.');
+      appendSavedDealActivity(activeDeal, {
+        type: 'pdf',
+        content: `Previewed Master Deal PDF for ${getPathLabel(activeSelectedPath)}.`,
+      });
+      setExportStatus(`Preview opened in a new tab for ${getPathLabel(activeSelectedPath)}.`);
     }
   };
 
   const handlePrintPackage = () => {
-    const readiness = getPdfReadiness(deal);
+    const readiness = getPdfReadiness(activeDeal);
     if (!readiness.ready) {
       setExportStatus(readiness.message);
       setActiveTab('documents');
       return;
     }
 
-    const popup = openMasterPackageWindow(deal, branding, true);
+    const popup = openMasterPackageWindow(activeDeal, branding, true);
     if (!popup) {
       setExportStatus('Print preview was blocked. Allow popups and try again.');
     } else {
-      setExportStatus('Print-ready package opened in a new tab.');
+      appendSavedDealActivity(activeDeal, {
+        type: 'pdf',
+        content: `Opened print-ready Master Deal PDF for ${getPathLabel(activeSelectedPath)}.`,
+      });
+      setExportStatus(`Print-ready package opened in a new tab for ${getPathLabel(activeSelectedPath)}.`);
     }
   };
 
   const handleGeneratePackage = () => {
-    const readiness = getPdfReadiness(deal);
+    const readiness = getPdfReadiness(activeDeal);
     if (!readiness.ready) {
       setExportStatus(readiness.message);
       setActiveTab('documents');
       return;
     }
 
-    const popup = openMasterPackageWindow(deal, branding, true);
+    const popup = openMasterPackageWindow(activeDeal, branding, true);
     if (!popup) {
-      setExportStatus('Premium package was blocked. Allow popups and try again.');
+      setExportStatus('Master PDF was blocked. Allow popups and try again.');
     } else {
-      setExportStatus('Premium package opened in print-ready mode.');
+      appendSavedDealActivity(activeDeal, {
+        type: 'pdf',
+        content: `Generated Master Deal PDF for ${getPathLabel(activeSelectedPath)}.`,
+      });
+      setExportStatus(`PDF ready for ${getPathLabel(activeSelectedPath)}.`);
     }
   };
 
@@ -575,31 +648,59 @@ export default function App() {
     selectedDocuments,
     senderProfile,
   }: {
-    selectedDocuments: string[];
+    selectedDocuments: QuickDocumentType[];
     senderProfile: 'warm' | 'cold';
   }) => {
     try {
       const response = await sendSellerDocsRequest({
-        leadId: deal.address || undefined,
-        leadName: deal.sellerName || undefined,
-        address: deal.address,
-        email: deal.sellerEmail,
+        leadId: activeDeal.address || undefined,
+        leadName: activeDeal.sellerName || undefined,
+        address: activeDeal.address,
+        email: activeDeal.sellerEmail,
         senderProfile,
         selectedDocuments,
         documentSet: generatedDocuments,
-        selectedPathLabel: normalizeSelectedPath(deal),
+        selectedPath: activeSelectedPath,
+        selectedPathLabel: getPathLabel(activeSelectedPath),
       });
       const delivery = response?.delivery as { status?: string } | undefined;
+      const deliveryStatus = String(delivery?.status || response?.result || '').toLowerCase();
+      const deliveryLabel =
+        deliveryStatus === 'sent'
+          ? 'Sent'
+          : deliveryStatus === 'provider_missing'
+            ? 'Provider key missing'
+            : deliveryStatus === 'queued_for_approval'
+              ? 'Queued for approval'
+              : 'Queued to send';
+      appendSavedDealActivity(activeDeal, {
+        type: 'email',
+        content: `Seller documents: ${deliveryLabel} via ${senderProfile} sender for ${getPathLabel(activeSelectedPath)}: ${selectedDocuments.join(', ')}.`,
+      });
       setDocumentDeliveryStatus(
-        delivery?.status === 'sent'
-          ? `Seller package emailed from the ${senderProfile} sender profile.`
-          : `Seller package queued with the ${senderProfile} sender profile.`,
+        deliveryStatus === 'sent'
+          ? `Seller package emailed from the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`
+          : deliveryStatus === 'provider_missing'
+            ? `Provider key missing. Seller package was not sent for ${getPathLabel(activeSelectedPath)}.`
+            : `Queued for approval with the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`,
       );
     } catch (error) {
       setDocumentDeliveryStatus(
-        error instanceof Error ? `Email delivery failed: ${error.message}` : 'Email delivery failed.',
+        error instanceof Error ? `Delivery failed: ${error.message}` : 'Delivery failed.',
       );
     }
+  };
+
+  const handlePdfPanelAction = (action: 'refresh' | 'download' | 'open') => {
+    const labels: Record<'refresh' | 'download' | 'open', string> = {
+      refresh: 'Manually refreshed Master PDF preview',
+      download: 'Downloaded Master PDF',
+      open: 'Opened Master PDF',
+    };
+    appendSavedDealActivity(activeDeal, {
+      type: 'pdf',
+      content: `${labels[action]} for ${getPathLabel(activeSelectedPath)}.`,
+    });
   };
 
   const closeDrawers = () => {
@@ -613,7 +714,7 @@ export default function App() {
         {
           type: 'pbk:analyzer:state',
           payload: {
-            deal,
+            deal: activeDeal,
             activeTab,
             analyzeStatus,
             updatedAt: Date.now(),
@@ -622,7 +723,7 @@ export default function App() {
         window.location.origin,
       );
     }
-  }, [deal, activeTab, analyzeStatus]);
+  }, [activeDeal, activeTab, analyzeStatus]);
 
   useEffect(() => {
     const hostPBK = (() => {
@@ -652,20 +753,20 @@ export default function App() {
       PBK?: Record<string, unknown>;
     }).PBKAnalyzer = {
       getState: () => ({
-        deal,
+        deal: activeDeal,
         activeTab,
         analyzeStatus,
       }),
       getBranding: () => branding,
-      getSelectedPath: () => normalizeSelectedPath(deal),
+      getSelectedPath: () => activeSelectedPath,
       getPdfReadiness: (incomingDeal?: Partial<DealData>) =>
-        getPdfReadiness(buildMergedDealState(deal, incomingDeal || {})),
+        getPdfReadiness(buildMergedDealState(activeDeal, incomingDeal || {})),
       getDocumentSet: (
         incomingDeal?: Partial<DealData>,
         incomingBranding?: Partial<PBKBranding>,
       ) =>
         buildDocumentSet(
-          buildMergedDealState(deal, incomingDeal || {}),
+          buildMergedDealState(activeDeal, incomingDeal || {}),
           {
             ...branding,
             ...(incomingBranding || {}),
@@ -681,7 +782,7 @@ export default function App() {
         printMode?: boolean;
       } = {}) =>
         buildMasterPackageParams(
-          buildMergedDealState(deal, incomingDeal || {}),
+          buildMergedDealState(activeDeal, incomingDeal || {}),
           {
             ...branding,
             ...(incomingBranding || {}),
@@ -713,13 +814,13 @@ export default function App() {
     return () => {
       delete (window as typeof window & { PBKAnalyzer?: unknown }).PBKAnalyzer;
     };
-  }, [deal, activeTab, analyzeStatus]);
+  }, [activeDeal, activeSelectedPath, activeTab, analyzeStatus, branding]);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#EDF0F7] dark:bg-slate-950">
       <TopBar
-        address={deal.address}
-        verdict={deal.verdict}
+        address={activeDeal.address}
+        verdict={activeDeal.verdict}
         onMenuToggle={() => setLeftPanelOpen(!leftPanelOpen)}
         onCallModeClick={() => setActiveTab('callmode')}
         onDocsClick={() => handleOpenDocuments('report')}
@@ -738,7 +839,7 @@ export default function App() {
       )}
 
       <div className="fixed top-[54px] left-0 right-0 bottom-0 flex overflow-hidden">
-        <LeftPanel deal={deal} isOpen={leftPanelOpen} />
+        <LeftPanel deal={activeDeal} isOpen={leftPanelOpen} />
 
         {/* Main Content */}
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -790,27 +891,30 @@ export default function App() {
           <div className="flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
             {activeTab === 'analyzer' && (
               <AnalyzerTab
-                deal={deal}
-                selectedPath={normalizeSelectedPath(deal)}
+                deal={activeDeal}
+                selectedPath={activeSelectedPath}
                 onDealChange={handleDealChange}
                 onAnalyze={handleAnalyzeDeal}
                 onSendToAgent={handleSendToAgent}
+                onSaveDeal={handleSaveDeal}
+                onClearDeal={handleClearAnalyzer}
+                onSelectPath={setSelectedPath}
                 onOpenCallMode={handleOpenCallModeForPath}
                 analyzeStatus={analyzeStatus}
               />
             )}
             {activeTab === 'callmode' && (
               <CallModeTab
-                deal={deal}
+                deal={activeDeal}
                 onDealChange={handleDealChange}
-                selectedPath={normalizeSelectedPath(deal)}
+                selectedPath={activeSelectedPath}
                 onSelectPath={setSelectedPath}
               />
             )}
             {activeTab === 'documents' && (
               <PathDeliverables
-                deal={deal}
-                selectedPath={normalizeSelectedPath(deal)}
+                deal={activeDeal}
+                selectedPath={activeSelectedPath}
                 activeDocument={activeDocument}
                 onDocumentChange={setActiveDocument}
                 branding={branding}
@@ -821,17 +925,23 @@ export default function App() {
                 onPrint={handlePrintPackage}
                 onGenerate={handleGeneratePackage}
                 onEmailDocuments={handleEmailDocuments}
+                onPdfAction={handlePdfPanelAction}
               />
             )}
-            {activeTab === 'crm' && <CRMFeatures />}
+            {activeTab === 'crm' && (
+              <CRMFeatures
+                deal={activeDeal}
+                onLoadDeal={handleLoadSavedDeal}
+              />
+            )}
           </div>
         </div>
 
         <RightPanel
           isOpen={rightPanelOpen}
           onClose={() => setRightPanelOpen(false)}
-          deal={deal}
-          selectedPath={normalizeSelectedPath(deal)}
+          deal={activeDeal}
+          selectedPath={activeSelectedPath}
           exportStatus={exportStatus}
           onGenerate={handleGeneratePackage}
           onPreview={handlePreview}

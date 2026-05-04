@@ -83,12 +83,12 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
           : { label: 'Pass', tone: 'red' as TrackerTone, note: 'Above the 10% cash ceiling. Re-negotiate or walk.' };
   const verdict =
     deal.verdict === 'green'
-      ? { label: 'GO', tone: 'green' as TrackerTone, note: 'The deal is clearing the current PBK bar.' }
+      ? { label: 'Go', tone: 'green' as TrackerTone, note: 'The deal is clearing the current PBK bar.' }
       : deal.verdict === 'yellow'
-        ? { label: 'MAYBE', tone: 'amber' as TrackerTone, note: 'Numbers are workable, but the margin is thin.' }
+        ? { label: 'Review', tone: 'amber' as TrackerTone, note: 'Numbers are workable, but the margin is thin.' }
         : deal.verdict === 'red'
-          ? { label: 'STOP', tone: 'red' as TrackerTone, note: 'Current pricing is outside the safer range.' }
-          : { label: 'NO DATA', tone: 'slate' as TrackerTone, note: 'Enter pricing and comps to score the deal.' };
+          ? { label: 'Pass', tone: 'red' as TrackerTone, note: 'Current pricing is outside the safer range.' }
+          : { label: 'Not analyzed', tone: 'slate' as TrackerTone, note: 'Enter pricing and comps to score the deal.' };
   const cashSpreadSummary = formatSpread(cashSpread, deal.mao60, 'MAO Cash');
   const rbpSpreadSummary = formatSpread(rbpSpread, deal.maoRBP, 'MAO RBP');
 
@@ -335,7 +335,7 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
         </div>
       </div>
 
-      <div className="bg-gradient-to-br from-slate-900 to-gray-900 dark:from-slate-950 dark:to-gray-950 border border-gray-700 dark:border-slate-800 rounded-xl p-4 mb-3 shadow-lg">
+      <div className="bg-white dark:bg-gradient-to-br dark:from-slate-950 dark:to-gray-950 border border-gray-200 dark:border-slate-800 rounded-xl p-4 mb-3 shadow-sm dark:shadow-lg">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-1 h-3 bg-green-500 rounded-sm"></div>
@@ -357,34 +357,34 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-400 mb-2">Decision</div>
+          <div className="bg-gray-50 dark:bg-white/5 rounded-lg p-3 border border-gray-200 dark:border-white/10">
+            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Decision</div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10.5px] text-gray-400">Path Verdict</span>
+                <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Path Verdict</span>
                 <span className={`text-[11.5px] font-semibold ${getToneClasses(pathVerdict.tone)}`}>{pathVerdict.label}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10.5px] text-gray-400">Deal Zone</span>
+                <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Deal Zone</span>
                 <span className={`text-[11.5px] font-semibold ${getToneClasses(dealZone.tone)}`}>{dealZone.label}</span>
               </div>
-              <div className="text-[10px] text-gray-300 leading-relaxed">{verdict.note}</div>
+              <div className="text-[10px] text-gray-600 dark:text-gray-300 leading-relaxed">{verdict.note}</div>
             </div>
           </div>
 
-          <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-400 mb-2">Offer Math</div>
+          <div className="bg-gray-50 dark:bg-white/5 rounded-lg p-3 border border-gray-200 dark:border-white/10">
+            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Offer Math</div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10.5px] text-gray-400">Anchor Price</span>
-                <span className="text-[11.5px] font-semibold text-white">{agreed > 0 ? formatCurrency(agreed) : '-'}</span>
+                <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Anchor Price</span>
+                <span className="text-[11.5px] font-semibold text-gray-900 dark:text-white">{agreed > 0 ? formatCurrency(agreed) : '-'}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10.5px] text-gray-400">Cash Spread</span>
+                <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Cash Spread</span>
                 <span className={`text-[11.5px] font-semibold ${getToneClasses(cashSpreadSummary.tone)}`}>{cashSpreadSummary.label}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10.5px] text-gray-400">RBP Gain</span>
+                <span className="text-[10.5px] text-gray-600 dark:text-gray-400">RBP Gain</span>
                 <span className={`text-[11.5px] font-semibold ${getToneClasses(rbpGain !== null && rbpGain > 0 ? 'green' : 'slate')}`}>
                   {rbpGain !== null ? formatCurrency(rbpGain) : '-'}
                 </span>
@@ -392,13 +392,13 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
             </div>
           </div>
 
-          <div className="bg-white/5 rounded-lg p-3 border border-white/10">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-400 mb-2">Investor Benchmarks</div>
+          <div className="bg-gray-50 dark:bg-white/5 rounded-lg p-3 border border-gray-200 dark:border-white/10">
+            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Investor Benchmarks</div>
             <div className="space-y-2">
               {investorRows.map((row) => (
                 <div key={row.label} className="flex items-center justify-between gap-3">
-                  <span className="text-[10.5px] text-gray-400">{row.label}</span>
-                  <span className="text-[11.5px] font-semibold text-white text-right">{row.value}</span>
+                  <span className="text-[10.5px] text-gray-600 dark:text-gray-400">{row.label}</span>
+                  <span className="text-[11.5px] font-semibold text-gray-900 dark:text-white text-right">{row.value}</span>
                 </div>
               ))}
             </div>

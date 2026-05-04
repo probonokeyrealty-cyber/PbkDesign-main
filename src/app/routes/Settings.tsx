@@ -21,9 +21,9 @@ function readinessFor(meta: Record<string, unknown> | undefined): ReadinessState
 
 function describeProvider(meta: Record<string, unknown> | undefined) {
   const state = readinessFor(meta);
-  if (state === 'unknown') return 'Waiting on bridge health';
-  if (state === 'ready') return 'Live';
-  if (state === 'partial') return 'Configured';
+  if (state === 'unknown') return 'Waiting for bridge';
+  if (state === 'ready') return 'Ready';
+  if (state === 'partial') return 'Connected, not tested';
   return 'Needs setup';
 }
 
@@ -31,8 +31,21 @@ function describeTooling(meta: Record<string, unknown> | undefined) {
   const state = readinessFor(meta);
   if (state === 'unknown') return 'Waiting on bridge';
   if (state === 'ready') return 'Ready';
-  if (state === 'partial') return 'Partially wired';
+  if (state === 'partial') return 'Needs one more step';
   return 'Needs setup';
+}
+
+function formatRuntimeStatus(status: unknown) {
+  const normalized = String(status || 'pending').toLowerCase();
+  if (normalized === 'provider_missing') return 'Provider key missing';
+  if (normalized === 'queued') return 'Queued for worker';
+  if (normalized === 'queued_for_approval') return 'Queued for approval';
+  if (normalized === 'pending') return 'Waiting';
+  if (normalized === 'approved') return 'Approved';
+  if (normalized === 'rejected') return 'Declined';
+  if (normalized === 'complete') return 'Complete';
+  if (normalized === 'failed') return 'Delivery failed';
+  return normalized ? normalized.replace(/_/g, ' ') : 'No data yet';
 }
 
 const DOT_CLASS: Record<ReadinessState, string> = {
@@ -63,12 +76,16 @@ export function Settings() {
   const providerCards = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
     { id: 'instantly', label: 'Instantly', meta: quotas?.instantly || runtimeProviders.instantly },
-    { id: 'docs', label: 'Documents', meta: quotas?.docs },
+    { id: 'docs', label: 'Document Sends', meta: quotas?.docs },
   ];
   const toolingCards = [
     { id: 'meta-agent', label: 'Meta-Agent Lab', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
     { id: 'browser-os', label: 'BrowserOS Agent', meta: tooling?.browserOs as Record<string, unknown> | undefined },
     { id: 'browser-research', label: 'Browser Research', meta: tooling?.browserResearch as Record<string, unknown> | undefined },
+    { id: 'property-data', label: 'Property Data Layer', meta: tooling?.propertyData as Record<string, unknown> | undefined },
+    { id: 'pipeline-memory', label: 'Pipeline Memory', meta: tooling?.pipelineMemory as Record<string, unknown> | undefined },
+    { id: 'voice-fallback', label: 'Voice Fallback', meta: tooling?.voiceFallback as Record<string, unknown> | undefined },
+    { id: 'desktop-copilot', label: 'Desktop Copilot', meta: tooling?.desktopCopilot as Record<string, unknown> | undefined },
     { id: 'context7', label: 'Context7 MCP', meta: tooling?.context7 as Record<string, unknown> | undefined },
     { id: 'workflow-ops', label: 'Workflow Ops', meta: tooling?.workflowOps as Record<string, unknown> | undefined },
     { id: 'observability', label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
@@ -84,7 +101,7 @@ export function Settings() {
     try {
       await updateAdminTaskDecision(taskId, status);
       await refresh().catch(() => null);
-      setActionStatus(status === 'approved' ? 'Admin task approved and executed.' : 'Admin task rejected.');
+      setActionStatus(status === 'approved' ? 'Admin task approved and executed.' : 'Admin task declined.');
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Admin task update failed.');
     } finally {
@@ -98,7 +115,7 @@ export function Settings() {
         <div>
           <h1 className="text-xl font-semibold text-slate-100 sm:text-2xl">Settings</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Provider readiness, quotas, and admin guardrails from the runtime.
+            Provider status, usage limits, and safety controls.
           </p>
         </div>
         <div
@@ -117,10 +134,10 @@ export function Settings() {
             ].join(' ')}
           />
           {loading
-            ? 'Checking bridge'
+            ? 'Checking bridge connection'
             : error
               ? 'Bridge offline'
-              : `State backend · ${(status.stateBackend as string) || 'unknown'}`}
+              : `State backend · ${(status.stateBackend as string) || 'No data yet'}`}
         </div>
       </div>
 
@@ -159,7 +176,7 @@ export function Settings() {
       <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-slate-100">Advanced Tooling</h2>
+            <h2 className="text-sm font-semibold text-slate-100">Agent Tools</h2>
             <p className="mt-1 text-xs text-slate-500">
               Repo-level systems that support research, observability, workflow health, and future agent training.
             </p>
@@ -177,16 +194,16 @@ export function Settings() {
                 key={card.id}
                 className="rounded-2xl border border-slate-800 bg-slate-900 p-4 transition-colors hover:border-slate-700"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0 text-[11px] uppercase tracking-[0.14em] text-slate-500">
                     {card.label}
                   </div>
                   <StatusDot state={state} />
                 </div>
-                <div className="mt-2 text-lg font-semibold text-slate-100">
+                <div className="mt-2 break-words text-lg font-semibold text-slate-100">
                   {describeTooling(card.meta)}
                 </div>
-                <div className="mt-1 text-xs text-slate-500 whitespace-pre-wrap">
+                <div className="mt-1 whitespace-pre-wrap break-words text-xs text-slate-500">
                   {String(card.meta?.note || 'Bridge-backed tooling surface.')}
                 </div>
               </section>
@@ -195,15 +212,15 @@ export function Settings() {
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-          Metrics endpoint: <span className="text-slate-200">{String(toolingSummary.metricsUrl || 'waiting for bridge')}</span>
+          Metrics endpoint: <span className="text-slate-200">{String(toolingSummary.metricsUrl || 'waiting for bridge connection')}</span>
         </div>
       </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-4">
         <section className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
           <div className="border-b border-slate-800 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-100">Pending Admin Tasks</h2>
-            <p className="mt-1 text-xs text-slate-500">Dry runs and approval-backed infrastructure changes queued by Rex.</p>
+            <h2 className="text-sm font-semibold text-slate-100">Admin Approvals Needed</h2>
+            <p className="mt-1 text-xs text-slate-500">Test mode and approval-backed infrastructure changes queued by Rex.</p>
           </div>
           <div className="divide-y divide-slate-800">
             {adminTasks.map((task) => (
@@ -230,26 +247,26 @@ export function Settings() {
                         onClick={() => void decideAdminTask(task, 'rejected')}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Reject
+                        Decline
                       </button>
                     </div>
                   )}
                 </div>
                 <div className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                  {String(task.status || 'pending')}
+                  {formatRuntimeStatus(task.status)}
                 </div>
               </div>
             ))}
             {!adminTasks.length && (
               <div className="px-4 py-10 text-center text-xs text-slate-500">
-                No admin tasks are queued.
+                No admin approvals are needed.
               </div>
             )}
           </div>
         </section>
 
         <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <h2 className="text-sm font-semibold text-slate-100">Guardrails Snapshot</h2>
+          <h2 className="text-sm font-semibold text-slate-100">Safety Controls</h2>
           <div className="mt-3 space-y-3 text-sm">
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
               <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Approvals</div>
@@ -260,7 +277,7 @@ export function Settings() {
               <div className="mt-1 text-slate-100">{String(status.pendingAdminTasks || 0)} admin changes still require review</div>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Documents</div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Document Sends</div>
               <div className="mt-1 text-slate-100">{String(status.documentDeliveries || 0)} seller document sends tracked in the bridge</div>
             </div>
           </div>

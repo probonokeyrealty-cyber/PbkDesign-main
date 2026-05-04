@@ -1,0 +1,133 @@
+{
+  "name": "PBK Property Data - HomeHarvest Import",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-daily-homeharvest",
+      "name": "Daily 6 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const zips = String($env.PBK_HOMEHARVEST_ZIPS || '43215').split(',').map((zip) => zip.trim()).filter(Boolean);\nreturn zips.map((zip) => ({ json: { zip, listingType: 'for_sale', limit: Number($env.PBK_HOMEHARVEST_LIMIT || 10) } }));"
+      },
+      "id": "build-zip-list",
+      "name": "Build Zip List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.PBK_BRIDGE_ENDPOINT || 'http://127.0.0.1:8788').replace(/\\/+$/, '') + '/api/property-data/scrape'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.PBK_BRIDGE_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"provider\": \"homeharvest\",\n  \"location\": $json.zip,\n  \"listingType\": $json.listingType,\n  \"limit\": $json.limit,\n  \"importLeads\": true,\n  \"cache\": true,\n  \"requestedBy\": \"n8n-homeharvest-daily\",\n  \"source\": \"n8n-homeharvest\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "scrape-and-import",
+      "name": "Scrape + Import",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json;\nreturn [{ json: {\n  ok: Boolean(body.ok),\n  provider: body.provider || 'homeharvest',\n  count: body.count || 0,\n  importedCount: body.importResult?.importedCount || 0,\n  updatedCount: body.importResult?.updatedCount || 0,\n  cachedCount: body.cachedCount || body.importResult?.cachedCount || 0,\n  generatedAt: new Date().toISOString()\n}}];"
+      },
+      "id": "summarize",
+      "name": "Summarize Import",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        340,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 6 AM": {
+      "main": [
+        [
+          {
+            "node": "Build Zip List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Zip List": {
+      "main": [
+        [
+          {
+            "node": "Scrape + Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape + Import": {
+      "main": [
+        [
+          {
+            "node": "Summarize Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "PBK"
+    },
+    {
+      "name": "Property Data"
+    }
+  ],
+  "pinData": {},
+  "versionId": "pbk-property-data-homeharvest-v1"
+}

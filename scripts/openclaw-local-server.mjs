@@ -2895,6 +2895,35 @@ async function loadStateFromDb() {
 }
 
 let activityLogPersistenceWarned = false;
+let activityLogSchemaReady = false;
+
+async function ensureActivityLogSchema(pool) {
+  if (!pool || activityLogSchemaReady) return Boolean(pool);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.activity_log (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT,
+      lead_name TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      actor TEXT NOT NULL DEFAULT 'System',
+      category TEXT NOT NULL DEFAULT 'INFO',
+      status TEXT NOT NULL DEFAULT 'success',
+      text TEXT NOT NULL DEFAULT '',
+      target TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'runtime',
+      metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS activity_log_lead_created_idx ON public.activity_log (lead_id, created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS activity_log_workspace_category_idx ON public.activity_log (workspace_id, category, created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS activity_log_workspace_status_idx ON public.activity_log (workspace_id, status, created_at DESC)');
+  await pool.query('CREATE INDEX IF NOT EXISTS activity_log_metadata_gin_idx ON public.activity_log USING GIN (metadata)');
+  activityLogSchemaReady = true;
+  return true;
+}
 
 async function persistActivityLogRecord(entry = {}) {
   const pool = getPgPool();
@@ -2908,6 +2937,7 @@ async function persistActivityLogRecord(entry = {}) {
     target: entry.target || '',
   };
   try {
+    await ensureActivityLogSchema(pool);
     await pool.query(
       `INSERT INTO public.activity_log (
         id, workspace_id, lead_id, lead_name, address, actor, category, status,

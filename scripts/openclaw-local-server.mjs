@@ -2921,6 +2921,7 @@ async function ensureActivityLogSchema(pool) {
   await pool.query('CREATE INDEX IF NOT EXISTS activity_log_workspace_category_idx ON public.activity_log (workspace_id, category, created_at DESC)');
   await pool.query('CREATE INDEX IF NOT EXISTS activity_log_workspace_status_idx ON public.activity_log (workspace_id, status, created_at DESC)');
   await pool.query('CREATE INDEX IF NOT EXISTS activity_log_metadata_gin_idx ON public.activity_log USING GIN (metadata)');
+  await pool.query("NOTIFY pgrst, 'reload schema'").catch(() => null);
   activityLogSchemaReady = true;
   return true;
 }

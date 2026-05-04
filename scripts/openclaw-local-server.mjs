@@ -21853,6 +21853,62 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/admin/activity-log/status') {
+      const pool = getPgPool();
+      if (!pool) {
+        json(response, 200, {
+          ok: false,
+          result: 'no_database',
+          stateBackend: DATABASE_URL ? 'postgres_unavailable' : 'file',
+          activityLog: null,
+          smokeRows: [],
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        });
+        return;
+      }
+
+      try {
+        await ensureActivityLogSchema(pool);
+        const summary = await pool.query(
+          `SELECT
+             to_regclass('public.activity_log')::text AS table_name,
+             COUNT(*)::int AS row_count,
+             MAX(created_at) AS last_created_at
+           FROM public.activity_log`,
+        );
+        const smoke = await pool.query(
+          `SELECT id, lead_id, lead_name, category, status, text, created_at
+           FROM public.activity_log
+           WHERE lead_id = $1
+           ORDER BY created_at DESC
+           LIMIT 5`,
+          ['hosted-activity-smoke'],
+        );
+
+        json(response, 200, {
+          ok: true,
+          result: 'live',
+          activityLog: summary.rows[0] || null,
+          smokeRows: smoke.rows || [],
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        });
+      } catch (error) {
+        json(response, 500, {
+          ok: false,
+          result: 'error',
+          error: error?.message || String(error),
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        });
+      }
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/admin/docusign/status') {
       const result = await toolHandlers.getDocuSignProviderStatus();
       json(response, 200, {

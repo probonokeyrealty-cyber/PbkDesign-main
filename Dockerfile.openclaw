@@ -48,6 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxrender1 \
       libxss1 \
       libxtst6 \
+      python3 \
+      python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -61,8 +63,18 @@ RUN npm install --no-save --no-audit --no-fund --loglevel=error \
       puppeteer-core@24.41.0 \
       pg@8.13.1
 
+# Property data import/scraping is intentionally isolated in a Python venv so
+# the hosted bridge can run HomeHarvest and Scrapling without touching Node deps.
+RUN python3 -m venv /app/.venv \
+  && /app/.venv/bin/python -m pip install --upgrade --no-cache-dir pip \
+  && /app/.venv/bin/python -m pip install --no-cache-dir \
+      homeharvest==0.8.18 \
+      'scrapling[fetchers]==0.4.7' \
+  && /app/.venv/bin/scrapling install
+
 # Copy the bridge source last so dependency installation caches across rebuilds.
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
+COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 
 # Default to the persistent state path for file-mode fallback. When

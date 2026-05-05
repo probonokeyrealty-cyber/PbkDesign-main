@@ -1441,6 +1441,37 @@
 [data-page="dashboard"] .qcard-body strong { color: var(--sky); font-family: var(--font-mono); font-weight: 500; }
 [data-page="dashboard"] .qcard-actions { display: flex; gap: var(--s-2); }
 [data-page="dashboard"] .qcard-actions .btn { flex: 1; justify-content: center; padding: 6px 10px; font-size: 10px; }
+[data-page="dashboard"] .qcard-review {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin: 0 0 var(--s-3);
+    padding: 8px;
+    border: 1px solid var(--border-dim);
+    border-radius: calc(var(--radius) - 2px);
+    background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
+  }
+[data-page="dashboard"] .qcard-review-label {
+    flex: 1 0 100%;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+[data-page="dashboard"] .qcard-review .btn {
+    flex: 0 1 auto;
+    min-height: 30px;
+    padding: 5px 8px;
+    font-size: 9px;
+    border-color: color-mix(in srgb, var(--amber) 35%, var(--border-dim));
+  }
+[data-theme="light"] [data-page="dashboard"] .qcard-review {
+    background: #f8fafc;
+    border-color: rgba(15, 23, 42, 0.10);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+  }
 /* ========================================================
      SECTION TITLES between grid & full-bleed
      ======================================================== */
@@ -14598,6 +14629,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
             </span>
           </div>
+          <div class="qcard-review qcard-actions" aria-label="Launch QA false-positive checks">
+            <span class="qcard-review-label">Launch QA: flag before approving if Ava/Rex missed something</span>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
+          </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
             <button class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
@@ -15674,6 +15712,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function handleApprovalAction(button, card) {
     const approvalId = card.dataset.approvalId;
     const action = button.dataset.approvalAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
+    const reviewReason = button.dataset.reviewReason || '';
+    const decisionNotes = button.dataset.approvalNote || '';
 
     if (!approvalId) return;
 
@@ -15696,13 +15736,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         id: approvalId,
         status: action,
         actor: 'PBK dashboard',
-        actedAt: new Date().toISOString()
+        actedAt: new Date().toISOString(),
+        notes: decisionNotes,
+        reviewReason,
+        falsePositiveTag: reviewReason
       });
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval sent to OpenClaw' : 'Decision sent to OpenClaw',
-        desc: 'The local brain and n8n callback flow were updated.'
+        title: action === 'approved' ? 'Approval sent to OpenClaw' : reviewReason ? 'Launch QA flag sent' : 'Decision sent to OpenClaw',
+        desc: reviewReason
+          ? 'Marked for correction before any provider action runs.'
+          : 'The local brain and n8n callback flow were updated.'
       });
     } catch (error) {
       button.disabled = false;
@@ -23437,6 +23482,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">
               ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
             </span>
+          </div>
+          <div class="qcard-review qcard-actions" aria-label="Launch QA false-positive checks">
+            <span class="qcard-review-label">Launch QA: flag before approving if Ava/Rex missed something</span>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>

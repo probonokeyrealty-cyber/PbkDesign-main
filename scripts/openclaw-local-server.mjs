@@ -15041,7 +15041,7 @@ function buildSlackApprovalBlocks(approval = {}) {
       elements: [
         {
           type: 'mrkdwn',
-          text: `Approval ID \`${approval.id || 'pending'}\` - PBK will only execute after an approved callback.`,
+          text: `Approval ID \`${approval.id || 'pending'}\` - approve only when path, BANT+, follow-up timing, and docs are clean. PBK executes only after approval.`,
         },
       ],
     },
@@ -15059,14 +15059,14 @@ function buildSlackApprovalBlocks(approval = {}) {
         {
           type: 'button',
           action_id: 'pbk_approval_reject',
-          text: { type: 'plain_text', text: 'Reject', emoji: false },
+          text: { type: 'plain_text', text: 'Decline', emoji: false },
           style: 'danger',
           value: approval.id || '',
         },
         {
           type: 'button',
           action_id: 'pbk_approval_modify',
-          text: { type: 'plain_text', text: 'Modify', emoji: false },
+          text: { type: 'plain_text', text: 'Needs Review', emoji: false },
           value: approval.id || '',
         },
       ],
@@ -19161,7 +19161,7 @@ async function handleEvent(eventType, payload = {}) {
 
     // Replay short-circuit: if status/actor/actedAt already match incoming
     // payload, n8n is just retrying. No mutation, no extra activity entry.
-    const incomingStatus = payload.status || approval.status;
+    const incomingStatus = String(payload.status || approval.status || 'pending').replace(/-/g, '_');
     const incomingActor = payload.actor || approval.actor || 'n8n';
     const incomingActedAt = payload.actedAt || approval.actedAt || null;
     if (
@@ -19181,6 +19181,20 @@ async function handleEvent(eventType, payload = {}) {
     approval.actor = incomingActor;
     approval.actedAt = incomingActedAt || isoNow();
     approval.notes = payload.notes || approval.notes;
+    const reviewReason = String(payload.reviewReason || payload.falsePositiveTag || '').trim();
+    if (reviewReason) {
+      approval.reviewReason = reviewReason;
+      approval.falsePositiveTag = reviewReason;
+      approval.metadata = {
+        ...(approval.metadata || {}),
+        launchReview: {
+          reason: reviewReason,
+          notes: payload.notes || '',
+          actor: incomingActor,
+          actedAt: approval.actedAt,
+        },
+      };
+    }
     let contractResult = null;
     let campaignResult = null;
     let promptResult = null;
@@ -19264,7 +19278,7 @@ async function handleEvent(eventType, payload = {}) {
         actor: approval.actor,
         category: approval.status === 'approved' ? 'APPROVED' : 'REJECTED',
         status: approval.status === 'approved' ? 'success' : 'warning',
-        text: `${approval.type} ${approval.status}${approval.offerPrice ? ` for ${currency(approval.offerPrice)}` : ''}`,
+        text: `${approval.type} ${approval.status}${approval.offerPrice ? ` for ${currency(approval.offerPrice)}` : ''}${approval.reviewReason ? ` - Launch QA: ${String(approval.reviewReason).replace(/_/g, ' ')}` : ''}`,
         target: approval.address || approval.leadName,
       }),
     );
@@ -20005,7 +20019,18 @@ async function handleSlackApprovalInteraction(payload = {}) {
       approval.status = status;
       approval.actor = actor;
       approval.actedAt = isoNow();
-      approval.notes = 'Slack requested changes before approval.';
+      approval.notes = 'Slack marked this item as needing review before approval.';
+      approval.reviewReason = 'slack_needs_review';
+      approval.falsePositiveTag = 'slack_needs_review';
+      approval.metadata = {
+        ...(approval.metadata || {}),
+        launchReview: {
+          reason: 'slack_needs_review',
+          notes: 'Check path, BANT+, follow-up timing, and document path before approving.',
+          actor,
+          actedAt: approval.actedAt,
+        },
+      };
       const rexDecisionResult = (
         String(approval.type || '').toLowerCase() === 'rex-decision'
         || String(approval.approvalAction || '').toLowerCase() === 'rex_apply'
@@ -20016,7 +20041,7 @@ async function handleSlackApprovalInteraction(payload = {}) {
         actor,
         category: 'APPROVAL',
         status: 'warning',
-        text: `${approval.type || 'Approval'} sent back for modification`,
+        text: `${approval.type || 'Approval'} marked needs review from Slack`,
         target: approval.address || approval.leadName || approval.id,
       }));
       await persistState(state);
@@ -22331,6 +22356,8 @@ const server = createServer(async (request, response) => {
         actor: body.actor || 'api',
         actedAt: body.actedAt || isoNow(),
         notes: body.notes || '',
+        reviewReason: body.reviewReason || '',
+        falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
       });
       json(response, result.ok === false ? 404 : 200, {
         ...result,

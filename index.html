@@ -4074,8 +4074,21 @@
       .fleet-detail-head .fleet-avatar { width: 52px; height: 52px; border-radius: 16px; font-size: 28px; }
       .fleet-detail-title h3 { font-size: 24px; overflow-wrap: anywhere; }
       .fleet-badges { padding: 0 var(--s-4) var(--s-3); }
-      .fleet-tabs { scroll-snap-type: x proximity; }
-      .fleet-tab { flex: 0 0 auto; min-height: 44px; scroll-snap-align: start; }
+      .fleet-tabs {
+        flex-wrap: wrap;
+        overflow-x: visible;
+        scroll-snap-type: none;
+        gap: 6px;
+        border-bottom: 0;
+      }
+      .fleet-tab {
+        flex: 1 1 calc(50% - 6px);
+        min-height: 44px;
+        border: 1px solid var(--border-dim);
+        border-radius: var(--radius-sm);
+        scroll-snap-align: none;
+      }
+      .fleet-tab:last-child { flex-basis: 100%; }
       .fleet-pane { padding: var(--s-4); max-height: none; }
       .fleet-line { grid-template-columns: 1fr; gap: 3px; }
       .fleet-form-grid { grid-template-columns: 1fr; }

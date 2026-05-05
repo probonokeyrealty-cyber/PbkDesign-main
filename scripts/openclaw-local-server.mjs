@@ -10159,12 +10159,25 @@ function getN8nWorkflowProviderMeta() {
   const missing = [];
   if (!N8N_API_BASE_URL) missing.push('PBK_N8N_API_BASE_URL');
   if (!N8N_API_KEY) missing.push('PBK_N8N_API_KEY');
+  let baseHost = '';
+  try {
+    baseHost = N8N_API_BASE_URL ? new URL(N8N_API_BASE_URL).host : '';
+  } catch {
+    baseHost = 'invalid-url';
+  }
   return {
     configured: Boolean(N8N_API_BASE_URL || N8N_API_KEY),
     ready: missing.length === 0,
     mode: missing.length === 0 ? 'n8n-api' : 'local-draft-store',
     localDraftStore: true,
     missing,
+    diagnostics: {
+      baseHost,
+      baseLength: N8N_API_BASE_URL.length,
+      keyLength: N8N_API_KEY.length,
+      keyLooksJwt: N8N_API_KEY.split('.').length === 3,
+      keyHasWhitespace: /\s/.test(N8N_API_KEY),
+    },
   };
 }
 

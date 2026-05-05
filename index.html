@@ -22723,6 +22723,47 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderAnalyzerFounderOps();
   }
 
+  function hasAnalyzerDealContent(deal = {}) {
+    if (!deal || typeof deal !== 'object') return false;
+    const hasAddress = String(deal.address || '').trim().length > 0;
+    const hasNumbers = ['price', 'arv', 'offer', 'agreedPrice', 'rent', 'balance', 'fee'].some((key) => Number(deal[key] || 0) > 0);
+    const hasComps = Object.values(deal.comps || {}).some((comp) => String(comp?.address || '').trim() || Number(comp?.price || 0) > 0);
+    return hasAddress || hasNumbers || hasComps;
+  }
+
+  function isAnalyzerFrameEditing(frame) {
+    try {
+      const active = frame?.contentDocument?.activeElement;
+      if (!active) return false;
+      const tagName = active.tagName;
+      return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || active.isContentEditable;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function buildAnalyzerSyncPayload(frame) {
+    const currentState = getAnalyzerFrameApi(frame)?.getState?.();
+    const currentDeal = currentState?.deal ? normalizeAnalyzerRuntimeDeal(currentState.deal) : null;
+    const storedDeal = getStoredAnalyzerDeal();
+    const normalizedStoredDeal = storedDeal ? normalizeAnalyzerRuntimeDeal(storedDeal) : {};
+    const currentHasContent = hasAnalyzerDealContent(currentDeal);
+    const storedHasContent = hasAnalyzerDealContent(normalizedStoredDeal);
+    const deal = currentHasContent || !storedHasContent
+      ? (currentDeal || normalizedStoredDeal || {})
+      : normalizedStoredDeal;
+    const storedTab = PBK.state.analyzer?.activeTab;
+    const activeTab = storedHasContent && !currentHasContent
+      ? (storedTab || currentState?.activeTab || 'analyzer')
+      : (currentState?.activeTab || storedTab || 'analyzer');
+
+    return {
+      deal,
+      activeTab,
+      analyzeStatus: currentState?.analyzeStatus || PBK.state.analyzer?.analyzeStatus
+    };
+  }
+
   function reflectAnalyzerSnapshot(payload) {
     if (!payload?.deal) return;
 
@@ -22759,11 +22800,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const frame = getAnalyzerFrame();
     if (!frame?.contentWindow) return;
 
-    const snapshot = getStoredAnalyzerDeal();
-    const payload = {
-      deal: snapshot || {},
-      activeTab: 'analyzer'
-    };
+    if (!showNotice && isAnalyzerFrameEditing(frame)) return;
+
+    const payload = buildAnalyzerSyncPayload(frame);
+    const snapshot = payload.deal || {};
 
     try {
       const analyzerApi = getAnalyzerFrameApi(frame);
@@ -23562,18 +23602,74 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   @media (max-width: 720px) {
-    .research-chat {
-      min-height: min(680px, calc(100dvh - 128px));
-      max-height: calc(100dvh - 112px);
-      margin-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    html,
+    body,
+    .app-shell,
+    .pages,
+    .page.active {
+      max-width: 100%;
+      overflow-x: hidden;
     }
 
-    .rc-body {
+    .page[data-page="brain"].active {
+      height: calc(100dvh - 76px - env(safe-area-inset-bottom, 0px));
+      overflow: hidden;
+      padding-bottom: 0 !important;
+    }
+
+    .page[data-page="brain"].active > .page-head,
+    .page[data-page="brain"].active .brain-left,
+    .page[data-page="brain"].active .brain-main,
+    .page[data-page="brain"].active .brain-right > :not(.research-chat) {
+      display: none !important;
+    }
+
+    .page[data-page="brain"].active .brain-layout {
+      display: block !important;
+      height: 100%;
+      max-height: 100%;
+      min-height: 0;
+      overflow: hidden;
+      padding: var(--s-3) !important;
+    }
+
+    .page[data-page="brain"].active .brain-right {
+      display: block !important;
+      height: 100%;
+      min-height: 0;
+      position: static !important;
+    }
+
+    .page[data-page="brain"].active .research-chat {
+      height: 100%;
+      min-height: 0;
+      max-height: none;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .page[data-page="brain"].active .rc-head,
+    .page[data-page="brain"].active .rc-suggests,
+    .page[data-page="brain"].active .rc-composer {
+      flex: 0 0 auto;
+    }
+
+    .page[data-page="brain"].active .rc-body {
       flex: 1 1 auto;
       min-height: 0;
       max-height: none !important;
-      padding-bottom: calc(var(--s-4) + 96px + env(safe-area-inset-bottom, 0px)) !important;
-      scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-bottom: var(--s-4) !important;
+      scroll-padding-bottom: var(--s-4);
+    }
+
+    .page[data-page="brain"].active .rc-suggests {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .rc-composer,
@@ -23583,6 +23679,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       flex-direction: column !important;
       align-items: stretch !important;
       gap: 10px !important;
+    }
+
+    .page[data-page="brain"].active .rc-composer {
+      padding-bottom: calc(var(--s-3) + env(safe-area-inset-bottom, 0px)) !important;
+      box-shadow: 0 -14px 32px rgba(0, 0, 0, 0.24);
     }
 
     .rc-composer textarea,
@@ -23603,6 +23704,112 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       width: 100% !important;
       min-height: 44px !important;
       justify-content: center !important;
+    }
+
+    .page[data-page="campaigns"] .camp-toolbar,
+    .page[data-page="campaigns"] .camp-card-head,
+    .page[data-page="campaigns"] .camp-card-actions,
+    .page[data-page="campaigns"] .cd-actions-bar,
+    .page[data-page="campaigns"] .page-head-actions {
+      display: grid !important;
+      grid-template-columns: 1fr !important;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .page[data-page="campaigns"] .camp-grid,
+    .page[data-page="campaigns"] .camp-card,
+    .page[data-page="campaigns"] .camp-card-body,
+    .page[data-page="campaigns"] .camp-card-stats {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .page[data-page="campaigns"] .camp-search,
+    .page[data-page="campaigns"] .camp-filter-select,
+    .page[data-page="campaigns"] .camp-channel-chip,
+    .page[data-page="campaigns"] .camp-card-actions .chip-btn,
+    .page[data-page="campaigns"] .page-head-actions .btn,
+    .page[data-page="campaigns"] .cd-actions-bar .btn {
+      width: 100% !important;
+      min-width: 0;
+      min-height: 44px;
+      justify-content: center;
+    }
+
+    .page[data-page="campaigns"] .camp-card-title,
+    .page[data-page="campaigns"] .camp-card-meta,
+    .page[data-page="campaigns"] .camp-card-copy {
+      overflow-wrap: anywhere;
+    }
+
+    .page[data-page="fleet"] .fleet-shell,
+    .page[data-page="fleet"] .fleet-grid,
+    .page[data-page="fleet"] .fleet-card,
+    .page[data-page="fleet"] .fleet-detail,
+    .page[data-page="fleet"] .fleet-pane {
+      min-width: 0;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    .page[data-page="fleet"] .fleet-card-actions,
+    .page[data-page="fleet"] .fleet-skill-card .fleet-card-actions,
+    .page[data-page="fleet"] .fleet-actions,
+    .page[data-page="fleet"] .fleet-mini-input {
+      display: grid !important;
+      grid-template-columns: 1fr !important;
+      width: 100%;
+    }
+
+    .page[data-page="fleet"] .fleet-card-actions .chip-btn,
+    .page[data-page="fleet"] .fleet-actions .btn,
+    .page[data-page="fleet"] .fleet-mini-input .chip-btn,
+    .page[data-page="fleet"] .fleet-mini-input input {
+      width: 100%;
+      min-width: 0;
+      min-height: 44px;
+      justify-content: center;
+    }
+
+    .page[data-page="fleet"] .fleet-skill-row,
+    .page[data-page="fleet"] .fleet-skill-meta,
+    .page[data-page="fleet"] .fleet-badges {
+      gap: 7px;
+      overflow-wrap: anywhere;
+    }
+
+    .page[data-page="analyzer"].active {
+      overflow: hidden;
+    }
+
+    .page[data-page="analyzer"] .analyzer-bridge-shell {
+      min-height: calc(100dvh - 76px - env(safe-area-inset-bottom, 0px));
+      padding-bottom: calc(var(--s-3) + 76px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    .page[data-page="analyzer"] .analyzer-runtime-meta,
+    .page[data-page="analyzer"] .analyzer-ops-grid {
+      display: none !important;
+    }
+
+    .page[data-page="analyzer"] .analyzer-frame-wrap {
+      height: calc(100dvh - 238px - env(safe-area-inset-bottom, 0px));
+      min-height: 560px !important;
+      overflow: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .page[data-page="analyzer"] #pbkAnalyzerFrame {
+      height: 100%;
+      min-height: 100% !important;
+    }
+
+    [data-theme="light"] .page[data-page="brain"].active .rc-composer,
+    [data-theme="light"] .fleet-card,
+    [data-theme="light"] .camp-card,
+    [data-theme="light"] .page[data-page="analyzer"] .analyzer-frame-wrap {
+      box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08) !important;
     }
   }
 </style>

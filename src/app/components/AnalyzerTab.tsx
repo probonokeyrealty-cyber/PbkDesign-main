@@ -114,6 +114,9 @@ export function AnalyzerTab({
           <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">Address</label>
           <input
             type="text"
+            inputMode="text"
+            enterKeyHint="next"
+            autoComplete="street-address"
             value={deal.address}
             onChange={(e) => handleInputChange('address', e.target.value)}
             placeholder="123 Main St, City, ST 12345"
@@ -392,6 +395,9 @@ export function AnalyzerTab({
               <span className="text-[11px] font-bold text-blue-500 text-center w-6">{comp}</span>
               <input
                 type="text"
+                inputMode="text"
+                enterKeyHint="next"
+                autoComplete="street-address"
                 value={deal.comps[comp].address}
                 onChange={(e) => handleCompChange(comp, 'address', e.target.value)}
                 placeholder="123 Main St, City, MI"

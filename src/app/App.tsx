@@ -213,17 +213,26 @@ export default function App() {
     setDeal((prev) => buildMergedDealState(prev, incoming));
   };
 
+  const isEditingAnalyzerField = () => {
+    const activeElement = document.activeElement;
+    if (!activeElement) return false;
+    const tagName = activeElement.tagName;
+    return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+  };
+
   const applyBridgeState = (payload: {
     deal?: Partial<DealData>;
     activeTab?: AppTab | string;
   }) => {
     if (!payload || typeof payload !== 'object') return;
+    const isEditing = isEditingAnalyzerField();
 
-    if (payload.deal) {
+    if (payload.deal && !isEditing) {
       mergeExternalDeal(payload.deal);
     }
 
     if (
+      !isEditing &&
       payload.activeTab &&
       ['analyzer', 'callmode', 'documents', 'crm'].includes(payload.activeTab)
     ) {

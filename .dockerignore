@@ -38,6 +38,11 @@ deploy-*.zip
 PBK_*
 n8n-lite
 
+# Runtime prompt + contract library must ship with the OpenClaw bridge image.
+!wholesale.agent.md
+!contracts
+!contracts/**
+
 # Tests, examples, scripts that aren't the bridge
 scripts/parity-check.mjs
 scripts/sync-master-template.mjs

@@ -13805,7 +13805,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         { title: 'PBK counter-offer library', meta: 'campaign analytics - 9 winning phrases', status: 'trained' },
         { title: 'Cleveland investor objections', meta: 'local market memory', status: 'candidate' },
       ],
-      tools: [['Campaign worker', 'Test mode: no real sends'], ['Instantly', 'approval-gated'], ['Telnyx SMS', 'approval-gated'], ['Slack approvals', 'online']],
+      tools: [['Campaign worker', 'Approval-gated live'], ['Instantly', 'approval required'], ['Telnyx SMS', 'approval required'], ['Slack approvals', 'online']],
     },
     {
       id: 'rex',
@@ -13901,7 +13901,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       knowledge: [
         { title: 'SMS compliance memory', meta: 'STOP and DNC handling', status: 'trained' },
       ],
-      tools: [['Telnyx messaging', 'approval-gated'], ['DNC pre-check', 'online'], ['Campaign worker', 'Test mode: no real sends']],
+      tools: [['Telnyx messaging', 'approval required'], ['DNC pre-check', 'online'], ['Campaign worker', 'Approval-gated live']],
     },
   ];
 
@@ -17615,6 +17615,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const emailReady = /ready|active|configured|green|live/.test(emailText) && !/missing|error/.test(emailText);
     const phoneReady = /ready|active|configured|green|live/.test(telnyxText) && !/missing|error/.test(telnyxText);
     const workerReady = Boolean(campaignWorker.ready);
+    const approvalMode = String(snapshot?.status?.mode || snapshot?.settings?.operatingMode || 'approval').toLowerCase() === 'approval';
+    const workerApprovalGated = !workerReady && approvalMode && (emailReady || phoneReady || !Object.keys(campaignWorker).length);
     page.querySelector('[data-campaign-approval-count]')?.replaceChildren(document.createTextNode(String(pendingCount)));
     const emailCard = page.querySelector('[data-campaign-ops="email"]');
     const phoneCard = page.querySelector('[data-campaign-ops="phone"]');
@@ -17630,11 +17632,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       phoneCard.querySelector('.camp-ops-note').textContent = phoneReady ? 'Call/SMS batches can schedule after approval.' : 'Call/SMS launches stay approval-gated and will report Provider key missing if Telnyx is not configured.';
     }
     if (workerCard) {
-      workerCard.dataset.state = workerReady ? 'good' : 'warning';
-      workerCard.querySelector('.camp-ops-value').textContent = workerReady ? 'Worker live' : 'Test mode: no real sends';
+      workerCard.dataset.state = (workerReady || workerApprovalGated) ? 'good' : 'warning';
+      workerCard.querySelector('.camp-ops-value').textContent = workerReady
+        ? 'Worker live'
+        : workerApprovalGated
+          ? 'Approval-gated live'
+          : 'Worker needs setup';
       workerCard.querySelector('.camp-ops-note').textContent = workerReady
         ? `Runner can process up to ${campaignWorker.maxStepsPerRun || 25} due steps per run.`
-        : 'Set campaign worker env gates before automated provider writes. Dry runs still audit due work.';
+        : workerApprovalGated
+          ? 'Campaign actions can queue against real providers, but every send/call still requires approval first.'
+          : 'Connect the campaign worker before automated provider writes. Approval review still protects queued work.';
     }
   }
 

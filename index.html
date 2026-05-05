@@ -13014,7 +13014,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return String(endpoint).trim().replace(/\/+$/, '');
   }
 
-  const DEFAULT_OPENCLAW_ENDPOINT = normalizeOpenClawEndpoint('https://pbk-openclaw-bridge.onrender.com');
+  function buildDefaultOpenClawEndpoint() {
+    const hostedEndpoint = 'https://pbk-openclaw-bridge.onrender.com';
+    const host = window.location.hostname;
+    if (host === '127.0.0.1' || host === 'localhost') {
+      return window.location.origin;
+    }
+    return hostedEndpoint;
+  }
+
+  const DEFAULT_OPENCLAW_ENDPOINT = normalizeOpenClawEndpoint(buildDefaultOpenClawEndpoint());
+
+  function isLocalOpenClawProxyEndpoint(endpoint = DEFAULT_OPENCLAW_ENDPOINT) {
+    const host = window.location.hostname;
+    if (host !== '127.0.0.1' && host !== 'localhost') return false;
+    return normalizeOpenClawEndpoint(endpoint) === normalizeOpenClawEndpoint(window.location.origin);
+  }
 
   function sanitizeOpenClawProviderMeta(name, meta) {
     if (!meta || typeof meta !== 'object') return { name, configured: null, ready: null, missing: [] };
@@ -13076,14 +13091,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function getOpenClawConfig() {
+    const storedConfig = parseJSONSafe(localStorage.getItem(OPENCLAW_STORAGE_KEY), {});
+    const localPreview = DEFAULT_OPENCLAW_ENDPOINT === normalizeOpenClawEndpoint(window.location.origin)
+      && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost');
+    const storedEndpoint = normalizeOpenClawEndpoint(storedConfig.endpoint || '');
+    const storedApiKey = String(storedConfig.apiKey || '').trim();
+    const shouldUseLocalProxy = localPreview && storedEndpoint && storedEndpoint !== DEFAULT_OPENCLAW_ENDPOINT && !storedApiKey;
+
     return sanitizeOpenClawConfig({
       endpoint: DEFAULT_OPENCLAW_ENDPOINT,
       apiKey: '',
       status: DEFAULT_OPENCLAW_ENDPOINT ? 'saved' : 'not-configured',
-      lastMessage: DEFAULT_OPENCLAW_ENDPOINT ? 'PBK public bridge is preconfigured.' : '',
+      lastMessage: DEFAULT_OPENCLAW_ENDPOINT
+        ? (localPreview
+            ? 'PBK local preview bridge is preconfigured through the Vite proxy.'
+            : 'PBK public bridge is preconfigured.')
+        : '',
       lastCheckedAt: 0,
       runtimeMeta: {},
-      ...parseJSONSafe(localStorage.getItem(OPENCLAW_STORAGE_KEY), {})
+      ...(shouldUseLocalProxy ? {} : storedConfig)
     });
   }
 
@@ -14272,6 +14298,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function assertOpenClawAuthReady(config = getOpenClawConfig()) {
     const authRequired = Boolean(config?.runtimeMeta?.authRequired);
     const hasApiKey = Boolean(String(config?.apiKey || '').trim());
+    if (isLocalOpenClawProxyEndpoint(config?.endpoint)) return;
     if (!authRequired || hasApiKey) return;
     const error = new Error('Bridge API key required - add it in Settings to enable this live control.');
     error.code = 'PBK_BRIDGE_AUTH_REQUIRED';
@@ -16283,10 +16310,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         ...commandContext
       });
       await applyRuntimeResponse(response);
+      const agentAnswer = response?.result?.response?.answer || response?.result?.answer || response?.answer || '';
+      if (agentAnswer) appendThinkLine(agentAnswer, 'brain');
       toast({
         type: 'success',
         title: 'Ava is on it',
-        desc: `Command routed to ${response?.result?.routedTo || 'updateCRM'}.`
+        desc: agentAnswer
+          ? String(agentAnswer).slice(0, 180)
+          : `Command routed to ${response?.result?.routedTo || 'updateCRM'}.`
       });
     } catch (error) {
       toast({
@@ -20377,6 +20408,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  function wireBrainChatComposer() {
+    const page = getPageNode('brain');
+    if (!page || page.dataset.chatComposerWired === 'true') return;
+    page.dataset.chatComposerWired = 'true';
+
+    page.querySelector('[data-brain-action="ask"]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      submitBrainQuery();
+    });
+
+    page.querySelector('[data-brain-chat-input]')?.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        submitBrainQuery();
+      }
+    });
+  }
+
   function wireIntegrationButtons() {
     const page = getPageNode('integrations');
     if (!page || page.dataset.integrationsWired === 'true') return;
@@ -20894,6 +20943,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     wireAutomationsControls();
     wireAnalyticsControls();
     wireBrainApiButton();
+    wireBrainChatComposer();
     wireIntegrationButtons();
     wireNotificationFilters();
     wireTagAndStatusFilters();
@@ -20934,7 +20984,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (input) input.value = '';
 
     try {
-      const response = await requestOpenClawApi('/brain/query', {
+      const response = await requestOpenClawApi('/api/brain/query', {
         method: 'POST',
         body: {
           query,

@@ -76,6 +76,8 @@ RUN python3 -m venv /app/.venv \
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY contracts ./contracts
+COPY wholesale.agent.md ./wholesale.agent.md
 
 # Default to the persistent state path for file-mode fallback. When
 # PBK_DATABASE_URL is set the bridge ignores this and uses Postgres instead.

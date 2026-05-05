@@ -105,7 +105,7 @@ export interface DealData {
   rbpSellerCosts?: string;
   rbpCashAlternative?: number;
 
-  // Cash Wholesale fields
+  // Cash Offer fields
   cashAsIs?: 'yes' | 'inspection';
   cashClosePeriod?: '21' | '30' | '45';
 

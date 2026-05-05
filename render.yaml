@@ -29,6 +29,10 @@ services:
         value: https://pbk-openclaw-bridge.onrender.com
 
       # ── n8n outbound (bridge fans events to n8n) ────────────────────────
+      - key: PBK_N8N_API_BASE_URL
+        sync: false
+      - key: PBK_N8N_API_KEY
+        sync: false
       - key: PBK_N8N_APPROVAL_WEBHOOK
         sync: false
       - key: PBK_N8N_LEAD_WEBHOOK
@@ -45,9 +49,30 @@ services:
         sync: false
       - key: PBK_TELNYX_MESSAGING_PROFILE_ID
         sync: false
+      - key: PBK_TELNYX_MEDIA_STREAM_TOKEN
+        sync: false
       # Optional: override the default webhook URL Telnyx posts call/message
       # events to. Defaults to ${PBK_PUBLIC_BASE_URL}/api/webhooks/telnyx.
       - key: PBK_TELNYX_WEBHOOK_URL
+        sync: false
+
+      - key: PBK_DEEPGRAM_API_KEY
+        sync: false
+      - key: PBK_DEEPGRAM_STREAM_CALLS
+        value: "false"
+      - key: PBK_DEEPGRAM_STREAM_TRACK
+        value: inbound_track
+      - key: PBK_DEEPGRAM_STREAM_CODEC
+        value: PCMU
+
+      - key: PBK_INSTANTLY_API_KEY
+        sync: false
+      - key: PBK_INSTANTLY_DEFAULT_FROM_EMAIL
+        sync: false
+      - key: PBK_INSTANTLY_BASE_URL
+        value: https://api.instantly.ai/api/v2
+
+      - key: PBK_SCRAPLING_MCP_URL
         sync: false
 
       # ── DocuSign (JWT auth + envelope create) ───────────────────────────

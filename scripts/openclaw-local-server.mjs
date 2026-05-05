@@ -5548,7 +5548,7 @@ function buildColdEmailContent(templateId = 'generic', lead = {}, brainInfo = {}
     <p>${escapeHtml(intro)}</p>
     <p>From our side it looks like there may be about <strong>${escapeHtml(equityText)}</strong> in equity, and we are seeing comps around <strong>${escapeHtml(compText)}</strong>. We buy as-is and can move quickly if that would make life easier.</p>
     <p>If ${escapeHtml(motivationText)} is relevant for you, would you be open to a quick 10-15 minute conversation this week?</p>
-    <p>Best,<br />PBK Capital</p>
+    <p>Best,<br />Probono Key Realty</p>
   `.trim();
 
   const text = [
@@ -5559,7 +5559,7 @@ function buildColdEmailContent(templateId = 'generic', lead = {}, brainInfo = {}
     `If ${motivationText} is relevant for you, would you be open to a quick 10-15 minute conversation this week?`,
     '',
     'Best,',
-    'PBK Capital',
+    'Probono Key Realty',
   ].join('\n');
 
   return {
@@ -5790,9 +5790,9 @@ function buildReplyTemplateCatalog(params = {}) {
         `${empathyIntro} We are routing your request now and will call ${reply.requestedWindow || 'shortly'}.`,
         '',
         'Best,',
-        'PBK Capital',
+        'Probono Key Realty',
       ].join('\n'),
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)} We are routing your request now and will call ${escapeHtml(reply.requestedWindow || 'shortly')}.</p><p>Best,<br />PBK Capital</p>`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)} We are routing your request now and will call ${escapeHtml(reply.requestedWindow || 'shortly')}.</p><p>Best,<br />Probono Key Realty</p>`,
     },
     booking_hold_confirmation: {
       templateKey: 'booking_hold_confirmation',
@@ -5807,9 +5807,9 @@ function buildReplyTemplateCatalog(params = {}) {
         `If that changes, you can also grab a different slot here: ${bookingLink}`,
         '',
         'Best,',
-        'PBK Capital',
+        'Probono Key Realty',
       ].join('\n'),
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)} I penciled in <strong>${escapeHtml(calendarLabel)}</strong> for ${escapeHtml(address)} and we will confirm it on our side.</p><p>If that changes, you can also grab a different slot here: <a href="${escapeHtml(bookingLink)}">${escapeHtml(bookingLink)}</a></p><p>Best,<br />PBK Capital</p>`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)} I penciled in <strong>${escapeHtml(calendarLabel)}</strong> for ${escapeHtml(address)} and we will confirm it on our side.</p><p>If that changes, you can also grab a different slot here: <a href="${escapeHtml(bookingLink)}">${escapeHtml(bookingLink)}</a></p><p>Best,<br />Probono Key Realty</p>`,
     },
     booking_link_prompt: {
       templateKey: 'booking_link_prompt',
@@ -5825,41 +5825,41 @@ function buildReplyTemplateCatalog(params = {}) {
         `Here is the quickest way to lock a time with us: ${bookingLink}`,
         '',
         'Best,',
-        'PBK Capital',
+        'Probono Key Realty',
       ].join('\n'),
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)}</p><p>${escapeHtml(equityLine)}</p><p>Here is the quickest way to lock a time with us: <a href="${escapeHtml(bookingLink)}">${escapeHtml(bookingLink)}</a></p><p>Best,<br />PBK Capital</p>`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)}</p><p>${escapeHtml(equityLine)}</p><p>Here is the quickest way to lock a time with us: <a href="${escapeHtml(bookingLink)}">${escapeHtml(bookingLink)}</a></p><p>Best,<br />Probono Key Realty</p>`,
     },
     opt_out_confirm: {
       templateKey: 'opt_out_confirm',
       templateVersion: 'reply-v2',
       channel: 'email',
       subject: 'You have been removed from our outreach',
-      text: `Hi ${firstName},\n\nUnderstood. We removed you from future outreach.\n\nPBK Capital`,
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>Understood. We removed you from future outreach.</p><p>PBK Capital</p>`,
+      text: `Hi ${firstName},\n\nUnderstood. We removed you from future outreach.\n\nProbono Key Realty`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>Understood. We removed you from future outreach.</p><p>Probono Key Realty</p>`,
     },
     not_interested_close: {
       templateKey: 'not_interested_close',
       templateVersion: 'reply-v2',
       channel: 'email',
       subject: `Thanks for the update on ${address}`,
-      text: `Hi ${firstName},\n\nThanks for letting us know. We will close out this follow-up on our side.\n\nPBK Capital`,
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>Thanks for letting us know. We will close out this follow-up on our side.</p><p>PBK Capital</p>`,
+      text: `Hi ${firstName},\n\nThanks for letting us know. We will close out this follow-up on our side.\n\nProbono Key Realty`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>Thanks for letting us know. We will close out this follow-up on our side.</p><p>Probono Key Realty</p>`,
     },
     manual_review_ack: {
       templateKey: 'manual_review_ack',
       templateVersion: 'reply-v2',
       channel: 'email',
       subject: `We received your message about ${address}`,
-      text: `Hi ${firstName},\n\nThanks for the note. A member of our team is reviewing it and will follow up directly.\n\nPBK Capital`,
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>Thanks for the note. A member of our team is reviewing it and will follow up directly.</p><p>PBK Capital</p>`,
+      text: `Hi ${firstName},\n\nThanks for the note. A member of our team is reviewing it and will follow up directly.\n\nProbono Key Realty`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>Thanks for the note. A member of our team is reviewing it and will follow up directly.</p><p>Probono Key Realty</p>`,
     },
     generic_ack: {
       templateKey: 'generic_ack',
       templateVersion: 'reply-v2',
       channel: 'email',
       subject: `Thanks for the reply on ${address}`,
-      text: `Hi ${firstName},\n\n${empathyIntro}\n\nPBK Capital`,
-      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)}</p><p>PBK Capital</p>`,
+      text: `Hi ${firstName},\n\n${empathyIntro}\n\nProbono Key Realty`,
+      html: `<p>Hi ${escapeHtml(firstName)},</p><p>${escapeHtml(empathyIntro)}</p><p>Probono Key Realty</p>`,
     },
   };
 }
@@ -8795,7 +8795,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   return {
     ok: true,
     result,
-    verbiage: result === 'live' ? 'Inbound route executed' : result === 'provider_missing' ? 'Inbound route recorded - provider missing or disabled' : 'Inbound route prepared',
+    verbiage: result === 'live' ? 'Inbound route executed' : result === 'provider_missing' ? 'Inbound route recorded - Provider key missing or disabled' : 'Inbound route prepared',
     route,
     reason,
     lead,
@@ -14504,7 +14504,7 @@ async function executeApprovedCampaign(approval = {}, options = {}) {
       status: 'scheduled',
       text: instantlyResult.ok
         ? `Approved campaign sent to Instantly for ${instantlyResult.request.leadCount} email lead${instantlyResult.request.leadCount === 1 ? '' : 's'}.`
-        : `Approved campaign execution started locally, but Instantly is not live: ${instantlyResult.error || 'provider missing'}.`,
+        : `Approved campaign execution started locally, but Instantly is not live: ${instantlyResult.error || 'Provider key missing'}.`,
       target: approval.leadName || approval.address || 'campaign',
     }),
   );
@@ -18485,7 +18485,7 @@ const toolHandlers = {
         <p>Hi ${escapeHtml(context.leadName || 'there')},</p>
         <p>Attached is the information package we discussed for <strong>${escapeHtml(context.address || 'your property')}</strong>.</p>
         <p>You will find ${documents.map((item) => escapeHtml(item.title)).join(', ')} attached for review. Reply directly to this email if you want us to adjust timing, offer structure, or contract terms.</p>
-        <p>Thanks,<br/>${escapeHtml(String(from).split('@')[0] || 'PBK')}<br/>PBK Capital</p>
+        <p>Thanks,<br/>${escapeHtml(String(from).split('@')[0] || 'PBK')}<br/>Probono Key Realty</p>
       </div>
     `;
 
@@ -22849,14 +22849,14 @@ const server = createServer(async (request, response) => {
         status: delivery.ok ? (delivery.live === false ? 'prepared' : 'sent') : 'warning',
         text: delivery.ok
           ? `Outbound email ${delivery.live === false ? 'prepared' : 'sent'} to ${context.leadName}.`
-          : `Outbound email could not send for ${context.leadName}: ${delivery.error || 'provider missing'}`,
+          : `Outbound email could not send for ${context.leadName}: ${delivery.error || 'Provider key missing'}`,
         target: context.address || recipient || context.leadName,
       }));
       await persistState(state);
       json(response, delivery.ok ? 200 : 400, {
         ok: delivery.ok,
         result: delivery.ok ? (delivery.live === false ? 'provider_missing' : 'live') : delivery.result || 'provider_missing',
-        verbiage: delivery.ok ? 'Email sent or prepared.' : delivery.error || 'Email provider missing.',
+        verbiage: delivery.ok ? 'Email sent or prepared.' : delivery.error || 'Provider key missing.',
         delivery,
         message,
         state: buildStateSnapshot(),

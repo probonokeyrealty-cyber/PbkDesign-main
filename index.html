@@ -3433,7 +3433,7 @@
         <div class="verdict-sub">with $13,500 estimated profit after fees & repairs</div>
         <div class="verdict-recommend">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-          Proceed — Deal Qualifies
+          Go - Deal Qualifies
         </div>
       </div>
 
@@ -8028,12 +8028,12 @@
     </div>
     <select class="camp-filter-select" id="campaignStatusFilter" aria-label="Filter campaigns by status">
       <option value="all">Status: All</option>
-      <option value="active">Active</option>
-      <option value="pending">Awaiting approval</option>
+      <option value="active">Working</option>
+      <option value="pending">Waiting</option>
       <option value="draft">Draft</option>
       <option value="paused">Paused</option>
       <option value="completed">Completed</option>
-      <option value="provider_missing">Provider missing</option>
+      <option value="provider_missing">Provider key missing</option>
       <option value="archived">Archived</option>
     </select>
     <button class="camp-channel-chip active" type="button" data-campaign-channel="all">All</button>
@@ -12486,10 +12486,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (rec) {
       if (result.walkAway > 0 && result.arv > 0) {
         rec.style.background = 'var(--sky)';
-        rec.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Proceed — Deal Qualifies';
+        rec.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Go - Deal Qualifies';
       } else {
         rec.style.background = 'var(--crimson)';
-        rec.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Stop — No Deal';
+        rec.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Pass - No Deal';
       }
     }
 
@@ -13735,7 +13735,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         { title: 'PBK counter-offer library', meta: 'campaign analytics - 9 winning phrases', status: 'trained' },
         { title: 'Cleveland investor objections', meta: 'local market memory', status: 'candidate' },
       ],
-      tools: [['Campaign worker', 'dry-run safe'], ['Instantly', 'provider-gated'], ['Telnyx SMS', 'provider-gated'], ['Slack approvals', 'online']],
+      tools: [['Campaign worker', 'Test mode: no real sends'], ['Instantly', 'approval-gated'], ['Telnyx SMS', 'approval-gated'], ['Slack approvals', 'online']],
     },
     {
       id: 'rex',
@@ -13831,7 +13831,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       knowledge: [
         { title: 'SMS compliance memory', meta: 'STOP and DNC handling', status: 'trained' },
       ],
-      tools: [['Telnyx messaging', 'provider-gated'], ['DNC pre-check', 'online'], ['Campaign worker', 'dry-run safe']],
+      tools: [['Telnyx messaging', 'approval-gated'], ['DNC pre-check', 'online'], ['Campaign worker', 'Test mode: no real sends']],
     },
   ];
 
@@ -17302,14 +17302,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function campaignStatusLabel(status = '') {
     const labels = {
-      active: 'Active',
+      active: 'Working',
       paused: 'Paused',
-      pending: 'Awaiting approval',
+      pending: 'Waiting',
       draft: 'Draft',
       completed: 'Completed',
       archived: 'Archived',
       provider: 'Provider gaps',
-      provider_missing: 'Provider missing'
+      provider_missing: 'Provider key missing'
     };
     return labels[status] || status || 'Draft';
   }
@@ -17445,7 +17445,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       eta: campaign.pendingAction ? `${String(campaign.pendingAction).replace(/_/g, ' ')} pending` : campaign.approvalId ? 'approval tracked' : 'draft saved',
       note: campaign.conflictCount
         ? `${campaign.conflictCount} lead conflict${campaign.conflictCount === 1 ? '' : 's'} need review before approval.`
-        : campaign.notes || campaign.verbiage || (providerGap ? 'Provider missing. Approval can queue, but execution will not claim success.' : 'Bridge-backed campaign record.'),
+        : campaign.notes || campaign.verbiage || (providerGap ? 'Provider key missing. Approval can queue, but execution will not claim success.' : 'Bridge-backed campaign record.'),
       stats: [
         ['Leads', String(leadCount)],
         [campaign.channel === 'email' ? 'Sent' : campaign.channel === 'call' ? 'Dialed' : 'Delivered', String(sent)],
@@ -17472,7 +17472,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       compliance: {
         DNC: 'checked before execution',
         Approval: campaign.approvalId ? 'queued' : 'draft only',
-        Provider: providerGap ? 'provider_missing' : campaign.provider || campaignProviderForChannel(campaign.channel),
+        Provider: providerGap ? 'Provider key missing' : campaign.provider || campaignProviderForChannel(campaign.channel),
         Audit: `${events.length} event${events.length === 1 ? '' : 's'}`
       },
       rex: campaign.conflictCount
@@ -17533,16 +17533,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (emailCard) {
       emailCard.dataset.state = emailReady ? 'good' : 'warning';
       emailCard.querySelector('.camp-ops-value').textContent = emailReady ? 'Instantly ready' : 'Instantly needs check';
-      emailCard.querySelector('.camp-ops-note').textContent = emailReady ? 'Email campaigns can execute after approval.' : 'Approval can queue, but execution will show provider_missing until the key is ready.';
+      emailCard.querySelector('.camp-ops-note').textContent = emailReady ? 'Email campaigns can execute after approval.' : 'Approval can queue, but execution will show Provider key missing until the key is ready.';
     }
     if (phoneCard) {
       phoneCard.dataset.state = phoneReady ? 'good' : 'warning';
       phoneCard.querySelector('.camp-ops-value').textContent = phoneReady ? 'Telnyx ready' : 'Telnyx needs check';
-      phoneCard.querySelector('.camp-ops-note').textContent = phoneReady ? 'Call/SMS batches can schedule after approval.' : 'Call/SMS launches stay approval-gated and will report provider_missing if Telnyx is not configured.';
+      phoneCard.querySelector('.camp-ops-note').textContent = phoneReady ? 'Call/SMS batches can schedule after approval.' : 'Call/SMS launches stay approval-gated and will report Provider key missing if Telnyx is not configured.';
     }
     if (workerCard) {
       workerCard.dataset.state = workerReady ? 'good' : 'warning';
-      workerCard.querySelector('.camp-ops-value').textContent = workerReady ? 'Worker live' : 'Dry-run safe';
+      workerCard.querySelector('.camp-ops-value').textContent = workerReady ? 'Worker live' : 'Test mode: no real sends';
       workerCard.querySelector('.camp-ops-note').textContent = workerReady
         ? `Runner can process up to ${campaignWorker.maxStepsPerRun || 25} due steps per run.`
         : 'Set campaign worker env gates before automated provider writes. Dry runs still audit due work.';
@@ -18362,7 +18362,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ready.innerHTML = [
         ['Launch behavior', 'queued_for_approval'],
         ['Provider writes', 'after approval only'],
-        ['If provider key missing', 'provider_missing'],
+        ['If provider key missing', 'Provider key missing'],
         ['If bridge offline', 'no fake success'],
         ['Selected lead rows', String(campaignSelectedLeadPayload(campaignUiState.wizard.leadSource).length)],
         ['Same-channel conflicts', String(conflicts)]
@@ -18871,7 +18871,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (label === 'import from batchdata') {
         showPbkFormModal({
           title: 'BatchData lead import',
-          intro: 'PBK will run this through the bridge. If BatchData is not configured, the action returns provider_missing instead of pretending it imported live data.',
+          intro: 'PBK will run this through the bridge. If BatchData is not configured, the action returns Provider key missing instead of pretending it imported live data.',
           submitLabel: 'Import through bridge',
           fields: [
             { name: 'sellerName', label: 'Seller name', value: 'BatchData Lead', required: true, full: false },
@@ -19679,7 +19679,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const context = getActiveRecordingContext();
         showPbkFormModal({
           title: `Send recording for ${context.leadName}`,
-          intro: 'This sends only if Resend and Supabase signed URLs are configured. Otherwise PBK reports provider_missing.',
+          intro: 'This sends only if Resend and Supabase signed URLs are configured. Otherwise PBK reports Provider key missing.',
           submitLabel: 'Send secure link',
           fields: [
             { name: 'email', label: 'Recipient email', type: 'email', placeholder: 'seller@example.com', required: true },
@@ -21398,7 +21398,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     showPbkFormModal({
       title: 'Launch BrowserOS research',
-      intro: 'Rex will queue a structured BrowserOS request. The outcome is shown as live, queued, provider missing, or unavailable.',
+      intro: 'Rex will queue a structured BrowserOS request. The outcome is shown as live, queued, Provider key missing, or unavailable.',
       submitLabel: 'Launch research',
       fields: [
         { name: 'target', label: 'URL or search term', value: '202 Cherry Ln Columbus OH property details', required: true, full: true },

@@ -17609,37 +17609,62 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       String(approval.type || '').toLowerCase() === 'campaign'
       && String(approval.status || '').toLowerCase() === 'pending'
     ).length;
-    const emailText = JSON.stringify(providers.instantly || {}).toLowerCase();
-    const telnyxText = JSON.stringify(providers.telnyx || {}).toLowerCase();
+    const emailMeta = providers.instantly || {};
+    const phoneMeta = providers.telnyx || {};
+    const emailKnown = Object.keys(emailMeta).length > 0;
+    const phoneKnown = Object.keys(phoneMeta).length > 0;
+    const providerStatusPending = Object.keys(providers).length === 0;
+    const emailText = JSON.stringify(emailMeta).toLowerCase();
+    const telnyxText = JSON.stringify(phoneMeta).toLowerCase();
     const campaignWorker = providers.campaignWorker || {};
-    const emailReady = /ready|active|configured|green|live/.test(emailText) && !/missing|error/.test(emailText);
-    const phoneReady = /ready|active|configured|green|live/.test(telnyxText) && !/missing|error/.test(telnyxText);
+    const emailReady = emailKnown && /ready|active|configured|green|live/.test(emailText) && !/missing|error/.test(emailText);
+    const phoneReady = phoneKnown && /ready|active|configured|green|live/.test(telnyxText) && !/missing|error/.test(telnyxText);
     const workerReady = Boolean(campaignWorker.ready);
     const approvalMode = String(snapshot?.status?.mode || snapshot?.settings?.operatingMode || 'approval').toLowerCase() === 'approval';
-    const workerApprovalGated = !workerReady && approvalMode && (emailReady || phoneReady || !Object.keys(campaignWorker).length);
+    const workerApprovalGated = !workerReady && approvalMode && !providerStatusPending && (emailReady || phoneReady || !Object.keys(campaignWorker).length);
     page.querySelector('[data-campaign-approval-count]')?.replaceChildren(document.createTextNode(String(pendingCount)));
     const emailCard = page.querySelector('[data-campaign-ops="email"]');
     const phoneCard = page.querySelector('[data-campaign-ops="phone"]');
     const workerCard = page.querySelector('[data-campaign-ops="worker"]');
     if (emailCard) {
-      emailCard.dataset.state = emailReady ? 'good' : 'warning';
-      emailCard.querySelector('.camp-ops-value').textContent = emailReady ? 'Instantly ready' : 'Instantly needs check';
-      emailCard.querySelector('.camp-ops-note').textContent = emailReady ? 'Email campaigns can execute after approval.' : 'Approval can queue, but execution will show Provider key missing until the key is ready.';
+      emailCard.dataset.state = (emailReady || !emailKnown) ? 'good' : 'warning';
+      emailCard.querySelector('.camp-ops-value').textContent = emailReady
+        ? 'Instantly ready'
+        : !emailKnown
+          ? 'Bridge status pending'
+          : 'Instantly needs check';
+      emailCard.querySelector('.camp-ops-note').textContent = emailReady
+        ? 'Email campaigns can execute after approval.'
+        : !emailKnown
+          ? 'This browser has not loaded live provider status yet. Connect OpenClaw or refresh the live bridge before launching.'
+          : 'Approval can queue, but execution will show Provider key missing until the key is ready.';
     }
     if (phoneCard) {
-      phoneCard.dataset.state = phoneReady ? 'good' : 'warning';
-      phoneCard.querySelector('.camp-ops-value').textContent = phoneReady ? 'Telnyx ready' : 'Telnyx needs check';
-      phoneCard.querySelector('.camp-ops-note').textContent = phoneReady ? 'Call/SMS batches can schedule after approval.' : 'Call/SMS launches stay approval-gated and will report Provider key missing if Telnyx is not configured.';
+      phoneCard.dataset.state = (phoneReady || !phoneKnown) ? 'good' : 'warning';
+      phoneCard.querySelector('.camp-ops-value').textContent = phoneReady
+        ? 'Telnyx ready'
+        : !phoneKnown
+          ? 'Bridge status pending'
+          : 'Telnyx needs check';
+      phoneCard.querySelector('.camp-ops-note').textContent = phoneReady
+        ? 'Call/SMS batches can schedule after approval.'
+        : !phoneKnown
+          ? 'This browser has not loaded live provider status yet. Connect OpenClaw or refresh the live bridge before launching.'
+          : 'Call/SMS launches stay approval-gated and will report Provider key missing if Telnyx is not configured.';
     }
     if (workerCard) {
-      workerCard.dataset.state = (workerReady || workerApprovalGated) ? 'good' : 'warning';
+      workerCard.dataset.state = (workerReady || workerApprovalGated || providerStatusPending) ? 'good' : 'warning';
       workerCard.querySelector('.camp-ops-value').textContent = workerReady
         ? 'Worker live'
+        : providerStatusPending
+          ? 'Bridge status pending'
         : workerApprovalGated
           ? 'Approval-gated live'
           : 'Worker needs setup';
       workerCard.querySelector('.camp-ops-note').textContent = workerReady
         ? `Runner can process up to ${campaignWorker.maxStepsPerRun || 25} due steps per run.`
+        : providerStatusPending
+          ? 'Campaign worker status will appear after this browser loads the live bridge snapshot.'
         : workerApprovalGated
           ? 'Campaign actions can queue against real providers, but every send/call still requires approval first.'
           : 'Connect the campaign worker before automated provider writes. Approval review still protects queued work.';

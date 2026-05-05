@@ -320,6 +320,9 @@ const PUBLIC_PATHS = new Set([
   // callbacks. This route validates Slack's signing secret instead.
   '/api/slack/interactions',
   '/api/webhooks/slack/interactive',
+  '/api/slack/commands',
+  '/api/webhooks/slack/commands',
+  '/api/webhooks/slack/slash',
   '/api/webhooks/docusign',
 ]);
 
@@ -5200,17 +5203,142 @@ function buildSystemAuditReport(stateRef = {}) {
   };
 }
 
+const PBK_CORE_DEAL_PATHS = [
+  {
+    key: 'cash',
+    label: 'Cash Offer',
+    purpose: 'speed, certainty, as-is purchase, no repairs, no agent fees',
+    passOff: 'Acquisitions Team',
+    scriptRule: 'Opening uses the disarm-and-connect opener; Acquisition uses the full cash primary script; Objections uses the cash objection engine.',
+  },
+  {
+    key: 'rbp',
+    label: 'Retail Buyer Program',
+    purpose: 'higher seller net when the seller can wait 30-60 days',
+    passOff: 'RBP Manager',
+    scriptRule: 'Opening frames higher value; Acquisition explains RBP phases; Objections handles timing, appraisal, and value questions.',
+  },
+  {
+    key: 'cf',
+    label: 'Creative Finance',
+    purpose: 'agent-listed deals where cash or conventional financing does not work at the seller price',
+    passOff: 'Acquisitions Team - Creative Structures',
+    scriptRule: 'Opening frames the financing problem; Acquisition uses the checkmate pitch; Objections handles seller finance risk and simplicity.',
+  },
+  {
+    key: 'mt',
+    label: 'Mortgage Takeover',
+    purpose: 'agent-listed low-rate mortgage opportunities solved with subject-to, assumption, or carry structures',
+    passOff: 'Acquisitions Team - Loan Takeover',
+    scriptRule: 'Opening frames the rate advantage; Acquisition presents subject-to, assumption, or seller carry options; Objections handles due-on-sale and payment risk.',
+  },
+  {
+    key: 'land',
+    label: 'Land',
+    purpose: 'vacant lots where buildability, utilities, access, zoning, and builder math drive the offer',
+    passOff: 'Acquisitions Team - Land Division',
+    scriptRule: 'Opening qualifies owner or agent context; Acquisition works through buildability and offer math; Objections handles low offers, assignments, and multiple offers.',
+  },
+];
+
+function getPbkCoreDoctrineText() {
+  return PBK_CORE_DEAL_PATHS
+    .map((path, index) => `${index + 1}. ${path.label}: ${path.purpose}. Pass-off: ${path.passOff}.`)
+    .join('\n');
+}
+
+function looksLikePbkDoctrineQuery(query = '') {
+  const normalized = String(query || '').toLowerCase();
+  if (!normalized) return false;
+  return /\b(who are you|what are you|rex|ava|deal path|paths|cash offer|cash wholesale|retail buyer|rbp|creative finance|mortgage takeover|subject-to|subto|land|bant|script|objection|heart of the business|probono key|pbk|wholesale\.agent|call mode|deal analyzer)\b/i.test(normalized);
+}
+
+function buildRexDoctrineAnswer(stateRef, query = '', matches = []) {
+  const normalized = String(query || '').toLowerCase();
+  const pendingApprovals = Array.isArray(stateRef.approvals)
+    ? stateRef.approvals.filter((item) => String(item.status || '').toLowerCase() === 'pending').length
+    : 0;
+  const providerMode = stateRef.status?.mode || 'approval';
+  const identity = 'Rex here. I am PBK\'s research, strategy, and memory agent. Ava is the acquisition specialist who uses the analyzer, BANT+, scripts, objections, and approval guardrails to move sellers toward the right contract path.';
+  const guardrails = [
+    'Ava never blends paths. Cash Offer, RBP, Creative Finance, Mortgage Takeover, and Land keep separate openings, acquisition scripts, and objection engines.',
+    'Ava never gives seller-facing numbers until BANT+ is complete: budget, authority, need, timeline, and urgency.',
+    'Ava should say Probono Key Realty and Cash Offer consistently, never "Cash Wholesale" and never lead with the word "wholesaler."',
+    `Provider mode is ${providerMode}; ${pendingApprovals} approval item${pendingApprovals === 1 ? '' : 's'} are currently pending.`,
+  ];
+  let answer = `${identity}\n\nPBK's five deal paths:\n${getPbkCoreDoctrineText()}\n\nOperating rules:\n- ${guardrails.join('\n- ')}\n\nDeal Analyzer and Call Mode use the same path stack: Opening, Acquisition, and Objection Engine. Calculators, live inputs, trackers, and PDF generation stay tied to the selected path.`;
+  if (/scam|fake|trust/i.test(normalized)) {
+    answer += '\n\nScam/fake handler: acknowledge the concern, offer verifiable office/site proof, state that PBK asks for no upfront money or sensitive info, then exit gracefully if trust is not restored.';
+  }
+  if (/slack|command/i.test(normalized)) {
+    answer += '\n\nSlack command routing: /rex answers strategy and memory questions; /ava routes acquisition commands, corrections, instructions, and script notes through the same bridge memory and approval-safe tooling.';
+  }
+  const useful = matches
+    .filter((doc) => doc && !String(doc.kind || '').includes('conversation-memory'))
+    .slice(0, 2)
+    .map((doc) => doc.title || doc.source)
+    .filter(Boolean);
+  if (useful.length) answer += `\n\nRelevant memory nearby: ${useful.join('; ')}.`;
+  return {
+    query: String(query || '').trim(),
+    answer,
+    matches: [],
+    citations: ['PBK runtime doctrine', 'wholesale.agent.md', 'Deal Analyzer path script library'],
+    doctrine: {
+      paths: PBK_CORE_DEAL_PATHS,
+      guardrails,
+    },
+  };
+}
+
+function looksLikeAgentDoctrineCommand(command = '') {
+  const normalized = String(command || '').toLowerCase();
+  return /\b(ava|rex)\b/i.test(normalized)
+    && /\b(who are you|what are you|explain|remember|instruction|instructions|bant|deal path|paths|script|objection|cash offer|doctrine|playbook|aware)\b/i.test(normalized);
+}
+
+function buildAvaDoctrineCommandResult(command = '', context = {}) {
+  return {
+    ok: true,
+    agent: 'ava',
+    answer: [
+      'Ava here. I am Ava Chen, Senior Wholesale Acquisition Specialist for Probono Key Realty.',
+      'My job is to qualify sellers, protect the MAO, keep each PBK path clean, and move qualified deals toward the right contract without pressure.',
+      '',
+      'What I am locked onto:',
+      `- BANT+ before seller-facing numbers: ${BANT_FIELDS.join(', ')}.`,
+      '- Path discipline: Cash Offer, RBP, Creative Finance, Mortgage Takeover, and Land all keep their own Opening, Acquisition, and Objection Engine scripts.',
+      '- Cash Offer wording stays consistent. I do not call it Cash Wholesale to sellers.',
+      '- Scam/fake objections get verification, no defensiveness, and a graceful exit if trust is not restored.',
+      '- Contracts, calls, SMS, email, and offer actions remain approval-safe unless operating mode explicitly allows them.',
+      context.address ? `- Current context address: ${context.address}.` : '',
+    ].filter(Boolean).join('\n'),
+    doctrine: {
+      paths: PBK_CORE_DEAL_PATHS,
+      bantFields: BANT_FIELDS,
+    },
+    command,
+  };
+}
+
 function answerBrainQuery(stateRef, query = '') {
   const trimmed = String(query || '').trim();
   const blogDocs = (stateRef.brainBlogPosts || []).map(brainBlogPostToDoc);
   const matches = [...(stateRef.brainDocs || []), ...blogDocs]
     .map((doc) => ({
       ...doc,
-      score: scoreBrainDocMatch(doc, trimmed || doc.title) + (doc.blogPost ? 0.25 : 0),
+      score:
+        scoreBrainDocMatch(doc, trimmed || doc.title)
+        + (doc.blogPost ? 0.25 : 0)
+        - (String(doc.kind || '').includes('conversation-memory') ? 0.6 : 0),
     }))
     .filter((doc) => doc.score > 0 || !trimmed)
     .sort((left, right) => right.score - left.score || String(right.createdAt).localeCompare(String(left.createdAt)))
     .slice(0, 3);
+
+  if (looksLikePbkDoctrineQuery(trimmed)) {
+    return buildRexDoctrineAnswer(stateRef, trimmed, matches);
+  }
 
   const top = matches[0];
   const answer = top
@@ -6075,6 +6203,18 @@ function getSenderAddress(profile = '', override = '') {
   return inferSenderProfile(profile) === 'cold' ? COLD_CAMPAIGN_EMAIL : MAIN_BUSINESS_EMAIL;
 }
 
+function mentionsTelnyxNumberAdminIntent(normalized = '') {
+  const text = String(normalized || '').toLowerCase();
+  if (text.includes('telnyx') || text.includes('caller id') || text.includes('call routing')) return true;
+  return /\b(buy|purchase|order|rent|provision|add|get|need|new)\b.{0,28}\b(phone\s+)?number(s)?\b/i.test(text)
+    || /\b(phone\s+)?number(s)?\b.{0,28}\b(buy|purchase|order|rent|provision|add|get|need|new)\b/i.test(text);
+}
+
+function looksLikeDealExecutionIntent(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  return /\b(call|dial|text|sms|send email|cold email|follow-up email|send contract|prepare contract|docusign|docu sign|analyze|analyzer|mao|arv|offer|cash offer|rbp|retail buyer|creative finance|mortgage takeover|subject-to|subto|land)\b/i.test(normalized);
+}
+
 function looksLikeAdminIntent(text = '') {
   const normalized = String(text || '').toLowerCase();
   return [
@@ -6082,7 +6222,6 @@ function looksLikeAdminIntent(text = '') {
     'domain',
     'warmup',
     'telnyx',
-    'number',
     'caller id',
     'call routing',
     'template',
@@ -6109,7 +6248,7 @@ function looksLikeAdminIntent(text = '') {
     'admin update',
     'docusign',
     'docu sign',
-  ].some((token) => normalized.includes(token));
+  ].some((token) => normalized.includes(token)) || mentionsTelnyxNumberAdminIntent(normalized);
 }
 
 function looksLikeDocuSignStatusIntent(text = '') {
@@ -6208,7 +6347,7 @@ function detectAdminIntent(command = '') {
     };
   }
 
-  if (normalized.includes('telnyx') || normalized.includes('number') || normalized.includes('caller id') || normalized.includes('routing')) {
+  if (mentionsTelnyxNumberAdminIntent(normalized)) {
     return {
       provider: 'telnyx',
       action: normalized.includes('routing') ? 'configure_call_routing' : normalized.includes('caller id') ? 'update_outbound_caller_id' : 'purchase_number',
@@ -18783,7 +18922,10 @@ const toolHandlers = {
     const zipMatch = command.match(/\b\d{5}(?:-\d{4})?\b/);
     const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(command);
 
-    if (isPropertyDataIntent) {
+    if (looksLikeAgentDoctrineCommand(command)) {
+      routedTo = 'agent_brain';
+      response = buildAvaDoctrineCommandResult(command, context);
+    } else if (isPropertyDataIntent) {
       routedTo = 'scrape_property';
       response = await toolHandlers.scrape_property({
         provider: lower.includes('scrapling') || urlMatch ? 'scrapling' : 'homeharvest',
@@ -18802,7 +18944,7 @@ const toolHandlers = {
         requestedBy: params.actor || 'Jordan',
         source: 'agent-console',
       });
-    } else if (looksLikeAdminIntent(command)) {
+    } else if (looksLikeAdminIntent(command) && !looksLikeDealExecutionIntent(command)) {
       response = await toolHandlers.routeAdminCommand({
         command,
         requestedBy: params.actor || 'Jordan',
@@ -19806,6 +19948,34 @@ async function readSlackInteractionRequest(request) {
   return { ok: true, status: 200, signature, payload };
 }
 
+async function readSlackSlashCommandRequest(request) {
+  const buffer = await readRawBodyBuffer(request);
+  const raw = buffer.toString('utf8');
+  const signature = verifySlackRequestSignature(request.headers || {}, raw);
+  if (!signature.ok) {
+    return { ok: false, status: 401, signature, payload: null };
+  }
+  const contentType = String(request.headers['content-type'] || '');
+  try {
+    let payload = {};
+    if (/application\/x-www-form-urlencoded/i.test(contentType)) {
+      const params = new URLSearchParams(raw);
+      payload = Object.fromEntries(params.entries());
+    } else {
+      payload = raw ? JSON.parse(raw) : {};
+    }
+    return { ok: true, status: 200, signature, payload };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 400,
+      signature,
+      payload: null,
+      error: error instanceof Error ? error.message : 'Slack slash command parse failed.',
+    };
+  }
+}
+
 async function handleSlackApprovalInteraction(payload = {}) {
   const action = Array.isArray(payload.actions) ? payload.actions[0] : null;
   const actionId = String(action?.action_id || '').trim();
@@ -19877,6 +20047,97 @@ async function handleSlackApprovalInteraction(payload = {}) {
       : (result.error || 'PBK approval was not found.'),
     result,
     update,
+  };
+}
+
+async function handleSlackSlashCommand(payload = {}) {
+  const commandName = String(payload.command || '').trim().toLowerCase();
+  const text = String(payload.text || '').trim();
+  const actor = payload.user_name || payload.user_id || 'slack';
+  const channel = payload.channel_name || payload.channel_id || '';
+  const commandLabel = commandName || '/pbk';
+
+  if (!text && /rex$|\/rex/i.test(commandLabel)) {
+    return {
+      ok: true,
+      status: 200,
+      text: 'Ask Rex a PBK strategy, memory, research, or admin question. Example: /rex what are Ava\'s five deal paths?',
+    };
+  }
+
+  if (/rex$|\/rex/i.test(commandLabel)) {
+    const result = await toolHandlers.getBrainState({
+      query: text,
+      requestedBy: actor,
+      source: 'slack-command',
+      remember: true,
+    });
+    return {
+      ok: true,
+      status: 200,
+      text: result.answer || 'Rex routed that request through the PBK brain.',
+      result,
+    };
+  }
+
+  if (/ava$|\/ava/i.test(commandLabel)) {
+    const normalized = text.toLowerCase();
+    const memoryMatch = normalized.match(/^(correct|instruct|script)\b[:\s-]*(.*)$/i);
+    if (memoryMatch) {
+      const kind = memoryMatch[1].toLowerCase();
+      const content = (memoryMatch[2] || text).trim();
+      const result = await toolHandlers.ingestResearchDoc({
+        title: `Ava ${kind} from Slack`,
+        topic: kind === 'script' ? 'Ava Script Memory' : 'Ava Operator Memory',
+        kind: 'coach-memory',
+        source: `Slack ${commandLabel}`,
+        summary: content || text,
+        excerpt: content || text,
+        tags: ['ava', 'operator-instruction', kind, 'pbk-wholesale'],
+      });
+      addActivity(state, makeActivity({
+        actor,
+        category: 'BRAIN',
+        status: 'indexed',
+        text: `Slack /ava ${kind} stored for Ava memory.`,
+        target: channel || 'Slack',
+      }));
+      await persistState(state);
+      return {
+        ok: true,
+        status: 200,
+        text: `Saved. Ava memory updated from /ava ${kind}.`,
+        result,
+      };
+    }
+
+    const result = await toolHandlers.runAgentCommand({
+      command: text || 'Ava, confirm your PBK acquisition instructions.',
+      actor,
+      source: 'slack-command',
+    });
+    const answer = result?.response?.answer
+      || `Ava routed that through ${result?.routedTo || 'the PBK command bridge'}.`;
+    return {
+      ok: true,
+      status: 200,
+      text: answer,
+      result,
+    };
+  }
+
+  const result = text
+    ? await toolHandlers.routeAdminCommand({
+        command: text,
+        requestedBy: actor,
+        source: 'slack-command',
+      })
+    : await toolHandlers.admin_check_health({ requestedBy: actor, source: 'slack-command' });
+  return {
+    ok: true,
+    status: 200,
+    text: result.answer || 'PBK command routed through the bridge.',
+    result,
   };
 }
 
@@ -20727,6 +20988,30 @@ const server = createServer(async (request, response) => {
         ok: result.ok,
         result: result.result,
         update: result.update,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/slack/commands', '/api/webhooks/slack/commands', '/api/webhooks/slack/slash'])) {
+      const slackRequest = await readSlackSlashCommandRequest(request);
+      if (!slackRequest.ok) {
+        json(response, slackRequest.status || 400, {
+          response_type: 'ephemeral',
+          text: slackRequest.error || slackRequest.signature?.error || 'Slack command rejected.',
+          ok: false,
+          signature: {
+            verified: false,
+            skipped: Boolean(slackRequest.signature?.skipped),
+          },
+        });
+        return;
+      }
+      const result = await handleSlackSlashCommand(slackRequest.payload || {});
+      json(response, result.status || (result.ok ? 200 : 400), {
+        response_type: 'ephemeral',
+        text: result.text || (result.ok ? 'PBK command routed.' : 'PBK command failed.'),
+        ok: result.ok,
+        result: result.result,
       });
       return;
     }
@@ -23213,6 +23498,7 @@ const server = createServer(async (request, response) => {
         'POST /api/campaigns/:id/script',
         'POST /api/campaigns/:id/sequence',
         'POST /api/slack/interactions',
+        'POST /api/slack/commands',
         'GET /api/deepgram/health',
         'POST /api/deepgram/transcribe-url',
         'GET /api/tooling/status',

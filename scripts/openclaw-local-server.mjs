@@ -15096,7 +15096,30 @@ function buildSlackApprovalBlocks(approval = {}) {
 }
 
 async function postSlackApproval(approval = {}) {
+  const approvalText = `PBK approval needed: ${approval.type || 'approval'} for ${approval.leadName || approval.address || approval.id}`;
+  const approvalBlocks = buildSlackApprovalBlocks(approval);
+
   if (!SLACK_BOT_TOKEN || !SLACK_APPROVAL_CHANNEL_ID) {
+    if (SLACK_WEBHOOK_URL) {
+      const webhookResult = await fireSlackWebhook({
+        text: approvalText,
+        blocks: approvalBlocks,
+      });
+      if (webhookResult.ok) {
+        approval.slackMessage = {
+          channel: 'incoming-webhook',
+          ts: '',
+          postedAt: isoNow(),
+          delivery: 'webhook',
+        };
+      }
+      return {
+        ...webhookResult,
+        result: webhookResult.ok ? 'queued_for_approval' : 'provider_missing',
+        verbiage: webhookResult.ok ? 'Slack approval posted via webhook' : 'Slack approval not posted',
+        fallback: 'incoming_webhook',
+      };
+    }
     return {
       ok: false,
       skipped: true,
@@ -15106,8 +15129,8 @@ async function postSlackApproval(approval = {}) {
   }
   const result = await fireSlackApi('chat.postMessage', {
     channel: SLACK_APPROVAL_CHANNEL_ID,
-    text: `PBK approval needed: ${approval.type || 'approval'} for ${approval.leadName || approval.address || approval.id}`,
-    blocks: buildSlackApprovalBlocks(approval),
+    text: approvalText,
+    blocks: approvalBlocks,
     metadata: {
       event_type: 'pbk_approval_request',
       event_payload: {
@@ -15121,6 +15144,28 @@ async function postSlackApproval(approval = {}) {
       channel: result.body?.channel || SLACK_APPROVAL_CHANNEL_ID,
       ts: result.body?.ts || '',
       postedAt: isoNow(),
+    };
+  }
+  if (!result.ok && SLACK_WEBHOOK_URL) {
+    const webhookResult = await fireSlackWebhook({
+      text: approvalText,
+      blocks: approvalBlocks,
+    });
+    if (webhookResult.ok) {
+      approval.slackMessage = {
+        channel: 'incoming-webhook',
+        ts: '',
+        postedAt: isoNow(),
+        delivery: 'webhook',
+        botPostError: result.error || '',
+      };
+    }
+    return {
+      ...webhookResult,
+      result: webhookResult.ok ? 'queued_for_approval' : (result.result || 'provider_missing'),
+      verbiage: webhookResult.ok ? 'Slack approval posted via webhook fallback' : 'Slack approval not posted',
+      fallback: 'incoming_webhook',
+      botPostError: result.error || '',
     };
   }
   return {

@@ -394,7 +394,7 @@ body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;}
 .badge-nogo{color:var(--red);font-weight:700;}
 .highlight-box{background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.2);}
 
-/* -- CoC Investor Yield Calculator (CF + MT paths) ----------------------- */
+/* -- Cash-on-Cash Calculator (CF + MT paths) ----------------------------- */
 .calculator{background:linear-gradient(180deg,#fff,var(--cream));border-radius:0 0 10px 10px;overflow:hidden;box-shadow:0 14px 34px rgba(10,10,10,.08);}
 .calculator .calc-intro{padding:12px 14px;background:linear-gradient(135deg,var(--blue-lt),#fff);border-bottom:1px solid var(--border);font-size:11px;color:var(--mid);line-height:1.45;}
 .calculator .calc-intro strong{color:var(--blue-dk);}
@@ -421,9 +421,16 @@ body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;}
 .calculator .math-check.bad{display:block;background:var(--red-lt);border-color:#FCA5A5;color:#7F1D1D;}
 .calculator .math-check.warn{display:block;background:var(--amber-lt);border-color:#FDE68A;color:#78350F;}
 .calculator .coc-note{padding:9px 14px 12px;font-size:10px;color:var(--mid);border-top:1px solid var(--border);line-height:1.5;}
+.coc-shell{margin-top:14px;border:1px solid rgba(42,151,218,.28);border-radius:16px;overflow:hidden;background:var(--card);box-shadow:0 14px 30px rgba(42,151,218,.10);}
+.coc-shell-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:linear-gradient(135deg,var(--blue-lt),rgba(255,255,255,.92));border-bottom:1px solid rgba(42,151,218,.22);}
+.coc-shell-title{font-size:11px;font-weight:900;color:var(--blue-dk);letter-spacing:.055em;text-transform:uppercase;}
+.coc-shell-note{font-size:10px;color:var(--mid);font-weight:800;}
+.coc-shell-root{overflow:hidden;}
 @media(max-width:720px){
   .calculator .calc-grid,.calculator .calc-results,.calculator .reverse-panel{grid-template-columns:1fr;}
   .calculator .coc-rev-btn{width:100%;}
+  .coc-shell-head{align-items:flex-start;flex-direction:column;gap:4px;}
+  .coc-shell-note{line-height:1.35;}
 }
 
 
@@ -2422,13 +2429,13 @@ html,body{
         <div class="cf-phase" id="mtp-script"><div class="cf-script-block" id="mt-script-text"></div></div>
         <div class="cf-phase" id="mtp-objections"><div id="mt-obj-list"></div></div>
       </div>
-      <!-- MT Yield Calculator -->
-      <div id="mt-yield-inline" style="margin-top:14px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--blue-lt);border-radius:8px 8px 0 0;border:1px solid var(--blue);border-bottom:none;">
-          <span style="font-size:11px;font-weight:700;color:var(--blue-dk);letter-spacing:.04em;text-transform:uppercase;">&#128200; Investor Yield Calculator</span>
-          <span style="font-size:10px;color:var(--mid);">MT path - pre-filled from deal data</span>
+      <!-- MT Cash-on-Cash Calculator -->
+      <div id="mt-yield-inline" class="coc-shell">
+        <div class="coc-shell-head">
+          <span class="coc-shell-title">&#128200; Cash-on-Cash Calculator</span>
+          <span class="coc-shell-note">MT path - pre-filled from deal data</span>
         </div>
-        <div id="mt-coc-calc-root" style="border:1px solid var(--blue);border-top:none;border-radius:0 0 8px 8px;overflow:hidden;"></div>
+        <div id="mt-coc-calc-root" class="coc-shell-root"></div>
       </div>
     </div>
     <!-- CF SCRIPTING PANEL -->
@@ -2446,12 +2453,12 @@ html,body{
       <div class="cf-phase" id="cfp-checkmate"><div class="cf-phase-label">Phase 2 &#8212; Checkmate Pitch</div><div class="cf-script-block" id="cf-script-checkmate"></div><div id="cf-checkmate-math"></div></div>
       <div class="cf-phase" id="cfp-terms"><div class="cf-phase-label">Phase 3 &#8212; Terms Close</div><div class="cf-script-block" id="cf-script-terms"></div></div>
       <div class="cf-phase" id="cfp-wrap"><div class="cf-phase-label">Phase 4 &#8212; Wrap&#8594;SF Convert</div><div class="cf-script-block" id="cf-script-wrap"></div></div>
-      <div id="cf-yield-inline" style="margin-top:14px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--blue-lt);border-radius:8px 8px 0 0;border:1px solid var(--blue);border-bottom:none;">
-          <span style="font-size:11px;font-weight:700;color:var(--blue-dk);letter-spacing:.04em;text-transform:uppercase;">&#128200; Investor Yield Calculator</span>
-          <span style="font-size:10px;color:var(--mid);">Pre-filled from deal data &mdash; CF path only</span>
+      <div id="cf-yield-inline" class="coc-shell">
+        <div class="coc-shell-head">
+          <span class="coc-shell-title">&#128200; Cash-on-Cash Calculator</span>
+          <span class="coc-shell-note">Pre-filled from deal data &mdash; CF path only</span>
         </div>
-        <div id="cf-coc-calc-root" style="border:1px solid var(--blue);border-top:none;border-radius:0 0 8px 8px;overflow:hidden;"></div>
+        <div id="cf-coc-calc-root" class="coc-shell-root"></div>
       </div>
       <div class="cf-phase" id="cfp-objections"><div class="cf-phase-label">CF Objections</div><div id="cf-obj-list"></div></div>
     </div>
@@ -5500,7 +5507,7 @@ function cfPhase(id){
   if(tabs[phIdx[id]])tabs[phIdx[id]].classList.add('on');
   var ph=document.getElementById('cfp-'+id);
   if(ph)ph.classList.add('on');
-  // Hide yield calc when objections tab active, show otherwise
+  // Hide CoC calculator when objections tab active, show otherwise
   var cfYldCard=document.getElementById('cf-yield-inline');
   if(cfYldCard){cfYldCard.style.display=(id==='objections')?'none':'';}
   // Recalculate on non-objection tabs
@@ -5752,7 +5759,7 @@ function mtPhase(id){
   if(tabs[tIdx[id]])tabs[tIdx[id]].classList.add('on');
   var ph=document.getElementById('mtp-'+id);
   if(ph)ph.classList.add('on');
-  // Hide yield calc when objections tab is active
+  // Hide CoC calculator when objections tab is active
   var yld=document.getElementById('mt-yield-inline');
   if(yld)yld.style.display=(id==='objections')?'none':'';
   // Always recalc when switching to yield/analysis
@@ -6239,12 +6246,12 @@ function applyMTOffer(offerNum,upfront,balConf,rateConf,mtTypeVal){
   buildCloseRemarks(D.selectedPath||'mt',D);
   live();
   if(typeof syncYieldCalcFromTerms==='function')syncYieldCalcFromTerms();
-  // Pre-fill yield calc with this specific MT offer's values
+  // Pre-fill CoC calculator with this specific MT offer's values
   var _mtPrice=D.agreedPrice||D.price||0;
   var _mtUpfrontPct=_mtPrice>0?Math.round((upfront/_mtPrice)*100):4;
   if(typeof buildCoCCalculator==='function')buildCoCCalculator(_mtPrice,_mtUpfrontPct,rateConf||D.srate||3.5,30,'mt');
   if(typeof buildCoCCalculatorForMT==='function')buildCoCCalculatorForMT();
-  // Make yield calc visible
+  // Make CoC calculator visible
   var _mtYield=document.getElementById('mt-yield-inline');
   if(_mtYield)_mtYield.style.display='';
   var lbl=document.getElementById('cm-script-lbl');
@@ -6277,7 +6284,7 @@ function applyCFOffer(offerNum,price,dn,rate,term){
   live();
   buildCloseRemarks(D.selectedPath||'cf',D);
   if(typeof syncYieldCalcFromTerms==='function')syncYieldCalcFromTerms();
-  // Sync yield calculator with newly applied offer
+  // Sync CoC calculator with newly applied offer
   if(typeof buildCoCCalculator==='function')buildCoCCalculator(price,dn>0&&price>0?Math.round(dn/price*100):20,rate,term,'cf');
   var lbl=document.getElementById('cm-script-lbl');
   if(lbl)lbl.textContent='CF Script - Offer '+offerNum+' Applied ?';
@@ -6292,7 +6299,7 @@ function fullSync(){
   live();
 }
 
-// -- buildCoCCalculatorForMT: yield calc pre-filled for MT path ---------------
+// -- buildCoCCalculatorForMT: CoC calc pre-filled for MT path -----------------
 function buildCoCCalculatorForMT(){
   var price=D.agreedPrice||D.price||0;
   var rate=D.agreedRateConf||D.srate||3.5;
@@ -6425,7 +6432,7 @@ function buildCallMode(){
 
   live();
 }
-// -- CoC Investor Yield Calculator (CF + MT paths) -----------------------------
+// -- Cash-on-Cash Calculator (CF + MT paths) -----------------------------------
 function _money(v){
   return isFinite(v)?'$'+Math.round(v).toLocaleString():'-';
 }
@@ -6591,9 +6598,9 @@ function buildCoCCalculator(overridePrice, overrideDn, overrideRate, overrideTer
   var other=activePath==='mt'?cfRoot:mtRoot;
   if(other&&other!==root)other.innerHTML='';
   var seed=initCoCFromDeal(activePath,{price:overridePrice,downPct:overrideDn,rate:overrideRate,term:overrideTerm});
-  var pathLabel=activePath==='mt'?'Mortgage Takeover':'Creative Finance';
+  var pathLabel=activePath==='mt'?'Mortgage Takeover Cash-on-Cash':'Creative Finance Cash-on-Cash';
   root.innerHTML='<div class="calculator" data-coc-path="'+activePath+'">'+
-    '<div class="calc-intro"><strong>'+pathLabel+' Investor Yield</strong> - Cash-on-Cash math only. Results update live from Deal Analyzer and Live Call Inputs.</div>'+
+    '<div class="calc-intro"><strong>'+pathLabel+'</strong> - CoC math only. Results update live from Deal Analyzer and Live Call Inputs.</div>'+
     '<div class="calc-grid">'+
     _cF('Purchase Price ($)','coc-price',seed.price,'number','1000')+
     _cF('Down Payment (%)','coc-down',seed.downPct,'number','0.1')+
@@ -6706,7 +6713,7 @@ function cocMaxPrice(){
   if(maxP>0)cocUpdate(true);
 }
 function cocFindMaxPrice(){return cocMaxPrice();}
-// -- End CoC Yield Calculator ---------------------------------------------
+// -- End Cash-on-Cash Calculator ---------------------------------------------
 
 
 // ==========================================
@@ -7451,7 +7458,7 @@ function calcDealScore(d){
   var acc=calcAcceptance(d);
   // Base score from classifyDeal (doc10 hierarchy)
   var score=deal.score||0;
-  // Doc 9: enhance score with gross profit + CoC (yield-first)
+  // Doc 9: enhance score with gross profit + CoC
   var profit=d.grossProfit||DEAL.grossProfit||0;
   var cocVal=calcCapRate(d)||0; // reuse cap rate as yield proxy
   if(profit>50000)score=Math.min(100,score+15);

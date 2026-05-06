@@ -694,6 +694,16 @@
   }
   .chip-btn:hover { color: var(--text-primary); border-color: var(--border-bright); }
   .chip-btn.active { color: var(--sky); border-color: var(--sky-dim); background: var(--sky-glow); }
+  .chip-btn.danger {
+    color: var(--crimson);
+    border-color: rgba(248, 113, 113, 0.32);
+    background: rgba(248, 113, 113, 0.06);
+  }
+  .chip-btn.danger:hover {
+    color: #fecaca;
+    border-color: rgba(248, 113, 113, 0.55);
+    background: rgba(248, 113, 113, 0.12);
+  }
 
   .btn {
     padding: 8px 14px; border-radius: var(--radius);
@@ -8179,6 +8189,13 @@
     }
     .cd-lead-row .name { font-family: var(--font-ui); font-size: 13px; color: var(--text-primary); overflow-wrap: anywhere; }
     .cd-lead-row .meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); margin-top: 1px; overflow-wrap: anywhere; }
+    .cd-lead-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
     .cd-side { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
     .cd-side-card { background: var(--bg-panel); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); padding: var(--s-4); min-width: 0; }
     .cd-side-card h4 { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: var(--s-3); }
@@ -17719,6 +17736,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   const CAMPAIGN_SELECTED_LEADS_STORAGE_KEY = 'pbk-campaign-selected-leads';
   const CAMPAIGN_DETAIL_LEADS_STORAGE_KEY = 'pbk-campaign-detail-leads-v1';
+  const CAMPAIGN_DETAIL_EXACT_STORAGE_KEY = 'pbk-campaign-detail-exact-v1';
 
   function campaignStatusLabel(status = '') {
     const labels = {
@@ -17732,6 +17750,32 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       provider_missing: 'Provider key missing'
     };
     return labels[status] || status || 'Draft';
+  }
+
+  function campaignLeadStatusMeta(status = '', chip = '') {
+    const raw = normalizeControlText(status || chip || '');
+    if (/provider_missing|provider key missing|provider key|missing provider|provider gap|env/.test(raw)) {
+      return { label: 'Provider key missing', chip: 'cold' };
+    }
+    if (/closed|won|signed|complete|converted|contract signed/.test(raw)) {
+      return { label: 'Closed', chip: 'won' };
+    }
+    if (/approval|review|queued|pending|waiting|awaiting|callback|follow.?up/.test(raw)) {
+      return { label: 'Waiting', chip: chip || 'pending' };
+    }
+    if (/active|working|contacted|sent|delivered|opened|reply|replied|connected|scheduled|live|dialed/.test(raw)) {
+      return { label: 'Working', chip: chip || 'new' };
+    }
+    if (/dnc|stop|suppressed|blocked|bounce|failed|conflict|declined|rejected|lost|pass/.test(raw)) {
+      return { label: /dnc|stop|suppressed|blocked/.test(raw) ? 'Suppressed' : 'Needs review', chip: 'cold' };
+    }
+    if (/new|cold|not touched|not started/.test(raw)) {
+      return { label: 'Not started', chip: chip || 'new' };
+    }
+    return {
+      label: status ? String(status).replace(/_/g, ' ') : 'Waiting',
+      chip: chip || 'new'
+    };
   }
 
   function campaignChannelLabel(channel = '') {
@@ -17768,14 +17812,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const providerMissing = Number(execution.providerMissingCount || 0);
     const status = providerMissing ? 'provider' : /complete|done/i.test(String(execution.status || '')) ? 'completed' : 'active';
     const sentSteps = steps.filter((step) => /sent|scheduled|provider/i.test(String(step.status || ''))).length;
-    const leads = Array.isArray(execution.leads) ? execution.leads.map((lead, index) => ({
-      name: lead.leadName || lead.name || `Lead ${index + 1}`,
-      meta: lead.address || lead.phone || lead.email || 'Campaign lead',
-      touch: `${steps.filter((step) => step.leadId === lead.leadId).length || 1} steps`,
-      last: formatRelativeTime(execution.updatedAt || execution.createdAt),
-      status: providerMissing ? 'provider gap' : 'scheduled',
-      chip: providerMissing ? 'cold' : 'new'
-    })) : [];
+    const leads = Array.isArray(execution.leads) ? execution.leads.map((lead, index) => {
+      const statusMeta = campaignLeadStatusMeta(providerMissing ? 'provider gap' : 'scheduled', providerMissing ? 'cold' : 'new');
+      return {
+        name: lead.leadName || lead.name || `Lead ${index + 1}`,
+        meta: lead.address || lead.phone || lead.email || 'Campaign lead',
+        touch: `${steps.filter((step) => step.leadId === lead.leadId).length || 1} steps`,
+        last: formatRelativeTime(execution.updatedAt || execution.createdAt),
+        status: statusMeta.label,
+        chip: statusMeta.chip
+      };
+    }) : [];
     return {
       id: execution.id || execution.approvalId || `campaign-runtime-${Date.now()}`,
       name: execution.notes || `Approved campaign ${String(execution.approvalId || '').slice(0, 8)}`,
@@ -17835,15 +17882,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
     const sent = Number(metrics.sent || 0);
     const replies = Number(metrics.replied || metrics.connected || 0);
-    const bridgeDisplayLeads = leads.map((lead) => ({
-      id: lead.leadId || lead.id || '',
-      name: lead.leadName || lead.name || 'Unknown seller',
-      meta: lead.address || lead.phone || lead.email || 'Campaign lead',
-      touch: `${lead.touchIndex || 0} touches`,
-      last: lead.lastTouchAt ? formatRelativeTime(lead.lastTouchAt) : 'Not touched',
-      status: lead.status || 'pending',
-      chip: /conflict|failed|bounce/i.test(String(lead.status || '')) ? 'cold' : 'new'
-    }));
+    const bridgeDisplayLeads = leads.map((lead) => {
+      const statusMeta = campaignLeadStatusMeta(lead.status || 'pending', /conflict|failed|bounce/i.test(String(lead.status || '')) ? 'cold' : 'new');
+      return {
+        id: lead.leadId || lead.id || '',
+        name: lead.leadName || lead.name || 'Unknown seller',
+        meta: lead.address || lead.phone || lead.email || 'Campaign lead',
+        touch: `${lead.touchIndex || 0} touches`,
+        last: lead.lastTouchAt ? formatRelativeTime(lead.lastTouchAt) : 'Not touched',
+        status: statusMeta.label,
+        chip: statusMeta.chip
+      };
+    });
     const displayLeads = mergeCampaignDetailLeads(bridgeDisplayLeads, getStoredCampaignDetailLeads(campaign.id), campaign.id);
     const leadCount = displayLeads.length || Number(campaign.leadCount || metrics.leads || 0);
     const totalTouches = Number(metrics.estimatedTouches || (campaign.channel === 'email' ? leadCount * 5 : campaign.channel === 'sms' ? leadCount * 3 : leadCount));
@@ -18122,7 +18172,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       <div class="cd-stat"><div class="l">${escapeHtml(label)}</div><div class="v ${escapeHtml(tone === 'good' ? 'good' : tone === 'warn' ? 'warn' : '')}">${escapeHtml(value)}</div><div class="delta ${escapeHtml(tone === 'up' ? 'up' : '')}">${escapeHtml(delta || '')}</div></div>
     `).join('');
     page.querySelector('[data-detail-lead-count]').textContent = `(${campaign.leadCount || 0})`;
-    const leads = campaign.leads?.length ? campaign.leads : [{ id: 'empty', name: 'No leads attached yet', meta: 'Add leads or wait for approval execution steps.', touch: '-', last: '-', status: 'pending', chip: 'cold' }];
+    const leads = campaign.leads?.length ? campaign.leads : [{ id: 'empty', name: 'No leads attached yet', meta: 'Add leads or wait for approval execution steps.', touch: '-', last: '-', status: 'Waiting', chip: 'cold' }];
     page.querySelector('[data-detail-leads]').innerHTML = leads.map((lead) => `
       <div class="cd-lead-row ${escapeHtml(lead.id && lead.id === campaignUiState.focusLeadId ? 'focused' : '')}" data-campaign-lead-id="${escapeHtml(lead.id || '')}">
         <input type="checkbox" aria-label="Select ${escapeHtml(lead.name)}">
@@ -18130,7 +18180,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         <span>${escapeHtml(lead.touch || '-')}</span>
         <span>${escapeHtml(lead.last || '-')}</span>
         <span><span class="status-chip ${escapeHtml(lead.chip || 'new')}">${escapeHtml(lead.status || 'pending')}</span></span>
-        <span><button class="chip-btn" type="button" data-campaign-detail-action="open-lead">Open</button></span>
+        <span class="cd-lead-actions">
+          <button class="chip-btn" type="button" data-campaign-detail-action="open-lead">Open</button>
+          ${lead.id && lead.id !== 'empty' ? `<button class="chip-btn danger" type="button" data-campaign-detail-action="remove-lead" data-campaign-remove-lead-id="${escapeHtml(lead.id || lead.leadId || '')}">Remove</button>` : ''}
+        </span>
       </div>
     `).join('');
     page.querySelector('[data-detail-schedule]').innerHTML = Object.entries(campaign.schedule || {}).map(([label, value]) => `<div class="row"><span class="l">${escapeHtml(label)}</span><span class="v">${escapeHtml(value)}</span></div>`).join('');
@@ -18260,6 +18313,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return Array.isArray(rows) ? rows : [];
   }
 
+  function getCampaignDetailExactStore() {
+    const stored = parseJSONSafe(localStorage.getItem(CAMPAIGN_DETAIL_EXACT_STORAGE_KEY), {});
+    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+  }
+
+  function setCampaignDetailExactOverride(campaignId = '', enabled = true) {
+    if (!campaignId) return;
+    const store = getCampaignDetailExactStore();
+    store[campaignId] = Boolean(enabled);
+    try {
+      localStorage.setItem(CAMPAIGN_DETAIL_EXACT_STORAGE_KEY, JSON.stringify(store));
+    } catch {}
+  }
+
   function normalizeCampaignLeadForDetail(input = {}, index = 0, campaignId = '') {
     const seller = input.seller || {};
     const property = input.property || {};
@@ -18269,11 +18336,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const phone = input.phone || seller.phone || '';
     const email = input.email || seller.email || '';
     const meta = input.meta || [address, phone, email].filter(Boolean).join(' - ') || 'Campaign lead';
-    const status = input.status || input.stage || input.pipelineStage || 'pending';
+    const rawStatus = input.status || input.stage || input.pipelineStage || 'pending';
     const tags = Array.isArray(input.tags)
       ? input.tags
       : String(input.tags || '').split(/[\s,]+/).filter(Boolean);
-    const chip = input.chip || (/conflict|failed|bounce/i.test(String(status)) ? 'cold' : 'new');
+    const statusMeta = campaignLeadStatusMeta(rawStatus, input.chip || (/conflict|failed|bounce/i.test(String(rawStatus)) ? 'cold' : 'new'));
     const touchIndex = Number(input.touchIndex || 0);
     return {
       id: leadId,
@@ -18289,8 +18356,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       touchIndex,
       last: input.last || (input.lastTouchAt ? formatRelativeTime(input.lastTouchAt) : 'Not touched'),
       lastTouchAt: input.lastTouchAt || '',
-      status,
-      chip,
+      status: statusMeta.label,
+      rawStatus,
+      chip: statusMeta.chip,
       tags,
       source: input.source || 'selected'
     };
@@ -18323,12 +18391,54 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return store[campaignId];
   }
 
+  function replaceCampaignDetailLeadsLocally(campaign = {}, leads = []) {
+    const campaignId = campaign.id || campaignUiState.leadSelector.campaignId || campaignUiState.selectedId || '';
+    if (!campaignId) return [];
+    const nextLeads = storeCampaignDetailLeads(campaignId, leads);
+    setCampaignDetailExactOverride(campaignId, true);
+    const runtime = PBK.state.openclawRuntime || {};
+    PBK.state.openclawRuntime = runtime;
+    const otherRuntimeLeads = Array.isArray(runtime.campaignLeads)
+      ? runtime.campaignLeads.filter((lead) => lead.campaignId !== campaignId)
+      : [];
+    runtime.campaignLeads = [
+      ...otherRuntimeLeads,
+      ...nextLeads.map((lead) => ({
+        ...lead,
+        campaignId,
+        leadId: lead.leadId || lead.id,
+        leadName: lead.name || lead.leadName,
+        touchIndex: Number(lead.touchIndex || 0),
+        lastTouchAt: lead.lastTouchAt || ''
+      }))
+    ];
+    if (Array.isArray(runtime.campaigns)) {
+      runtime.campaigns = runtime.campaigns.map((item) => {
+        if (item.id !== campaignId) return item;
+        const metrics = {
+          ...(item.metrics || {}),
+          leads: nextLeads.length
+        };
+        return {
+          ...item,
+          leadCount: nextLeads.length,
+          metrics,
+          updatedAt: new Date().toISOString()
+        };
+      });
+    }
+    return nextLeads;
+  }
+
   function enrichCampaignWithStoredLeads(campaign = {}) {
     if (!campaign?.id) return campaign;
     const storedLeads = getStoredCampaignDetailLeads(campaign.id);
-    if (!storedLeads.length) return campaign;
-    const leads = mergeCampaignDetailLeads(campaign.leads || [], storedLeads, campaign.id);
-    const leadCount = Math.max(Number(campaign.leadCount || 0), leads.length);
+    const exactOverride = getCampaignDetailExactStore()[campaign.id] === true;
+    if (!storedLeads.length && !exactOverride) return campaign;
+    const leads = exactOverride
+      ? mergeCampaignDetailLeads([], storedLeads, campaign.id)
+      : mergeCampaignDetailLeads(campaign.leads || [], storedLeads, campaign.id);
+    const leadCount = leads.length || Number(campaign.leadCount || 0);
     const updateLeadRows = (rows = []) => Array.isArray(rows)
       ? rows.map((row) => Array.isArray(row) && /^leads/i.test(String(row[0] || '')) ? [row[0], String(leadCount), ...row.slice(2)] : row)
       : rows;
@@ -18344,39 +18454,57 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function applyCampaignLeadSelectionLocally(campaign = {}, selectedLeads = []) {
     const campaignId = campaign.id || campaignUiState.leadSelector.campaignId || '';
     if (!campaignId || !selectedLeads.length) return [];
-    const mergedLeads = storeCampaignDetailLeads(campaignId, mergeCampaignDetailLeads(getStoredCampaignDetailLeads(campaignId), selectedLeads, campaignId));
-    const runtime = PBK.state.openclawRuntime || {};
-    PBK.state.openclawRuntime = runtime;
-    const otherRuntimeLeads = Array.isArray(runtime.campaignLeads)
-      ? runtime.campaignLeads.filter((lead) => lead.campaignId !== campaignId)
-      : [];
-    runtime.campaignLeads = [
-      ...otherRuntimeLeads,
-      ...mergedLeads.map((lead) => ({
-        ...lead,
-        campaignId,
-        leadId: lead.leadId || lead.id,
-        leadName: lead.name || lead.leadName,
-        touchIndex: Number(lead.touchIndex || 0),
-        lastTouchAt: lead.lastTouchAt || ''
-      }))
-    ];
-    if (Array.isArray(runtime.campaigns)) {
-      runtime.campaigns = runtime.campaigns.map((item) => {
-        if (item.id !== campaignId) return item;
-        const metrics = {
-          ...(item.metrics || {}),
-          leads: Math.max(Number(item.metrics?.leads || item.leadCount || 0), mergedLeads.length)
-        };
-        return {
-          ...item,
-          leadCount: metrics.leads,
-          metrics,
-          updatedAt: new Date().toISOString()
-        };
-      });
-    }
+    const mergedLeads = replaceCampaignDetailLeadsLocally(
+      { ...campaign, id: campaignId },
+      mergeCampaignDetailLeads([
+        ...(campaign.leads || []),
+        ...getStoredCampaignDetailLeads(campaignId)
+      ], selectedLeads, campaignId)
+    );
     return mergedLeads;
+  }
+
+  function removeCampaignLeadLocally(campaign = {}, leadId = '') {
+    const campaignId = campaign.id || campaignUiState.selectedId || '';
+    const needle = String(leadId || '').trim();
+    if (!campaignId || !needle) return [];
+    const keyNeedle = campaignLeadKey({ leadId: needle, id: needle }) || needle;
+    const currentLeads = mergeCampaignDetailLeads(campaign.leads || [], getStoredCampaignDetailLeads(campaignId), campaignId);
+    const remaining = currentLeads.filter((lead) => {
+      const leadKeys = [
+        lead.id,
+        lead.leadId,
+        campaignLeadKey({
+          leadId: lead.leadId,
+          id: lead.id,
+          leadName: lead.name,
+          address: lead.address || lead.meta,
+          phone: lead.phone,
+          email: lead.email
+        })
+      ].map((value) => String(value || '').trim()).filter(Boolean);
+      return !leadKeys.includes(needle) && !leadKeys.includes(keyNeedle);
+    });
+    const nextLeads = replaceCampaignDetailLeadsLocally(campaign, remaining);
+    renderCampaignsExperience(PBK.state.openclawRuntime);
+    renderCampaignDetail(campaignId, PBK.state.openclawRuntime);
+    toastOutcome({
+      outcome: 'queued_for_approval',
+      title: 'Lead removed from campaign',
+      desc: 'The campaign roster updated now. Provider-impacting execution remains approval-gated.'
+    });
+    requestCampaignAction(campaign, 'remove_lead', {
+      removedLeadId: needle,
+      selectedLeads: nextLeads,
+      leadSource: 'selected',
+      actor: 'PBK Command Center',
+      notes: `Remove lead ${needle} from ${campaign.name || campaignId}.`
+    }).then(() => {
+      replaceCampaignDetailLeadsLocally(campaign, nextLeads);
+      renderCampaignsExperience(PBK.state.openclawRuntime);
+      renderCampaignDetail(campaignId, PBK.state.openclawRuntime);
+    }).catch(() => {});
+    return nextLeads;
   }
 
   function normalizeCampaignLeadCandidate(input = {}, index = 0, source = 'runtime') {
@@ -18934,7 +19062,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       showLocalViewToast('Campaign view filter', 'This control filters only the current detail view.');
       return;
     }
-    if (normalized === 'open') showPage('lead-detail');
+    if (normalized === 'open' || normalized === 'open-lead') showPage('lead-detail');
   }
 
   function wireCampaignsControls() {
@@ -19003,6 +19131,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const value = action.dataset.campaignDetailAction;
         if (value === 'back') {
           showPage('campaigns');
+          return;
+        }
+        if (value === 'remove-lead') {
+          event.preventDefault();
+          event.stopPropagation();
+          const leadId = action.dataset.campaignRemoveLeadId || action.closest('[data-campaign-lead-id]')?.dataset.campaignLeadId || '';
+          removeCampaignLeadLocally(campaign, leadId);
           return;
         }
         handleCampaignAction(value, campaign);

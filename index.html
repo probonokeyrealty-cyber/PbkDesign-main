@@ -7940,6 +7940,183 @@
     .campaign-review-line span:first-child { color: var(--text-tertiary); font-family: var(--font-mono); }
     .campaign-review-line span:last-child { color: var(--text-primary); text-align: right; overflow-wrap: anywhere; }
     .campaign-wizard-actions { padding: var(--s-4) var(--s-6); border-top: 1px solid var(--border-dim); display: flex; gap: var(--s-2); justify-content: flex-end; background: var(--bg-console); }
+    .campaign-lead-selector-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1250;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(3,5,8,0.78);
+      backdrop-filter: blur(10px);
+    }
+    .campaign-lead-selector-backdrop.open { display: flex; }
+    .campaign-lead-selector {
+      width: min(920px, 100%);
+      max-height: calc(100dvh - 48px);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      overflow: hidden;
+      background: linear-gradient(180deg, var(--bg-panel), var(--bg-console));
+      border: 1px solid var(--border-bright);
+      border-radius: 24px;
+      box-shadow: 0 26px 90px rgba(0,0,0,0.58);
+    }
+    .campaign-lead-selector-head {
+      padding: var(--s-5) var(--s-6);
+      border-bottom: 1px solid var(--border-dim);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--s-4);
+    }
+    .campaign-lead-selector-head h3 {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }
+    .campaign-lead-selector-head p {
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+      margin-top: 4px;
+      max-width: 620px;
+    }
+    .lead-selector-filters {
+      padding: var(--s-4) var(--s-6);
+      border-bottom: 1px solid var(--border-dim);
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 180px 150px;
+      gap: var(--s-3);
+      background: rgba(5,7,11,0.32);
+    }
+    .lead-selector-field { display: grid; gap: 6px; min-width: 0; }
+    .lead-selector-field label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    .lead-selector-field input,
+    .lead-selector-field select {
+      width: 100%;
+      min-height: 44px;
+      background: var(--bg-void);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      padding: 10px 12px;
+      font-family: var(--font-ui);
+      font-size: 13px;
+    }
+    .lead-selector-list {
+      overflow-y: auto;
+      padding: var(--s-3) var(--s-6) var(--s-4);
+      display: grid;
+      gap: var(--s-2);
+      overscroll-behavior: contain;
+    }
+    .lead-selector-row {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--border-dim);
+      background: var(--bg-void);
+      color: var(--text-primary);
+      border-radius: 16px;
+      padding: var(--s-3);
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: var(--s-3);
+      align-items: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, transform 0.15s;
+    }
+    .lead-selector-row:hover { border-color: var(--sky-dim); transform: translateY(-1px); }
+    .lead-selector-row.selected {
+      border-color: var(--sky);
+      background: var(--sky-glow);
+      box-shadow: inset 0 0 0 1px var(--sky-dim);
+    }
+    .lead-selector-check {
+      width: 24px;
+      height: 24px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      color: transparent;
+      background: rgba(255,255,255,0.03);
+      font-weight: 800;
+    }
+    .lead-selector-row.selected .lead-selector-check {
+      background: var(--sky);
+      border-color: var(--sky);
+      color: #fff;
+    }
+    .lead-selector-main { min-width: 0; }
+    .lead-selector-name {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      overflow-wrap: anywhere;
+    }
+    .lead-selector-meta {
+      margin-top: 3px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .lead-selector-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      max-width: 240px;
+    }
+    .lead-selector-tag {
+      border: 1px solid var(--border-dim);
+      border-radius: 999px;
+      padding: 4px 8px;
+      color: var(--text-tertiary);
+      background: rgba(255,255,255,0.03);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .lead-selector-empty {
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--s-6);
+      color: var(--text-secondary);
+      text-align: center;
+      line-height: 1.55;
+      background: var(--bg-void);
+    }
+    .lead-selector-actions {
+      padding: var(--s-4) var(--s-6);
+      border-top: 1px solid var(--border-dim);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+      background: var(--bg-console);
+    }
+    .lead-selector-count {
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .lead-selector-actions .btn { min-height: 44px; }
     .cd-head { padding: var(--s-5) var(--s-6); background: var(--bg-console); border-bottom: 1px solid var(--border-dim); }
     .cd-head-top { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; margin-bottom: var(--s-3); }
     .cd-title { font-family: var(--font-display); font-weight: 500; font-size: 30px; letter-spacing: -0.02em; line-height: 1.2; margin-bottom: var(--s-2); overflow-wrap: anywhere; }
@@ -8026,6 +8203,41 @@
       .campaign-wizard { width: 100%; max-height: calc(100dvh - 12px - env(safe-area-inset-top, 0px)); border-radius: 22px 22px 0 0; }
       .campaign-wizard-head, .campaign-wizard-body, .campaign-wizard-actions { padding-left: var(--s-4); padding-right: var(--s-4); }
       .campaign-wizard-head { flex-direction: column; }
+      .campaign-lead-selector-backdrop { align-items: flex-end; padding: 0; }
+      .campaign-lead-selector {
+        width: 100%;
+        max-height: calc(100dvh - 10px - env(safe-area-inset-top, 0px));
+        border-radius: 22px 22px 0 0;
+      }
+      .campaign-lead-selector-head,
+      .lead-selector-filters,
+      .lead-selector-list,
+      .lead-selector-actions {
+        padding-left: var(--s-4);
+        padding-right: var(--s-4);
+      }
+      .campaign-lead-selector-head,
+      .lead-selector-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .campaign-lead-selector-head h3 { font-size: 23px; }
+      .lead-selector-filters { grid-template-columns: 1fr; }
+      .lead-selector-field input,
+      .lead-selector-field select { font-size: 16px; }
+      .lead-selector-row {
+        grid-template-columns: 30px minmax(0, 1fr);
+        align-items: start;
+      }
+      .lead-selector-tags {
+        grid-column: 2 / -1;
+        justify-content: flex-start;
+        max-width: none;
+      }
+      .lead-selector-actions .btn {
+        width: 100%;
+        justify-content: center;
+      }
       .campaign-steps, .campaign-option-grid, .campaign-wizard-grid, .campaign-review { grid-template-columns: 1fr; }
       .campaign-provider-grid { grid-template-columns: 1fr; }
       .campaign-provider-control { grid-template-columns: 1fr; }
@@ -8270,6 +8482,47 @@
     <div class="campaign-wizard-actions">
       <button class="btn btn-ghost" type="button" data-campaign-wizard-prev>Back</button>
       <button class="btn btn-primary" type="button" data-campaign-wizard-next>Next</button>
+    </div>
+  </div>
+</div>
+
+<div class="campaign-lead-selector-backdrop" id="campaignLeadSelectorBackdrop" aria-hidden="true">
+  <div class="campaign-lead-selector" role="dialog" aria-modal="true" aria-labelledby="campaignLeadSelectorTitle">
+    <div class="campaign-lead-selector-head">
+      <div>
+        <h3 id="campaignLeadSelectorTitle">Add leads to campaign</h3>
+        <p data-campaign-lead-selector-intro>Select exactly who belongs in this outreach profile. Saving updates the campaign draft and queues an approval item before any provider action can run.</p>
+      </div>
+      <button class="btn btn-ghost" type="button" data-campaign-lead-selector-close>Close</button>
+    </div>
+    <div class="lead-selector-filters">
+      <div class="lead-selector-field">
+        <label for="campaignLeadSearch">Search</label>
+        <input id="campaignLeadSearch" data-campaign-lead-search placeholder="Name, address, phone, email, tag...">
+      </div>
+      <div class="lead-selector-field">
+        <label for="campaignLeadStatus">Status</label>
+        <select id="campaignLeadStatus" data-campaign-lead-status>
+          <option value="all">All statuses</option>
+          <option value="new">New</option>
+          <option value="working">Working</option>
+          <option value="waiting">Waiting</option>
+          <option value="hot">Hot / urgent</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+      <div class="lead-selector-field">
+        <label for="campaignLeadZip">Zip code</label>
+        <input id="campaignLeadZip" data-campaign-lead-zip inputmode="numeric" placeholder="43215">
+      </div>
+    </div>
+    <div class="lead-selector-list" data-campaign-lead-list></div>
+    <div class="lead-selector-actions">
+      <div class="lead-selector-count" data-campaign-lead-selector-count>0 selected</div>
+      <div style="display:flex; gap:var(--s-2); flex-wrap:wrap;">
+        <button class="btn btn-ghost" type="button" data-campaign-lead-selector-close>Cancel</button>
+        <button class="btn btn-primary" type="button" data-campaign-lead-selector-save>Add selected leads</button>
+      </div>
     </div>
   </div>
 </div>
@@ -17403,7 +17656,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       telnyxNumbers: [],
       instantlySenders: []
     },
-    selectedLeadsCache: []
+    selectedLeadsCache: [],
+    leadSelector: {
+      campaignId: '',
+      query: '',
+      status: 'all',
+      zip: '',
+      selectedKeys: [],
+      candidates: []
+    }
   };
 
   const CAMPAIGN_SELECTED_LEADS_STORAGE_KEY = 'pbk-campaign-selected-leads';
@@ -17865,6 +18126,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       address: lead.address,
       phone: lead.phone,
       email: lead.email || '',
+      status: lead.status || '',
       tags: String(lead.tags || '').split(/\s+/).filter(Boolean)
     };
   }
@@ -17921,6 +18183,196 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (source === 'csv-upload') return Array.isArray(campaignUiState.wizard.csvLeads) ? campaignUiState.wizard.csvLeads : [];
     if (source === 'selected') return getRememberedCampaignSelectedLeads().length ? getRememberedCampaignSelectedLeads() : rememberCampaignSelectedLeads();
     return [];
+  }
+
+  function campaignLeadKey(lead = {}) {
+    return String(lead.leadId || lead.id || lead.email || lead.phone || lead.address || lead.leadName || lead.name || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  function campaignLeadZip(lead = {}) {
+    const text = [lead.zip, lead.postalCode, lead.address, lead.meta].filter(Boolean).join(' ');
+    const match = String(text || '').match(/\b\d{5}(?:-\d{4})?\b/);
+    return match ? match[0].slice(0, 5) : '';
+  }
+
+  function normalizeCampaignLeadCandidate(input = {}, index = 0, source = 'runtime') {
+    const seller = input.seller || {};
+    const property = input.property || {};
+    const leadName = input.leadName || input.name || seller.name || input.sellerName || `Lead ${index + 1}`;
+    const address = input.address || property.address || input.propertyAddress || input.meta || '';
+    const phone = input.phone || seller.phone || '';
+    const email = input.email || seller.email || '';
+    const tags = Array.isArray(input.tags)
+      ? input.tags
+      : String(input.tags || input.status || '').split(/[\s,]+/).filter(Boolean);
+    const status = input.status || input.stage || input.pipelineStage || (tags.some((tag) => /hot|urgent/i.test(tag)) ? 'hot' : 'new');
+    return {
+      leadId: input.leadId || input.id || `lead-${source}-${index + 1}`,
+      leadName,
+      address,
+      phone,
+      email,
+      status,
+      tags,
+      source,
+      zip: campaignLeadZip({ ...input, address })
+    };
+  }
+
+  function getCampaignLeadSelectorCandidates(campaign = {}) {
+    const runtime = PBK.state.openclawRuntime || {};
+    const imported = [
+      ...(Array.isArray(runtime.leadImports) ? runtime.leadImports : []),
+      ...(Array.isArray(runtime.leads) ? runtime.leads : [])
+    ].map((lead, index) => normalizeCampaignLeadCandidate(lead, index, 'bridge'));
+    const uiRows = getLeadRows().map((row, index) => normalizeCampaignLeadCandidate(getLeadRowCampaignPayload(row, index), index, 'leads-page'));
+    const campaignRows = Array.isArray(campaign.leads)
+      ? campaign.leads.map((lead, index) => normalizeCampaignLeadCandidate({
+        leadId: lead.id || lead.leadId,
+        leadName: lead.name || lead.leadName,
+        address: lead.meta || lead.address,
+        status: lead.status || '',
+        tags: [lead.status, lead.chip].filter(Boolean)
+      }, index, 'campaign'))
+      : [];
+    const candidates = [...imported, ...uiRows, ...campaignRows].filter((lead) =>
+      lead.leadName && (lead.address || lead.phone || lead.email || lead.leadId)
+    );
+    const seen = new Set();
+    return candidates.filter((lead) => {
+      const key = campaignLeadKey(lead);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function filterCampaignLeadSelectorCandidates(candidates = []) {
+    const q = normalizeControlText(campaignUiState.leadSelector.query);
+    const status = normalizeControlText(campaignUiState.leadSelector.status || 'all');
+    const zip = String(campaignUiState.leadSelector.zip || '').trim();
+    return candidates.filter((lead) => {
+      const haystack = normalizeControlText([
+        lead.leadName,
+        lead.address,
+        lead.phone,
+        lead.email,
+        lead.status,
+        lead.zip,
+        ...(Array.isArray(lead.tags) ? lead.tags : [])
+      ].filter(Boolean).join(' '));
+      const statusText = normalizeControlText([lead.status, ...(Array.isArray(lead.tags) ? lead.tags : [])].join(' '));
+      const qMatch = !q || haystack.includes(q);
+      const statusMatch = status === 'all'
+        || statusText.includes(status)
+        || (status === 'working' && /working|active|contacted|follow/.test(statusText))
+        || (status === 'waiting' && /waiting|pending|review|callback/.test(statusText))
+        || (status === 'hot' && /hot|urgent|probate|high equity|motivated/.test(statusText));
+      const zipMatch = !zip || campaignLeadZip(lead).startsWith(zip);
+      return qMatch && statusMatch && zipMatch;
+    });
+  }
+
+  function renderCampaignLeadSelector() {
+    const modal = document.getElementById('campaignLeadSelectorBackdrop');
+    if (!modal) return;
+    const candidates = campaignUiState.leadSelector.candidates || [];
+    const visible = filterCampaignLeadSelectorCandidates(candidates);
+    const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
+    const list = modal.querySelector('[data-campaign-lead-list]');
+    const count = modal.querySelector('[data-campaign-lead-selector-count]');
+    if (count) count.textContent = `${selected.size} selected - ${visible.length} visible`;
+    if (!list) return;
+    if (!candidates.length) {
+      list.innerHTML = '<div class="lead-selector-empty"><strong>No leads found yet.</strong><br>Add/import leads from Streak or the Leads page first, then return here to attach them to this campaign.</div>';
+      return;
+    }
+    if (!visible.length) {
+      list.innerHTML = '<div class="lead-selector-empty"><strong>No matches.</strong><br>Try clearing the search, status, or zip filter.</div>';
+      return;
+    }
+    list.innerHTML = visible.map((lead) => {
+      const key = campaignLeadKey(lead);
+      const tags = [lead.status, lead.zip, ...(Array.isArray(lead.tags) ? lead.tags : [])]
+        .filter(Boolean)
+        .slice(0, 4);
+      return `
+        <button class="lead-selector-row ${selected.has(key) ? 'selected' : ''}" type="button" data-campaign-lead-key="${escapeHtml(key)}">
+          <span class="lead-selector-check">${selected.has(key) ? '&#10003;' : ''}</span>
+          <span class="lead-selector-main">
+            <span class="lead-selector-name">${escapeHtml(lead.leadName || 'Unknown seller')}</span>
+            <span class="lead-selector-meta">${escapeHtml([lead.address, lead.phone, lead.email].filter(Boolean).join(' - ') || 'Lead details pending')}</span>
+          </span>
+          <span class="lead-selector-tags">${tags.map((tag) => `<span class="lead-selector-tag">${escapeHtml(tag)}</span>`).join('')}</span>
+        </button>`;
+    }).join('');
+  }
+
+  function openCampaignLeadSelector(campaign = {}) {
+    const modal = document.getElementById('campaignLeadSelectorBackdrop');
+    if (!modal) return;
+    const candidates = getCampaignLeadSelectorCandidates(campaign);
+    const currentKeys = new Set((Array.isArray(campaign.leads) ? campaign.leads : []).map((lead) => campaignLeadKey({
+      leadId: lead.id || lead.leadId,
+      leadName: lead.name || lead.leadName,
+      address: lead.meta || lead.address
+    })).filter(Boolean));
+    campaignUiState.leadSelector = {
+      campaignId: campaign.id || '',
+      query: '',
+      status: 'all',
+      zip: '',
+      selectedKeys: Array.from(currentKeys),
+      candidates
+    };
+    const intro = modal.querySelector('[data-campaign-lead-selector-intro]');
+    if (intro) intro.textContent = `Attach leads to "${campaign.name || 'this campaign'}". Saving updates the campaign and queues approval before any outreach runs.`;
+    modal.querySelector('[data-campaign-lead-search]').value = '';
+    modal.querySelector('[data-campaign-lead-status]').value = 'all';
+    modal.querySelector('[data-campaign-lead-zip]').value = '';
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    renderCampaignLeadSelector();
+    setTimeout(() => modal.querySelector('[data-campaign-lead-search]')?.focus(), 40);
+  }
+
+  function closeCampaignLeadSelector() {
+    const modal = document.getElementById('campaignLeadSelectorBackdrop');
+    if (!modal) return;
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  async function saveCampaignLeadSelector() {
+    const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
+    const leads = (campaignUiState.leadSelector.candidates || []).filter((lead) => selected.has(campaignLeadKey(lead)));
+    const campaign = getCampaignRecords().find((item) => item.id === campaignUiState.leadSelector.campaignId) || getCampaignRecords()[0] || {};
+    if (!leads.length) {
+      toastOutcome({
+        outcome: 'unavailable',
+        title: 'Choose at least one lead',
+        desc: 'Select one or more leads before adding them to the campaign.'
+      });
+      return;
+    }
+    campaignUiState.selectedLeadsCache = leads;
+    try {
+      localStorage.setItem(CAMPAIGN_SELECTED_LEADS_STORAGE_KEY, JSON.stringify(leads));
+    } catch {}
+    const response = await requestCampaignAction(campaign, 'add_leads', {
+      selectedLeads: leads,
+      leadSource: 'selected',
+      notes: `Add ${leads.length} selected lead${leads.length === 1 ? '' : 's'} from the campaign detail selector.`,
+      actor: 'PBK Command Center'
+    });
+    if (response) {
+      closeCampaignLeadSelector();
+      await syncOpenClawState({ silent: true }).catch(() => {});
+      renderCampaignsExperience();
+      renderCampaignDetail(campaign.id);
+    }
   }
 
   function setCampaignProviderStatus(message = '', tone = 'neutral') {
@@ -18220,7 +18672,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
     if (normalized.includes('leads')) {
-      requestCampaignAction(campaign, normalized.includes('template') ? 'edit_template' : 'add_leads');
+      openCampaignLeadSelector(campaign);
       return;
     }
     if (normalized === 'export') {
@@ -18346,6 +18798,48 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           campaignUiState.wizard[field.dataset.campaignField] = field.value;
           updateCampaignWizardReview();
         });
+      });
+    }
+
+    const leadSelector = document.getElementById('campaignLeadSelectorBackdrop');
+    if (leadSelector && leadSelector.dataset.campaignLeadSelectorWired !== 'true') {
+      leadSelector.dataset.campaignLeadSelectorWired = 'true';
+      leadSelector.addEventListener('click', (event) => {
+        if (event.target === leadSelector || event.target.closest('[data-campaign-lead-selector-close]')) {
+          closeCampaignLeadSelector();
+          return;
+        }
+        const row = event.target.closest('[data-campaign-lead-key]');
+        if (row) {
+          const key = row.dataset.campaignLeadKey || '';
+          const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
+          if (selected.has(key)) selected.delete(key);
+          else selected.add(key);
+          campaignUiState.leadSelector.selectedKeys = Array.from(selected);
+          renderCampaignLeadSelector();
+          return;
+        }
+        if (event.target.closest('[data-campaign-lead-selector-save]')) {
+          saveCampaignLeadSelector().catch((error) => {
+            toastOutcome({
+              outcome: 'unavailable',
+              title: 'Could not add leads',
+              desc: error?.message || 'PBK could not attach those leads to the campaign.'
+            });
+          });
+        }
+      });
+      leadSelector.querySelector('[data-campaign-lead-search]')?.addEventListener('input', (event) => {
+        campaignUiState.leadSelector.query = event.target.value || '';
+        renderCampaignLeadSelector();
+      });
+      leadSelector.querySelector('[data-campaign-lead-status]')?.addEventListener('change', (event) => {
+        campaignUiState.leadSelector.status = event.target.value || 'all';
+        renderCampaignLeadSelector();
+      });
+      leadSelector.querySelector('[data-campaign-lead-zip]')?.addEventListener('input', (event) => {
+        campaignUiState.leadSelector.zip = event.target.value || '';
+        renderCampaignLeadSelector();
       });
     }
   }

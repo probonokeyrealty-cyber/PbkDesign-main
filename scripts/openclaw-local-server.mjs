@@ -14560,6 +14560,107 @@ async function patchCampaignRecord(campaignId = '', patch = {}) {
   return { ok: true, result: 'live', verbiage: 'Campaign updated', campaign: next, leads: getCampaignLeads(campaignId) };
 }
 
+async function attachCampaignLeadsToCampaign(campaignId = '', payload = {}) {
+  ensureCampaignCollections();
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: 'Campaign record not found.' };
+  }
+  const providedLeads = Array.isArray(payload.selectedLeads)
+    ? payload.selectedLeads
+    : Array.isArray(payload.leads)
+      ? payload.leads
+      : Array.isArray(payload.csvLeads)
+        ? payload.csvLeads
+        : [];
+  const source = String(payload.leadSource || payload.source || campaign.leadSource || 'selected').trim();
+  const sourceLeads = providedLeads.length ? [] : selectCampaignLeadsBySource(source, toNumber(payload.limit, 500));
+  const incoming = dedupeCampaignLeads(providedLeads.length ? providedLeads : sourceLeads);
+  if (!incoming.length) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      verbiage: 'No campaign leads selected',
+      error: 'Choose at least one lead before adding leads to this campaign.',
+      campaign,
+      leads: getCampaignLeads(campaignId),
+    };
+  }
+
+  const existing = getCampaignLeads(campaignId);
+  const leadKey = (lead = {}) => String(lead.leadId || lead.email || lead.phone || lead.address || lead.leadName || '').trim().toLowerCase();
+  const existingByKey = new Map(existing.map((lead) => [leadKey(lead), lead]));
+  const merged = dedupeCampaignLeads([...existing, ...incoming]);
+  const now = isoNow();
+  state.campaignLeads = (state.campaignLeads || []).filter((lead) => String(lead.campaignId || '') !== String(campaignId));
+  merged.forEach((lead, index) => {
+    const key = leadKey(lead);
+    const previous = existingByKey.get(key) || {};
+    upsertById(state, 'campaignLeads', {
+      ...previous,
+      id: previous.id || `campaign-lead-${campaignId}-${slugify(lead.leadId || lead.email || lead.phone || lead.address || index) || index}`,
+      campaignId,
+      leadId: lead.leadId || previous.leadId || '',
+      leadName: lead.leadName || previous.leadName || 'Unknown seller',
+      address: lead.address || previous.address || '',
+      email: lead.email || previous.email || '',
+      phone: lead.phone || previous.phone || '',
+      tags: lead.tags || previous.tags || [],
+      status: previous.status || 'pending',
+      touchIndex: previous.touchIndex || 0,
+      createdAt: previous.createdAt || now,
+      updatedAt: now,
+    });
+  });
+
+  const savedLeads = getCampaignLeads(campaignId);
+  const nextCampaign = {
+    ...campaign,
+    leadSource: source || campaign.leadSource || 'selected',
+    leadFilter: payload.leadFilter || campaign.leadFilter || { source: source || 'selected' },
+    leadCount: savedLeads.length,
+    metrics: {
+      ...calculateCampaignMetrics({ ...campaign, leadCount: savedLeads.length }),
+      ...(campaign.metrics || {}),
+      leads: savedLeads.length,
+    },
+    updatedAt: now,
+  };
+  upsertById(state, 'campaigns', nextCampaign);
+  recordCampaignEvent({
+    campaignId,
+    eventType: 'campaign_leads_added',
+    channel: nextCampaign.channel,
+    provider: nextCampaign.provider,
+    providerStatus: 'queued_for_approval',
+    payload: {
+      addedCount: incoming.length,
+      totalLeads: savedLeads.length,
+      source,
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: payload.actor || 'PBK Command Center',
+      category: 'CAMPAIGN',
+      status: 'updated',
+      text: `Added ${incoming.length} lead${incoming.length === 1 ? '' : 's'} to campaign "${nextCampaign.name}".`,
+      target: campaignId,
+    }),
+  );
+  await persistState(state);
+  await persistCampaignRecord(nextCampaign);
+  await Promise.all(savedLeads.map((lead) => persistCampaignLeadRecord(lead)));
+  return {
+    ok: true,
+    result: 'live',
+    verbiage: `${incoming.length} lead${incoming.length === 1 ? '' : 's'} added to campaign`,
+    campaign: nextCampaign,
+    leads: savedLeads,
+  };
+}
+
 async function requestCampaignApproval(campaignId = '', params = {}) {
   ensureCampaignCollections();
   const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
@@ -14641,6 +14742,21 @@ async function runCampaignAction(campaignId = '', payload = {}) {
   const action = String(payload.action || payload.requestedAction || '').trim().toLowerCase().replace(/\s+/g, '_');
   if (!action) {
     return { ok: false, result: 'unavailable', verbiage: 'Campaign action missing', error: 'No action supplied.' };
+  }
+  if (action === 'add_leads' || action === 'campaign_add_leads') {
+    const attachResult = await attachCampaignLeadsToCampaign(campaignId, payload);
+    if (!attachResult.ok) return attachResult;
+    const approvalResult = await requestCampaignApproval(campaignId, {
+      ...payload,
+      requestedAction: 'campaign_add_leads',
+      notes: payload.notes || `Add ${attachResult.leads.length} lead${attachResult.leads.length === 1 ? '' : 's'} to campaign before provider execution.`,
+    });
+    return {
+      ...approvalResult,
+      attachResult,
+      campaign: approvalResult.campaign || attachResult.campaign,
+      leads: getCampaignLeads(campaignId),
+    };
   }
   if (['start', 'start_campaign', 'pause', 'resume', 'archive', 'cancel', 'delete', 'add_leads', 'edit_template', 'campaign_pause', 'campaign_resume', 'campaign_archive', 'campaign_cancel'].includes(action)) {
     return requestCampaignApproval(campaignId, {

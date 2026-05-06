@@ -6242,7 +6242,7 @@ function applyMTOffer(offerNum,upfront,balConf,rateConf,mtTypeVal){
   // Pre-fill yield calc with this specific MT offer's values
   var _mtPrice=D.agreedPrice||D.price||0;
   var _mtUpfrontPct=_mtPrice>0?Math.round((upfront/_mtPrice)*100):4;
-  if(typeof buildCoCCalculator==='function')buildCoCCalculator(_mtPrice,_mtUpfrontPct,rateConf||D.srate||3.5,30);
+  if(typeof buildCoCCalculator==='function')buildCoCCalculator(_mtPrice,_mtUpfrontPct,rateConf||D.srate||3.5,30,'mt');
   if(typeof buildCoCCalculatorForMT==='function')buildCoCCalculatorForMT();
   // Make yield calc visible
   var _mtYield=document.getElementById('mt-yield-inline');
@@ -6278,7 +6278,7 @@ function applyCFOffer(offerNum,price,dn,rate,term){
   buildCloseRemarks(D.selectedPath||'cf',D);
   if(typeof syncYieldCalcFromTerms==='function')syncYieldCalcFromTerms();
   // Sync yield calculator with newly applied offer
-  if(typeof buildCoCCalculator==='function')buildCoCCalculator(price,dn>0&&price>0?Math.round(dn/price*100):20,rate,term);
+  if(typeof buildCoCCalculator==='function')buildCoCCalculator(price,dn>0&&price>0?Math.round(dn/price*100):20,rate,term,'cf');
   var lbl=document.getElementById('cm-script-lbl');
   if(lbl)lbl.textContent='CF Script - Offer '+offerNum+' Applied ?';
 }
@@ -6287,7 +6287,7 @@ function applyCFOffer(offerNum,price,dn,rate,term){
 function fullSync(){
   run();
   buildCallMode();
-  if(typeof buildCoCCalculator==='function')buildCoCCalculator();
+  if(typeof buildCoCCalculator==='function')buildCoCCalculator(null,null,null,null,D.selectedPath||'');
   updateLiveInputs(D.selectedPath||'');
   live();
 }
@@ -6300,7 +6300,7 @@ function buildCoCCalculatorForMT(){
   var upfront=D.agreedUpfront||Math.round(price*0.04)||0;
   var dnPct=price>0?Math.round(upfront/price*100):4;
   if(typeof buildCoCCalculator==='function'){
-    buildCoCCalculator(price,dnPct,rate,30);
+    buildCoCCalculator(price,dnPct,rate,30,'mt');
   }
 }
 
@@ -6316,14 +6316,14 @@ function syncYieldCalcFromTerms(){
     ?(+gv('li-dn')||D.agreedDN||0)
     :(+gv('li-upfront')||D.agreedUpfront||0);
   var dnPct=price>0&&cashIn>0?Math.round(cashIn/price*100):(path==='cf'?20:4);
-  var priceEl=_yieldCalcField('coc-price');
-  var dnEl=_yieldCalcField('coc-down');
-  var rateEl=_yieldCalcField('coc-rate');
-  var termEl=_yieldCalcField('coc-term');
-  var rentEl=_yieldCalcField('coc-rent');
-  var closingEl=_yieldCalcField('coc-closing');
+  var priceEl=_yieldCalcField('coc-price',path);
+  var dnEl=_yieldCalcField('coc-down',path);
+  var rateEl=_yieldCalcField('coc-rate',path);
+  var termEl=_yieldCalcField('coc-term',path);
+  var rentEl=_yieldCalcField('coc-rent',path);
+  var closingEl=_yieldCalcField('coc-closing',path);
   if(!priceEl||!dnEl||!rateEl||!termEl){
-    if(path==='cf')buildCoCCalculator(price,dnPct,rate,term);
+    if(path==='cf')buildCoCCalculator(price,dnPct,rate,term,'cf');
     else buildCoCCalculatorForMT();
     return;
   }
@@ -6356,6 +6356,9 @@ function buildCallMode(){
   if(objEngine)   objEngine.classList.toggle('hidden', isCF||isMT||isLandPath);
   // -- End unconditional panel visibility -----------------------------------
 
+  if(isCF&&!D.price&&typeof buildCoCCalculator==='function'){
+    setTimeout(function(){buildCoCCalculator(null,null,null,null,'cf');},50);
+  }
   if (D.selectedPath !== 'mt' && !D.price) return; // content building requires deal data - panels already set above
   const d=D;
   let snap='';
@@ -6406,7 +6409,7 @@ function buildCallMode(){
   }
 
   // -- Build content for active path panel (only when deal data exists) ------
-  if(isCF){buildCFScripts(d);buildCFMathBox(d);setTimeout(function(){buildCoCCalculator();},80);}
+  if(isCF){buildCFScripts(d);buildCFMathBox(d);setTimeout(function(){buildCoCCalculator(null,null,null,null,'cf');},80);}
   if(isMT){
     buildMTAnalysis(d);
     var _mst=document.getElementById('mt-script-text');
@@ -6502,21 +6505,30 @@ function _cC(lbl,id,sub){
   return '<div class="coc-card"><div class="coc-lbl">'+lbl+'</div>'+
     '<div class="coc-val" id="'+id+'">-</div><div class="coc-sub">'+sub+'</div></div>';
 }
-function _yieldCalcRoot(){
-  var path=D.selectedPath||'';
+function _yieldCalcPath(pathOverride){
+  if(pathOverride==='cf'||pathOverride==='mt')return pathOverride;
+  if(D.selectedPath==='cf'||D.selectedPath==='mt')return D.selectedPath;
+  var mtCalc=document.querySelector('#mt-coc-calc-root .calculator');
+  var cfCalc=document.querySelector('#cf-coc-calc-root .calculator');
+  if(mtCalc)return 'mt';
+  if(cfCalc)return 'cf';
+  return '';
+}
+function _yieldCalcRoot(pathOverride){
+  var path=_yieldCalcPath(pathOverride);
   if(path==='mt')return document.getElementById('mt-coc-calc-root')||document.getElementById('cf-coc-calc-root');
   return document.getElementById('cf-coc-calc-root')||document.getElementById('mt-coc-calc-root');
 }
-function _yieldCalcField(id){
-  var root=_yieldCalcRoot();
+function _yieldCalcField(id,pathOverride){
+  var root=_yieldCalcRoot(pathOverride);
   return root?root.querySelector('#'+id):document.getElementById(id);
 }
-function _yieldCalcValue(id){
-  var el=_yieldCalcField(id);
+function _yieldCalcValue(id,pathOverride){
+  var el=_yieldCalcField(id,pathOverride);
   return el?_numFromInput(el.value):0;
 }
 function _syncYieldTracker(sync){
-  var path=D.selectedPath||'';
+  var path=(sync&&sync.path)||_yieldCalcPath();
   if(path!=='cf'&&path!=='mt')return;
   var ltcf=document.getElementById('lt-cf-cashflow');
   var ltds=document.getElementById('lt-dscr');
@@ -6566,8 +6578,8 @@ function _syncYieldTracker(sync){
     setTone(ltNoi,'');
   }
 }
-function buildCoCCalculator(overridePrice, overrideDn, overrideRate, overrideTerm){
-  var activePath=D.selectedPath||'';
+function buildCoCCalculator(overridePrice, overrideDn, overrideRate, overrideTerm, pathOverride){
+  var activePath=_yieldCalcPath(pathOverride);
   var cfRoot=document.getElementById('cf-coc-calc-root');
   var mtRoot=document.getElementById('mt-coc-calc-root');
   if(activePath!=='cf'&&activePath!=='mt'){
@@ -6575,7 +6587,7 @@ function buildCoCCalculator(overridePrice, overrideDn, overrideRate, overrideTer
     if(mtRoot)mtRoot.innerHTML='';
     return;
   }
-  var root=_yieldCalcRoot();if(!root)return;
+  var root=_yieldCalcRoot(activePath);if(!root)return;
   var other=activePath==='mt'?cfRoot:mtRoot;
   if(other&&other!==root)other.innerHTML='';
   var seed=initCoCFromDeal(activePath,{price:overridePrice,downPct:overrideDn,rate:overrideRate,term:overrideTerm});
@@ -6639,9 +6651,9 @@ function cocUpdate(immediate){
   _cocUpdateTimer=setTimeout(cocUpdateNow,80);
 }
 function cocUpdateNow(){
-  var g=function(id){return _yieldCalcValue(id);};
+  var activePath=_yieldCalcPath();
+  var g=function(id){return _yieldCalcValue(id,activePath);};
   var term=g('coc-term')||30;
-  var activePath=D.selectedPath||'';
   var price=g('coc-price');
   var rent=g('coc-rent');
   var vac=g('coc-vacancy')||10;

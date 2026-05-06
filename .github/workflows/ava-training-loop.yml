@@ -51,3 +51,7 @@ jobs:
       - name: Run Ava memory learning
         if: ${{ steps.training-secrets.outputs.run_worker == 'true' }}
         run: node ./scripts/ava-memory-worker.mjs
+
+      - name: Prepare approved feedback training data
+        if: ${{ steps.training-secrets.outputs.run_worker == 'true' }}
+        run: node ./scripts/export-ava-training-data.mjs

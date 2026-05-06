@@ -5,6 +5,7 @@ dist/
 .tmp/
 .pbk-local/
 brain-export/
+.pbk-training/
 
 PBK_React_Preview_Code_*/
 PBK_React_Preview_Code_*.zip

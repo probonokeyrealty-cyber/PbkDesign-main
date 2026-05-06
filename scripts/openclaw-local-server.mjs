@@ -11289,7 +11289,6 @@ async function saveWorkflowPersistence(params = {}) {
       nodes: workflowPayload.nodes,
       connections: workflowPayload.connections,
       settings: draft.settings,
-      active: draft.active,
     });
   }
 
@@ -11360,7 +11359,6 @@ async function publishWorkflowPersistence(params = {}) {
       nodes: workflowPayload.nodes,
       connections: workflowPayload.connections,
       settings: draft.settings,
-      active: false,
     });
     const workflowId = String(
       sync.payload?.id

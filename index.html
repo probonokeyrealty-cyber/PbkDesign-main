@@ -11005,10 +11005,25 @@
     recordings: 'Call Recordings'
   };
 
+  function syncMobileViewportLocks() {
+    const topbar = document.querySelector('.topbar')?.getBoundingClientRect().height || 56;
+    const mobileNav = document.getElementById('mobileNav');
+    const navRect = mobileNav?.getBoundingClientRect();
+    const navHeight = navRect && navRect.height > 0 ? navRect.height : 64;
+    document.documentElement.style.setProperty('--pbk-vh-px', `${window.innerHeight}px`);
+    document.documentElement.style.setProperty('--pbk-topbar-px', `${topbar}px`);
+    document.documentElement.style.setProperty('--pbk-mobile-nav-px', `${navHeight}px`);
+  }
+
   function showPage(name) {
+    syncMobileViewportLocks();
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     const target = document.querySelector(`.page[data-page="${name}"]`);
     if (target) target.classList.add('active');
+    if (target) {
+      document.documentElement.dataset.activePage = name;
+      document.body.dataset.activePage = name;
+    }
     document.querySelectorAll('.rail-item').forEach(r => r.classList.remove('active'));
     const rail = document.querySelector(`.rail-item[data-page="${name}"]`);
     if (rail) rail.classList.add('active');
@@ -11016,6 +11031,10 @@
     document.querySelector('.main').scrollTop = 0;
     window.scrollTo(0, 0);
   }
+
+  window.addEventListener('resize', syncMobileViewportLocks);
+  window.visualViewport?.addEventListener('resize', syncMobileViewportLocks);
+  window.visualViewport?.addEventListener('scroll', syncMobileViewportLocks);
 
   document.querySelectorAll('.rail-item[data-page]').forEach(item => {
     item.addEventListener('click', () => showPage(item.dataset.page));
@@ -23965,13 +23984,32 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08) !important;
     }
 
-    .page[data-page="inbox"].active {
-      height: calc(100dvh - 56px - 76px - env(safe-area-inset-bottom, 0px));
+    html[data-active-page="inbox"],
+    body[data-active-page="inbox"] {
+      height: 100dvh !important;
+      max-height: 100dvh !important;
+      overflow: hidden !important;
+      overscroll-behavior: none;
+    }
+
+    body[data-active-page="inbox"] .main,
+    body[data-active-page="inbox"] .pages {
+      height: 100dvh !important;
+      max-height: 100dvh !important;
+      overflow: hidden !important;
+    }
+
+    body[data-active-page="inbox"] .main {
+      padding-bottom: 0 !important;
+    }
+
+    body[data-active-page="inbox"] .page[data-page="inbox"].active {
+      height: calc(var(--pbk-vh-px, 100vh) - var(--pbk-topbar-px, 56px) - var(--pbk-mobile-nav-px, 64px));
       overflow: hidden !important;
       padding-bottom: 0 !important;
     }
 
-    .page[data-page="inbox"] .inbox-layout {
+    body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-layout {
       display: grid !important;
       grid-template-columns: minmax(0, 1fr) !important;
       height: 100% !important;
@@ -23979,7 +24017,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       overflow: hidden !important;
     }
 
-    .page[data-page="inbox"] .ib-convo {
+    body[data-active-page="inbox"] .page[data-page="inbox"] .ib-convo {
       display: flex !important;
       flex-direction: column !important;
       height: 100% !important;
@@ -23988,12 +24026,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       padding-bottom: 0 !important;
     }
 
-    .page[data-page="inbox"] .convo-head,
-    .page[data-page="inbox"] .compose {
+    body[data-active-page="inbox"] .page[data-page="inbox"] .convo-head,
+    body[data-active-page="inbox"] .page[data-page="inbox"] .compose {
       flex: 0 0 auto !important;
     }
 
-    .page[data-page="inbox"] .convo-body {
+    body[data-active-page="inbox"] .page[data-page="inbox"] .convo-body {
       flex: 1 1 auto !important;
       min-height: 0 !important;
       overflow-y: auto !important;
@@ -24003,7 +24041,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       scroll-padding-bottom: var(--s-4);
     }
 
-    .page[data-page="inbox"] .compose {
+    body[data-active-page="inbox"] .page[data-page="inbox"] .compose {
       position: relative !important;
       bottom: auto !important;
       margin: 0 !important;

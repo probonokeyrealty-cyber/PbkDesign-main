@@ -23727,6 +23727,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     startOpenClawPolling({ immediate: false });
   }
 
+  window.addEventListener('hashchange', () => {
+    const nextPage = window.location.hash.replace(/^#/, '') || 'dashboard';
+    if (pageLabels[nextPage]) showPage(nextPage);
+  });
+
   const initialHash = window.location.hash.replace(/^#/, '');
   if (initialHash && pageLabels[initialHash]) {
     showPage(initialHash);
@@ -23958,6 +23963,52 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     [data-theme="light"] .camp-card,
     [data-theme="light"] .page[data-page="analyzer"] .analyzer-frame-wrap {
       box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08) !important;
+    }
+
+    .page[data-page="inbox"].active {
+      height: calc(100dvh - 56px - 76px - env(safe-area-inset-bottom, 0px));
+      overflow: hidden !important;
+      padding-bottom: 0 !important;
+    }
+
+    .page[data-page="inbox"] .inbox-layout {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      height: 100% !important;
+      min-height: 0 !important;
+      overflow: hidden !important;
+    }
+
+    .page[data-page="inbox"] .ib-convo {
+      display: flex !important;
+      flex-direction: column !important;
+      height: 100% !important;
+      min-height: 0 !important;
+      overflow: hidden !important;
+      padding-bottom: 0 !important;
+    }
+
+    .page[data-page="inbox"] .convo-head,
+    .page[data-page="inbox"] .compose {
+      flex: 0 0 auto !important;
+    }
+
+    .page[data-page="inbox"] .convo-body {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      overflow-y: auto !important;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: var(--s-4) !important;
+      scroll-padding-bottom: var(--s-4);
+    }
+
+    .page[data-page="inbox"] .compose {
+      position: relative !important;
+      bottom: auto !important;
+      margin: 0 !important;
+      z-index: 2 !important;
+      box-shadow: 0 -14px 32px rgba(0, 0, 0, 0.22) !important;
     }
   }
 </style>

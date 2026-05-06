@@ -36,6 +36,7 @@ const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'rent',
   'balance',
   'rate',
+  'arv',
   'fee',
   'builderPrice',
   'lotSize',
@@ -377,8 +378,9 @@ export default function App() {
   // Calculate verdict based on deal data
   // FORMULAS LOCKED - Using centralized calculations that match original HTML
   useEffect(() => {
-    // Calculate ARV from comps using centralized function
-    const arv = calculateARV(deal.comps);
+    // Prefer comp-backed ARV when comps exist, but do not wipe a manual or bridge-fed ARV.
+    const compArv = calculateARV(deal.comps);
+    const arv = compArv > 0 ? compArv : deal.arv;
 
     // Calculate MAO values using corrected formulas
     const mao60 = calculateMAO.wholesale(
@@ -408,6 +410,7 @@ export default function App() {
     }
   }, [
     deal.price,
+    deal.arv,
     deal.comps.A.price,
     deal.comps.B.price,
     deal.comps.C.price,
@@ -473,18 +476,25 @@ export default function App() {
     try {
       const response = await syncDealAnalysis(deal);
       const result = (response as { result?: Record<string, unknown> }).result || (response as Record<string, unknown>);
-      setDeal((prev) => ({
-        ...prev,
-        isAnalyzed: true,
-        arv: Number(result?.arv || prev.arv || 0),
-        mao60: Number(result?.mao || prev.mao60 || 0),
-        maoRBP: Number(result?.mao || prev.maoRBP || 0),
-        offer: Number(result?.targetOffer || prev.offer || 0),
-        repairs: {
-          ...prev.repairs,
-          mid: Number(result?.repairsMid || prev.repairs.mid || 0),
-        },
-      }));
+      setDeal((prev) => {
+        const nextArv = Number(result?.arv || prev.arv || 0);
+        const nextMao60 = Number(result?.mao || result?.mao60 || prev.mao60 || 0);
+        const nextMaoRBP = Number(result?.maoRbp || result?.maoRBP || result?.mao || prev.maoRBP || 0);
+
+        return {
+          ...prev,
+          isAnalyzed: true,
+          arv: nextArv,
+          mao60: nextMao60,
+          maoRBP: nextMaoRBP,
+          verdict: calculateVerdict(prev.price, nextArv, nextMaoRBP),
+          offer: Number(result?.targetOffer || prev.offer || 0),
+          repairs: {
+            ...prev.repairs,
+            mid: Number(result?.repairsMid || prev.repairs.mid || 0),
+          },
+        };
+      });
       setAnalyzeStatus(
         result?.mao
           ? `Bridge analysis synced. ARV ${Number(result.arv || 0).toLocaleString()} · MAO ${Number(result.mao || 0).toLocaleString()}`
@@ -494,6 +504,7 @@ export default function App() {
       setDeal((prev) => ({
         ...prev,
         isAnalyzed: true,
+        verdict: calculateVerdict(prev.price, prev.arv, prev.maoRBP),
       }));
       setAnalyzeStatus(
         error instanceof Error

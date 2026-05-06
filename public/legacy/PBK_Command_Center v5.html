@@ -394,25 +394,37 @@ body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;}
 .badge-nogo{color:var(--red);font-weight:700;}
 .highlight-box{background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.2);}
 
-/* -- CoC Yield Calculator (CF path) ----------------------- */
-.coc-calc-wrap{background:var(--cream);border-radius:10px;border:1px solid var(--border);overflow:hidden;margin-top:10px;}
-.coc-calc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px;}
-.coc-fld{display:flex;flex-direction:column;gap:4px;}
-.coc-fld label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);}
-.coc-fld input{padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff;width:100%;}
-.coc-results{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px;background:#fff;border-top:1px solid var(--border);}
-.coc-card{background:var(--blue-lt);border-radius:10px;padding:9px 8px;text-align:center;}
-.coc-card .coc-lbl{font-size:9px;font-weight:700;text-transform:uppercase;color:var(--blue-dk);margin-bottom:3px;}
-.coc-card .coc-val{font-size:17px;font-weight:700;color:var(--dark);}
-.coc-card .coc-val.go{color:var(--green);}
-.coc-card .coc-val.warn{color:var(--amber);}
-.coc-card .coc-val.bad{color:var(--red);}
-.coc-card .coc-sub{font-size:9px;color:var(--mid);margin-top:2px;}
-.coc-reverse{background:var(--gray,#F3F4F6);padding:10px 12px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;}
-.coc-reverse .coc-fld{flex:2;min-width:120px;}
-.coc-rev-btn{background:var(--blue);border:none;border-radius:20px;padding:7px 14px;color:#fff;font-weight:700;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;}
-.coc-rev-btn:hover{background:var(--blue-dk);}
-.coc-note{padding:8px 12px 10px;font-size:10px;color:var(--mid);border-top:1px solid var(--border);}
+/* -- CoC Investor Yield Calculator (CF + MT paths) ----------------------- */
+.calculator{background:linear-gradient(180deg,#fff,var(--cream));border-radius:0 0 10px 10px;overflow:hidden;box-shadow:0 14px 34px rgba(10,10,10,.08);}
+.calculator .calc-intro{padding:12px 14px;background:linear-gradient(135deg,var(--blue-lt),#fff);border-bottom:1px solid var(--border);font-size:11px;color:var(--mid);line-height:1.45;}
+.calculator .calc-intro strong{color:var(--blue-dk);}
+.calculator .calc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding:14px;background:var(--cream);}
+.calculator .calc-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.calculator .calc-field label{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--mid);}
+.calculator .calc-field input,.calculator .calc-field select{width:100%;min-height:38px;padding:8px 9px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--dark);font-size:12px;outline:none;transition:border-color .15s,box-shadow .15s;}
+.calculator .calc-field input:focus,.calculator .calc-field select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(42,151,218,.14);}
+.calculator .calc-results{display:grid;grid-template-columns:repeat(auto-fit,minmax(126px,1fr));gap:8px;padding:14px;background:#fff;border-top:1px solid var(--border);}
+.calculator .coc-card{background:var(--blue-lt);border:1px solid rgba(42,151,218,.18);border-radius:12px;padding:10px 9px;text-align:center;min-width:0;}
+.calculator .coc-card .coc-lbl{font-size:8.8px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--blue-dk);margin-bottom:4px;}
+.calculator .coc-card .coc-val{font-size:18px;font-weight:800;color:var(--dark);letter-spacing:-.02em;overflow-wrap:anywhere;}
+.calculator .coc-card .coc-val.go{color:var(--green);}
+.calculator .coc-card .coc-val.warn{color:var(--amber);}
+.calculator .coc-card .coc-val.bad{color:var(--red);}
+.calculator .coc-card .coc-sub{font-size:9px;color:var(--mid);margin-top:3px;line-height:1.35;}
+.calculator .reverse-panel{display:grid;grid-template-columns:minmax(130px,1fr) auto auto minmax(130px,1fr);gap:10px;align-items:end;background:var(--gray);padding:12px 14px;border-top:1px solid var(--border);}
+.calculator .coc-rev-btn{min-height:38px;background:var(--blue);border:none;border-radius:999px;padding:8px 14px;color:#fff;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 20px rgba(42,151,218,.18);}
+.calculator .coc-rev-btn:hover{background:var(--blue-dk);}
+.calculator .coc-rev-btn.secondary{background:#fff;color:var(--blue-dk);border:1px solid rgba(42,151,218,.34);box-shadow:none;}
+.calculator .coc-rev-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;}
+.calculator .math-check{display:none;margin:0 14px 12px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);font-size:11px;line-height:1.55;background:#fff;color:var(--dark);}
+.calculator .math-check.good{display:block;background:var(--green-lt);border-color:#86EFAC;color:#14532D;}
+.calculator .math-check.bad{display:block;background:var(--red-lt);border-color:#FCA5A5;color:#7F1D1D;}
+.calculator .math-check.warn{display:block;background:var(--amber-lt);border-color:#FDE68A;color:#78350F;}
+.calculator .coc-note{padding:9px 14px 12px;font-size:10px;color:var(--mid);border-top:1px solid var(--border);line-height:1.5;}
+@media(max-width:720px){
+  .calculator .calc-grid,.calculator .calc-results,.calculator .reverse-panel{grid-template-columns:1fr;}
+  .calculator .coc-rev-btn{width:100%;}
+}
 
 
 /* -- UI Polish additions --------------------------------------- */
@@ -2444,80 +2456,8 @@ html,body{
       <div class="cf-phase" id="cfp-objections"><div class="cf-phase-label">CF Objections</div><div id="cf-obj-list"></div></div>
     </div>
 
-    <!-- COC YIELD CALCULATOR - CF PATH INTEGRATION -->
-    <div id="coc-calc-panel" class="scard hidden" style="display:none!important;">
-      <div class="shead" style="display:flex;align-items:center;justify-content:space-between;">
-        <span>&#128200; Investor Yield Analysis - Cash-on-Cash Calculator</span>
-        <span style="font-size:10px;color:var(--mid);">Creative Finance &amp; Rental Hold</span>
-      </div>
-      <div style="padding:12px 14px 4px;font-size:11px;color:var(--mid);background:var(--cream);border-bottom:1px solid var(--border);">
-        Yield-first underwriting. Enter deal inputs below - price &amp; rent auto-fill from the analyzer.
-      </div>
-      <!-- INPUTS GRID -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;padding:14px;background:var(--cream);">
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Sale / Offer Price ($)</label>
-          <div style="position:relative;"><span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--mid);font-size:11px;pointer-events:none;">$</span>
-          <input type="number" id="coc-price" class="linp hp" style="padding-left:20px;" placeholder="0" oninput="runCoCCalc()"></div>
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Gross Monthly Rent ($)</label>
-          <div style="position:relative;"><span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--mid);font-size:11px;pointer-events:none;">$</span>
-          <input type="number" id="coc-rent" class="linp hp" style="padding-left:20px;" placeholder="0" oninput="runCoCCalc()"></div>
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Interest Rate (%)</label>
-          <input type="number" id="coc-rate" class="linp" step="0.125" placeholder="7.0" value="7.0" oninput="runCoCCalc()">
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Down Payment (%)</label>
-          <input type="number" id="coc-down" class="linp" step="1" placeholder="20" value="20" oninput="runCoCCalc()">
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Vacancy (%)</label>
-          <input type="number" id="coc-vacancy" class="linp" step="1" placeholder="10" value="10" oninput="runCoCCalc()">
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Operating Expense (% rent)</label>
-          <input type="number" id="coc-expense" class="linp" step="1" placeholder="20" value="20" oninput="runCoCCalc()">
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Closing Costs ($)</label>
-          <div style="position:relative;"><span style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--mid);font-size:11px;pointer-events:none;">$</span>
-          <input type="number" id="coc-closing" class="linp hp" style="padding-left:20px;" placeholder="5000" value="5000" oninput="runCoCCalc()"></div>
-        </div>
-        <div class="calc-field" style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">Loan Term (years)</label>
-          <select id="coc-term" class="linp" oninput="runCoCCalc()">
-            <option value="30" selected>30 yrs (standard)</option><option value="25">25 yrs</option><option value="20">20 yrs</option><option value="15">15 yrs</option><option value="12">12 yrs</option><option value="10">10 yrs</option><option value="7">7 yrs</option><option value="5">5 yrs (hard money)</option><option value="3">3 yrs</option><option value="2">2 yrs</option><option value="1">1 yr</option>
-          </select>
-        </div>
-      </div>
-      <!-- RESULTS GRID -->
-      <div id="coc-results" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;padding:12px 14px;background:#fff;border-top:1px solid var(--border);">
-        <!-- populated by runCoCCalc() -->
-      </div>
-      <!-- VERDICT BAR -->
-      <div id="coc-verdict" style="padding:8px 14px;font-size:11px;font-weight:600;border-top:1px solid var(--border);background:var(--cream);display:none;"></div>
-      <!-- REVERSE SOLVER -->
-      <div style="padding:12px 14px;background:var(--gray,#F3F4F6);border-top:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;">
-        <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">&#127919; Target Cash-on-Cash (%)</label>
-          <input type="number" id="coc-target" class="linp" placeholder="25" value="25" oninput="runCoCCalc()">
-        </div>
-        <button class="abtn" style="background:var(--blue);color:#fff;border-radius:20px;padding:7px 16px;font-size:11px;font-weight:700;border:none;cursor:pointer;white-space:nowrap;" onclick="cocReverseSolve()">
-          &#8635; Max Price for Target CoC
-        </button>
-        <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px;">
-          <label style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mid);">&#128161; Suggested Max Price</label>
-          <input type="text" id="coc-suggested" class="linp" readonly placeholder="Click button" style="background:var(--cream);font-weight:600;color:var(--blue-dk,#1A6FA3);">
-        </div>
-      </div>
-      <div style="padding:8px 14px 12px;font-size:10px;color:var(--mid);border-top:1px solid var(--border);">
-        <strong>Formula:</strong> Cash-on-Cash = (NOI &minus; Annual Debt Service) &divide; (Down Payment + Closing Costs) &times; 100.
-        30-yr fixed amortization. Conservative underwriting: 20% expense ratio + 10% vacancy.
-      </div>
-    </div>
+    <!-- Legacy standalone CoC panel retired. CF/MT now render one shared calculator inside #cf-coc-calc-root or #mt-coc-calc-root. -->
+    <div id="coc-calc-panel" class="scard hidden" style="display:none!important;"></div>
 
     <!-- LAND SCRIPTING PANEL -->
     <div id="land-script-panel" class="scard hidden">
@@ -6354,23 +6294,13 @@ function fullSync(){
 
 // -- buildCoCCalculatorForMT: yield calc pre-filled for MT path ---------------
 function buildCoCCalculatorForMT(){
-  var root=document.getElementById('mt-coc-calc-root');
-  if(!root)return;
   var price=D.agreedPrice||D.price||0;
-  var bal=D.agreedBal||D.bal||0;
   var rate=D.agreedRateConf||D.srate||3.5;
-  var rent=D.rent||DEAL.rent||0;
   // For MT: equity invested = upfront payment, not down%
   var upfront=D.agreedUpfront||Math.round(price*0.04)||0;
   var dnPct=price>0?Math.round(upfront/price*100):4;
   if(typeof buildCoCCalculator==='function'){
     buildCoCCalculator(price,dnPct,rate,30);
-    // Re-root results into MT calc root if different from CF root
-    var cfRoot=document.getElementById('cf-coc-calc-root');
-    if(cfRoot&&cfRoot!==root){
-      root.innerHTML=cfRoot.innerHTML;
-      cfRoot.innerHTML='';
-    }
   }
 }
 
@@ -6387,9 +6317,11 @@ function syncYieldCalcFromTerms(){
     :(+gv('li-upfront')||D.agreedUpfront||0);
   var dnPct=price>0&&cashIn>0?Math.round(cashIn/price*100):(path==='cf'?20:4);
   var priceEl=_yieldCalcField('coc-price');
-  var dnEl=_yieldCalcField('coc-dn');
+  var dnEl=_yieldCalcField('coc-down');
   var rateEl=_yieldCalcField('coc-rate');
   var termEl=_yieldCalcField('coc-term');
+  var rentEl=_yieldCalcField('coc-rent');
+  var closingEl=_yieldCalcField('coc-closing');
   if(!priceEl||!dnEl||!rateEl||!termEl){
     if(path==='cf')buildCoCCalculator(price,dnPct,rate,term);
     else buildCoCCalculatorForMT();
@@ -6399,6 +6331,8 @@ function syncYieldCalcFromTerms(){
   dnEl.value=dnPct;
   rateEl.value=rate||0;
   termEl.value=String(term||30);
+  if(rentEl)rentEl.value=(D.rent||DEAL.rent||0);
+  if(closingEl&&!closingEl._userEdited)closingEl.value=Math.round((price||0)*0.025);
   if(typeof cocUpdate==='function')cocUpdate();
 }
 
@@ -6488,40 +6422,85 @@ function buildCallMode(){
 
   live();
 }
-// -- CoC Yield Calculator (CF Path - Doc 16) -----------------------------
-function computeCoC(price,downPct,intRate,grossRent,vacPct,expPct,closingCosts,termYears){
-  var yrs=termYears||30;
-  var dn=price*(downPct/100),loan=price-dn,mR=intRate/100/12,n=yrs*12;
-  var pmt=((D.selectedPath||'')==='cf')
-    ? (mR>0&&loan>0?loan*mR:0)
-    : (mR>0&&loan>0?loan*(mR*Math.pow(1+mR,n))/(Math.pow(1+mR,n)-1):(n>0?loan/n:0));
-  // Correct order: vacancy first, expenses on gross rent
-  var ag=grossRent*12,vl=ag*(vacPct/100),expDollar=ag*(expPct/100);
-  var noi=(ag-vl)-expDollar;
-  var cashflow=noi-pmt*12,equity=dn+(closingCosts||0);
-  var dscr=pmt>0?(noi/12)/pmt:999;
-  return{pmt:pmt,noi:noi,cashflow:cashflow,equity:equity,dscr:dscr,
-         coc:equity>0?(cashflow/equity)*100:0,cap:price>0?(noi/price)*100:0};
+// -- CoC Investor Yield Calculator (CF + MT paths) -----------------------------
+function _money(v){
+  return isFinite(v)?'$'+Math.round(v).toLocaleString():'-';
 }
-function cocMaxPrice(downPct,intRate,grossRent,vacPct,expPct,closing,target,termYears){
-  var lo=10000,hi=2000000;
-  for(var i=0;i<60;i++){var mid=(lo+hi)/2;computeCoC(mid,downPct,intRate,grossRent,vacPct,expPct,closing,termYears||30).coc>=target?lo=mid:hi=mid;}
-  return Math.round(lo/1000)*1000;
+function _pct(v,dec){
+  return isFinite(v)?Number(v).toFixed(dec==null?1:dec)+'%':'-';
+}
+function _numFromInput(value){
+  var n=Number(String(value==null?'':value).replace(/[^0-9.-]/g,''));
+  return isFinite(n)?n:0;
+}
+function computeCoC(price,downPct,intRate,grossRent,vacPct,expPct,closingCosts,termYears){
+  price=Math.max(0,+price||0);
+  downPct=Math.max(0,+downPct||0);
+  intRate=Math.max(0,+intRate||0);
+  grossRent=Math.max(0,+grossRent||0);
+  vacPct=Math.max(0,+vacPct||0);
+  expPct=Math.max(0,+expPct||0);
+  closingCosts=Math.max(0,+closingCosts||0);
+  var yrs=Math.max(1,+termYears||30);
+  var dn=price*(downPct/100);
+  var loan=Math.max(0,price-dn);
+  var mR=intRate/100/12;
+  var n=yrs*12;
+  var pmt=mR>0&&loan>0
+    ? loan*(mR*Math.pow(1+mR,n))/(Math.pow(1+mR,n)-1)
+    : (loan>0&&n>0?loan/n:0);
+  var annualGross=grossRent*12;
+  var vacancyLoss=annualGross*(vacPct/100);
+  var expenseDollars=annualGross*(expPct/100);
+  var noi=(annualGross-vacancyLoss)-expenseDollars;
+  var annualDebt=pmt*12;
+  var cashflow=noi-annualDebt;
+  var equity=dn+closingCosts;
+  var dscr=pmt>0?(noi/12)/pmt:0;
+  return{
+    price:price,
+    downPayment:dn,
+    loan:loan,
+    pmt:pmt,
+    annualDebt:annualDebt,
+    noi:noi,
+    cashflow:cashflow,
+    monthlyCashflow:cashflow/12,
+    equity:equity,
+    dscr:dscr,
+    coc:equity>0?(cashflow/equity)*100:0,
+    cap:price>0?(noi/price)*100:0
+  };
+}
+function solveMaxCoCPrice(downPct,intRate,grossRent,vacPct,expPct,closing,target,termYears){
+  grossRent=+grossRent||0;
+  target=+target||0;
+  if(grossRent<=0||target<=0)return 0;
+  var hi=Math.max(100000, grossRent*12*25, (+_yieldCalcValue('coc-price')||0)*4);
+  var lo=0;
+  for(var i=0;i<64;i++){
+    var mid=(lo+hi)/2;
+    var res=computeCoC(mid,downPct,intRate,grossRent,vacPct,expPct,closing,termYears||30);
+    if(res.coc>=target)lo=mid;
+    else hi=mid;
+  }
+  return Math.max(0,Math.round(lo/1000)*1000);
 }
 function _cF(lbl,id,val,type,step,extra){
-  return '<div class="coc-fld"><label>'+lbl+'</label>'+
-    '<input id="'+id+'" type="'+(type||'number')+'" value="'+val+'" step="'+(step||'1')+'"'+
-    (extra?' '+extra:'')+(type!=='text'?' oninput="cocUpdate()"':'')+
-    '></div>';
+  var safeVal=val==null?'':String(val).replace(/"/g,'&quot;');
+  var onInput=(type==='text'||extra&&String(extra).indexOf('readonly')>-1)?'':' oninput="this._userEdited=true;cocUpdate()"';
+  return '<div class="calc-field"><label for="'+id+'">'+lbl+'</label>'+
+    '<input id="'+id+'" type="'+(type||'number')+'" value="'+safeVal+'" step="'+(step||'1')+'" min="0"'+
+    (extra?' '+extra:'')+onInput+'></div>';
 }
 function _cFSelect(lbl,id,val,options,unit){
-  var opts=options.map(function(v){return '<option value="'+v+'"'+(v==val?' selected':'')+'>'+v+(unit?' '+unit:'')+'</option>';}).join('');
-  return '<div class="coc-fld"><label>'+lbl+'</label>'+
-    '<select id="'+id+'" onchange="cocUpdate()" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;">'+opts+'</select></div>';
+  var opts=options.map(function(v){return '<option value="'+v+'"'+(Number(v)===Number(val)?' selected':'')+'>'+v+(unit?' '+unit:'')+'</option>';}).join('');
+  return '<div class="calc-field"><label for="'+id+'">'+lbl+'</label>'+
+    '<select id="'+id+'" onchange="this._userEdited=true;cocUpdate()">'+opts+'</select></div>';
 }
-function _cC(lbl,val,cls,sub){
+function _cC(lbl,id,sub){
   return '<div class="coc-card"><div class="coc-lbl">'+lbl+'</div>'+
-    '<div class="coc-val '+(cls||'')+'">'+val+'</div><div class="coc-sub">'+sub+'</div></div>';
+    '<div class="coc-val" id="'+id+'">-</div><div class="coc-sub">'+sub+'</div></div>';
 }
 function _yieldCalcRoot(){
   var path=D.selectedPath||'';
@@ -6534,11 +6513,11 @@ function _yieldCalcField(id){
 }
 function _yieldCalcValue(id){
   var el=_yieldCalcField(id);
-  return el?+el.value||0:0;
+  return el?_numFromInput(el.value):0;
 }
 function _syncYieldTracker(sync){
   var path=D.selectedPath||'';
-  if(!sync||!sync.path||sync.path!==path||(path!=='cf'&&path!=='mt'))return;
+  if(path!=='cf'&&path!=='mt')return;
   var ltcf=document.getElementById('lt-cf-cashflow');
   var ltds=document.getElementById('lt-dscr');
   var ltCap=document.getElementById('lt-cap-rate');
@@ -6550,6 +6529,14 @@ function _syncYieldTracker(sync){
     if(!el)return;
     el.style.color=tone==='good'?'var(--green)':tone==='warn'?'var(--amber)':tone==='bad'?'var(--red)':'';
   };
+  if(!sync||!sync.path||sync.path!==path){
+    [ltcf,ltds,ltCap,ltCoc,ltPi,ltEquity,ltNoi].forEach(function(el){
+      if(!el)return;
+      el.textContent='-';
+      setTone(el,'');
+    });
+    return;
+  }
   if(ltcf){
     ltcf.textContent=fmt(sync.monthlyCashflow)+'/mo';
     setTone(ltcf,sync.monthlyCashflow>=200?'good':sync.monthlyCashflow>=0?'warn':'bad');
@@ -6580,206 +6567,197 @@ function _syncYieldTracker(sync){
   }
 }
 function buildCoCCalculator(overridePrice, overrideDn, overrideRate, overrideTerm){
-  var root=document.getElementById('cf-coc-calc-root');if(!root)return;
-  var mtRoot=document.getElementById('mt-coc-calc-root');
-  if(mtRoot&&mtRoot!==root)mtRoot.innerHTML='';
   var activePath=D.selectedPath||'';
-  var isMt=activePath==='mt';
-  // Pre-fill from live agreed terms first, then D, then DEAL
-  var liPrice=+gv('li-price')||0;
-  var liRate=isMt?(+gv('li-rateconf')||0):(+gv('li-rate')||0);
-  var liTerm=isMt?30:(+gv('li-term')||0);
-  var liDn=isMt?(+gv('li-upfront')||0):(+gv('li-dn')||0);
-  var price=overridePrice||(liPrice||D.agreedPrice||D.price||DEAL.agreedPrice||DEAL.price||0);
-  var dnPct=overrideDn||(liDn>0&&price>0?Math.round(liDn/price*100):(isMt?4:20));
-  var rent=D.rent||DEAL.rent||0;
-  var rate=overrideRate||(liRate||+(gv('h-rate')||'0')||(isMt?(D.agreedRateConf||D.srate||3.5):(D.agreedRate||D.srate||5)));
-  var term=overrideTerm||(liTerm||30);
-  var noteText=activePath==='cf'
-    ?'<strong>Yield-First Formula:</strong> CoC = (NOI - Debt Service) / (Down + Closing Costs). Interest-only CF note payment; balloon term tracked separately.'
-    :'<strong>Yield-First Formula:</strong> CoC = (NOI - Debt Service) / (Down + Closing Costs). 30-yr fixed. Conservative underwriting: 20% expense + 10% vacancy.';
-  root.innerHTML='<div class="coc-calc-wrap">'+
-    '<div class="coc-calc-grid">'+
-    _cF('Sale / Agreed Price ($)','coc-price',price||146000,'number','1000')+
-    _cF('Down Payment (%)','coc-dn',dnPct,'number','1')+
-    _cF('Interest Rate (%)','coc-rate',rate,'number','0.125')+
-    _cFSelect('Loan Term','coc-term',term,[1,2,3,5,7,10,12,15,20,25,30],'yrs')+
-    _cF('Gross Monthly Rent ($)','coc-rent',rent||2400,'number','100')+
-    _cF('Vacancy (%)','coc-vac',10,'number','1')+
-    _cF('Expense (% of gross rent)','coc-exp',20,'number','1')+
-    '</div><div class="coc-results" id="coc-dyn-results"></div>'+
-    '<div class="coc-reverse">'+
+  var cfRoot=document.getElementById('cf-coc-calc-root');
+  var mtRoot=document.getElementById('mt-coc-calc-root');
+  if(activePath!=='cf'&&activePath!=='mt'){
+    if(cfRoot)cfRoot.innerHTML='';
+    if(mtRoot)mtRoot.innerHTML='';
+    return;
+  }
+  var root=_yieldCalcRoot();if(!root)return;
+  var other=activePath==='mt'?cfRoot:mtRoot;
+  if(other&&other!==root)other.innerHTML='';
+  var seed=initCoCFromDeal(activePath,{price:overridePrice,downPct:overrideDn,rate:overrideRate,term:overrideTerm});
+  var pathLabel=activePath==='mt'?'Mortgage Takeover':'Creative Finance';
+  root.innerHTML='<div class="calculator" data-coc-path="'+activePath+'">'+
+    '<div class="calc-intro"><strong>'+pathLabel+' Investor Yield</strong> - Cash-on-Cash math only. Results update live from Deal Analyzer and Live Call Inputs.</div>'+
+    '<div class="calc-grid">'+
+    _cF('Purchase Price ($)','coc-price',seed.price,'number','1000')+
+    _cF('Down Payment (%)','coc-down',seed.downPct,'number','0.1')+
+    _cF('Interest Rate (%)','coc-rate',seed.rate,'number','0.125')+
+    _cFSelect('Loan Term (years)','coc-term',seed.term,[1,2,3,5,7,10,12,15,20,25,30],'yrs')+
+    _cF('Gross Monthly Rent ($)','coc-rent',seed.rent,'number','50')+
+    _cF('Vacancy (%)','coc-vacancy',seed.vacancy,'number','0.5')+
+    _cF('Operating Expenses (% of gross rent)','coc-expenses',seed.expenses,'number','0.5')+
+    _cF('Closing Costs ($)','coc-closing',seed.closing,'number','100')+
+    '</div>'+
+    '<div class="calc-results">'+
+    _cC('Cash-on-Cash','coc-coc','Annual CF / equity invested')+
+    _cC('Cap Rate','coc-cap','NOI / purchase price')+
+    _cC('Monthly P&amp;I','coc-payment','Standard amortization')+
+    _cC('Annual Cash Flow','coc-cashflow','NOI - annual debt')+
+    _cC('Equity Invested','coc-equity','Down payment + closing')+
+    _cC('NOI (annual)','coc-noi','Rent - vacancy - expenses')+
+    '</div>'+
+    '<div class="reverse-panel">'+
     _cF('Target CoC (%)','coc-target',25,'number','1')+
-    _cF('Closing Costs ($)','coc-closing',5000,'number','500')+
-    '<button class="coc-rev-btn" onclick="cocFindMaxPrice()">&#8635; Max Price for Target CoC</button>'+
-    '<button class="coc-rev-btn" onclick="checkMathWorks()" style="margin-left:8px;">&#128290; Check Math Works</button>'+
-    '<div id="math-works-notify" style="margin-top:8px; font-size:11px;"></div>'+
-    _cF('Suggested Max Price','coc-maxprice','','text','','readonly style="background:var(--gray,#F3F4F6);"')+
-    '</div><div class="coc-note">'+noteText+'</div></div>';
-  cocUpdate();
+    '<button class="coc-rev-btn" id="coc-max-btn" onclick="cocMaxPrice()">Compute Max Price</button>'+
+    '<button class="coc-rev-btn secondary" onclick="checkMathWorks()">&#128290; Check Math Works</button>'+
+    _cF('Suggested Max Price','coc-max-price','','text','','readonly style="background:#fff;font-weight:800;color:var(--blue-dk);"')+
+    '</div>'+
+    '<div class="math-check" id="math-works-notify"></div>'+
+    '<div class="coc-note"><strong>Formula:</strong> CoC = (NOI - Annual Debt Service) / (Down Payment + Closing Costs). Math validation checks arithmetic only - it never labels a deal good or bad.</div>'+
+    '</div>';
+  cocUpdate(true);
 }
-function cocUpdate(){
+function initCoCFromDeal(path,overrides){
+  path=path||D.selectedPath||'cf';
+  overrides=overrides||{};
+  var isMt=path==='mt';
+  var price=overrides.price||(+gv('li-price')||D.agreedPrice||D.price||DEAL.agreedPrice||DEAL.price||0);
+  var cashIn=isMt?(+gv('li-upfront')||D.agreedUpfront||0):(+gv('li-dn')||D.agreedDN||0);
+  var downPct=overrides.downPct||(price>0&&cashIn>0?(cashIn/price)*100:(isMt?4:20));
+  var rate=overrides.rate||(isMt?(+gv('li-rateconf')||D.agreedRateConf||D.srate||0):(+gv('li-rate')||D.agreedRate||D.srate||5));
+  var term=overrides.term||(isMt?30:(+gv('li-term')||D.agreedTerm||30));
+  var rent=+gv('h-rent')||D.rent||DEAL.rent||0;
+  return{
+    price:Math.round(price||0),
+    downPct:Math.round((downPct||0)*10)/10,
+    rate:Math.round((rate||0)*1000)/1000,
+    term:term||30,
+    rent:Math.round(rent||0),
+    vacancy:10,
+    expenses:45,
+    closing:Math.round((price||0)*0.025)
+  };
+}
+var _cocUpdateTimer=null;
+function cocUpdate(immediate){
+  clearTimeout(_cocUpdateTimer);
+  if(immediate)return cocUpdateNow();
+  _cocUpdateTimer=setTimeout(cocUpdateNow,80);
+}
+function cocUpdateNow(){
   var g=function(id){return _yieldCalcValue(id);};
   var term=g('coc-term')||30;
   var activePath=D.selectedPath||'';
   var price=g('coc-price');
   var rent=g('coc-rent');
-  var vac=g('coc-vac')||10;
-  var exp=g('coc-exp')||20;
+  var vac=g('coc-vacancy')||10;
+  var exp=g('coc-expenses')||45;
   var closing=g('coc-closing');
   var rate=g('coc-rate');
-  var dnPct=g('coc-dn');
-  var res;
-  if(activePath==='mt'){
-    var upfront=+gv('li-upfront')||D.agreedUpfront||Math.round((price||0)*(dnPct||4)/100)||0;
-    var bal=+gv('li-balconf')||D.agreedBal||D.bal||Math.max(0,(price||0)-upfront);
-    var mtRate=+gv('li-rateconf')||D.agreedRateConf||rate||D.srate||0;
-    var ag=rent*12, vl=ag*(vac/100), expDollar=ag*(exp/100), noi=(ag-vl)-expDollar;
-    var mR=mtRate/100/12, n=360;
-    var pmt=mR>0&&bal>0?bal*(mR*Math.pow(1+mR,n))/(Math.pow(1+mR,n)-1):(bal>0?bal/n:0);
-    var cashflow=noi-pmt*12, equity=Math.max(0,upfront)+(closing||0), dscr=pmt>0?(noi/12)/pmt:999;
-    res={pmt:pmt,noi:noi,cashflow:cashflow,equity:equity,dscr:dscr,coc:equity>0?(cashflow/equity)*100:0,cap:price>0?(noi/price)*100:0};
-    term=30;
+  var dnPct=g('coc-down');
+  var res=computeCoC(price,dnPct,rate,rent,vac,exp,closing,term);
+  var set=function(id,value,tone){
+    var el=_yieldCalcField(id);if(!el)return;
+    el.textContent=value;
+    el.classList.remove('go','warn','bad');
+    if(tone)el.classList.add(tone);
+  };
+  var requiredReady=price>0&&rent>0;
+  if(!requiredReady){
+    ['coc-coc','coc-cap','coc-payment','coc-cashflow','coc-equity','coc-noi'].forEach(function(id){set(id,'-','');});
   }else{
-    res=computeCoC(price,dnPct,rate,rent,vac,exp,closing,term);
+    set('coc-coc',_pct(res.coc,1),res.coc>=0?'go':'bad');
+    set('coc-cap',_pct(res.cap,1),'');
+    set('coc-payment',_money(res.pmt),'');
+    set('coc-cashflow',_money(res.cashflow),res.cashflow>=0?'go':'bad');
+    set('coc-equity',_money(res.equity),'');
+    set('coc-noi',_money(res.noi),'');
   }
-  var el=_yieldCalcField('coc-dyn-results')||_yieldCalcField('coc-results');if(!el)return;
-  var rt=_yieldCalcField('coc-rate');
-  // GO/NO-GO verdict
-  var cfMo=Math.round(res.cashflow/12);
-  var verdict,vclass;
-  if(res.coc>=20&&res.dscr>=1.25&&cfMo>=200){verdict='GO - Strong Hold';vclass='go';}
-  else if(res.coc>=12){verdict='NEGOTIATE - Workable';vclass='warn';}
-  else{verdict='NO DEAL - Pass';vclass='bad';}
-  var termWarn=term<10?'<span style="color:var(--amber);font-size:10px;">Warning: short term = much lower max price</span>':'';
-  var paymentLabel=activePath==='cf'?'Monthly Interest Only':'Monthly P&I;';
-  var paymentSub=activePath==='cf'
-    ?((g('coc-term')||term)+'-yr balloon @ '+(rt?rt.value:'7')+'%')
-    :(term+'-yr @ '+(rt?rt.value:'7')+'%');
-  el.innerHTML=
-    '<div style="padding:8px 12px;border-radius:6px;margin-bottom:8px;font-weight:700;font-size:12px;text-align:center;'+
-      (vclass==='go'?'background:var(--green-lt);color:var(--green);border:1px solid var(--green);':
-       vclass==='warn'?'background:var(--amber-lt);color:var(--amber);border:1px solid var(--amber);':
-       'background:var(--red-lt);color:var(--red);border:1px solid var(--red);')+'">'+verdict+'</div>'+
-    _cC('Cash-on-Cash',res.coc.toFixed(1)+'%',res.coc>=25?'go':res.coc>=12?'warn':'bad','GO >=20%, NEGOTIATE 12-20%')+
-    _cC('DSCR',res.dscr.toFixed(2)+(res.dscr>=1.25?' ?':' ?'),res.dscr>=1.25?'go':'bad','Target >=1.25')+
-    _cC('Cap Rate',res.cap.toFixed(1)+'%','','Comps: 5-8%')+
-    _cC(paymentLabel,'$'+Math.round(res.pmt).toLocaleString(),'',paymentSub)+
-    _cC('Monthly Cash Flow','$'+cfMo.toLocaleString(),cfMo>=200?'go':cfMo>=0?'warn':'bad','Target >=$200/mo')+
-    _cC('Annual Cash Flow','$'+Math.round(res.cashflow).toLocaleString(),res.cashflow>=0?'go':'bad','After all debt service')+
-    _cC('Equity Invested','$'+Math.round(res.equity).toLocaleString(),'','Down + closing costs')+
-    _cC('NOI (annual)','$'+Math.round(res.noi).toLocaleString(),'','Gross rent - vacancy - expenses')+
-    termWarn;
+  var maxBtn=_yieldCalcField('coc-max-btn');
+  if(maxBtn)maxBtn.disabled=!(rent>0&&g('coc-target')>0);
   if(activePath==='cf'||activePath==='mt'){
-    D.liveYieldSync={path:activePath,monthlyCashflow:cfMo,dscr:res.dscr,cap:res.cap,coc:res.coc,piti:Math.round(res.pmt),equityInvested:Math.round(res.equity),noi:Math.round(res.noi),term:term};
-    if(activePath==='cf')D.cfTrueCashflow=cfMo;
+    if(!requiredReady){
+      D.liveYieldSync=null;
+      _syncYieldTracker(null);
+      return;
+    }
+    D.liveYieldSync={path:activePath,monthlyCashflow:Math.round(res.monthlyCashflow),annualCashflow:Math.round(res.cashflow),dscr:res.dscr,cap:res.cap,coc:res.coc,piti:Math.round(res.pmt),equityInvested:Math.round(res.equity),noi:Math.round(res.noi),term:term};
+    if(activePath==='cf')D.cfTrueCashflow=Math.round(res.monthlyCashflow);
     _syncYieldTracker(D.liveYieldSync);
   }
 }
-function cocFindMaxPrice(){
+function cocMaxPrice(){
   var g=function(id){return _yieldCalcValue(id);};
-  var dn=g('coc-dn')||20, rate=g('coc-rate')||7;
-  var rent=g('coc-rent'), vac=g('coc-vac')||10, exp=g('coc-exp')||20;
-  var closing=g('coc-closing')||5000, target=g('coc-target')||25;
+  var dn=g('coc-down')||20, rate=g('coc-rate')||0;
+  var rent=g('coc-rent'), vac=g('coc-vacancy')||10, exp=g('coc-expenses')||45;
+  var closing=g('coc-closing')||0, target=g('coc-target')||25;
   var term=g('coc-term')||30;
-  var maxP=cocMaxPrice(dn,rate,rent,vac,exp,closing,target,term);
-  // Write result to all possible output elements
-  ['coc-maxprice','coc-suggested'].forEach(function(id){
-    var el=_yieldCalcField(id);
-    if(el)el.value=maxP>0?'$'+maxP.toLocaleString():'-';
-  });
-  // Pre-fill the price input and trigger full recalc
+  var maxP=solveMaxCoCPrice(dn,rate,rent,vac,exp,closing,target,term);
+  var out=_yieldCalcField('coc-max-price');
+  if(out)out.value=maxP>0?_money(maxP):'-';
   var prEl=_yieldCalcField('coc-price');
   if(prEl&&maxP>0){prEl.value=maxP;}
-  if(typeof cocUpdate==='function')setTimeout(cocUpdate,0);
+  if(maxP>0)cocUpdate(true);
 }
+function cocFindMaxPrice(){return cocMaxPrice();}
 // -- End CoC Yield Calculator ---------------------------------------------
 
 
 // ==========================================
 function checkMathWorks() {
-  var notify = document.getElementById('math-works-notify');
+  var notify = _yieldCalcField('math-works-notify') || document.getElementById('math-works-notify');
   if (!notify) return;
   try {
-    var price = +gv('li-price') || D.agreedPrice || D.price || 0;
-    var arv = D.arv || 0;
-    var rent = D.rent || 0;
-    var bal = +gv('li-balconf') || D.agreedBal || D.bal || 0;
+    var price = _yieldCalcValue('coc-price');
+    var rent = _yieldCalcValue('coc-rent');
+    var downPct = _yieldCalcValue('coc-down');
+    var rate = _yieldCalcValue('coc-rate');
+    var term = _yieldCalcValue('coc-term') || 30;
+    var vacancy = _yieldCalcValue('coc-vacancy');
+    var expenses = _yieldCalcValue('coc-expenses');
+    var closing = _yieldCalcValue('coc-closing');
     var path = D.selectedPath || '';
-    var down = 0, rate = 0, monthly = 0;
-    var checks = [];
-    var allPass = true;
-
-    if (!arv) {
-      notify.innerHTML = '<div style="padding:8px 10px;border-radius:8px;background:var(--cream);font-size:11px;"><strong>MATH VALIDATION RESULTS</strong><br>Warning: ARV missing - run analyzer first.</div>';
-      return;
+    var balance = +gv('li-balconf') || D.agreedBal || D.bal || 0;
+    var downPayment = price * (downPct / 100);
+    var loanPrincipal = price - downPayment;
+    var res = computeCoC(price, downPct, rate, rent, vacancy, expenses, closing, term);
+    var failures = [], warnings = [], passes = [];
+    var numericFields = [
+      ['Purchase price', price],
+      ['Down payment %', downPct],
+      ['Interest rate', rate],
+      ['Loan term', term],
+      ['Gross monthly rent', rent],
+      ['Vacancy %', vacancy],
+      ['Operating expenses %', expenses],
+      ['Closing costs', closing]
+    ];
+    numericFields.forEach(function(item){
+      if(!isFinite(item[1]))failures.push(item[0]+' is not a valid number.');
+      else if(item[1]<0)failures.push(item[0]+' cannot be negative.');
+    });
+    if(price<=0)warnings.push('Purchase price is missing.');
+    if(rent<=0)warnings.push('Gross monthly rent is missing, so rent coverage cannot be verified.');
+    if(term<=0)failures.push('Loan term cannot be zero.');
+    if(price>0&&loanPrincipal<=0)failures.push('Price minus down payment must be greater than $0.');
+    else if(price>0)passes.push('Price minus down payment is positive.');
+    if(rent>0&&res.pmt>0){
+      if(res.pmt<=rent)passes.push('Monthly payment is less than or equal to rent.');
+      else failures.push('Monthly payment exceeds rent, so the buyer cannot cover payment from rent alone.');
     }
-    if (!price) {
-      notify.innerHTML = '<div style="padding:8px 10px;border-radius:8px;background:var(--cream);font-size:11px;"><strong>MATH VALIDATION RESULTS</strong><br>Warning: Agreed price missing - enter in Live Call Inputs.</div>';
-      return;
-    }
-
-    if (path === 'cf') {
-      down = +gv('li-dn') || D.agreedDN || Math.round(price * 0.04);
-      rate = +gv('li-rate') || D.agreedRate || D.srate || 5;
-      monthly = Math.round((price - down) * (rate / 100 / 12));
-    } else if (path === 'mt') {
-      down = +gv('li-upfront') || D.agreedUpfront || Math.round(price * 0.04);
-      rate = +gv('li-rateconf') || D.agreedRateConf || D.srate || 0;
-      monthly = Math.round(bal * (rate / 100 / 12));
-    }
-
-    var negFields = [];
-    if (price < 0) negFields.push('price');
-    if (arv < 0) negFields.push('ARV');
-    if (rent < 0) negFields.push('rent');
-    if (down < 0) negFields.push('down payment');
-    if (rate < 0) negFields.push('interest rate');
-    if (negFields.length) {
-      checks.push('Error: Negative value detected in ' + negFields.join(', ') + '.');
-      allPass = false;
-    } else {
-      checks.push('OK: All key inputs are non-negative.');
-    }
-
-    if (arv >= price) {
-      checks.push('OK: Equity is positive: ARV $' + arv.toLocaleString() + ' >= Agreed Price $' + price.toLocaleString() + '.');
-    } else {
-      checks.push('Error: Equity is negative: ARV $' + arv.toLocaleString() + ' is less than Agreed Price $' + price.toLocaleString() + '.');
-      allPass = false;
-    }
-
-    if (rent > 0 && monthly > 0) {
-      if (monthly <= rent) {
-        checks.push('OK: Monthly payment $' + monthly.toLocaleString() + ' <= rent $' + rent.toLocaleString() + '.');
-      } else {
-        checks.push('Error: Monthly payment $' + monthly.toLocaleString() + ' exceeds rent $' + rent.toLocaleString() + ' - buyer would be underwater.');
-        allPass = false;
-      }
-    } else {
-      checks.push('Warning: No rent data - cannot verify payment affordability.');
-    }
-
-    if (path === 'mt') {
-      if (bal > 0) {
-        if (price > bal) {
-          checks.push('OK: Agreed price $' + price.toLocaleString() + ' is above loan balance $' + bal.toLocaleString() + '.');
-        } else {
-          checks.push('Error: Agreed price $' + price.toLocaleString() + ' is less than or equal to loan balance $' + bal.toLocaleString() + ' - seller would need to bring cash.');
-          allPass = false;
-        }
-      } else {
-        checks.push('Warning: No loan balance entered - loan sanity check skipped.');
+    if(path==='mt'){
+      if(balance>0){
+        if(price>balance)passes.push('Purchase price is above existing loan balance.');
+        else failures.push('MT price must be above existing loan balance or seller would owe money.');
+      }else{
+        warnings.push('Existing loan balance is missing for MT validation.');
       }
     }
-
-    notify.innerHTML = '<div style="padding:8px 10px;border-radius:8px;background:var(--cream);font-size:11px;">' +
-      '<strong>MATH VALIDATION RESULTS</strong><br>' +
-      checks.join('<br>') +
-      '<br><strong>' + (allPass ? 'All math checks passed - numbers are internally consistent.' : 'Math errors found - correct the highlighted issues before presenting.') + '</strong>' +
-      '</div>';
+    if(!isFinite(res.coc)||!isFinite(res.cap)||!isFinite(res.pmt)||!isFinite(res.noi))failures.push('Calculation produced a division-by-zero or invalid-number result.');
+    else passes.push('No division-by-zero errors detected.');
+    notify.className='math-check '+(failures.length?'bad':warnings.length?'warn':'good');
+    notify.innerHTML='<strong>Math Validation Results</strong><br>'+
+      (failures.length?failures.map(function(x){return '&#10060; '+x;}).join('<br>'):
+       warnings.length?warnings.map(function(x){return '&#9888; '+x;}).join('<br>'):
+       '&#9989; All math checks passed - numbers are internally consistent.')+
+      (passes.length&&failures.length?'<br>'+passes.map(function(x){return '&#9989; '+x;}).join('<br>'):'');
   } catch (e) {
-    notify.innerHTML = '<div style="padding:8px 10px;border-radius:8px;background:var(--cream);font-size:11px;"><strong>MATH VALIDATION RESULTS</strong><br>Warning: Unable to validate the current numbers. Please review the agreed terms and try again.</div>';
+    notify.className='math-check warn';
+    notify.innerHTML = '<strong>Math Validation Results</strong><br>&#9888; Unable to validate the current numbers. Please review the agreed terms and try again.';
   }
 }
 
@@ -8260,71 +8238,19 @@ function generatePDF(){
 // MISSING FUNCTION STUBS - all called from HTML/JS but previously undefined
 // ==============================================================================
 
-// -- runCoCCalc / cocReverseSolve -- aliases for the inline CoC calc ----------
-// The left-panel coc-calc-panel inputs use oninput="runCoCCalc()"
-// and the reverse solver button uses onclick="cocReverseSolve()"
+// -- runCoCCalc / cocReverseSolve -- compatibility aliases for CF/MT CoC calc --
+// Older inline handlers call these names; the active calculator uses cocUpdate()
+// and cocMaxPrice() inside the CF/MT path panels.
 function runCoCCalc(){
-  // Inline panel uses different IDs (coc-price, coc-down, etc.) vs dynamic calc
-  // Try to run cocUpdate() if the dynamic calc is rendered, else compute inline
   if(typeof cocUpdate==='function'){
-    try{cocUpdate();}catch(e){}
-  }
-  // Also handle the static left-panel coc-calc-panel inputs
-  var g=function(id){var el=document.getElementById(id);return el?+el.value||0:0;};
-  var price=g('coc-price'),dnPct=g('coc-down')||20,rate=g('coc-rate')||7,
-      rent=g('coc-rent'),vac=g('coc-vacancy')||10,exp=g('coc-expense')||20,
-      closing=g('coc-closing')||5000,term=g('coc-term')||30;
-  if(!price||!rent)return;
-  var res=typeof computeCoC==='function'?computeCoC(price,dnPct,rate,rent,vac,exp,closing,term):null;
-  if(!res)return;
-  var resultsEl=document.getElementById('coc-results');
-  if(resultsEl){
-    var cfMo=Math.round(res.cashflow/12);
-    var verdict2,vc2;
-    if(res.coc>=20&&res.dscr>=1.25&&cfMo>=200){verdict2='GO - Strong Hold';vc2='go';}
-    else if(res.coc>=12){verdict2='NEGOTIATE - Workable';vc2='warn';}
-    else{verdict2='NO DEAL - Pass';vc2='bad';}
-    var termVal=g('coc-term')||30;
-    var termWarn2=termVal<10?'<div style="color:var(--amber);font-size:10px;padding:4px 0;">Warning: short loan term = lower max price</div>':'';
-    resultsEl.innerHTML=
-      '<div style="grid-column:1/-1;padding:6px 10px;border-radius:6px;font-weight:700;font-size:12px;text-align:center;margin-bottom:4px;'+
-        (vc2==='go'?'background:var(--green-lt);color:var(--green);border:1px solid var(--green);':
-         vc2==='warn'?'background:var(--amber-lt);color:var(--amber);border:1px solid var(--amber);':
-         'background:var(--red-lt);color:var(--red);border:1px solid var(--red);')+'">'+verdict2+'</div>'+
-      _cC('Cash-on-Cash',res.coc.toFixed(1)+'%',res.coc>=25?'go':res.coc>=12?'warn':'bad','GO >=20%')+
-      _cC('DSCR',res.dscr.toFixed(2)+(res.dscr>=1.25?' ✓':' ✗'),res.dscr>=1.25?'go':'bad','Target >=1.25')+
-      _cC('Cap Rate',res.cap.toFixed(1)+'%','','Comps: 5-8%')+
-      _cC('Mo. P&I;','$'+Math.round(res.pmt).toLocaleString(),'',termVal+'-yr loan')+
-      _cC('Mo. Cash Flow','$'+cfMo.toLocaleString(),cfMo>=200?'go':cfMo>=0?'warn':'bad','Target >=$200')+
-      _cC('Annual CF','$'+Math.round(res.cashflow).toLocaleString(),res.cashflow>=0?'go':'bad','')+
-      _cC('NOI','$'+Math.round(res.noi).toLocaleString(),'','Gross - vac - exp')+
-      termWarn2;
-  }
-  var verdictEl=document.getElementById('coc-verdict');
-  if(verdictEl&&res){
-    verdictEl.style.display='block';
-    verdictEl.textContent=res.coc>=25?'✓ Strong hold - meets 25% CoC target':
-                           res.coc>=12?'⚠ Marginal - below 25% target':
-                           '❌ Negative or weak cash flow - renegotiate price';
-    verdictEl.style.color=res.coc>=25?'var(--green)':res.coc>=12?'var(--amber)':'var(--red)';
+    try{return cocUpdate(true);}catch(e){}
   }
 }
 
 function cocReverseSolve(){
-  // Alias for cocFindMaxPrice() - works for both dynamic and static panel
-  if(typeof cocFindMaxPrice==='function'){
-    try{cocFindMaxPrice();return;}catch(e){}
+  if(typeof cocMaxPrice==='function'){
+    try{return cocMaxPrice();}catch(e){}
   }
-  // Fallback: solve directly from static panel inputs
-  var g=function(id){var el=document.getElementById(id);return el?+el.value||0:0;};
-  var maxP=typeof cocMaxPrice==='function'
-    ?cocMaxPrice(g('coc-dn')||g('coc-down')||20,g('coc-rate')||7,
-                 g('coc-rent'),g('coc-vac')||g('coc-vacancy')||10,
-                 g('coc-exp')||g('coc-expense')||20,
-                 g('coc-closing')||5000,g('coc-target')||25)
-    :0;
-  var el=document.getElementById('coc-maxprice')||document.getElementById('coc-suggested');
-  if(el&&maxP>0)el.value='$'+maxP.toLocaleString();
 }
 
 // -- showOpenLink -- shows/hides the "Open" listing link button -------------

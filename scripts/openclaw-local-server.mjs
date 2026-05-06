@@ -7424,7 +7424,8 @@ async function executeAdminTask(task, overrides = {}) {
               response.details = `${response.details} Render persistence failed: ${renderResult.error || 'unknown error'}`;
             }
           } else {
-            state.status.telnyxCallerIdRenderSyncStatus = renderConfigured ? 'skipped' : 'not-configured';
+            const renderConfiguredForCallerId = Boolean(RENDER_API_KEY && RENDER_SERVICE_ID);
+            state.status.telnyxCallerIdRenderSyncStatus = renderConfiguredForCallerId ? 'skipped' : 'not-configured';
             response.details = `${response.details} Render sync was skipped, so the env var itself was not updated.`;
           }
         }

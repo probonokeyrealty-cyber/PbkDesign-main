@@ -1,0 +1,53 @@
+name: Ava Training Loop
+
+on:
+  schedule:
+    # Keeps Ava's memory flywheel warm without touching provider writes.
+    - cron: "37 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      minutesBudget:
+        description: "Learning run minutes budget"
+        required: false
+        default: "60"
+      limit:
+        description: "Max candidate interactions to process"
+        required: false
+        default: "40"
+
+permissions:
+  contents: read
+
+jobs:
+  ava-training-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PBK_BRIDGE_URL: ${{ vars.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com' }}
+      PBK_BRIDGE_API_KEY: ${{ secrets.PBK_BRIDGE_API_KEY }}
+      PBK_AVA_MEMORY_DAILY_MINUTES: ${{ inputs.minutesBudget || '60' }}
+      PBK_AVA_MEMORY_WORKER_LIMIT: ${{ inputs.limit || '40' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check training loop secrets
+        id: training-secrets
+        shell: bash
+        run: |
+          if [ -z "$PBK_BRIDGE_API_KEY" ]; then
+            echo "run_worker=false" >> "$GITHUB_OUTPUT"
+            echo "PBK_BRIDGE_API_KEY is not configured; skipping Ava training loop."
+          else
+            echo "run_worker=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Ava memory learning
+        if: ${{ steps.training-secrets.outputs.run_worker == 'true' }}
+        run: node ./scripts/ava-memory-worker.mjs

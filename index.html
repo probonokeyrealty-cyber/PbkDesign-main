@@ -24662,37 +24662,48 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     .page[data-page="brain"].active {
-      height: calc(100dvh - 76px - env(safe-area-inset-bottom, 0px));
-      overflow: hidden;
-      padding-bottom: 0 !important;
-    }
-
-    .page[data-page="brain"].active > .page-head,
-    .page[data-page="brain"].active .brain-left,
-    .page[data-page="brain"].active .brain-main,
-    .page[data-page="brain"].active .brain-right > :not(.research-chat) {
-      display: none !important;
+      height: auto;
+      min-height: calc(100dvh - 76px - env(safe-area-inset-bottom, 0px));
+      overflow-y: auto;
+      padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
     }
 
     .page[data-page="brain"].active .brain-layout {
-      display: block !important;
-      height: 100%;
-      max-height: 100%;
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: var(--s-3) !important;
+      height: auto;
+      max-height: none;
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
       padding: var(--s-3) !important;
     }
 
+    .page[data-page="brain"].active .brain-left,
+    .page[data-page="brain"].active .brain-main,
     .page[data-page="brain"].active .brain-right {
-      display: block !important;
-      height: 100%;
+      display: flex !important;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      height: auto;
       min-height: 0;
       position: static !important;
     }
 
+    .page[data-page="brain"].active .brain-right {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-3);
+    }
+
+    .page[data-page="brain"].active .brain-right > * {
+      min-width: 0 !important;
+      width: 100%;
+    }
+
     .page[data-page="brain"].active .research-chat {
-      height: 100%;
-      min-height: 0;
+      min-height: 430px;
       max-height: none;
       margin: 0;
       display: flex;
@@ -24708,8 +24719,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     .page[data-page="brain"].active .rc-body {
       flex: 1 1 auto;
-      min-height: 0;
-      max-height: none !important;
+      min-height: 220px;
+      max-height: min(52dvh, 520px) !important;
       overflow-y: auto;
       overscroll-behavior: contain;
       padding-bottom: var(--s-4) !important;

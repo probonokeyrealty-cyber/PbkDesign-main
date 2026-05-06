@@ -9531,23 +9531,45 @@ async function fireStreakRequest(method, endpoint, { body, form, query } = {}) {
 }
 
 function extractStreakCollection(body, keys = []) {
+  const fromObjectMap = (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const entries = Object.entries(value)
+      .filter(([, item]) => item && typeof item === 'object' && !Array.isArray(item));
+    const collection = entries
+      .map(([fallbackKey, item]) => ({
+        key: item.key || item.stageKey || item.fieldKey || item.id || fallbackKey,
+        ...item,
+      }))
+      .filter((item) => item.name || item.label || item.stageName || item.fieldName || item.key || item.stageKey || item.fieldKey);
+    return collection;
+  };
   for (const key of keys) {
     const value = body?.[key];
     if (Array.isArray(value)) return value;
+    const mapped = fromObjectMap(value);
+    if (mapped.length) return mapped;
   }
   if (Array.isArray(body)) return body;
   if (body?.results && typeof body.results === 'object') {
     for (const key of keys) {
       const value = body.results?.[key];
       if (Array.isArray(value)) return value;
+      const mapped = fromObjectMap(value);
+      if (mapped.length) return mapped;
     }
   }
   if (body?.data && typeof body.data === 'object') {
     for (const key of keys) {
       const value = body.data?.[key];
       if (Array.isArray(value)) return value;
+      const mapped = fromObjectMap(value);
+      if (mapped.length) return mapped;
     }
+    const mappedData = fromObjectMap(body.data);
+    if (mappedData.length) return mappedData;
   }
+  const mappedBody = fromObjectMap(body);
+  if (mappedBody.length) return mappedBody;
   return [];
 }
 

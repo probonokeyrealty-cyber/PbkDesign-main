@@ -1017,15 +1017,27 @@ async function generatePdfDocument(payload = {}) {
   try {
     browser = await launchPdfBrowserWithRetry();
     const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(90000);
+    page.setDefaultTimeout(90000);
     const previewUrl = buildPdfPreviewUrl(payload);
 
     if (previewUrl) {
-      await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 45000 });
+      try {
+        await page.goto(previewUrl, { waitUntil: 'networkidle2', timeout: 90000 });
+      } catch (error) {
+        await page.setContent(
+          renderPdfFallbackHtml({
+            ...payload,
+            content: `${payload.content || 'The live preview renderer needed more time than expected.'}\n\nRenderer fallback: ${error instanceof Error ? error.message : String(error)}`,
+          }),
+          { waitUntil: 'domcontentloaded', timeout: 90000 },
+        );
+      }
       await page.emulateMediaType('print');
       await page.evaluate(() => document.fonts?.ready);
       await sleep(400);
     } else {
-      await page.setContent(renderPdfFallbackHtml(payload), { waitUntil: 'networkidle0' });
+      await page.setContent(renderPdfFallbackHtml(payload), { waitUntil: 'domcontentloaded', timeout: 90000 });
     }
 
     return await page.pdf({

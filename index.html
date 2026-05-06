@@ -23915,6 +23915,176 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       overflow-wrap: anywhere;
     }
 
+    .page[data-page="campaign-detail"] {
+      overflow-x: hidden;
+      padding-bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .page[data-page="campaign-detail"] [data-campaign-detail-content],
+    .page[data-page="campaign-detail"] .cd-head,
+    .page[data-page="campaign-detail"] .cd-actions-bar,
+    .page[data-page="campaign-detail"] .cd-stats-bar,
+    .page[data-page="campaign-detail"] .cd-body,
+    .page[data-page="campaign-detail"] .cd-side,
+    .page[data-page="campaign-detail"] .cd-side-card,
+    .page[data-page="campaign-detail"] .cd-leads-table,
+    .page[data-page="campaign-detail"] .cd-template-preview,
+    .page[data-page="campaign-detail"] .cd-sequence-editor,
+    .page[data-page="campaign-detail"] .campaign-field,
+    .page[data-page="campaign-detail"] .cd-sequence-hint {
+      min-width: 0 !important;
+      max-width: 100% !important;
+      box-sizing: border-box;
+    }
+
+    .page[data-page="campaign-detail"] .cd-head,
+    .page[data-page="campaign-detail"] .cd-actions-bar,
+    .page[data-page="campaign-detail"] .cd-body {
+      padding-left: var(--s-3) !important;
+      padding-right: var(--s-3) !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-head-top,
+    .page[data-page="campaign-detail"] .cd-actions-bar,
+    .page[data-page="campaign-detail"] .cd-meta,
+    .page[data-page="campaign-detail"] .cd-sequence-editor .sequence-row {
+      display: grid !important;
+      grid-template-columns: 1fr !important;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .page[data-page="campaign-detail"] .cd-actions-bar .btn,
+    .page[data-page="campaign-detail"] .cd-head-top .btn,
+    .page[data-page="campaign-detail"] [data-campaign-detail-action="local-touch-filter"],
+    .page[data-page="campaign-detail"] [data-campaign-detail-action="local-status-filter"],
+    .page[data-page="campaign-detail"] .cd-side-card .btn,
+    .page[data-page="campaign-detail"] .cd-side-card .chip-btn,
+    .page[data-page="campaign-detail"] .cd-lead-row .chip-btn,
+    .page[data-page="campaign-detail"] .campaign-field input,
+    .page[data-page="campaign-detail"] .campaign-field textarea {
+      width: 100% !important;
+      min-width: 0 !important;
+      min-height: 44px;
+      justify-content: center;
+    }
+
+    .page[data-page="campaign-detail"] [style*="display:flex"]:has(> [data-campaign-detail-action="local-touch-filter"]) {
+      display: grid !important;
+      grid-template-columns: 1fr !important;
+      width: 100% !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-actions-bar [style*="margin-left"] {
+      margin-left: 0 !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-title {
+      font-size: clamp(23px, 8vw, 30px) !important;
+      line-height: 1.12;
+    }
+
+    .page[data-page="campaign-detail"] .cd-stats-bar {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      width: 100%;
+    }
+
+    .page[data-page="campaign-detail"] .cd-stat {
+      padding: var(--s-3) !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-stat .v {
+      font-size: 18px !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-body {
+      grid-template-columns: 1fr !important;
+      gap: var(--s-4) !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-leads-table {
+      margin-right: 0 !important;
+      overflow-x: hidden !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-leads-table .head {
+      display: none !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row {
+      display: grid !important;
+      grid-template-columns: 26px minmax(0, 1fr) !important;
+      min-width: 0 !important;
+      width: 100%;
+      gap: 8px 10px !important;
+      padding: var(--s-3) !important;
+      align-items: start !important;
+      border-bottom: 1px solid var(--border-dim);
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > div {
+      min-width: 0;
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+      min-width: 0;
+      padding-left: 36px;
+      color: var(--text-primary);
+      overflow-wrap: anywhere;
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span::before {
+      flex: 0 0 auto;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span:nth-of-type(1)::before {
+      content: "Touch";
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span:nth-of-type(2)::before {
+      content: "Last";
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span:nth-of-type(3)::before {
+      content: "Status";
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span:nth-of-type(4) {
+      padding-left: 0;
+    }
+
+    .page[data-page="campaign-detail"] .cd-lead-row > span:nth-of-type(4)::before {
+      content: "";
+      display: none;
+    }
+
+    .page[data-page="campaign-detail"] .cd-side-card .row {
+      align-items: flex-start !important;
+    }
+
+    .page[data-page="campaign-detail"] .cd-side-card .row .v {
+      max-width: 58%;
+    }
+
+    .page[data-page="campaign-detail"] .cd-template-preview,
+    .page[data-page="campaign-detail"] .cd-sequence-hint,
+    .page[data-page="campaign-detail"] .cd-meta,
+    .page[data-page="campaign-detail"] .cd-title,
+    .page[data-page="campaign-detail"] .cd-lead-row .name,
+    .page[data-page="campaign-detail"] .cd-lead-row .meta {
+      overflow-wrap: anywhere;
+    }
+
     .page[data-page="fleet"] .fleet-shell,
     .page[data-page="fleet"] .fleet-grid,
     .page[data-page="fleet"] .fleet-card,

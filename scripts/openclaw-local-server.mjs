@@ -376,6 +376,13 @@ const TOOL_NAMES = [
   'send_verification_sms',
   'routeInboundCall',
   'runAvaMemoryLearning',
+  'addPbkMemory',
+  'recallPbkMemory',
+  'recordPbkFeedback',
+  'detectPbkIntent',
+  'recordPbkKnowledge',
+  'queryPbkKnowledge',
+  'runPbkAgentPipeline',
   'generatePersona',
   'scoreAgentLikability',
   'prepare_and_send_contract',
@@ -423,6 +430,10 @@ const LIMITS = {
   campaignExecutions: 120,
   rexDecisions: 240,
   avaActiveMemories: 120,
+  pbkMemories: 240,
+  pbkFeedback: 240,
+  pbkIntentEvents: 240,
+  pbkKnowledge: 240,
   avaLearningSessions: 180,
   avaStories: 160,
   agentVersions: 240,
@@ -1572,8 +1583,8 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   const extracted = normalizeBantInfo(existing);
   const moneyMatch = text.match(/(?:\$|want|need|asking|happy with|walk away|take)\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand)?)/i);
   if (!extracted.budget && moneyMatch) extracted.budget = moneyMatch[0].trim();
-  if (!extracted.authority && /\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text)) {
-    extracted.authority = text.match(/.{0,40}\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
+  if (!extracted.authority && /\b(owner|i own|my house|my property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text)) {
+    extracted.authority = text.match(/.{0,40}\b(owner|i own|my house|my property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
   if (!extracted.need && /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b/i.test(text)) {
     extracted.need = text.match(/.{0,40}\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b.{0,80}/i)?.[0]?.trim() || 'seller need mentioned';
@@ -1581,8 +1592,8 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   if (!extracted.timeline && /\b(asap|soon|quick|days|weeks|months|close|closing|deadline|by [a-z]+|before)\b/i.test(text)) {
     extracted.timeline = text.match(/.{0,40}\b(asap|soon|quick|days|weeks|months|close|closing|deadline|before)\b.{0,80}/i)?.[0]?.trim() || 'timeline mentioned';
   }
-  if (!extracted.urgency && /\b(if it does not sell|cannot wait|need this done|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b/i.test(lower)) {
-    extracted.urgency = text.match(/.{0,50}\b(cannot wait|need this done|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b.{0,80}/i)?.[0]?.trim() || 'urgency mentioned';
+  if (!extracted.urgency && /\b(if it does not sell|cannot wait|need this done|need to close|must close|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b/i.test(lower)) {
+    extracted.urgency = text.match(/.{0,50}\b(cannot wait|need this done|need to close|must close|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b.{0,80}/i)?.[0]?.trim() || 'urgency mentioned';
   }
   return extracted;
 }
@@ -2517,6 +2528,10 @@ function buildDefaultState() {
     agentVersions: [],
     rexDecisions: [],
     avaActiveMemories: [],
+    pbkMemories: [],
+    pbkFeedback: [],
+    pbkIntentEvents: [],
+    pbkKnowledge: [],
     avaLearningSessions: [],
     avaStories: buildDefaultAvaStories(),
     inboundCallRoutes: [],
@@ -2704,6 +2719,77 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.pbk_memories (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT '',
+      memory_type TEXT NOT NULL DEFAULT 'episodic',
+      content TEXT NOT NULL DEFAULT '',
+      importance NUMERIC NOT NULL DEFAULT 0.5,
+      source TEXT NOT NULL DEFAULT 'bridge',
+      source_id TEXT NOT NULL DEFAULT '',
+      embedding JSONB,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_memories
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS memory_type TEXT NOT NULL DEFAULT 'episodic',
+      ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS importance NUMERIC NOT NULL DEFAULT 0.5,
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'bridge',
+      ADD COLUMN IF NOT EXISTS source_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS embedding JSONB,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_feedback (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT '',
+      agent_action TEXT NOT NULL DEFAULT '',
+      human_decision TEXT NOT NULL DEFAULT '',
+      transcript_snippet TEXT NOT NULL DEFAULT '',
+      outcome_label TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_intent_events (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      transcript_snippet TEXT NOT NULL DEFAULT '',
+      intent TEXT NOT NULL DEFAULT 'neutral',
+      confidence NUMERIC NOT NULL DEFAULT 0,
+      recommended_action TEXT NOT NULL DEFAULT 'continue_conversation',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_knowledge (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      subject TEXT NOT NULL DEFAULT '',
+      predicate TEXT NOT NULL DEFAULT '',
+      object TEXT NOT NULL DEFAULT '',
+      confidence NUMERIC NOT NULL DEFAULT 0.5,
+      source TEXT NOT NULL DEFAULT 'bridge',
+      source_id TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS public.rex_decisions (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL DEFAULT 'rex-strategist',
@@ -2778,6 +2864,40 @@ async function ensurePgSchema() {
     CREATE INDEX IF NOT EXISTS agent_tasks_memory_idx
       ON public.agent_tasks (workspace_id, created_at DESC);
 
+    CREATE INDEX IF NOT EXISTS pbk_memories_tenant_lead_idx
+      ON public.pbk_memories (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_memories_type_idx
+      ON public.pbk_memories (tenant_id, memory_type, importance DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_memories_content_idx
+      ON public.pbk_memories
+      USING gin (to_tsvector('english', content));
+
+    CREATE INDEX IF NOT EXISTS pbk_memories_metadata_idx
+      ON public.pbk_memories USING gin (metadata);
+
+    CREATE INDEX IF NOT EXISTS pbk_feedback_lead_idx
+      ON public.pbk_feedback (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_feedback_decision_idx
+      ON public.pbk_feedback (tenant_id, human_decision, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_intent_events_lead_idx
+      ON public.pbk_intent_events (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_intent_events_intent_idx
+      ON public.pbk_intent_events (tenant_id, intent, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_knowledge_lookup_idx
+      ON public.pbk_knowledge (tenant_id, subject, predicate);
+
+    CREATE INDEX IF NOT EXISTS pbk_knowledge_object_idx
+      ON public.pbk_knowledge (tenant_id, object);
+
+    CREATE INDEX IF NOT EXISTS pbk_knowledge_metadata_idx
+      ON public.pbk_knowledge USING gin (metadata);
+
     CREATE INDEX IF NOT EXISTS rex_decisions_created_idx
       ON public.rex_decisions (created_at DESC);
 
@@ -2812,6 +2932,16 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS agent_tasks_set_updated_at ON public.agent_tasks;
     CREATE TRIGGER agent_tasks_set_updated_at
       BEFORE UPDATE ON public.agent_tasks
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_memories_set_updated_at ON public.pbk_memories;
+    CREATE TRIGGER pbk_memories_set_updated_at
+      BEFORE UPDATE ON public.pbk_memories
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_knowledge_set_updated_at ON public.pbk_knowledge;
+    CREATE TRIGGER pbk_knowledge_set_updated_at
+      BEFORE UPDATE ON public.pbk_knowledge
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
   `);
 }
@@ -4002,6 +4132,10 @@ function limitStateArrays(nextState) {
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
+  nextState.pbkMemories = sortNewest(nextState.pbkMemories || []).slice(0, LIMITS.pbkMemories);
+  nextState.pbkFeedback = sortNewest(nextState.pbkFeedback || []).slice(0, LIMITS.pbkFeedback);
+  nextState.pbkIntentEvents = sortNewest(nextState.pbkIntentEvents || []).slice(0, LIMITS.pbkIntentEvents);
+  nextState.pbkKnowledge = sortNewest(nextState.pbkKnowledge || []).slice(0, LIMITS.pbkKnowledge);
   nextState.avaLearningSessions = sortNewest(nextState.avaLearningSessions || []).slice(0, LIMITS.avaLearningSessions);
   nextState.avaStories = sortNewest(nextState.avaStories || []).slice(0, LIMITS.avaStories);
   nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
@@ -4040,6 +4174,10 @@ function updateDerivedStatus(nextState) {
   nextState.status.pendingCampaigns = (nextState.campaigns || []).filter((campaign) => ['pending', 'approval_required'].includes(String(campaign.status || '').toLowerCase())).length;
   nextState.status.campaignEvents = (nextState.campaignEvents || []).length;
   nextState.status.avaActiveMemories = (nextState.avaActiveMemories || []).length;
+  nextState.status.pbkMemories = (nextState.pbkMemories || []).length;
+  nextState.status.pbkFeedback = (nextState.pbkFeedback || []).length;
+  nextState.status.pbkIntentEvents = (nextState.pbkIntentEvents || []).length;
+  nextState.status.pbkKnowledge = (nextState.pbkKnowledge || []).length;
   nextState.status.avaLearningSessions = (nextState.avaLearningSessions || []).length;
   nextState.status.avaStories = (nextState.avaStories || []).length;
   nextState.status.agentVersions = (nextState.agentVersions || []).length;
@@ -4062,6 +4200,10 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastCampaignAt = getItemTimestamp((nextState.campaigns || [])[0] || {}) || null;
   nextState.status.lastCampaignEventAt = getItemTimestamp((nextState.campaignEvents || [])[0] || {}) || null;
   nextState.status.lastAvaLearningAt = getItemTimestamp((nextState.avaLearningSessions || [])[0] || {}) || nextState.status.lastAvaLearningAt || null;
+  nextState.status.lastPbkMemoryAt = getItemTimestamp((nextState.pbkMemories || [])[0] || {}) || nextState.status.lastPbkMemoryAt || null;
+  nextState.status.lastPbkFeedbackAt = getItemTimestamp((nextState.pbkFeedback || [])[0] || {}) || nextState.status.lastPbkFeedbackAt || null;
+  nextState.status.lastPbkIntentAt = getItemTimestamp((nextState.pbkIntentEvents || [])[0] || {}) || nextState.status.lastPbkIntentAt || null;
+  nextState.status.lastPbkKnowledgeAt = getItemTimestamp((nextState.pbkKnowledge || [])[0] || {}) || nextState.status.lastPbkKnowledgeAt || null;
   nextState.status.lastInboundRouteAt = getItemTimestamp((nextState.inboundCallRoutes || [])[0] || {}) || nextState.status.lastInboundRouteAt || null;
   nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
   nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
@@ -4123,6 +4265,10 @@ function hydrateState(raw = {}) {
     agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
+    pbkMemories: trimArray(raw.pbkMemories || defaults.pbkMemories, LIMITS.pbkMemories),
+    pbkFeedback: trimArray(raw.pbkFeedback || defaults.pbkFeedback, LIMITS.pbkFeedback),
+    pbkIntentEvents: trimArray(raw.pbkIntentEvents || defaults.pbkIntentEvents, LIMITS.pbkIntentEvents),
+    pbkKnowledge: trimArray(raw.pbkKnowledge || defaults.pbkKnowledge, LIMITS.pbkKnowledge),
     avaLearningSessions: trimArray(raw.avaLearningSessions || defaults.avaLearningSessions, LIMITS.avaLearningSessions),
     avaStories: trimArray(raw.avaStories || defaults.avaStories, LIMITS.avaStories),
     inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
@@ -5452,6 +5598,617 @@ async function syncRexMemoryToSupermemory(doc = {}) {
   }
 }
 
+function normalizeTenantId(value = '') {
+  return String(value || 'pbk').trim() || 'pbk';
+}
+
+function normalizeAgentName(value = '') {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'PBK Agent';
+  return normalized;
+}
+
+function normalizeMemoryType(value = '') {
+  const normalized = String(value || 'episodic').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  return normalized || 'episodic';
+}
+
+function tokenizeForRecall(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
+    .slice(0, 60);
+}
+
+function scorePbkTextMatch(query = '', content = '', metadata = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  const c = [
+    content,
+    metadata?.tags,
+    metadata?.intent,
+    metadata?.path,
+    metadata?.leadName,
+    metadata?.address,
+  ].flat().filter(Boolean).join(' ').toLowerCase();
+  if (!q) return 0.5;
+  if (!c) return 0;
+  const queryTokens = new Set(tokenizeForRecall(q));
+  if (!queryTokens.size) return c.includes(q) ? 2 : 0;
+  let hits = 0;
+  for (const token of queryTokens) {
+    if (c.includes(token)) hits += 1;
+  }
+  const phraseBonus = c.includes(q) ? 3 : 0;
+  return hits / Math.max(1, queryTokens.size) + phraseBonus;
+}
+
+function normalizePbkMemoryRecord(params = {}) {
+  const context = findLeadContext(params);
+  const content = String(params.content || params.text || params.summary || params.memory || '').trim();
+  return {
+    id: params.id || `pbk-memory-${Date.now()}-${Math.abs(hashString(`${context.leadId}\n${content}`))}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+    leadId: String(params.leadId || params.lead_id || context.leadId || '').trim(),
+    agentName: normalizeAgentName(params.agentName || params.agent_name || params.agent || params.requestedBy),
+    memoryType: normalizeMemoryType(params.memoryType || params.memory_type || params.type),
+    content,
+    importance: Math.max(0, Math.min(1, toNumber(params.importance ?? params.score, 0.5))),
+    source: String(params.source || 'bridge').trim() || 'bridge',
+    sourceId: String(params.sourceId || params.source_id || params.callId || params.call_id || '').trim(),
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      leadName: context.leadName,
+      address: context.address,
+      path: params.path || params.selectedPath || params.selected_path || '',
+      tags: normalizeStringList(params.tags || params.tag || params.memoryTags || []),
+    },
+    createdAt: params.createdAt || params.created_at || isoNow(),
+    updatedAt: params.updatedAt || params.updated_at || isoNow(),
+  };
+}
+
+async function persistPbkMemoryToPg(memory = {}) {
+  const pool = getPgPool();
+  if (!pool || !memory.content) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_memories (
+        id, tenant_id, lead_id, agent_name, memory_type, content, importance,
+        source, source_id, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        lead_id = EXCLUDED.lead_id,
+        agent_name = EXCLUDED.agent_name,
+        memory_type = EXCLUDED.memory_type,
+        content = EXCLUDED.content,
+        importance = EXCLUDED.importance,
+        source = EXCLUDED.source,
+        source_id = EXCLUDED.source_id,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        memory.id,
+        memory.tenantId,
+        memory.leadId,
+        memory.agentName,
+        memory.memoryType,
+        memory.content,
+        memory.importance,
+        memory.source,
+        memory.sourceId,
+        JSON.stringify(memory.metadata || {}),
+        memory.createdAt,
+        memory.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK memory persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function addPbkMemoryRecord(params = {}) {
+  const memory = normalizePbkMemoryRecord(params);
+  if (!memory.content) {
+    return {
+      ok: false,
+      stored: false,
+      error: 'No memory content provided.',
+    };
+  }
+  if (!Array.isArray(state.pbkMemories)) state.pbkMemories = [];
+  upsertById(state, 'pbkMemories', memory);
+  const postgres = await persistPbkMemoryToPg(memory);
+  return {
+    ok: true,
+    stored: true,
+    memory,
+    storage: {
+      localState: true,
+      postgres,
+      vector: false,
+      note: 'Native PBK memory stored safely; embeddings/Mem0 can be layered on later.',
+    },
+  };
+}
+
+async function recallPbkMemoryRecords(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id);
+  const context = findLeadContext(params);
+  const leadId = String(params.leadId || params.lead_id || context.leadId || '').trim();
+  const query = String(params.query || params.q || params.prompt || '').trim();
+  const memoryType = normalizeMemoryType(params.memoryType || params.memory_type || params.type || '');
+  const limit = Math.max(1, Math.min(20, Number(params.limit || 5)));
+  let candidates = [];
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      const values = [tenantId];
+      let where = 'tenant_id = $1';
+      if (leadId && params.includeGlobal !== true) {
+        values.push(leadId);
+        where += ` AND (lead_id = $${values.length} OR lead_id = '')`;
+      }
+      if (memoryType && memoryType !== 'episodic') {
+        values.push(memoryType);
+        where += ` AND memory_type = $${values.length}`;
+      }
+      const result = await pool.query(
+        `SELECT id, tenant_id, lead_id, agent_name, memory_type, content, importance,
+          source, source_id, metadata, created_at, updated_at
+        FROM public.pbk_memories
+        WHERE ${where}
+        ORDER BY created_at DESC
+        LIMIT 200`,
+        values,
+      );
+      candidates = result.rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        leadId: row.lead_id,
+        agentName: row.agent_name,
+        memoryType: row.memory_type,
+        content: row.content,
+        importance: Number(row.importance || 0),
+        source: row.source,
+        sourceId: row.source_id,
+        metadata: row.metadata || {},
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] PBK memory recall DB fallback:', error?.message || error);
+    }
+  }
+  if (!candidates.length) {
+    candidates = (state.pbkMemories || []).filter((memory) => {
+      if (normalizeTenantId(memory.tenantId || memory.tenant_id) !== tenantId) return false;
+      if (leadId && params.includeGlobal !== true && memory.leadId && memory.leadId !== leadId) return false;
+      if (memoryType && memoryType !== 'episodic' && normalizeMemoryType(memory.memoryType || memory.memory_type) !== memoryType) return false;
+      return true;
+    }).slice(0, 200);
+  }
+  const memories = candidates
+    .map((memory) => ({
+      ...memory,
+      recallScore: scorePbkTextMatch(query, memory.content, memory.metadata) + Number(memory.importance || 0),
+    }))
+    .filter((memory) => !query || memory.recallScore > 0)
+    .sort((left, right) => right.recallScore - left.recallScore || new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
+    .slice(0, limit);
+  return {
+    ok: true,
+    tenantId,
+    leadId,
+    query,
+    count: memories.length,
+    memories,
+    storage: {
+      postgres: Boolean(pool),
+      vector: false,
+      retrieval: 'safe-text-similarity',
+    },
+  };
+}
+
+function normalizePbkFeedbackRecord(params = {}) {
+  const context = findLeadContext(params);
+  return {
+    id: params.id || `pbk-feedback-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 1000)))}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+    leadId: String(params.leadId || params.lead_id || context.leadId || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    agentName: normalizeAgentName(params.agentName || params.agent_name || params.agent || params.requestedBy),
+    agentAction: String(params.agentAction || params.agent_action || params.action || params.type || '').trim(),
+    humanDecision: String(params.humanDecision || params.human_decision || params.decision || params.status || '').trim().toLowerCase(),
+    transcriptSnippet: String(params.transcriptSnippet || params.transcript_snippet || params.snippet || params.notes || '').trim().slice(0, 2000),
+    outcomeLabel: String(params.outcomeLabel || params.outcome_label || params.outcome || '').trim(),
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      leadName: context.leadName,
+      address: context.address,
+      approvalId: params.approvalId || params.approval_id || '',
+    },
+    createdAt: params.createdAt || params.created_at || isoNow(),
+  };
+}
+
+async function recordPbkFeedbackRecord(params = {}) {
+  const feedback = normalizePbkFeedbackRecord(params);
+  if (!feedback.agentAction && !feedback.humanDecision) {
+    return {
+      ok: false,
+      recorded: false,
+      error: 'No feedback action/decision provided.',
+    };
+  }
+  if (!Array.isArray(state.pbkFeedback)) state.pbkFeedback = [];
+  upsertById(state, 'pbkFeedback', feedback);
+  let postgres = false;
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO public.pbk_feedback (
+          id, tenant_id, lead_id, call_id, agent_name, agent_action,
+          human_decision, transcript_snippet, outcome_label, metadata, created_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)
+        ON CONFLICT (id) DO NOTHING`,
+        [
+          feedback.id,
+          feedback.tenantId,
+          feedback.leadId,
+          feedback.callId,
+          feedback.agentName,
+          feedback.agentAction,
+          feedback.humanDecision,
+          feedback.transcriptSnippet,
+          feedback.outcomeLabel,
+          JSON.stringify(feedback.metadata || {}),
+          feedback.createdAt,
+        ],
+      );
+      postgres = true;
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] PBK feedback persistence skipped:', error?.message || error);
+    }
+  }
+  return {
+    ok: true,
+    recorded: true,
+    feedback,
+    storage: { localState: true, postgres },
+  };
+}
+
+function classifyPbkIntent(text = '') {
+  const body = String(text || '').toLowerCase();
+  const rules = [
+    {
+      intent: 'trust_scam',
+      confidence: 0.93,
+      recommendedAction: 'verify_identity_then_exit_if_unconvinced',
+      patterns: [/\bscam\b/, /\bfake\b/, /not real/, /do not trust/, /who are you/, /prove/i],
+    },
+    {
+      intent: 'ready_to_close',
+      confidence: 0.91,
+      recommendedAction: 'prepare_contract_after_bant_check',
+      patterns: [/send (the )?(contract|agreement)/, /let'?s do it/, /ready to sign/, /sounds good/, /move forward/, /where do i sign/],
+    },
+    {
+      intent: 'callback_request',
+      confidence: 0.87,
+      recommendedAction: 'schedule_specific_callback',
+      patterns: [/call me (back )?(tomorrow|later|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/, /not a good time/, /after work/, /next week/, /later today/],
+    },
+    {
+      intent: 'objection_price',
+      confidence: 0.86,
+      recommendedAction: 'use_price_objection_playbook',
+      patterns: [/too low/, /lowball/, /more money/, /higher offer/, /better offer/, /worth more/, /need more/],
+    },
+    {
+      intent: 'financing_question',
+      confidence: 0.82,
+      recommendedAction: 'explain_terms_then_defer_numbers_to_acquisitions',
+      patterns: [/seller financ/, /subject[- ]?to/, /mortgage/, /loan/, /payments?/, /interest rate/, /take over/],
+    },
+    {
+      intent: 'not_interested',
+      confidence: 0.8,
+      recommendedAction: 'respectfully_exit_or_long_term_nurture',
+      patterns: [/not interested/, /stop calling/, /take me off/, /do not call/, /no thanks/],
+    },
+  ];
+  for (const rule of rules) {
+    if (rule.patterns.some((pattern) => pattern.test(body))) {
+      return {
+        intent: rule.intent,
+        confidence: rule.confidence,
+        recommendedAction: rule.recommendedAction,
+      };
+    }
+  }
+  return {
+    intent: 'neutral',
+    confidence: body.trim() ? 0.45 : 0,
+    recommendedAction: 'continue_conversation',
+  };
+}
+
+async function recordPbkIntentEvent(params = {}, classification = null) {
+  const context = findLeadContext(params);
+  const text = String(params.text || params.transcript || params.transcriptSnippet || params.body || '').trim();
+  const detected = classification || classifyPbkIntent(text);
+  const event = {
+    id: params.id || `pbk-intent-${Date.now()}-${Math.abs(hashString(`${context.leadId}\n${text}`))}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+    leadId: String(params.leadId || params.lead_id || context.leadId || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    transcriptSnippet: text.slice(0, 2000),
+    intent: detected.intent,
+    confidence: detected.confidence,
+    recommendedAction: detected.recommendedAction,
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      leadName: context.leadName,
+      address: context.address,
+    },
+    createdAt: params.createdAt || params.created_at || isoNow(),
+  };
+  if (!Array.isArray(state.pbkIntentEvents)) state.pbkIntentEvents = [];
+  upsertById(state, 'pbkIntentEvents', event);
+  let postgres = false;
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO public.pbk_intent_events (
+          id, tenant_id, lead_id, call_id, transcript_snippet, intent,
+          confidence, recommended_action, metadata, created_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+        ON CONFLICT (id) DO NOTHING`,
+        [
+          event.id,
+          event.tenantId,
+          event.leadId,
+          event.callId,
+          event.transcriptSnippet,
+          event.intent,
+          event.confidence,
+          event.recommendedAction,
+          JSON.stringify(event.metadata || {}),
+          event.createdAt,
+        ],
+      );
+      postgres = true;
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] PBK intent persistence skipped:', error?.message || error);
+    }
+  }
+  return {
+    ok: true,
+    event,
+    storage: { localState: true, postgres },
+  };
+}
+
+function normalizePbkKnowledgeRecord(params = {}) {
+  const subject = String(params.subject || params.propertyId || params.leadId || params.address || '').trim();
+  const predicate = String(params.predicate || params.fact || params.key || '').trim();
+  const object = String(params.object || params.value || params.answer || '').trim();
+  return {
+    id: params.id || `pbk-knowledge-${Math.abs(hashString(`${subject}\n${predicate}\n${object}`))}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+    subject,
+    predicate,
+    object,
+    confidence: Math.max(0, Math.min(1, toNumber(params.confidence, 0.5))),
+    source: String(params.source || 'bridge').trim() || 'bridge',
+    sourceId: String(params.sourceId || params.source_id || '').trim(),
+    metadata: params.metadata && typeof params.metadata === 'object' ? params.metadata : {},
+    createdAt: params.createdAt || params.created_at || isoNow(),
+    updatedAt: params.updatedAt || params.updated_at || isoNow(),
+  };
+}
+
+async function recordPbkKnowledgeRecord(params = {}) {
+  const fact = normalizePbkKnowledgeRecord(params);
+  if (!fact.subject || !fact.predicate || !fact.object) {
+    return {
+      ok: false,
+      recorded: false,
+      error: 'Knowledge facts require subject, predicate, and object.',
+    };
+  }
+  if (!Array.isArray(state.pbkKnowledge)) state.pbkKnowledge = [];
+  upsertById(state, 'pbkKnowledge', fact);
+  let postgres = false;
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO public.pbk_knowledge (
+          id, tenant_id, subject, predicate, object, confidence,
+          source, source_id, metadata, created_at, updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11)
+        ON CONFLICT (id) DO UPDATE SET
+          tenant_id = EXCLUDED.tenant_id,
+          subject = EXCLUDED.subject,
+          predicate = EXCLUDED.predicate,
+          object = EXCLUDED.object,
+          confidence = EXCLUDED.confidence,
+          source = EXCLUDED.source,
+          source_id = EXCLUDED.source_id,
+          metadata = EXCLUDED.metadata,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          fact.id,
+          fact.tenantId,
+          fact.subject,
+          fact.predicate,
+          fact.object,
+          fact.confidence,
+          fact.source,
+          fact.sourceId,
+          JSON.stringify(fact.metadata || {}),
+          fact.createdAt,
+          fact.updatedAt,
+        ],
+      );
+      postgres = true;
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] PBK knowledge persistence skipped:', error?.message || error);
+    }
+  }
+  return {
+    ok: true,
+    recorded: true,
+    fact,
+    storage: { localState: true, postgres },
+  };
+}
+
+async function queryPbkKnowledgeRecords(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id);
+  const subject = String(params.subject || params.propertyId || params.leadId || params.address || '').trim();
+  const predicate = String(params.predicate || params.fact || params.key || '').trim();
+  const query = String(params.query || params.q || '').trim().toLowerCase();
+  const limit = Math.max(1, Math.min(50, Number(params.limit || 10)));
+  let facts = [];
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      const values = [tenantId];
+      let where = 'tenant_id = $1';
+      if (subject) {
+        values.push(`%${subject}%`);
+        where += ` AND subject ILIKE $${values.length}`;
+      }
+      if (predicate) {
+        values.push(`%${predicate}%`);
+        where += ` AND predicate ILIKE $${values.length}`;
+      }
+      const result = await pool.query(
+        `SELECT id, tenant_id, subject, predicate, object, confidence, source, source_id, metadata, created_at, updated_at
+        FROM public.pbk_knowledge
+        WHERE ${where}
+        ORDER BY confidence DESC, updated_at DESC
+        LIMIT $${values.length + 1}`,
+        [...values, Math.max(limit, 50)],
+      );
+      facts = result.rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        subject: row.subject,
+        predicate: row.predicate,
+        object: row.object,
+        confidence: Number(row.confidence || 0),
+        source: row.source,
+        sourceId: row.source_id,
+        metadata: row.metadata || {},
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] PBK knowledge DB fallback:', error?.message || error);
+    }
+  }
+  if (!facts.length) {
+    facts = (state.pbkKnowledge || []).filter((fact) => {
+      if (normalizeTenantId(fact.tenantId || fact.tenant_id) !== tenantId) return false;
+      if (subject && !String(fact.subject || '').toLowerCase().includes(subject.toLowerCase())) return false;
+      if (predicate && !String(fact.predicate || '').toLowerCase().includes(predicate.toLowerCase())) return false;
+      return true;
+    });
+  }
+  const scored = facts
+    .map((fact) => ({
+      ...fact,
+      score: scorePbkTextMatch(query || `${subject} ${predicate}`, `${fact.subject} ${fact.predicate} ${fact.object}`, fact.metadata) + Number(fact.confidence || 0),
+    }))
+    .filter((fact) => !query || fact.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+  return {
+    ok: true,
+    tenantId,
+    subject,
+    predicate,
+    query,
+    count: scored.length,
+    facts: scored,
+    storage: { postgres: Boolean(pool) },
+  };
+}
+
+async function runPbkAgentPipelineRecord(params = {}) {
+  const context = findLeadContext(params);
+  const transcript = String(params.transcript || params.text || params.query || '').trim();
+  const leadContext = params.leadContext && typeof params.leadContext === 'object' ? params.leadContext : {};
+  const bant = normalizeBantInfo(params.bant || {}, leadContext.bant || {}, extractBantFromTranscript(transcript, {}));
+  const missingBant = getMissingBantFields(bant);
+  const intent = await recordPbkIntentEvent({
+    ...params,
+    text: transcript,
+    leadId: context.leadId,
+    metadata: {
+      ...(params.metadata || {}),
+      pipeline: true,
+    },
+  });
+  const memories = await recallPbkMemoryRecords({
+    tenantId: params.tenantId || params.tenant_id,
+    leadId: context.leadId,
+    query: transcript || `${context.leadName} ${context.address}`,
+    limit: 5,
+    includeGlobal: true,
+  });
+  let nextAgent = 'lead_qualifier';
+  let action = 'qualify_bant';
+  if (!missingBant.length && intent.event.intent === 'ready_to_close') {
+    nextAgent = 'contract_prep';
+    action = 'prepare_path_contract_with_approval';
+  } else if (intent.event.intent === 'objection_price') {
+    nextAgent = 'negotiator';
+    action = 'use_weighted_price_objection_playbook';
+  } else if (intent.event.intent === 'callback_request') {
+    nextAgent = 'follow_up_scheduler';
+    action = 'schedule_specific_callback';
+  } else if (intent.event.intent === 'trust_scam') {
+    nextAgent = 'verification';
+    action = 'verify_identity_or_exit';
+  } else if (!missingBant.length) {
+    nextAgent = 'negotiator';
+    action = 'continue_negotiation';
+  }
+  return {
+    ok: true,
+    lead: context,
+    qualifier: {
+      bant,
+      missingBant,
+      complete: missingBant.length === 0,
+    },
+    intent: intent.event,
+    memory: memories.memories,
+    nextAgent,
+    action,
+    approvalGated: true,
+    note: 'Pipeline is advisory and launch-safe; provider writes still follow PBK approval gates.',
+  };
+}
+
 async function storeRexConversationMemory(stateRef, params = {}, result = {}) {
   const query = String(params.query || '').trim();
   const answer = String(result.answer || '').trim();
@@ -5470,11 +6227,31 @@ async function storeRexConversationMemory(stateRef, params = {}, result = {}) {
     source: params.source || 'brain-chat',
   });
   addBrainDoc(stateRef, doc);
+  const pbkMemory = await addPbkMemoryRecord({
+    tenantId: params.tenantId || 'pbk',
+    leadId: params.leadId || '',
+    agentName: 'Rex',
+    memoryType: 'semantic',
+    content: `User asked: ${query}\nRex answered: ${answer}`,
+    importance: 0.62,
+    source: params.source || 'brain-chat',
+    sourceId: doc.id,
+    metadata: {
+      sessionId: params.sessionId || '',
+      docId: doc.id,
+      tags: ['rex', 'conversation-memory'],
+    },
+  }).catch((error) => ({
+    ok: false,
+    stored: false,
+    error: error?.message || 'PBK native memory store failed.',
+  }));
   const supermemory = await syncRexMemoryToSupermemory(doc);
   return {
     stored: true,
     docId: doc.id,
     localBrain: true,
+    pbkMemory,
     supermemory,
   };
 }
@@ -15707,6 +16484,117 @@ function setAnalyzerResultCache(params = {}, result = {}) {
 }
 
 const toolHandlers = {
+  async addPbkMemory(params = {}) {
+    recordToolUse('addPbkMemory');
+    const result = await addPbkMemoryRecord(params);
+    if (result.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: result.memory.agentName || 'PBK Memory',
+          category: 'MEMORY',
+          status: 'success',
+          text: `Stored ${result.memory.memoryType} memory${result.memory.leadId ? ` for ${result.memory.leadId}` : ''}.`,
+          target: result.memory.metadata?.leadName || result.memory.metadata?.address || result.memory.leadId || 'PBK brain',
+        }),
+      );
+      await persistState(state);
+    }
+    return result;
+  },
+
+  async recallPbkMemory(params = {}) {
+    recordToolUse('recallPbkMemory');
+    return recallPbkMemoryRecords(params);
+  },
+
+  async recordPbkFeedback(params = {}) {
+    recordToolUse('recordPbkFeedback');
+    const result = await recordPbkFeedbackRecord(params);
+    if (result.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: result.feedback.agentName || 'PBK Feedback',
+          category: 'FEEDBACK',
+          status: result.feedback.humanDecision === 'approved' ? 'success' : 'warning',
+          text: `Logged feedback: ${result.feedback.agentAction || 'agent action'} -> ${result.feedback.humanDecision || 'reviewed'}.`,
+          target: result.feedback.metadata?.leadName || result.feedback.metadata?.address || result.feedback.leadId || 'PBK brain',
+        }),
+      );
+      await persistState(state);
+    }
+    return result;
+  },
+
+  async detectPbkIntent(params = {}) {
+    recordToolUse('detectPbkIntent');
+    if (params.persist === false) {
+      const context = findLeadContext(params);
+      const text = String(params.text || params.transcript || params.transcriptSnippet || params.body || '').trim();
+      const detected = classifyPbkIntent(text);
+      return {
+        ok: true,
+        event: {
+          id: '',
+          tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+          leadId: String(params.leadId || params.lead_id || context.leadId || '').trim(),
+          callId: String(params.callId || params.call_id || '').trim(),
+          transcriptSnippet: text.slice(0, 2000),
+          intent: detected.intent,
+          confidence: detected.confidence,
+          recommendedAction: detected.recommendedAction,
+          persisted: false,
+        },
+        storage: { localState: false, postgres: false },
+      };
+    }
+    const result = await recordPbkIntentEvent(params);
+    await persistState(state);
+    return result;
+  },
+
+  async recordPbkKnowledge(params = {}) {
+    recordToolUse('recordPbkKnowledge');
+    const result = await recordPbkKnowledgeRecord(params);
+    if (result.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'PBK Knowledge Graph',
+          category: 'KNOWLEDGE',
+          status: 'success',
+          text: `Recorded fact: ${result.fact.subject} ${result.fact.predicate} ${result.fact.object}.`,
+          target: result.fact.subject,
+        }),
+      );
+      await persistState(state);
+    }
+    return result;
+  },
+
+  async queryPbkKnowledge(params = {}) {
+    recordToolUse('queryPbkKnowledge');
+    return queryPbkKnowledgeRecords(params);
+  },
+
+  async runPbkAgentPipeline(params = {}) {
+    recordToolUse('runPbkAgentPipeline');
+    const result = await runPbkAgentPipelineRecord(params);
+    addActivity(
+      state,
+      makeActivity({
+        actor: 'PBK Agent Pipeline',
+        category: 'BRAIN',
+        status: 'success',
+        text: `Pipeline routed to ${result.nextAgent}: ${result.action}.`,
+        target: result.lead?.address || result.lead?.leadName || result.lead?.leadId || 'lead',
+      }),
+    );
+    await persistState(state);
+    return result;
+  },
+
   async analyzeDeal(params = {}) {
     recordToolUse('analyzeDeal');
     if (shouldEnforceBantForAnalyze(params)) {
@@ -19261,6 +20149,33 @@ async function handleEvent(eventType, payload = {}) {
         },
       };
     }
+    let feedbackResult = null;
+    try {
+      feedbackResult = await recordPbkFeedbackRecord({
+        id: `approval-feedback-${approval.id}-${incomingStatus}-${approval.actedAt}`,
+        tenantId: approval.workspaceId || approval.workspace_id || 'pbk',
+        leadId: approval.leadId || approval.targetId || '',
+        callId: approval.callId || approval.call_id || '',
+        agentName: approval.requestedBy || approval.agentName || approval.actor || 'PBK Approval',
+        agentAction: approval.approvalAction || approval.type || 'approval_decision',
+        humanDecision: incomingStatus,
+        transcriptSnippet: payload.notes || approval.notes || approval.summary || approval.description || '',
+        outcomeLabel: reviewReason || incomingStatus,
+        approvalId: approval.id,
+        metadata: {
+          approvalType: approval.type || '',
+          provider: approval.provider || '',
+          reviewReason,
+          actor: incomingActor,
+        },
+      });
+    } catch (error) {
+      feedbackResult = {
+        ok: false,
+        recorded: false,
+        error: error?.message || 'Approval feedback capture skipped.',
+      };
+    }
     let contractResult = null;
     let campaignResult = null;
     let promptResult = null;
@@ -19353,6 +20268,7 @@ async function handleEvent(eventType, payload = {}) {
     return {
       ok: true,
       approval,
+      feedbackResult,
       contractResult,
       campaignResult,
       promptResult,

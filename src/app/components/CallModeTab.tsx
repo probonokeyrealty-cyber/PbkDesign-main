@@ -23,7 +23,7 @@ function getForcedVariant(path: PBKPath): ScriptVariant | null {
   return null;
 }
 
-function isYieldPath(path: PBKPath): path is 'cf' | 'mt' {
+function isCoCPath(path: PBKPath): path is 'cf' | 'mt' {
   return path === 'cf' || path === 'mt';
 }
 
@@ -119,7 +119,7 @@ export function CallModeTab({
         onScriptVariantChange={setScriptVariant}
       />
 
-      {isYieldPath(activePath) ? (
+      {isCoCPath(activePath) ? (
         <div className="mb-3">
           <InvestorYield deal={deal} onDealChange={onDealChange} activePath={activePath} />
         </div>

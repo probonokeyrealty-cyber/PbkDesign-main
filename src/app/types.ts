@@ -119,7 +119,7 @@ export interface DealData {
   reductions?: number;
   vacantStatus?: string;
 
-  // Investor Yield Metrics
+  // Investor CoC Metrics
   investorCashFlow?: number;
   investorCOC?: number; // Cash-on-Cash Return
   investorROI?: number;

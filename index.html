@@ -8028,7 +8028,7 @@
       border-radius: 16px;
       padding: var(--s-3);
       display: grid;
-      grid-template-columns: 34px minmax(0, 1fr) auto;
+      grid-template-columns: 34px minmax(0, 1fr) auto auto;
       gap: var(--s-3);
       align-items: center;
       cursor: pointer;
@@ -8050,6 +8050,17 @@
       color: transparent;
       background: rgba(255,255,255,0.03);
       font-weight: 800;
+    }
+    .lead-selector-native-check {
+      width: 24px;
+      height: 24px;
+      margin: 0;
+      accent-color: var(--sky);
+      cursor: pointer;
+    }
+    .lead-selector-native-check:focus-visible {
+      outline: 2px solid var(--sky);
+      outline-offset: 3px;
     }
     .lead-selector-row.selected .lead-selector-check {
       background: var(--sky);
@@ -8090,6 +8101,26 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
       white-space: nowrap;
+    }
+    .lead-selector-pick {
+      min-height: 36px;
+      border: 1px solid var(--border-dim);
+      border-radius: 999px;
+      padding: 0 12px;
+      background: rgba(255,255,255,0.04);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .lead-selector-row.selected .lead-selector-pick {
+      background: var(--sky);
+      border-color: var(--sky);
+      color: #fff;
     }
     .lead-selector-empty {
       border: 1px dashed var(--border);
@@ -8234,6 +8265,10 @@
         justify-content: flex-start;
         max-width: none;
       }
+      .lead-selector-pick {
+        grid-column: 2 / -1;
+        width: 100%;
+      }
       .lead-selector-actions .btn {
         width: 100%;
         justify-content: center;
@@ -8249,7 +8284,22 @@
       .cd-title { font-size: 24px; }
       .cd-stats-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .cd-body, .cd-head, .cd-actions-bar { padding-left: var(--s-3); padding-right: var(--s-3); }
-      .cd-leads-table { margin-right: calc(-1 * var(--s-3)); }
+      .cd-leads-table { margin-right: 0; overflow: visible; }
+      .cd-leads-table .head { display: none; }
+      .cd-leads-table .cd-lead-row {
+        min-width: 0;
+        grid-template-columns: 28px minmax(0, 1fr);
+        gap: 8px var(--s-2);
+        padding: var(--s-3);
+      }
+      .cd-leads-table .cd-lead-row > span {
+        grid-column: 2 / -1;
+      }
+      .cd-leads-table .cd-lead-row .chip-btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 40px;
+      }
       .cd-sequence-editor .sequence-row { grid-template-columns: 1fr; }
     }
   </style>
@@ -17668,6 +17718,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   };
 
   const CAMPAIGN_SELECTED_LEADS_STORAGE_KEY = 'pbk-campaign-selected-leads';
+  const CAMPAIGN_DETAIL_LEADS_STORAGE_KEY = 'pbk-campaign-detail-leads-v1';
 
   function campaignStatusLabel(status = '') {
     const labels = {
@@ -17784,10 +17835,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
     const sent = Number(metrics.sent || 0);
     const replies = Number(metrics.replied || metrics.connected || 0);
-    const leadCount = leads.length || Number(campaign.leadCount || metrics.leads || 0);
-    const totalTouches = Number(metrics.estimatedTouches || (campaign.channel === 'email' ? leadCount * 5 : campaign.channel === 'sms' ? leadCount * 3 : leadCount));
-    const progress = totalTouches ? Math.min(100, Math.round((sent / totalTouches) * 100)) : 0;
-    const displayLeads = leads.map((lead) => ({
+    const bridgeDisplayLeads = leads.map((lead) => ({
       id: lead.leadId || lead.id || '',
       name: lead.leadName || lead.name || 'Unknown seller',
       meta: lead.address || lead.phone || lead.email || 'Campaign lead',
@@ -17796,6 +17844,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       status: lead.status || 'pending',
       chip: /conflict|failed|bounce/i.test(String(lead.status || '')) ? 'cold' : 'new'
     }));
+    const displayLeads = mergeCampaignDetailLeads(bridgeDisplayLeads, getStoredCampaignDetailLeads(campaign.id), campaign.id);
+    const leadCount = displayLeads.length || Number(campaign.leadCount || metrics.leads || 0);
+    const totalTouches = Number(metrics.estimatedTouches || (campaign.channel === 'email' ? leadCount * 5 : campaign.channel === 'sms' ? leadCount * 3 : leadCount));
+    const progress = totalTouches ? Math.min(100, Math.round((sent / totalTouches) * 100)) : 0;
     const providerGap = campaign.status === 'provider_missing';
     return {
       id: campaign.id,
@@ -17860,7 +17912,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const seenIds = new Set(persisted.map((item) => item.id));
     const bridgeHasCampaignCollections = Array.isArray(snapshot?.campaigns);
     const fallback = bridgeHasCampaignCollections ? [] : CAMPAIGN_SEED.filter((item) => !seenIds.has(item.id));
-    return [...persisted, ...runtime.filter((item) => !seenIds.has(item.id)), ...fallback];
+    return [...persisted, ...runtime.filter((item) => !seenIds.has(item.id)), ...fallback].map(enrichCampaignWithStoredLeads);
   }
 
   function getFilteredCampaignRecords(snapshot = PBK.state.openclawRuntime) {
@@ -18197,6 +18249,136 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return match ? match[0].slice(0, 5) : '';
   }
 
+  function getCampaignDetailLeadStore() {
+    const stored = parseJSONSafe(localStorage.getItem(CAMPAIGN_DETAIL_LEADS_STORAGE_KEY), {});
+    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+  }
+
+  function getStoredCampaignDetailLeads(campaignId = '') {
+    if (!campaignId) return [];
+    const rows = getCampaignDetailLeadStore()[campaignId];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function normalizeCampaignLeadForDetail(input = {}, index = 0, campaignId = '') {
+    const seller = input.seller || {};
+    const property = input.property || {};
+    const leadId = String(input.leadId || input.id || campaignLeadKey(input) || `local-${campaignId || 'campaign'}-${index + 1}`);
+    const name = input.name || input.leadName || input.sellerName || seller.name || `Lead ${index + 1}`;
+    const address = input.address || input.propertyAddress || property.address || '';
+    const phone = input.phone || seller.phone || '';
+    const email = input.email || seller.email || '';
+    const meta = input.meta || [address, phone, email].filter(Boolean).join(' - ') || 'Campaign lead';
+    const status = input.status || input.stage || input.pipelineStage || 'pending';
+    const tags = Array.isArray(input.tags)
+      ? input.tags
+      : String(input.tags || '').split(/[\s,]+/).filter(Boolean);
+    const chip = input.chip || (/conflict|failed|bounce/i.test(String(status)) ? 'cold' : 'new');
+    const touchIndex = Number(input.touchIndex || 0);
+    return {
+      id: leadId,
+      leadId,
+      campaignId,
+      name,
+      leadName: name,
+      address,
+      phone,
+      email,
+      meta,
+      touch: input.touch || `${touchIndex} touches`,
+      touchIndex,
+      last: input.last || (input.lastTouchAt ? formatRelativeTime(input.lastTouchAt) : 'Not touched'),
+      lastTouchAt: input.lastTouchAt || '',
+      status,
+      chip,
+      tags,
+      source: input.source || 'selected'
+    };
+  }
+
+  function mergeCampaignDetailLeads(baseLeads = [], addedLeads = [], campaignId = '') {
+    const merged = new Map();
+    [...baseLeads, ...addedLeads].forEach((lead, index) => {
+      const normalized = normalizeCampaignLeadForDetail(lead, index, campaignId);
+      const key = campaignLeadKey({
+        leadId: normalized.leadId,
+        id: normalized.id,
+        leadName: normalized.name,
+        address: normalized.address || normalized.meta,
+        phone: normalized.phone,
+        email: normalized.email
+      });
+      if (key) merged.set(key, normalized);
+    });
+    return Array.from(merged.values());
+  }
+
+  function storeCampaignDetailLeads(campaignId = '', leads = []) {
+    if (!campaignId) return [];
+    const store = getCampaignDetailLeadStore();
+    store[campaignId] = mergeCampaignDetailLeads([], leads, campaignId);
+    try {
+      localStorage.setItem(CAMPAIGN_DETAIL_LEADS_STORAGE_KEY, JSON.stringify(store));
+    } catch {}
+    return store[campaignId];
+  }
+
+  function enrichCampaignWithStoredLeads(campaign = {}) {
+    if (!campaign?.id) return campaign;
+    const storedLeads = getStoredCampaignDetailLeads(campaign.id);
+    if (!storedLeads.length) return campaign;
+    const leads = mergeCampaignDetailLeads(campaign.leads || [], storedLeads, campaign.id);
+    const leadCount = Math.max(Number(campaign.leadCount || 0), leads.length);
+    const updateLeadRows = (rows = []) => Array.isArray(rows)
+      ? rows.map((row) => Array.isArray(row) && /^leads/i.test(String(row[0] || '')) ? [row[0], String(leadCount), ...row.slice(2)] : row)
+      : rows;
+    return {
+      ...campaign,
+      leads,
+      leadCount,
+      stats: updateLeadRows(campaign.stats),
+      detailStats: updateLeadRows(campaign.detailStats)
+    };
+  }
+
+  function applyCampaignLeadSelectionLocally(campaign = {}, selectedLeads = []) {
+    const campaignId = campaign.id || campaignUiState.leadSelector.campaignId || '';
+    if (!campaignId || !selectedLeads.length) return [];
+    const mergedLeads = storeCampaignDetailLeads(campaignId, mergeCampaignDetailLeads(getStoredCampaignDetailLeads(campaignId), selectedLeads, campaignId));
+    const runtime = PBK.state.openclawRuntime || {};
+    PBK.state.openclawRuntime = runtime;
+    const otherRuntimeLeads = Array.isArray(runtime.campaignLeads)
+      ? runtime.campaignLeads.filter((lead) => lead.campaignId !== campaignId)
+      : [];
+    runtime.campaignLeads = [
+      ...otherRuntimeLeads,
+      ...mergedLeads.map((lead) => ({
+        ...lead,
+        campaignId,
+        leadId: lead.leadId || lead.id,
+        leadName: lead.name || lead.leadName,
+        touchIndex: Number(lead.touchIndex || 0),
+        lastTouchAt: lead.lastTouchAt || ''
+      }))
+    ];
+    if (Array.isArray(runtime.campaigns)) {
+      runtime.campaigns = runtime.campaigns.map((item) => {
+        if (item.id !== campaignId) return item;
+        const metrics = {
+          ...(item.metrics || {}),
+          leads: Math.max(Number(item.metrics?.leads || item.leadCount || 0), mergedLeads.length)
+        };
+        return {
+          ...item,
+          leadCount: metrics.leads,
+          metrics,
+          updatedAt: new Date().toISOString()
+        };
+      });
+    }
+    return mergedLeads;
+  }
+
   function normalizeCampaignLeadCandidate(input = {}, index = 0, source = 'runtime') {
     const seller = input.seller || {};
     const property = input.property || {};
@@ -18275,6 +18457,38 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  function toggleCampaignLeadSelectorKey(key = '') {
+    if (!key) return;
+    const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
+    if (selected.has(key)) selected.delete(key);
+    else selected.add(key);
+    campaignUiState.leadSelector.selectedKeys = Array.from(selected);
+    renderCampaignLeadSelector();
+  }
+
+  function setCampaignLeadSelectorKey(key = '', checked = false) {
+    if (!key) return;
+    const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
+    if (checked) selected.add(key);
+    else selected.delete(key);
+    campaignUiState.leadSelector.selectedKeys = Array.from(selected);
+    renderCampaignLeadSelector();
+  }
+
+  function collectCampaignLeadSelectorCheckedKeys() {
+    const modal = document.getElementById('campaignLeadSelectorBackdrop');
+    if (!modal) return new Set(campaignUiState.leadSelector.selectedKeys || []);
+    const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
+    modal.querySelectorAll('[data-campaign-lead-checkbox]').forEach((box) => {
+      const key = box.dataset.campaignLeadCheckbox || '';
+      if (!key) return;
+      if (box.checked) selected.add(key);
+      else selected.delete(key);
+    });
+    campaignUiState.leadSelector.selectedKeys = Array.from(selected);
+    return selected;
+  }
+
   function renderCampaignLeadSelector() {
     const modal = document.getElementById('campaignLeadSelectorBackdrop');
     if (!modal) return;
@@ -18299,15 +18513,37 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         .filter(Boolean)
         .slice(0, 4);
       return `
-        <button class="lead-selector-row ${selected.has(key) ? 'selected' : ''}" type="button" data-campaign-lead-key="${escapeHtml(key)}">
-          <span class="lead-selector-check">${selected.has(key) ? '&#10003;' : ''}</span>
+        <div class="lead-selector-row ${selected.has(key) ? 'selected' : ''}" data-campaign-lead-key="${escapeHtml(key)}">
+          <input class="lead-selector-native-check" type="checkbox" aria-label="Select ${escapeHtml(lead.leadName || 'lead')}" data-campaign-lead-checkbox="${escapeHtml(key)}" onpointerdown="event.stopPropagation();" onchange="event.stopPropagation(); setCampaignLeadSelectorKey(this.dataset.campaignLeadCheckbox || '', this.checked)" ${selected.has(key) ? 'checked' : ''}>
           <span class="lead-selector-main">
             <span class="lead-selector-name">${escapeHtml(lead.leadName || 'Unknown seller')}</span>
             <span class="lead-selector-meta">${escapeHtml([lead.address, lead.phone, lead.email].filter(Boolean).join(' - ') || 'Lead details pending')}</span>
           </span>
           <span class="lead-selector-tags">${tags.map((tag) => `<span class="lead-selector-tag">${escapeHtml(tag)}</span>`).join('')}</span>
-        </button>`;
+          <button class="lead-selector-pick" type="button" data-campaign-lead-quick-add="${escapeHtml(key)}" data-campaign-lead-selected="${selected.has(key) ? 'true' : 'false'}" onpointerdown="event.preventDefault(); event.stopPropagation(); setCampaignLeadSelectorKey(this.dataset.campaignLeadQuickAdd || '', this.dataset.campaignLeadSelected !== 'true')" onclick="event.stopPropagation(); setCampaignLeadSelectorKey(this.dataset.campaignLeadQuickAdd || '', this.dataset.campaignLeadSelected !== 'true')">${selected.has(key) ? 'Remove' : 'Add'}</button>
+        </div>`;
     }).join('');
+    list.querySelectorAll('[data-campaign-lead-key]').forEach((row) => {
+      row.addEventListener('click', (event) => {
+        const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+        if (target?.closest('[data-campaign-lead-checkbox]') || target?.closest('[data-campaign-lead-quick-add]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCampaignLeadSelectorKey(row.dataset.campaignLeadKey || '');
+      });
+      row.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCampaignLeadSelectorKey(row.dataset.campaignLeadKey || '');
+      });
+    });
+    list.querySelectorAll('[data-campaign-lead-checkbox]').forEach((box) => {
+      box.addEventListener('change', (event) => {
+        event.stopPropagation();
+        setCampaignLeadSelectorKey(box.dataset.campaignLeadCheckbox || '', box.checked);
+      });
+    });
   }
 
   function openCampaignLeadSelector(campaign = {}) {
@@ -18346,9 +18582,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   async function saveCampaignLeadSelector() {
-    const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
-    const leads = (campaignUiState.leadSelector.candidates || []).filter((lead) => selected.has(campaignLeadKey(lead)));
+    const selected = collectCampaignLeadSelectorCheckedKeys();
     const campaign = getCampaignRecords().find((item) => item.id === campaignUiState.leadSelector.campaignId) || getCampaignRecords()[0] || {};
+    const candidatePool = mergeCampaignDetailLeads([
+      ...(campaignUiState.leadSelector.candidates || []),
+      ...(campaign.leads || []),
+      ...getStoredCampaignDetailLeads(campaign.id || campaignUiState.leadSelector.campaignId)
+    ], [], campaign.id || campaignUiState.leadSelector.campaignId);
+    const leads = candidatePool.filter((lead) => selected.has(campaignLeadKey(lead)));
     if (!leads.length) {
       toastOutcome({
         outcome: 'unavailable',
@@ -18361,6 +18602,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     try {
       localStorage.setItem(CAMPAIGN_SELECTED_LEADS_STORAGE_KEY, JSON.stringify(leads));
     } catch {}
+    const campaignId = campaign.id || campaignUiState.leadSelector.campaignId;
+    const mergedLeads = applyCampaignLeadSelectionLocally(campaign, leads);
+    closeCampaignLeadSelector();
+    renderCampaignsExperience(PBK.state.openclawRuntime);
+    renderCampaignDetail(campaignId, PBK.state.openclawRuntime);
+    toastOutcome({
+      outcome: 'queued_for_approval',
+      title: `${mergedLeads.length} lead${mergedLeads.length === 1 ? '' : 's'} attached`,
+      desc: 'Campaign detail updated now. Provider outreach still waits for approval.'
+    });
     const response = await requestCampaignAction(campaign, 'add_leads', {
       selectedLeads: leads,
       leadSource: 'selected',
@@ -18368,10 +18619,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       actor: 'PBK Command Center'
     });
     if (response) {
-      closeCampaignLeadSelector();
       await syncOpenClawState({ silent: true }).catch(() => {});
+      applyCampaignLeadSelectionLocally(campaign, leads);
       renderCampaignsExperience();
-      renderCampaignDetail(campaign.id);
+      renderCampaignDetail(campaignId);
     }
   }
 
@@ -18805,21 +19056,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (leadSelector && leadSelector.dataset.campaignLeadSelectorWired !== 'true') {
       leadSelector.dataset.campaignLeadSelectorWired = 'true';
       leadSelector.addEventListener('click', (event) => {
-        if (event.target === leadSelector || event.target.closest('[data-campaign-lead-selector-close]')) {
+        const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+        if (!target) return;
+        if (target === leadSelector || target.closest('[data-campaign-lead-selector-close]')) {
           closeCampaignLeadSelector();
           return;
         }
-        const row = event.target.closest('[data-campaign-lead-key]');
-        if (row) {
-          const key = row.dataset.campaignLeadKey || '';
-          const selected = new Set(campaignUiState.leadSelector.selectedKeys || []);
-          if (selected.has(key)) selected.delete(key);
-          else selected.add(key);
-          campaignUiState.leadSelector.selectedKeys = Array.from(selected);
-          renderCampaignLeadSelector();
+        const quickAdd = target.closest('[data-campaign-lead-quick-add]');
+        if (quickAdd) {
+          const shouldSelect = quickAdd.dataset.campaignLeadSelected !== 'true';
+          setCampaignLeadSelectorKey(quickAdd.dataset.campaignLeadQuickAdd || '', shouldSelect);
           return;
         }
-        if (event.target.closest('[data-campaign-lead-selector-save]')) {
+        if (target.closest('[data-campaign-lead-selector-save]')) {
           saveCampaignLeadSelector().catch((error) => {
             toastOutcome({
               outcome: 'unavailable',

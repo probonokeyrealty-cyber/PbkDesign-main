@@ -861,10 +861,10 @@ export function PathWorkflowPanel({
               <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
                 <div className="flex items-center gap-2">
                   <Landmark size={16} className="text-purple-500" />
-                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-purple-500">Yield Lens</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">CoC Calculator</div>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                  Keep this visible while shaping the final terms so the conversation stays tied to investor reality, not just seller emotion.
+                  Keep this visible while shaping final terms so the conversation stays tied to cash-on-cash math, not just seller emotion.
                 </p>
                 <div className="mt-4">
                   <InvestorYield deal={deal} onDealChange={onDealChange} activePath="cf" />
@@ -1006,10 +1006,10 @@ export function PathWorkflowPanel({
               <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
                 <div className="flex items-center gap-2">
                   <Sparkles size={16} className="text-purple-500" />
-                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-purple-500">Yield Lens</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">CoC Calculator</div>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                  Keep this visible while negotiating so the conversation stays anchored to rate preservation and investor spread.
+                  Keep this visible while negotiating so the conversation stays anchored to payment coverage, CoC return, and investor spread.
                 </p>
                 <div className="mt-4">
                   <InvestorYield deal={deal} onDealChange={onDealChange} activePath="mt" />

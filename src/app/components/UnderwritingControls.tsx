@@ -44,7 +44,7 @@ const CONTROL_DEFS: ControlDef[] = [
     label: 'Target CoC %',
     min: 5,
     max: 50,
-    helper: 'Benchmark for rental / yield conversations in the tracker.',
+    helper: 'Benchmark for rental / CoC conversations in the tracker.',
   },
   {
     key: 'assignFeePct',

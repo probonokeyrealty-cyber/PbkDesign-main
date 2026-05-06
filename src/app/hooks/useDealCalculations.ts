@@ -55,7 +55,7 @@ export const useDealVerdict = (price: number, arv: number, maoRBP: number) => {
 };
 
 /**
- * Hook for investor yield calculations
+ * Hook for investor CoC calculations
  */
 export const useInvestorMetrics = (
   deal: DealData,

@@ -3600,6 +3600,38 @@ async function persistCampaignLeadRecord(lead = {}) {
   }
 }
 
+async function deleteCampaignLeadRecord(campaignId = '', lead = {}) {
+  const pool = getPgPool();
+  const leadIds = [
+    lead.id,
+    lead.leadId,
+    lead.email,
+    lead.phone,
+    lead.address,
+    lead.leadName,
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  if (!pool || !campaignId || !leadIds.length) return false;
+  try {
+    await pool.query(
+      `DELETE FROM public.campaign_leads
+       WHERE campaign_id = $1
+       AND (
+         id = ANY($2::text[])
+         OR lead_id = ANY($2::text[])
+         OR email = ANY($2::text[])
+         OR phone = ANY($2::text[])
+         OR address = ANY($2::text[])
+         OR lead_name = ANY($2::text[])
+       )`,
+      [campaignId, leadIds],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] campaign lead deletion skipped:', error?.message || error);
+    return false;
+  }
+}
+
 async function persistCampaignEventRecord(event = {}) {
   const pool = getPgPool();
   if (!pool || !event.id || !event.campaignId) return false;
@@ -15213,6 +15245,129 @@ async function attachCampaignLeadsToCampaign(campaignId = '', payload = {}) {
   };
 }
 
+async function removeCampaignLeadFromCampaign(campaignId = '', payload = {}) {
+  ensureCampaignCollections();
+  const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+  if (!campaign) {
+    return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: 'Campaign record not found.' };
+  }
+  const needle = String(
+    payload.removedLeadId
+      || payload.leadId
+      || payload.campaignLeadId
+      || payload.id
+      || '',
+  ).trim();
+  if (!needle) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      verbiage: 'Campaign lead missing',
+      error: 'Choose a campaign lead before removing it.',
+      campaign,
+      leads: getCampaignLeads(campaignId),
+    };
+  }
+  const normalizeKey = (value = '') => String(value || '').trim().toLowerCase();
+  const leadKey = (lead = {}) => normalizeKey(lead.leadId || lead.id || lead.email || lead.phone || lead.address || lead.leadName);
+  const needleKey = normalizeKey(needle);
+  const existing = getCampaignLeads(campaignId);
+  const removed = existing.filter((lead) => {
+    const keys = [
+      lead.id,
+      lead.leadId,
+      lead.email,
+      lead.phone,
+      lead.address,
+      lead.leadName,
+      leadKey(lead),
+    ].map(normalizeKey).filter(Boolean);
+    return keys.includes(needleKey);
+  });
+  if (!removed.length) {
+    return {
+      ok: false,
+      result: 'unavailable',
+      verbiage: 'Campaign lead not found',
+      error: 'That lead is not attached to this campaign.',
+      campaign,
+      leads: existing,
+    };
+  }
+
+  const removedKeys = new Set(removed.flatMap((lead) => [
+    lead.id,
+    lead.leadId,
+    lead.email,
+    lead.phone,
+    lead.address,
+    lead.leadName,
+    leadKey(lead),
+  ].map(normalizeKey).filter(Boolean)));
+  state.campaignLeads = (state.campaignLeads || []).filter((lead) => {
+    if (String(lead.campaignId || '') !== String(campaignId)) return true;
+    const keys = [
+      lead.id,
+      lead.leadId,
+      lead.email,
+      lead.phone,
+      lead.address,
+      lead.leadName,
+      leadKey(lead),
+    ].map(normalizeKey).filter(Boolean);
+    return !keys.some((key) => removedKeys.has(key));
+  });
+
+  const savedLeads = getCampaignLeads(campaignId);
+  const nextCampaign = {
+    ...campaign,
+    leadCount: savedLeads.length,
+    metrics: {
+      ...calculateCampaignMetrics({ ...campaign, leadCount: savedLeads.length }),
+      ...(campaign.metrics || {}),
+      leads: savedLeads.length,
+    },
+    updatedAt: isoNow(),
+  };
+  upsertById(state, 'campaigns', nextCampaign);
+  recordCampaignEvent({
+    campaignId,
+    campaignLeadId: removed[0]?.id || '',
+    leadId: removed[0]?.leadId || '',
+    eventType: 'campaign_lead_removed',
+    channel: nextCampaign.channel,
+    provider: nextCampaign.provider,
+    providerStatus: 'queued_for_approval',
+    payload: {
+      removedLeadId: needle,
+      removedCount: removed.length,
+      totalLeads: savedLeads.length,
+      notes: payload.notes || '',
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: payload.actor || 'PBK Command Center',
+      category: 'CAMPAIGN',
+      status: 'updated',
+      text: `Removed ${removed.length} lead${removed.length === 1 ? '' : 's'} from campaign "${nextCampaign.name}".`,
+      target: campaignId,
+    }),
+  );
+  await persistState(state);
+  await persistCampaignRecord(nextCampaign);
+  await Promise.all(removed.map((lead) => deleteCampaignLeadRecord(campaignId, lead)));
+  return {
+    ok: true,
+    result: 'queued_for_approval',
+    verbiage: `${removed.length} lead${removed.length === 1 ? '' : 's'} removed from campaign`,
+    campaign: nextCampaign,
+    leads: savedLeads,
+    removed,
+  };
+}
+
 async function requestCampaignApproval(campaignId = '', params = {}) {
   ensureCampaignCollections();
   const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
@@ -15310,7 +15465,10 @@ async function runCampaignAction(campaignId = '', payload = {}) {
       leads: getCampaignLeads(campaignId),
     };
   }
-  if (['start', 'start_campaign', 'pause', 'resume', 'archive', 'cancel', 'delete', 'add_leads', 'edit_template', 'campaign_pause', 'campaign_resume', 'campaign_archive', 'campaign_cancel'].includes(action)) {
+  if (action === 'remove_lead' || action === 'campaign_remove_lead') {
+    return removeCampaignLeadFromCampaign(campaignId, payload);
+  }
+  if (['start', 'start_campaign', 'pause', 'resume', 'archive', 'cancel', 'delete', 'add_leads', 'remove_lead', 'edit_template', 'campaign_pause', 'campaign_resume', 'campaign_archive', 'campaign_cancel', 'campaign_remove_lead'].includes(action)) {
     return requestCampaignApproval(campaignId, {
       ...payload,
       requestedAction: action.startsWith('campaign_') ? action : `campaign_${action}`,

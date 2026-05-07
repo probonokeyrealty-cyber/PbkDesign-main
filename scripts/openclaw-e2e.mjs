@@ -197,6 +197,79 @@ async function main() {
     assert(transitions.response.ok && transitions.parsed?.ok === true, 'Lead transition lookup failed.');
     assert(Array.isArray(transitions.parsed?.transitions) && transitions.parsed.transitions.length > 0, 'No lead transitions were recorded.');
 
+    const campaignDraft = await requestJson('/api/campaigns', {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'E2E Campaign Lead Roster',
+        channel: 'email',
+        templateId: 'probate-empathetic-v3',
+        leadSource: 'selected',
+        status: 'draft',
+        selectedLeads: [{
+          leadId,
+          leadName,
+          address,
+          phone,
+          email,
+          tags: ['e2e'],
+        }],
+      }),
+    });
+    assert(campaignDraft.response.ok && campaignDraft.parsed?.ok === true, 'Campaign draft creation failed.');
+    const campaignId = campaignDraft.parsed?.campaign?.id;
+    assert(campaignId, 'Campaign draft did not return an id.');
+
+    const addedLead = {
+      leadId: 'e2e-lead-2',
+      leadName: 'E2E Add Remove Seller',
+      address: '222 E2E Add Remove Rd, Columbus OH',
+      phone: '+16145550222',
+      email: 'e2e-add-remove@example.com',
+      tags: ['e2e', 'smoke'],
+    };
+    const addCampaignLead = await requestJson(`/api/campaigns/${encodeURIComponent(campaignId)}/actions`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'add_leads',
+        selectedLeads: [addedLead],
+        leadSource: 'selected',
+        actor: 'e2e-test',
+      }),
+    });
+    assert(addCampaignLead.response.ok && addCampaignLead.parsed?.ok === true, 'Campaign add lead action failed.');
+    assert(
+      Array.isArray(addCampaignLead.parsed?.leads)
+        && addCampaignLead.parsed.leads.some((lead) => lead.leadId === addedLead.leadId),
+      'Campaign add lead action did not return the added lead.',
+    );
+
+    const removeCampaignLead = await requestJson(`/api/campaigns/${encodeURIComponent(campaignId)}/actions`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'remove_lead',
+        removedLeadId: addedLead.leadId,
+        actor: 'e2e-test',
+      }),
+    });
+    assert(removeCampaignLead.response.ok && removeCampaignLead.parsed?.ok === true, 'Campaign remove lead action failed.');
+    assert(
+      Array.isArray(removeCampaignLead.parsed?.leads)
+        && !removeCampaignLead.parsed.leads.some((lead) => lead.leadId === addedLead.leadId),
+      'Campaign remove lead action did not remove the lead.',
+    );
+
     const call = await requestJson('/api/calls', {
       method: 'POST',
       headers: {
@@ -322,6 +395,7 @@ async function main() {
       participantExpertise: participantProfile.parsed?.profile?.expertise || 'unknown',
       leadStage: handledReply.parsed?.leadStage || 'unknown',
       appointmentStatus: handledReply.parsed?.appointment?.status || 'unknown',
+      campaignRosterAfterRemove: removeCampaignLead.parsed?.leads?.length ?? null,
       callScript: call.parsed?.callStrategy?.script || (callWasApprovalQueued ? 'queued_for_approval' : 'unknown'),
       contractTemplate: lawyerReview.parsed?.template?.id || 'unknown',
       underwritingApprovalId: contractApprovalId,

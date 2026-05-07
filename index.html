@@ -8553,7 +8553,7 @@
   </div>
 </div>
 
-<div class="campaign-lead-selector-backdrop" id="campaignLeadSelectorBackdrop" aria-hidden="true">
+<div class="campaign-lead-selector-backdrop" id="campaignLeadSelectorBackdrop" aria-hidden="true" inert>
   <div class="campaign-lead-selector" role="dialog" aria-modal="true" aria-labelledby="campaignLeadSelectorTitle">
     <div class="campaign-lead-selector-head">
       <div>
@@ -19220,6 +19220,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     modal.querySelector('[data-campaign-lead-search]').value = '';
     modal.querySelector('[data-campaign-lead-status]').value = 'all';
     modal.querySelector('[data-campaign-lead-zip]').value = '';
+    modal.removeAttribute('inert');
     modal.classList.add('open');
     modal.setAttribute('aria-hidden', 'false');
     renderCampaignLeadSelector();
@@ -19229,8 +19230,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function closeCampaignLeadSelector() {
     const modal = document.getElementById('campaignLeadSelectorBackdrop');
     if (!modal) return;
+    if (modal.contains(document.activeElement)) {
+      document.activeElement?.blur?.();
+    }
     modal.classList.remove('open');
     modal.setAttribute('aria-hidden', 'true');
+    modal.setAttribute('inert', '');
   }
 
   async function saveCampaignLeadSelector() {

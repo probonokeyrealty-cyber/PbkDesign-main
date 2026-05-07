@@ -813,14 +813,27 @@ function getTelnyxProviderMeta() {
   };
 }
 
+function isBrowserVoiceRuntimeEnabled() {
+  const runtimeSettings = state?.settings && typeof state.settings === 'object' ? state.settings : {};
+  const voiceSettings = runtimeSettings.voice && typeof runtimeSettings.voice === 'object' ? runtimeSettings.voice : {};
+  const uiSettings = runtimeSettings.ui && typeof runtimeSettings.ui === 'object' ? runtimeSettings.ui : {};
+  return Boolean(
+    BROWSER_VOICE_ENABLED
+      || runtimeSettings.browserVoiceEnabled === true
+      || voiceSettings.browserVoiceEnabled === true
+      || uiSettings.browserVoiceEnabled === true,
+  );
+}
+
 function getBrowserVoiceProviderMeta() {
   const deepgramMeta = getDeepgramProviderMeta(process.env);
+  const browserVoiceEnabled = isBrowserVoiceRuntimeEnabled();
   const missing = [];
-  if (!BROWSER_VOICE_ENABLED) missing.push('PBK_BROWSER_VOICE_ENABLED');
+  if (!browserVoiceEnabled) missing.push('PBK_BROWSER_VOICE_ENABLED or settings.browserVoiceEnabled');
   if (!deepgramMeta.ready) missing.push(...deepgramMeta.missing);
   return {
-    configured: BROWSER_VOICE_ENABLED,
-    ready: BROWSER_VOICE_ENABLED && deepgramMeta.ready,
+    configured: browserVoiceEnabled,
+    ready: browserVoiceEnabled && deepgramMeta.ready,
     provider: 'Deepgram',
     mode: 'browser-microphone-websocket',
     streamPath: '/api/voice/browser/stream',
@@ -829,6 +842,7 @@ function getBrowserVoiceProviderMeta() {
     sampleRate: BROWSER_VOICE_SAMPLE_RATE,
     requiresUserGesture: true,
     approvalGated: true,
+    enabledBy: BROWSER_VOICE_ENABLED ? 'env' : browserVoiceEnabled ? 'runtime-settings' : 'disabled',
     missing,
   };
 }
@@ -25862,7 +25876,7 @@ server.on('upgrade', (request, socket, head) => {
   if (matchesPath(upgradePath, ['/api/voice/browser/stream', '/api/browser-voice/stream'])) {
     const token = upgradeUrl.searchParams.get('token') || '';
     pruneBrowserVoiceSessions();
-    if (!BROWSER_VOICE_ENABLED || !browserVoiceSessions.has(token)) {
+      if (!isBrowserVoiceRuntimeEnabled() || !browserVoiceSessions.has(token)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;

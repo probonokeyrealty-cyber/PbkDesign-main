@@ -13939,9 +13939,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!providers || typeof providers !== 'object') return null;
     return {
       telnyx: sanitizeOpenClawProviderMeta('telnyx', providers.telnyx),
+      instantly: sanitizeOpenClawProviderMeta('instantly', providers.instantly),
+      browserVoice: sanitizeOpenClawProviderMeta('browserVoice', providers.browserVoice),
+      elevenLabs: sanitizeOpenClawProviderMeta('elevenLabs', providers.elevenLabs),
+      googleCalendar: sanitizeOpenClawProviderMeta('googleCalendar', providers.googleCalendar),
+      supabaseStorage: sanitizeOpenClawProviderMeta('supabaseStorage', providers.supabaseStorage),
+      n8nWorkflows: sanitizeOpenClawProviderMeta('n8nWorkflows', providers.n8nWorkflows),
+      streak: sanitizeOpenClawProviderMeta('streak', providers.streak),
+      crmSync: sanitizeOpenClawProviderMeta('crmSync', providers.crmSync),
       docusign: sanitizeOpenClawProviderMeta('docusign', providers.docusign),
       batchdata: sanitizeOpenClawProviderMeta('batchdata', providers.batchdata),
-      slack: sanitizeOpenClawProviderMeta('slack', providers.slack)
+      slack: sanitizeOpenClawProviderMeta('slack', providers.slack),
+      render: sanitizeOpenClawProviderMeta('render', providers.render)
     };
   }
 
@@ -18500,11 +18509,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const emailKnown = Object.keys(emailMeta).length > 0;
     const phoneKnown = Object.keys(phoneMeta).length > 0;
     const providerStatusPending = Object.keys(providers).length === 0;
-    const emailText = JSON.stringify(emailMeta).toLowerCase();
-    const telnyxText = JSON.stringify(phoneMeta).toLowerCase();
     const campaignWorker = providers.campaignWorker || {};
-    const emailReady = emailKnown && /ready|active|configured|green|live/.test(emailText) && !/missing|error/.test(emailText);
-    const phoneReady = phoneKnown && /ready|active|configured|green|live/.test(telnyxText) && !/missing|error/.test(telnyxText);
+    const hasMissingProviderValue = (meta = {}) => [
+      meta.missing,
+      meta.messagingMissing,
+      meta.voiceMissing,
+      meta.interactiveMissing
+    ].some((items) => Array.isArray(items) && items.length > 0);
+    const hasProviderError = (meta = {}) => Boolean(String(meta.error || meta.lastError || '').trim());
+    const emailReady = emailKnown
+      && !hasMissingProviderValue(emailMeta)
+      && !hasProviderError(emailMeta)
+      && Boolean(emailMeta.ready || emailMeta.configured || emailMeta.stateSyncReady);
+    const phoneReady = phoneKnown
+      && !hasMissingProviderValue(phoneMeta)
+      && !hasProviderError(phoneMeta)
+      && Boolean(phoneMeta.ready || phoneMeta.stateSyncReady || (phoneMeta.messagingReady && phoneMeta.voiceReady));
     const workerReady = Boolean(campaignWorker.ready);
     const approvalMode = String(snapshot?.status?.mode || snapshot?.settings?.operatingMode || 'approval').toLowerCase() === 'approval';
     const workerApprovalGated = !workerReady && approvalMode && !providerStatusPending && (emailReady || phoneReady || !Object.keys(campaignWorker).length);

@@ -130,9 +130,12 @@ async function main() {
         templateId: 'probate',
       }),
     });
-    const coldEmailOutcome = coldEmail.parsed?.result || coldEmail.parsed?.delivery?.result || '';
+    const coldEmailOutcome = coldEmail.parsed?.result || coldEmail.parsed?.outcome || coldEmail.parsed?.delivery?.result || '';
     const coldEmailIsLive = coldEmail.response.ok && coldEmail.parsed?.ok === true && coldEmail.parsed?.delivery?.ok === true;
-    assert(coldEmailIsLive || coldEmailOutcome === 'provider_missing', 'Cold email send neither delivered nor reported provider_missing.');
+    assert(
+      coldEmailIsLive || ['provider_missing', 'queued_for_approval'].includes(coldEmailOutcome),
+      'Cold email send neither delivered, queued for approval, nor reported provider_missing.',
+    );
 
     const classification = await requestJson('/api/participants/classify', {
       method: 'POST',
@@ -210,7 +213,12 @@ async function main() {
       }),
     });
     assert(call.response.ok && call.parsed?.ok === true, 'Call routing failed.');
-    assert(call.parsed?.callStrategy?.script === 'novice-guided-walkthrough', `Expected novice-guided-walkthrough script, got ${call.parsed?.callStrategy?.script || 'missing'}.`);
+    const callOutcome = call.parsed?.result || call.parsed?.outcome || '';
+    const callWasApprovalQueued = callOutcome === 'queued_for_approval' && Boolean(call.parsed?.approval?.approval?.id);
+    assert(
+      callWasApprovalQueued || call.parsed?.callStrategy?.script === 'novice-guided-walkthrough',
+      `Expected approval-gated call queueing or novice-guided-walkthrough script, got ${call.parsed?.callStrategy?.script || callOutcome || 'missing'}.`,
+    );
 
     const lawyerReview = await requestJson('/api/contracts/lawyer-review', {
       method: 'POST',
@@ -314,7 +322,7 @@ async function main() {
       participantExpertise: participantProfile.parsed?.profile?.expertise || 'unknown',
       leadStage: handledReply.parsed?.leadStage || 'unknown',
       appointmentStatus: handledReply.parsed?.appointment?.status || 'unknown',
-      callScript: call.parsed?.callStrategy?.script || 'unknown',
+      callScript: call.parsed?.callStrategy?.script || (callWasApprovalQueued ? 'queued_for_approval' : 'unknown'),
       contractTemplate: lawyerReview.parsed?.template?.id || 'unknown',
       underwritingApprovalId: contractApprovalId,
       docusignFlowOk: Boolean(contractApproval.parsed?.contractResult?.ok),

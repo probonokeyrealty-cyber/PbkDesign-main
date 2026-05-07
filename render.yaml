@@ -75,6 +75,37 @@ services:
       - key: PBK_SCRAPLING_MCP_URL
         sync: false
 
+      # Browser Ava voice. Keep disabled until you intentionally enable live
+      # microphone streaming from the dashboard. Deepgram key is still required.
+      - key: PBK_BROWSER_VOICE_ENABLED
+        value: "false"
+      - key: PBK_BROWSER_VOICE_SESSION_TTL_MS
+        value: "300000"
+      - key: PBK_BROWSER_VOICE_ENCODING
+        value: opus
+      - key: PBK_BROWSER_VOICE_SAMPLE_RATE
+        value: "48000"
+
+      # ElevenLabs spoken replies for the Ava avatar. The API key is secret and
+      # must be pasted in Render; keep the feature flag false until cost-approved.
+      - key: PBK_ELEVENLABS_TTS_ENABLED
+        value: "false"
+      - key: PBK_ELEVENLABS_API_KEY
+        sync: false
+      - key: PBK_ELEVENLABS_VOICE_ID
+        value: EXAVITQu4L4D8Xk9nI0J
+      - key: PBK_ELEVENLABS_MODEL_ID
+        value: eleven_turbo_v2_5
+
+      # Protected operator controls. Used for kill-switch restore/activation and
+      # Ava-to-operator urgent calls. Do not commit the passcode value here.
+      - key: PBK_PROTECTED_OPS_PASSCODE
+        sync: false
+      - key: PBK_OPERATOR_PHONE
+        sync: false
+      - key: PBK_SLACK_UPDATES_CHANNEL_ID
+        sync: false
+
       # ── DocuSign (JWT auth + envelope create) ───────────────────────────
       # Provision: DocuSign developer account -> create Service Integration ->
       # generate RSA keypair -> upload public key -> grant impersonation

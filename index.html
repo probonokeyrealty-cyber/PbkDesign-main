@@ -11259,7 +11259,7 @@
           </button>
         </div>
         <div class="ava-mic-label" id="avaMicLabel">PRESS TO TALK</div>
-        <div class="ava-mic-hint">Visual voice mode only for now. Ava still stages actions under approval guardrails.</div>
+        <div class="ava-mic-hint" id="avaMicHint">Voice streaming is off until PBK_BROWSER_VOICE_ENABLED is enabled. Ava still stages actions under approval guardrails.</div>
       </div>
       <div class="ava-avatar-actions">
         <button class="btn btn-primary" type="button" id="avaAvatarSend">Stage command</button>
@@ -25108,6 +25108,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const closeBtn = document.getElementById('avaAvatarClose');
     const micBtn = document.getElementById('avaMicBtn');
     const micLabel = document.getElementById('avaMicLabel');
+    const micHint = document.getElementById('avaMicHint');
     const status = document.getElementById('avaAvatarStatus');
     const input = document.getElementById('avaAvatarInput');
     const sendBtn = document.getElementById('avaAvatarSend');
@@ -25115,12 +25116,26 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!shell || !panel || !orb || shell.dataset.runtimeWired === 'true') return;
     shell.dataset.runtimeWired = 'true';
 
+    let voiceHealth = null;
+    let voiceMode = 'idle';
+    let voiceStream = null;
+    let voiceRecorder = null;
+    let voiceSocket = null;
+    let voiceStarting = false;
+    let lastTranscript = '';
+
+    const getVoiceBase = () => normalizeOpenClawEndpoint(getOpenClawConfig().endpoint);
+    const getVoiceHeaders = (json = true) => buildOpenClawHeaders(getOpenClawConfig(), json);
+
     const setPanelOpen = (open) => {
       panel.classList.toggle('open', open);
       panel.setAttribute('aria-hidden', open ? 'false' : 'true');
       panel.toggleAttribute('inert', !open);
       orb.setAttribute('aria-expanded', open ? 'true' : 'false');
-      if (open) window.setTimeout(() => input?.focus(), 80);
+      if (open) {
+        fetchVoiceHealth().catch(() => null);
+        window.setTimeout(() => input?.focus(), 80);
+      }
     };
 
     const setListening = (listening) => {
@@ -25132,6 +25147,185 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (micLabel) micLabel.textContent = listening ? 'LISTENING... CLICK TO STOP' : 'PRESS TO TALK';
       if (status) status.textContent = listening ? 'Listening preview active - Deepgram stream UI ready.' : 'Ready for typed or voice-style commands.';
     };
+
+    const arrayBufferToBase64 = (buffer) => {
+      const bytes = new Uint8Array(buffer || []);
+      let binary = '';
+      for (let index = 0; index < bytes.length; index += 1) {
+        binary += String.fromCharCode(bytes[index]);
+      }
+      return btoa(binary);
+    };
+
+    const updateVoiceCopy = () => {
+      const browserVoice = voiceHealth?.browserVoice || {};
+      const elevenLabs = voiceHealth?.elevenLabs || {};
+      if (browserVoice.ready) {
+        if (micHint) {
+          micHint.textContent = elevenLabs.ready
+            ? 'Live browser voice is ready. Ava will transcribe, stage the command, and speak back.'
+            : 'Live browser voice is ready. Spoken replies stay off until ElevenLabs is enabled.';
+        }
+        if (status && !shell.classList.contains('listening')) status.textContent = 'Browser microphone voice is ready.';
+      } else if (browserVoice.configured) {
+        if (micHint) micHint.textContent = 'Browser voice is enabled, but Deepgram is missing or not ready.';
+        if (status && !shell.classList.contains('listening')) status.textContent = 'Voice needs provider configuration.';
+      } else {
+        if (micHint) micHint.textContent = 'Voice streaming is off until PBK_BROWSER_VOICE_ENABLED is enabled. Ava still stages actions under approval guardrails.';
+        if (status && !shell.classList.contains('listening')) status.textContent = 'Ready for typed or voice-style commands.';
+      }
+    };
+
+    async function fetchVoiceHealth() {
+      const base = getVoiceBase();
+      if (!base) {
+        voiceHealth = { browserVoice: { ready: false, configured: false }, elevenLabs: { ready: false, configured: false } };
+        updateVoiceCopy();
+        return voiceHealth;
+      }
+      const response = await fetchWithTimeout(`${base}/api/voice/browser/health`, {
+        method: 'GET',
+        headers: getVoiceHeaders(false),
+      }, 8000);
+      if (!response.ok) throw new Error(`Voice health failed: ${response.status}`);
+      voiceHealth = await response.json();
+      updateVoiceCopy();
+      return voiceHealth;
+    }
+
+    function stopBrowserVoice(reason = 'user-stop') {
+      if (voiceRecorder && voiceRecorder.state !== 'inactive') {
+        try { voiceRecorder.stop(); } catch {}
+      }
+      if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
+        try { voiceSocket.send(JSON.stringify({ event: 'stop', reason })); } catch {}
+      }
+      if (voiceSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(voiceSocket.readyState)) {
+        window.setTimeout(() => {
+          try { voiceSocket?.close(); } catch {}
+        }, 350);
+      }
+      voiceStream?.getTracks?.().forEach((track) => track.stop());
+      voiceRecorder = null;
+      voiceSocket = null;
+      voiceStream = null;
+      voiceMode = 'idle';
+      setListening(false);
+      updateVoiceCopy();
+    }
+
+    async function playAvaTts(text = '') {
+      const clean = String(text || '').trim();
+      if (!clean || !voiceHealth?.elevenLabs?.ready) return;
+      const base = getVoiceBase();
+      if (!base) return;
+      try {
+        const response = await fetchWithTimeout(`${base}/api/voice/tts`, {
+          method: 'POST',
+          headers: getVoiceHeaders(true),
+          body: JSON.stringify({ text: clean }),
+        }, 30000);
+        if (!response.ok) return;
+        const blob = await response.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        audio.addEventListener('ended', () => URL.revokeObjectURL(audioUrl), { once: true });
+        await audio.play();
+      } catch {
+        // Spoken replies are additive; text response remains the source of truth.
+      }
+    }
+
+    async function startBrowserVoice() {
+      if (voiceStarting) return;
+      voiceStarting = true;
+      try {
+        const health = await fetchVoiceHealth();
+        if (!health?.browserVoice?.ready) {
+          voiceMode = 'preview';
+          setListening(true);
+          toast({
+            type: health?.browserVoice?.configured ? 'warning' : 'info',
+            title: health?.browserVoice?.configured ? 'Voice provider needs setup' : 'Voice streaming disabled',
+            desc: health?.browserVoice?.configured
+              ? 'Deepgram is not ready yet, so Ava is showing the visual listening state only.'
+              : 'Set PBK_BROWSER_VOICE_ENABLED=true when you are ready for real microphone streaming.'
+          });
+          return;
+        }
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+          throw new Error('This browser does not support microphone recording.');
+        }
+        const base = getVoiceBase();
+        if (!base) throw new Error('OpenClaw bridge is not configured.');
+        voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const sessionResponse = await fetchWithTimeout(`${base}/api/voice/browser/session`, {
+          method: 'POST',
+          headers: getVoiceHeaders(true),
+          body: JSON.stringify({
+            actor: 'PBK dashboard',
+            source: 'ava-avatar',
+          }),
+        }, 10000);
+        const sessionPayload = await sessionResponse.json().catch(() => ({}));
+        if (!sessionResponse.ok || !sessionPayload?.session?.wsUrl) {
+          throw new Error(sessionPayload?.message || sessionPayload?.error || 'Voice session could not start.');
+        }
+
+        voiceSocket = new WebSocket(sessionPayload.session.wsUrl);
+        voiceMode = 'live';
+        setListening(true);
+        if (status) status.textContent = 'Connecting microphone stream...';
+        voiceSocket.addEventListener('open', () => {
+          const mimeType = MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : 'audio/webm';
+          voiceSocket.send(JSON.stringify({ event: 'start', mimeType }));
+          voiceRecorder = new MediaRecorder(voiceStream, { mimeType });
+          voiceRecorder.addEventListener('dataavailable', async (event) => {
+            if (!event.data?.size || !voiceSocket || voiceSocket.readyState !== WebSocket.OPEN) return;
+            const payload = arrayBufferToBase64(await event.data.arrayBuffer());
+            voiceSocket.send(JSON.stringify({ event: 'media', media: { payload, mimeType } }));
+          });
+          voiceRecorder.start(700);
+          if (status) status.textContent = 'Listening live - speak naturally.';
+        });
+        voiceSocket.addEventListener('message', (event) => {
+          let data = {};
+          try { data = JSON.parse(event.data); } catch { return; }
+          if (data.type === 'ready' && status) status.textContent = 'Listening live - Deepgram stream open.';
+          if (data.type === 'transcript' && data.transcript) {
+            lastTranscript = data.transcript;
+            if (input && data.isFinal) input.value = data.transcript;
+            if (status) status.textContent = data.isFinal ? 'Transcript captured - staging Ava response.' : `Hearing: ${data.transcript.slice(0, 54)}`;
+          }
+          if (data.type === 'assistant_response') {
+            if (status) status.textContent = data.text || 'Ava response staged.';
+            toast({
+              type: data.ok ? 'success' : 'warning',
+              title: data.ok ? 'Ava heard you' : 'Voice unclear',
+              desc: data.text || 'Try again when you are ready.'
+            });
+            playAvaTts(data.text || '').catch(() => null);
+          }
+          if (data.type === 'error') {
+            toast({ type: 'error', title: 'Voice stream issue', desc: data.error || 'Ava voice stream reported an error.' });
+          }
+        });
+        voiceSocket.addEventListener('close', () => {
+          if (voiceMode === 'live') stopBrowserVoice('socket-close');
+        });
+      } catch (error) {
+        stopBrowserVoice('start-failed');
+        toast({
+          type: 'error',
+          title: 'Ava voice could not start',
+          desc: error?.message || 'Microphone streaming failed before any provider action.'
+        });
+      } finally {
+        voiceStarting = false;
+      }
+    }
 
     const stageCommand = () => {
       const command = (input?.value || '').trim();
@@ -25155,7 +25349,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
 
     closeBtn?.addEventListener('click', () => {
-      setListening(false);
+      stopBrowserVoice('panel-close');
       setPanelOpen(false);
     });
 
@@ -25169,9 +25363,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       window.setTimeout(() => ripple.remove(), 620);
     });
 
-    micBtn?.addEventListener('click', () => {
+    micBtn?.addEventListener('click', async () => {
       setPanelOpen(true);
-      setListening(!shell.classList.contains('listening'));
+      if (shell.classList.contains('listening')) {
+        stopBrowserVoice('user-stop');
+        return;
+      }
+      await startBrowserVoice();
     });
 
     sendBtn?.addEventListener('click', stageCommand);
@@ -25183,7 +25381,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
 
     brainBtn?.addEventListener('click', () => {
-      setListening(false);
+      stopBrowserVoice('open-brain');
       setPanelOpen(false);
       showPage('brain');
     });
@@ -25191,13 +25389,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     document.addEventListener('click', (event) => {
       if (!panel.classList.contains('open')) return;
       if (shell.contains(event.target)) return;
-      setListening(false);
+      stopBrowserVoice('outside-click');
       setPanelOpen(false);
     });
 
     document.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !panel.classList.contains('open')) return;
-      setListening(false);
+      stopBrowserVoice('escape');
       setPanelOpen(false);
     });
   }

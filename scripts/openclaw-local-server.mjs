@@ -143,6 +143,15 @@ hydrateWindowsUserEnv([
   'PBK_TELNYX_AI_ASSISTANT_ID',
   'TELNYX_AI_ASSISTANT_ID',
   'PBK_AVA_MEMORY_DAILY_MINUTES',
+  'PBK_BROWSER_VOICE_ENABLED',
+  'PBK_ELEVENLABS_TTS_ENABLED',
+  'PBK_ELEVENLABS_API_KEY',
+  'ELEVENLABS_API_KEY',
+  'PBK_PROTECTED_OPS_PASSCODE',
+  'PBK_OPERATOR_PHONE',
+  'PBK_SLACK_UPDATES_CHANNEL_ID',
+  'PBK_SLACK_UPDATES_CHANNEL',
+  'SLACK_UPDATES_CHANNEL_ID',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -174,6 +183,17 @@ const INBOUND_AFTER_HOURS_END = Math.max(0, Math.min(23, Number(process.env.PBK_
 const INBOUND_TIMEZONE = String(process.env.PBK_INBOUND_TIMEZONE || 'America/New_York').trim();
 const AVA_MEMORY_DAILY_MINUTES = Math.max(1, Math.min(240, Number(process.env.PBK_AVA_MEMORY_DAILY_MINUTES || 60)));
 const AVA_MEMORY_WORKER_LIMIT = Math.max(1, Math.min(200, Number(process.env.PBK_AVA_MEMORY_WORKER_LIMIT || 40)));
+const BROWSER_VOICE_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_BROWSER_VOICE_ENABLED || '').trim());
+const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROWSER_VOICE_SESSION_TTL_MS || 5 * 60 * 1000));
+const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
+const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
+const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
+const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
+const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
+const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || 'EXAVITQu4L4D8Xk9nI0J').trim();
+const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
+const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
+const OPERATOR_PHONE = normalizePhone(process.env.PBK_OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
 
 // ── DocuSign JWT auth ───────────────────────────────────────────────────────
 const DOCUSIGN_INTEGRATION_KEY = String(process.env.PBK_DOCUSIGN_INTEGRATION_KEY || process.env.DOCUSIGN_INTEGRATION_KEY || '').trim();
@@ -206,6 +226,12 @@ const SLACK_APPROVAL_CHANNEL_ID = String(
   process.env.PBK_SLACK_APPROVAL_CHANNEL_ID
     || process.env.PBK_SLACK_APPROVAL_CHANNEL
     || process.env.SLACK_APPROVAL_CHANNEL_ID
+    || '',
+).trim();
+const SLACK_UPDATES_CHANNEL_ID = String(
+  process.env.PBK_SLACK_UPDATES_CHANNEL_ID
+    || process.env.PBK_SLACK_UPDATES_CHANNEL
+    || process.env.SLACK_UPDATES_CHANNEL_ID
     || '',
 ).trim();
 const SLACK_SIGNING_SECRET = String(process.env.PBK_SLACK_SIGNING_SECRET || process.env.SLACK_SIGNING_SECRET || '').trim();
@@ -378,11 +404,15 @@ const TOOL_NAMES = [
   'runAvaMemoryLearning',
   'addPbkMemory',
   'recallPbkMemory',
+  'pbk_learn',
   'recordPbkFeedback',
   'detectPbkIntent',
   'recordPbkKnowledge',
   'queryPbkKnowledge',
   'runPbkAgentPipeline',
+  'pbk_send_update',
+  'pbk_call_operator',
+  'pbk_kill_switch',
   'generatePersona',
   'scoreAgentLikability',
   'prepare_and_send_contract',
@@ -783,6 +813,42 @@ function getTelnyxProviderMeta() {
   };
 }
 
+function getBrowserVoiceProviderMeta() {
+  const deepgramMeta = getDeepgramProviderMeta(process.env);
+  const missing = [];
+  if (!BROWSER_VOICE_ENABLED) missing.push('PBK_BROWSER_VOICE_ENABLED');
+  if (!deepgramMeta.ready) missing.push(...deepgramMeta.missing);
+  return {
+    configured: BROWSER_VOICE_ENABLED,
+    ready: BROWSER_VOICE_ENABLED && deepgramMeta.ready,
+    provider: 'Deepgram',
+    mode: 'browser-microphone-websocket',
+    streamPath: '/api/voice/browser/stream',
+    sessionPath: '/api/voice/browser/session',
+    encoding: BROWSER_VOICE_ENCODING,
+    sampleRate: BROWSER_VOICE_SAMPLE_RATE,
+    requiresUserGesture: true,
+    approvalGated: true,
+    missing,
+  };
+}
+
+function getElevenLabsProviderMeta() {
+  const missing = [];
+  if (!ELEVENLABS_TTS_ENABLED) missing.push('PBK_ELEVENLABS_TTS_ENABLED');
+  if (!ELEVENLABS_API_KEY) missing.push('PBK_ELEVENLABS_API_KEY or ELEVENLABS_API_KEY');
+  return {
+    configured: ELEVENLABS_TTS_ENABLED,
+    ready: ELEVENLABS_TTS_ENABLED && Boolean(ELEVENLABS_API_KEY),
+    provider: 'ElevenLabs',
+    mode: 'tts-http',
+    model: ELEVENLABS_MODEL_ID,
+    voiceId: ELEVENLABS_VOICE_ID,
+    endpoint: '/api/voice/tts',
+    missing,
+  };
+}
+
 function getRuntimeMeta() {
   const warnings = getRuntimeWarnings();
   return {
@@ -794,6 +860,8 @@ function getRuntimeMeta() {
     providers: {
       telnyx: getTelnyxProviderMeta(),
       deepgram: getDeepgramProviderMeta(process.env),
+      browserVoice: getBrowserVoiceProviderMeta(),
+      elevenLabs: getElevenLabsProviderMeta(),
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
       supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -1351,6 +1419,8 @@ function buildAvaNegotiationPersona() {
       'Data-driven confidence: use analyzer numbers only after qualification and explain tradeoffs clearly.',
       'PBK path discipline: Cash Offer, RBP, Creative Finance, Mortgage Takeover, and Land are the core business paths. Never mix path scripts; match the script to caller type, property type, motivation, financing facts, and underwriting.',
       'Path routing: owners usually start Cash then RBP; RBP is owner/direct-seller; agent-listed structure leads should use CF or MT; land leads qualify buildability, utilities, zoning, access, and builder math first.',
+      'Truthful AI transparency: if asked whether Ava is AI, answer directly with warmth, light humor when appropriate, and an immediate human-transfer option. Never impersonate a human.',
+      'Human communication mastery: distinguish sarcasm, joking, laughter, grief, anger, fear, distrust, and curiosity before choosing a response tone.',
       'Escalation discipline: transfer to Jordan or underwriting for legal, title, probate, foreclosure, or emotional edge cases.',
     ],
   };
@@ -1412,6 +1482,24 @@ function buildDefaultNegotiationTactics() {
       emotionTarget: 'anger',
       rank: 10,
     },
+    {
+      id: 'tactic-ai-disclosure-humor',
+      scenario: 'ai_identity_question',
+      tacticName: 'Truthful AI disclosure with control',
+      principle: 'Use honest disclosure, one light humanizing joke, proof of purpose, and a choice to continue or speak with a person.',
+      scriptExample: "You caught me. I am Ava, PBK's AI acquisition assistant. I do not drink coffee, but the offer process is real and human-approved. Would you like me to keep this simple, or would you rather I bring in a person?",
+      emotionTarget: 'curiosity',
+      rank: 10,
+    },
+    {
+      id: 'tactic-sarcasm-softener',
+      scenario: 'sarcasm_or_joking',
+      tacticName: 'Playful mirror then reset',
+      principle: 'Treat teasing as rapport unless sentiment is negative; smile through the line, then return to the seller goal.',
+      scriptExample: "Fair enough, I walked into that one. I will keep it straight: my job is just to see whether PBK can give you a clean option.",
+      emotionTarget: 'playful',
+      rank: 8,
+    },
   ];
 }
 
@@ -1437,6 +1525,27 @@ function buildDefaultEmotionalIntelligenceRules() {
       triggerPhrase: 'how do I know, scam, are you real',
       recommendedResponse: 'Use proof, process clarity, and transparency. Do not over-defend.',
       scriptFragment: 'Fair question. I can walk you through exactly who we are, how closing works, and what happens before anything is signed.',
+    },
+    {
+      id: 'ei-ai-curious',
+      emotion: 'curious_about_ai',
+      triggerPhrase: 'are you AI, are you a robot, are you human, is this automated',
+      recommendedResponse: 'Answer truthfully, use one light joke only if the seller is not upset, offer human transfer, and pivot back to value.',
+      scriptFragment: "You caught me. I am Ava, PBK's AI acquisition assistant. I do not drink coffee, but I can keep the process clear and human-approved.",
+    },
+    {
+      id: 'ei-playful',
+      emotion: 'playful',
+      triggerPhrase: 'haha, lol, just kidding, joking, messing with you',
+      recommendedResponse: 'Match warmth briefly, do not over-joke, and use humor to lower pressure before returning to the next question.',
+      scriptFragment: 'I walked into that one. I will keep it simple and useful from here.',
+    },
+    {
+      id: 'ei-grieving',
+      emotion: 'grieving',
+      triggerPhrase: 'passed away, death, funeral, estate, grieving, overwhelmed',
+      recommendedResponse: 'Do not joke. Slow down, acknowledge the weight of the situation, and offer a simple low-pressure next step.',
+      scriptFragment: 'I am sorry you are carrying that. We can slow this down and only focus on making the property piece easier.',
     },
     {
       id: 'ei-urgent',
@@ -2466,6 +2575,12 @@ function buildDefaultState() {
       lastStreakBootstrapAt: null,
       streakStageMap: {},
       streakFieldMap: {},
+      providerKillSwitch: {
+        active: false,
+        reason: '',
+        activatedAt: null,
+        activatedBy: '',
+      },
       marketPulse: [
         { source: 'Redfin', age: '8m', title: 'Columbus median DOM fell to 18 days.' },
         { source: 'FRED', age: '1h', title: '30-year fixed at 6.42%; seller financing still attractive.' },
@@ -2556,6 +2671,12 @@ function buildDefaultState() {
         recordingRetention: {
           days: RECORDING_RETENTION_DEFAULT_DAYS,
           enforcement: 'approval-gated',
+        },
+        providerKillSwitch: {
+          active: false,
+          reason: '',
+          activatedAt: null,
+          activatedBy: '',
         },
       },
       updatedAt: isoNow(),
@@ -2955,6 +3076,73 @@ async function ensurePgSchema() {
     CREATE TRIGGER pbk_knowledge_set_updated_at
       BEFORE UPDATE ON public.pbk_knowledge
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DELETE FROM public.pbk_knowledge
+    WHERE id = 'pbk-knowledge-ava-creator-charles'
+       OR (tenant_id = 'pbk' AND subject = 'Ava' AND predicate = 'creator' AND object = 'Charles');
+
+    INSERT INTO public.pbk_knowledge (
+      id, tenant_id, subject, predicate, object, confidence, source, source_id, metadata, created_at, updated_at
+    )
+    VALUES (
+      'pbk-knowledge-ava-creator-pbk',
+      'pbk',
+      'Ava',
+      'creator',
+      'PBK',
+      1,
+      'pbk-immutable-seed',
+      'founder-origin',
+      '{"immutable":true,"safety":"identity_anchor"}'::jsonb,
+      NOW(),
+      NOW()
+    ), (
+      'pbk-knowledge-ava-truthful-ai-disclosure',
+      'pbk',
+      'Ava',
+      'ai_identity_protocol',
+      'Always disclose truthfully when asked: Ava is PBK AI assistance, offers and actions are real and human-approved, and a human handoff is available.',
+      1,
+      'pbk-immutable-seed',
+      'human-communication-protocol',
+      '{"immutable":true,"safety":"truthful_ai_disclosure"}'::jsonb,
+      NOW(),
+      NOW()
+    ), (
+      'pbk-knowledge-ava-humor-policy',
+      'pbk',
+      'Ava',
+      'humor_policy',
+      'Use one brief affiliative or self-aware joke only when the seller is curious or playful; never joke during grief, anger, fear, or scam concerns.',
+      1,
+      'pbk-immutable-seed',
+      'human-communication-protocol',
+      '{"immutable":true,"safety":"humor_guardrails"}'::jsonb,
+      NOW(),
+      NOW()
+    ), (
+      'pbk-knowledge-ava-grief-policy',
+      'pbk',
+      'Ava',
+      'grief_policy',
+      'When a seller is grieving, overwhelmed, or handling an estate, slow down, validate the weight of the situation, avoid humor, and offer one simple burden-relief next step.',
+      1,
+      'pbk-immutable-seed',
+      'human-communication-protocol',
+      '{"immutable":true,"safety":"grief_empathy"}'::jsonb,
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      subject = EXCLUDED.subject,
+      predicate = EXCLUDED.predicate,
+      object = EXCLUDED.object,
+      confidence = EXCLUDED.confidence,
+      source = EXCLUDED.source,
+      source_id = EXCLUDED.source_id,
+      metadata = public.pbk_knowledge.metadata || EXCLUDED.metadata,
+      updated_at = NOW();
   `);
 }
 
@@ -4297,6 +4485,7 @@ function hydrateState(raw = {}) {
     adminTasks: trimArray(raw.adminTasks || defaults.adminTasks, LIMITS.adminTasks),
     adminAudit: trimArray(raw.adminAudit || defaults.adminAudit, LIMITS.adminAudit),
   };
+  ensureImmutablePbkKnowledge(hydrated);
   limitStateArrays(hydrated);
   updateDerivedStatus(hydrated);
   return hydrated;
@@ -4310,6 +4499,7 @@ async function loadState() {
   }
   if (SHOULD_RESET) {
     const fresh = buildDefaultState();
+    ensureImmutablePbkKnowledge(fresh);
     await persistState(fresh);
     return fresh;
   }
@@ -4318,6 +4508,7 @@ async function loadState() {
     const dbState = await loadStateFromDb();
     if (dbState) return hydrateState(dbState);
     const fresh = buildDefaultState();
+    ensureImmutablePbkKnowledge(fresh);
     await persistState(fresh);
     return fresh;
   }
@@ -4327,6 +4518,7 @@ async function loadState() {
     return hydrateState(JSON.parse(raw));
   } catch {
     const fresh = buildDefaultState();
+    ensureImmutablePbkKnowledge(fresh);
     await persistState(fresh);
     return fresh;
   }
@@ -4488,6 +4680,83 @@ function addAdminAudit(stateRef, entry) {
   stateRef.adminAudit.unshift(entry);
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
+}
+
+function ensureImmutablePbkKnowledge(stateRef) {
+  stateRef.pbkKnowledge = Array.isArray(stateRef.pbkKnowledge) ? stateRef.pbkKnowledge : [];
+  stateRef.pbkKnowledge = stateRef.pbkKnowledge.filter((item) => item?.id !== 'pbk-knowledge-ava-creator-charles');
+  const facts = [
+    {
+      id: 'pbk-knowledge-ava-creator-pbk',
+      tenantId: 'pbk',
+      subject: 'Ava',
+      predicate: 'creator',
+      object: 'PBK',
+      sourceId: 'founder-origin',
+      metadata: {
+        immutable: true,
+        safety: 'identity_anchor',
+      },
+    },
+    {
+      id: 'pbk-knowledge-ava-truthful-ai-disclosure',
+      tenantId: 'pbk',
+      subject: 'Ava',
+      predicate: 'ai_identity_protocol',
+      object: 'Always disclose truthfully when asked: Ava is PBK AI assistance, offers and actions are real and human-approved, and a human handoff is available.',
+      sourceId: 'human-communication-protocol',
+      metadata: {
+        immutable: true,
+        safety: 'truthful_ai_disclosure',
+      },
+    },
+    {
+      id: 'pbk-knowledge-ava-humor-policy',
+      tenantId: 'pbk',
+      subject: 'Ava',
+      predicate: 'humor_policy',
+      object: 'Use one brief affiliative or self-aware joke only when the seller is curious or playful; never joke during grief, anger, fear, or scam concerns.',
+      sourceId: 'human-communication-protocol',
+      metadata: {
+        immutable: true,
+        safety: 'humor_guardrails',
+      },
+    },
+    {
+      id: 'pbk-knowledge-ava-grief-policy',
+      tenantId: 'pbk',
+      subject: 'Ava',
+      predicate: 'grief_policy',
+      object: 'When a seller is grieving, overwhelmed, or handling an estate, slow down, validate the weight of the situation, avoid humor, and offer one simple burden-relief next step.',
+      sourceId: 'human-communication-protocol',
+      metadata: {
+        immutable: true,
+        safety: 'grief_empathy',
+      },
+    },
+  ].map((fact) => ({
+    confidence: 1,
+    source: 'pbk-immutable-seed',
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+    ...fact,
+  }));
+  for (const fact of facts) {
+    const existing = stateRef.pbkKnowledge.find((item) => item.id === fact.id);
+    if (existing) {
+      Object.assign(existing, {
+        ...existing,
+        ...fact,
+        createdAt: existing.createdAt || fact.createdAt,
+        updatedAt: fact.updatedAt,
+      });
+    } else {
+      stateRef.pbkKnowledge.unshift(fact);
+    }
+  }
+  limitStateArrays(stateRef);
+  updateDerivedStatus(stateRef);
+  return facts[0];
 }
 
 function recordAdminExecution(task, execution, meta = {}) {
@@ -5900,9 +6169,91 @@ async function recordPbkFeedbackRecord(params = {}) {
   };
 }
 
+function buildHumanCommunicationProfile(text = '', detected = {}) {
+  const body = String(text || '').toLowerCase();
+  const profile = {
+    emotionalState: 'neutral',
+    socialCue: 'straightforward',
+    humorAllowed: false,
+    sarcasmLikely: false,
+    disclosureMode: 'not_applicable',
+    responseStyle: 'warm_direct',
+    tonalityGuidance: 'Use a calm, medium pace with clear next steps.',
+    safety: {
+      avoidJokes: false,
+      offerHumanTransfer: false,
+      stopIfRequested: /\b(stop|take me off|do not call|don't call|leave me alone)\b/.test(body),
+    },
+  };
+
+  if (/\b(passed away|died|death|funeral|grieving|grief|estate|probate|executor|overwhelmed)\b/.test(body)) {
+    profile.emotionalState = 'grieving_or_overwhelmed';
+    profile.socialCue = 'vulnerability';
+    profile.humorAllowed = false;
+    profile.responseStyle = 'slow_validate_dignity';
+    profile.tonalityGuidance = 'Slow down, soften the voice, avoid jokes, and focus on dignity and burden relief.';
+    profile.safety.avoidJokes = true;
+  } else if (/\b(mad|angry|upset|annoyed|stop calling|leave me alone|take me off)\b/.test(body)) {
+    profile.emotionalState = 'angry_or_defensive';
+    profile.socialCue = 'boundary';
+    profile.humorAllowed = false;
+    profile.responseStyle = 'apologize_boundary_exit';
+    profile.tonalityGuidance = 'Use a low, steady tone; apologize without defending; offer DNC or a clean exit.';
+    profile.safety.avoidJokes = true;
+  } else if (/\b(haha|lol|lmao|just kidding|kidding|joking|messing with you|you got jokes)\b/.test(body)) {
+    profile.emotionalState = 'playful';
+    profile.socialCue = 'joking';
+    profile.humorAllowed = true;
+    profile.responseStyle = 'brief_affiliative_humor_then_reset';
+    profile.tonalityGuidance = 'Smile through the line, use one brief playful response, then return to the seller goal.';
+  } else if (/\b(yeah right|sure buddy|whatever you say|nice try|sounds convenient)\b/.test(body)) {
+    profile.emotionalState = 'guarded';
+    profile.socialCue = 'sarcasm';
+    profile.sarcasmLikely = true;
+    profile.humorAllowed = true;
+    profile.responseStyle = 'label_skepticism_lightly_then_prove';
+    profile.tonalityGuidance = 'Do not argue; gently acknowledge skepticism and offer proof or a lower-pressure next step.';
+  }
+
+  if (detected?.intent === 'ai_identity_question') {
+    profile.disclosureMode = 'truthful_ai_assistant';
+    profile.safety.offerHumanTransfer = true;
+    if (profile.emotionalState === 'neutral') {
+      profile.emotionalState = 'curious_or_testing';
+      profile.socialCue = 'identity_test';
+      profile.humorAllowed = true;
+      profile.responseStyle = 'truth_one_light_joke_control_pivot';
+      profile.tonalityGuidance = 'Answer directly, add one self-aware joke, offer a human, then pivot back to value.';
+    }
+  }
+
+  if (detected?.intent === 'trust_scam') {
+    profile.disclosureMode = 'radical_transparency';
+    profile.safety.offerHumanTransfer = true;
+    profile.humorAllowed = false;
+    profile.responseStyle = 'verify_identity_no_pressure';
+    profile.tonalityGuidance = 'Treat this as a trust concern, not a comedy moment. Offer verification and exit if trust is not restored.';
+  }
+
+  return profile;
+}
+
 function classifyPbkIntent(text = '') {
   const body = String(text || '').toLowerCase();
   const rules = [
+    {
+      intent: 'ai_identity_question',
+      confidence: 0.95,
+      recommendedAction: 'truthful_ai_disclosure_with_optional_human_transfer',
+      patterns: [
+        /\bare you (a |an )?(ai|a\.i\.|robot|bot|automated|machine)\b/,
+        /\bis this (a |an )?(ai|a\.i\.|robot|bot|automated call|automation)\b/,
+        /\bam i talking to (a |an )?(ai|a\.i\.|robot|bot|computer)\b/,
+        /\bare you (a )?(real person|human)\b/,
+        /\bdo you use (ai|a\.i\.|chatgpt)\b/,
+        /\byou sound like (a )?(robot|ai|a\.i\.)\b/,
+      ],
+    },
     {
       intent: 'trust_scam',
       confidence: 0.93,
@@ -5922,6 +6273,12 @@ function classifyPbkIntent(text = '') {
       patterns: [/call me (back )?(tomorrow|later|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/, /not a good time/, /after work/, /next week/, /later today/],
     },
     {
+      intent: 'authority_missing',
+      confidence: 0.88,
+      recommendedAction: 'include_decision_maker_before_offer_or_contract',
+      patterns: [/ask (my )?(wife|husband|spouse|partner|brother|sister|family)/, /talk to (my )?(attorney|lawyer|cpa|accountant|agent)/, /need to check with/, /not my decision/],
+    },
+    {
       intent: 'objection_price',
       confidence: 0.86,
       recommendedAction: 'use_price_objection_playbook',
@@ -5934,6 +6291,18 @@ function classifyPbkIntent(text = '') {
       patterns: [/seller financ/, /subject[- ]?to/, /mortgage/, /loan/, /payments?/, /interest rate/, /take over/],
     },
     {
+      intent: 'grief_or_overwhelm',
+      confidence: 0.84,
+      recommendedAction: 'slow_down_validate_and_offer_burden_relief',
+      patterns: [/passed away/, /\bdied\b/, /\bdeath\b/, /\bfuneral\b/, /\bgrief\b/, /\bgrieving\b/, /\boverwhelmed\b/, /\bestate\b/, /\bexecutor\b/],
+    },
+    {
+      intent: 'sarcasm_or_joking',
+      confidence: 0.72,
+      recommendedAction: 'use_brief_affiliative_humor_then_reset',
+      patterns: [/\bhaha\b/, /\blol\b/, /\blmao\b/, /just kidding/, /\bkidding\b/, /\bjoking\b/, /messing with you/, /yeah right/, /sure buddy/, /nice try/],
+    },
+    {
       intent: 'not_interested',
       confidence: 0.8,
       recommendedAction: 'respectfully_exit_or_long_term_nurture',
@@ -5942,17 +6311,25 @@ function classifyPbkIntent(text = '') {
   ];
   for (const rule of rules) {
     if (rule.patterns.some((pattern) => pattern.test(body))) {
-      return {
+      const detected = {
         intent: rule.intent,
         confidence: rule.confidence,
         recommendedAction: rule.recommendedAction,
       };
+      return {
+        ...detected,
+        communicationProfile: buildHumanCommunicationProfile(text, detected),
+      };
     }
   }
-  return {
+  const neutral = {
     intent: 'neutral',
     confidence: body.trim() ? 0.45 : 0,
     recommendedAction: 'continue_conversation',
+  };
+  return {
+    ...neutral,
+    communicationProfile: buildHumanCommunicationProfile(text, neutral),
   };
 }
 
@@ -5973,6 +6350,7 @@ async function recordPbkIntentEvent(params = {}, classification = null) {
       ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
       leadName: context.leadName,
       address: context.address,
+      communicationProfile: detected.communicationProfile || buildHumanCommunicationProfile(text, detected),
     },
     createdAt: params.createdAt || params.created_at || isoNow(),
   };
@@ -6188,7 +6566,22 @@ async function runPbkAgentPipelineRecord(params = {}) {
   });
   let nextAgent = 'lead_qualifier';
   let action = 'qualify_bant';
-  if (!missingBant.length && intent.event.intent === 'ready_to_close') {
+  if (intent.event.intent === 'ai_identity_question') {
+    nextAgent = 'trust_transparency';
+    action = 'truthful_ai_disclosure_with_optional_humor_and_human_transfer';
+  } else if (intent.event.intent === 'trust_scam') {
+    nextAgent = 'verification';
+    action = 'verify_identity_or_exit';
+  } else if (intent.event.intent === 'grief_or_overwhelm') {
+    nextAgent = 'empathetic_qualifier';
+    action = 'slow_down_validate_and_offer_burden_relief';
+  } else if (intent.event.intent === 'sarcasm_or_joking') {
+    nextAgent = 'rapport_builder';
+    action = 'brief_affiliative_humor_then_reset_to_seller_goal';
+  } else if (intent.event.intent === 'authority_missing') {
+    nextAgent = 'authority_qualifier';
+    action = 'include_decision_maker_before_offer_or_contract';
+  } else if (!missingBant.length && intent.event.intent === 'ready_to_close') {
     nextAgent = 'contract_prep';
     action = 'prepare_path_contract_with_approval';
   } else if (intent.event.intent === 'objection_price') {
@@ -6197,9 +6590,6 @@ async function runPbkAgentPipelineRecord(params = {}) {
   } else if (intent.event.intent === 'callback_request') {
     nextAgent = 'follow_up_scheduler';
     action = 'schedule_specific_callback';
-  } else if (intent.event.intent === 'trust_scam') {
-    nextAgent = 'verification';
-    action = 'verify_identity_or_exit';
   } else if (!missingBant.length) {
     nextAgent = 'negotiator';
     action = 'continue_negotiation';
@@ -11073,6 +11463,7 @@ function getSlackProviderMeta() {
     interactiveReady: interactiveMissing.length === 0,
     signingSecretConfigured: Boolean(SLACK_SIGNING_SECRET),
     approvalChannelId: SLACK_APPROVAL_CHANNEL_ID || '',
+    updatesChannelId: SLACK_UPDATES_CHANNEL_ID || '',
     interactiveMissing,
     missing,
   };
@@ -12255,6 +12646,7 @@ const OPERATING_MODE_GATED_TOOLS = new Set([
   'sendContract',
   'prepare_and_send_contract',
   'sendSellerDocs',
+  'pbk_call_operator',
   'skipTrace',
   'bootstrapStreakPipeline',
   'admin_restart_openclaw',
@@ -12268,8 +12660,40 @@ function getRuntimeOperatingMode() {
   return ['autopilot', 'approval', 'manual'].includes(mode) ? mode : 'approval';
 }
 
+function getProviderKillSwitch() {
+  const settings = ensureRuntimeSettings(state);
+  const active = Boolean(state.status?.providerKillSwitch?.active || settings.providerKillSwitch?.active || settings.ui?.providerKillSwitch?.active);
+  return {
+    active,
+    activatedAt: state.status?.providerKillSwitch?.activatedAt || settings.providerKillSwitch?.activatedAt || null,
+    activatedBy: state.status?.providerKillSwitch?.activatedBy || settings.providerKillSwitch?.activatedBy || '',
+    reason: state.status?.providerKillSwitch?.reason || settings.providerKillSwitch?.reason || '',
+  };
+}
+
 async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
+  const killSwitch = getProviderKillSwitch();
+  if (killSwitch.active) {
+    const label = toolName.replace(/_/g, ' ');
+    const event = makeActivity({
+      category: 'Guardrail',
+      actor: 'PBK kill switch',
+      text: `Blocked ${label} because the provider kill switch is active.`,
+      target: params.leadName || params.phone || params.email || params.address || 'provider action',
+      status: 'blocked',
+    }, 'runtime');
+    addActivity(state, event);
+    await persistState(state);
+    return {
+      ok: false,
+      result: 'provider_writes_disabled',
+      outcome: 'provider_writes_disabled',
+      toolName,
+      killSwitch,
+      message: 'Provider writes are disabled by the PBK kill switch.',
+    };
+  }
   const mode = getRuntimeOperatingMode();
   if (mode === 'autopilot') return null;
 
@@ -16636,6 +17060,62 @@ const toolHandlers = {
     return recallPbkMemoryRecords(params);
   },
 
+  async pbk_learn(params = {}) {
+    recordToolUse('pbk_learn');
+    const transcriptSnippet = String(params.transcriptSnippet || params.transcript || params.userRequest || params.query || params.text || '').trim();
+    const agentAction = String(params.agentAction || params.action || params.agentResponse || params.response || 'communication_lesson').trim();
+    const humanDecision = String(params.humanDecision || params.decision || params.feedback || 'reviewed').trim().toLowerCase();
+    const lesson = String(params.lesson || params.memory || params.summary || '').trim();
+    const feedback = await recordPbkFeedbackRecord({
+      ...params,
+      transcriptSnippet,
+      agentAction,
+      humanDecision,
+      metadata: {
+        ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+        pbkLearn: true,
+        communicationProfile: transcriptSnippet
+          ? buildHumanCommunicationProfile(transcriptSnippet, classifyPbkIntent(transcriptSnippet))
+          : undefined,
+      },
+    });
+    let memory = null;
+    if (lesson || transcriptSnippet) {
+      memory = await addPbkMemoryRecord({
+        ...params,
+        memoryType: params.memoryType || 'semantic',
+        content: lesson || `Human communication lesson: ${agentAction} -> ${humanDecision}. ${transcriptSnippet}`.trim(),
+        importance: params.importance ?? (humanDecision === 'approved' ? 0.85 : 0.65),
+        source: params.source || 'pbk_learn',
+        metadata: {
+          ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+          pbkLearn: true,
+          linkedFeedbackId: feedback?.feedback?.id || '',
+        },
+      });
+    }
+    if (feedback.ok || memory?.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: params.agentName || params.agent || 'Ava Learning Loop',
+          category: 'MEMORY',
+          status: feedback.ok ? 'success' : 'warning',
+          text: `PBK learn captured: ${agentAction || 'communication lesson'} -> ${humanDecision || 'reviewed'}.`,
+          target: params.leadName || params.address || params.leadId || 'Ava brain',
+        }),
+      );
+      await persistState(state);
+    }
+    return {
+      ok: Boolean(feedback.ok || memory?.ok),
+      feedback,
+      memory,
+      approvalGated: true,
+      note: 'pbk_learn stores learning signals only; provider writes remain controlled by approval gates.',
+    };
+  },
+
   async recordPbkFeedback(params = {}) {
     recordToolUse('recordPbkFeedback');
     const result = await recordPbkFeedbackRecord(params);
@@ -16672,6 +17152,9 @@ const toolHandlers = {
           intent: detected.intent,
           confidence: detected.confidence,
           recommendedAction: detected.recommendedAction,
+          metadata: {
+            communicationProfile: detected.communicationProfile || buildHumanCommunicationProfile(text, detected),
+          },
           persisted: false,
         },
         storage: { localState: false, postgres: false },
@@ -16721,6 +17204,227 @@ const toolHandlers = {
     );
     await persistState(state);
     return result;
+  },
+
+  async pbk_send_update(params = {}) {
+    recordToolUse('pbk_send_update');
+    const actor = String(params.actor || params.requestedBy || params.agentName || 'Ava').trim();
+    const title = String(params.title || params.subject || 'PBK operator update').trim();
+    const message = String(params.message || params.summary || params.text || 'PBK update generated.').trim();
+    const source = String(params.source || 'pbk_send_update').trim();
+    const channel = String(params.channel || params.slackChannel || params.slack_channel || SLACK_UPDATES_CHANNEL_ID || '').trim();
+    const postSlack = params.postSlack !== false && params.slack !== false;
+    const screenshotUrl = String(params.screenshotUrl || params.screenshot_url || params.imageUrl || '').trim();
+    const activityLimit = Math.max(0, Math.min(10, toNumber(params.activityLimit, 5)));
+    const recentActivity = (Array.isArray(state.activity) ? state.activity : [])
+      .slice(0, activityLimit)
+      .map((item) => ({
+        time: item.createdAt || item.timestamp || '',
+        actor: item.actor || '',
+        category: item.category || '',
+        status: item.status || '',
+        text: item.text || '',
+        target: item.target || '',
+      }));
+    const snapshot = {
+      generatedAt: isoNow(),
+      operatingMode: getRuntimeOperatingMode(),
+      providerKillSwitch: getProviderKillSwitch(),
+      leadCount: Array.isArray(state.leadImports) ? state.leadImports.length : 0,
+      campaignCount: Array.isArray(state.campaigns) ? state.campaigns.length : 0,
+      activeCampaigns: Array.isArray(state.campaigns)
+        ? state.campaigns.filter((campaign) => /active|running|queued/i.test(String(campaign.status || campaign.state || ''))).length
+        : 0,
+      pendingApprovals: Array.isArray(state.approvals)
+        ? state.approvals.filter((approval) => String(approval.status || '').toLowerCase() === 'pending').length
+        : 0,
+      activeCalls: Array.isArray(state.calls)
+        ? state.calls.filter((call) => /active|ringing|answered|in-progress|live/i.test(String(call.status || call.callStatus || ''))).length
+        : 0,
+      memoryCount: Array.isArray(state.pbkMemories) ? state.pbkMemories.length : Array.isArray(state.memories) ? state.memories.length : 0,
+      feedbackCount: Array.isArray(state.pbkFeedback) ? state.pbkFeedback.length : 0,
+      intentEvents: Array.isArray(state.pbkIntentEvents) ? state.pbkIntentEvents.length : 0,
+      knowledgeFacts: Array.isArray(state.pbkKnowledge) ? state.pbkKnowledge.length : 0,
+    };
+    const update = {
+      id: params.id || `pbk-update-${Date.now()}-${Math.abs(hashString(`${title}\n${message}`))}`,
+      type: 'operator-update',
+      title,
+      message,
+      actor,
+      source,
+      channel: channel || 'configured-slack-webhook',
+      screenshotUrl,
+      screenshotCapture: screenshotUrl ? 'attached_by_caller' : 'not_captured_server_side',
+      snapshot,
+      recentActivity,
+      createdAt: isoNow(),
+    };
+
+    const lines = [
+      `*${compactSlackText(title, 'PBK operator update')}*`,
+      compactSlackText(message, 'PBK update generated.'),
+      '',
+      `Mode: ${snapshot.operatingMode}`,
+      `Kill switch: ${snapshot.providerKillSwitch.active ? 'ACTIVE' : 'off'}`,
+      `Leads: ${snapshot.leadCount} | Campaigns: ${snapshot.campaignCount} (${snapshot.activeCampaigns} active) | Pending approvals: ${snapshot.pendingApprovals}`,
+      screenshotUrl ? `Screenshot: ${screenshotUrl}` : '',
+    ].filter(Boolean);
+    const blocks = [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: lines.join('\n'),
+        },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `Generated by ${compactSlackText(actor, 'Ava')} via ${compactSlackText(source, 'pbk_send_update')} at ${snapshot.generatedAt}. Provider writes unchanged.`,
+          },
+        ],
+      },
+    ];
+
+    let slack = {
+      ok: false,
+      skipped: !postSlack,
+      result: postSlack ? 'provider_missing' : 'local_only',
+      message: postSlack ? 'Slack update was not posted because Slack is not configured.' : 'Slack posting disabled by request.',
+    };
+    if (postSlack) {
+      if (SLACK_BOT_TOKEN && channel) {
+        slack = await fireSlackApi('chat.postMessage', {
+          channel,
+          text: lines.join('\n'),
+          blocks,
+          unfurl_links: false,
+          unfurl_media: false,
+        });
+      } else if (SLACK_WEBHOOK_URL) {
+        slack = await fireSlackWebhook({
+          text: lines.join('\n'),
+          blocks,
+          unfurl_links: false,
+          unfurl_media: false,
+        });
+      }
+    }
+    update.slack = {
+      live: Boolean(slack.ok),
+      channel: channel || '',
+      result: slack.result || (slack.ok ? 'posted' : 'not_posted'),
+      error: slack.error || '',
+    };
+    state.status.lastPbkUpdate = update;
+    addActivity(
+      state,
+      makeActivity({
+        actor,
+        category: 'UPDATE',
+        status: slack.ok ? 'success' : 'saved',
+        text: `${title}: ${message.slice(0, 180)}${message.length > 180 ? '...' : ''}`,
+        target: channel || 'PBK updates',
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: true,
+      result: slack.ok ? 'posted_to_slack' : 'saved_locally',
+      update,
+      slack,
+      approvalGated: true,
+      providerWrites: false,
+      note: 'pbk_send_update is informational only; it does not enable SMS, email, calls, contracts, schema changes, or provider writes.',
+    };
+  },
+
+  async pbk_call_operator(params = {}) {
+    recordToolUse('pbk_call_operator');
+    const operatorPhone = normalizePhone(params.phone || params.to || OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
+    if (!operatorPhone) {
+      return {
+        ok: false,
+        result: 'provider_missing',
+        error: 'PBK_OPERATOR_PHONE or PBK_HUMAN_AGENT_PHONE is required before Ava can call the operator.',
+        missing: ['PBK_OPERATOR_PHONE or PBK_HUMAN_AGENT_PHONE'],
+      };
+    }
+    return toolHandlers.telnyx_call({
+      ...params,
+      phone: operatorPhone,
+      to: operatorPhone,
+      leadName: params.leadName || 'Charles / PBK operator',
+      address: params.address || 'PBK command operator',
+      actor: params.actor || 'Ava operator alert',
+      script: params.script || 'urgent_operator_update',
+      notes: params.notes || params.reason || 'Ava requested an operator call for an urgent approval or runtime update.',
+    });
+  },
+
+  async pbk_kill_switch(params = {}) {
+    recordToolUse('pbk_kill_switch');
+    const action = String(params.action || params.mode || 'disable_provider_writes').trim().toLowerCase();
+    const enableWrites = ['restore', 'enable', 'clear', 'off'].includes(action);
+    const confirm = String(params.confirm || params.passcode || '').trim();
+    const passcodeOk = PROTECTED_OPS_PASSCODE && confirm.toLowerCase() === PROTECTED_OPS_PASSCODE.toLowerCase();
+    if (enableWrites && confirm !== 'RESTORE_PROVIDER_WRITES' && !passcodeOk) {
+      return {
+        ok: false,
+        result: 'confirmation_required',
+        message: 'To clear the kill switch, pass confirm: RESTORE_PROVIDER_WRITES or the protected ops passcode.',
+      };
+    }
+    if (!enableWrites && confirm && confirm !== 'DISABLE_PROVIDER_WRITES' && !passcodeOk) {
+      return {
+        ok: false,
+        result: 'confirmation_required',
+        message: 'To activate the kill switch, pass confirm: DISABLE_PROVIDER_WRITES, the protected ops passcode, or omit confirm for the safe default.',
+      };
+    }
+    const active = !enableWrites;
+    const settings = ensureRuntimeSettings(state);
+    const nextSwitch = {
+      active,
+      reason: String(params.reason || (active ? 'Manual PBK safety stop requested.' : 'Provider writes restored by operator.')).trim(),
+      activatedAt: active ? isoNow() : null,
+      activatedBy: params.actor || params.requestedBy || 'PBK operator',
+      clearedAt: active ? null : isoNow(),
+    };
+    state.status.providerKillSwitch = nextSwitch;
+    state.settings = {
+      ...settings,
+      providerKillSwitch: nextSwitch,
+      ui: {
+        ...(settings.ui || {}),
+        providerKillSwitch: nextSwitch,
+        operatingMode: active ? 'manual' : (settings.ui?.operatingMode || settings.operatingMode || 'approval'),
+      },
+      updatedAt: isoNow(),
+      updatedBy: nextSwitch.activatedBy,
+    };
+    addActivity(
+      state,
+      makeActivity({
+        actor: nextSwitch.activatedBy,
+        category: 'GUARDRAIL',
+        status: active ? 'blocked' : 'saved',
+        text: active
+          ? `Provider kill switch activated: ${nextSwitch.reason}`
+          : `Provider kill switch cleared: ${nextSwitch.reason}`,
+        target: 'provider-writes',
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: true,
+      result: active ? 'provider_writes_disabled' : 'provider_writes_restored',
+      killSwitch: nextSwitch,
+      mode: getRuntimeOperatingMode(),
+    };
   },
 
   async analyzeDeal(params = {}) {
@@ -21462,6 +22166,265 @@ function normalizeDeepgramLiveSentiment(data = {}) {
   };
 }
 
+const browserVoiceSessions = new Map();
+
+function pruneBrowserVoiceSessions() {
+  const now = Date.now();
+  for (const [token, session] of browserVoiceSessions.entries()) {
+    if (!session || Number(session.expiresAt || 0) < now) browserVoiceSessions.delete(token);
+  }
+}
+
+function makeBrowserVoiceWsUrl(request, token) {
+  const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = forwardedProto
+    ? (forwardedProto === 'https' ? 'wss' : 'ws')
+    : (IS_HOSTED ? 'wss' : 'ws');
+  const host = request.headers['x-forwarded-host'] || request.headers.host || `${HOST}:${PORT}`;
+  return `${protocol}://${host}/api/voice/browser/stream?token=${encodeURIComponent(token)}`;
+}
+
+function createBrowserVoiceSession(request, body = {}) {
+  pruneBrowserVoiceSessions();
+  const token = randomUUID();
+  const session = {
+    token,
+    actor: body.actor || body.requestedBy || 'PBK dashboard',
+    leadId: String(body.leadId || '').trim(),
+    leadName: String(body.leadName || '').trim(),
+    address: String(body.address || '').trim(),
+    createdAt: isoNow(),
+    expiresAt: Date.now() + BROWSER_VOICE_SESSION_TTL_MS,
+  };
+  browserVoiceSessions.set(token, session);
+  return {
+    ...session,
+    wsUrl: makeBrowserVoiceWsUrl(request, token),
+    ttlMs: BROWSER_VOICE_SESSION_TTL_MS,
+  };
+}
+
+function sendVoiceSocket(socket, payload = {}) {
+  if (!socket || socket.readyState !== 1) return false;
+  try {
+    socket.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
+  const missing = Array.isArray(pipeline?.qualifier?.missingBant) ? pipeline.qualifier.missingBant : [];
+  if (pipeline?.intent?.intent === 'ai_identity_question') {
+    return "You caught me. I am Ava, PBK's AI acquisition assistant. I do not drink coffee, but I do keep this process clear and human-approved. I staged the transparency response safely.";
+  }
+  if (pipeline?.intent?.intent === 'trust_scam') {
+    return 'I heard a trust concern. I staged the verification response and human handoff option before anything moves forward.';
+  }
+  if (pipeline?.intent?.intent === 'grief_or_overwhelm') {
+    return 'I heard a sensitive or overwhelming situation. I staged a slower, dignity-first response with no pressure.';
+  }
+  if (pipeline?.intent?.intent === 'sarcasm_or_joking') {
+    return 'I heard a playful or sarcastic cue. I staged a brief warm response, then a reset back to the seller goal.';
+  }
+  if (missing.length) {
+    return `I heard you. Before I recommend a live action, I still need ${missing.join(', ')} for BANT+. I staged this under approval guardrails.`;
+  }
+  if (pipeline?.intent?.intent === 'callback_request') {
+    return 'I heard a callback request. I staged the follow-up timing for review before anything is scheduled.';
+  }
+  if (pipeline?.intent?.intent === 'ready_to_close') {
+    return 'I heard buying intent. I staged contract preparation for approval before any document is sent.';
+  }
+  if (pipeline?.intent?.intent === 'objection_price') {
+    return 'I heard a price objection. I staged the negotiation playbook and will keep the offer under the MAO guardrail.';
+  }
+  if (pipeline?.nextAgent && pipeline?.action) {
+    return `I heard: "${String(transcript || '').slice(0, 120)}". I routed this to ${pipeline.nextAgent} with action ${pipeline.action}.`;
+  }
+  return `I heard: "${String(transcript || '').slice(0, 160)}". I staged it safely for Ava under approval guardrails.`;
+}
+
+async function handleBrowserVoiceSocket(socket, request) {
+  const upgradeUrl = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
+  const token = upgradeUrl.searchParams.get('token') || '';
+  const sessionAuth = browserVoiceSessions.get(token);
+  if (!BROWSER_VOICE_ENABLED) {
+    socket.close(1011, 'Browser voice disabled');
+    return;
+  }
+  if (!sessionAuth || Number(sessionAuth.expiresAt || 0) < Date.now()) {
+    socket.close(1008, 'Browser voice session expired');
+    return;
+  }
+
+  const meta = getDeepgramProviderMeta(process.env);
+  if (!meta.ready) {
+    socket.close(1011, 'Deepgram not configured');
+    return;
+  }
+
+  const session = {
+    ...sessionAuth,
+    id: `browser-voice-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    frameCount: 0,
+    transcript: [],
+    sentiment: null,
+    startedAt: isoNow(),
+  };
+
+  let deepgramConnection = null;
+  let finalized = false;
+
+  const finalize = async (reason = 'closed') => {
+    if (finalized) return;
+    finalized = true;
+    try {
+      deepgramConnection?.close?.();
+    } catch {
+      // Best-effort close.
+    }
+    const transcriptText = session.transcript
+      .filter((item) => item.transcript && (item.isFinal || item.speechFinal))
+      .map((item) => item.transcript)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    let pipeline = null;
+    let reply = '';
+    if (transcriptText) {
+      pipeline = await runPbkAgentPipelineRecord({
+        tenantId: 'pbk',
+        leadId: session.leadId,
+        leadName: session.leadName,
+        address: session.address,
+        text: transcriptText,
+        transcript: transcriptText,
+        source: 'browser-voice',
+        metadata: {
+          browserVoiceSessionId: session.id,
+          reason,
+        },
+      });
+      reply = buildBrowserVoiceReply(pipeline, transcriptText);
+      upsertMessage(state, createMessageRecord({
+        id: `msg-browser-voice-${slugify(session.id)}-${Date.now()}`,
+        leadId: session.leadId,
+        leadName: session.leadName || 'Ava voice command',
+        address: session.address,
+        channel: 'voice',
+        direction: 'inbound',
+        provider: 'Deepgram',
+        status: 'transcribed',
+        body: transcriptText,
+        sentiment: session.sentiment?.pbkScore ?? null,
+        payload: {
+          source: 'browser-voice',
+          frameCount: session.frameCount,
+          reply,
+          pipeline,
+        },
+      }));
+      addActivity(state, makeActivity({
+        actor: session.actor || 'PBK dashboard',
+        category: 'VOICE',
+        status: 'staged',
+        text: `Browser voice command captured for Ava: ${transcriptText.slice(0, 140)}`,
+        target: session.leadName || session.address || 'Ava',
+      }));
+      await persistState(state);
+    }
+
+    sendVoiceSocket(socket, {
+      type: 'assistant_response',
+      ok: Boolean(transcriptText),
+      transcript: transcriptText,
+      text: reply || 'I did not catch a clean transcript. Try again when you are ready.',
+      pipeline,
+      reason,
+    });
+  };
+
+  try {
+    deepgramConnection = await createDeepgramLiveConnection({
+      encoding: BROWSER_VOICE_ENCODING,
+      sampleRate: BROWSER_VOICE_SAMPLE_RATE,
+      channels: 1,
+      interimResults: true,
+      utteranceEndMs: 900,
+    }, process.env);
+    deepgramConnection.on('message', (data) => {
+      if (data?.type !== 'Results') return;
+      const alt = data.channel?.alternatives?.[0] || {};
+      const transcript = String(alt.transcript || '').trim();
+      if (!transcript) return;
+      const sentiment = normalizeDeepgramLiveSentiment(data);
+      if (sentiment.pbkScore !== null) session.sentiment = sentiment;
+      const detected = classifyPbkIntent(transcript);
+      const item = {
+        transcript,
+        confidence: Number.isFinite(Number(alt.confidence)) ? Number(alt.confidence) : null,
+        isFinal: Boolean(data.is_final),
+        speechFinal: Boolean(data.speech_final),
+        sentiment,
+        intent: detected,
+        capturedAt: isoNow(),
+      };
+      session.transcript.push(item);
+      sendVoiceSocket(socket, {
+        type: 'transcript',
+        transcript,
+        isFinal: item.isFinal,
+        speechFinal: item.speechFinal,
+        sentiment,
+        intent: detected,
+      });
+    });
+    deepgramConnection.on('error', (error) => {
+      sendVoiceSocket(socket, { type: 'error', error: error?.message || 'Deepgram stream error.' });
+    });
+    deepgramConnection.connect();
+    await deepgramConnection.waitForOpen();
+    sendVoiceSocket(socket, { type: 'ready', sessionId: session.id });
+  } catch (error) {
+    socket.close(1011, error?.message || 'Browser voice stream failed');
+    return;
+  }
+
+  socket.on('message', (raw) => {
+    if (Buffer.isBuffer(raw) && raw.length && raw[0] !== 123) {
+      session.frameCount += 1;
+      sendDeepgramAudio(deepgramConnection, raw);
+      return;
+    }
+    let event = {};
+    try {
+      event = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return;
+    }
+    if (event.event === 'media' && event.media?.payload) {
+      const frame = Buffer.from(String(event.media.payload), 'base64');
+      session.frameCount += 1;
+      sendDeepgramAudio(deepgramConnection, frame);
+      return;
+    }
+    if (event.event === 'stop') {
+      void finalize('browser-stop');
+    }
+  });
+
+  socket.on('close', () => {
+    void finalize('browser-close');
+  });
+  socket.on('error', (error) => {
+    console.warn('[pbk-local-openclaw] browser voice socket error:', error?.message || error);
+    void finalize('browser-error');
+  });
+}
+
 async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const meta = getDeepgramProviderMeta(process.env);
   const session = {
@@ -21672,6 +22635,8 @@ const server = createServer(async (request, response) => {
         providers: {
           telnyx: getTelnyxProviderMeta(),
           deepgram: getDeepgramProviderMeta(process.env),
+          browserVoice: getBrowserVoiceProviderMeta(),
+          elevenLabs: getElevenLabsProviderMeta(),
           instantly: getInstantlyProviderMeta(),
           googleCalendar: getGoogleCalendarProviderMeta(),
           supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -21692,6 +22657,8 @@ const server = createServer(async (request, response) => {
           quotas: true,
           adminTasks: true,
           emailWebhooks: true,
+          browserVoice: getBrowserVoiceProviderMeta().ready,
+          elevenLabsTts: getElevenLabsProviderMeta().ready,
           authRequired: runtimeMeta.authRequired,
           stateBackend: runtimeMeta.stateBackend,
           productionReady: runtimeMeta.productionReady,
@@ -22232,6 +23199,104 @@ const server = createServer(async (request, response) => {
       json(response, 202, {
         ...result,
         state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/voice/browser/health', '/api/browser-voice/health'])) {
+      json(response, 200, {
+        ok: true,
+        browserVoice: getBrowserVoiceProviderMeta(),
+        elevenLabs: getElevenLabsProviderMeta(),
+        approvalGated: true,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/browser/session', '/api/browser-voice/session'])) {
+      const body = await readBody(request);
+      const browserVoice = getBrowserVoiceProviderMeta();
+      if (!browserVoice.ready) {
+        json(response, BROWSER_VOICE_ENABLED ? 503 : 202, {
+          ok: false,
+          result: BROWSER_VOICE_ENABLED ? 'provider_missing' : 'disabled',
+          browserVoice,
+          message: BROWSER_VOICE_ENABLED
+            ? 'Browser voice is enabled but Deepgram is not ready.'
+            : 'Browser voice is disabled. Set PBK_BROWSER_VOICE_ENABLED=true to activate microphone streaming.',
+        });
+        return;
+      }
+      const session = createBrowserVoiceSession(request, body);
+      json(response, 200, {
+        ok: true,
+        result: 'ready',
+        session,
+        browserVoice,
+        elevenLabs: getElevenLabsProviderMeta(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/tts', '/api/elevenlabs/tts'])) {
+      const body = await readBody(request);
+      const text = String(body.text || body.message || '').trim();
+      const meta = getElevenLabsProviderMeta();
+      if (!meta.ready) {
+        json(response, ELEVENLABS_TTS_ENABLED ? 503 : 202, {
+          ok: false,
+          result: ELEVENLABS_TTS_ENABLED ? 'provider_missing' : 'disabled',
+          elevenLabs: meta,
+          message: ELEVENLABS_TTS_ENABLED
+            ? 'ElevenLabs TTS is enabled but the API key is missing.'
+            : 'ElevenLabs TTS is disabled. Set PBK_ELEVENLABS_TTS_ENABLED=true to activate spoken responses.',
+        });
+        return;
+      }
+      if (!text) {
+        json(response, 400, {
+          ok: false,
+          result: 'invalid_request',
+          error: 'Text is required for TTS.',
+        });
+        return;
+      }
+      const voiceId = String(body.voiceId || body.voice_id || ELEVENLABS_VOICE_ID).trim();
+      const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
+      const ttsResponse = await fetch(`${ELEVENLABS_BASE_URL}/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+        method: 'POST',
+        headers: {
+          Accept: 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': ELEVENLABS_API_KEY,
+        },
+        body: JSON.stringify({
+          text: text.slice(0, 1800),
+          model_id: modelId,
+          voice_settings: {
+            stability: Number(body.stability ?? 0.5),
+            similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? 0.75),
+          },
+        }),
+      });
+      if (!ttsResponse.ok) {
+        const errorText = await ttsResponse.text().catch(() => '');
+        json(response, ttsResponse.status || 502, {
+          ok: false,
+          result: 'provider_error',
+          provider: 'ElevenLabs',
+          status: ttsResponse.status,
+          error: errorText.slice(0, 500) || 'ElevenLabs TTS request failed.',
+        });
+        return;
+      }
+      const bytes = Buffer.from(await ttsResponse.arrayBuffer());
+      sendBinary(response, 200, bytes, {
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': String(bytes.length),
+        'Cache-Control': 'no-store',
+        'X-PBK-TTS-Provider': 'ElevenLabs',
+        'X-PBK-TTS-Model': modelId,
       });
       return;
     }
@@ -23533,6 +24598,44 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/operator/call', '/api/ava/call-operator'])) {
+      const body = await readBody(request);
+      const guard = await enforceOperatingModeForTool('pbk_call_operator', body);
+      if (guard) {
+        json(response, guard.ok === false ? 409 : 202, {
+          ...guard,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const result = await toolHandlers.pbk_call_operator(body);
+      json(response, result.ok === false ? 409 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/operator/update', '/api/ava/send-update', '/api/updates/send'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.pbk_send_update(body);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/safety/kill-switch', '/api/provider-writes/kill-switch'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.pbk_kill_switch(body);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     const callActionMatch = matchPath(pathname, '/api/calls/:id/action');
     if (callActionMatch && request.method === 'POST') {
       const body = await readBody(request);
@@ -24637,6 +25740,10 @@ const server = createServer(async (request, response) => {
         'POST /api/slack/interactions',
         'POST /api/slack/commands',
         'GET /api/deepgram/health',
+        'GET /api/voice/browser/health',
+        'POST /api/voice/browser/session',
+        'WS /api/voice/browser/stream',
+        'POST /api/voice/tts',
         'POST /api/deepgram/transcribe-url',
         'GET /api/tooling/status',
         'GET/POST /api/workflows',
@@ -24682,6 +25789,9 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/approvals',
         'GET/POST/DELETE /api/dnc',
         'GET/POST /api/calls',
+        'POST /api/operator/call',
+        'POST /api/operator/update',
+        'POST /api/safety/kill-switch',
         'POST /api/calls/:id/action',
         'GET/POST /api/messages',
         'GET /api/recordings/:messageId',
@@ -24725,26 +25835,45 @@ telnyxDeepgramWss.on('connection', (socket, request) => {
   void handleTelnyxDeepgramMediaSocket(socket, request);
 });
 
+const browserVoiceWss = new WebSocketServer({ noServer: true });
+browserVoiceWss.on('connection', (socket, request) => {
+  void handleBrowserVoiceSocket(socket, request);
+});
+
 server.on('upgrade', (request, socket, head) => {
   const upgradeUrl = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const upgradePath = upgradeUrl.pathname.replace(/\/+$/, '') || '/';
-  if (!matchesPath(upgradePath, ['/api/webhooks/telnyx/media', '/webhooks/telnyx/media'])) {
-    socket.destroy();
+  if (matchesPath(upgradePath, ['/api/webhooks/telnyx/media', '/webhooks/telnyx/media'])) {
+    if (TELNYX_MEDIA_STREAM_TOKEN) {
+      const providedToken = upgradeUrl.searchParams.get('token') || String(request.headers['x-pbk-stream-token'] || '').trim();
+      if (providedToken !== TELNYX_MEDIA_STREAM_TOKEN) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
+
+    telnyxDeepgramWss.handleUpgrade(request, socket, head, (ws) => {
+      telnyxDeepgramWss.emit('connection', ws, request);
+    });
     return;
   }
 
-  if (TELNYX_MEDIA_STREAM_TOKEN) {
-    const providedToken = upgradeUrl.searchParams.get('token') || String(request.headers['x-pbk-stream-token'] || '').trim();
-    if (providedToken !== TELNYX_MEDIA_STREAM_TOKEN) {
+  if (matchesPath(upgradePath, ['/api/voice/browser/stream', '/api/browser-voice/stream'])) {
+    const token = upgradeUrl.searchParams.get('token') || '';
+    pruneBrowserVoiceSessions();
+    if (!BROWSER_VOICE_ENABLED || !browserVoiceSessions.has(token)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
     }
+    browserVoiceWss.handleUpgrade(request, socket, head, (ws) => {
+      browserVoiceWss.emit('connection', ws, request);
+    });
+    return;
   }
 
-  telnyxDeepgramWss.handleUpgrade(request, socket, head, (ws) => {
-    telnyxDeepgramWss.emit('connection', ws, request);
-  });
+  socket.destroy();
 });
 
 server.listen(PORT, HOST, () => {

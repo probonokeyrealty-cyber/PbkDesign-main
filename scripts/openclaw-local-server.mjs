@@ -149,6 +149,9 @@ hydrateWindowsUserEnv([
   'ELEVENLABS_API_KEY',
   'PBK_PROTECTED_OPS_PASSCODE',
   'PBK_OPERATOR_PHONE',
+  'PBK_TOTP_REQUIRED',
+  'PBK_TOTP_SECRET',
+  'PBK_VOICE_PREWARM_ENABLED',
   'PBK_SLACK_UPDATES_CHANNEL_ID',
   'PBK_SLACK_UPDATES_CHANNEL',
   'SLACK_UPDATES_CHANNEL_ID',
@@ -194,6 +197,10 @@ const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || 'EXAVI
 const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
 const OPERATOR_PHONE = normalizePhone(process.env.PBK_OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
+const TOTP_REQUIRED = /^(1|true|yes)$/i.test(String(process.env.PBK_TOTP_REQUIRED || '').trim());
+const TOTP_SECRET = String(process.env.PBK_TOTP_SECRET || '').trim();
+const TOTP_WINDOW = Math.max(0, Math.min(3, Number(process.env.PBK_TOTP_WINDOW || 1)));
+const VOICE_PREWARM_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_VOICE_PREWARM_ENABLED || '').trim());
 
 // ── DocuSign JWT auth ───────────────────────────────────────────────────────
 const DOCUSIGN_INTEGRATION_KEY = String(process.env.PBK_DOCUSIGN_INTEGRATION_KEY || process.env.DOCUSIGN_INTEGRATION_KEY || '').trim();
@@ -884,6 +891,7 @@ function getRuntimeMeta() {
       crmSync: getCrmSyncProviderMeta(),
       render: getRenderProviderMeta(),
     },
+    security: getSecurityMeta(),
     warnings,
   };
 }
@@ -903,6 +911,100 @@ function jsonStringify(value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getSecurityMeta() {
+  return {
+    bridgeBearerRequired: Boolean(BRIDGE_API_KEY),
+    totpRequired: TOTP_REQUIRED,
+    totpConfigured: Boolean(TOTP_SECRET),
+    protectedOpsPasscodeConfigured: Boolean(PROTECTED_OPS_PASSCODE),
+    providerWritesApprovalGated: getRuntimeOperatingMode() !== 'autopilot',
+    voicePrewarmEnabled: VOICE_PREWARM_ENABLED,
+  };
+}
+
+function decodeBase32Secret(secret = '') {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const normalized = String(secret || '')
+    .toUpperCase()
+    .replace(/^OTPAUTH:\/\/[^?]+\?/i, '')
+    .replace(/.*SECRET=([^&]+).*/i, '$1')
+    .replace(/[^A-Z2-7]/g, '');
+  let bits = '';
+  for (const char of normalized) {
+    const value = alphabet.indexOf(char);
+    if (value < 0) continue;
+    bits += value.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let index = 0; index + 8 <= bits.length; index += 8) {
+    bytes.push(parseInt(bits.slice(index, index + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+function generateTotpCode(secret = TOTP_SECRET, counter = Math.floor(Date.now() / 30000)) {
+  const key = decodeBase32Secret(secret);
+  if (!key.length) return '';
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+  counterBuffer.writeUInt32BE(counter >>> 0, 4);
+  const hmac = createHmac('sha1', key).update(counterBuffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const value = ((hmac[offset] & 0x7f) << 24)
+    | ((hmac[offset + 1] & 0xff) << 16)
+    | ((hmac[offset + 2] & 0xff) << 8)
+    | (hmac[offset + 3] & 0xff);
+  return String(value % 1000000).padStart(6, '0');
+}
+
+function verifyTotpCode(token = '', secret = TOTP_SECRET, windowSize = TOTP_WINDOW) {
+  const normalized = String(token || '').replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(normalized) || !secret) return false;
+  const currentCounter = Math.floor(Date.now() / 30000);
+  for (let offset = -windowSize; offset <= windowSize; offset += 1) {
+    const candidate = generateTotpCode(secret, currentCounter + offset);
+    if (!candidate) continue;
+    const left = Buffer.from(candidate);
+    const right = Buffer.from(normalized);
+    if (left.length === right.length && timingSafeEqual(left, right)) return true;
+  }
+  return false;
+}
+
+function requiresTotpForPath(pathname = '') {
+  if (!TOTP_REQUIRED) return false;
+  return pathname.startsWith('/api/admin')
+    || matchesPath(pathname, [
+      '/api/operator/call',
+      '/api/ava/call-operator',
+      '/api/safety/kill-switch',
+      '/api/provider-writes/kill-switch',
+      '/api/admin/request',
+      '/api/admin/route',
+    ]);
+}
+
+function enforceTotp(request, response, pathname = '') {
+  if (!requiresTotpForPath(pathname)) return false;
+  if (!TOTP_SECRET) {
+    json(response, 503, {
+      ok: false,
+      error: 'TOTP is required but PBK_TOTP_SECRET is not configured.',
+    });
+    return true;
+  }
+  const token = String(request.headers['x-pbk-totp'] || request.headers['x-otp'] || '').trim();
+  if (!verifyTotpCode(token)) {
+    json(response, 401, {
+      ok: false,
+      error: 'TOTP verification required.',
+      hint: 'Send the current 6-digit code in X-PBK-TOTP for protected admin/operator actions.',
+    });
+    return true;
+  }
+  return false;
 }
 
 function escapeHtml(value = '') {
@@ -22634,6 +22736,8 @@ const server = createServer(async (request, response) => {
     }
   }
 
+  if (enforceTotp(request, response, pathname)) return;
+
   try {
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();
@@ -22682,6 +22786,31 @@ const server = createServer(async (request, response) => {
         runtime: runtimeMeta,
         warnings: runtimeMeta.warnings,
         lastUpdatedAt: state.status.lastUpdatedAt,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/security/totp/status') {
+      json(response, 200, {
+        ok: true,
+        security: getSecurityMeta(),
+        protectedPaths: [
+          '/api/admin/*',
+          '/api/operator/call',
+          '/api/ava/call-operator',
+          '/api/safety/kill-switch',
+          '/api/provider-writes/kill-switch',
+        ],
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/security/totp/verify') {
+      const body = await readBody(request);
+      json(response, 200, {
+        ok: true,
+        configured: Boolean(TOTP_SECRET),
+        valid: verifyTotpCode(body?.code || body?.token || body?.totp || ''),
       });
       return;
     }
@@ -25890,10 +26019,77 @@ server.on('upgrade', (request, socket, head) => {
   socket.destroy();
 });
 
+async function withPrewarmTimeout(task, ms, label) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} prewarm timed out`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function prewarmVoiceProviders() {
+  if (!VOICE_PREWARM_ENABLED) return;
+  const deepgramMeta = getDeepgramProviderMeta(process.env);
+  if (deepgramMeta.ready) {
+    try {
+      const connection = await createDeepgramLiveConnection({
+        encoding: BROWSER_VOICE_ENCODING,
+        sampleRate: BROWSER_VOICE_SAMPLE_RATE,
+        channels: 1,
+        interimResults: true,
+        utteranceEndMs: 900,
+      }, process.env);
+      await withPrewarmTimeout((async () => {
+        connection.connect();
+        await connection.waitForOpen();
+        connection.close?.();
+      })(), 5000, 'Deepgram');
+      console.log('[pbk-local-openclaw] Deepgram browser voice prewarm ok');
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] Deepgram prewarm skipped:', error?.message || error);
+    }
+  }
+
+  const elevenLabsMeta = getElevenLabsProviderMeta();
+  if (elevenLabsMeta.ready) {
+    try {
+      const ttsResponse = await withPrewarmTimeout(fetch(`${ELEVENLABS_BASE_URL}/v1/text-to-speech/${encodeURIComponent(ELEVENLABS_VOICE_ID)}`, {
+        method: 'POST',
+        headers: {
+          Accept: 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': ELEVENLABS_API_KEY,
+        },
+        body: JSON.stringify({
+          text: String(process.env.PBK_ELEVENLABS_PREWARM_TEXT || 'PBK voice ready.').slice(0, 120),
+          model_id: ELEVENLABS_MODEL_ID,
+        }),
+      }), 8000, 'ElevenLabs');
+      if (ttsResponse.ok) {
+        await ttsResponse.arrayBuffer();
+        console.log('[pbk-local-openclaw] ElevenLabs TTS prewarm ok');
+      } else {
+        console.warn('[pbk-local-openclaw] ElevenLabs prewarm returned:', ttsResponse.status);
+      }
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] ElevenLabs prewarm skipped:', error?.message || error);
+    }
+  }
+}
+
 server.listen(PORT, HOST, () => {
   startContractTemplateWatcher();
   reloadContractTemplateLibrary('startup').catch((error) => {
     console.warn('[pbk-local-openclaw] contract template startup load failed:', error instanceof Error ? error.message : error);
+  });
+  prewarmVoiceProviders().catch((error) => {
+    console.warn('[pbk-local-openclaw] voice provider prewarm failed:', error?.message || error);
   });
   console.log(`[pbk-local-openclaw] listening on http://${HOST}:${PORT}`);
   console.log(`[pbk-local-openclaw] state backend: ${STATE_BACKEND}${DATABASE_URL ? ' (postgres)' : ` (file: ${STATE_FILE})`}`);

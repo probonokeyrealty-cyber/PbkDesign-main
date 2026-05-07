@@ -1,0 +1,14 @@
+{
+  "name": "pbk-ava-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PBK Ava desktop wrapper with tray and hotkey access to the live dashboard voice interface.",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "latest"
+  }
+}

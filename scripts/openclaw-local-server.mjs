@@ -193,8 +193,15 @@ const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
-const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || 'EXAVITQu4L4D8Xk9nI0J').trim();
+const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
 const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
+let __elevenLabsValidation = {
+  checkedAt: '',
+  ok: null,
+  status: 0,
+  voiceId: ELEVENLABS_VOICE_ID,
+  error: '',
+};
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
 const OPERATOR_PHONE = normalizePhone(process.env.PBK_OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
 const TOTP_REQUIRED = /^(1|true|yes)$/i.test(String(process.env.PBK_TOTP_REQUIRED || '').trim());
@@ -858,15 +865,29 @@ function getElevenLabsProviderMeta() {
   const missing = [];
   if (!ELEVENLABS_TTS_ENABLED) missing.push('PBK_ELEVENLABS_TTS_ENABLED');
   if (!ELEVENLABS_API_KEY) missing.push('PBK_ELEVENLABS_API_KEY or ELEVENLABS_API_KEY');
+  const credentialReady = ELEVENLABS_TTS_ENABLED && Boolean(ELEVENLABS_API_KEY);
+  const validationFailed = __elevenLabsValidation.ok === false;
   return {
     configured: ELEVENLABS_TTS_ENABLED,
-    ready: ELEVENLABS_TTS_ENABLED && Boolean(ELEVENLABS_API_KEY),
+    ready: credentialReady && !validationFailed,
     provider: 'ElevenLabs',
     mode: 'tts-http',
     model: ELEVENLABS_MODEL_ID,
     voiceId: ELEVENLABS_VOICE_ID,
     endpoint: '/api/voice/tts',
+    validated: __elevenLabsValidation.ok === true,
+    validation: __elevenLabsValidation.ok === null ? null : { ...__elevenLabsValidation },
     missing,
+  };
+}
+
+function recordElevenLabsValidation({ ok = false, status = 0, error = '', voiceId = ELEVENLABS_VOICE_ID } = {}) {
+  __elevenLabsValidation = {
+    checkedAt: new Date().toISOString(),
+    ok: Boolean(ok),
+    status: Number(status || 0),
+    voiceId: String(voiceId || ELEVENLABS_VOICE_ID),
+    error: String(error || '').slice(0, 240),
   };
 }
 
@@ -23582,6 +23603,12 @@ const server = createServer(async (request, response) => {
       });
       if (!ttsResponse.ok) {
         const errorText = await ttsResponse.text().catch(() => '');
+        recordElevenLabsValidation({
+          ok: false,
+          status: ttsResponse.status,
+          voiceId,
+          error: errorText || 'ElevenLabs TTS request failed.',
+        });
         json(response, ttsResponse.status || 502, {
           ok: false,
           result: 'provider_error',
@@ -23592,6 +23619,12 @@ const server = createServer(async (request, response) => {
         return;
       }
       const bytes = Buffer.from(await ttsResponse.arrayBuffer());
+      recordElevenLabsValidation({
+        ok: true,
+        status: 200,
+        voiceId,
+        error: '',
+      });
       sendBinary(response, 200, bytes, {
         'Content-Type': 'audio/mpeg',
         'Content-Length': String(bytes.length),
@@ -26231,8 +26264,16 @@ async function prewarmVoiceProviders() {
       }), 8000, 'ElevenLabs');
       if (ttsResponse.ok) {
         await ttsResponse.arrayBuffer();
+        recordElevenLabsValidation({ ok: true, status: 200, voiceId: ELEVENLABS_VOICE_ID });
         console.log('[pbk-local-openclaw] ElevenLabs TTS prewarm ok');
       } else {
+        const errorText = await ttsResponse.text().catch(() => '');
+        recordElevenLabsValidation({
+          ok: false,
+          status: ttsResponse.status,
+          voiceId: ELEVENLABS_VOICE_ID,
+          error: errorText || `ElevenLabs prewarm returned ${ttsResponse.status}`,
+        });
         console.warn('[pbk-local-openclaw] ElevenLabs prewarm returned:', ttsResponse.status);
       }
     } catch (error) {

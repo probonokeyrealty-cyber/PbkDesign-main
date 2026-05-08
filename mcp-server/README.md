@@ -16,6 +16,8 @@ The PBK bridge is the brain — this just makes it speak MCP.
 | `pbk_decide_approval` | `PUT /api/approvals/:id` | flips status, adds activity |
 | `pbk_list_approvals` | `GET /api/approvals` | none |
 | `pbk_get_brain_state` | `POST /invoke getBrainState` | reads brainDocs, may add activity |
+| `pbk_get_readable_summary` | `POST /invoke getReadableSummary` | none - converts approvals/feedback/intents/activity into plain English |
+| `pbk_openai_web_search` | `POST /invoke openAiWebSearch` | live OpenAI Responses web search when configured |
 | `pbk_ingest_research_doc` | `POST /invoke ingestResearchDoc` | adds brainDoc |
 | `pbk_lead_intake` | `POST /api/leads/import` | adds leadImport + activity |
 | `pbk_check_dnc` | `POST /invoke checkDNC` | none — pure lookup |

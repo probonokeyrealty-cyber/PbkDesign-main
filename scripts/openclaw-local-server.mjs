@@ -155,6 +155,11 @@ hydrateWindowsUserEnv([
   'PBK_SLACK_UPDATES_CHANNEL_ID',
   'PBK_SLACK_UPDATES_CHANNEL',
   'SLACK_UPDATES_CHANNEL_ID',
+  'PBK_OPENAI_API_KEY',
+  'OPENAI_API_KEY',
+  'PBK_OPENAI_WEB_SEARCH_ENABLED',
+  'PBK_OPENAI_WEB_SEARCH_MODEL',
+  'PBK_OPENAI_BASE_URL',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -202,6 +207,10 @@ let __elevenLabsValidation = {
   voiceId: ELEVENLABS_VOICE_ID,
   error: '',
 };
+const OPENAI_API_KEY = String(process.env.PBK_OPENAI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+const OPENAI_BASE_URL = String(process.env.PBK_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com').trim().replace(/\/+$/g, '');
+const OPENAI_WEB_SEARCH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_OPENAI_WEB_SEARCH_ENABLED || 'true').trim());
+const OPENAI_WEB_SEARCH_MODEL = String(process.env.PBK_OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_WEB_SEARCH_MODEL || 'gpt-4o-mini').trim();
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
 const OPERATOR_PHONE = normalizePhone(process.env.PBK_OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
 const TOTP_REQUIRED = /^(1|true|yes)$/i.test(String(process.env.PBK_TOTP_REQUIRED || '').trim());
@@ -424,6 +433,8 @@ const TOOL_NAMES = [
   'recordPbkKnowledge',
   'queryPbkKnowledge',
   'runPbkAgentPipeline',
+  'getReadableSummary',
+  'openAiWebSearch',
   'pbk_send_update',
   'pbk_call_operator',
   'pbk_kill_switch',
@@ -904,6 +915,7 @@ function getRuntimeMeta() {
       deepgram: getDeepgramProviderMeta(process.env),
       browserVoice: getBrowserVoiceProviderMeta(),
       elevenLabs: getElevenLabsProviderMeta(),
+      openAiWebSearch: getOpenAiWebSearchProviderMeta(),
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
       supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -5914,6 +5926,299 @@ function buildAvaDoctrineCommandResult(command = '', context = {}) {
       bantFields: BANT_FIELDS,
     },
     command,
+  };
+}
+
+function looksLikeReadableSummaryQuery(query = '') {
+  const normalized = String(query || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return /\b(readable|redible|plain english|operator summary|daily summary|approval summary|human readable|explain the logs|raw logs|what needs review|what needs approval|pending action|pending approval|decision-maker|decision maker)\b/i.test(normalized);
+}
+
+function looksLikeOpenAiWebSearchIntent(query = '') {
+  const normalized = String(query || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (looksLikePbkDoctrineQuery(normalized)) return false;
+  if (looksLikeBrowserResearchIntent(normalized)) return false;
+  return /\b(current|currently|latest|today|this week|this month|recent|real-time|real time|up to date|up-to-date|news|market update|market trend|interest rate|mortgage rate|home price|comps|search web|web search|search internet|look up|research online)\b/i.test(normalized);
+}
+
+function formatReadableCurrency(value) {
+  const numeric = Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(numeric) || numeric === 0) return '';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(numeric);
+}
+
+function formatReadablePercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  const pct = Math.abs(numeric) <= 1 ? numeric * 100 : numeric;
+  return `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+}
+
+function sentimentWord(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 'unknown';
+  if (numeric >= 0.65) return `positive (${numeric.toFixed(2)})`;
+  if (numeric <= 0.35) return `negative (${numeric.toFixed(2)})`;
+  return `neutral (${numeric.toFixed(2)})`;
+}
+
+function getReadableLeadLabel(item = {}) {
+  const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+  const candidates = [
+    item.leadName,
+    item.sellerName,
+    item.ownerName,
+    metadata.leadName,
+    metadata.sellerName,
+    item.address,
+    item.propertyAddress,
+    metadata.address,
+    item.target,
+    item.leadId,
+    item.callId,
+    item.approvalId,
+    item.id,
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  return candidates[0] || 'Unassigned lead';
+}
+
+function humanizeSnake(value = '') {
+  return String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function summarizeApprovalReadable(approval = {}) {
+  const status = humanizeSnake(approval.status || 'pending');
+  const action = humanizeSnake(approval.action || approval.toolName || approval.type || approval.category || 'Review request');
+  const amount = formatReadableCurrency(approval.offer || approval.amount || approval.price || approval.metadata?.offer || approval.metadata?.price);
+  const reason = approval.reason || approval.rationale || approval.summary || approval.text || approval.message || '';
+  return `${status}: ${action}${amount ? ` at ${amount}` : ''}${reason ? ` - ${String(reason).slice(0, 220)}` : ''}`;
+}
+
+function summarizeFeedbackReadable(feedback = {}) {
+  const decision = humanizeSnake(feedback.humanDecision || feedback.human_decision || feedback.decision || 'reviewed');
+  const action = feedback.agentAction || feedback.agent_action || feedback.action || 'agent action';
+  const snippet = feedback.transcriptSnippet || feedback.transcript_snippet || feedback.snippet || '';
+  return `${decision}: ${action}${snippet ? ` - "${String(snippet).slice(0, 180)}"` : ''}`;
+}
+
+function summarizeIntentReadable(event = {}) {
+  const intent = humanizeSnake(event.intent || event.intentLabel || event.intent_label || event.label || 'intent');
+  const confidence = formatReadablePercent(event.confidence);
+  const action = event.recommendedAction || event.recommended_action || '';
+  return `${intent}${confidence ? ` (${confidence} confidence)` : ''}${action ? ` - next: ${humanizeSnake(action)}` : ''}`;
+}
+
+function buildReadableOperatorSummary(stateRef, params = {}) {
+  const limit = Math.max(1, Math.min(20, Number(params.limit || 8)));
+  const pendingApprovals = sortNewest(Array.isArray(stateRef.approvals) ? stateRef.approvals : [])
+    .filter((item) => String(item.status || '').toLowerCase() === 'pending')
+    .slice(0, limit);
+  const recentFeedback = sortNewest(Array.isArray(stateRef.pbkFeedback) ? stateRef.pbkFeedback : []).slice(0, limit);
+  const recentIntents = sortNewest(Array.isArray(stateRef.pbkIntentEvents) ? stateRef.pbkIntentEvents : []).slice(0, limit);
+  const recentActivity = getRealActivityForSummary(stateRef).slice(0, limit);
+  const runtimeMeta = getRuntimeMeta();
+  const providerEntries = Object.entries(runtimeMeta.providers || {});
+  const missingProviders = providerEntries
+    .filter(([, meta]) => !meta?.ready)
+    .map(([name, meta]) => `${humanizeSnake(name)}${Array.isArray(meta?.missing) && meta.missing.length ? ` (${meta.missing.join(', ')})` : ''}`)
+    .slice(0, 8);
+
+  const groups = new Map();
+  const addToGroup = (label, line) => {
+    const key = label || 'Unassigned lead';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(line);
+  };
+  pendingApprovals.forEach((approval) => addToGroup(getReadableLeadLabel(approval), `Action needed: ${summarizeApprovalReadable(approval)}`));
+  recentFeedback.forEach((feedback) => addToGroup(getReadableLeadLabel(feedback), `Feedback: ${summarizeFeedbackReadable(feedback)}`));
+  recentIntents.forEach((event) => addToGroup(getReadableLeadLabel(event), `Intent: ${summarizeIntentReadable(event)}`));
+
+  const generatedAt = isoNow();
+  const lines = [
+    `PBK Operator Summary - ${new Date(generatedAt).toLocaleString('en-US')}`,
+    '',
+    `System: ${runtimeMeta.stateBackend || 'state'} backend, ${runtimeMeta.authRequired ? 'authenticated' : 'local-open'} bridge, ${getRuntimeOperatingMode()} mode.`,
+    `Provider readiness: ${providerEntries.filter(([, meta]) => meta?.ready).length} live, ${missingProviders.length} need setup${missingProviders.length ? ` - ${missingProviders.join('; ')}` : ''}.`,
+    `Approvals: ${pendingApprovals.length} pending. Provider writes remain approval-gated.`,
+    '',
+  ];
+
+  if (groups.size) {
+    lines.push('Lead-by-lead review:');
+    [...groups.entries()].slice(0, limit).forEach(([label, items]) => {
+      lines.push(`- ${label}`);
+      items.slice(0, 4).forEach((item) => lines.push(`  - ${item}`));
+    });
+    lines.push('');
+  } else {
+    lines.push('Lead-by-lead review: No pending lead-specific approvals or fresh feedback found.');
+    lines.push('');
+  }
+
+  lines.push('Recent system activity:');
+  if (recentActivity.length) {
+    recentActivity.slice(0, 6).forEach((item) => {
+      lines.push(`- ${formatRelativeTime(item.createdAt || item.timestamp)}: ${item.actor || 'System'} ${humanizeSnake(item.status || 'updated')} - ${item.text || item.category || 'runtime event'}`);
+    });
+  } else {
+    lines.push('- No live activity yet.');
+  }
+
+  lines.push('');
+  lines.push('Legend: Pending = needs human review. Approved/Success = complete. Warning = inspect before relying on it. No outbound SMS/email/calls were triggered by this summary.');
+
+  return {
+    ok: true,
+    generatedAt,
+    format: 'plain-English',
+    summary: lines.join('\n'),
+    counts: {
+      pendingApprovals: pendingApprovals.length,
+      recentFeedback: recentFeedback.length,
+      recentIntents: recentIntents.length,
+      recentActivity: recentActivity.length,
+      missingProviders: missingProviders.length,
+    },
+    sections: {
+      pendingApprovals,
+      recentFeedback,
+      recentIntents,
+      recentActivity,
+      missingProviders,
+    },
+  };
+}
+
+function getRealActivityForSummary(stateRef) {
+  const activity = Array.isArray(stateRef.activity) ? stateRef.activity : [];
+  return activity.filter((item) => {
+    const text = String(item?.text || '');
+    return item?.source !== 'demo'
+      && !/Requested approval for \$78,000 offer|Analyzer ran - ARV \$185k|daily_probate_import\.csv|Indexed 3 new sources/i.test(text);
+  });
+}
+
+function extractOpenAiResponseText(payload = {}) {
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) return payload.output_text.trim();
+  const chunks = [];
+  for (const item of Array.isArray(payload.output) ? payload.output : []) {
+    if (typeof item?.content === 'string') chunks.push(item.content);
+    for (const content of Array.isArray(item?.content) ? item.content : []) {
+      if (typeof content?.text === 'string') chunks.push(content.text);
+      if (typeof content?.content === 'string') chunks.push(content.content);
+    }
+  }
+  return chunks.join('\n').trim();
+}
+
+function extractOpenAiCitations(payload = {}) {
+  const citations = new Set();
+  for (const item of Array.isArray(payload.output) ? payload.output : []) {
+    for (const content of Array.isArray(item?.content) ? item.content : []) {
+      for (const annotation of Array.isArray(content?.annotations) ? content.annotations : []) {
+        const url = annotation.url || annotation.uri || annotation.source?.url || '';
+        const title = annotation.title || annotation.source?.title || '';
+        if (url || title) citations.add([title, url].filter(Boolean).join(' - '));
+      }
+    }
+  }
+  return [...citations].slice(0, 8);
+}
+
+async function runOpenAiWebSearch(query = '', params = {}) {
+  const meta = getOpenAiWebSearchProviderMeta();
+  const cleanQuery = String(query || '').trim();
+  if (!cleanQuery) {
+    return {
+      ok: false,
+      result: 'invalid_request',
+      answer: 'Ask Rex a specific current-market or research question first.',
+      citations: [],
+      provider: meta,
+    };
+  }
+  if (!meta.ready) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      answer: `OpenAI web search is not ready. ${meta.missing.join(', ') || 'Configure the OpenAI API key and enable web search.'}`,
+      citations: [],
+      provider: meta,
+    };
+  }
+
+  const system = [
+    'You are Rex, PBK Wholesale Paradise research agent.',
+    'Use live web search only to answer the current question.',
+    'Write for a busy operator: plain English, short paragraphs, no raw JSON, no article-title dumping.',
+    'Translate current data into PBK action: what it means for wholesale, creative finance, mortgage takeover, seller conversations, or approval-gated decisions.',
+    'If the data is uncertain, say what is uncertain. Include source names or URLs when available.',
+  ].join(' ');
+
+  const bodyBase = {
+    model: String(params.model || meta.model || OPENAI_WEB_SEARCH_MODEL),
+    input: [
+      { role: 'system', content: system },
+      { role: 'user', content: cleanQuery },
+    ],
+  };
+
+  const toolTypes = ['web_search', 'web_search_preview'];
+  let lastError = null;
+  for (const toolType of toolTypes) {
+    try {
+      const response = await fetch(`${OPENAI_BASE_URL}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...bodyBase,
+          tools: [{ type: toolType }],
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        lastError = new Error(payload?.error?.message || payload?.message || `OpenAI web search returned ${response.status}`);
+        continue;
+      }
+      const answer = extractOpenAiResponseText(payload);
+      const citations = extractOpenAiCitations(payload);
+      return {
+        ok: true,
+        result: 'live',
+        query: cleanQuery,
+        answer: answer || 'OpenAI web search completed, but no readable answer text was returned.',
+        citations,
+        provider: {
+          ...meta,
+          toolType,
+        },
+        responseId: payload?.id || '',
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return {
+    ok: false,
+    result: 'provider_error',
+    query: cleanQuery,
+    answer: `OpenAI web search could not complete: ${lastError?.message || 'unknown provider error'}`,
+    citations: [],
+    provider: meta,
   };
 }
 
@@ -11648,6 +11953,20 @@ function getGoogleCalendarProviderMeta() {
     ready: Boolean(GOOGLE_CALENDAR_ACCESS_TOKEN || CALENDAR_SYNC_WEBHOOK_URL),
     calendarId: GOOGLE_CALENDAR_ID,
     mode: GOOGLE_CALENDAR_ACCESS_TOKEN ? 'google-rest' : CALENDAR_SYNC_WEBHOOK_URL ? 'webhook' : 'disabled',
+    missing,
+  };
+}
+
+function getOpenAiWebSearchProviderMeta() {
+  const missing = [];
+  if (!OPENAI_API_KEY) missing.push('PBK_OPENAI_API_KEY or OPENAI_API_KEY');
+  if (!OPENAI_WEB_SEARCH_ENABLED) missing.push('PBK_OPENAI_WEB_SEARCH_ENABLED=true');
+  return {
+    configured: Boolean(OPENAI_API_KEY),
+    ready: Boolean(OPENAI_API_KEY && OPENAI_WEB_SEARCH_ENABLED),
+    mode: 'responses-web-search',
+    model: OPENAI_WEB_SEARCH_MODEL,
+    baseUrl: OPENAI_BASE_URL,
     missing,
   };
 }
@@ -17501,6 +17820,31 @@ const toolHandlers = {
     return result;
   },
 
+  async getReadableSummary(params = {}) {
+    recordToolUse('getReadableSummary');
+    return buildReadableOperatorSummary(state, params);
+  },
+
+  async openAiWebSearch(params = {}) {
+    recordToolUse('openAiWebSearch');
+    const query = params.query || params.q || params.prompt || params.text || '';
+    const result = await runOpenAiWebSearch(query, params);
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.requestedBy || 'Rex',
+        category: 'RESEARCH',
+        status: result.ok ? 'served' : 'warning',
+        text: result.ok
+          ? `OpenAI web search answered: "${String(query).slice(0, 140)}"`
+          : `OpenAI web search unavailable: ${result.answer || result.result}`,
+        target: 'OpenAI Web Search',
+      }),
+    );
+    await persistState(state);
+    return result;
+  },
+
   async pbk_send_update(params = {}) {
     recordToolUse('pbk_send_update');
     const actor = String(params.actor || params.requestedBy || params.agentName || 'Ava').trim();
@@ -19540,12 +19884,75 @@ const toolHandlers = {
     recordToolUse('getBrainState');
     const messages = normalizeConversationMessages(params.messages);
     const query = getLastUserMessage(messages, params.query || params.q || '');
+    const isReadableSummaryIntent = looksLikeReadableSummaryQuery(query);
     const isBrowserResearchIntent = looksLikeBrowserResearchIntent(query);
-    const isAdminIntent = !isBrowserResearchIntent && looksLikeAdminIntent(query);
-    const response = isAdminIntent || isBrowserResearchIntent
+    const isOpenAiWebSearchIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && looksLikeOpenAiWebSearchIntent(query);
+    const isAdminIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isOpenAiWebSearchIntent && looksLikeAdminIntent(query);
+    const response = isAdminIntent || isBrowserResearchIntent || isReadableSummaryIntent || isOpenAiWebSearchIntent
       ? null
       : answerBrainQuery(state, query);
     state.status.queryCountToday = toNumber(state.status.queryCountToday, 0) + 1;
+
+    if (isReadableSummaryIntent) {
+      const summary = buildReadableOperatorSummary(state, {
+        limit: params.limit || 10,
+      });
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Rex',
+          category: 'QUERY',
+          status: 'served',
+          text: 'Rex converted raw PBK logs into a plain-English operator summary.',
+          target: 'Brain',
+        }),
+      );
+      const result = {
+        query,
+        answer: summary.summary,
+        citations: ['PBK approvals', 'PBK feedback', 'PBK intent events', 'PBK activity log'],
+        readableSummary: summary,
+        brainDocs: state.brainDocs.slice(0, 8),
+        brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
+        status: state.status,
+      };
+      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
+      await persistState(state);
+      result.brainDocs = state.brainDocs.slice(0, 8);
+      return result;
+    }
+
+    if (isOpenAiWebSearchIntent || params.webSearch === true || params.useOpenAiSearch === true) {
+      const searchResult = await runOpenAiWebSearch(query, params);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Rex',
+          category: 'RESEARCH',
+          status: searchResult?.ok ? 'served' : 'warning',
+          text: searchResult?.ok
+            ? `Rex used OpenAI web search for current info: "${query}"`
+            : `Rex could not use OpenAI web search: ${searchResult?.answer || 'provider not ready'}`,
+          target: 'OpenAI Web Search',
+        }),
+      );
+      const fallback = searchResult?.ok ? null : answerBrainQuery(state, query);
+      const result = {
+        query,
+        answer: searchResult?.ok
+          ? searchResult.answer
+          : `${searchResult?.answer || 'OpenAI web search is not available.'}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`,
+        citations: searchResult?.ok ? searchResult.citations : (fallback?.citations || ['PBK Brain fallback']),
+        openAiWebSearch: searchResult,
+        brainDocs: state.brainDocs.slice(0, 8),
+        brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
+        status: state.status,
+      };
+      result.memory = await storeRexConversationMemory(state, { ...params, query, messages }, result);
+      await persistState(state);
+      result.brainDocs = state.brainDocs.slice(0, 8);
+      return result;
+    }
 
     if (isBrowserResearchIntent) {
       const researchResult = await toolHandlers.launchBrowserResearch({
@@ -21781,6 +22188,7 @@ function buildStateSnapshot() {
       providers: {
         telnyx: getTelnyxProviderMeta(),
         instantly: getInstantlyProviderMeta(),
+        openAiWebSearch: getOpenAiWebSearchProviderMeta(),
         googleCalendar: getGoogleCalendarProviderMeta(),
         supabaseStorage: getSupabaseStorageProviderMeta(),
         n8nWorkflows: getN8nWorkflowProviderMeta(),
@@ -22934,6 +23342,7 @@ const server = createServer(async (request, response) => {
           deepgram: getDeepgramProviderMeta(process.env),
           browserVoice: getBrowserVoiceProviderMeta(),
           elevenLabs: getElevenLabsProviderMeta(),
+          openAiWebSearch: getOpenAiWebSearchProviderMeta(),
           instantly: getInstantlyProviderMeta(),
           googleCalendar: getGoogleCalendarProviderMeta(),
           supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -24005,6 +24414,36 @@ const server = createServer(async (request, response) => {
         source: 'brain-api',
       });
       json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/operator/summary', '/api/readable-summary'])) {
+      const result = await toolHandlers.getReadableSummary({
+        limit: url.searchParams.get('limit') || 10,
+        requestedBy: url.searchParams.get('requestedBy') || 'api',
+      });
+      const wantsText = /text\/plain|text\/markdown/i.test(String(request.headers.accept || ''))
+        || ['text', 'markdown', 'md'].includes(String(url.searchParams.get('format') || '').toLowerCase());
+      if (wantsText) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        response.end(result.summary);
+        return;
+      }
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/web-search', '/api/openai/web-search'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.openAiWebSearch({
+        ...body,
+        requestedBy: body.requestedBy || 'api',
+      });
+      json(response, result.ok === false ? 503 : 200, result);
       return;
     }
 

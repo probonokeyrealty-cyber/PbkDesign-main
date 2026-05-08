@@ -6535,7 +6535,7 @@
     }
     .rc-msg {
       padding: var(--s-3); border-radius: var(--radius-lg); font-size: 12px;
-      line-height: 1.55;
+      line-height: 1.55; white-space: pre-wrap;
     }
     .rc-msg.ai {
       background: var(--bg-panel); border: 1px solid var(--border-dim);
@@ -6948,7 +6948,7 @@
 
         <div class="rc-body" data-brain-chat-body>
           <div class="rc-msg ai">
-            <strong>Rex</strong> here. I've got your full library + web access. Ask me anything about wholesaling, creative finance, cash structures, or local market trends. Every answer cites its source.
+            <strong>Rex</strong> here. I can read the PBK Brain, turn raw logs into plain-English summaries, and use OpenAI web search for current info when the bridge key is configured. Ask me anything about wholesaling, creative finance, cash structures, or local market trends.
           </div>
 
           <div class="rc-msg user">how do i structure a sub-to deal when the seller still has a mortgage at 3.2% and owes $82k?</div>
@@ -22769,7 +22769,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           requestedBy: 'Command Center',
           source: 'brain-chat'
         },
-        timeout: 15000
+        timeout: 30000
       });
       const result = response?.result || response;
       const answer = result?.answer || 'Rex did not have a grounded answer yet.';
@@ -25023,6 +25023,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       deepgram: 'Deepgram',
       browserVoice: 'Browser Voice',
       elevenLabs: 'ElevenLabs',
+      openAiWebSearch: 'OpenAI Web Search',
       googleCalendar: 'Google Calendar',
       supabaseStorage: 'Supabase Storage',
       n8nWorkflows: 'n8n Workflows',
@@ -25034,7 +25035,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       render: 'Render'
     };
 
-    const order = ['telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
+    const order = ['telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
     const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
     const shortList = (items, limit = 2) => {
       const list = normalizeMissing(items);
@@ -25107,6 +25108,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = 'Live - browser mic ready';
         } else if (key === 'deepgram') {
           label = 'Live - STT ready';
+        } else if (key === 'openAiWebSearch') {
+          label = 'Live - current web search ready';
         } else if (key === 'render') {
           label = 'Live - deploy control ready';
         }

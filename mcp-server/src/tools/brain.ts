@@ -5,6 +5,22 @@ import { bridgeInvoke, bridgeRequest, formatBridgeError } from "../client.js";
 const GetBrainStateInput = z
   .object({
     query: z.string().optional().describe("Optional natural-language query. Bridge tries to ground its answer in current brainDocs."),
+    webSearch: z.boolean().optional().describe("Force OpenAI Responses web search for current/live information when configured."),
+    useOpenAiSearch: z.boolean().optional().describe("Alias for webSearch."),
+    limit: z.number().int().min(1).max(20).optional().describe("Used for readable summaries."),
+  })
+  .strict();
+
+const GetReadableSummaryInput = z
+  .object({
+    limit: z.number().int().min(1).max(20).optional().describe("How many approvals/feedback/intents/activity rows to summarize."),
+  })
+  .strict();
+
+const OpenAiWebSearchInput = z
+  .object({
+    query: z.string().min(1).describe("Current-information question Rex should answer with OpenAI Responses web search."),
+    model: z.string().optional().describe("Optional OpenAI model override. Defaults to the bridge runtime setting."),
   })
   .strict();
 
@@ -220,6 +236,64 @@ Returns:
         const result = await bridgeInvoke("getBrainState", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_get_readable_summary",
+    {
+      title: "Readable PBK operator summary",
+      description: `Convert raw PBK approvals, feedback, intent events, and activity into a plain-English operator summary. Use this when a human asks for readable logs, pending approvals, or daily status.`,
+      inputSchema: GetReadableSummaryInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("getReadableSummary", params);
+        return {
+          content: [{ type: "text", text: String((result as Record<string, unknown>)?.summary || JSON.stringify(result, null, 2)) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_openai_web_search",
+    {
+      title: "OpenAI web search for Rex",
+      description: `Use the bridge's OpenAI API key with the Responses API web_search tool to answer current-market or recent-information questions. This is live search; it is not the model's static training memory.`,
+      inputSchema: OpenAiWebSearchInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("openAiWebSearch", params);
+        return {
+          content: [{ type: "text", text: String((result as Record<string, unknown>)?.answer || JSON.stringify(result, null, 2)) }],
           structuredContent: result as Record<string, unknown>,
         };
       } catch (error) {

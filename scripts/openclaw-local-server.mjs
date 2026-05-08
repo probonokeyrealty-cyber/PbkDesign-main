@@ -5996,6 +5996,26 @@ function humanizeSnake(value = '') {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatRelativeTime(value) {
+  const date = value instanceof Date ? value : new Date(value || 0);
+  if (!Number.isFinite(date.getTime()) || date.getTime() <= 0) return 'recently';
+  const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const abs = Math.abs(seconds);
+  const units = [
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+    ['second', 1],
+  ];
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  for (const [unit, size] of units) {
+    if (abs >= size || unit === 'second') {
+      return rtf.format(Math.round(seconds / size), unit);
+    }
+  }
+  return 'recently';
+}
+
 function summarizeApprovalReadable(approval = {}) {
   const status = humanizeSnake(approval.status || 'pending');
   const action = humanizeSnake(approval.action || approval.toolName || approval.type || approval.category || 'Review request');

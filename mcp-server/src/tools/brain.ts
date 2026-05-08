@@ -125,6 +125,32 @@ const RecordPbkFeedbackInput = z
   })
   .strict();
 
+const PbkLearnFromChatInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    callId: z.string().optional(),
+    approvalId: z.string().optional(),
+    agentName: z.string().optional(),
+    actor: z.string().optional(),
+    topic: z.string().optional().describe("Subject Ava should attach this learning to."),
+    fact: z.string().optional().describe("Specific fact, policy, preference, or lesson being taught."),
+    lesson: z.string().optional().describe("Human-readable lesson Ava should remember."),
+    conversation: z.string().optional().describe("Conversation excerpt that produced the learning."),
+    message: z.string().optional(),
+    transcript: z.string().optional(),
+    subject: z.string().optional(),
+    predicate: z.string().optional(),
+    object: z.string().optional(),
+    scope: z.string().optional().describe("routine, lead, deal, preference, strategic, policy, pricing, compliance, etc."),
+    strategic: z.boolean().optional().describe("Set true only for permanent PBK doctrine, pricing rules, policies, scripts, or core behavior changes."),
+    passcode: z.string().optional().describe("Protected admin passcode for strategic/core brain updates only. Do not use for routine lead/deal learning."),
+    confidence: z.number().min(0).max(1).optional(),
+    confidenceThreshold: z.number().min(0).max(1).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const DetectPbkIntentInput = z
   .object({
     tenantId: z.string().optional(),
@@ -379,6 +405,64 @@ Returns:
     async (params) => {
       try {
         const result = await bridgeInvoke("recordPbkFeedback", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_learn",
+    {
+      title: "PBK learning capture",
+      description: `Capture Ava/Rex learning signals from conversations, approvals, calls, and operator corrections. Routine lead/deal learning is frictionless; strategic/core updates require the protected admin passcode before becoming applied PBK knowledge.`,
+      inputSchema: PbkLearnFromChatInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_learn", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_learn_from_chat",
+    {
+      title: "Teach Ava/Rex from conversation",
+      description: `Capture conversational learning for Ava/Rex. Routine lead, call, objection, seller-preference, and deal lessons do not require a passcode. Strategic/core PBK doctrine, pricing rules, policy, script, contract-default, identity, or compliance updates are stored as pending unless the protected admin passcode is supplied.`,
+      inputSchema: PbkLearnFromChatInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_learn_from_chat", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

@@ -428,6 +428,7 @@ const TOOL_NAMES = [
   'addPbkMemory',
   'recallPbkMemory',
   'pbk_learn',
+  'pbk_learn_from_chat',
   'recordPbkFeedback',
   'detectPbkIntent',
   'recordPbkKnowledge',
@@ -6967,6 +6968,265 @@ async function recordPbkKnowledgeRecord(params = {}) {
     recorded: true,
     fact,
     storage: { localState: true, postgres },
+  };
+}
+
+const STRATEGIC_LEARNING_TERMS = [
+  'always',
+  'never',
+  'policy',
+  'company policy',
+  'standard',
+  'core behavior',
+  'system prompt',
+  'script',
+  'contract',
+  'contract default',
+  'docusign',
+  'docuseal',
+  'pricing rule',
+  'offer rule',
+  'mao',
+  'maximum allowable offer',
+  'compliance',
+  'tcpa',
+  'delete memory',
+  'overwrite',
+  'creator',
+  'identity',
+  'kill switch',
+];
+
+const ROUTINE_LEARNING_TERMS = [
+  'lead',
+  'seller',
+  'call',
+  'follow up',
+  'follow-up',
+  'objection',
+  'bant',
+  'probate',
+  'cash offer',
+  'creative finance',
+  'mortgage takeover',
+  'mt',
+  'cf',
+  'sms',
+  'email',
+  'appointment',
+  'campaign',
+];
+
+function getLearningPasscodeCandidate(params = {}) {
+  return String(params.passcode || params.password || params.confirm || params.adminPasscode || params.protectedOpsPasscode || '').trim();
+}
+
+function isProtectedLearningPasscodeValid(params = {}) {
+  const candidate = getLearningPasscodeCandidate(params);
+  return Boolean(PROTECTED_OPS_PASSCODE && candidate && candidate.toLowerCase() === PROTECTED_OPS_PASSCODE.toLowerCase());
+}
+
+function redactLearningSecrets(value = '') {
+  return redactMemoryText(value)
+    .replace(/\b(passcode|password|codeword|protected code)\s*(is|:|=)?\s*\S+/gi, '$1 [redacted]');
+}
+
+function learningBody(params = {}) {
+  return [
+    params.fact,
+    params.lesson,
+    params.memory,
+    params.summary,
+    params.object,
+    params.value,
+    params.message,
+    params.conversation,
+    params.transcript,
+    params.transcriptSnippet,
+    params.userRequest,
+    params.query,
+    params.text,
+  ].map((value) => String(value || '')).filter(Boolean).join('\n').trim();
+}
+
+function normalizeLearningScope(params = {}) {
+  return String(params.scope || params.learningScope || params.learningMode || params.mode || params.type || '').trim().toLowerCase();
+}
+
+function isStrategicLearningUpdate(params = {}) {
+  if (params.strategic === true || params.requiresPasscode === true || params.coreUpdate === true) return true;
+  const scope = normalizeLearningScope(params);
+  if (/(strategic|policy|core|company|contract|pricing|compliance|identity|system|permanent)/i.test(scope)) return true;
+  const body = learningBody(params).toLowerCase();
+  return STRATEGIC_LEARNING_TERMS.some((term) => body.includes(term));
+}
+
+function isRoutineDealLearning(params = {}) {
+  if (params.leadId || params.lead_id || params.callId || params.call_id || params.approvalId || params.approval_id) return true;
+  const scope = normalizeLearningScope(params);
+  if (/(routine|lead|deal|call|seller|campaign|preference|outcome|feedback)/i.test(scope)) return true;
+  const body = learningBody(params).toLowerCase();
+  return ROUTINE_LEARNING_TERMS.some((term) => body.includes(term));
+}
+
+function buildLearningConfidenceAssessment(params = {}, classification = {}) {
+  const body = learningBody(params);
+  const hasConcreteLesson = Boolean(String(params.lesson || params.fact || params.object || params.memory || params.summary || '').trim());
+  const hasContext = Boolean(params.leadId || params.callId || params.approvalId || params.subject || params.topic || params.address);
+  let confidence = 0.46;
+  if (hasConcreteLesson) confidence += 0.22;
+  if (hasContext) confidence += 0.12;
+  if (classification.routine) confidence += 0.12;
+  if (classification.strategic) confidence -= classification.passcodeAccepted ? 0 : 0.12;
+  if (/\b(i prefer|we prefer|remember that|note this|use this next time|store this|learn this)\b/i.test(body)) confidence += 0.08;
+  if (!body) confidence = 0.08;
+  confidence = Math.max(0, Math.min(1, Number(confidence.toFixed(2))));
+  const threshold = Math.max(0.1, Math.min(0.95, toNumber(params.confidenceThreshold ?? process.env.PBK_CONFIDENCE_THRESHOLD, 0.52)));
+  const questions = [];
+  if (!hasConcreteLesson) {
+    questions.push('What exact rule, preference, or lesson should Ava remember from this conversation?');
+  }
+  if (classification.strategic && !classification.passcodeAccepted) {
+    questions.push('Should this become a permanent PBK policy/core behavior, or should it stay as a pending suggestion for admin review?');
+  }
+  if (!hasContext && !classification.strategic) {
+    questions.push('Does this apply to a specific lead/deal, or should Ava treat it as a general operating preference?');
+  }
+  return {
+    confidence,
+    threshold,
+    shouldAsk: confidence < threshold || questions.length > 0,
+    clarifyingQuestion: questions[0] || '',
+    questions,
+  };
+}
+
+function buildLearningClassification(params = {}) {
+  const strategic = isStrategicLearningUpdate(params);
+  const routine = !strategic || isRoutineDealLearning(params);
+  const passcodeAccepted = isProtectedLearningPasscodeValid(params);
+  return {
+    strategic,
+    routine,
+    passcodeAccepted,
+    requiresPasscode: strategic,
+    mode: strategic ? (passcodeAccepted ? 'strategic-applied' : 'strategic-pending') : 'routine',
+    scope: normalizeLearningScope(params) || (strategic ? 'strategic' : 'routine'),
+  };
+}
+
+function normalizeChatKnowledgeFact(params = {}, classification = {}) {
+  const topic = String(params.topic || params.subject || params.leadId || params.address || (classification.strategic ? 'PBK strategic doctrine' : 'PBK operating memory')).trim();
+  const predicate = String(params.predicate || params.key || (classification.strategic ? 'company_policy' : 'learned_from_conversation')).trim();
+  const object = String(params.object || params.value || params.fact || params.lesson || params.memory || params.summary || '').trim();
+  return {
+    subject: topic,
+    predicate,
+    object,
+    confidence: Math.max(0, Math.min(1, toNumber(params.confidence, classification.strategic ? 0.95 : 0.72))),
+  };
+}
+
+async function capturePbkChatLearning(params = {}, options = {}) {
+  const sourceTool = options.sourceTool || 'pbk_learn_from_chat';
+  const classification = buildLearningClassification(params);
+  const confidenceAssessment = buildLearningConfidenceAssessment(params, classification);
+  const rawBody = learningBody(params);
+  const safeBody = redactLearningSecrets(rawBody);
+  const lesson = redactLearningSecrets(String(params.lesson || params.fact || params.memory || params.summary || params.object || params.value || '').trim());
+  const transcriptSnippet = redactLearningSecrets(String(params.transcriptSnippet || params.transcript || params.conversation || params.message || params.userRequest || params.query || params.text || '').trim());
+  const actor = params.agentName || params.agent || params.actor || params.requestedBy || 'Ava Learning Loop';
+  const agentAction = String(params.agentAction || params.action || (classification.strategic ? 'strategic_brain_update' : 'conversation_learning')).trim();
+  const humanDecision = String(params.humanDecision || params.decision || (classification.strategic && !classification.passcodeAccepted ? 'needs_admin_approval' : 'approved')).trim().toLowerCase();
+  const baseMetadata = {
+    ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+    pbkLearn: true,
+    sourceTool,
+    learningMode: classification.mode,
+    learningScope: classification.scope,
+    strategic: classification.strategic,
+    routine: classification.routine,
+    requiresPasscode: classification.requiresPasscode,
+    passcodeAccepted: classification.passcodeAccepted,
+    confidenceAssessment,
+    communicationProfile: transcriptSnippet
+      ? buildHumanCommunicationProfile(transcriptSnippet, classifyPbkIntent(transcriptSnippet))
+      : undefined,
+  };
+
+  const feedback = await recordPbkFeedbackRecord({
+    ...params,
+    transcriptSnippet,
+    agentAction,
+    humanDecision,
+    outcomeLabel: params.outcomeLabel || (classification.strategic && !classification.passcodeAccepted ? 'pending-strategic-brain-approval' : 'learning-captured'),
+    metadata: baseMetadata,
+  });
+
+  let memory = null;
+  const memoryContent = lesson || (safeBody ? `Conversation learning: ${safeBody}` : '');
+  if (memoryContent) {
+    memory = await addPbkMemoryRecord({
+      ...params,
+      memoryType: params.memoryType || (classification.strategic ? 'strategic-proposal' : 'conversation-learning'),
+      content: classification.strategic && !classification.passcodeAccepted
+        ? `Pending strategic learning proposal: ${memoryContent}`
+        : memoryContent,
+      importance: params.importance ?? (classification.strategic ? 0.9 : 0.7),
+      source: params.source || sourceTool,
+      metadata: {
+        ...baseMetadata,
+        linkedFeedbackId: feedback?.feedback?.id || '',
+      },
+    });
+  }
+
+  let knowledge = null;
+  const fact = normalizeChatKnowledgeFact(params, classification);
+  if (fact.subject && fact.predicate && fact.object && (!classification.strategic || classification.passcodeAccepted)) {
+    knowledge = await recordPbkKnowledgeRecord({
+      ...params,
+      ...fact,
+      source: params.source || (classification.strategic ? 'protected-chat-learning' : 'routine-chat-learning'),
+      sourceId: params.sourceId || feedback?.feedback?.id || '',
+      metadata: {
+        ...baseMetadata,
+        linkedFeedbackId: feedback?.feedback?.id || '',
+        linkedMemoryId: memory?.memory?.id || '',
+      },
+    });
+  }
+
+  if (feedback.ok || memory?.ok || knowledge?.ok) {
+    addActivity(
+      state,
+      makeActivity({
+        actor,
+        category: 'MEMORY',
+        status: classification.strategic && !classification.passcodeAccepted ? 'pending' : 'success',
+        text: classification.strategic && !classification.passcodeAccepted
+          ? 'Strategic brain update captured as a pending proposal; protected passcode is required before it becomes PBK doctrine.'
+          : `PBK learning captured from ${classification.mode.replace(/-/g, ' ')}.`,
+        target: params.leadName || params.address || params.leadId || fact.subject || 'Ava brain',
+      }),
+    );
+    await persistState(state);
+  }
+
+  return {
+    ok: Boolean(feedback.ok || memory?.ok || knowledge?.ok),
+    applied: Boolean(knowledge?.ok),
+    queuedForAdmin: Boolean(classification.strategic && !classification.passcodeAccepted),
+    classification,
+    confidenceAssessment,
+    feedback,
+    memory,
+    knowledge,
+    approvalGated: true,
+    providerWritesTriggered: false,
+    note: classification.strategic && !classification.passcodeAccepted
+      ? 'Strategic/core brain updates are stored as pending proposals until the protected admin passcode is provided. Routine lead/deal learning remains frictionless.'
+      : 'Learning captured. Provider writes remain controlled by approval gates; this did not send SMS, email, calls, or contracts.',
   };
 }
 
@@ -17703,58 +17963,12 @@ const toolHandlers = {
 
   async pbk_learn(params = {}) {
     recordToolUse('pbk_learn');
-    const transcriptSnippet = String(params.transcriptSnippet || params.transcript || params.userRequest || params.query || params.text || '').trim();
-    const agentAction = String(params.agentAction || params.action || params.agentResponse || params.response || 'communication_lesson').trim();
-    const humanDecision = String(params.humanDecision || params.decision || params.feedback || 'reviewed').trim().toLowerCase();
-    const lesson = String(params.lesson || params.memory || params.summary || '').trim();
-    const feedback = await recordPbkFeedbackRecord({
-      ...params,
-      transcriptSnippet,
-      agentAction,
-      humanDecision,
-      metadata: {
-        ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
-        pbkLearn: true,
-        communicationProfile: transcriptSnippet
-          ? buildHumanCommunicationProfile(transcriptSnippet, classifyPbkIntent(transcriptSnippet))
-          : undefined,
-      },
-    });
-    let memory = null;
-    if (lesson || transcriptSnippet) {
-      memory = await addPbkMemoryRecord({
-        ...params,
-        memoryType: params.memoryType || 'semantic',
-        content: lesson || `Human communication lesson: ${agentAction} -> ${humanDecision}. ${transcriptSnippet}`.trim(),
-        importance: params.importance ?? (humanDecision === 'approved' ? 0.85 : 0.65),
-        source: params.source || 'pbk_learn',
-        metadata: {
-          ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
-          pbkLearn: true,
-          linkedFeedbackId: feedback?.feedback?.id || '',
-        },
-      });
-    }
-    if (feedback.ok || memory?.ok) {
-      addActivity(
-        state,
-        makeActivity({
-          actor: params.agentName || params.agent || 'Ava Learning Loop',
-          category: 'MEMORY',
-          status: feedback.ok ? 'success' : 'warning',
-          text: `PBK learn captured: ${agentAction || 'communication lesson'} -> ${humanDecision || 'reviewed'}.`,
-          target: params.leadName || params.address || params.leadId || 'Ava brain',
-        }),
-      );
-      await persistState(state);
-    }
-    return {
-      ok: Boolean(feedback.ok || memory?.ok),
-      feedback,
-      memory,
-      approvalGated: true,
-      note: 'pbk_learn stores learning signals only; provider writes remain controlled by approval gates.',
-    };
+    return capturePbkChatLearning(params, { sourceTool: 'pbk_learn' });
+  },
+
+  async pbk_learn_from_chat(params = {}) {
+    recordToolUse('pbk_learn_from_chat');
+    return capturePbkChatLearning(params, { sourceTool: 'pbk_learn_from_chat' });
   },
 
   async recordPbkFeedback(params = {}) {

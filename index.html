@@ -25503,7 +25503,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         if (micHint) micHint.textContent = 'Browser voice is enabled, but Deepgram is missing or not ready.';
         if (status && !shell.classList.contains('listening')) status.textContent = 'Voice needs provider configuration.';
       } else {
-        if (micHint) micHint.textContent = 'Voice streaming is off until PBK_BROWSER_VOICE_ENABLED is enabled. Ava still stages actions under approval guardrails.';
+        if (micHint) micHint.textContent = 'Voice providers are not enabled for this environment yet. Ava still stages actions under approval guardrails.';
         if (status && !shell.classList.contains('listening')) status.textContent = 'Ready for typed or voice-style commands.';
       }
     };

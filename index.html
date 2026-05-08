@@ -25530,7 +25530,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         return voiceHealth;
       }
       const config = getOpenClawConfig();
-      if (config.runtimeMeta?.authRequired === true && !config.apiKey) {
+      if (!config.apiKey && !isLocalOpenClawProxyEndpoint(config.endpoint)) {
         voiceHealth = getRuntimeVoiceHealth();
         updateVoiceCopy();
         return voiceHealth;

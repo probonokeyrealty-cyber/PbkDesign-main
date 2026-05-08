@@ -6176,6 +6176,23 @@ async function runOpenAiWebSearch(query = '', params = {}) {
     };
   }
   if (!meta.ready) {
+    if (params.fallback !== false) {
+      const fallback = answerBrainQuery(state, cleanQuery);
+      const reason = `OpenAI web search is not ready. ${meta.missing.join(', ') || 'Configure the OpenAI API key and enable web search.'}`;
+      return {
+        ok: false,
+        result: 'provider_missing_with_fallback',
+        live: false,
+        query: cleanQuery,
+        answer: `${reason}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`,
+        citations: fallback?.citations || ['PBK Brain fallback'],
+        fallback: {
+          source: 'PBK Brain',
+          ...fallback,
+        },
+        provider: meta,
+      };
+    }
     return {
       ok: false,
       result: 'provider_missing',
@@ -6238,6 +6255,24 @@ async function runOpenAiWebSearch(query = '', params = {}) {
     } catch (error) {
       lastError = error;
     }
+  }
+
+  if (params.fallback !== false) {
+    const fallback = answerBrainQuery(state, cleanQuery);
+    const reason = `OpenAI web search could not complete: ${lastError?.message || 'unknown provider error'}`;
+    return {
+      ok: false,
+      result: 'provider_error_with_fallback',
+      live: false,
+      query: cleanQuery,
+      answer: `${reason}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`,
+      citations: fallback?.citations || ['PBK Brain fallback'],
+      fallback: {
+        source: 'PBK Brain',
+        ...fallback,
+      },
+      provider: meta,
+    };
   }
 
   return {
@@ -20177,13 +20212,15 @@ const toolHandlers = {
           target: 'OpenAI Web Search',
         }),
       );
-      const fallback = searchResult?.ok ? null : answerBrainQuery(state, query);
+      const fallback = searchResult?.ok ? null : (searchResult?.fallback || answerBrainQuery(state, query));
       const result = {
         query,
         answer: searchResult?.ok
           ? searchResult.answer
-          : `${searchResult?.answer || 'OpenAI web search is not available.'}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`,
-        citations: searchResult?.ok ? searchResult.citations : (fallback?.citations || ['PBK Brain fallback']),
+          : (searchResult?.fallback
+            ? searchResult.answer
+            : `${searchResult?.answer || 'OpenAI web search is not available.'}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`),
+        citations: searchResult?.ok ? searchResult.citations : (searchResult?.citations || fallback?.citations || ['PBK Brain fallback']),
         openAiWebSearch: searchResult,
         brainDocs: state.brainDocs.slice(0, 8),
         brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),

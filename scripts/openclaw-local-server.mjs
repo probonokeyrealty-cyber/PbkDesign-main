@@ -23564,7 +23564,8 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const text = String(body.text || body.message || '').trim();
       const meta = getElevenLabsProviderMeta();
-      if (!meta.ready) {
+      const credentialsPresent = ELEVENLABS_TTS_ENABLED && Boolean(ELEVENLABS_API_KEY);
+      if (!credentialsPresent) {
         json(response, ELEVENLABS_TTS_ENABLED ? 503 : 202, {
           ok: false,
           result: ELEVENLABS_TTS_ENABLED ? 'provider_missing' : 'disabled',

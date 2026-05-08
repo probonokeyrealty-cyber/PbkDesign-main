@@ -6038,6 +6038,10 @@ function summarizeIntentReadable(event = {}) {
   return `${intent}${confidence ? ` (${confidence} confidence)` : ''}${action ? ` - next: ${humanizeSnake(action)}` : ''}`;
 }
 
+function isProviderOperational(meta = {}) {
+  return meta?.ready === true || meta?.messagingReady === true || meta?.voiceReady === true;
+}
+
 function buildReadableOperatorSummary(stateRef, params = {}) {
   const limit = Math.max(1, Math.min(20, Number(params.limit || 8)));
   const pendingApprovals = sortNewest(Array.isArray(stateRef.approvals) ? stateRef.approvals : [])
@@ -6049,7 +6053,7 @@ function buildReadableOperatorSummary(stateRef, params = {}) {
   const runtimeMeta = getRuntimeMeta();
   const providerEntries = Object.entries(runtimeMeta.providers || {});
   const missingProviders = providerEntries
-    .filter(([, meta]) => !meta?.ready)
+    .filter(([, meta]) => !isProviderOperational(meta))
     .map(([name, meta]) => `${humanizeSnake(name)}${Array.isArray(meta?.missing) && meta.missing.length ? ` (${meta.missing.join(', ')})` : ''}`)
     .slice(0, 8);
 
@@ -6068,7 +6072,7 @@ function buildReadableOperatorSummary(stateRef, params = {}) {
     `PBK Operator Summary - ${new Date(generatedAt).toLocaleString('en-US')}`,
     '',
     `System: ${runtimeMeta.stateBackend || 'state'} backend, ${runtimeMeta.authRequired ? 'authenticated' : 'local-open'} bridge, ${getRuntimeOperatingMode()} mode.`,
-    `Provider readiness: ${providerEntries.filter(([, meta]) => meta?.ready).length} live, ${missingProviders.length} need setup${missingProviders.length ? ` - ${missingProviders.join('; ')}` : ''}.`,
+    `Provider readiness: ${providerEntries.filter(([, meta]) => isProviderOperational(meta)).length} live, ${missingProviders.length} need setup${missingProviders.length ? ` - ${missingProviders.join('; ')}` : ''}.`,
     `Approvals: ${pendingApprovals.length} pending. Provider writes remain approval-gated.`,
     '',
   ];

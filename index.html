@@ -1430,6 +1430,18 @@
 [data-page="dashboard"] .activity-text strong { color: var(--text-primary); font-weight: 500; }
 /* --- Approvals needed cards --- */
 [data-page="dashboard"] .queue { padding: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
+[data-page="dashboard"] .approval-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 var(--s-3) var(--s-3);
+    border-bottom: 1px solid var(--border-dim);
+  }
+[data-page="dashboard"] .approval-filter-bar .chip-btn {
+    min-height: 30px;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+  }
 [data-page="dashboard"] .qcard {
     background: var(--bg-panel-elevated);
     border: 1px solid var(--border-dim);
@@ -1469,6 +1481,9 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--text-tertiary);
+  }
+[data-page="dashboard"] .qcard-empty {
+    border-left-color: var(--sky-dim);
   }
 [data-page="dashboard"] .qcard-review .btn {
     flex: 0 1 auto;
@@ -2067,7 +2082,13 @@
 
         <div class="panel">
           <div class="panel-head">
-            <div class="panel-title">Approvals Needed <span class="tt-count" data-openclaw-count="approvals">— 3</span></div>
+            <div class="panel-title">Founder Approval Board <span class="tt-count" data-openclaw-count="approvals">- 3</span></div>
+          </div>
+          <div class="approval-filter-bar" aria-label="Approval filters">
+            <button class="chip-btn active" type="button" data-approval-filter="all">All decisions</button>
+            <button class="chip-btn" type="button" data-approval-filter="offer">Offers</button>
+            <button class="chip-btn" type="button" data-approval-filter="contract">Contracts</button>
+            <button class="chip-btn" type="button" data-approval-filter="outbound">Campaigns</button>
           </div>
           <div class="queue" data-openclaw-feed="approvals">
 
@@ -2077,12 +2098,12 @@
                 <span class="qcard-time">2m ago</span>
               </div>
               <div class="qcard-body">
-                Authorize <strong>$78,000</strong> offer on <strong>202 Cherry Ln</strong> to Diane Kowalski?
-                <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">MAO $91.5k — est. profit $13.5k</span>
+                Approve Ava to present <strong>$78,000</strong> on <strong>202 Cherry Ln</strong> after the PBK path check?
+                <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">MAO $91.5k - probate empathy - no provider action until approved</span>
               </div>
               <div class="qcard-actions">
-                <button class="btn btn-primary">Approve</button>
-                <button class="btn btn-ghost">Decline</button>
+                <button class="btn btn-primary">Approve offer</button>
+                <button class="btn btn-ghost">Revise first</button>
               </div>
             </div>
 
@@ -2092,11 +2113,11 @@
                 <span class="qcard-time">1h ago</span>
               </div>
               <div class="qcard-body">
-                Send DocuSign to <strong>R. Chen</strong> for <strong>55 Birch Rd</strong> at agreed <strong>$98,500</strong>?
+                Approve the configured DocuSign template for <strong>R. Chen</strong> at <strong>55 Birch Rd</strong>?
               </div>
               <div class="qcard-actions">
-                <button class="btn btn-primary">Send Contract</button>
-                <button class="btn btn-ghost">Edit</button>
+                <button class="btn btn-primary">Approve contract</button>
+                <button class="btn btn-ghost">Edit packet</button>
               </div>
             </div>
 
@@ -2106,11 +2127,11 @@
                 <span class="qcard-time">18m ago</span>
               </div>
               <div class="qcard-body">
-                Start outbound campaign on <strong>342 fresh leads</strong>? Autopilot will use approval-first workflow.
+                Review <strong>342 fresh leads</strong> before PBK queues any outbound touches.
               </div>
               <div class="qcard-actions">
-                <button class="btn btn-primary">Start</button>
-                <button class="btn btn-ghost">Later</button>
+                <button class="btn btn-primary">Approve launch</button>
+                <button class="btn btn-ghost">Hold</button>
               </div>
             </div>
 
@@ -2243,7 +2264,7 @@
           <div class="think-line"><span class="think-ts">10:34:06</span><span class="think-body"><span class="tag tool">tool</span>calling <code>telnyx_call</code>(+16145550142) — script: "grief-aware, repair-anchored"</span></div>
           <div class="think-line"><span class="think-ts">10:34:12</span><span class="think-body">call connected — seller answered on second ring</span></div>
           <div class="think-line"><span class="think-ts">10:34:48</span><span class="think-body"><span class="tag memory">memory</span>new context: probate, bad roof, furnace out — sentiment climbing to 0.72</span></div>
-          <div class="think-line"><span class="think-ts">10:35:06</span><span class="think-body"><span class="tag alert">approval</span>before making $78k offer, requesting user authorization — see Approvals Needed</span></div>
+          <div class="think-line"><span class="think-ts">10:35:06</span><span class="think-body"><span class="tag alert">approval</span>before making $78k offer, requesting user authorization — see Founder Approval Board</span></div>
         </div>
 
         <div class="command-bar">
@@ -2301,7 +2322,10 @@
   <style>
     .inbox-layout {
       display: grid; grid-template-columns: 360px 1fr;
-      height: calc(100vh - 56px); border-top: 1px solid var(--border-dim);
+      height: calc(100dvh - 62px);
+      max-height: calc(100dvh - 62px);
+      overflow: hidden;
+      border-top: 1px solid var(--border-dim);
     }
     .inbox-sidebar {
       background: var(--bg-console); border-right: 1px solid var(--border-dim);
@@ -2314,6 +2338,28 @@
     }
     .ib-head h3 em { font-style: italic; font-weight: 600; color: var(--sky); }
     .ib-head p { color: var(--text-tertiary); font-size: 12px; font-family: var(--font-mono); }
+    .ib-live-status {
+      margin-top: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--sky);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .ib-empty {
+      margin: var(--s-4);
+      padding: var(--s-4);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-lg);
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.55;
+      background: rgba(255,255,255,.025);
+    }
+    .ib-empty strong { color: var(--text-primary); }
 
     .ib-channels { display: flex; padding: var(--s-3) var(--s-5); gap: var(--s-2); border-bottom: 1px solid var(--border-dim); flex-wrap: wrap; }
 
@@ -2340,6 +2386,8 @@
     /* conversation view */
     .ib-convo {
       display: flex; flex-direction: column; background: var(--bg-void);
+      min-height: 0;
+      overflow: hidden;
     }
     .convo-head {
       padding: var(--s-4) var(--s-6);
@@ -2366,6 +2414,7 @@
     .convo-body {
       flex: 1; overflow-y: auto; padding: var(--s-6);
       display: flex; flex-direction: column; gap: var(--s-4);
+      min-height: 0;
     }
     .convo-day {
       text-align: center; font-family: var(--font-mono); font-size: 10px;
@@ -2456,12 +2505,13 @@
     }
     @media (max-width: 720px) {
       .inbox-layout {
-        height: auto;
-        min-height: calc(100dvh - 56px);
+        height: calc(100dvh - 62px);
+        min-height: 0;
+        max-height: calc(100dvh - 62px);
         border-top: 0;
       }
       .ib-convo {
-        min-height: calc(100dvh - 56px);
+        min-height: 0;
         padding-bottom: calc(84px + env(safe-area-inset-bottom));
       }
       .convo-head {
@@ -2544,7 +2594,8 @@
     <aside class="inbox-sidebar">
       <div class="ib-head">
         <h3>The <em>inbox</em>.</h3>
-        <p>// every call, text, email, and voicemail — one stream</p>
+        <p>Live bridge inbox for calls, SMS, email, voicemail, approvals, and lead context.</p>
+        <div class="ib-live-status" data-inbox-live-status>Waiting for live bridge sync</div>
       </div>
       <div class="ib-channels">
         <button class="chip-btn active">All — 12</button>
@@ -2552,7 +2603,7 @@
         <button class="chip-btn">SMS — 4</button>
         <button class="chip-btn">Email — 3</button>
       </div>
-      <div class="ib-list">
+      <div class="ib-list" data-openclaw-inbox-list>
         <div class="ib-item unread active">
           <div class="ib-row1">
             <svg class="ib-channel-icon" viewBox="0 0 24 24" fill="none" stroke="var(--sky)" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
@@ -2636,7 +2687,7 @@
         </div>
       </div>
 
-      <div class="convo-body">
+      <div class="convo-body" data-openclaw-convo-body>
         <div class="convo-day">Apr 18 — 4 days ago</div>
 
         <div class="bubble them">
@@ -3789,6 +3840,13 @@
     .path-rules li { display: flex; gap: 6px; align-items: flex-start; }
     .path-rules .do { color: var(--sky); }
     .path-rules .dont { color: var(--crimson); }
+    .path-redirect-copy {
+      margin: 0;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.6;
+    }
 
     .memory-item {
       background: var(--bg-void); border: 1px solid var(--border-dim);
@@ -3939,19 +3997,13 @@
     </div>
 
     <aside class="agent-side">
-      <div class="side-sec path-strategy">
-        <div class="label"><span>Current path strategy</span><button type="button" class="side-link-stub" data-path-override>override -></button></div>
+      <div class="side-sec path-strategy path-strategy-redirect">
+        <div class="label"><span>Lead strategy lives in portal</span><button type="button" class="side-link-stub" data-path-override>open Lead Portal</button></div>
         <div class="path-title-row">
-          <span class="path-title" data-current-path-title>Cash Offer</span>
-          <span class="confidence-pill">88% confidence</span>
+          <span class="path-title">Lead Portal source of truth</span>
+          <span class="confidence-pill">approval-first</span>
         </div>
-        <ul class="path-rules">
-          <li><span class="do">▸</span><span>Emphasize <strong style="color: var(--text-primary);">speed</strong> · 14-21 day close</span></li>
-          <li><span class="do">▸</span><span><strong style="color: var(--text-primary);">As-is purchase</strong> · no repairs needed</span></li>
-          <li><span class="do">▸</span><span>Hard MAO cap · <strong style="color: var(--lime);">$91,500</strong></span></li>
-          <li><span class="dont">x</span><span>Never say <strong style="color: var(--text-primary);">wholesaler</strong></span></li>
-          <li><span class="do">▸</span><span>Lead with empathy on probate</span></li>
-        </ul>
+        <p class="path-redirect-copy">Edit the path, offer, contract route, and Ava notes from the Lead Portal. The Agent Console stays focused on memory, tools, and guardrails.</p>
       </div>
 
       <div class="side-sec">
@@ -8648,6 +8700,8 @@
       display: grid;
       gap: 6px;
       min-height: 112px;
+      min-width: 0;
+      overflow: hidden;
     }
     .settings-runtime-card[data-state="warning"] {
       border-color: rgba(255, 176, 32, 0.36);
@@ -9559,6 +9613,29 @@
       margin-left: auto; padding: 2px 6px; background: var(--sky); color: var(--bg-void);
       border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
     }
+    .lead-strategy-panel {
+      margin: var(--s-3) 0;
+      padding: var(--s-4);
+      border: 1px solid var(--sky-dim);
+      border-radius: var(--radius-lg);
+      box-shadow: inset 0 0 0 1px var(--sky-glow), 0 16px 40px rgba(0,0,0,.18);
+    }
+    .lead-strategy-panel .label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    .lead-strategy-panel .path-rules {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px 12px;
+    }
     .deal-path-foot {
       display: flex; gap: var(--s-3); align-items: center;
       padding-top: var(--s-3); border-top: 1px dashed var(--border-dim);
@@ -9596,6 +9673,7 @@
       .ld-type-pill { flex: 1 1 100%; justify-content: space-between; font-size: 12px; }
       .mobile-path-selector { display: flex; }
       .deal-path-head { align-items: flex-start; flex-direction: column; }
+      .lead-strategy-panel .path-rules { grid-template-columns: 1fr; }
       .deal-path-fields { grid-template-columns: 1fr; }
       .deal-path-card .form-field input,
       .deal-path-card .form-field select,
@@ -9699,6 +9777,20 @@
                 <option value="land">Land · per-acre offer</option>
               </select>
             </div>
+          </div>
+          <div class="lead-strategy-panel path-strategy" data-lead-path-strategy>
+            <div class="label"><span>Lead Portal strategy</span><span>entered here - not Agent Console</span></div>
+            <div class="path-title-row">
+              <span class="path-title" data-current-path-title>Cash Offer</span>
+              <span class="confidence-pill">88% confidence</span>
+            </div>
+            <ul class="path-rules">
+              <li><span class="do">></span><span>Emphasize <strong style="color: var(--text-primary);">speed</strong> - 14-21 day close</span></li>
+              <li><span class="do">></span><span><strong style="color: var(--text-primary);">As-is purchase</strong> - no repairs needed</span></li>
+              <li><span class="do">></span><span>Hard MAO cap - <strong style="color: var(--lime);">$91,500</strong></span></li>
+              <li><span class="dont">x</span><span>Never say <strong style="color: var(--text-primary);">wholesaler</strong></span></li>
+              <li><span class="do">></span><span>Lead with empathy on probate</span></li>
+            </ul>
           </div>
           <div class="deal-path-fields">
             <div class="form-field">
@@ -11930,6 +12022,13 @@
     });
   });
 
+  document.querySelectorAll('[data-approval-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      PBK.state.approvalFilter = button.dataset.approvalFilter || 'all';
+      renderApprovalQueue(PBK.state.openclawRuntime || {});
+    });
+  });
+
   // =========================================================
   // TOAST SYSTEM
   // =========================================================
@@ -12441,7 +12540,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     button.addEventListener('click', () => {
       showPage('lead-detail');
       setTimeout(() => document.getElementById('selectedPath')?.focus(), 80);
-      toast({ type: 'info', title: 'Deal path override opened', desc: 'Use the selected-path dropdown or mobile chips to change Ava strategy.' });
+      toast({ type: 'info', title: 'Lead Portal strategy opened', desc: 'Change the path, offer, contract route, and Ava notes here so the Lead Portal remains the source of truth.' });
     });
   });
 
@@ -13085,7 +13184,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     },
     {
       title: 'The <em>command center</em>',
-      body: 'Start every morning here. Stats ribbon shows yesterday\'s wins — live call panel shows whatever Ava is on right now — Approvals Needed waits for your tap on offers and contracts.',
+      body: 'Start every morning here. Stats ribbon shows yesterday\'s wins — live call panel shows whatever Ava is on right now — Founder Approval Board waits for your tap on offers and contracts.',
       page: 'dashboard'
     },
     {
@@ -13713,7 +13812,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
     [data-page="settings"] .settings-providers-row {
       display: grid;
-      grid-template-columns: 12px 1fr auto;
+      grid-template-columns: 12px minmax(84px, .8fr) minmax(0, 1.2fr);
       align-items: center;
       gap: 10px;
       padding: 8px 10px;
@@ -13721,6 +13820,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       background: rgba(255, 255, 255, 0.03);
       font-size: 0.85rem;
       line-height: 1.2;
+      min-width: 0;
     }
     [data-page="settings"] .settings-providers-dot {
       width: 8px;
@@ -13744,17 +13844,32 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       color: rgba(255, 255, 255, 0.85);
       font-weight: 600;
       letter-spacing: 0.01em;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     [data-page="settings"] .settings-providers-state {
       color: rgba(255, 255, 255, 0.55);
       font-family: 'JetBrains Mono', ui-monospace, monospace;
       font-size: 0.78rem;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      text-align: right;
     }
     [data-page="settings"] .settings-providers-row[data-state="ready"] .settings-providers-state {
       color: #4ade80;
     }
     [data-page="settings"] .settings-providers-row[data-state="warning"] .settings-providers-state {
       color: #fbbf24;
+    }
+    @media (max-width: 920px) {
+      [data-page="settings"] .settings-providers-row {
+        grid-template-columns: 12px minmax(0, 1fr);
+      }
+      [data-page="settings"] .settings-providers-state {
+        grid-column: 2;
+        text-align: left;
+      }
     }
     [data-page="settings"] .plugin-runtime-grid {
       margin-top: var(--s-3);
@@ -15410,6 +15525,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     `).join('');
   }
 
+  function getApprovalVisionMeta(type = '') {
+    const normalized = String(type || 'offer').toLowerCase();
+    if (normalized.includes('contract') || normalized.includes('docusign') || normalized.includes('doc')) {
+      return { filter: 'contract', label: 'Contract Packet', primary: 'Approve contract', secondary: 'Edit packet', accent: 'var(--ion)' };
+    }
+    if (normalized.includes('outbound') || normalized.includes('campaign') || normalized.includes('call') || normalized.includes('sms') || normalized.includes('email')) {
+      return { filter: 'outbound', label: 'Outreach Launch', primary: 'Approve launch', secondary: 'Hold', accent: 'var(--magenta)' };
+    }
+    if (normalized.includes('admin') || normalized.includes('schema') || normalized.includes('settings')) {
+      return { filter: 'admin', label: 'Admin Change', primary: 'Approve safely', secondary: 'Review', accent: 'var(--amber)' };
+    }
+    return { filter: 'offer', label: 'Seller Offer', primary: 'Approve offer', secondary: 'Revise first', accent: 'var(--amber)' };
+  }
+
   function renderApprovalQueue(snapshot) {
     const container = document.querySelector('[data-openclaw-feed="approvals"]');
     const countNode = document.querySelector('[data-openclaw-count="approvals"]');
@@ -15431,21 +15560,50 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
       `;
 
-    const approvals = Array.isArray(snapshot?.approvals)
-      ? snapshot.approvals.filter((item) => item.status === 'pending').slice(0, 6)
+    const activeFilter = PBK.state.approvalFilter || 'all';
+    const pendingApprovals = Array.isArray(snapshot?.approvals)
+      ? snapshot.approvals.filter((item) => item.status === 'pending')
       : [];
+    const approvals = pendingApprovals
+      .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
+      .slice(0, 6);
 
-    if (countNode) countNode.textContent = `— ${approvals.length}`;
+    document.querySelectorAll('[data-approval-filter]').forEach((button) => {
+      const filter = button.dataset.approvalFilter || 'all';
+      const count = filter === 'all'
+        ? pendingApprovals.length
+        : pendingApprovals.filter((item) => getApprovalVisionMeta(item.type).filter === filter).length;
+      const label = button.dataset.approvalLabel || button.textContent.replace(/\s+\d+$/, '').trim();
+      button.dataset.approvalLabel = label;
+      button.textContent = `${label} ${count}`;
+      button.classList.toggle('active', filter === activeFilter);
+    });
+
+    if (countNode) countNode.textContent = `- ${pendingApprovals.length}`;
+
+    if (!pendingApprovals.length) {
+      container.innerHTML = `
+        ${staleNotice}
+        <div class="qcard qcard-empty">
+          <div class="qcard-head">
+            <span class="qcard-type">Runtime</span>
+            <span class="qcard-time">live</span>
+          </div>
+          <div class="qcard-body">No founder decisions waiting. New offers, DocuSign packets, campaign launches, and protected admin moves will land here before any provider write.</div>
+        </div>
+      `;
+      return;
+    }
 
     if (!approvals.length) {
       container.innerHTML = `
         ${staleNotice}
-        <div class="qcard" style="border-left-color: var(--sky-dim);">
+        <div class="qcard qcard-empty">
           <div class="qcard-head">
-            <span class="qcard-type">⚙️ Runtime</span>
-            <span class="qcard-time">live</span>
+            <span class="qcard-type">Filter clear</span>
+            <span class="qcard-time">0 shown</span>
           </div>
-          <div class="qcard-body">No pending approvals right now. New offer, contract, and outbound requests will appear here.</div>
+          <div class="qcard-body">No ${escapeHtml(activeFilter)} approvals are waiting. Switch filters to review the full approval board.</div>
         </div>
       `;
       return;
@@ -15453,26 +15611,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     container.innerHTML = `${staleNotice}${approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
-      const primaryLabel = type === 'contract'
-        ? 'Send Contract'
-        : type === 'outbound'
-          ? 'Start'
-          : 'Approve';
-      const secondaryLabel = type === 'contract'
-        ? 'Edit'
-        : type === 'outbound'
-          ? 'Later'
-          : 'Decline';
-      const accent = type === 'contract'
-        ? 'var(--ion)'
-        : type === 'outbound'
-          ? 'var(--magenta)'
-          : 'var(--amber)';
+      const meta = getApprovalVisionMeta(type);
+      const primaryLabel = meta.primary;
+      const secondaryLabel = meta.secondary;
+      const accent = meta.accent;
 
       return `
         <div class="qcard" data-approval-id="${escapeHtml(approval.id)}" style="border-left-color: ${accent};">
           <div class="qcard-head">
-            <span class="qcard-type" style="color: ${accent};">● ${escapeHtml(type.charAt(0).toUpperCase() + type.slice(1))}</span>
+            <span class="qcard-type" style="color: ${accent};">${escapeHtml(meta.label)}</span>
             <span class="qcard-time">${escapeHtml(formatRelativeTime(approval.createdAt))}</span>
           </div>
           <div class="qcard-body">
@@ -15481,12 +15628,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
             </span>
           </div>
-          <div class="qcard-review qcard-actions" aria-label="Launch QA false-positive checks">
-            <span class="qcard-review-label">Launch QA: flag before approving if Ava/Rex missed something</span>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
+          <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
+            <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
@@ -15925,7 +16072,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
       if (action === 'open-approvals') {
         showPage('dashboard');
-        toastOutcome({ outcome: 'local_view_only', title: 'Approvals opened', desc: 'Approve, decline, or modify Rex proposals from Approvals Needed or Slack.' });
+        toastOutcome({ outcome: 'local_view_only', title: 'Founder Approval Board opened', desc: 'Approve, decline, or modify Rex proposals from the Founder Approval Board or Slack.' });
         return;
       }
       if (action === 'revise') {
@@ -16167,11 +16314,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  function isDemoRuntimeMessage(message = {}) {
+    const source = String(message.source || message.kind || message.fixture || '').toLowerCase();
+    const text = [
+      message.preview,
+      message.body,
+      message.text,
+      message.message,
+      message.notes,
+      message.subject,
+      message.leadName,
+      message.address
+    ].filter(Boolean).join(' ');
+    return source.includes('demo')
+      || source.includes('fixture')
+      || /sandbox call recording fixture|smoke test|demo conversation|fixture/i.test(text);
+  }
+
   function getRuntimeMessageCounts(snapshot = {}) {
-    if (snapshot.messageCounts && typeof snapshot.messageCounts === 'object') {
+    const rawMessages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+    if (!rawMessages.length && snapshot.messageCounts && typeof snapshot.messageCounts === 'object') {
       return snapshot.messageCounts;
     }
-    const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
+    const messages = rawMessages.filter((message) => !isDemoRuntimeMessage(message));
     const calls = Array.isArray(snapshot.calls) ? snapshot.calls : [];
     const approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
     const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
@@ -16207,6 +16372,82 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     setCountChip(inboxButtons[1], 'Calls', counts.calls);
     setCountChip(inboxButtons[2], 'SMS', counts.sms);
     setCountChip(inboxButtons[3], 'Email', counts.email);
+  }
+
+  function getRuntimeInboxItems(snapshot = {}) {
+    const messages = Array.isArray(snapshot.messages)
+      ? snapshot.messages.filter((message) => !isDemoRuntimeMessage(message))
+      : [];
+    return sortRuntimeItems(messages).slice(0, 24).map((message, index) => {
+      const channel = String(message.channel || message.type || 'message').toLowerCase();
+      const leadName = message.leadName || message.name || message.sender || message.from || 'Unknown lead';
+      const address = message.address || message.leadAddress || message.subject || 'Live bridge record';
+      const preview = message.body || message.text || message.message || message.preview || message.notes || 'No message body attached yet.';
+      const status = String(message.status || '').toLowerCase();
+      return {
+        id: message.id || message.messageId || `runtime-message-${index}`,
+        channel,
+        leadName,
+        address,
+        preview,
+        at: message.createdAt || message.updatedAt || message.at,
+        unread: /received|unread|new/i.test(status),
+      };
+    });
+  }
+
+  function renderRuntimeInbox(snapshot = {}) {
+    const list = document.querySelector('[data-openclaw-inbox-list]');
+    const convo = document.querySelector('[data-openclaw-convo-body]');
+    const status = document.querySelector('[data-inbox-live-status]');
+    if (!list || !convo) return;
+
+    const items = getRuntimeInboxItems(snapshot);
+    const connected = getOpenClawConfig().status === 'connected';
+    if (status) {
+      status.textContent = connected
+        ? `Live bridge inbox - ${items.length} message${items.length === 1 ? '' : 's'}`
+        : 'Connect OpenClaw to load live inbox';
+    }
+
+    if (!items.length) {
+      list.innerHTML = '<div class="ib-empty"><strong>No live inbox records yet.</strong><br>Once the bridge returns SMS, email, calls, or voicemail records, they will render here. This surface no longer pretends sample conversations are live.</div>';
+      convo.innerHTML = '<div class="ib-empty"><strong>Waiting for live conversation data.</strong><br>Select a real bridge message after sync, or use the Lead Portal timeline for historical lead context.</div>';
+      return;
+    }
+
+    list.innerHTML = items.map((item, index) => `
+      <div class="ib-item ${item.unread ? 'unread' : ''} ${index === 0 ? 'active' : ''}" data-runtime-inbox-id="${escapeHtml(item.id)}">
+        <div class="ib-row1">
+          <span class="bubble-channel ${escapeHtml(item.channel)}">${escapeHtml(item.channel)}</span>
+          <span class="ib-name">${escapeHtml(item.leadName)}</span>
+          <span class="ib-time">${escapeHtml(formatRelativeTime(item.at))}</span>
+        </div>
+        <div class="ib-addr">${escapeHtml(item.address)}</div>
+        <div class="ib-preview">${escapeHtml(item.preview)}</div>
+      </div>
+    `).join('');
+
+    const paintConversation = (active) => {
+      convo.innerHTML = `
+      <div class="convo-day">Live bridge record</div>
+      <div class="bubble ${active.channel === 'sms' || active.channel === 'email' ? 'them' : 'ai'}">
+        <div class="bubble-meta"><span class="bubble-channel ${escapeHtml(active.channel)}">${escapeHtml(active.channel)}</span> ${escapeHtml(formatRelativeTime(active.at))}</div>
+        ${escapeHtml(active.preview)}
+      </div>
+      `;
+    };
+
+    list.querySelectorAll('[data-runtime-inbox-id]').forEach((row) => {
+      row.addEventListener('click', () => {
+        list.querySelectorAll('.ib-item').forEach((item) => item.classList.remove('active'));
+        row.classList.add('active');
+        const active = items.find((item) => String(item.id) === String(row.dataset.runtimeInboxId)) || items[0];
+        paintConversation(active);
+      });
+    });
+
+    paintConversation(items[0]);
   }
 
   function buildRuntimeNotifications(snapshot = {}) {
@@ -16371,6 +16612,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     PBK.state.openclawRuntime = snapshot;
     applyRuntimeMode(snapshot);
     renderRuntimeCounts(snapshot);
+    renderRuntimeInbox(snapshot);
     renderRuntimeNotifications(snapshot);
     renderActivityFeed(snapshot);
     renderApprovalQueue(snapshot);
@@ -16399,6 +16641,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     renderContractsExperience();
   }
+
+  renderRuntimeInbox(PBK.state.openclawRuntime || {});
 
   async function syncOpenClawState({ silent = false } = {}) {
     const config = getOpenClawConfig();
@@ -16596,7 +16840,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval sent to OpenClaw' : reviewReason ? 'Launch QA flag sent' : 'Decision sent to OpenClaw',
+        title: action === 'approved' ? 'Approval sent to OpenClaw' : reviewReason ? 'PBK decision check sent' : 'Decision sent to OpenClaw',
         desc: reviewReason
           ? 'Marked for correction before any provider action runs.'
           : 'The local brain and n8n callback flow were updated.'
@@ -19605,7 +19849,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           if (action === 'new') openCampaignWizard();
           if (action === 'approvals') {
             showPage('dashboard');
-            toastOutcome({ outcome: 'local_view_only', title: 'Approvals opened', desc: 'Dashboard approval cards show pending campaign approvals from the bridge.' });
+            toastOutcome({ outcome: 'local_view_only', title: 'Founder Approval Board opened', desc: 'Dashboard approval cards show pending campaign approvals from the bridge.' });
           }
           if (action === 'templates') {
             showUtilityModal('Campaign templates', 'Templates are selected in the campaign wizard. Provider-side template sync remains approval-gated and will not update Instantly/Telnyx without approval.');
@@ -20551,7 +20795,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         }, {
           actionLabel: 'outbound approvals',
           successTitle: 'Outbound batch queued',
-          successDesc: 'The next outbound batch is waiting in Approvals Needed.',
+          successDesc: 'The next outbound batch is waiting in Founder Approval Board.',
           errorTitle: 'Could not queue outbound batch'
         });
       }
@@ -24761,13 +25005,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const providerLabels = {
       telnyx: 'Telnyx',
       instantly: 'Instantly',
+      deepgram: 'Deepgram',
+      browserVoice: 'Browser Voice',
+      elevenLabs: 'ElevenLabs',
+      googleCalendar: 'Google Calendar',
+      supabaseStorage: 'Supabase Storage',
+      n8nWorkflows: 'n8n Workflows',
+      streak: 'Streak',
+      crmSync: 'CRM Sync',
       docusign: 'DocuSign',
       batchdata: 'BatchData',
       slack: 'Slack',
       render: 'Render'
     };
 
-    const order = ['telnyx', 'instantly', 'docusign', 'batchdata', 'slack', 'render'];
+    const order = ['telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
     const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
     const shortList = (items, limit = 2) => {
       const list = normalizeMissing(items);
@@ -24831,9 +25083,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           if (meta.voiceReady) lanes.push('voice');
           if (lanes.length) label = `Live · ${lanes.join(' + ')}`;
         } else if (key === 'instantly') {
-          label = 'Live · campaign admin ready';
+          label = 'Live - campaign admin ready';
+        } else if (key === 'docusign') {
+          label = 'Live - templates configured';
+        } else if (key === 'elevenLabs') {
+          label = 'Live - TTS ready';
+        } else if (key === 'browserVoice') {
+          label = 'Live - browser mic ready';
+        } else if (key === 'deepgram') {
+          label = 'Live - STT ready';
         } else if (key === 'render') {
-          label = 'Live · deploy control ready';
+          label = 'Live - deploy control ready';
         }
       } else if (isConfigured) {
         state = 'warning';
@@ -24905,21 +25165,51 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
       `;
 
-    const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending').slice(0, 5) : [];
-    const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending').slice(0, 4) : [];
-    const totalQueued = approvals.length + adminTasks.length;
+    const activeFilter = PBK.state.approvalFilter || 'all';
+    const pendingApprovals = Array.isArray(snapshot?.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
+    const pendingAdminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
+    const approvals = pendingApprovals
+      .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
+      .slice(0, 5);
+    const adminTasks = activeFilter === 'all' ? pendingAdminTasks.slice(0, 4) : [];
+    const totalQueued = pendingApprovals.length + pendingAdminTasks.length;
 
-    if (countNode) countNode.textContent = `— ${totalQueued}`;
+    document.querySelectorAll('[data-approval-filter]').forEach((button) => {
+      const filter = button.dataset.approvalFilter || 'all';
+      const count = filter === 'all'
+        ? totalQueued
+        : pendingApprovals.filter((item) => getApprovalVisionMeta(item.type).filter === filter).length;
+      const label = button.dataset.approvalLabel || button.textContent.replace(/\s+\d+$/, '').trim();
+      button.dataset.approvalLabel = label;
+      button.textContent = `${label} ${count}`;
+      button.classList.toggle('active', filter === activeFilter);
+    });
+
+    if (countNode) countNode.textContent = `- ${totalQueued}`;
 
     if (!totalQueued) {
       container.innerHTML = `
         ${staleNotice}
-        <div class="qcard" style="border-left-color: var(--sky-dim);">
+        <div class="qcard qcard-empty">
           <div class="qcard-head">
             <span class="qcard-type">Runtime</span>
             <span class="qcard-time">live</span>
           </div>
-          <div class="qcard-body">No pending approvals or admin actions right now. New offer, contract, outbound, and infrastructure requests will appear here.</div>
+          <div class="qcard-body">No founder decisions waiting. New offers, DocuSign packets, campaign launches, and protected admin moves will land here before any provider write.</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (!approvals.length && !adminTasks.length) {
+      container.innerHTML = `
+        ${staleNotice}
+        <div class="qcard qcard-empty">
+          <div class="qcard-head">
+            <span class="qcard-type">Filter clear</span>
+            <span class="qcard-time">0 shown</span>
+          </div>
+          <div class="qcard-body">No ${escapeHtml(activeFilter)} approvals are waiting. Switch filters to review the full approval board.</div>
         </div>
       `;
       return;
@@ -24927,13 +25217,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const approvalCards = approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
-      const primaryLabel = type === 'contract' ? 'Send Contract' : type === 'outbound' ? 'Start' : 'Approve';
-      const secondaryLabel = type === 'contract' ? 'Edit' : type === 'outbound' ? 'Later' : 'Decline';
-      const accent = type === 'contract' ? 'var(--ion)' : type === 'outbound' ? 'var(--magenta)' : 'var(--amber)';
+      const meta = getApprovalVisionMeta(type);
+      const primaryLabel = meta.primary;
+      const secondaryLabel = meta.secondary;
+      const accent = meta.accent;
       return `
         <div class="qcard" data-approval-id="${escapeHtml(approval.id)}" style="border-left-color: ${accent};">
           <div class="qcard-head">
-            <span class="qcard-type" style="color: ${accent};">● ${escapeHtml(type.charAt(0).toUpperCase() + type.slice(1))}</span>
+            <span class="qcard-type" style="color: ${accent};">${escapeHtml(meta.label)}</span>
             <span class="qcard-time">${escapeHtml(formatRelativeTime(approval.createdAt))}</span>
           </div>
           <div class="qcard-body">
@@ -24942,12 +25233,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
             </span>
           </div>
-          <div class="qcard-review qcard-actions" aria-label="Launch QA false-positive checks">
-            <span class="qcard-review-label">Launch QA: flag before approving if Ava/Rex missed something</span>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="Launch QA: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
+          <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
+            <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
+            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
@@ -24963,7 +25254,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return `
         <div class="qcard" data-admin-task-id="${escapeHtml(task.id)}" style="border-left-color: var(--sky);">
           <div class="qcard-head">
-            <span class="qcard-type" style="color: var(--sky);">● Admin</span>
+            <span class="qcard-type" style="color: var(--sky);">Admin Change</span>
             <span class="qcard-time">${escapeHtml(formatRelativeTime(task.createdAt))}</span>
           </div>
           <div class="qcard-body">
@@ -24971,8 +25262,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">${escapeHtml(impact)}</span>
           </div>
           <div class="qcard-actions">
-            <button class="btn btn-primary" data-admin-action="approved">Approve</button>
-            <button class="btn btn-ghost" data-admin-action="rejected">Decline</button>
+            <button class="btn btn-primary" data-admin-action="approved">Approve safely</button>
+            <button class="btn btn-ghost" data-admin-action="rejected">Hold</button>
           </div>
         </div>
       `;

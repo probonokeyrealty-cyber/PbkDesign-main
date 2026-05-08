@@ -28,6 +28,27 @@ services:
       - key: PBK_PUBLIC_BASE_URL
         value: https://pbk-openclaw-bridge.onrender.com
 
+      # OpenAI Responses API web search for Rex/Ava current-market research.
+      # Optional proxy route: set PBK_OPENAI_BASE_URL to a compatible LiteLLM
+      # or OpenAI-compatible proxy that supports /v1/responses + web_search.
+      - key: PBK_OPENAI_API_KEY
+        sync: false
+      - key: PBK_OPENAI_BASE_URL
+        sync: false
+      - key: PBK_OPENAI_WEB_SEARCH_ENABLED
+        value: "true"
+      - key: PBK_OPENAI_WEB_SEARCH_MODEL
+        value: gpt-4o-mini
+
+      # TOTP is code-ready. Do not set PBK_TOTP_REQUIRED=true until the admin
+      # has enrolled PBK_TOTP_SECRET in an authenticator app and verified it.
+      - key: PBK_TOTP_SECRET
+        sync: false
+      - key: PBK_TOTP_REQUIRED
+        value: "false"
+      - key: PBK_TOTP_WINDOW
+        value: "1"
+
       # ── n8n outbound (bridge fans events to n8n) ────────────────────────
       - key: PBK_N8N_API_BASE_URL
         sync: false
@@ -75,10 +96,10 @@ services:
       - key: PBK_SCRAPLING_MCP_URL
         sync: false
 
-      # Browser Ava voice. Keep disabled until you intentionally enable live
-      # microphone streaming from the dashboard. Deepgram key is still required.
+      # Browser Ava voice. Requires a user gesture and the private bridge key
+      # saved in dashboard Settings before microphone sessions can start.
       - key: PBK_BROWSER_VOICE_ENABLED
-        value: "false"
+        value: "true"
       - key: PBK_BROWSER_VOICE_SESSION_TTL_MS
         value: "300000"
       - key: PBK_BROWSER_VOICE_ENCODING
@@ -86,10 +107,9 @@ services:
       - key: PBK_BROWSER_VOICE_SAMPLE_RATE
         value: "48000"
 
-      # ElevenLabs spoken replies for the Ava avatar. The API key is secret and
-      # must be pasted in Render; keep the feature flag false until cost-approved.
+      # ElevenLabs spoken replies for the Ava avatar.
       - key: PBK_ELEVENLABS_TTS_ENABLED
-        value: "false"
+        value: "true"
       - key: PBK_ELEVENLABS_API_KEY
         sync: false
       - key: PBK_ELEVENLABS_VOICE_ID
@@ -118,10 +138,10 @@ services:
         sync: false
       # Auth host. Use 'account-d.docusign.com' for dev/sandbox, 'account.docusign.com' for prod.
       - key: PBK_DOCUSIGN_AUTH_HOST
-        value: account-d.docusign.com
+        value: account.docusign.com
       # REST base URL. 'https://demo.docusign.net/restapi' for dev, 'https://www.docusign.net/restapi' for prod.
       - key: PBK_DOCUSIGN_REST_BASE
-        value: https://demo.docusign.net/restapi
+        value: https://www.docusign.net/restapi
       # The full PEM-formatted RSA private key. Multi-line; paste exactly,
       # including the BEGIN/END markers. Render's env var UI handles newlines.
       - key: PBK_DOCUSIGN_PRIVATE_KEY

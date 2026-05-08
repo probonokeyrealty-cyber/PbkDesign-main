@@ -1,0 +1,134 @@
+{
+  "name": "PBK Nightly Ava Learning",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "id": "nightly-trigger",
+      "name": "Nightly 2 AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Test Run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com') + '/invoke'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"toolName\":\"runAvaMemoryLearning\",\"params\":{\"actor\":\"n8n nightly learning\",\"limit\":{{$env.PBK_AVA_MEMORY_WORKER_LIMIT || 40}},\"minutesBudget\":{{$env.PBK_AVA_MEMORY_DAILY_MINUTES || 60}}}}"
+      },
+      "id": "run-learning",
+      "name": "Run Ava Memory Learning",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        390
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{($env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com') + '/invoke'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$env.PBK_BRIDGE_API_KEY ? 'Bearer ' + $env.PBK_BRIDGE_API_KEY : ''}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"toolName\":\"pbk_send_update\",\"params\":{\"title\":\"PBK Nightly Ava Learning\",\"message\":\"Ava nightly learning completed. Processed \" + (($json.result && $json.result.session && $json.result.session.candidatesProcessed) || 0) + \" candidate(s), extracted \" + (($json.result && $json.result.session && $json.result.session.lessonsExtracted) || 0) + \" lesson(s).\",\"source\":\"n8n-nightly-ava-learning\",\"postSlack\":true}}"
+      },
+      "id": "post-summary",
+      "name": "Post Learning Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        390
+      ]
+    }
+  ],
+  "connections": {
+    "Nightly 2 AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Run Ava Memory Learning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test Run": {
+      "main": [
+        [
+          {
+            "node": "Run Ava Memory Learning",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Ava Memory Learning": {
+      "main": [
+        [
+          {
+            "node": "Post Learning Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

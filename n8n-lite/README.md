@@ -4,6 +4,7 @@ These workflows are the production n8n pieces the founder build relies on:
 
 1. `pbk-lead-intake.workflow.json`
 2. `pbk-approval-fanout.workflow.json`
+3. `pbk-nightly-ava-learning.workflow.json`
 
 The keep-warm workflow can stay managed in n8n cloud if you already have it active. OpenClaw remains the brain; n8n only normalizes, notifies, and callbacks.
 
@@ -27,6 +28,13 @@ They are intentionally deterministic. OpenClaw remains the brain.
 - Uses the shared `PBK Bridge Bearer` credential instead of per-node manual headers
 - Repeat callbacks for the same decision are replay-safe at the bridge layer
 
+### Nightly Ava Learning
+- Trigger: daily 2 AM schedule or manual test run
+- Calls the bridge tool `runAvaMemoryLearning`
+- Extracts lessons from recent calls/transcripts and stores active Ava memories
+- Posts a plain-English summary via `pbk_send_update`
+- Does not fine-tune, change model IDs, deploy, or send provider messages
+
 ## Import steps
 
 1. Make sure the OpenClaw bridge is reachable:
@@ -40,6 +48,8 @@ npm run openclaw:local
 - Value: the same raw `PBK_BRIDGE_API_KEY` value you set on Render or your local bridge
 
 3. Open n8n and import both workflow JSON files from this folder.
+
+For the self-learning loop, also import `pbk-nightly-ava-learning.workflow.json`.
 
 4. Open each HTTP Request node that talks to OpenClaw and confirm:
 - `Authentication` = `Generic Credential Type`

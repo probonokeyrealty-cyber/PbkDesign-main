@@ -25443,6 +25443,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const getVoiceBase = () => normalizeOpenClawEndpoint(getOpenClawConfig().endpoint);
     const getVoiceHeaders = (json = true) => buildOpenClawHeaders(getOpenClawConfig(), json);
+    const getRuntimeVoiceHealth = () => {
+      const providers = getOpenClawConfig().runtimeMeta?.providers || {};
+      return {
+        ok: true,
+        fromRuntimeMeta: true,
+        authRequired: getOpenClawConfig().runtimeMeta?.authRequired === true,
+        browserVoice: providers.browserVoice || { ready: false, configured: false },
+        elevenLabs: providers.elevenLabs || { ready: false, configured: false },
+      };
+    };
 
     const setPanelOpen = (open) => {
       panel.classList.toggle('open', open);
@@ -25478,12 +25488,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const browserVoice = voiceHealth?.browserVoice || {};
       const elevenLabs = voiceHealth?.elevenLabs || {};
       if (browserVoice.ready) {
+        const needsBridgeKey = voiceHealth?.authRequired && !getOpenClawConfig().apiKey;
         if (micHint) {
-          micHint.textContent = elevenLabs.ready
+          micHint.textContent = needsBridgeKey
+            ? 'Voice providers are live. Save the private bridge API key in Settings to start microphone sessions.'
+            : elevenLabs.ready
             ? 'Live browser voice is ready. Ava will transcribe, stage the command, and speak back.'
             : 'Live browser voice is ready. Spoken replies stay off until ElevenLabs is enabled.';
         }
-        if (status && !shell.classList.contains('listening')) status.textContent = 'Browser microphone voice is ready.';
+        if (status && !shell.classList.contains('listening')) {
+          status.textContent = needsBridgeKey ? 'Voice stack live - bridge key required.' : 'Browser microphone voice is ready.';
+        }
       } else if (browserVoice.configured) {
         if (micHint) micHint.textContent = 'Browser voice is enabled, but Deepgram is missing or not ready.';
         if (status && !shell.classList.contains('listening')) status.textContent = 'Voice needs provider configuration.';
@@ -25569,6 +25584,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               : 'Set PBK_BROWSER_VOICE_ENABLED=true when you are ready for real microphone streaming.'
           });
           return;
+        }
+        if (health?.authRequired && !getOpenClawConfig().apiKey) {
+          throw new Error('Save the private bridge API key in Settings before starting live microphone streaming.');
         }
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
           throw new Error('This browser does not support microphone recording.');
@@ -25728,7 +25746,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       setPanelOpen(false);
     });
 
-    window.setTimeout(() => fetchVoiceHealth().catch(() => updateVoiceCopy()), 750);
+    window.setTimeout(() => fetchVoiceHealth().catch(() => {
+      voiceHealth = getRuntimeVoiceHealth();
+      updateVoiceCopy();
+    }), 750);
   }
 
   wireOpenClawCard();

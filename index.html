@@ -15307,8 +15307,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return 'new';
   }
 
-  function assertOpenClawAuthReady(config = getOpenClawConfig()) {
-    const authRequired = Boolean(config?.runtimeMeta?.authRequired);
+  function pathRequiresBridgeApiKey(path = '', method = 'GET') {
+    const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`.toLowerCase();
+    const protectedPrefixes = [
+      '/api/settings',
+      '/api/lead-scoring/weights',
+      '/api/analytics'
+    ];
+    return protectedPrefixes.some((prefix) => (
+      normalizedPath === prefix
+      || normalizedPath.startsWith(`${prefix}/`)
+      || normalizedPath.startsWith(`${prefix}?`)
+    ));
+  }
+
+  function assertOpenClawAuthReady(config = getOpenClawConfig(), path = '', method = 'GET') {
+    const authRequired = Boolean(config?.runtimeMeta?.authRequired) || pathRequiresBridgeApiKey(path, method);
     const hasApiKey = Boolean(String(config?.apiKey || '').trim());
     if (isLocalOpenClawProxyEndpoint(config?.endpoint)) return;
     if (!authRequired || hasApiKey) return;
@@ -15376,7 +15390,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const config = getOpenClawConfig();
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
-    assertOpenClawAuthReady(config);
+    assertOpenClawAuthReady(config, path, method);
     const url = new URL(String(path || '').replace(/^\/+/, ''), `${base}/`).toString();
     const response = await fetchWithTimeout(url, {
       method,

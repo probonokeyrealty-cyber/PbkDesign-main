@@ -25727,6 +25727,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       stopBrowserVoice('escape');
       setPanelOpen(false);
     });
+
+    window.setTimeout(() => fetchVoiceHealth().catch(() => updateVoiceCopy()), 750);
   }
 
   wireOpenClawCard();

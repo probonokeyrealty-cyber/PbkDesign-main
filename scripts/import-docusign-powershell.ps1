@@ -213,8 +213,8 @@ if ([string]::IsNullOrWhiteSpace($integrationKey)) {
     $integrationKey = [string]($settings.INTEGRATION_KEY_AUTH_CODE)
 }
 $userId = [string]($settings.IMPERSONATION_USER_GUID)
-$authHost = 'account-d.docusign.com'
-$defaultRestBase = 'https://demo.docusign.net/restapi'
+$authHost = 'account.docusign.com'
+$defaultRestBase = 'https://www.docusign.net/restapi'
 $consentUrl = 'https://{0}/oauth/auth?response_type=code&scope=signature%20impersonation&client_id={1}&redirect_uri=https://www.docusign.com' -f $authHost, $integrationKey
 
 if ([string]::IsNullOrWhiteSpace($integrationKey)) { throw 'No integration key found in bundle settings.' }

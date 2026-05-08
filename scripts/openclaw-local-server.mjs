@@ -213,8 +213,8 @@ const VOICE_PREWARM_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_VOIC
 const DOCUSIGN_INTEGRATION_KEY = String(process.env.PBK_DOCUSIGN_INTEGRATION_KEY || process.env.DOCUSIGN_INTEGRATION_KEY || '').trim();
 const DOCUSIGN_USER_ID = String(process.env.PBK_DOCUSIGN_USER_ID || process.env.DOCUSIGN_USER_ID || '').trim();
 const DOCUSIGN_ACCOUNT_ID = String(process.env.PBK_DOCUSIGN_ACCOUNT_ID || process.env.DOCUSIGN_ACCOUNT_ID || '').trim();
-const DOCUSIGN_AUTH_HOST = String(process.env.PBK_DOCUSIGN_AUTH_HOST || 'account-d.docusign.com').trim();
-let DOCUSIGN_REST_BASE = String(process.env.PBK_DOCUSIGN_REST_BASE || 'https://demo.docusign.net/restapi').trim().replace(/\/+$/g, '');
+const DOCUSIGN_AUTH_HOST = String(process.env.PBK_DOCUSIGN_AUTH_HOST || 'account.docusign.com').trim();
+let DOCUSIGN_REST_BASE = String(process.env.PBK_DOCUSIGN_REST_BASE || 'https://www.docusign.net/restapi').trim().replace(/\/+$/g, '');
 const DOCUSIGN_PRIVATE_KEY = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY || process.env.DOCUSIGN_PRIVATE_KEY || '');
 const DOCUSIGN_PRIVATE_KEY_B64 = String(
   process.env.PBK_DOCUSIGN_PRIVATE_KEY_B64

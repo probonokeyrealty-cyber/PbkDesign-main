@@ -18096,6 +18096,13 @@ const toolHandlers = {
     return result;
   },
 
+  async runAvaMemoryLearning(params = {}) {
+    return runAvaMemoryLearning({
+      ...params,
+      actor: params.actor || params.requestedBy || 'Ava memory worker',
+    });
+  },
+
   async getReadableSummary(params = {}) {
     recordToolUse('getReadableSummary');
     return buildReadableOperatorSummary(state, params);

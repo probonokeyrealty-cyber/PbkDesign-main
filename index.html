@@ -1788,7 +1788,7 @@
     <section class="hero fade-in">
       <div class="hero-tag"><span data-bind="dashboard.heroTime">Live — — — —</span></div>
       <h1>Good <span data-bind="dashboard.timeOfDay">morning</span>, <span data-bind="user.firstName">there</span>. <em>Your agents closed <span data-bind="dashboard.overnightRevenue">$0</span> overnight.</em></h1>
-      <p class="hero-sub"><span data-bind="dashboard.heroSubtitle">No live activity yet — connect OpenClaw to begin.</span></p>
+      <p class="hero-sub"><span data-bind="dashboard.heroSubtitle">No live activity yet - connect PBK Brain to begin.</span></p>
       <div class="founder-ops-strip" data-founder-ops="dashboard">
         <article class="founder-ops-card" data-founder-card="bridge">
           <span class="founder-ops-label">Bridge</span>
@@ -6729,7 +6729,7 @@
           <article class="brain-ops-card" data-brain-card="query">
             <span class="brain-ops-label">Query lane</span>
             <strong class="brain-ops-value">Connect Rex</strong>
-            <p class="brain-ops-note">Once OpenClaw is connected, this card flips into a real ask-the-brain prompt.</p>
+            <p class="brain-ops-note">Once PBK Brain is connected, this card flips into a real ask-the-brain prompt.</p>
           </article>
         </div>
         <div class="br-stats">
@@ -9335,7 +9335,7 @@
             <div class="plugin-actions">
               <button class="btn btn-ghost" data-plugin-action="test" disabled>Test connection</button>
               <button class="btn btn-ghost" data-plugin-action="save-later">Save for later</button>
-              <button class="btn btn-primary" data-plugin-action="connect">Connect OpenClaw</button>
+              <button class="btn btn-primary" data-plugin-action="connect">Connect PBK Brain</button>
             </div>
 
             <div class="plugin-footer">
@@ -12421,7 +12421,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       el.textContent = DEAL_PATH_LABELS[key];
     });
     if (announce) {
-      toast({ type: 'info', title: 'Path switched', desc: `Now using ${DEAL_PATH_LABELS[key]} - Ava notified locally.` });
+      toast({ type: 'info', title: 'Path switched', desc: `Now using ${DEAL_PATH_LABELS[key]} - Ava context updated locally.` });
     }
   }
 
@@ -12478,7 +12478,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   if (analyzerScriptPath) {
     analyzerScriptPath.addEventListener('change', () => {
       renderAnalyzerScriptPanel();
-      toast({ type: 'info', title: 'Analyzer script path updated', desc: `Loaded ${DEAL_PATH_LABELS[analyzerScriptPath.value] || 'PBK'} call mode.` });
+      toast({ type: 'info', title: 'Call script path updated', desc: `Loaded ${DEAL_PATH_LABELS[analyzerScriptPath.value] || 'PBK'} call mode.` });
     });
   }
 
@@ -12488,7 +12488,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (analyzerScriptVariantBtn.disabled) return;
       analyzerScriptVariant = analyzerScriptVariant === 'owner' ? 'agent' : 'owner';
       renderAnalyzerScriptPanel();
-      toast({ type: 'info', title: 'Analyzer script variant updated', desc: analyzerScriptVariant === 'agent' ? 'Agent partnership script loaded.' : 'Owner direct script loaded.' });
+      toast({ type: 'info', title: 'Call script audience updated', desc: analyzerScriptVariant === 'agent' ? 'Agent partnership script loaded.' : 'Owner direct script loaded.' });
     });
   }
 
@@ -12505,7 +12505,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const path = document.getElementById('analyzerScriptPath')?.value || 'cash';
       toast({
         type: 'success',
-        title: 'Script pushed to Ava locally',
+        title: 'Ava call script updated',
         desc: `${DEAL_PATH_LABELS[path] || 'PBK'} ${analyzerScriptTab} guidance is now the active call-mode reference.`
       });
     });
@@ -12546,7 +12546,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   document.querySelectorAll('.deal-ui-filter').forEach((filter) => {
     filter.addEventListener('click', () => {
-      toast({ type: 'info', title: 'Lead filter ready', desc: `${filter.textContent.trim()} is a local UI filter preview for lead-type routing.` });
+      toast({ type: 'info', title: 'Lead filter preview active', desc: `${filter.textContent.trim()} routing is previewed locally before campaign action.` });
     });
   });
 
@@ -12587,7 +12587,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     toast({
       type: 'warning',
       title: 'Approval needs live bridge data',
-      desc: 'This visible card is a static fallback. Connect OpenClaw or wait for approvals to sync before approving or declining.'
+      desc: 'This visible card is a static fallback. Connect PBK Brain or wait for approvals to sync before approving or declining.'
     });
   });
 
@@ -12699,7 +12699,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     toast({
       type: 'info',
       title: 'Keyboard shortcuts',
-      desc: '?K palette — G+D dashboard — G+L leads — G+I inbox — A approve — ? this dialog'
+      desc: 'Ctrl/Command+K palette - G+D dashboard - G+L leads - G+I inbox - A approve - ? shortcuts'
     });
   });
 
@@ -12930,7 +12930,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     else if (a === 'new-campaign') { showPage('campaigns'); openCampaignWizard(); }
     else if (a === 'start-call') { showPage('calls'); toast({ title: 'Outbound queue open', desc: 'Pick a lead or start a batch' }); }
     else if (a === 'pause-ai') { setMode('manual'); }
-    else if (a === 'ask-rex') { showPage('brain'); toast({ type: 'info', title: 'Rex is listening', desc: 'Type a research question in the right panel' }); }
+    else if (a === 'ask-rex') { showPage('brain'); toast({ type: 'info', title: 'Rex research ready', desc: 'Type a research question in the right panel.' }); }
     else if (a === 'take-tour') { startTour(); }
     else if (a === 'toggle-theme') { themeToggle.click(); }
   }
@@ -12970,7 +12970,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'info',
         title: 'Keyboard shortcuts',
-        desc: '?K palette — G+D/L/I/B navigate — A approve — R decline — ? this'
+        desc: 'Ctrl/Command+K palette - G+D/L/I/B navigate - A approve - R decline - ? shortcuts'
       });
     }
 
@@ -13229,7 +13229,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   tourNext.addEventListener('click', () => {
     if (tourStep === tourSteps.length - 1) {
       endTour();
-      toast({ type: 'success', title: 'Tour complete', desc: 'Press ?K anytime to jump anywhere — ? for shortcuts' });
+      toast({ type: 'success', title: 'Tour complete', desc: 'Press Ctrl/Command+K anytime to jump anywhere - ? for shortcuts.' });
     } else {
       tourStep++;
       renderTour();
@@ -13575,7 +13575,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     'dashboard.timeOfDay': 'morning',
     'user.firstName': 'there',
     'dashboard.overnightRevenue': '$0',
-    'dashboard.heroSubtitle': 'No live activity yet — connect OpenClaw to begin.'
+    'dashboard.heroSubtitle': 'No live activity yet - connect PBK Brain to begin.'
   };
 
   const OPENCLAW_STORAGE_KEY = 'pbk-openclaw-config';
@@ -14403,7 +14403,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (testBtn) testBtn.disabled = !config.endpoint || config.status === 'testing';
     if (connectBtn) {
       connectBtn.disabled = !config.endpoint || config.status === 'testing';
-      connectBtn.textContent = config.status === 'connected' ? 'Reconnect OpenClaw' : 'Connect OpenClaw';
+      connectBtn.textContent = config.status === 'connected' ? 'Reconnect PBK Brain' : 'Connect PBK Brain';
     }
     if (runtimeGrid) {
       runtimeGrid.innerHTML = config.endpoint ? `
@@ -14435,9 +14435,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     if (config.status === 'connected') {
-      setBoundValue('dashboard.heroSubtitle', 'OpenClaw connected — analyzer, calls, and activity are ready to sync.');
+      setBoundValue('dashboard.heroSubtitle', 'PBK Brain connected - analyzer, calls, and activity are ready to sync.');
     } else if (config.status === 'saved') {
-      setBoundValue('dashboard.heroSubtitle', 'OpenClaw endpoint saved locally — test or connect when the local brain is running.');
+      setBoundValue('dashboard.heroSubtitle', 'PBK Brain endpoint saved locally - test or connect when the bridge is running.');
     } else if (config.status === 'not-configured' || config.status === 'error') {
       setBoundValue('dashboard.heroSubtitle', PBK_BIND_DEFAULTS['dashboard.heroSubtitle']);
     }
@@ -14513,7 +14513,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const base = normalizeOpenClawEndpoint(config.endpoint);
 
     if (!base) {
-      throw new Error('OpenClaw is not configured yet.');
+      throw new Error('PBK Brain is not configured yet.');
     }
 
     const attempts = [
@@ -14597,7 +14597,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const testing = saveOpenClawConfig({
         ...config,
         status: 'testing',
-        lastMessage: 'Checking OpenClaw health—',
+        lastMessage: 'Checking PBK Brain health...',
         lastCheckedAt: Date.now()
       });
       reflectOpenClawUI(testing);
@@ -14614,8 +14614,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         PBK.events.emit('openclaw:status', connected);
         toast({
           type: 'success',
-          title: 'OpenClaw connected',
-          desc: 'Paradise can now reach your local reasoning agent.'
+          title: 'PBK Brain connected',
+          desc: 'Command Center can now reach the Brain bridge.'
         });
         return result;
       } catch (error) {
@@ -14629,7 +14629,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         PBK.events.emit('openclaw:status', failed);
         toast({
           type: 'error',
-          title: 'OpenClaw did not respond',
+          title: 'PBK Brain did not respond',
           desc: failed.lastMessage
         });
         throw error;
@@ -15571,7 +15571,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <span class="qcard-type">Bridge</span>
             <span class="qcard-time">stale</span>
           </div>
-          <div class="qcard-body">Showing the last successful approval snapshot from ${escapeHtml(lastSyncCopy)}. Reconnect OpenClaw to resume live approval updates.</div>
+          <div class="qcard-body">Showing the last successful approval snapshot from ${escapeHtml(lastSyncCopy)}. Reconnect PBK Brain to resume live approval updates.</div>
         </div>
       `;
 
@@ -15898,7 +15898,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <div class="lib-card">
               <span class="lib-type note">Note</span>
               <div class="title">No indexed sources yet</div>
-              <div class="excerpt">Connect the local OpenClaw bridge and ingest your first PBK memo, market report, or legal note.</div>
+              <div class="excerpt">Connect PBK Brain and ingest your first PBK memo, market report, or legal note.</div>
               <div class="meta"><span class="src">PBK</span><span>waiting</span></div>
             </div>
           `;
@@ -16314,7 +16314,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
     paintOpsCard(strip.querySelector('[data-brain-card="query"]'), {
       state: summary.bridge.state,
-      value: getOpenClawConfig().status === 'connected' ? 'Ask Rex live' : 'Connect OpenClaw',
+      value: getOpenClawConfig().status === 'connected' ? 'Ask Rex live' : 'Connect PBK Brain',
       note: getOpenClawConfig().status === 'connected'
         ? 'Use the chat rail for live founder questions; answers will cite the indexed runtime library.'
         : 'The query lane stays read-only until the hosted bridge is connected in this browser.'
@@ -16422,7 +16422,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (status) {
       status.textContent = connected
         ? `Live bridge inbox - ${items.length} message${items.length === 1 ? '' : 's'}`
-        : 'Connect OpenClaw to load live inbox';
+        : 'Connect PBK Brain to load live inbox';
     }
 
     if (!items.length) {
@@ -16651,7 +16651,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (lastActivity?.text) {
       setBoundValue('dashboard.heroSubtitle', `Live brain sync — ${lastActivity.text}`);
     } else if (getOpenClawConfig().status === 'connected') {
-      setBoundValue('dashboard.heroSubtitle', 'OpenClaw connected — analyzer, calls, and activity are ready to sync.');
+      setBoundValue('dashboard.heroSubtitle', 'PBK Brain connected - analyzer, calls, and activity are ready to sync.');
     }
 
     renderContractsExperience();
@@ -16836,7 +16836,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved' ? 'Approval removed locally' : 'Decision removed locally',
-        desc: 'Reconnect the OpenClaw bridge to replay this as a live approval callback.'
+        desc: 'Reconnect PBK Brain to replay this as a live approval callback.'
       });
       return;
     }
@@ -16855,17 +16855,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval sent to OpenClaw' : reviewReason ? 'PBK decision check sent' : 'Decision sent to OpenClaw',
+        title: action === 'approved' ? 'Approval sent to PBK Brain' : reviewReason ? 'PBK decision check sent' : 'Decision sent to PBK Brain',
         desc: reviewReason
           ? 'Marked for correction before any provider action runs.'
-          : 'The local brain and n8n callback flow were updated.'
+          : 'PBK Brain and the n8n callback flow were updated.'
       });
     } catch (error) {
       button.disabled = false;
       toast({
         type: 'error',
         title: 'Approval action failed',
-        desc: error?.message || 'The local brain did not accept that decision.'
+        desc: error?.message || 'PBK Brain did not accept that decision.'
       });
     }
   }
@@ -17004,8 +17004,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!PBK.openclaw.isConfigured()) {
       toast({
         type: 'warning',
-        title: 'OpenClaw endpoint missing',
-        desc: `Open Settings and connect the bridge before using ${actionLabel}.`
+        title: 'PBK Brain endpoint missing',
+        desc: `Open Settings and connect the Brain bridge before using ${actionLabel}.`
       });
       showPage('settings');
       return false;
@@ -17018,8 +17018,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     } catch (error) {
       toast({
         type: 'error',
-        title: 'OpenClaw connection failed',
-        desc: error?.message || `PBK could not reach the bridge for ${actionLabel}.`
+        title: 'PBK Brain connection failed',
+        desc: error?.message || `PBK could not reach the Brain bridge for ${actionLabel}.`
       });
       return false;
     }
@@ -17157,7 +17157,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         title: successTitle,
         desc: typeof successDesc === 'function' ? successDesc(response, outcome) : successDesc,
         response,
-        fallback: `${eventType} accepted by OpenClaw.`
+        fallback: `${eventType} accepted by PBK Brain.`
       });
       return response;
     } catch (error) {
@@ -18801,7 +18801,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       emailCard.querySelector('.camp-ops-note').textContent = emailReady
         ? 'Email campaigns can execute after approval.'
         : !emailKnown
-          ? 'This browser has not loaded live provider status yet. Connect OpenClaw or refresh the live bridge before launching.'
+          ? 'This browser has not loaded live provider status yet. Connect PBK Brain or refresh the live bridge before launching.'
           : 'Approval can queue, but execution will show Provider key missing until the key is ready.';
     }
     if (phoneCard) {
@@ -18814,7 +18814,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       phoneCard.querySelector('.camp-ops-note').textContent = phoneReady
         ? 'Call/SMS batches can schedule after approval.'
         : !phoneKnown
-          ? 'This browser has not loaded live provider status yet. Connect OpenClaw or refresh the live bridge before launching.'
+          ? 'This browser has not loaded live provider status yet. Connect PBK Brain or refresh the live bridge before launching.'
           : 'Call/SMS launches stay approval-gated and will report Provider key missing if Telnyx is not configured.';
     }
     if (workerCard) {
@@ -21067,7 +21067,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         toast({
           type: 'info',
           title: 'Audit trail lives in the runtime log',
-          desc: 'OpenClaw activity, approvals, DocuSign events, and DNC changes are all recorded in the live runtime surfaces.'
+          desc: 'PBK Brain activity, approvals, DocuSign events, and DNC changes are all recorded in the live runtime surfaces.'
         });
       }
     });
@@ -22746,7 +22746,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'info',
         title: 'Ask Rex something specific',
-        desc: 'Try —subject-to in Ohio—, —probate follow-up timing—, or —silent MAO—.'
+        desc: 'Try "subject-to in Ohio", "probate follow-up timing", or "silent MAO".'
       });
       return;
     }
@@ -22785,7 +22785,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'error',
         title: 'Rex could not answer',
-        desc: error?.message || 'The local brain did not return a research response. Check the OpenClaw bridge connection.'
+        desc: error?.message || 'PBK Brain did not return a research response. Check the bridge connection.'
       });
     }
   }
@@ -22794,8 +22794,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!PBK.openclaw.isConnected()) {
       toast({
         type: 'warning',
-        title: 'OpenClaw connection needed',
-        desc: 'Connect the local brain before ingesting documents into the research library.'
+        title: 'PBK Brain connection needed',
+        desc: 'Connect PBK Brain before ingesting documents into the research library.'
       });
       return;
     }
@@ -22854,7 +22854,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             toast({
               type: 'error',
               title: 'Attachment ingest failed',
-              desc: fallbackError?.message || error?.message || 'The local brain did not accept that file.'
+              desc: fallbackError?.message || error?.message || 'PBK Brain did not accept that file.'
             });
             return;
           }
@@ -22864,7 +22864,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     showPbkFormModal({
       title: 'Ingest Brain source',
-      intro: 'This stores a real research note through OpenClaw. If the bridge rejects it, PBK will show an error instead of a fake success.',
+      intro: 'This stores a real research note through PBK Brain. If the bridge rejects it, PBK will show an error instead of a fake success.',
       submitLabel: 'Ingest source',
       fields: [
         { name: 'title', label: 'Source title', value: 'Manual PBK note', required: true, full: false },
@@ -22900,7 +22900,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           toast({
             type: 'error',
             title: 'Ingest failed',
-            desc: error?.message || 'The local brain did not accept that source.'
+            desc: error?.message || 'PBK Brain did not accept that source.'
           });
           return false;
         }
@@ -23018,7 +23018,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
     if (!PBK.openclaw.isConnected()) {
-      toast({ type: 'info', title: 'Connect OpenClaw first', desc: 'Reconnect the bridge before retrying BrowserOS research.' });
+      toast({ type: 'info', title: 'Connect PBK Brain first', desc: 'Reconnect the Brain bridge before retrying BrowserOS research.' });
       return;
     }
     const target = job.target || job.targetLabel || job.url || job.query || 'PBK research target';
@@ -23047,7 +23047,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function trainRexFromBlogPost(postId) {
     if (!PBK.openclaw.isConnected()) {
-      toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect the bridge before training Rex on Brain Blog content.' });
+      toast({ type: 'warning', title: 'PBK Brain connection needed', desc: 'Connect PBK Brain before training Rex on Brain Blog content.' });
       return;
     }
     const post = findBrainBlogPost(postId);
@@ -23062,17 +23062,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toastOutcome({
         outcome: getRuntimeOutcome(response, 'live'),
         title: 'Rex training saved',
-        desc: `${post?.title || 'That Brain Blog post'} is now part of Rex's coach memory lane.`,
+        desc: `${post?.title || 'That Brain Blog post'} is now part of Rex's training memory.`,
         response
       });
     } catch (error) {
-      toast({ type: 'error', title: 'Training failed', desc: error?.message || 'The bridge did not accept the Train Rex request.' });
+      toast({ type: 'error', title: 'Training failed', desc: error?.message || 'PBK Brain did not accept the Train Rex request.' });
     }
   }
 
   async function harvestBrainBlogNow() {
     if (!PBK.openclaw.isConnected()) {
-      toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect Rex before harvesting external sales research.' });
+      toast({ type: 'warning', title: 'PBK Brain connection needed', desc: 'Connect PBK Brain before harvesting external sales research.' });
       return;
     }
     try {
@@ -23098,7 +23098,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function runRevenueAgentAction(action) {
     if (!PBK.openclaw.isConnected()) {
-      toast({ type: 'warning', title: 'OpenClaw connection needed', desc: 'Connect the bridge before running revenue agents.' });
+      toast({ type: 'warning', title: 'PBK Brain connection needed', desc: 'Connect PBK Brain before running revenue agents.' });
       return;
     }
 
@@ -23216,8 +23216,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!PBK.openclaw.isConnected()) {
       toast({
         type: 'info',
-        title: 'Connect OpenClaw first',
-        desc: 'Connect the local brain before launching BrowserOS research from PBK.'
+        title: 'Connect PBK Brain first',
+        desc: 'Connect PBK Brain before launching BrowserOS research from PBK.'
       });
       return;
     }
@@ -23385,8 +23385,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         PBK.openclaw.saveConfig(readOpenClawDraft());
         toast({
           type: 'info',
-          title: 'OpenClaw config saved',
-          desc: 'Paradise will remember this endpoint on this machine.'
+          title: 'PBK Brain config saved',
+          desc: 'PBK will remember this endpoint on this machine.'
         });
       }
 
@@ -23409,7 +23409,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'info',
         title: 'More plugin slots coming',
-        desc: 'OpenClaw is the first live bridge. Codex-local and custom MCP plugins can layer in next.'
+        desc: 'PBK Brain is the first live bridge. Codex-local and custom MCP plugins can layer in next.'
       });
     });
 
@@ -24673,10 +24673,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       <div class="analyzer-bridge-shell">
         <div class="analyzer-bridge-head">
           <div>
-            <div class="analyzer-eyebrow">React Analyzer — Live bridge</div>
-            <h3>Deal Analyzer <em>embedded inside Paradise</em>.</h3>
+            <div class="analyzer-eyebrow">React Analyzer - Live bridge</div>
+            <h3>Deal Analyzer <em>embedded inside PBK</em>.</h3>
             <p class="analyzer-bridge-copy">
-              The React analyzer now runs inside this tab via <code>/analyzer.html</code>. Saved deal state stays shared with Paradise, and OpenClaw can be invoked through the same runtime bridge once the local brain is connected.
+              The React analyzer now runs inside this tab via <code>/analyzer.html</code>. Saved deal state stays shared with PBK, and the Brain bridge can be invoked once connected.
             </p>
           </div>
           <div class="analyzer-head-actions">
@@ -24685,7 +24685,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <button class="btn btn-ghost" type="button" data-analyzer-action="clear-analyzer">Clear Analyzer</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="send-agent">Send to Agent</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="open">Open full analyzer</button>
-            <button class="btn btn-primary" type="button" data-analyzer-action="openclaw">Ask OpenClaw to analyze</button>
+            <button class="btn btn-primary" type="button" data-analyzer-action="openclaw">Ask PBK Brain to analyze</button>
           </div>
         </div>
 
@@ -24764,7 +24764,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           toast({
             type: 'warning',
             title: 'Address needed first',
-            desc: 'Open the analyzer, enter a property address, then ask OpenClaw to run the remote tool.'
+            desc: 'Open the analyzer, enter a property address, then ask PBK Brain to run the remote tool.'
           });
           return;
         }
@@ -24774,16 +24774,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           deal: payload.deal || {}
         }, {
           actionLabel: 'remote analyzer runs',
-          successTitle: 'OpenClaw accepted analyzer run',
-          successDesc: 'The local brain received the analyzeDeal request and refreshed runtime state.',
-          errorTitle: 'OpenClaw analyzeDeal failed'
+          successTitle: 'PBK Brain accepted analyzer run',
+          successDesc: 'PBK Brain received the analyzeDeal request and refreshed runtime state.',
+          errorTitle: 'PBK Brain analyzeDeal failed'
         });
       }
     });
 
     const frame = section.querySelector('#pbkAnalyzerFrame');
     frame?.addEventListener('load', () => syncAnalyzerFrame(false));
-    setAnalyzerRuntimeMeta('Loading the embedded React analyzer—');
+    setAnalyzerRuntimeMeta('Loading the embedded React analyzer...');
   }
 
   window.addEventListener('message', (event) => {
@@ -25322,7 +25322,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved' ? 'Admin approval removed locally' : 'Admin decline removed locally',
-        desc: 'Reconnect the OpenClaw bridge to replay this as a live admin callback.'
+        desc: 'Reconnect PBK Brain to replay this as a live admin callback.'
       });
       return;
     }
@@ -25333,7 +25333,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin action sent to OpenClaw' : 'Admin task declined',
+        title: action === 'approved' ? 'Admin action sent to PBK Brain' : 'Admin task declined',
         desc: 'Rex and the bridge audit log were updated.'
       });
     } catch (error) {
@@ -25341,7 +25341,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'error',
         title: 'Admin action failed',
-        desc: error?.message || 'The local brain did not accept that admin decision.'
+        desc: error?.message || 'PBK Brain did not accept that admin decision.'
       });
     }
   }
@@ -25615,7 +25615,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           throw new Error('This browser does not support microphone recording.');
         }
         const base = getVoiceBase();
-        if (!base) throw new Error('OpenClaw bridge is not configured.');
+        if (!base) throw new Error('PBK Brain bridge is not configured.');
         voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const sessionResponse = await fetchWithTimeout(`${base}/api/voice/browser/session`, {
           method: 'POST',

@@ -25515,6 +25515,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         updateVoiceCopy();
         return voiceHealth;
       }
+      const config = getOpenClawConfig();
+      if (config.runtimeMeta?.authRequired === true && !config.apiKey) {
+        voiceHealth = getRuntimeVoiceHealth();
+        updateVoiceCopy();
+        return voiceHealth;
+      }
       const response = await fetchWithTimeout(`${base}/api/voice/browser/health`, {
         method: 'GET',
         headers: getVoiceHeaders(false),

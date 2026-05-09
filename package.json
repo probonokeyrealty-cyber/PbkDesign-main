@@ -49,6 +49,7 @@
     "test:e2e:browseros": "node ./scripts/browseros-e2e.mjs",
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",
     "test:mcp": "npm --prefix ./mcp-server run typecheck",
+    "test:strategy": "node ./scripts/test-negotiation-intelligence.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",
     "preview:final": "npm run build && npm run test:parity && npm run test:tooling && npm run doctor:browser-use",
     "test:founder": "npm run build && npm run test:mcp && npm run test:bridge",

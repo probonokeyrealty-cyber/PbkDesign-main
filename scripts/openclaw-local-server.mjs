@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-09-live-ops-memory-team-public-ava';
+const BUILD_REVISION = '2026-05-09-deepseek-strategist-negotiation';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -161,6 +161,12 @@ hydrateWindowsUserEnv([
   'PBK_OPENAI_WEB_SEARCH_ENABLED',
   'PBK_OPENAI_WEB_SEARCH_MODEL',
   'PBK_OPENAI_BASE_URL',
+  'PBK_DEEPSEEK_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'PBK_DEEPSEEK_BASE_URL',
+  'PBK_DEEPSEEK_MODEL',
+  'PBK_DEEPSEEK_FALLBACK_MODEL',
+  'PBK_STRATEGIST_PROVIDER',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -212,6 +218,12 @@ const OPENAI_API_KEY = String(process.env.PBK_OPENAI_API_KEY || process.env.OPEN
 const OPENAI_BASE_URL = String(process.env.PBK_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com').trim().replace(/\/+$/g, '');
 const OPENAI_WEB_SEARCH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_OPENAI_WEB_SEARCH_ENABLED || 'true').trim());
 const OPENAI_WEB_SEARCH_MODEL = String(process.env.PBK_OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_WEB_SEARCH_MODEL || 'gpt-4o-mini').trim();
+const DEEPSEEK_API_KEY = String(process.env.PBK_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY || '').trim();
+const DEEPSEEK_BASE_URL = String(process.env.PBK_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').trim().replace(/\/+$/g, '');
+const DEEPSEEK_MODEL = String(process.env.PBK_DEEPSEEK_MODEL || 'deepseek-v4-pro').trim();
+const DEEPSEEK_FALLBACK_MODEL = String(process.env.PBK_DEEPSEEK_FALLBACK_MODEL || 'deepseek-v4-flash').trim();
+const STRATEGIST_PROVIDER = String(process.env.PBK_STRATEGIST_PROVIDER || 'deepseek').trim().toLowerCase();
+const DEEPSEEK_TIMEOUT_MS = Math.max(5000, Math.min(90000, Number(process.env.PBK_DEEPSEEK_TIMEOUT_MS || 30000)));
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
 const TEAM_PASSCODE = String(process.env.PBK_TEAM_PASSCODE || '').trim();
 const TEAM_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.PBK_TEAM_SESSION_TTL_MS || 8 * 60 * 60 * 1000));
@@ -445,6 +457,14 @@ const TOOL_NAMES = [
   'recallPbkMemory',
   'rememberPersonalFact',
   'getPersonalContext',
+  'avaAskStrategist',
+  'askStrategist',
+  'pbk_teach_ava',
+  'recordRepairs',
+  'pbkRecordRepairs',
+  'sendNegotiationApproval',
+  'pbkSendNegotiationApproval',
+  'avaOverrideOffer',
   'pbk_learn',
   'pbk_learn_from_chat',
   'recordPbkFeedback',
@@ -546,6 +566,9 @@ const LIMITS = {
   pbkIntentEvents: 240,
   pbkKnowledge: 240,
   avaLearningSessions: 180,
+  avaLearningRequests: 180,
+  repairItems: 360,
+  offerOverrides: 180,
   avaStories: 160,
   agentVersions: 240,
   inboundCallRoutes: 180,
@@ -972,6 +995,7 @@ function getRuntimeMeta() {
       browserVoice: getBrowserVoiceProviderMeta(),
       elevenLabs: getElevenLabsProviderMeta(),
       openAiWebSearch: getOpenAiWebSearchProviderMeta(),
+      deepSeek: getDeepSeekProviderMeta(),
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
       supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -1092,6 +1116,11 @@ function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
     openAiWebSearch: summarizeProviderComponent(providers.openAiWebSearch, {
       label: 'OpenAI web search',
       note: 'Responses API web search for Rex/Ava current-data answers.',
+    }),
+    deepSeek: summarizeProviderComponent(providers.deepSeek, {
+      label: 'DeepSeek strategist',
+      optional: true,
+      note: 'Ava/Rex coaching lane for low-confidence objections and negotiation scripts.',
     }),
     docusign: summarizeProviderComponent(providers.docusign, {
       label: 'DocuSign envelopes',
@@ -3170,6 +3199,9 @@ function buildDefaultState() {
     pbkIntentEvents: [],
     pbkKnowledge: [],
     avaLearningSessions: [],
+    avaLearningRequests: [],
+    repairItems: [],
+    offerOverrides: [],
     avaStories: buildDefaultAvaStories(),
     inboundCallRoutes: [],
     promptPatchApplications: [],
@@ -3433,6 +3465,96 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.pbk_learning_requests (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT 'Ava',
+      situation TEXT NOT NULL DEFAULT '',
+      transcript TEXT NOT NULL DEFAULT '',
+      confidence NUMERIC NOT NULL DEFAULT 0,
+      attempted_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      strategist_response JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'open',
+      provider TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_learning_requests
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_name TEXT NOT NULL DEFAULT 'Ava',
+      ADD COLUMN IF NOT EXISTS situation TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS transcript TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS confidence NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS attempted_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS strategist_response JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open',
+      ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_repair_items (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      item_name TEXT NOT NULL DEFAULT '',
+      item_category TEXT NOT NULL DEFAULT 'general',
+      estimated_cost NUMERIC NOT NULL DEFAULT 0,
+      urgency TEXT NOT NULL DEFAULT 'medium',
+      is_required BOOLEAN NOT NULL DEFAULT TRUE,
+      notes TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_repair_items
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS item_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS item_category TEXT NOT NULL DEFAULT 'general',
+      ADD COLUMN IF NOT EXISTS estimated_cost NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS urgency TEXT NOT NULL DEFAULT 'medium',
+      ADD COLUMN IF NOT EXISTS is_required BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_offer_overrides (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      approved_offer NUMERIC NOT NULL DEFAULT 0,
+      original_mao NUMERIC NOT NULL DEFAULT 0,
+      is_above_mao BOOLEAN NOT NULL DEFAULT FALSE,
+      rationale TEXT NOT NULL DEFAULT '',
+      approved_by TEXT NOT NULL DEFAULT '',
+      approval_id TEXT NOT NULL DEFAULT '',
+      ava_script TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_offer_overrides
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS approved_offer NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS original_mao NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS is_above_mao BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS rationale TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS approved_by TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS approval_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS ava_script TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.rex_decisions (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL DEFAULT 'rex-strategist',
@@ -3541,6 +3663,25 @@ async function ensurePgSchema() {
     CREATE INDEX IF NOT EXISTS pbk_knowledge_metadata_idx
       ON public.pbk_knowledge USING gin (metadata);
 
+    CREATE INDEX IF NOT EXISTS pbk_learning_requests_lookup_idx
+      ON public.pbk_learning_requests (tenant_id, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_learning_requests_lead_idx
+      ON public.pbk_learning_requests (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_repair_items_lead_idx
+      ON public.pbk_repair_items (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_repair_items_category_idx
+      ON public.pbk_repair_items (tenant_id, item_category, urgency);
+
+    CREATE INDEX IF NOT EXISTS pbk_offer_overrides_lead_idx
+      ON public.pbk_offer_overrides (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_offer_overrides_approval_idx
+      ON public.pbk_offer_overrides (tenant_id, approval_id)
+      WHERE approval_id <> '';
+
     CREATE INDEX IF NOT EXISTS rex_decisions_created_idx
       ON public.rex_decisions (created_at DESC);
 
@@ -3585,6 +3726,21 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS pbk_knowledge_set_updated_at ON public.pbk_knowledge;
     CREATE TRIGGER pbk_knowledge_set_updated_at
       BEFORE UPDATE ON public.pbk_knowledge
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_learning_requests_set_updated_at ON public.pbk_learning_requests;
+    CREATE TRIGGER pbk_learning_requests_set_updated_at
+      BEFORE UPDATE ON public.pbk_learning_requests
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_repair_items_set_updated_at ON public.pbk_repair_items;
+    CREATE TRIGGER pbk_repair_items_set_updated_at
+      BEFORE UPDATE ON public.pbk_repair_items
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_offer_overrides_set_updated_at ON public.pbk_offer_overrides;
+    CREATE TRIGGER pbk_offer_overrides_set_updated_at
+      BEFORE UPDATE ON public.pbk_offer_overrides
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DELETE FROM public.pbk_knowledge
@@ -4881,6 +5037,9 @@ function limitStateArrays(nextState) {
   nextState.pbkIntentEvents = sortNewest(nextState.pbkIntentEvents || []).slice(0, LIMITS.pbkIntentEvents);
   nextState.pbkKnowledge = sortNewest(nextState.pbkKnowledge || []).slice(0, LIMITS.pbkKnowledge);
   nextState.avaLearningSessions = sortNewest(nextState.avaLearningSessions || []).slice(0, LIMITS.avaLearningSessions);
+  nextState.avaLearningRequests = sortNewest(nextState.avaLearningRequests || []).slice(0, LIMITS.avaLearningRequests);
+  nextState.repairItems = sortNewest(nextState.repairItems || []).slice(0, LIMITS.repairItems);
+  nextState.offerOverrides = sortNewest(nextState.offerOverrides || []).slice(0, LIMITS.offerOverrides);
   nextState.avaStories = sortNewest(nextState.avaStories || []).slice(0, LIMITS.avaStories);
   nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
@@ -4923,6 +5082,10 @@ function updateDerivedStatus(nextState) {
   nextState.status.pbkIntentEvents = (nextState.pbkIntentEvents || []).length;
   nextState.status.pbkKnowledge = (nextState.pbkKnowledge || []).length;
   nextState.status.avaLearningSessions = (nextState.avaLearningSessions || []).length;
+  nextState.status.avaLearningRequests = (nextState.avaLearningRequests || []).length;
+  nextState.status.pendingAvaLearningRequests = (nextState.avaLearningRequests || []).filter((request) => ['pending', 'open', 'deferred'].includes(String(request.status || '').toLowerCase())).length;
+  nextState.status.repairItems = (nextState.repairItems || []).length;
+  nextState.status.offerOverrides = (nextState.offerOverrides || []).length;
   nextState.status.avaStories = (nextState.avaStories || []).length;
   nextState.status.agentVersions = (nextState.agentVersions || []).length;
   nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
@@ -4948,6 +5111,9 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastPbkFeedbackAt = getItemTimestamp((nextState.pbkFeedback || [])[0] || {}) || nextState.status.lastPbkFeedbackAt || null;
   nextState.status.lastPbkIntentAt = getItemTimestamp((nextState.pbkIntentEvents || [])[0] || {}) || nextState.status.lastPbkIntentAt || null;
   nextState.status.lastPbkKnowledgeAt = getItemTimestamp((nextState.pbkKnowledge || [])[0] || {}) || nextState.status.lastPbkKnowledgeAt || null;
+  nextState.status.lastAvaLearningRequestAt = getItemTimestamp((nextState.avaLearningRequests || [])[0] || {}) || nextState.status.lastAvaLearningRequestAt || null;
+  nextState.status.lastRepairItemAt = getItemTimestamp((nextState.repairItems || [])[0] || {}) || nextState.status.lastRepairItemAt || null;
+  nextState.status.lastOfferOverrideAt = getItemTimestamp((nextState.offerOverrides || [])[0] || {}) || nextState.status.lastOfferOverrideAt || null;
   nextState.status.lastInboundRouteAt = getItemTimestamp((nextState.inboundCallRoutes || [])[0] || {}) || nextState.status.lastInboundRouteAt || null;
   nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
   nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
@@ -5014,6 +5180,9 @@ function hydrateState(raw = {}) {
     pbkIntentEvents: trimArray(raw.pbkIntentEvents || defaults.pbkIntentEvents, LIMITS.pbkIntentEvents),
     pbkKnowledge: trimArray(raw.pbkKnowledge || defaults.pbkKnowledge, LIMITS.pbkKnowledge),
     avaLearningSessions: trimArray(raw.avaLearningSessions || defaults.avaLearningSessions, LIMITS.avaLearningSessions),
+    avaLearningRequests: trimArray(raw.avaLearningRequests || defaults.avaLearningRequests, LIMITS.avaLearningRequests),
+    repairItems: trimArray(raw.repairItems || defaults.repairItems, LIMITS.repairItems),
+    offerOverrides: trimArray(raw.offerOverrides || defaults.offerOverrides, LIMITS.offerOverrides),
     avaStories: trimArray(raw.avaStories || defaults.avaStories, LIMITS.avaStories),
     inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
@@ -7499,6 +7668,869 @@ async function recordPbkKnowledgeRecord(params = {}) {
     ok: true,
     recorded: true,
     fact,
+    storage: { localState: true, postgres },
+  };
+}
+
+function normalizeAttemptedActions(value = []) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 12);
+  const text = String(value || '').trim();
+  return text ? text.split(/\n|;|\|/g).map((item) => item.trim()).filter(Boolean).slice(0, 12) : [];
+}
+
+function extractJsonObjectFromText(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Continue to fenced/object extraction.
+  }
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch {
+      // Continue to broad object extraction.
+    }
+  }
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function normalizeStrategistResponse(raw = {}, fallbackText = '') {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const value = source?.[key];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    return '';
+  };
+  const immediateScript = pick('immediateScript', 'immediate_script', 'script', 'sellerScript');
+  const strategy = pick('strategy', 'plan', 'operatorRead');
+  const rule = pick('rule', 'memoryRule', 'memory_to_store', 'memoryToStore');
+  const nextQuestion = pick('nextQuestion', 'next_question', 'question');
+  const returnToBusiness = pick('returnToBusiness', 'return_to_business', 'transition');
+  return {
+    immediateScript: immediateScript || fallbackText.slice(0, 900),
+    strategy: strategy || 'Acknowledge, ask one precise question, protect MAO, and move the seller back to a clear next step.',
+    risk: pick('risk', 'riskNote') || 'Do not overpromise, exceed MAO, or pretend to have authority that was not approved.',
+    rule: rule || 'When Ava is uncertain, slow down, ask one clarifying question, then route the decision through PBK approval gates.',
+    nextQuestion: nextQuestion || 'What would make this simple enough for you to move forward today?',
+    returnToBusiness: returnToBusiness || 'I appreciate you sharing that. Let me bring this back to the property so I respect your time.',
+    approvalNeeded: Boolean(source.approvalNeeded ?? source.approval_needed ?? true),
+    confidence: Math.max(0, Math.min(1, toNumber(source.confidence ?? source.confidenceScore, 0.82))),
+  };
+}
+
+function buildLocalStrategistFallback(params = {}) {
+  const situation = String(params.situation || params.prompt || params.query || '').trim();
+  const transcript = String(params.transcript || params.text || '').trim();
+  const combined = `${situation}\n${transcript}`.toLowerCase();
+  let response;
+  if (/newborn|baby|child|kid|born|infant/.test(combined)) {
+    response = {
+      immediateScript: 'Congratulations, that is a big season. What is the baby name? I will only ask one baby question, then I will keep this quick so I do not steal family time.',
+      strategy: 'Use one warm personal question, store the name/age if shared, then transition back to the sale timeline and convenience.',
+      risk: 'Do not linger in personal small talk; the seller told us time is tight.',
+      rule: 'For newborn/life-event rapport: celebrate, ask one relevant question, remember it, then return to the seller goal with a time-respect cue.',
+      nextQuestion: 'What is the baby name?',
+      returnToBusiness: 'I will keep this simple. On the house, are you mainly looking for speed, certainty, or the highest number?',
+      approvalNeeded: false,
+      confidence: 0.88,
+    };
+  } else if (/competing|another investor|higher offer|better offer/.test(combined)) {
+    response = {
+      immediateScript: 'That is helpful to know. Do you know if that other offer is cash with no inspection and a real close date, or is it more of a verbal number?',
+      strategy: 'Verify terms without calling the seller dishonest, then compare PBK on certainty: cash, no repairs, no agent fees, clean close. Never beat an unverified offer above MAO.',
+      risk: 'Chasing a vague higher offer can turn a good deal into a bad one.',
+      rule: 'When seller claims a competing offer, verify terms politely, sell certainty, and escalate before any number above MAO.',
+      nextQuestion: 'Are the terms written and does it include inspection, repair credits, or financing?',
+      returnToBusiness: 'If certainty matters, I can make our best clean number clear and simple.',
+      approvalNeeded: true,
+      confidence: 0.86,
+    };
+  } else if (/scam|real company|legit|trust/.test(combined)) {
+    response = {
+      immediateScript: 'Fair question. You should verify anyone offering to buy your house. I can send our company details, explain the process in plain English, and you do not sign anything unless you are comfortable.',
+      strategy: 'Validate skepticism, offer proof, slow down, and invite verification. Do not pressure.',
+      risk: 'If Ava gets defensive, trust collapses.',
+      rule: 'For trust objections, agree that verification is smart, provide company/process proof, and keep the seller in control.',
+      nextQuestion: 'What would help you feel comfortable verifying us?',
+      returnToBusiness: 'Once that is clear, we can talk through whether a cash close even makes sense for your situation.',
+      approvalNeeded: false,
+      confidence: 0.84,
+    };
+  } else if (/probate|estate|passed|died|loss|executor/.test(combined)) {
+    response = {
+      immediateScript: 'I am sorry you are carrying that. We can go slowly. Are you the person authorized to make decisions for the estate, or is there another family member involved too?',
+      strategy: 'Lead with empathy, confirm authority, avoid urgency pressure, and offer flexible next steps.',
+      risk: 'Moving too fast in probate can feel predatory.',
+      rule: 'For probate, slow down, validate grief, confirm executor/authority, and offer a low-pressure path.',
+      nextQuestion: 'Are you the executor or helping the family coordinate?',
+      returnToBusiness: 'I can keep the property side simple and work around the family timeline.',
+      approvalNeeded: false,
+      confidence: 0.87,
+    };
+  } else if (/price|too low|lowball|more money|repairs|roof|furnace|hvac/.test(combined)) {
+    response = {
+      immediateScript: 'I hear you. The number is mostly being shaped by the repairs and the risk we take after closing. Let me do one last check, but I want to be transparent that I cannot promise we can move much.',
+      strategy: 'Anchor to repair facts, ask for the seller yes-number, then send negotiation approval if the requested amount is above current authority.',
+      risk: 'Avoid arguing comps; explain capital constraints and keep final authority real.',
+      rule: 'When price pushback appears, tie the offer to repair risk, ask the yes-number, and escalate before exceeding approved authority.',
+      nextQuestion: 'What number would make you comfortable saying yes today?',
+      returnToBusiness: 'Let me check that against the repair budget and our max authority.',
+      approvalNeeded: true,
+      confidence: 0.85,
+    };
+  } else {
+    response = {
+      immediateScript: 'That makes sense. Let me ask one clean question so I do not guess wrong: what matters most to you here, speed, certainty, or price?',
+      strategy: 'Clarify motivation, avoid guessing, summarize the seller goal, and choose the next safest PBK action.',
+      risk: 'Do not over-answer a vague situation. Ask a calibrated question first.',
+      rule: 'When Ava confidence drops below threshold, ask one clarifying question and route uncertain business decisions through strategist/approval.',
+      nextQuestion: 'What matters most to you here: speed, certainty, or price?',
+      returnToBusiness: 'Once I know that, I can recommend the cleanest path.',
+      approvalNeeded: true,
+      confidence: 0.78,
+    };
+  }
+  return {
+    ok: true,
+    result: 'local_fallback',
+    provider: {
+      provider: 'PBK Local Strategist',
+      mode: 'deterministic-playbook',
+      ready: true,
+      configured: true,
+    },
+    response,
+    rawAnswer: response.immediateScript,
+  };
+}
+
+async function runDeepSeekChatCompletion(messages = [], params = {}) {
+  const meta = getDeepSeekProviderMeta();
+  if (!meta.ready) {
+    return {
+      ok: false,
+      result: 'provider_missing',
+      provider: meta,
+      error: `DeepSeek is not configured. ${meta.missing.join(', ') || 'Add PBK_DEEPSEEK_API_KEY.'}`,
+    };
+  }
+  const model = String(params.model || meta.model || DEEPSEEK_MODEL).trim();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1000, toNumber(params.timeoutMs, DEEPSEEK_TIMEOUT_MS)));
+  try {
+    const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: params.temperature ?? 0.25,
+        max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+        ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return {
+        ok: false,
+        result: 'provider_error',
+        status: response.status,
+        provider: { ...meta, model },
+        error: payload?.error?.message || payload?.message || `DeepSeek returned ${response.status}`,
+        payload,
+      };
+    }
+    const message = payload?.choices?.[0]?.message || {};
+    const answer = String(message.content || message.reasoning_content || '').trim();
+    return {
+      ok: true,
+      result: 'live',
+      answer,
+      reasoning: String(message.reasoning_content || '').trim(),
+      provider: { ...meta, model },
+      usage: payload?.usage || null,
+      responseId: payload?.id || '',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
+      provider: { ...meta, model },
+      error: error?.name === 'AbortError' ? 'DeepSeek request timed out.' : (error?.message || 'DeepSeek request failed.'),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildStrategistMessages(params = {}) {
+  const context = findLeadContext(params);
+  const situation = String(params.situation || params.prompt || params.query || params.text || '').trim();
+  const transcript = String(params.transcript || params.transcriptSnippet || params.callTranscript || '').trim();
+  const attemptedActions = normalizeAttemptedActions(params.attemptedActions || params.attempted_actions || params.actions);
+  const dealContext = {
+    leadId: params.leadId || context.leadId || '',
+    leadName: params.leadName || context.leadName || '',
+    address: params.address || context.address || '',
+    arv: toNumber(params.arv ?? params.analysis?.arv, 0),
+    mao: toNumber(params.mao ?? params.analysis?.mao, 0),
+    currentOffer: toNumber(params.currentOffer ?? params.offerPrice, 0),
+    sellerAsk: toNumber(params.sellerAsk ?? params.askingPrice, 0),
+    motivation: params.sellerMotivation || params.motivation || '',
+    confidence: toNumber(params.confidence, 0.5),
+  };
+  const system = [
+    'You are the PBK strategist coaching Ava, an approval-gated real estate acquisition agent.',
+    'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.',
+    'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.',
+    'Never authorize calls, contracts, SMS, email, or offer increases directly. If money or provider writes are sensitive, set approvalNeeded true.',
+    'Truth boundary: Ava must not pretend to be human if asked. Offers and actions are real but approval-gated.',
+    'Return JSON only with keys: immediateScript, strategy, risk, rule, nextQuestion, returnToBusiness, approvalNeeded, confidence.',
+  ].join(' ');
+  const user = [
+    `Situation: ${situation || 'Ava is uncertain during a seller conversation.'}`,
+    `Transcript: ${transcript || '(none provided)'}`,
+    `Attempted actions: ${attemptedActions.join('; ') || '(none)'}`,
+    `Deal context: ${JSON.stringify(dealContext)}`,
+    'Write short, natural language Ava can say immediately. Include one smart question and one transition back to business.',
+  ].join('\n\n');
+  return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], context, situation, transcript, attemptedActions, dealContext };
+}
+
+async function persistLearningRequestToPg(record = {}) {
+  const pool = getPgPool();
+  if (!pool || !record.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_learning_requests (
+        id, tenant_id, lead_id, agent_name, situation, transcript, confidence,
+        attempted_actions, strategist_response, status, provider, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12::jsonb,$13,$14)
+      ON CONFLICT (id) DO UPDATE SET
+        strategist_response = EXCLUDED.strategist_response,
+        status = EXCLUDED.status,
+        provider = EXCLUDED.provider,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.tenantId,
+        record.leadId,
+        record.agentName,
+        record.situation,
+        record.transcript,
+        record.confidence,
+        JSON.stringify(record.attemptedActions || []),
+        JSON.stringify(record.strategistResponse || {}),
+        record.status,
+        record.provider,
+        JSON.stringify(record.metadata || {}),
+        record.createdAt,
+        record.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] learning request persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function askStrategistRecord(params = {}) {
+  const built = buildStrategistMessages(params);
+  const fallbackChain = [];
+  let strategist = null;
+  if (STRATEGIST_PROVIDER === 'deepseek') {
+    const primary = await runDeepSeekChatCompletion(built.messages, {
+      model: params.model || DEEPSEEK_MODEL,
+      responseFormat: 'json',
+      temperature: params.temperature ?? 0.2,
+      maxTokens: params.maxTokens || 1200,
+    });
+    fallbackChain.push({ provider: 'deepseek', model: params.model || DEEPSEEK_MODEL, result: primary.result, ok: primary.ok, error: primary.error || '' });
+    if (primary.ok) {
+      const parsed = extractJsonObjectFromText(primary.answer);
+      strategist = {
+        ok: true,
+        result: 'live',
+        provider: primary.provider,
+        response: normalizeStrategistResponse(parsed || {}, primary.answer),
+        rawAnswer: primary.answer,
+        usage: primary.usage || null,
+      };
+    } else if (DEEPSEEK_FALLBACK_MODEL && DEEPSEEK_FALLBACK_MODEL !== (params.model || DEEPSEEK_MODEL)) {
+      const secondary = await runDeepSeekChatCompletion(built.messages, {
+        model: DEEPSEEK_FALLBACK_MODEL,
+        responseFormat: 'json',
+        temperature: params.temperature ?? 0.2,
+        maxTokens: params.maxTokens || 1200,
+      });
+      fallbackChain.push({ provider: 'deepseek', model: DEEPSEEK_FALLBACK_MODEL, result: secondary.result, ok: secondary.ok, error: secondary.error || '' });
+      if (secondary.ok) {
+        const parsed = extractJsonObjectFromText(secondary.answer);
+        strategist = {
+          ok: true,
+          result: 'live_fallback_model',
+          provider: secondary.provider,
+          response: normalizeStrategistResponse(parsed || {}, secondary.answer),
+          rawAnswer: secondary.answer,
+          usage: secondary.usage || null,
+        };
+      }
+    }
+  }
+  if (!strategist) {
+    strategist = buildLocalStrategistFallback(params);
+    fallbackChain.push({ provider: 'local-pbk-brain', model: 'deterministic-playbook', result: 'local_fallback', ok: true, error: '' });
+  }
+
+  const now = isoNow();
+  const context = built.context;
+  const request = {
+    id: params.id || `ava-learning-request-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+    leadId: String(params.leadId || context.leadId || '').trim(),
+    leadName: String(params.leadName || context.leadName || '').trim(),
+    address: String(params.address || context.address || '').trim(),
+    agentName: String(params.agentName || params.agent || 'Ava').trim() || 'Ava',
+    situation: built.situation,
+    transcript: built.transcript.slice(0, 8000),
+    confidence: Math.max(0, Math.min(1, toNumber(params.confidence, 0.5))),
+    attemptedActions: built.attemptedActions,
+    strategistResponse: strategist.response,
+    provider: strategist.provider?.provider || strategist.provider?.mode || 'PBK Strategist',
+    status: params.status || 'open',
+    fallbackChain,
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      dealContext: built.dealContext,
+      rawAnswer: strategist.rawAnswer || '',
+      result: strategist.result || '',
+    },
+    createdAt: params.createdAt || now,
+    updatedAt: now,
+  };
+  if (!Array.isArray(state.avaLearningRequests)) state.avaLearningRequests = [];
+  upsertById(state, 'avaLearningRequests', request);
+  const postgres = await persistLearningRequestToPg(request);
+  const lessonRule = strategist.response?.rule || '';
+  if (lessonRule && params.storeRule !== false) {
+    await recordPbkKnowledgeRecord({
+      tenantId: request.tenantId,
+      subject: 'ava_strategy',
+      predicate: slugify(request.situation || lessonRule).slice(0, 80) || 'live_call_strategy',
+      object: lessonRule,
+      confidence: strategist.response?.confidence ?? 0.82,
+      source: strategist.provider?.provider || 'pbk-strategist',
+      sourceId: request.id,
+      metadata: {
+        learningRequestId: request.id,
+        approvalNeeded: strategist.response?.approvalNeeded,
+        situation: request.situation,
+      },
+    });
+    await addPbkMemoryRecord({
+      tenantId: request.tenantId,
+      leadId: request.leadId,
+      agentName: 'Ava',
+      memoryType: 'strategy-coaching',
+      importance: 0.9,
+      content: `Strategist coaching: ${lessonRule} Script: ${strategist.response?.immediateScript || ''}`,
+      source: strategist.provider?.provider || 'pbk-strategist',
+      sourceId: request.id,
+      tags: ['ava_strategy', 'coaching'],
+      metadata: { learningRequestId: request.id, situation: request.situation },
+    });
+  }
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'Ava Strategist',
+      category: 'BRAIN',
+      status: strategist.result === 'local_fallback' ? 'fallback' : 'success',
+      text: `Coached Ava: ${String(request.situation || strategist.response?.nextQuestion || 'live uncertainty').slice(0, 140)}`,
+      target: request.leadName || request.address || request.leadId || 'Ava',
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: strategist.result,
+    request,
+    strategy: strategist.response,
+    provider: strategist.provider,
+    fallbackChain,
+    storage: { localState: true, postgres },
+  };
+}
+
+async function teachAvaRecord(params = {}) {
+  const requestId = String(params.learningId || params.learning_id || params.requestId || params.id || '').trim();
+  const objectionType = String(params.objectionType || params.objection_type || params.topic || 'strategy').trim();
+  const script = String(params.script || params.immediateScript || params.sellerScript || '').trim();
+  const rule = String(params.rule || params.lesson || params.memoryRule || params.fact || '').trim();
+  const passcodeValid = isProtectedLearningPasscodeValid(params);
+  const requiresPasscode = params.strategic !== false;
+  if (requiresPasscode && !passcodeValid) {
+    const approvalResult = await toolHandlers.createApproval({
+      type: 'strategy-learning',
+      leadName: params.leadName || 'Ava',
+      address: params.address || 'PBK Command Center',
+      approvalAction: 'teach_ava_strategy',
+      notes: `Ava strategy update needs admin approval. Objection: ${objectionType}. Rule: ${rule || '(none)'}`.slice(0, 900),
+      metadata: {
+        kind: 'teach_ava',
+        learningId: requestId,
+        objectionType,
+        script,
+        rule,
+      },
+    });
+    return {
+      ok: true,
+      result: 'queued_for_approval',
+      approval: approvalResult.approval,
+      message: 'Strategic Ava teaching was queued for admin approval.',
+    };
+  }
+  if (!script && !rule) {
+    return { ok: false, result: 'invalid_request', error: 'Teach Ava needs a script and/or rule.' };
+  }
+  const now = isoNow();
+  const knowledge = rule
+    ? await recordPbkKnowledgeRecord({
+      tenantId: params.tenantId || 'pbk',
+      subject: 'ava_objection_playbook',
+      predicate: slugify(objectionType) || 'strategy',
+      object: rule,
+      confidence: params.confidenceBoost ?? params.confidence ?? 0.92,
+      source: params.source || 'human-coach',
+      sourceId: requestId,
+      metadata: {
+        learningId: requestId,
+        script,
+        actor: params.actor || params.requestedBy || 'PBK operator',
+        taughtAt: now,
+      },
+    })
+    : null;
+  const memory = await addPbkMemoryRecord({
+    tenantId: params.tenantId || 'pbk',
+    leadId: params.leadId || '',
+    agentName: 'Ava',
+    memoryType: 'objection-playbook',
+    importance: 0.94,
+    content: [rule ? `Rule: ${rule}` : '', script ? `Script: ${script}` : ''].filter(Boolean).join('\n'),
+    source: params.source || 'human-coach',
+    sourceId: requestId,
+    tags: ['teach_ava', objectionType],
+    metadata: { learningId: requestId, objectionType, actor: params.actor || params.requestedBy || 'PBK operator' },
+  });
+  if (requestId && Array.isArray(state.avaLearningRequests)) {
+    const existing = state.avaLearningRequests.find((item) => item.id === requestId);
+    if (existing) {
+      existing.status = 'learned';
+      existing.updatedAt = now;
+      existing.taughtRule = rule;
+      existing.taughtScript = script;
+      await persistLearningRequestToPg(existing);
+    }
+  }
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'PBK Coach',
+      category: 'BRAIN',
+      status: 'success',
+      text: `Taught Ava strategy: ${objectionType}.`,
+      target: requestId || 'Ava playbook',
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'learned',
+    knowledge: knowledge?.fact || null,
+    memory: memory?.memory || null,
+    message: 'Ava learned this coaching rule.',
+  };
+}
+
+function normalizeRepairUrgency(value = '') {
+  const normalized = String(value || 'medium').trim().toLowerCase();
+  if (['critical', 'high', 'medium', 'low'].includes(normalized)) return normalized;
+  if (/urgent|must|safety|structural|foundation|roof|hvac|furnace|electrical|plumb/.test(normalized)) return 'high';
+  return 'medium';
+}
+
+function normalizeRepairItem(raw = {}, index = 0, context = {}) {
+  const itemName = String(raw.item_name || raw.itemName || raw.name || raw.title || raw.repair || '').trim();
+  const category = String(raw.item_category || raw.itemCategory || raw.category || 'general').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-') || 'general';
+  const estimatedCost = Math.max(0, toNumber(raw.estimated_cost ?? raw.estimatedCost ?? raw.cost ?? raw.amount, 0));
+  const leadId = String(raw.leadId || raw.lead_id || context.leadId || '').trim();
+  const tenantId = normalizeTenantId(raw.tenantId || raw.tenant_id || context.tenantId || 'pbk');
+  const stem = `${tenantId}-${leadId || context.address || 'lead'}-${itemName || index}-${estimatedCost}`;
+  return {
+    id: raw.id || `repair-${slugify(stem) || randomUUID().slice(0, 8)}-${index}`,
+    tenantId,
+    leadId,
+    itemName: itemName || `Repair item ${index + 1}`,
+    itemCategory: category,
+    estimatedCost,
+    urgency: normalizeRepairUrgency(raw.urgency || raw.priority),
+    isRequired: raw.is_required !== false && raw.isRequired !== false,
+    notes: String(raw.notes || raw.note || '').trim(),
+    metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
+    createdAt: raw.createdAt || raw.created_at || isoNow(),
+    updatedAt: raw.updatedAt || raw.updated_at || isoNow(),
+  };
+}
+
+async function persistRepairItemToPg(item = {}) {
+  const pool = getPgPool();
+  if (!pool || !item.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_repair_items (
+        id, tenant_id, lead_id, item_name, item_category, estimated_cost,
+        urgency, is_required, notes, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        lead_id = EXCLUDED.lead_id,
+        item_name = EXCLUDED.item_name,
+        item_category = EXCLUDED.item_category,
+        estimated_cost = EXCLUDED.estimated_cost,
+        urgency = EXCLUDED.urgency,
+        is_required = EXCLUDED.is_required,
+        notes = EXCLUDED.notes,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        item.id,
+        item.tenantId,
+        item.leadId,
+        item.itemName,
+        item.itemCategory,
+        item.estimatedCost,
+        item.urgency,
+        item.isRequired,
+        item.notes,
+        JSON.stringify(item.metadata || {}),
+        item.createdAt,
+        item.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] repair item persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function recordRepairsRecord(params = {}) {
+  const context = findLeadContext(params);
+  const repairsInput = Array.isArray(params.repairs)
+    ? params.repairs
+    : Array.isArray(params.items)
+      ? params.items
+      : [];
+  if (!repairsInput.length) {
+    return { ok: false, result: 'invalid_request', error: 'recordRepairs requires a repairs/items array.' };
+  }
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const leadId = String(params.leadId || params.lead_id || context.leadId || '').trim();
+  const address = String(params.address || context.address || '').trim();
+  const normalized = repairsInput.map((item, index) => normalizeRepairItem(item, index, { tenantId, leadId, address }));
+  if (params.replace !== false && leadId) {
+    state.repairItems = (state.repairItems || []).filter((item) => item.leadId !== leadId || item.tenantId !== tenantId);
+  }
+  if (!Array.isArray(state.repairItems)) state.repairItems = [];
+  for (const item of normalized) upsertById(state, 'repairItems', item);
+  const persistResults = await Promise.all(normalized.map((item) => persistRepairItemToPg(item)));
+  const totalRepairs = normalized.reduce((sum, item) => sum + Number(item.estimatedCost || 0), 0);
+  const criticalItems = normalized.filter((item) => ['critical', 'high'].includes(item.urgency));
+  const summaryLines = normalized
+    .sort((left, right) => Number(right.estimatedCost || 0) - Number(left.estimatedCost || 0))
+    .map((item) => `${item.itemName}: ${currency(item.estimatedCost)} (${item.urgency})`);
+  await addPbkMemoryRecord({
+    tenantId,
+    leadId,
+    agentName: params.agentName || 'Ava',
+    memoryType: 'repair-estimate',
+    importance: 0.88,
+    content: `Repair estimate for ${params.leadName || context.leadName || address || leadId}: total ${currency(totalRepairs)}.\n${summaryLines.join('\n')}`,
+    source: params.source || 'pbk_record_repairs',
+    sourceId: params.sourceId || params.callId || '',
+    tags: ['repair_items', 'negotiation'],
+    metadata: {
+      leadName: params.leadName || context.leadName || '',
+      address,
+      totalRepairs,
+      criticalItems: criticalItems.map((item) => item.itemName),
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'Ava',
+      category: 'ANALYZER',
+      status: 'success',
+      text: `Recorded ${normalized.length} repair items totaling ${currency(totalRepairs)}.`,
+      target: params.leadName || address || leadId || 'repair estimate',
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'repairs_recorded',
+    leadId,
+    address,
+    totalRepairs,
+    criticalItems: criticalItems.map((item) => item.itemName),
+    items: normalized,
+    storage: {
+      localState: true,
+      postgres: persistResults.some(Boolean),
+    },
+  };
+}
+
+function getRepairItemsForLead(leadId = '', tenantId = 'pbk') {
+  const normalizedLeadId = String(leadId || '').trim();
+  if (!normalizedLeadId) return [];
+  return (state.repairItems || [])
+    .filter((item) => item.leadId === normalizedLeadId && normalizeTenantId(item.tenantId) === normalizeTenantId(tenantId))
+    .sort((left, right) => Number(right.estimatedCost || 0) - Number(left.estimatedCost || 0));
+}
+
+function buildRepairBreakdownText(items = []) {
+  if (!items.length) return 'No line-item repairs recorded yet.';
+  return items.slice(0, 8).map((item) => `${item.itemName}: ${currency(item.estimatedCost)} (${item.urgency})`).join('\n');
+}
+
+async function sendNegotiationApprovalRecord(params = {}) {
+  const context = findLeadContext(params);
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const leadId = String(params.leadId || params.lead_id || context.leadId || '').trim();
+  const repairItems = Array.isArray(params.repairsDetail)
+    ? params.repairsDetail.map((item, index) => normalizeRepairItem(item, index, { tenantId, leadId, address: params.address || context.address }))
+    : getRepairItemsForLead(leadId, tenantId);
+  const totalRepairs = Math.max(0, toNumber(params.repairs ?? params.totalRepairs, repairItems.reduce((sum, item) => sum + Number(item.estimatedCost || 0), 0)));
+  const arv = Math.max(0, toNumber(params.arv, 0));
+  const mao = Math.max(0, toNumber(params.mao, 0));
+  const currentOffer = Math.max(0, toNumber(params.currentOffer ?? params.offerPrice, 0));
+  const sellerAsk = Math.max(0, toNumber(params.sellerAsk ?? params.askingPrice, 0));
+  const recommendedCounter = Math.max(0, toNumber(params.recommendedCounter ?? params.recommendedOffer ?? params.counterOffer, currentOffer || Math.round((mao || sellerAsk || 0) * 0.92)));
+  const estimatedProfit = arv && recommendedCounter ? arv - totalRepairs - recommendedCounter : 0;
+  const repairBreakdown = buildRepairBreakdownText(repairItems);
+  const recommendation = String(params.rationale || params.recommendation || '').trim()
+    || `Recommend ${currency(recommendedCounter)} if it keeps control of the deal. Repairs total ${currency(totalRepairs)} and estimated spread is ${currency(estimatedProfit)} before transaction costs.`;
+  const approvalResult = await toolHandlers.createApproval({
+    type: 'negotiation',
+    leadId: leadId || context.leadId || randomUUID(),
+    leadName: params.leadName || context.leadName || 'Unknown seller',
+    address: params.address || context.address || 'Unknown property',
+    offerPrice: recommendedCounter,
+    mao,
+    approvalAction: 'approve_negotiation_counter',
+    notes: recommendation,
+    metadata: {
+      kind: 'negotiation',
+      arv,
+      repairs: totalRepairs,
+      repairItems,
+      repairBreakdown,
+      currentOffer,
+      sellerAsk,
+      sellerMotivation: params.sellerMotivation || params.motivation || '',
+      recommendedCounter,
+      estimatedProfit,
+      avaFinalScript: `My team came back at ${currency(recommendedCounter)}. That is the absolute max we can do with the repairs we are seeing. We can close cash, as-is, and keep it simple. Does that work for you?`,
+    },
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'Ava',
+      category: 'APPROVAL',
+      status: 'pending',
+      text: `Negotiation approval requested for ${currency(recommendedCounter)} with ${currency(totalRepairs)} repairs.`,
+      target: params.address || context.address || leadId || 'negotiation',
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'queued_for_approval',
+    approval: approvalResult.approval,
+    fanout: approvalResult.fanout,
+    slack: approvalResult.slack,
+    recommendation,
+    repairBreakdown,
+    estimatedProfit,
+  };
+}
+
+async function persistOfferOverrideToPg(record = {}) {
+  const pool = getPgPool();
+  if (!pool || !record.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_offer_overrides (
+        id, tenant_id, lead_id, approved_offer, original_mao, is_above_mao,
+        rationale, approved_by, approval_id, ava_script, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
+      ON CONFLICT (id) DO UPDATE SET
+        approved_offer = EXCLUDED.approved_offer,
+        original_mao = EXCLUDED.original_mao,
+        is_above_mao = EXCLUDED.is_above_mao,
+        rationale = EXCLUDED.rationale,
+        approved_by = EXCLUDED.approved_by,
+        approval_id = EXCLUDED.approval_id,
+        ava_script = EXCLUDED.ava_script,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.tenantId,
+        record.leadId,
+        record.approvedOffer,
+        record.originalMao,
+        record.isAboveMao,
+        record.rationale,
+        record.approvedBy,
+        record.approvalId,
+        record.avaScript,
+        JSON.stringify(record.metadata || {}),
+        record.createdAt,
+        record.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] offer override persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+function isApprovalApproved(approvalId = '') {
+  const id = String(approvalId || '').trim();
+  if (!id) return false;
+  const approval = (state.approvals || []).find((item) => item.id === id);
+  return Boolean(approval && String(approval.status || '').toLowerCase() === 'approved');
+}
+
+async function avaOverrideOfferRecord(params = {}) {
+  const context = findLeadContext(params);
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const leadId = String(params.leadId || params.lead_id || context.leadId || '').trim();
+  const finalOffer = Math.max(0, toNumber(params.finalOffer ?? params.approvedOffer ?? params.offerPrice, 0));
+  const approvalId = String(params.approvalId || params.approval_id || '').trim();
+  const passcodeValid = isProtectedLearningPasscodeValid(params);
+  if (!finalOffer) return { ok: false, result: 'invalid_request', error: 'finalOffer is required.' };
+  if (!approvalId && !passcodeValid) {
+    const approvalResult = await sendNegotiationApprovalRecord({
+      ...params,
+      recommendedCounter: finalOffer,
+      rationale: params.rationale || `Admin approval required before Ava can deliver ${currency(finalOffer)}.`,
+    });
+    return {
+      ok: true,
+      result: 'queued_for_approval',
+      approval: approvalResult.approval,
+      message: 'Offer override was queued because no approved approvalId or protected passcode was provided.',
+    };
+  }
+  if (approvalId && !isApprovalApproved(approvalId) && !passcodeValid) {
+    return {
+      ok: false,
+      result: 'approval_required',
+      approvalId,
+      error: 'Offer override requires an approved approvalId or protected admin passcode.',
+    };
+  }
+  const mao = Math.max(0, toNumber(params.mao ?? params.originalMao, 0));
+  const repairItems = getRepairItemsForLead(leadId, tenantId);
+  const repairTotal = Math.max(0, toNumber(params.repairs ?? params.totalRepairs, repairItems.reduce((sum, item) => sum + Number(item.estimatedCost || 0), 0)));
+  const repairHighlights = repairItems.slice(0, 3).map((item) => item.itemName).join(', ') || 'the current repair scope';
+  const avaScript = String(params.avaScript || '').trim()
+    || `My team came back at ${currency(finalOffer)}. That is the absolute max we can do with ${repairHighlights} and the as-is risk. We can keep it clean: cash, as-is, and a simple close. Does that work for you?`;
+  const now = isoNow();
+  const override = {
+    id: params.id || `offer-override-${slugify(leadId || context.address || 'lead')}-${Date.now()}`,
+    tenantId,
+    leadId,
+    leadName: params.leadName || context.leadName || '',
+    address: params.address || context.address || '',
+    approvedOffer: finalOffer,
+    originalMao: mao,
+    isAboveMao: Boolean(mao && finalOffer > mao),
+    rationale: String(params.rationale || 'Approved via PBK offer override gate.').trim(),
+    approvedBy: String(params.approvedBy || params.actor || params.requestedBy || 'PBK operator').trim(),
+    approvalId,
+    avaScript,
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      repairTotal,
+      repairHighlights,
+      passcodeOverride: passcodeValid,
+    },
+    createdAt: params.createdAt || now,
+    updatedAt: now,
+  };
+  if (!Array.isArray(state.offerOverrides)) state.offerOverrides = [];
+  upsertById(state, 'offerOverrides', override);
+  const postgres = await persistOfferOverrideToPg(override);
+  await addPbkMemoryRecord({
+    tenantId,
+    leadId,
+    agentName: 'Ava',
+    memoryType: 'approved-offer',
+    importance: 0.95,
+    content: `Approved final offer: ${currency(finalOffer)}. Ava delivery script: ${avaScript}`,
+    source: 'ava_override_offer',
+    sourceId: override.id,
+    tags: ['approved_offer', 'negotiation'],
+    metadata: override.metadata,
+  });
+  addActivity(
+    state,
+    makeActivity({
+      actor: override.approvedBy,
+      category: 'APPROVAL',
+      status: 'approved',
+      text: `Offer override approved at ${currency(finalOffer)}${override.isAboveMao ? ' above MAO' : ''}.`,
+      target: override.address || override.leadName || leadId || 'offer override',
+    }),
+  );
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'offer_override_recorded',
+    override,
+    avaScript,
     storage: { localState: true, postgres },
   };
 }
@@ -12860,6 +13892,23 @@ function getOpenAiWebSearchProviderMeta() {
   };
 }
 
+function getDeepSeekProviderMeta() {
+  const missing = [];
+  if (!DEEPSEEK_API_KEY) missing.push('PBK_DEEPSEEK_API_KEY or DEEPSEEK_API_KEY');
+  return {
+    configured: Boolean(DEEPSEEK_API_KEY),
+    ready: Boolean(DEEPSEEK_API_KEY && DEEPSEEK_BASE_URL && DEEPSEEK_MODEL),
+    provider: 'DeepSeek',
+    mode: 'openai-chat-completions',
+    model: DEEPSEEK_MODEL,
+    fallbackModel: DEEPSEEK_FALLBACK_MODEL,
+    baseUrl: DEEPSEEK_BASE_URL,
+    timeoutMs: DEEPSEEK_TIMEOUT_MS,
+    strategistProvider: STRATEGIST_PROVIDER,
+    missing,
+  };
+}
+
 function getSupabaseStorageProviderMeta() {
   const missing = [];
   if (!SUPABASE_URL) missing.push('PBK_SUPABASE_URL');
@@ -18185,6 +19234,7 @@ function buildSlackApprovalBlocks(approval = {}) {
   const approvalType = compactSlackText(approval.type || 'approval', 'approval');
   const actionLabel = compactSlackText(approval.approvalAction || approval.metadata?.requestedAction || 'approval_required');
   const amount = toNumber(approval.offerPrice, 0) ? currency(approval.offerPrice) : 'n/a';
+  const isNegotiation = approval.type === 'negotiation' || approval.metadata?.kind === 'negotiation';
   const campaignName = approval.metadata?.campaignName || approval.metadata?.campaignId || '';
   const summary = [
     `*Seller:* ${compactSlackText(approval.leadName, 'Unknown seller')}`,
@@ -18194,6 +19244,76 @@ function buildSlackApprovalBlocks(approval = {}) {
     amount !== 'n/a' ? `*Offer:* ${amount}` : '',
   ].filter(Boolean).join('\n');
   const notes = compactSlackText(approval.notes || approval.metadata?.statusMessage || '');
+  if (isNegotiation) {
+    const repairBreakdown = compactSlackText(approval.metadata?.repairBreakdown || '', 'No line-item repairs recorded yet.');
+    const sellerAsk = toNumber(approval.metadata?.sellerAsk, 0) ? currency(approval.metadata.sellerAsk) : 'n/a';
+    const currentOffer = toNumber(approval.metadata?.currentOffer, 0) ? currency(approval.metadata.currentOffer) : 'n/a';
+    const estimatedProfit = Number.isFinite(Number(approval.metadata?.estimatedProfit))
+      ? currency(approval.metadata.estimatedProfit)
+      : 'n/a';
+    return [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: 'PBK negotiation approval', emoji: false },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Seller:*\n${compactSlackText(approval.leadName, 'Unknown seller')}` },
+          { type: 'mrkdwn', text: `*Property:*\n${compactSlackText(approval.address, 'Unknown property')}` },
+          { type: 'mrkdwn', text: `*Current offer:*\n${currentOffer}` },
+          { type: 'mrkdwn', text: `*Seller ask:*\n${sellerAsk}` },
+          { type: 'mrkdwn', text: `*Recommended:*\n${amount}` },
+          { type: 'mrkdwn', text: `*MAO:*\n${toNumber(approval.mao, 0) ? currency(approval.mao) : 'n/a'}` },
+          { type: 'mrkdwn', text: `*Repairs:*\n${toNumber(approval.metadata?.repairs, 0) ? currency(approval.metadata.repairs) : 'n/a'}` },
+          { type: 'mrkdwn', text: `*Est. spread:*\n${estimatedProfit}` },
+        ],
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*Repair breakdown:*\n${repairBreakdown.slice(0, 1500)}` },
+      },
+      {
+        type: 'section',
+        text: { type: 'mrkdwn', text: `*Ava recommendation:*\n${(notes || approval.metadata?.avaFinalScript || 'Review the number, MAO, and repair risk before approving.').slice(0, 1600)}` },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `Approval ID \`${approval.id || 'pending'}\` - Ava cannot deliver the final number until approved.`,
+          },
+        ],
+      },
+      {
+        type: 'actions',
+        block_id: `pbk_approval_${String(approval.id || '').slice(0, 40) || 'pending'}`,
+        elements: [
+          {
+            type: 'button',
+            action_id: 'pbk_approval_approve',
+            text: { type: 'plain_text', text: `Approve ${amount}`, emoji: false },
+            style: 'primary',
+            value: approval.id || '',
+          },
+          {
+            type: 'button',
+            action_id: 'pbk_approval_modify',
+            text: { type: 'plain_text', text: 'Counter / Review', emoji: false },
+            value: approval.id || '',
+          },
+          {
+            type: 'button',
+            action_id: 'pbk_approval_reject',
+            text: { type: 'plain_text', text: 'Walk Away', emoji: false },
+            style: 'danger',
+            value: approval.id || '',
+          },
+        ],
+      },
+    ];
+  }
   return [
     {
       type: 'header',
@@ -18899,6 +20019,46 @@ const toolHandlers = {
   async getPersonalContext(params = {}) {
     recordToolUse('getPersonalContext');
     return getPersonalContextRecords(params);
+  },
+
+  async avaAskStrategist(params = {}) {
+    recordToolUse('avaAskStrategist');
+    return askStrategistRecord(params);
+  },
+
+  async askStrategist(params = {}) {
+    recordToolUse('askStrategist');
+    return askStrategistRecord(params);
+  },
+
+  async pbk_teach_ava(params = {}) {
+    recordToolUse('pbk_teach_ava');
+    return teachAvaRecord(params);
+  },
+
+  async recordRepairs(params = {}) {
+    recordToolUse('recordRepairs');
+    return recordRepairsRecord(params);
+  },
+
+  async pbkRecordRepairs(params = {}) {
+    recordToolUse('pbkRecordRepairs');
+    return recordRepairsRecord(params);
+  },
+
+  async sendNegotiationApproval(params = {}) {
+    recordToolUse('sendNegotiationApproval');
+    return sendNegotiationApprovalRecord(params);
+  },
+
+  async pbkSendNegotiationApproval(params = {}) {
+    recordToolUse('pbkSendNegotiationApproval');
+    return sendNegotiationApprovalRecord(params);
+  },
+
+  async avaOverrideOffer(params = {}) {
+    recordToolUse('avaOverrideOffer');
+    return avaOverrideOfferRecord(params);
   },
 
   async pbk_learn(params = {}) {
@@ -20184,6 +21344,76 @@ const toolHandlers = {
       : params.key
         ? [String(params.key).trim()]
         : [];
+    const directValue = String(params.value ?? params.envVarValue ?? '').trim();
+    const directApply = Boolean(params.apply || params.applyDirect || params.live);
+    const deepSeekEnvAllowlist = new Set([
+      'PBK_DEEPSEEK_API_KEY',
+      'DEEPSEEK_API_KEY',
+      'PBK_DEEPSEEK_BASE_URL',
+      'PBK_DEEPSEEK_MODEL',
+      'PBK_DEEPSEEK_FALLBACK_MODEL',
+      'PBK_STRATEGIST_PROVIDER',
+    ]);
+    if (directApply && directValue && envVars.length === 1 && deepSeekEnvAllowlist.has(envVars[0])) {
+      const passcode = String(params.passcode || params.teamPasscode || params.team_passcode || params.protectedOpsPasscode || '').trim();
+      const passcodeOk = isProtectedLearningPasscodeValid({ passcode }) || isTeamPasscodeValid(passcode);
+      if (!passcodeOk) {
+        return {
+          ok: false,
+          outcome: 'team_or_admin_passcode_required',
+          live: false,
+          key: envVars[0],
+          summary: 'Direct DeepSeek env updates require the PBK team passcode or protected ops passcode.',
+        };
+      }
+      const serviceId = String(params.serviceId || RENDER_SERVICE_ID || '').trim();
+      if (!serviceId) {
+        return {
+          ok: false,
+          outcome: 'render_service_missing',
+          live: false,
+          key: envVars[0],
+          summary: 'Render service ID is not configured on the bridge.',
+        };
+      }
+      const update = await fireRenderRequest(
+        'PUT',
+        `/services/${encodeURIComponent(serviceId)}/env-vars/${encodeURIComponent(envVars[0])}`,
+        { value: directValue },
+      );
+      let restart = null;
+      if (update.ok && params.restart !== false) {
+        restart = await fireRenderRequest('POST', `/services/${encodeURIComponent(serviceId)}/restart`);
+      }
+      addActivity(
+        state,
+        makeActivity({
+          actor: params.requestedBy || params.actor || 'PBK operator',
+          category: 'ADMIN',
+          status: update.ok && (!restart || restart.ok) ? 'complete' : 'warning',
+          text: `Updated Render env ${envVars[0]} for the DeepSeek strategist lane. Secret value was not stored in bridge state.`,
+          target: 'Render DeepSeek env',
+        }),
+      );
+      await persistState(state);
+      return {
+        ok: Boolean(update.ok && (!restart || restart.ok)),
+        outcome: update.ok ? 'render_env_updated' : 'render_env_update_failed',
+        live: true,
+        key: envVars[0],
+        update: {
+          ok: update.ok,
+          status: update.status,
+          error: update.error || '',
+        },
+        restart: restart
+          ? { ok: restart.ok, status: restart.status, error: restart.error || '' }
+          : null,
+        summary: update.ok
+          ? `Updated ${envVars[0]} on Render and ${restart?.ok === false ? 'restart failed' : 'restart requested'}.`
+          : `Render env update failed for ${envVars[0]}.`,
+      };
+    }
     const result = await toolHandlers.requestAdminAction({
       command: params.command || `Update Render env ${envVars.join(', ') || 'variable'}`,
       requestedBy: params.requestedBy || 'Rex',
@@ -23410,6 +24640,7 @@ function buildStateSnapshot() {
         telnyx: getTelnyxProviderMeta(),
         instantly: getInstantlyProviderMeta(),
         openAiWebSearch: getOpenAiWebSearchProviderMeta(),
+        deepSeek: getDeepSeekProviderMeta(),
         googleCalendar: getGoogleCalendarProviderMeta(),
         supabaseStorage: getSupabaseStorageProviderMeta(),
         n8nWorkflows: getN8nWorkflowProviderMeta(),
@@ -23482,6 +24713,9 @@ function buildStateSnapshot() {
     rexDecisions: state.rexDecisions || [],
     avaActiveMemories: state.avaActiveMemories || [],
     avaLearningSessions: state.avaLearningSessions || [],
+    avaLearningRequests: state.avaLearningRequests || [],
+    repairItems: state.repairItems || [],
+    offerOverrides: state.offerOverrides || [],
     avaStories: state.avaStories || buildDefaultAvaStories(),
     inboundCallRoutes: state.inboundCallRoutes || [],
     leadScoringWeights: getLeadScoringWeights(),
@@ -24800,6 +26034,7 @@ const server = createServer(async (request, response) => {
           browserVoice: getBrowserVoiceProviderMeta(),
           elevenLabs: getElevenLabsProviderMeta(),
           openAiWebSearch: getOpenAiWebSearchProviderMeta(),
+          deepSeek: getDeepSeekProviderMeta(),
           instantly: getInstantlyProviderMeta(),
           googleCalendar: getGoogleCalendarProviderMeta(),
           supabaseStorage: getSupabaseStorageProviderMeta(),

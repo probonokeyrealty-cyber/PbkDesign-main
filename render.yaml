@@ -40,6 +40,20 @@ services:
       - key: PBK_OPENAI_WEB_SEARCH_MODEL
         value: gpt-4o-mini
 
+      # DeepSeek strategist lane for Ava/Rex coaching. This is advisory:
+      # provider writes, offer increases, contracts, calls, and SMS remain
+      # approval-gated by the PBK bridge.
+      - key: PBK_DEEPSEEK_API_KEY
+        sync: false
+      - key: PBK_DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: PBK_DEEPSEEK_MODEL
+        value: deepseek-v4-pro
+      - key: PBK_DEEPSEEK_FALLBACK_MODEL
+        value: deepseek-v4-flash
+      - key: PBK_STRATEGIST_PROVIDER
+        value: deepseek
+
       # Public website Ava chat. This route is read-only except lead capture:
       # no calls, SMS, email, contracts, deletes, or admin tool execution.
       - key: PBK_PUBLIC_AVA_CHAT_ENABLED

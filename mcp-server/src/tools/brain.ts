@@ -71,6 +71,9 @@ const GetStateInput = z
         "pbkFeedback",
         "pbkIntentEvents",
         "pbkKnowledge",
+        "avaLearningRequests",
+        "repairItems",
+        "offerOverrides",
         "status",
       ])
       .default("all")
@@ -228,6 +231,107 @@ const RunPbkAgentPipelineInput = z
     text: z.string().optional(),
     bant: z.record(z.unknown()).optional(),
     leadContext: z.record(z.unknown()).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const AvaAskStrategistInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    situation: z.string().min(1).describe("What Ava is uncertain about right now."),
+    transcript: z.string().optional().describe("Relevant live-call transcript excerpt."),
+    confidence: z.number().min(0).max(1).optional().describe("Ava's current confidence before coaching."),
+    attemptedActions: z.array(z.string()).optional().describe("What Ava already tried."),
+    arv: z.number().nonnegative().optional(),
+    mao: z.number().nonnegative().optional(),
+    currentOffer: z.number().nonnegative().optional(),
+    sellerAsk: z.number().nonnegative().optional(),
+    sellerMotivation: z.string().optional(),
+    storeRule: z.boolean().optional().describe("Defaults true. Stores the learned strategist rule into PBK knowledge."),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const TeachAvaInput = z
+  .object({
+    learningId: z.string().optional().describe("Ava learning request id returned by pbk_ava_ask_strategist."),
+    objectionType: z.string().optional().describe("e.g. competing_offer, price_pushback, probate, trust_scam."),
+    script: z.string().optional().describe("Exact seller-facing wording Ava should remember."),
+    rule: z.string().optional().describe("Durable rule Ava should apply next time."),
+    strategic: z.boolean().optional().describe("Defaults true. Strategic changes require protected passcode."),
+    passcode: z.string().optional().describe("Protected admin passcode for core strategy updates."),
+    confidenceBoost: z.number().min(0).max(1).optional(),
+    actor: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const RepairItemInput = z
+  .object({
+    itemName: z.string().optional(),
+    item_name: z.string().optional(),
+    name: z.string().optional(),
+    itemCategory: z.string().optional(),
+    item_category: z.string().optional(),
+    category: z.string().optional(),
+    estimatedCost: z.number().nonnegative().optional(),
+    estimated_cost: z.number().nonnegative().optional(),
+    cost: z.number().nonnegative().optional(),
+    urgency: z.enum(["critical", "high", "medium", "low"]).optional(),
+    isRequired: z.boolean().optional(),
+    is_required: z.boolean().optional(),
+    notes: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
+const RecordRepairsInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    repairs: z.array(RepairItemInput).min(1),
+    replace: z.boolean().optional().describe("Defaults true for this lead."),
+    actor: z.string().optional(),
+  })
+  .strict();
+
+const SendNegotiationApprovalInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    arv: z.number().nonnegative().optional(),
+    mao: z.number().nonnegative().optional(),
+    repairs: z.number().nonnegative().optional(),
+    repairsDetail: z.array(RepairItemInput).optional(),
+    currentOffer: z.number().nonnegative().optional(),
+    sellerAsk: z.number().nonnegative().optional(),
+    sellerMotivation: z.string().optional(),
+    recommendedCounter: z.number().nonnegative().optional(),
+    rationale: z.string().optional(),
+    actor: z.string().optional(),
+  })
+  .strict();
+
+const AvaOverrideOfferInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    finalOffer: z.number().positive(),
+    mao: z.number().nonnegative().optional(),
+    approvalId: z.string().optional().describe("Approved negotiation approval id. Required unless protected passcode is supplied."),
+    rationale: z.string().optional(),
+    avaScript: z.string().optional(),
+    passcode: z.string().optional().describe("Protected admin passcode for direct override."),
+    actor: z.string().optional(),
     metadata: z.record(z.unknown()).optional(),
   })
   .strict();
@@ -466,6 +570,151 @@ Returns:
     async (params) => {
       try {
         const result = await bridgeInvoke("getPersonalContext", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_ava_ask_strategist",
+    {
+      title: "Ask PBK strategist for Ava coaching",
+      description: `When Ava is uncertain on a live seller call, ask the DeepSeek strategist lane for veteran acquisition guidance. The bridge stores the coaching request, adds the durable rule to PBK knowledge, and falls back to the local PBK playbook if DeepSeek is unavailable. This does not send calls, contracts, SMS, or offer changes.`,
+      inputSchema: AvaAskStrategistInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("avaAskStrategist", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_teach_ava",
+    {
+      title: "Teach Ava a durable strategy",
+      description: `Convert an operator/strategist correction into Ava memory and PBK knowledge. Strategic/core behavior updates are approval-gated unless the protected admin passcode is supplied.`,
+      inputSchema: TeachAvaInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_teach_ava", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_record_repairs",
+    {
+      title: "Record line-item repairs",
+      description: `Store property repair line items for a lead so Ava can explain the offer like a seasoned acquisitions operator. The repair summary is also written to PBK memory for future calls.`,
+      inputSchema: RecordRepairsInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("recordRepairs", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_send_negotiation_approval",
+    {
+      title: "Send negotiation approval",
+      description: `Create a rich approval request for an offer/counteroffer, including MAO, repair breakdown, seller ask, recommendation, and Ava's final delivery script. Ava cannot deliver the final number until approved.`,
+      inputSchema: SendNegotiationApprovalInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("sendNegotiationApproval", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_ava_override_offer",
+    {
+      title: "Record approved offer override",
+      description: `Record an approved final offer and return Ava's exact delivery script. Requires an approved negotiation approval id or the protected admin passcode; otherwise the bridge queues approval instead of changing the offer.`,
+      inputSchema: AvaOverrideOfferInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("avaOverrideOffer", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,
@@ -771,6 +1020,9 @@ Returns:
             pbkFeedback: slice("pbkFeedback"),
             pbkIntentEvents: slice("pbkIntentEvents"),
             pbkKnowledge: slice("pbkKnowledge"),
+            avaLearningRequests: slice("avaLearningRequests"),
+            repairItems: slice("repairItems"),
+            offerOverrides: slice("offerOverrides"),
           };
         } else {
           payload = { [section]: slice(section), status: full.status };

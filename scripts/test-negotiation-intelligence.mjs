@@ -1,0 +1,179 @@
+import { spawn } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
+const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
+const PORT = Number(process.env.PBK_STRATEGY_SMOKE_PORT || (19000 + Math.floor(Math.random() * 1000)));
+const API_KEY = String(process.env.PBK_STRATEGY_SMOKE_API_KEY || 'pbk-strategy-smoke-key').trim();
+const BASE_URL = `http://127.0.0.1:${PORT}`;
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+async function request(pathname, options = {}) {
+  const response = await fetch(`${BASE_URL}${pathname}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${API_KEY}`,
+      ...(options.headers || {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`${pathname} returned ${response.status}: ${JSON.stringify(payload)}`);
+  }
+  return payload;
+}
+
+async function invoke(toolName, params = {}) {
+  return request('/invoke', {
+    method: 'POST',
+    body: JSON.stringify({ toolName, params }),
+  });
+}
+
+async function waitForHealth(timeoutMs = 15000) {
+  const startedAt = Date.now();
+  let lastError = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`${BASE_URL}/health`);
+      if (response.ok) return response.json();
+      lastError = new Error(`Health returned ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(300);
+  }
+  throw lastError || new Error('Timed out waiting for bridge health.');
+}
+
+async function main() {
+  const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
+    cwd: ROOT_DIR,
+    env: {
+      ...process.env,
+      PBK_OPENCLAW_PORT: String(PORT),
+      PBK_BRIDGE_API_KEY: API_KEY,
+      PBK_DEEPSEEK_API_KEY: process.env.PBK_DEEPSEEK_API_KEY || '',
+      DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || '',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr += String(chunk || '');
+  });
+
+  const cleanup = async () => {
+    if (!child.killed) {
+      child.kill();
+      await delay(150);
+    }
+  };
+
+  try {
+    const health = await waitForHealth();
+    assert(health.revision === '2026-05-09-deepseek-strategist-negotiation', `Unexpected revision ${health.revision}`);
+    assert(health.tools.includes('avaAskStrategist'), 'avaAskStrategist missing from health tools.');
+    assert(health.tools.includes('recordRepairs'), 'recordRepairs missing from health tools.');
+    assert(health.providers.deepSeek, 'DeepSeek provider metadata missing.');
+
+    const strategy = await invoke('avaAskStrategist', {
+      leadId: 'strategy-smoke-lead',
+      leadName: 'Diane Smoke',
+      address: '202 Cherry Ln, Columbus OH',
+      situation: 'Seller says another investor offered more and she has a newborn, so time is tight.',
+      transcript: 'Seller: We just had a baby and another investor says they can pay 95k.',
+      confidence: 0.42,
+      attemptedActions: ['acknowledged the baby', 'asked for preferred closing timeline'],
+      mao: 91500,
+      currentOffer: 78000,
+      sellerAsk: 95000,
+    });
+    assert(strategy.result?.strategy?.immediateScript, 'Strategist did not return a seller-facing script.');
+    assert(strategy.result?.request?.id, 'Strategist did not store learning request.');
+
+    const repairs = await invoke('recordRepairs', {
+      leadId: 'strategy-smoke-lead',
+      leadName: 'Diane Smoke',
+      address: '202 Cherry Ln, Columbus OH',
+      repairs: [
+        { itemName: 'Roof replacement', itemCategory: 'structural', estimatedCost: 12500, urgency: 'critical' },
+        { itemName: 'Furnace replacement', itemCategory: 'mechanical', estimatedCost: 8200, urgency: 'high' },
+      ],
+    });
+    assert(repairs.result?.totalRepairs === 20700, 'Repair total did not match expected value.');
+
+    const approval = await invoke('sendNegotiationApproval', {
+      leadId: 'strategy-smoke-lead',
+      leadName: 'Diane Smoke',
+      address: '202 Cherry Ln, Columbus OH',
+      arv: 185000,
+      mao: 91500,
+      currentOffer: 78000,
+      sellerAsk: 95000,
+      recommendedCounter: 88000,
+      sellerMotivation: 'Probate and newborn; wants simple close.',
+    });
+    const approvalId = approval.result?.approval?.id;
+    assert(approvalId, 'Negotiation approval was not queued.');
+
+    const blockedOverride = await invoke('avaOverrideOffer', {
+      leadId: 'strategy-smoke-lead',
+      leadName: 'Diane Smoke',
+      address: '202 Cherry Ln, Columbus OH',
+      finalOffer: 88000,
+      mao: 91500,
+    });
+    assert(blockedOverride.result?.result === 'queued_for_approval', 'Offer override without approval should queue instead of applying.');
+
+    await request(`/api/approvals/${encodeURIComponent(approvalId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'approved', actor: 'strategy-smoke', notes: 'Smoke approval.' }),
+    });
+
+    const override = await invoke('avaOverrideOffer', {
+      leadId: 'strategy-smoke-lead',
+      leadName: 'Diane Smoke',
+      address: '202 Cherry Ln, Columbus OH',
+      finalOffer: 88000,
+      mao: 91500,
+      approvalId,
+      actor: 'strategy-smoke',
+    });
+    assert(override.result?.result === 'offer_override_recorded', 'Approved offer override did not record.');
+    assert(override.result?.avaScript, 'Offer override did not return Ava script.');
+
+    const state = await request('/state');
+    assert((state.avaLearningRequests || []).length >= 1, 'State missing Ava learning request.');
+    assert((state.repairItems || []).length >= 2, 'State missing repair items.');
+    assert((state.offerOverrides || []).length >= 1, 'State missing offer override.');
+
+    console.log(JSON.stringify({
+      ok: true,
+      revision: health.revision,
+      deepSeekReady: Boolean(health.providers.deepSeek?.ready),
+      strategistResult: strategy.result?.result,
+      approvalId,
+      overrideId: override.result?.override?.id,
+    }, null, 2));
+  } catch (error) {
+    console.error(stderr);
+    throw error;
+  } finally {
+    await cleanup();
+  }
+}
+
+main().catch((error) => {
+  console.error(error?.stack || error?.message || error);
+  process.exit(1);
+});

@@ -53,7 +53,10 @@
     "preview:final": "npm run build && npm run test:parity && npm run test:tooling && npm run doctor:browser-use",
     "test:founder": "npm run build && npm run test:mcp && npm run test:bridge",
     "agent:labels": "node ./scripts/pbk-agent-labels.mjs",
-    "agent:planner": "node ./scripts/pbk-agent-planner.mjs"
+    "agent:planner": "node ./scripts/pbk-agent-planner.mjs",
+    "desktop:install": "npm --prefix ./electron-desktop install",
+    "desktop:pack": "npm --prefix ./electron-desktop run pack",
+    "desktop:dist": "npm --prefix ./electron-desktop run dist"
   },
   "dependencies": {
     "@deepgram/sdk": "^5.1.0",

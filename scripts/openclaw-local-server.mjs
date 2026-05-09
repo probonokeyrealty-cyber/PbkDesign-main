@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-09-live-ops-memory-team';
+const BUILD_REVISION = '2026-05-09-live-ops-memory-team-public-ava';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -353,6 +353,14 @@ const BRAIN_BLOG_DEFAULT_FEEDS = [
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
 const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+const PUBLIC_AVA_CHAT_ENABLED = !/^(0|false|no)$/i.test(String(process.env.PBK_PUBLIC_AVA_CHAT_ENABLED || 'true').trim());
+const PUBLIC_AVA_CHAT_KEY = String(process.env.PBK_PUBLIC_AVA_CHAT_KEY || '').trim();
+const PUBLIC_AVA_CHAT_RATE_LIMIT_MAX = Math.max(5, Number(process.env.PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_MAX || 24));
+const PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS = Math.max(
+  60_000,
+  Number(process.env.PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS || 15 * 60_000),
+);
+const publicAvaChatBuckets = new Map();
 
 // Endpoints that stay open even when PBK_BRIDGE_API_KEY is set, so external
 // healthchecks (Render, uptime monitors) can still reach the bridge.
@@ -377,6 +385,10 @@ const PUBLIC_PATHS = new Set([
   '/api/webhooks/slack/commands',
   '/api/webhooks/slack/slash',
   '/api/webhooks/docusign',
+  // Public website Ava is intentionally limited to FAQ/research answers and
+  // lead capture. It never invokes provider-write or admin tools.
+  '/api/public/ava-chat',
+  '/public/ava-chat',
 ]);
 
 // Postgres state backend. When PBK_DATABASE_URL is set the bridge persists
@@ -23558,6 +23570,230 @@ async function readBody(request) {
   }
 }
 
+function getRequestClientIp(request) {
+  const forwarded = String(request.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded
+    || String(request.headers?.['x-real-ip'] || '').trim()
+    || request.socket?.remoteAddress
+    || 'unknown';
+}
+
+function checkPublicAvaChatRateLimit(request) {
+  const key = getRequestClientIp(request);
+  const now = Date.now();
+  const current = publicAvaChatBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    const bucket = { count: 1, resetAt: now + PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS };
+    publicAvaChatBuckets.set(key, bucket);
+    return {
+      ok: true,
+      key,
+      remaining: PUBLIC_AVA_CHAT_RATE_LIMIT_MAX - 1,
+      resetAt: bucket.resetAt,
+    };
+  }
+  current.count += 1;
+  if (current.count > PUBLIC_AVA_CHAT_RATE_LIMIT_MAX) {
+    return {
+      ok: false,
+      key,
+      remaining: 0,
+      resetAt: current.resetAt,
+      retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+    };
+  }
+  return {
+    ok: true,
+    key,
+    remaining: Math.max(0, PUBLIC_AVA_CHAT_RATE_LIMIT_MAX - current.count),
+    resetAt: current.resetAt,
+  };
+}
+
+function sanitizePublicAvaChatText(value = '') {
+  return String(value || '')
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,})\b/g, '[redacted-secret]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1800);
+}
+
+function extractPublicAvaLead(body = {}, text = '') {
+  const cleanText = String(text || '');
+  const emailMatch = cleanText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const phoneMatch = cleanText.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/);
+  const name = String(body.name || body.fullName || body.sellerName || body.leadName || '').trim().slice(0, 120);
+  const address = String(body.address || body.propertyAddress || body.property?.address || '').trim().slice(0, 220);
+  const email = String(body.email || body.sellerEmail || emailMatch?.[0] || '').trim().slice(0, 160);
+  const phone = normalizePhone(body.phone || body.sellerPhone || phoneMatch?.[0] || '');
+  const motivation = String(body.motivation || body.timeline || body.reason || '').trim().slice(0, 400);
+  const wantsCallback = /(?:call\s+me|callback|schedule|appointment|talk\s+to|speak\s+with|cash\s+offer|sell\s+(?:my|the)|make\s+an\s+offer|property\s+value|what'?s\s+my\s+(?:house|home)\s+worth)/i.test(cleanText)
+    || ['callback', 'schedule_callback', 'lead_capture', 'cash_offer'].includes(String(body.intent || '').toLowerCase());
+
+  return {
+    name,
+    address,
+    email,
+    phone,
+    motivation,
+    wantsCallback,
+    hasContact: Boolean(email || phone),
+    hasLeadSignal: Boolean(wantsCallback || address || email || phone || motivation),
+  };
+}
+
+function isPublicAvaChatKeyValid(request, body = {}) {
+  if (!PUBLIC_AVA_CHAT_KEY) return true;
+  const provided = String(
+    request.headers?.['x-public-ava-key']
+      || request.headers?.['x-public-key']
+      || body.publicKey
+      || body.public_key
+      || '',
+  ).trim();
+  if (!provided || provided.length !== PUBLIC_AVA_CHAT_KEY.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(provided), Buffer.from(PUBLIC_AVA_CHAT_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function buildPublicAvaFallbackAnswer(lead = {}) {
+  if (lead.hasLeadSignal && !lead.hasContact) {
+    return 'I can help with that. Send the property address plus the best phone or email, and I can get it into PBK for a callback review. I will not trigger a call, text, or contract from this public chat.';
+  }
+  return 'I can answer questions about PBK, cash offers, creative finance, land, and our process. If you want a callback, share the property address and best contact info, and I will save it for the team to review.';
+}
+
+async function handlePublicAvaChatRequest(request) {
+  if (!PUBLIC_AVA_CHAT_ENABLED) {
+    return {
+      statusCode: 503,
+      body: {
+        ok: false,
+        error: 'Public Ava chat is disabled.',
+      },
+    };
+  }
+
+  const rate = checkPublicAvaChatRateLimit(request);
+  if (!rate.ok) {
+    return {
+      statusCode: 429,
+      headers: { 'Retry-After': String(rate.retryAfterSeconds || 60) },
+      body: {
+        ok: false,
+        error: 'Public Ava chat rate limit reached. Please try again shortly.',
+        rateLimit: rate,
+      },
+    };
+  }
+
+  const body = await readBody(request);
+  if (!isPublicAvaChatKeyValid(request, body)) {
+    return {
+      statusCode: 401,
+      body: {
+        ok: false,
+        error: 'Invalid public Ava chat key.',
+      },
+    };
+  }
+
+  const messages = normalizeConversationMessages(body.messages);
+  const text = sanitizePublicAvaChatText(
+    getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''),
+  );
+  if (!text) {
+    return {
+      statusCode: 400,
+      body: {
+        ok: false,
+        error: 'message is required',
+      },
+    };
+  }
+
+  const lead = extractPublicAvaLead(body, text);
+  let leadCapture = null;
+  if (lead.hasLeadSignal && (lead.hasContact || lead.address)) {
+    leadCapture = await handleEvent('lead-intake', {
+      eventId: body.eventId || `public-ava-${Math.abs(hashString(`${lead.email}|${lead.phone}|${lead.address}|${text}`))}`,
+      source: 'website-chat',
+      leadSource: 'website-chat',
+      seller: {
+        name: lead.name || 'Website visitor',
+        phone: lead.phone,
+        email: lead.email,
+      },
+      property: {
+        address: lead.address,
+      },
+      motivation: lead.motivation || text,
+      notes: text,
+      tags: ['website-chat', 'public-ava', 'approval-gated'],
+      requestedCallback: Boolean(lead.wantsCallback),
+      providerWriteRequested: false,
+    });
+  }
+
+  const brain = answerBrainQuery(state, text);
+  const matched = Boolean(brain?.matches?.length);
+  const answer = matched
+    ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.`
+    : buildPublicAvaFallbackAnswer(lead);
+
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'Website Ava',
+      category: 'PUBLIC_CHAT',
+      status: leadCapture?.ok ? 'lead-captured' : 'served',
+      text: leadCapture?.ok
+        ? `Website Ava captured a public lead signal from ${lead.name || lead.email || lead.phone || 'visitor'}.`
+        : 'Website Ava answered a public chat request without provider writes.',
+      target: lead.address || lead.email || lead.phone || 'website visitor',
+    }),
+  );
+  await persistState(state);
+
+  return {
+    statusCode: 200,
+    headers: {
+      'X-RateLimit-Limit': String(PUBLIC_AVA_CHAT_RATE_LIMIT_MAX),
+      'X-RateLimit-Remaining': String(rate.remaining),
+    },
+    body: {
+      ok: true,
+      mode: 'public-readonly',
+      answer,
+      citations: brain?.citations || ['PBK public knowledge'],
+      leadCaptured: Boolean(leadCapture?.ok),
+      requestedCallback: Boolean(lead.wantsCallback),
+      safety: {
+        providerWrites: 'blocked',
+        adminTools: 'blocked',
+        contracts: 'blocked',
+        approvalGate: 'required for calls, SMS, email, and DocuSign',
+      },
+      lead: {
+        name: lead.name,
+        address: lead.address,
+        hasContact: lead.hasContact,
+      },
+      leadCapture: leadCapture
+        ? {
+            ok: Boolean(leadCapture.ok),
+            duplicate: Boolean(leadCapture.duplicate || leadCapture.replayed),
+            leadId: leadCapture.leadImport?.leadId || '',
+          }
+        : null,
+      rateLimit: rate,
+    },
+  };
+}
+
 function createTelnyxPublicKeyObject(publicKeyValue = TELNYX_PUBLIC_KEY) {
   const value = String(publicKeyValue || '').trim();
   if (!value) return null;
@@ -24596,6 +24832,19 @@ const server = createServer(async (request, response) => {
         warnings: runtimeMeta.warnings,
         lastUpdatedAt: state.status.lastUpdatedAt,
       });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/public/ava-chat', '/public/ava-chat'])) {
+      const result = await handlePublicAvaChatRequest(request);
+      response.writeHead(result.statusCode || 200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Public-Ava-Key, X-Public-Key',
+        ...(result.headers || {}),
+      });
+      response.end(JSON.stringify(result.body || {}));
       return;
     }
 

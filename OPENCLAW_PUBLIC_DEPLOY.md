@@ -75,7 +75,32 @@ Import the workflow files from:
 - `n8n-lite/pbk-lead-intake.workflow.json`
 - `n8n-lite/pbk-approval-fanout.workflow.json`
 
-## 4. Telnyx live outbound
+## 4. Website Ava Chat Widget
+
+The production frontend ships a drop-in public widget at:
+
+```html
+<div id="pbk-ava-public-chat"></div>
+<script src="https://pbkcommandcenter.netlify.app/ava-chat-widget.js" defer></script>
+```
+
+The widget posts to Netlify at `/api/public/ava-chat`, which proxies to the bridge route `/api/public/ava-chat`.
+That bridge route is deliberately constrained: it can answer from PBK Brain, capture a website lead, and record an
+activity entry. It cannot call, text, email, send contracts, delete records, or invoke admin tools.
+
+Optional hardening env vars:
+
+```text
+PBK_PUBLIC_AVA_CHAT_ENABLED=true
+PBK_PUBLIC_AVA_CHAT_KEY=optional-shared-public-widget-key
+PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_MAX=24
+PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS=900000
+```
+
+If `PBK_PUBLIC_AVA_CHAT_KEY` is set on the bridge, set the same value as `PUBLIC_AVA_CHAT_KEY` on Netlify so the
+serverless proxy can forward it without exposing the key in browser JavaScript.
+
+## 5. Telnyx live outbound
 
 The bridge can now place real Telnyx calls and SMS messages. Without the Telnyx variables below, PBK keeps the founder-safe simulated behavior for calls and texts.
 
@@ -102,11 +127,12 @@ Notes:
 - `PBK_PUBLIC_BASE_URL` lets the bridge auto-build the Telnyx webhook callback URL.
 - If webhook configuration is missing, outbound send can still work, but PBK may not receive live status updates back from Telnyx.
 
-## 5. Quick launch checklist
+## 6. Quick launch checklist
 
 - Netlify frontend is live.
 - Bridge answers `GET /health`.
 - Bridge answers `GET /state`.
+- Public Ava chat answers `POST /api/public/ava-chat` without exposing admin/provider tools.
 - Settings endpoint in PBK points to the public bridge URL.
 - Analyzer can call `analyzeDeal`.
 - Approval queue updates after `POST /events`.

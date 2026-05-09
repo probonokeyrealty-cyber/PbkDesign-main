@@ -40,6 +40,17 @@ services:
       - key: PBK_OPENAI_WEB_SEARCH_MODEL
         value: gpt-4o-mini
 
+      # Public website Ava chat. This route is read-only except lead capture:
+      # no calls, SMS, email, contracts, deletes, or admin tool execution.
+      - key: PBK_PUBLIC_AVA_CHAT_ENABLED
+        value: "true"
+      - key: PBK_PUBLIC_AVA_CHAT_KEY
+        sync: false
+      - key: PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_MAX
+        value: "24"
+      - key: PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS
+        value: "900000"
+
       # TOTP is code-ready. Do not set PBK_TOTP_REQUIRED=true until the admin
       # has enrolled PBK_TOTP_SECRET in an authenticator app and verified it.
       - key: PBK_TOTP_SECRET

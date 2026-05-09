@@ -24,6 +24,15 @@ npm install
 npm start
 ```
 
+## Build Installer
+
+```powershell
+cd "C:\Users\Dell\Documents\New project 2\PbkDesign-main"
+npm run desktop:dist
+```
+
+The packaged app is written to `electron-desktop/dist`.
+
 Optional environment values:
 
 ```powershell

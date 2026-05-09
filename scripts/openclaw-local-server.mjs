@@ -933,6 +933,170 @@ function getRuntimeMeta() {
   };
 }
 
+function summarizeProviderComponent(meta = {}, {
+  label = '',
+  ready = null,
+  configured = null,
+  optional = false,
+  note = '',
+} = {}) {
+  const missing = Array.isArray(meta?.missing) ? meta.missing.filter(Boolean) : [];
+  const readyValue = typeof ready === 'function'
+    ? Boolean(ready(meta))
+    : ready !== null
+      ? Boolean(ready)
+      : Boolean(meta?.ready || meta?.voiceReady || meta?.messagingReady);
+  const configuredValue = configured !== null
+    ? Boolean(configured)
+    : Boolean(meta?.configured || meta?.enabled || readyValue);
+  const validationFailed = meta?.validation?.ok === false || meta?.validated === false;
+  const status = readyValue
+    ? 'up'
+    : validationFailed
+      ? 'degraded'
+      : configuredValue
+        ? 'degraded'
+        : missing.length
+          ? (optional ? 'optional_missing' : 'missing')
+          : optional
+            ? 'optional'
+            : 'unknown';
+  return {
+    label: label || meta?.provider || 'PBK component',
+    status,
+    ready: readyValue,
+    configured: configuredValue,
+    optional: Boolean(optional),
+    missing,
+    mode: meta?.mode || meta?.provider || '',
+    note: note || meta?.note || (missing.length ? `Missing ${missing.join(', ')}` : ''),
+  };
+}
+
+function summarizeHealthComponents(components = {}) {
+  const entries = Object.entries(components);
+  const required = entries.filter(([, value]) => !value.optional);
+  const isPassing = (value = {}) => value.status === 'up' || (value.status === 'file_mode' && value.optional);
+  const failingRequired = required.filter(([, value]) => !isPassing(value));
+  const warning = entries.filter(([, value]) => ['degraded', 'missing', 'unknown'].includes(String(value.status || '')));
+  return {
+    status: failingRequired.length ? 'degraded' : 'ok',
+    ready: failingRequired.length === 0,
+    total: entries.length,
+    required: required.length,
+    up: entries.filter(([, value]) => isPassing(value)).length,
+    warnings: warning.map(([key, value]) => ({
+      key,
+      status: value.status,
+      missing: value.missing || [],
+      note: value.note || '',
+    })),
+  };
+}
+
+function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
+  const providers = runtimeMeta.providers || {};
+  const tooling = buildToolingStatus();
+  const components = {
+    bridge: {
+      label: 'PBK Bridge',
+      status: 'up',
+      ready: true,
+      configured: true,
+      optional: false,
+      revision: BUILD_REVISION,
+      note: `${runtimeMeta.mode} runtime using ${runtimeMeta.stateBackend} state.`,
+    },
+    postgres: {
+      label: 'Postgres state backend',
+      status: STATE_BACKEND === 'postgres' ? 'up' : 'file_mode',
+      ready: STATE_BACKEND === 'postgres',
+      configured: true,
+      optional: !IS_HOSTED,
+      note: STATE_BACKEND === 'postgres'
+        ? 'Hosted bridge is using Postgres-backed runtime state.'
+        : 'Local bridge is using file-backed state; hosted production should report postgres.',
+    },
+    telnyx: summarizeProviderComponent(providers.telnyx, {
+      label: 'Telnyx phone/SMS',
+      ready: (meta) => Boolean(meta.voiceReady && meta.messagingReady),
+      note: 'Voice and SMS provider health for approval-gated outbound actions.',
+    }),
+    deepgram: summarizeProviderComponent(providers.deepgram, {
+      label: 'Deepgram STT',
+      note: 'Speech-to-text readiness for browser and phone transcripts.',
+    }),
+    browserVoice: summarizeProviderComponent(providers.browserVoice, {
+      label: 'Browser mic sessions',
+      note: 'Dashboard microphone sessions are protected by the bridge API key.',
+    }),
+    elevenlabs: summarizeProviderComponent(providers.elevenLabs, {
+      label: 'ElevenLabs TTS',
+      note: 'Spoken Ava responses through the bridge TTS endpoint.',
+    }),
+    openAiWebSearch: summarizeProviderComponent(providers.openAiWebSearch, {
+      label: 'OpenAI web search',
+      note: 'Responses API web search for Rex/Ava current-data answers.',
+    }),
+    docusign: summarizeProviderComponent(providers.docusign, {
+      label: 'DocuSign envelopes',
+      note: 'Contract envelope provider readiness; provider writes remain approval-gated.',
+    }),
+    n8n: summarizeProviderComponent(providers.n8nWorkflows, {
+      label: 'n8n workflows',
+      note: 'Workflow activation surface for Rex strategist and outcome evaluator.',
+    }),
+    slack: summarizeProviderComponent(providers.slack, {
+      label: 'Slack approvals',
+      note: 'Founder approvals and update notifications.',
+    }),
+    render: summarizeProviderComponent(providers.render, {
+      label: 'Render operations',
+      note: 'Render API readiness for safe deploy/restart operations.',
+    }),
+    batchdata: summarizeProviderComponent(providers.batchdata, {
+      label: 'BatchData skip trace',
+      optional: true,
+      note: 'Optional lead enrichment provider; missing key does not block core launch.',
+    }),
+    supabaseStorage: summarizeProviderComponent(providers.supabaseStorage, {
+      label: 'Supabase storage',
+      optional: true,
+      note: 'Recording/document storage surface.',
+    }),
+    browseros: {
+      label: 'BrowserOS MCP',
+      status: tooling.browserOs?.ready ? 'up' : 'optional_missing',
+      ready: Boolean(tooling.browserOs?.ready),
+      configured: Boolean(tooling.browserOs?.registryConfigured),
+      optional: true,
+      endpoint: tooling.browserOs?.endpoint || BROWSEROS_MCP_URL,
+      note: tooling.browserOs?.note || 'Optional browser-native research worker.',
+    },
+    bytebot: {
+      label: 'Bytebot desktop worker',
+      status: process.env.PBK_BYTEBOT_MCP_URL ? 'configured' : 'optional',
+      ready: false,
+      configured: Boolean(process.env.PBK_BYTEBOT_MCP_URL),
+      optional: true,
+      endpoint: String(process.env.PBK_BYTEBOT_MCP_URL || ''),
+      note: 'Optional desktop automation worker; keep separate until intentionally connected through MCP.',
+    },
+  };
+  const summary = summarizeHealthComponents(components);
+  return {
+    status: summary.status,
+    ready: summary.ready,
+    checkedAt: isoNow(),
+    service: 'pbk-local-openclaw',
+    revision: BUILD_REVISION,
+    hosted: IS_HOSTED,
+    stateBackend: STATE_BACKEND,
+    components,
+    summary,
+  };
+}
+
 function hashString(value = '') {
   let hash = 0;
   const normalized = String(value || 'pbk').trim();
@@ -23613,12 +23777,17 @@ const server = createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();
+      const commandCenterHealth = buildCommandCenterHealthSnapshot(runtimeMeta);
       json(response, 200, {
         ok: true,
+        status: commandCenterHealth.status,
         service: 'pbk-local-openclaw',
         revision: BUILD_REVISION,
         host: HOST,
         port: PORT,
+        checkedAt: commandCenterHealth.checkedAt,
+        components: commandCenterHealth.components,
+        componentSummary: commandCenterHealth.summary,
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
         n8n: state.status.n8n,

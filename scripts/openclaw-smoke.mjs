@@ -354,6 +354,9 @@ async function main() {
     assert(health?.runtime?.mode === 'local', `Expected local smoke runtime mode, got ${health?.runtime?.mode || 'missing'}.`);
     assert(health?.runtime?.hosted === false, 'Expected local smoke runtime hosted flag to be false.');
     assert(Array.isArray(health?.runtime?.warnings), 'Bridge health did not expose runtime warnings array.');
+    assert(health?.components?.bridge?.status === 'up', 'Bridge health did not expose command-center components.');
+    assert(health?.components?.postgres?.status, 'Bridge health did not expose state backend component.');
+    assert(health?.componentSummary?.total >= 10, 'Bridge health component summary is incomplete.');
     assert(unauthorizedState.status === 401, `Expected unauthenticated /state to return 401, got ${unauthorizedState.status}.`);
     assert(Array.isArray(state?.approvals), 'Authenticated /state did not return approvals.');
     assert(quotas?.ok === true, 'Quota endpoint did not return ok: true.');
@@ -388,8 +391,10 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       revision: health.revision,
+      healthStatus: health.status,
       authRequired: health.features.authRequired,
       stateBackend: health.features.stateBackend,
+      healthComponents: Number(health?.componentSummary?.total || 0),
       mode: health.runtime.mode,
       approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
       activity: Array.isArray(state?.activity) ? state.activity.length : 0,

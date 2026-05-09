@@ -38,6 +38,9 @@ async function main() {
   assert(health?.features?.stateBackend === 'postgres', `Expected hosted stateBackend postgres, got ${health?.features?.stateBackend || 'missing'}.`);
   assert(health?.runtime?.hosted === true, 'Hosted /health did not report hosted runtime.');
   assert(health?.providers && typeof health.providers === 'object', 'Hosted /health did not expose providers block.');
+  assert(health?.components?.bridge?.status === 'up', 'Hosted /health did not expose command-center health components.');
+  assert(health?.components?.postgres?.status === 'up', `Hosted /health expected postgres component up, got ${health?.components?.postgres?.status || 'missing'}.`);
+  assert(Number(health?.componentSummary?.total || 0) >= 10, 'Hosted /health component summary is incomplete.');
 
   const unauthorizedState = await request('/state');
   assert(unauthorizedState.status === 401, `Expected unauthenticated /state to return 401, got ${unauthorizedState.status}.`);
@@ -167,8 +170,10 @@ async function main() {
       {
         ok: true,
         revision: health.revision,
+        healthStatus: health.status,
         authRequired: health.features.authRequired,
         stateBackend: health.features.stateBackend,
+        healthComponents: Number(health?.componentSummary?.total || 0),
         providers: Object.fromEntries(
           Object.entries(health.providers || {}).map(([name, meta]) => {
             const isReady = meta?.ready === true

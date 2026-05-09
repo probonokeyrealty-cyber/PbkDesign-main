@@ -29,6 +29,8 @@
     "llm:smoke:mock": "node ./scripts/pbk-llm-provider-smoke.mjs --mock",
     "deepgram:smoke": "node ./scripts/deepgram-smoke.mjs",
     "deepgram:smoke:mock": "node ./scripts/deepgram-smoke.mjs --mock",
+    "health:weekly": "node ./scripts/pbk-weekly-health-check.mjs",
+    "health:weekly:json": "node ./scripts/pbk-weekly-health-check.mjs --json",
     "property-data:smoke": "node ./scripts/property-data-smoke.mjs",
     "property-data:endpoint-smoke": "node ./scripts/property-data-endpoint-smoke.mjs",
     "property-data:homeharvest": "node ./scripts/property-data-adapter.mjs homeharvest --location 43215 --listing-type for_sale --limit 5",

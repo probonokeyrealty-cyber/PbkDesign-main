@@ -15433,6 +15433,50 @@ const OPERATING_MODE_GATED_TOOLS = new Set([
   'admin_update_env_var',
 ]);
 
+const DIRECT_ENV_UPDATE_ALLOWLIST = new Set([
+  'PBK_DEEPSEEK_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'PBK_DEEPSEEK_BASE_URL',
+  'PBK_DEEPSEEK_MODEL',
+  'PBK_DEEPSEEK_FALLBACK_MODEL',
+  'PBK_STRATEGIST_PROVIDER',
+]);
+
+function getEnvUpdateKeys(params = {}) {
+  if (Array.isArray(params.envVars)) {
+    return params.envVars.map((key) => String(key || '').trim()).filter(Boolean);
+  }
+  return params.key ? [String(params.key).trim()] : [];
+}
+
+function isDirectProtectedEnvUpdate(toolName = '', params = {}) {
+  if (toolName !== 'admin_update_env_var') return false;
+  const envKeys = getEnvUpdateKeys(params);
+  const directValue = String(params.value ?? params.envVarValue ?? '').trim();
+  const directApply = Boolean(params.apply || params.applyDirect || params.live);
+  return Boolean(directApply && directValue && envKeys.length === 1 && DIRECT_ENV_UPDATE_ALLOWLIST.has(envKeys[0]));
+}
+
+function redactApprovalParamPreview(value, depth = 0) {
+  if (depth > 6) return '[REDACTED_DEPTH_LIMIT]';
+  if (Array.isArray(value)) return value.map((item) => redactApprovalParamPreview(item, depth + 1));
+  if (!value || typeof value !== 'object') return value;
+
+  const redacted = {};
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = String(key || '').toLowerCase();
+    const isEnvKeyName = normalizedKey === 'key'
+      && typeof item === 'string'
+      && /^[A-Z][A-Z0-9_]{2,}$/.test(item);
+    if (!isEnvKeyName && /(secret|token|passcode|password|authorization|api[_-]?key|private[_-]?key|envvarvalue|\bvalue\b)/i.test(normalizedKey)) {
+      redacted[key] = '[REDACTED]';
+    } else {
+      redacted[key] = redactApprovalParamPreview(item, depth + 1);
+    }
+  }
+  return redacted;
+}
+
 function getRuntimeOperatingMode() {
   const settings = ensureRuntimeSettings(state);
   const mode = String(settings.ui?.operatingMode || settings.operatingMode || state.status?.mode || 'approval').toLowerCase();
@@ -15452,6 +15496,7 @@ function getProviderKillSwitch() {
 
 async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
+  if (isDirectProtectedEnvUpdate(toolName, params)) return null;
   const killSwitch = getProviderKillSwitch();
   if (killSwitch.active) {
     const label = toolName.replace(/_/g, ' ');
@@ -15499,7 +15544,7 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
 
   let paramPreview = '';
   try {
-    paramPreview = JSON.stringify(params || {});
+    paramPreview = JSON.stringify(redactApprovalParamPreview(params || {}));
   } catch {
     paramPreview = '[unserializable params]';
   }
@@ -21378,22 +21423,10 @@ const toolHandlers = {
 
   async admin_update_env_var(params = {}) {
     recordToolUse('admin_update_env_var');
-    const envVars = Array.isArray(params.envVars)
-      ? params.envVars.map((key) => String(key || '').trim()).filter(Boolean)
-      : params.key
-        ? [String(params.key).trim()]
-        : [];
+    const envVars = getEnvUpdateKeys(params);
     const directValue = String(params.value ?? params.envVarValue ?? '').trim();
     const directApply = Boolean(params.apply || params.applyDirect || params.live);
-    const deepSeekEnvAllowlist = new Set([
-      'PBK_DEEPSEEK_API_KEY',
-      'DEEPSEEK_API_KEY',
-      'PBK_DEEPSEEK_BASE_URL',
-      'PBK_DEEPSEEK_MODEL',
-      'PBK_DEEPSEEK_FALLBACK_MODEL',
-      'PBK_STRATEGIST_PROVIDER',
-    ]);
-    if (directApply && directValue && envVars.length === 1 && deepSeekEnvAllowlist.has(envVars[0])) {
+    if (directApply && directValue && envVars.length === 1 && DIRECT_ENV_UPDATE_ALLOWLIST.has(envVars[0])) {
       const passcode = String(params.passcode || params.teamPasscode || params.team_passcode || params.protectedOpsPasscode || '').trim();
       const passcodeOk = isProtectedLearningPasscodeValid({ passcode }) || isTeamPasscodeValid(passcode);
       if (!passcodeOk) {

@@ -9878,11 +9878,19 @@ function detectAdminIntent(command = '') {
     };
   }
 
-  if (normalized.includes('render') || normalized.includes('env var') || normalized.includes('restart') || normalized.includes('rollback')) {
+  if (normalized.includes('render') || normalized.includes('env var') || normalized.includes('restart') || normalized.includes('rollback') || normalized.includes('redeploy') || normalized.includes('deploy latest') || normalized.includes('manual deploy')) {
+    const renderAction =
+      normalized.includes('rollback')
+        ? 'rollback_deploy'
+        : normalized.includes('restart') && !normalized.includes('deploy latest') && !normalized.includes('manual deploy')
+          ? 'restart_service'
+          : normalized.includes('redeploy') || normalized.includes('deploy latest') || normalized.includes('manual deploy')
+            ? 'trigger_deploy'
+            : 'update_env_var';
     return {
       provider: 'render',
-      action: normalized.includes('rollback') ? 'rollback_deploy' : normalized.includes('restart') ? 'restart_service' : 'update_env_var',
-      risk: normalized.includes('rollback') || normalized.includes('update') ? 'high' : 'medium',
+      action: renderAction,
+      risk: ['rollback_deploy', 'update_env_var', 'trigger_deploy'].includes(renderAction) ? 'high' : 'medium',
       summary: 'Prepare a hosted bridge infrastructure change on Render.',
     };
   }
@@ -10102,6 +10110,11 @@ function extractServiceId(command = '') {
   return match ? match[1] : '';
 }
 
+function extractCommitId(command = '') {
+  const match = String(command || '').match(/\b(?:commit|sha)\s+([a-f0-9]{7,40})\b/i);
+  return match ? match[1] : '';
+}
+
 function buildAdminRoutePreview(route = {}) {
   const providerKey = String(route.provider || '').toLowerCase();
   const configured =
@@ -10223,6 +10236,8 @@ function classifyExtendedAdminCommand(command = '', detected = null) {
     const envVars = extractEnvVarNames(command);
     const envAssignments = extractEnvAssignments(command);
     const serviceId = extractServiceId(command) || RENDER_SERVICE_ID || '';
+    const commitId = extractCommitId(command);
+    const clearCache = normalized.includes('clear cache') || normalized.includes('clear build cache');
     const restartAfterUpdate = normalized.includes('restart') || normalized.includes('bounce') || normalized.includes('redeploy');
     return {
       provider: 'render',
@@ -10234,11 +10249,15 @@ function classifyExtendedAdminCommand(command = '', detected = null) {
         envVars,
         envAssignments,
         serviceId: serviceId || undefined,
+        commitId: commitId || undefined,
+        clearCache,
         restartAfterUpdate,
       },
       summary:
         adminIntent.action === 'rollback_deploy'
           ? `Prepare a Render rollback${serviceId ? ` for service ${serviceId}` : ''}.`
+          : adminIntent.action === 'trigger_deploy'
+            ? `Prepare a Render deploy${commitId ? ` for commit ${commitId}` : ' of the latest commit'}${serviceId ? ` on service ${serviceId}` : ''}${clearCache ? ' with a cleared build cache' : ''}.`
           : adminIntent.action === 'restart_service'
             ? `Prepare a Render service restart${serviceId ? ` for ${serviceId}` : ''}.`
             : `Prepare a Render environment update${Object.keys(envAssignments).length ? ` for ${Object.keys(envAssignments).join(', ')}` : envVars.length ? ` for ${envVars.join(', ')}` : ''}.`,
@@ -10650,6 +10669,7 @@ function normalizeApprovalRequired(provider = '', action = '') {
   return [
     'instantly:create_email_domain',
     'instantly:rotate_sending_limits',
+    'render:trigger_deploy',
     'telnyx:purchase_number',
     'render:update_env_var',
     'render:rollback_deploy',
@@ -10956,6 +10976,25 @@ async function executeAdminTask(task, overrides = {}) {
       response.details = 'Render admin credentials are not configured, so this action stayed in dry-run mode.';
     } else if (!liveExecution) {
       response.details = 'Render admin request recorded. Live provider writes remain guarded until the task runs live.';
+    } else if (task.action === 'trigger_deploy') {
+      const serviceId = String(payload.serviceId || RENDER_SERVICE_ID || '').trim();
+      if (!serviceId) {
+        response.ok = false;
+        response.details = 'Render deploy requires a service ID.';
+      } else {
+        const deployBody = {
+          clearCache: payload.clearCache ? 'clear' : 'do_not_clear',
+        };
+        if (payload.commitId) deployBody.commitId = String(payload.commitId);
+        const deployResult = await fireRenderRequest('POST', `/services/${encodeURIComponent(serviceId)}/deploys`, deployBody);
+        response.ok = deployResult.ok;
+        response.live = true;
+        response.simulated = false;
+        response.deployResult = deployResult;
+        response.details = deployResult.ok
+          ? `Render deploy requested for service ${serviceId}${payload.commitId ? ` at commit ${payload.commitId}` : ' using the latest linked-branch commit'}.`
+          : deployResult.error || `Render deploy request failed for service ${serviceId}.`;
+      }
     } else if (task.action === 'restart_service') {
       const serviceId = String(payload.serviceId || RENDER_SERVICE_ID || '').trim();
       if (!serviceId) {

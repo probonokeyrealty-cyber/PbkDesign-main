@@ -14281,14 +14281,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const providerLabels = {
       telnyx: 'Telnyx',
       docusign: 'DocuSign',
-      batchdata: 'BatchData',
+      batchdata: 'BatchData (optional)',
       slack: 'Slack'
     };
 
     const order = ['telnyx', 'docusign', 'batchdata', 'slack'];
-    const total = order.length;
-    let liveCount = 0;
-    let configuredCount = 0;
+    const optionalProviders = new Set(['batchdata']);
+    const coreOrder = order.filter((key) => !optionalProviders.has(key));
+    const coreTotal = coreOrder.length;
+    let coreLiveCount = 0;
+    let coreConfiguredCount = 0;
 
     const normalizeMissing = (value) => {
       if (!value) return [];
@@ -14331,9 +14333,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const stateEl = row.querySelector('.settings-providers-state');
       const isReady = Boolean(meta.ready);
       const isConfigured = Boolean(meta.configured);
+      const isOptional = optionalProviders.has(key);
 
-      if (isReady) liveCount += 1;
-      if (isConfigured) configuredCount += 1;
+      if (isReady && !isOptional) coreLiveCount += 1;
+      if (isConfigured && !isOptional) coreConfiguredCount += 1;
 
       const hint = buildMissingHint(meta, key);
       let state = 'missing';
@@ -14362,6 +14365,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           const prefix = 'Configured · not ready';
           label = hint ? `${prefix} · ${hint}` : prefix;
         }
+      } else if (isOptional) {
+        label = hint ? `Optional setup - ${hint}` : 'Optional setup';
       } else {
         label = hint ? `Not configured · ${hint}` : 'Not configured';
       }
@@ -14376,23 +14381,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
 
     if (summaryEl) {
-      if (liveCount === 0 && configuredCount === 0) {
-        summaryEl.textContent = 'No providers configured';
-      } else if (liveCount === total) {
-        summaryEl.textContent = `${total} of ${total} live`;
+      if (coreLiveCount === 0 && coreConfiguredCount === 0) {
+        summaryEl.textContent = 'Core providers not configured';
+      } else if (coreLiveCount === coreTotal) {
+        const optionalReady = order.filter((key) => optionalProviders.has(key) && providers?.[key]?.ready).length;
+        summaryEl.textContent = optionalReady ? `Core live + ${optionalReady} optional` : 'Core providers live';
       } else {
-        summaryEl.textContent = `${liveCount} of ${total} live · ${total - liveCount} need setup`;
+        summaryEl.textContent = `${coreLiveCount} of ${coreTotal} core live - ${coreTotal - coreLiveCount} need setup`;
       }
     }
 
     if (noteEl) {
-      const notLive = order
+      const notLive = coreOrder
         .filter((key) => providers?.[key] && !providers[key].ready)
         .map((key) => providerLabels[key] || key);
 
-      noteEl.textContent = notLive.length === 0
-        ? 'Bridge health reports all provider APIs live.'
-        : `Bridge health reports ${liveCount} of ${total} live. Missing requirements are listed per provider (Render env vars).`;
+      const optionalMissing = order.some((key) => optionalProviders.has(key) && providers?.[key] && !providers[key].ready);
+      if (notLive.length === 0 && optionalMissing) {
+        noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers can be added later in Render.';
+      } else if (notLive.length === 0) {
+        noteEl.textContent = 'Bridge health reports all core and optional provider APIs live.';
+      } else {
+        noteEl.textContent = `Bridge health reports ${coreLiveCount} of ${coreTotal} core providers live. Missing requirements are listed per provider (Render env vars).`;
+      }
     }
   }
 
@@ -25259,12 +25270,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       streak: 'Streak',
       crmSync: 'CRM Sync',
       docusign: 'DocuSign',
-      batchdata: 'BatchData',
+      batchdata: 'BatchData (optional)',
       slack: 'Slack',
       render: 'Render'
     };
 
     const order = ['telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
+    const optionalProviders = new Set(['batchdata']);
+    const coreOrder = order.filter((key) => !optionalProviders.has(key));
     const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
     const shortList = (items, limit = 2) => {
       const list = normalizeMissing(items);
@@ -25298,8 +25311,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
 
-    let liveCount = 0;
-    let configuredCount = 0;
+    const coreVisibleOrder = coreOrder.filter((key) => providers?.[key]);
+    const coreVisibleTotal = coreVisibleOrder.length || coreOrder.length;
+    let coreLiveCount = 0;
+    let coreConfiguredCount = 0;
 
     order.forEach((key) => {
       const meta = providers?.[key];
@@ -25309,12 +25324,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       const isReady = Boolean(meta.ready);
       const isConfigured = Boolean(meta.configured);
+      const isOptional = optionalProviders.has(key);
       const hint = buildMissingHint(meta, key);
       const stateEl = row.querySelector('.settings-providers-state');
       const nameEl = row.querySelector('.settings-providers-name');
 
-      if (isReady) liveCount += 1;
-      if (isConfigured) configuredCount += 1;
+      if (isReady && !isOptional) coreLiveCount += 1;
+      if (isConfigured && !isOptional) coreConfiguredCount += 1;
 
       let state = 'missing';
       let label = 'Not configured';
@@ -25358,6 +25374,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           const prefix = 'Configured · not ready';
           label = hint ? `${prefix} · ${hint}` : prefix;
         }
+      } else if (isOptional) {
+        label = hint ? `Optional setup - ${hint}` : 'Optional setup';
       } else {
         label = hint ? `Not configured · ${hint}` : 'Not configured';
       }
@@ -25368,19 +25386,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
 
     if (summaryEl) {
-      if (liveCount === 0 && configuredCount === 0) {
-        summaryEl.textContent = 'No providers configured';
-      } else if (liveCount === order.length) {
-        summaryEl.textContent = `${order.length} of ${order.length} live`;
+      if (coreLiveCount === 0 && coreConfiguredCount === 0) {
+        summaryEl.textContent = 'Core providers not configured';
+      } else if (coreLiveCount === coreVisibleTotal) {
+        const optionalReady = order.filter((key) => optionalProviders.has(key) && providers?.[key]?.ready).length;
+        summaryEl.textContent = optionalReady ? `Core live + ${optionalReady} optional` : 'Core providers live';
       } else {
-        summaryEl.textContent = `${liveCount} of ${order.length} live · ${order.length - liveCount} need setup`;
+        summaryEl.textContent = `${coreLiveCount} of ${coreVisibleTotal} core live - ${coreVisibleTotal - coreLiveCount} need setup`;
       }
     }
 
     if (noteEl) {
-      noteEl.textContent = liveCount === order.length
-        ? 'Bridge health reports all provider APIs live.'
-        : `Bridge health reports ${liveCount} of ${order.length} live. Missing requirements are listed per provider (Render env vars).`;
+      const optionalMissing = order.some((key) => optionalProviders.has(key) && providers?.[key] && !providers[key].ready);
+      if (coreLiveCount === coreVisibleTotal && optionalMissing) {
+        noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers can be added later in Render.';
+      } else if (coreLiveCount === coreVisibleTotal) {
+        noteEl.textContent = 'Bridge health reports all core and optional provider APIs live.';
+      } else {
+        noteEl.textContent = `Bridge health reports ${coreLiveCount} of ${coreVisibleTotal} core providers live. Missing requirements are listed per provider (Render env vars).`;
+      }
     }
 
     if (quotaEl) {

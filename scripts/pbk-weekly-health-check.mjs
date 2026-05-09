@@ -207,7 +207,10 @@ async function main() {
     console.log(`Frontend: ${frontend.ok ? 'up' : `down (${frontend.status || 'no status'})`}`);
     console.log(`Browser voice health: ${voiceHealth.ok ? 'up' : 'needs attention'}`);
     console.log(`Deepgram health: ${deepgramHealth.ok ? 'up' : 'needs attention'}`);
-    console.log(`TOTP: ${result.totp.required ? 'required' : 'not enforced'} / ${result.totp.configured ? 'configured' : 'not configured'}`);
+    const totpMode = result.totp.required
+      ? 'enforced'
+      : (result.totp.configured ? 'configured, not enforced' : 'off until founder enrollment');
+    console.log(`TOTP: ${totpMode}`);
     console.log('');
     console.log(result.ok ? 'PBK weekly health check passed.' : 'PBK weekly health check needs attention.');
     if (!rows.length) {

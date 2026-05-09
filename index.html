@@ -4298,12 +4298,17 @@
       display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
       gap: var(--s-4);
     }
+    .calls-grid[data-live-calls-grid]:not([data-rendered="true"]) > .lc-card,
+    .uq-list[data-live-calls-queue]:not([data-rendered="true"]) > .uq-card {
+      display: none;
+    }
     .lc-card {
       background: var(--bg-panel); border: 1px solid var(--border-dim);
       border-radius: var(--radius-lg); overflow: hidden;
       display: flex; flex-direction: column; min-height: 360px;
       position: relative;
     }
+    .lc-card.queued { border-color: rgba(125, 211, 252, 0.24); }
     .lc-card.live { border-color: var(--crimson); box-shadow: 0 0 0 1px var(--crimson-glow), 0 0 24px var(--crimson-glow); }
     .lc-card.live::before {
       content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -4325,6 +4330,24 @@
     .lc-who .n { font-family: var(--font-display); font-weight: 600; font-size: 15px; color: var(--text-primary); line-height: 1.2; }
     .lc-who .a { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.04em; }
     .lc-timer { font-family: var(--font-mono); font-size: 13px; color: var(--sky); letter-spacing: 0.08em; flex-shrink: 0; }
+    .lc-status-pill {
+      margin-left: var(--s-2);
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(125, 211, 252, 0.28);
+      color: var(--sky);
+      background: rgba(125, 211, 252, 0.08);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .lc-status-pill.live {
+      border-color: rgba(255, 55, 94, 0.42);
+      color: var(--crimson);
+      background: rgba(255, 55, 94, 0.08);
+    }
 
     .lc-body { flex: 1; padding: var(--s-4); overflow-y: auto; font-family: var(--font-mono); font-size: 11px; line-height: 1.7; max-height: 200px; }
     .lc-turn { margin-bottom: var(--s-2); }
@@ -4350,6 +4373,30 @@
       display: flex; gap: 6px; flex-wrap: wrap;
     }
     .lc-ctrls .btn { flex: 1; justify-content: center; padding: 6px 8px; font-size: 10px; }
+    .lc-empty,
+    .uq-empty {
+      width: 100%;
+      min-height: 220px;
+      border: 1px dashed rgba(125, 211, 252, 0.24);
+      border-radius: var(--radius-lg);
+      background:
+        radial-gradient(circle at 14% 0%, rgba(125,211,252,0.10), transparent 30%),
+        linear-gradient(180deg, rgba(255,255,255,0.025), rgba(7,10,14,0.86));
+      color: var(--text-secondary);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: var(--s-6);
+      line-height: 1.55;
+    }
+    .lc-empty strong,
+    .uq-empty strong {
+      display: block;
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
 
     /* upcoming queue */
     .upcoming-queue {
@@ -4380,7 +4427,7 @@
 
   <div class="page-head">
     <div class="page-head-left">
-      <div class="ph-tag">Mission Control — 2 active — 4 queued</div>
+      <div class="ph-tag" data-call-floor-summary>Mission Control - connect PBK Brain for live calls</div>
       <h2>The <em>call floor</em>.</h2>
       <p>Every live AI call on one screen. Read the transcript, watch sentiment, barge in, or let Ava close. Multi-call takeover and DNC controls on every tile.</p>
     </div>
@@ -4391,7 +4438,13 @@
     </div>
   </div>
 
-  <div class="calls-grid">
+  <div class="calls-grid" data-live-calls-grid>
+    <div class="lc-empty" data-call-floor-empty>
+      <div>
+        <strong>No live AI calls loaded yet.</strong>
+        Connect PBK Brain in Settings and live Ava/Rex call tiles will appear here with transcript, sentiment, and takeover controls. Sample calls stay hidden on this production surface.
+      </div>
+    </div>
     <!-- LIVE CALL 1 -->
     <div class="lc-card live">
       <div class="lc-head">
@@ -4460,8 +4513,14 @@
   </div>
 
   <div class="upcoming-queue">
-    <div class="uq-title">? Queued Outbound — next 30 minutes</div>
-    <div class="uq-list">
+    <div class="uq-title" data-call-floor-queue-title>Queued outbound - live bridge</div>
+    <div class="uq-list" data-live-calls-queue>
+      <div class="uq-empty" data-call-floor-queue-empty>
+        <div>
+          <strong>No outbound queue loaded.</strong>
+          Approved Telnyx calls and sandboxed call requests will populate this lane after PBK Brain syncs.
+        </div>
+      </div>
       <div class="uq-card">
         <div class="when">11:02 — 27m</div>
         <div class="name">Latoya Briggs</div>
@@ -6775,10 +6834,10 @@
           Rex has no visible decisions yet. Import and activate the strategist workflows, then proposals will appear here with their approval status, target, rationale, and measured outcome.
         </div>
         <div class="rex-setup-strip" data-rex-setup-strip>
-          <div class="rex-setup-chip"><strong>n8n envs</strong><br>PBK_BRIDGE_URL, PBK_BRIDGE_API_KEY, PBK_VOIDLLM_BASE_URL, PBK_VOIDLLM_MODEL</div>
-          <div class="rex-setup-chip"><strong>Workflows</strong><br>Import rex-strategist and rex-outcome-evaluator, then activate after a dry run.</div>
-          <div class="rex-setup-chip"><strong>Provider writes</strong><br>Keep Instantly, Telnyx, and DocuSign in sandbox until one verified live test passes.</div>
-          <div class="rex-setup-chip"><strong>Slack</strong><br>Approve, Decline, and Modify proposal actions are audit-backed.</div>
+          <div class="rex-setup-chip"><strong>Brain bridge keys</strong><br>These let n8n safely reach PBK Brain and know which model endpoint Rex should use.</div>
+          <div class="rex-setup-chip"><strong>Rex learning loops</strong><br>Import strategist and outcome-evaluator workflows, dry-run once, then activate.</div>
+          <div class="rex-setup-chip"><strong>Provider safety</strong><br>Email, SMS, calls, and contracts stay sandboxed until one verified live test passes.</div>
+          <div class="rex-setup-chip"><strong>Approval audit</strong><br>Approve, Decline, and Modify actions are logged back to PBK for learning and accountability.</div>
         </div>
       </section>
 
@@ -16052,13 +16111,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const action = actionButton.dataset.rexAction;
         if (action === 'setup') {
           showUtilityModal('Rex strategist setup', `
-            <p style="margin-bottom:10px;color:var(--text-secondary);line-height:1.55;">Rex can already propose, approve, apply, and measure changes. To turn on the daily loop, import the two workflows and set the four n8n env vars.</p>
-            <code>n8n-lite/rex-strategist.workflow.json</code><br>
-            <code>n8n-lite/rex-outcome-evaluator.workflow.json</code><br><br>
-            <code>PBK_BRIDGE_URL</code><br>
-            <code>PBK_BRIDGE_API_KEY</code><br>
-            <code>PBK_VOIDLLM_BASE_URL</code><br>
-            <code>PBK_VOIDLLM_MODEL</code>
+            <p style="margin-bottom:10px;color:var(--text-secondary);line-height:1.55;">Purpose: this turns Rex from a manual research helper into a measured improvement loop. Rex proposes a change, PBK routes it for approval, then the evaluator checks whether the change actually helped.</p>
+            <div style="display:grid;gap:10px;color:var(--text-secondary);line-height:1.55;">
+              <div><strong style="color:var(--text-primary);">1. n8n bridge keys</strong><br><code>PBK_BRIDGE_URL</code> points n8n at PBK Brain. <code>PBK_BRIDGE_API_KEY</code> lets n8n authenticate safely. <code>PBK_VOIDLLM_BASE_URL</code> and <code>PBK_VOIDLLM_MODEL</code> tell Rex which model lane to use.</div>
+              <div><strong style="color:var(--text-primary);">2. Workflows</strong><br>Import <code>n8n-lite/rex-strategist.workflow.json</code> for proposals and <code>n8n-lite/rex-outcome-evaluator.workflow.json</code> for scoring outcomes. Run both once in dry-run before activation.</div>
+              <div><strong style="color:var(--text-primary);">3. Provider safety</strong><br>Instantly, Telnyx, and DocuSign remain sandboxed until PBK completes one verified live test. Rex may recommend actions, but provider writes stay approval-gated.</div>
+              <div><strong style="color:var(--text-primary);">4. Slack audit</strong><br>Approve, Decline, and Modify decisions are recorded so Ava and Rex learn what you accepted, changed, or rejected.</div>
+            </div>
           `);
           return;
         }
@@ -16329,6 +16388,174 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  function isRuntimeCallActive(call = {}) {
+    return /active|answered|in-progress|live|ringing/i.test(String(call.status || call.callStatus || ''));
+  }
+
+  function isRuntimeCallQueued(call = {}) {
+    return /queued|scheduled|pending|requested|approval/i.test(String(call.status || call.callStatus || ''));
+  }
+
+  function isDemoRuntimeCall(call = {}) {
+    const phoneDigits = String(call.phone || call.to || '').replace(/\D+/g, '');
+    const text = [
+      call.id,
+      call.leadId,
+      call.leadName,
+      call.address,
+      call.provider,
+      call.script,
+      call.source
+    ].filter(Boolean).join(' ');
+    return /call-diane-live|call-john-live|lead-diane-kowalski|lead-john-smith|Diane Kowalski|John Smith|202 Cherry Ln|123 Main St/i.test(text)
+      || (/55501\d{2}$/.test(phoneDigits) && !/telnyx/i.test(String(call.provider || '')));
+  }
+
+  function getRuntimeCalls(snapshot = {}, { includeEnded = false } = {}) {
+    const calls = Array.isArray(snapshot.calls) ? snapshot.calls : [];
+    return sortRuntimeItems(calls.filter((call) => {
+      if (isDemoRuntimeCall(call)) return false;
+      if (includeEnded) return true;
+      return isRuntimeCallActive(call) || isRuntimeCallQueued(call);
+    }));
+  }
+
+  function formatPhoneForDisplay(phone = '') {
+    const digits = String(phone || '').replace(/\D+/g, '');
+    const local = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+    if (local.length === 10) return `+1 ${local.slice(0, 3)}-${local.slice(3, 6)}-${local.slice(6)}`;
+    return phone || 'Phone pending';
+  }
+
+  function getInitial(value = '') {
+    return (String(value || 'P').trim()[0] || 'P').toUpperCase();
+  }
+
+  function formatCallDuration(call = {}) {
+    const directSeconds = Number(call.durationSeconds || call.duration_seconds || 0);
+    let seconds = Number.isFinite(directSeconds) && directSeconds > 0 ? directSeconds : 0;
+    if (!seconds) {
+      const startedAt = new Date(call.startedAt || call.createdAt || call.updatedAt || 0).getTime();
+      if (Number.isFinite(startedAt) && startedAt > 0 && isRuntimeCallActive(call)) {
+        seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      }
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainder = Math.floor(seconds % 60);
+    return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+  }
+
+  function formatCallScore(value, fallback = 'Tracking') {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(2) : fallback;
+  }
+
+  function renderCallTranscriptTurns(call = {}) {
+    const turns = Array.isArray(call.transcript) ? call.transcript.slice(-6) : [];
+    if (!turns.length) {
+      return '<div class="lc-turn current"><span class="s">PBK</span><span class="t">Waiting for transcript from Telnyx and Deepgram.</span></div>';
+    }
+    return turns.map((turn, index) => {
+      const speaker = turn.speaker || turn.role || (turn.isAi ? 'AI' : 'Seller');
+      const isSeller = !/ai|ava|rex|agent|assistant|pbk/i.test(String(speaker));
+      const isCurrent = index === turns.length - 1 && isRuntimeCallActive(call);
+      return `<div class="lc-turn ${isSeller ? 'seller' : ''} ${isCurrent ? 'current' : ''}"><span class="s">${escapeHtml(String(speaker).slice(0, 14))}</span><span class="t">${escapeHtml(turn.text || turn.content || turn.message || '')}</span></div>`;
+    }).join('');
+  }
+
+  function renderCallFloorCard(call = {}) {
+    const status = String(call.status || call.callStatus || 'live');
+    const leadName = call.leadName || call.name || call.sellerName || 'Unknown seller';
+    const address = call.address || call.propertyAddress || 'Address pending';
+    const phone = formatPhoneForDisplay(call.phone || call.to || '');
+    const assistant = call.agentName || call.assistantName || call.assistantId || call.actor || 'Ava';
+    const live = isRuntimeCallActive(call);
+    const sentiment = Number(call.sentiment);
+    const sentimentClass = Number.isFinite(sentiment) && sentiment >= 0.62 ? 'good' : Number.isFinite(sentiment) && sentiment < 0.4 ? 'alert' : '';
+    const yellRisk = Number(call.yellRisk || call.yell_risk);
+    const yellClass = Number.isFinite(yellRisk) && yellRisk > 0.35 ? 'alert' : 'good';
+    return `
+      <div class="lc-card ${live ? 'live' : 'queued'}" data-call-id="${escapeHtml(call.id || '')}">
+        <div class="lc-head">
+          <div class="lc-who">
+            <div class="lc-avatar">${escapeHtml(getInitial(leadName))}</div>
+            <div>
+              <div class="n">${escapeHtml(leadName)}</div>
+              <div class="a">${escapeHtml(address)} - ${escapeHtml(phone)} - ${escapeHtml(assistant)}</div>
+            </div>
+            <span class="lc-status-pill ${live ? 'live' : ''}">${escapeHtml(status)}</span>
+          </div>
+          <div class="lc-timer">${escapeHtml(formatCallDuration(call))}</div>
+        </div>
+        <div class="lc-body">
+          ${renderCallTranscriptTurns(call)}
+        </div>
+        <div class="lc-meters">
+          <div class="lc-meter"><div class="l">Sentiment</div><div class="v ${sentimentClass}">${escapeHtml(formatCallScore(call.sentiment))}</div></div>
+          <div class="lc-meter"><div class="l">Provider</div><div class="v">${escapeHtml(call.provider || 'PBK')}</div></div>
+          <div class="lc-meter"><div class="l">Yell risk</div><div class="v ${yellClass}">${escapeHtml(formatCallScore(call.yellRisk || call.yell_risk))}</div></div>
+        </div>
+        <div class="lc-ctrls">
+          <button class="btn btn-takeover" type="button">Take over</button>
+          <button class="btn btn-ghost" type="button">Mute AI</button>
+          <button class="btn btn-ghost" type="button">Transfer</button>
+          <button class="btn btn-danger" type="button">End</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCallFloorQueueCard(call = {}) {
+    const leadName = call.leadName || call.name || call.sellerName || 'Queued lead';
+    const address = call.address || call.propertyAddress || 'Address pending';
+    const when = call.scheduledFor || call.scheduledAt || call.startedAt || call.createdAt || call.updatedAt;
+    const reason = [
+      call.script,
+      call.status || call.callStatus,
+      call.provider ? `${call.provider} lane` : '',
+      call.phone ? formatPhoneForDisplay(call.phone) : ''
+    ].filter(Boolean).join(' - ');
+    return `
+      <div class="uq-card" data-call-id="${escapeHtml(call.id || '')}">
+        <div class="when">${escapeHtml(when ? formatRelativeTime(when) : 'Pending approval')}</div>
+        <div class="name">${escapeHtml(leadName)}</div>
+        <div class="addr">${escapeHtml(address)}</div>
+        <div class="why">${escapeHtml(reason || 'Waiting for PBK Brain to attach queue context.')}</div>
+      </div>
+    `;
+  }
+
+  function renderCallFloor(snapshot = {}) {
+    const page = getPageNode('calls');
+    if (!page) return;
+    const summary = page.querySelector('[data-call-floor-summary]');
+    const grid = page.querySelector('[data-live-calls-grid]');
+    const queue = page.querySelector('[data-live-calls-queue]');
+    const queueTitle = page.querySelector('[data-call-floor-queue-title]');
+    if (!grid || !queue) return;
+
+    const connected = getOpenClawConfig().status === 'connected';
+    const calls = getRuntimeCalls(snapshot);
+    const activeCalls = calls.filter(isRuntimeCallActive);
+    const queuedCalls = calls.filter(isRuntimeCallQueued);
+
+    if (summary) {
+      summary.textContent = connected
+        ? `Mission Control - ${activeCalls.length} active - ${queuedCalls.length} queued`
+        : 'Mission Control - connect PBK Brain for live calls';
+    }
+    if (queueTitle) queueTitle.textContent = `Queued outbound - ${queuedCalls.length} bridge record${queuedCalls.length === 1 ? '' : 's'}`;
+
+    grid.dataset.rendered = 'true';
+    queue.dataset.rendered = 'true';
+    grid.innerHTML = activeCalls.length
+      ? activeCalls.map(renderCallFloorCard).join('')
+      : `<div class="lc-empty" data-call-floor-empty><div><strong>No AI calls are live right now.</strong>${connected ? 'When Ava, Rex, or another PBK agent joins a Telnyx/Deepgram call, the transcript, sentiment, and takeover controls will appear here.' : 'Save the private PBK bridge API key in Settings to load live call state.'}</div></div>`;
+    queue.innerHTML = queuedCalls.length
+      ? queuedCalls.map(renderCallFloorQueueCard).join('')
+      : `<div class="uq-empty" data-call-floor-queue-empty><div><strong>No outbound queue loaded.</strong>${connected ? 'Approved call requests and sandboxed provider checks will show here before they go live.' : 'Connect PBK Brain to see queued call requests.'}</div></div>`;
+  }
+
   function isDemoRuntimeMessage(message = {}) {
     const source = String(message.source || message.kind || message.fixture || '').toLowerCase();
     const text = [
@@ -16352,7 +16579,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return snapshot.messageCounts;
     }
     const messages = rawMessages.filter((message) => !isDemoRuntimeMessage(message));
-    const calls = Array.isArray(snapshot.calls) ? snapshot.calls : [];
+    const calls = getRuntimeCalls(snapshot);
     const approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
     const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
     const channel = (name) => messages.filter((message) => String(message.channel || '').toLowerCase() === name).length;
@@ -16628,6 +16855,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     applyRuntimeMode(snapshot);
     renderRuntimeCounts(snapshot);
     renderRuntimeInbox(snapshot);
+    renderCallFloor(snapshot);
     renderRuntimeNotifications(snapshot);
     renderActivityFeed(snapshot);
     renderApprovalQueue(snapshot);
@@ -16658,6 +16886,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   renderRuntimeInbox(PBK.state.openclawRuntime || {});
+  renderCallFloor(PBK.state.openclawRuntime || {});
 
   async function syncOpenClawState({ silent = false } = {}) {
     const config = getOpenClawConfig();

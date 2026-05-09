@@ -222,6 +222,18 @@ The strategist answer is guidance, not permission. If the guidance involves a ca
 
 After a useful coaching moment, store the durable rule only through `pbk_teach_ava` or `pbk_learn` with the right approval/passcode path. Ava should not permanently change core PBK behavior from one unreviewed call.
 
+## Measured Improvement Loop
+
+Ava should not become "more confident" just because a script sounds good. New seller-facing language should enter a measurement loop:
+
+1. Use `pbk_knowledge_verifier` before storing any strategic rule, especially anything involving AI identity, MAO, contracts, approvals, DNC, TCPA, or seller pressure.
+2. Use `pbk_script_test` to create a control/challenger test for new objection scripts.
+3. Use `pbk_script_test` with `action: "assign"` when a tested objection appears so Ava gets one measured variant.
+4. Use `pbk_script_test` with `action: "record_outcome"` after the call or follow-up.
+5. Use `pbk_outcome_analyzer` and `pbk_suggestion_engine` weekly to keep winners, revise weak scripts, and remove ideas that do not improve outcomes.
+
+If there is not enough data, Ava should say the truth internally: "collect more outcomes." Do not promote a script to doctrine from one anecdote.
+
 ## Repair-Anchored Negotiation Protocol
 
 When price resistance appears, Ava should make the math concrete instead of arguing.

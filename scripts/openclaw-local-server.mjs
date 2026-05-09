@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-09-deepseek-strategist-negotiation';
+const BUILD_REVISION = '2026-05-09-ava-quality-gates';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -465,6 +465,14 @@ const TOOL_NAMES = [
   'sendNegotiationApproval',
   'pbkSendNegotiationApproval',
   'avaOverrideOffer',
+  'pbk_script_test',
+  'scriptTest',
+  'pbk_outcome_analyzer',
+  'outcomeAnalyzer',
+  'pbk_suggestion_engine',
+  'suggestionEngine',
+  'pbk_knowledge_verifier',
+  'knowledgeVerifier',
   'pbk_learn',
   'pbk_learn_from_chat',
   'recordPbkFeedback',
@@ -569,6 +577,11 @@ const LIMITS = {
   avaLearningRequests: 180,
   repairItems: 360,
   offerOverrides: 180,
+  scriptTests: 160,
+  scriptTestEvents: 1200,
+  avaOutcomeReports: 120,
+  avaImprovementSuggestions: 240,
+  knowledgeVerifications: 240,
   avaStories: 160,
   agentVersions: 240,
   inboundCallRoutes: 180,
@@ -3202,6 +3215,11 @@ function buildDefaultState() {
     avaLearningRequests: [],
     repairItems: [],
     offerOverrides: [],
+    scriptTests: [],
+    scriptTestEvents: [],
+    avaOutcomeReports: [],
+    avaImprovementSuggestions: [],
+    knowledgeVerifications: [],
     avaStories: buildDefaultAvaStories(),
     inboundCallRoutes: [],
     promptPatchApplications: [],
@@ -3555,6 +3573,108 @@ async function ensurePgSchema() {
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    CREATE TABLE IF NOT EXISTS public.pbk_script_tests (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      objection_type TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      success_metric TEXT NOT NULL DEFAULT 'close_rate',
+      sample_size_target INTEGER NOT NULL DEFAULT 50,
+      variants JSONB NOT NULL DEFAULT '[]'::jsonb,
+      stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ended_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_script_tests
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS objection_type TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS success_metric TEXT NOT NULL DEFAULT 'close_rate',
+      ADD COLUMN IF NOT EXISTS sample_size_target INTEGER NOT NULL DEFAULT 50,
+      ADD COLUMN IF NOT EXISTS variants JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_script_test_events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      test_id TEXT NOT NULL DEFAULT '',
+      variant_id TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL DEFAULT 'exposure',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      outcome_label TEXT NOT NULL DEFAULT '',
+      success BOOLEAN,
+      deal_value NUMERIC NOT NULL DEFAULT 0,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_script_test_events
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS test_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS variant_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'exposure',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS outcome_label TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS success BOOLEAN,
+      ADD COLUMN IF NOT EXISTS deal_value NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_outcome_reports (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      period_days INTEGER NOT NULL DEFAULT 7,
+      summary TEXT NOT NULL DEFAULT '',
+      metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+      recommendations JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_improvement_suggestions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      title TEXT NOT NULL DEFAULT '',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      status TEXT NOT NULL DEFAULT 'proposed',
+      evidence TEXT NOT NULL DEFAULT '',
+      recommendation TEXT NOT NULL DEFAULT '',
+      success_metric TEXT NOT NULL DEFAULT '',
+      rollback_condition TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_knowledge_verifications (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      subject TEXT NOT NULL DEFAULT '',
+      predicate TEXT NOT NULL DEFAULT '',
+      object TEXT NOT NULL DEFAULT '',
+      verdict TEXT NOT NULL DEFAULT 'needs_review',
+      risk_level TEXT NOT NULL DEFAULT 'medium',
+      reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+      applied_fact_id TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS public.rex_decisions (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL DEFAULT 'rex-strategist',
@@ -3682,6 +3802,24 @@ async function ensurePgSchema() {
       ON public.pbk_offer_overrides (tenant_id, approval_id)
       WHERE approval_id <> '';
 
+    CREATE INDEX IF NOT EXISTS pbk_script_tests_lookup_idx
+      ON public.pbk_script_tests (tenant_id, objection_type, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_script_test_events_lookup_idx
+      ON public.pbk_script_test_events (tenant_id, test_id, variant_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_script_test_events_outcome_idx
+      ON public.pbk_script_test_events (tenant_id, outcome_label, success, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_outcome_reports_created_idx
+      ON public.pbk_outcome_reports (tenant_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_improvement_suggestions_status_idx
+      ON public.pbk_improvement_suggestions (tenant_id, status, priority, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_knowledge_verifications_lookup_idx
+      ON public.pbk_knowledge_verifications (tenant_id, verdict, risk_level, created_at DESC);
+
     CREATE INDEX IF NOT EXISTS rex_decisions_created_idx
       ON public.rex_decisions (created_at DESC);
 
@@ -3741,6 +3879,26 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS pbk_offer_overrides_set_updated_at ON public.pbk_offer_overrides;
     CREATE TRIGGER pbk_offer_overrides_set_updated_at
       BEFORE UPDATE ON public.pbk_offer_overrides
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_script_tests_set_updated_at ON public.pbk_script_tests;
+    CREATE TRIGGER pbk_script_tests_set_updated_at
+      BEFORE UPDATE ON public.pbk_script_tests
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_outcome_reports_set_updated_at ON public.pbk_outcome_reports;
+    CREATE TRIGGER pbk_outcome_reports_set_updated_at
+      BEFORE UPDATE ON public.pbk_outcome_reports
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_improvement_suggestions_set_updated_at ON public.pbk_improvement_suggestions;
+    CREATE TRIGGER pbk_improvement_suggestions_set_updated_at
+      BEFORE UPDATE ON public.pbk_improvement_suggestions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_knowledge_verifications_set_updated_at ON public.pbk_knowledge_verifications;
+    CREATE TRIGGER pbk_knowledge_verifications_set_updated_at
+      BEFORE UPDATE ON public.pbk_knowledge_verifications
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DELETE FROM public.pbk_knowledge
@@ -5040,6 +5198,11 @@ function limitStateArrays(nextState) {
   nextState.avaLearningRequests = sortNewest(nextState.avaLearningRequests || []).slice(0, LIMITS.avaLearningRequests);
   nextState.repairItems = sortNewest(nextState.repairItems || []).slice(0, LIMITS.repairItems);
   nextState.offerOverrides = sortNewest(nextState.offerOverrides || []).slice(0, LIMITS.offerOverrides);
+  nextState.scriptTests = sortNewest(nextState.scriptTests || []).slice(0, LIMITS.scriptTests);
+  nextState.scriptTestEvents = sortNewest(nextState.scriptTestEvents || []).slice(0, LIMITS.scriptTestEvents);
+  nextState.avaOutcomeReports = sortNewest(nextState.avaOutcomeReports || []).slice(0, LIMITS.avaOutcomeReports);
+  nextState.avaImprovementSuggestions = sortNewest(nextState.avaImprovementSuggestions || []).slice(0, LIMITS.avaImprovementSuggestions);
+  nextState.knowledgeVerifications = sortNewest(nextState.knowledgeVerifications || []).slice(0, LIMITS.knowledgeVerifications);
   nextState.avaStories = sortNewest(nextState.avaStories || []).slice(0, LIMITS.avaStories);
   nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
@@ -5086,6 +5249,13 @@ function updateDerivedStatus(nextState) {
   nextState.status.pendingAvaLearningRequests = (nextState.avaLearningRequests || []).filter((request) => ['pending', 'open', 'deferred'].includes(String(request.status || '').toLowerCase())).length;
   nextState.status.repairItems = (nextState.repairItems || []).length;
   nextState.status.offerOverrides = (nextState.offerOverrides || []).length;
+  nextState.status.scriptTests = (nextState.scriptTests || []).length;
+  nextState.status.activeScriptTests = (nextState.scriptTests || []).filter((test) => String(test.status || '').toLowerCase() === 'active').length;
+  nextState.status.scriptTestEvents = (nextState.scriptTestEvents || []).length;
+  nextState.status.avaOutcomeReports = (nextState.avaOutcomeReports || []).length;
+  nextState.status.avaImprovementSuggestions = (nextState.avaImprovementSuggestions || []).length;
+  nextState.status.openAvaImprovementSuggestions = (nextState.avaImprovementSuggestions || []).filter((item) => ['open', 'proposed', 'testing'].includes(String(item.status || '').toLowerCase())).length;
+  nextState.status.knowledgeVerifications = (nextState.knowledgeVerifications || []).length;
   nextState.status.avaStories = (nextState.avaStories || []).length;
   nextState.status.agentVersions = (nextState.agentVersions || []).length;
   nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
@@ -5114,6 +5284,10 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastAvaLearningRequestAt = getItemTimestamp((nextState.avaLearningRequests || [])[0] || {}) || nextState.status.lastAvaLearningRequestAt || null;
   nextState.status.lastRepairItemAt = getItemTimestamp((nextState.repairItems || [])[0] || {}) || nextState.status.lastRepairItemAt || null;
   nextState.status.lastOfferOverrideAt = getItemTimestamp((nextState.offerOverrides || [])[0] || {}) || nextState.status.lastOfferOverrideAt || null;
+  nextState.status.lastScriptTestAt = getItemTimestamp((nextState.scriptTests || [])[0] || {}) || nextState.status.lastScriptTestAt || null;
+  nextState.status.lastOutcomeReportAt = getItemTimestamp((nextState.avaOutcomeReports || [])[0] || {}) || nextState.status.lastOutcomeReportAt || null;
+  nextState.status.lastImprovementSuggestionAt = getItemTimestamp((nextState.avaImprovementSuggestions || [])[0] || {}) || nextState.status.lastImprovementSuggestionAt || null;
+  nextState.status.lastKnowledgeVerificationAt = getItemTimestamp((nextState.knowledgeVerifications || [])[0] || {}) || nextState.status.lastKnowledgeVerificationAt || null;
   nextState.status.lastInboundRouteAt = getItemTimestamp((nextState.inboundCallRoutes || [])[0] || {}) || nextState.status.lastInboundRouteAt || null;
   nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
   nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
@@ -5183,6 +5357,11 @@ function hydrateState(raw = {}) {
     avaLearningRequests: trimArray(raw.avaLearningRequests || defaults.avaLearningRequests, LIMITS.avaLearningRequests),
     repairItems: trimArray(raw.repairItems || defaults.repairItems, LIMITS.repairItems),
     offerOverrides: trimArray(raw.offerOverrides || defaults.offerOverrides, LIMITS.offerOverrides),
+    scriptTests: trimArray(raw.scriptTests || defaults.scriptTests, LIMITS.scriptTests),
+    scriptTestEvents: trimArray(raw.scriptTestEvents || defaults.scriptTestEvents, LIMITS.scriptTestEvents),
+    avaOutcomeReports: trimArray(raw.avaOutcomeReports || defaults.avaOutcomeReports, LIMITS.avaOutcomeReports),
+    avaImprovementSuggestions: trimArray(raw.avaImprovementSuggestions || defaults.avaImprovementSuggestions, LIMITS.avaImprovementSuggestions),
+    knowledgeVerifications: trimArray(raw.knowledgeVerifications || defaults.knowledgeVerifications, LIMITS.knowledgeVerifications),
     avaStories: trimArray(raw.avaStories || defaults.avaStories, LIMITS.avaStories),
     inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
@@ -8531,6 +8710,703 @@ async function avaOverrideOfferRecord(params = {}) {
     result: 'offer_override_recorded',
     override,
     avaScript,
+    storage: { localState: true, postgres },
+  };
+}
+
+function normalizeScriptVariant(raw = {}, index = 0) {
+  const fallbackId = index === 0 ? 'A' : index === 1 ? 'B' : `V${index + 1}`;
+  const id = String(raw.id || raw.variantId || raw.key || fallbackId).trim() || fallbackId;
+  const script = String(raw.script || raw.text || raw.body || '').trim();
+  return {
+    id,
+    label: String(raw.label || raw.name || `Variant ${id}`).trim() || `Variant ${id}`,
+    script,
+    hypothesis: String(raw.hypothesis || raw.why || '').trim(),
+    weight: Math.max(1, toNumber(raw.weight, 1)),
+    exposures: Math.max(0, toNumber(raw.exposures, 0)),
+    outcomes: Math.max(0, toNumber(raw.outcomes, 0)),
+    wins: Math.max(0, toNumber(raw.wins, 0)),
+    losses: Math.max(0, toNumber(raw.losses, 0)),
+    dealValue: Math.max(0, toNumber(raw.dealValue || raw.deal_value, 0)),
+  };
+}
+
+function buildScriptTestStats(test = {}, events = []) {
+  const variants = (test.variants || []).map((variant) => ({
+    ...variant,
+    exposures: 0,
+    outcomes: 0,
+    wins: 0,
+    losses: 0,
+    dealValue: 0,
+  }));
+  const byVariant = new Map(variants.map((variant) => [variant.id, variant]));
+  for (const event of events) {
+    const variant = byVariant.get(String(event.variantId || event.variant_id || ''));
+    if (!variant) continue;
+    const eventType = String(event.eventType || event.event_type || '').toLowerCase();
+    if (eventType === 'exposure' || eventType === 'assignment') {
+      variant.exposures += 1;
+    }
+    if (eventType === 'outcome') {
+      variant.outcomes += 1;
+      if (event.success === true) variant.wins += 1;
+      if (event.success === false) variant.losses += 1;
+      variant.dealValue += Math.max(0, toNumber(event.dealValue || event.deal_value, 0));
+    }
+  }
+  const scored = variants.map((variant) => ({
+    ...variant,
+    winRate: variant.outcomes ? Number((variant.wins / variant.outcomes).toFixed(4)) : 0,
+    exposureToWinRate: variant.exposures ? Number((variant.wins / variant.exposures).toFixed(4)) : 0,
+    averageDealValue: variant.wins ? Math.round(variant.dealValue / variant.wins) : 0,
+  }));
+  const winner = [...scored].sort((left, right) => {
+    if (right.winRate !== left.winRate) return right.winRate - left.winRate;
+    if (right.wins !== left.wins) return right.wins - left.wins;
+    return right.exposures - left.exposures;
+  })[0] || null;
+  const totals = scored.reduce((acc, variant) => {
+    acc.exposures += variant.exposures;
+    acc.outcomes += variant.outcomes;
+    acc.wins += variant.wins;
+    acc.losses += variant.losses;
+    acc.dealValue += variant.dealValue;
+    return acc;
+  }, { exposures: 0, outcomes: 0, wins: 0, losses: 0, dealValue: 0 });
+  return {
+    totals,
+    variants: scored,
+    winner,
+    confidence: totals.outcomes >= Math.max(10, Math.min(50, Number(test.sampleSizeTarget || 50)))
+      ? 'directional'
+      : 'collecting_data',
+  };
+}
+
+async function persistScriptTestToPg(test = {}) {
+  const pool = getPgPool();
+  if (!pool || !test.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_script_tests (
+        id, tenant_id, objection_type, name, status, success_metric,
+        sample_size_target, variants, stats, metadata, started_at, ended_at, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,$14)
+      ON CONFLICT (id) DO UPDATE SET
+        objection_type = EXCLUDED.objection_type,
+        name = EXCLUDED.name,
+        status = EXCLUDED.status,
+        success_metric = EXCLUDED.success_metric,
+        sample_size_target = EXCLUDED.sample_size_target,
+        variants = EXCLUDED.variants,
+        stats = EXCLUDED.stats,
+        metadata = EXCLUDED.metadata,
+        ended_at = EXCLUDED.ended_at,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        test.id,
+        test.tenantId,
+        test.objectionType,
+        test.name,
+        test.status,
+        test.successMetric,
+        test.sampleSizeTarget,
+        JSON.stringify(test.variants || []),
+        JSON.stringify(test.stats || {}),
+        JSON.stringify(test.metadata || {}),
+        test.startedAt,
+        test.endedAt || null,
+        test.createdAt,
+        test.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] script test persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function persistScriptTestEventToPg(event = {}) {
+  const pool = getPgPool();
+  if (!pool || !event.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_script_test_events (
+        id, tenant_id, test_id, variant_id, event_type, lead_id, call_id,
+        outcome_label, success, deal_value, metadata, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+      ON CONFLICT (id) DO NOTHING`,
+      [
+        event.id,
+        event.tenantId,
+        event.testId,
+        event.variantId,
+        event.eventType,
+        event.leadId,
+        event.callId,
+        event.outcomeLabel,
+        event.success,
+        event.dealValue,
+        JSON.stringify(event.metadata || {}),
+        event.createdAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] script test event persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+function findScriptTest(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const testId = String(params.testId || params.test_id || params.id || '').trim();
+  if (testId) {
+    return (state.scriptTests || []).find((test) => test.id === testId && normalizeTenantId(test.tenantId) === tenantId) || null;
+  }
+  const objectionType = slugify(params.objectionType || params.objection_type || params.topic || '');
+  return (state.scriptTests || [])
+    .filter((test) => normalizeTenantId(test.tenantId) === tenantId)
+    .filter((test) => !objectionType || slugify(test.objectionType) === objectionType)
+    .find((test) => String(test.status || '').toLowerCase() === 'active') || null;
+}
+
+async function scriptTestRecord(params = {}) {
+  const action = String(params.action || (params.scriptA || params.scriptB || params.variants ? 'create' : 'report')).trim().toLowerCase();
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const now = isoNow();
+  if (['create', 'start'].includes(action)) {
+    const rawVariants = Array.isArray(params.variants)
+      ? params.variants
+      : [
+        { id: 'A', label: params.labelA || 'Control', script: params.scriptA || params.controlScript || '' },
+        { id: 'B', label: params.labelB || 'Challenger', script: params.scriptB || params.challengerScript || '' },
+      ];
+    const variants = rawVariants.map((variant, index) => normalizeScriptVariant(variant, index)).filter((variant) => variant.script);
+    if (variants.length < 2) {
+      return { ok: false, result: 'invalid_request', error: 'pbk_script_test create requires at least two script variants.' };
+    }
+    const objectionType = String(params.objectionType || params.objection_type || params.topic || 'general_objection').trim();
+    const test = {
+      id: params.id || params.testId || `script-test-${slugify(objectionType)}-${Date.now()}`,
+      tenantId,
+      objectionType,
+      name: String(params.name || `${objectionType} script test`).trim(),
+      status: String(params.status || 'active').trim(),
+      successMetric: String(params.successMetric || params.success_metric || 'close_rate').trim(),
+      sampleSizeTarget: Math.max(10, Math.min(500, Number(params.sampleSizeTarget || params.sample_size_target || 50))),
+      variants,
+      stats: buildScriptTestStats({ variants }, []),
+      metadata: params.metadata && typeof params.metadata === 'object' ? params.metadata : {},
+      startedAt: params.startedAt || now,
+      endedAt: '',
+      createdAt: params.createdAt || now,
+      updatedAt: now,
+    };
+    if (!Array.isArray(state.scriptTests)) state.scriptTests = [];
+    upsertById(state, 'scriptTests', test);
+    const postgres = await persistScriptTestToPg(test);
+    addActivity(state, makeActivity({
+      actor: params.actor || 'Ava Quality Gate',
+      category: 'BRAIN',
+      status: 'success',
+      text: `Started script test for ${objectionType} with ${variants.length} variants.`,
+      target: test.name,
+    }));
+    await persistState(state);
+    return { ok: true, result: 'script_test_created', test, storage: { localState: true, postgres } };
+  }
+
+  if (['assign', 'choose', 'exposure'].includes(action)) {
+    const test = findScriptTest(params);
+    if (!test) return { ok: false, result: 'not_found', error: 'No active script test found for this request.' };
+    const variants = Array.isArray(test.variants) ? test.variants : [];
+    if (!variants.length) return { ok: false, result: 'invalid_test', error: 'Script test has no variants.' };
+    const identity = String(params.leadId || params.lead_id || params.callId || params.call_id || params.sessionId || randomUUID()).trim();
+    const variantIndex = Math.abs(hashString(`${test.id}:${identity}`)) % variants.length;
+    const variant = variants[variantIndex];
+    const event = {
+      id: params.eventId || `script-event-${test.id}-${slugify(identity).slice(0, 24) || randomUUID().slice(0, 8)}-${Date.now()}`,
+      tenantId,
+      testId: test.id,
+      variantId: variant.id,
+      eventType: 'exposure',
+      leadId: String(params.leadId || params.lead_id || '').trim(),
+      callId: String(params.callId || params.call_id || '').trim(),
+      outcomeLabel: '',
+      success: null,
+      dealValue: 0,
+      metadata: { identity, objectionType: test.objectionType, source: 'script_test_assignment' },
+      createdAt: now,
+    };
+    if (!Array.isArray(state.scriptTestEvents)) state.scriptTestEvents = [];
+    upsertById(state, 'scriptTestEvents', event);
+    const events = (state.scriptTestEvents || []).filter((item) => item.testId === test.id);
+    test.stats = buildScriptTestStats(test, events);
+    test.updatedAt = now;
+    await Promise.all([persistScriptTestEventToPg(event), persistScriptTestToPg(test)]);
+    await persistState(state);
+    return { ok: true, result: 'variant_assigned', testId: test.id, variant, eventId: event.id, script: variant.script, stats: test.stats };
+  }
+
+  if (['record_outcome', 'outcome', 'complete'].includes(action)) {
+    const test = findScriptTest(params);
+    if (!test) return { ok: false, result: 'not_found', error: 'No script test found for outcome recording.' };
+    const variantId = String(params.variantId || params.variant_id || '').trim();
+    if (!variantId) return { ok: false, result: 'invalid_request', error: 'variantId is required to record a script test outcome.' };
+    const outcomeLabel = String(params.outcomeLabel || params.outcome_label || params.outcome || '').trim() || (params.success ? 'won' : 'reviewed');
+    const success = typeof params.success === 'boolean'
+      ? params.success
+      : /won|closed|accepted|signed|appointment|positive/i.test(outcomeLabel)
+        ? true
+        : /lost|rejected|dnc|bad|negative|walk/i.test(outcomeLabel)
+          ? false
+          : null;
+    const event = {
+      id: params.eventId || `script-outcome-${test.id}-${variantId}-${Date.now()}`,
+      tenantId,
+      testId: test.id,
+      variantId,
+      eventType: 'outcome',
+      leadId: String(params.leadId || params.lead_id || '').trim(),
+      callId: String(params.callId || params.call_id || '').trim(),
+      outcomeLabel,
+      success,
+      dealValue: Math.max(0, toNumber(params.dealValue || params.deal_value || params.assignmentFee || params.contractValue, 0)),
+      metadata: params.metadata && typeof params.metadata === 'object' ? params.metadata : {},
+      createdAt: now,
+    };
+    if (!Array.isArray(state.scriptTestEvents)) state.scriptTestEvents = [];
+    upsertById(state, 'scriptTestEvents', event);
+    const events = (state.scriptTestEvents || []).filter((item) => item.testId === test.id);
+    test.stats = buildScriptTestStats(test, events);
+    test.updatedAt = now;
+    if (params.closeTest || params.close_test) {
+      test.status = 'completed';
+      test.endedAt = now;
+    }
+    await Promise.all([persistScriptTestEventToPg(event), persistScriptTestToPg(test)]);
+    await persistState(state);
+    return { ok: true, result: 'script_outcome_recorded', event, test, stats: test.stats };
+  }
+
+  const tests = (state.scriptTests || [])
+    .filter((test) => normalizeTenantId(test.tenantId) === tenantId)
+    .filter((test) => !params.objectionType || slugify(test.objectionType) === slugify(params.objectionType))
+    .slice(0, Math.max(1, Math.min(50, Number(params.limit || 10))))
+    .map((test) => {
+      const events = (state.scriptTestEvents || []).filter((event) => event.testId === test.id);
+      return { ...test, stats: buildScriptTestStats(test, events) };
+    });
+  return { ok: true, result: 'script_test_report', tests };
+}
+
+async function persistOutcomeReportToPg(report = {}) {
+  const pool = getPgPool();
+  if (!pool || !report.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_outcome_reports (
+        id, tenant_id, period_days, summary, metrics, recommendations, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9)
+      ON CONFLICT (id) DO UPDATE SET
+        summary = EXCLUDED.summary,
+        metrics = EXCLUDED.metrics,
+        recommendations = EXCLUDED.recommendations,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        report.id,
+        report.tenantId,
+        report.periodDays,
+        report.summary,
+        JSON.stringify(report.metrics || {}),
+        JSON.stringify(report.recommendations || []),
+        JSON.stringify(report.metadata || {}),
+        report.createdAt,
+        report.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] outcome report persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+function withinQualityGateWindow(item = {}, days = 7) {
+  const timestamp = Date.parse(getItemTimestamp(item) || item.createdAt || item.created_at || '');
+  if (!Number.isFinite(timestamp)) return true;
+  return Date.now() - timestamp <= days * 24 * 60 * 60 * 1000;
+}
+
+function countBy(items = [], getter = () => '') {
+  return items.reduce((acc, item) => {
+    const key = String(getter(item) || 'unknown').trim() || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+async function outcomeAnalyzerRecord(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const periodDays = Math.max(1, Math.min(365, Number(params.days || params.periodDays || params.period_days || 7)));
+  const feedback = (state.pbkFeedback || []).filter((item) => normalizeTenantId(item.tenantId || item.tenant_id) === tenantId && withinQualityGateWindow(item, periodDays));
+  const intentEvents = (state.pbkIntentEvents || []).filter((item) => normalizeTenantId(item.tenantId || item.tenant_id) === tenantId && withinQualityGateWindow(item, periodDays));
+  const learningRequests = (state.avaLearningRequests || []).filter((item) => normalizeTenantId(item.tenantId || item.tenant_id) === tenantId && withinQualityGateWindow(item, periodDays));
+  const scriptTests = (state.scriptTests || []).filter((item) => normalizeTenantId(item.tenantId) === tenantId);
+  const scriptTestReports = scriptTests.map((test) => {
+    const events = (state.scriptTestEvents || []).filter((event) => event.testId === test.id && withinQualityGateWindow(event, periodDays));
+    return { id: test.id, objectionType: test.objectionType, name: test.name, status: test.status, stats: buildScriptTestStats(test, events) };
+  });
+  const feedbackByDecision = countBy(feedback, (item) => item.humanDecision || item.human_decision);
+  const feedbackByAction = countBy(feedback, (item) => item.agentAction || item.agent_action);
+  const outcomeLabels = countBy(feedback, (item) => item.outcomeLabel || item.outcome_label || item.humanDecision || item.human_decision);
+  const intentCounts = countBy(intentEvents, (item) => item.intent);
+  const lowConfidence = learningRequests.filter((item) => Number(item.confidence || 0) < 0.7);
+  const weakTests = scriptTestReports.filter((report) => {
+    const winner = report.stats?.winner;
+    return winner && report.stats.totals.outcomes >= 3 && winner.winRate < 0.5;
+  });
+  const recommendations = [];
+  if (lowConfidence.length) {
+    recommendations.push({
+      priority: 'high',
+      title: 'Coach recurring low-confidence objections',
+      evidence: `${lowConfidence.length} strategist requests in the last ${periodDays} days.`,
+      action: 'Use pbk_teach_ava for repeated patterns and create script tests for the top objections.',
+    });
+  }
+  if (weakTests.length) {
+    recommendations.push({
+      priority: 'high',
+      title: 'Replace weak script variants',
+      evidence: `${weakTests.length} script test(s) are under 50% directional win rate.`,
+      action: 'Generate challenger scripts with pbk_suggestion_engine and keep the current winner as control.',
+    });
+  }
+  if ((feedbackByDecision.rejected || 0) > (feedbackByDecision.approved || 0)) {
+    recommendations.push({
+      priority: 'medium',
+      title: 'Review rejected agent actions',
+      evidence: `Rejected feedback exceeds approved feedback in this window.`,
+      action: 'Audit the rejected action types before increasing automation.',
+    });
+  }
+  if (!recommendations.length) {
+    recommendations.push({
+      priority: 'low',
+      title: 'Keep collecting clean outcomes',
+      evidence: 'No urgent negative pattern detected.',
+      action: 'Continue logging script outcomes and seller objections.',
+    });
+  }
+  const report = {
+    id: params.id || `ava-outcome-report-${Date.now()}`,
+    tenantId,
+    periodDays,
+    summary: `Ava outcome analysis: ${feedback.length} feedback rows, ${intentEvents.length} intent events, ${learningRequests.length} coaching requests, ${scriptTestReports.length} script tests reviewed.`,
+    metrics: {
+      feedbackCount: feedback.length,
+      intentEventCount: intentEvents.length,
+      learningRequestCount: learningRequests.length,
+      lowConfidenceCount: lowConfidence.length,
+      feedbackByDecision,
+      feedbackByAction,
+      outcomeLabels,
+      intentCounts,
+      scriptTests: scriptTestReports,
+    },
+    recommendations,
+    metadata: params.metadata && typeof params.metadata === 'object' ? params.metadata : {},
+    createdAt: params.createdAt || isoNow(),
+    updatedAt: isoNow(),
+  };
+  let postgres = false;
+  if (params.persist !== false) {
+    if (!Array.isArray(state.avaOutcomeReports)) state.avaOutcomeReports = [];
+    upsertById(state, 'avaOutcomeReports', report);
+    postgres = await persistOutcomeReportToPg(report);
+    addActivity(state, makeActivity({
+      actor: params.actor || 'Ava Outcome Analyzer',
+      category: 'BRAIN',
+      status: 'success',
+      text: report.summary,
+      target: 'Ava quality gates',
+    }));
+    await persistState(state);
+  }
+  return { ok: true, result: 'outcome_report', report, storage: { localState: params.persist !== false, postgres } };
+}
+
+async function persistImprovementSuggestionToPg(suggestion = {}) {
+  const pool = getPgPool();
+  if (!pool || !suggestion.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_improvement_suggestions (
+        id, tenant_id, title, priority, status, evidence, recommendation,
+        success_metric, rollback_condition, payload, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        title = EXCLUDED.title,
+        priority = EXCLUDED.priority,
+        status = EXCLUDED.status,
+        evidence = EXCLUDED.evidence,
+        recommendation = EXCLUDED.recommendation,
+        success_metric = EXCLUDED.success_metric,
+        rollback_condition = EXCLUDED.rollback_condition,
+        payload = EXCLUDED.payload,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        suggestion.id,
+        suggestion.tenantId,
+        suggestion.title,
+        suggestion.priority,
+        suggestion.status,
+        suggestion.evidence,
+        suggestion.recommendation,
+        suggestion.successMetric,
+        suggestion.rollbackCondition,
+        JSON.stringify(suggestion.payload || {}),
+        suggestion.createdAt,
+        suggestion.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] improvement suggestion persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+async function suggestionEngineRecord(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const analysis = params.analysis && typeof params.analysis === 'object'
+    ? params.analysis
+    : (await outcomeAnalyzerRecord({ ...params, tenantId, persist: false })).report;
+  const recommendations = Array.isArray(analysis.recommendations) ? analysis.recommendations : [];
+  const now = isoNow();
+  const suggestions = recommendations.map((recommendation, index) => {
+    const title = String(recommendation.title || `Ava improvement ${index + 1}`).trim();
+    const objectionType = params.objectionType || recommendation.objectionType || 'general';
+    return {
+      id: params.id && recommendations.length === 1 ? params.id : `ava-suggestion-${slugify(title)}-${Date.now()}-${index}`,
+      tenantId,
+      title,
+      priority: String(recommendation.priority || 'medium').toLowerCase(),
+      status: 'proposed',
+      evidence: String(recommendation.evidence || '').trim(),
+      recommendation: String(recommendation.action || recommendation.recommendation || '').trim(),
+      successMetric: String(params.successMetric || 'Improve objection-to-next-step conversion by at least 10%.').trim(),
+      rollbackCondition: String(params.rollbackCondition || 'Rollback if close rate or appointment rate drops by 5% after 20 measured outcomes.').trim(),
+      payload: {
+        objectionType,
+        suggestedTool: 'pbk_script_test',
+        suggestedParams: {
+          action: 'create',
+          objectionType,
+          scriptA: 'Use the current approved Ava script as control.',
+          scriptB: params.challengerScript || 'Use a shorter challenger that acknowledges, asks one proof question, and returns to the close.',
+          sampleSizeTarget: 50,
+        },
+        sourceReportId: analysis.id || '',
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+  if (!suggestions.length) {
+    suggestions.push({
+      id: `ava-suggestion-keep-collecting-${Date.now()}`,
+      tenantId,
+      title: 'Keep collecting measured outcomes',
+      priority: 'low',
+      status: 'proposed',
+      evidence: 'No strong failure pattern was found in the current sample.',
+      recommendation: 'Continue logging every script exposure and outcome so the next report has stronger signal.',
+      successMetric: 'At least 20 outcomes recorded per top objection.',
+      rollbackCondition: 'Not applicable.',
+      payload: { suggestedTool: 'pbk_script_test', suggestedParams: { action: 'report' }, sourceReportId: analysis.id || '' },
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  let postgres = false;
+  if (params.persist !== false) {
+    if (!Array.isArray(state.avaImprovementSuggestions)) state.avaImprovementSuggestions = [];
+    for (const suggestion of suggestions) {
+      upsertById(state, 'avaImprovementSuggestions', suggestion);
+      postgres = (await persistImprovementSuggestionToPg(suggestion)) || postgres;
+    }
+    addActivity(state, makeActivity({
+      actor: params.actor || 'Ava Suggestion Engine',
+      category: 'BRAIN',
+      status: 'success',
+      text: `Generated ${suggestions.length} measurable Ava improvement suggestion(s).`,
+      target: 'Ava quality gates',
+    }));
+    await persistState(state);
+  }
+  return { ok: true, result: 'suggestions_generated', suggestions, sourceReport: analysis, storage: { localState: params.persist !== false, postgres } };
+}
+
+async function persistKnowledgeVerificationToPg(record = {}) {
+  const pool = getPgPool();
+  if (!pool || !record.id) return false;
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_knowledge_verifications (
+        id, tenant_id, subject, predicate, object, verdict, risk_level,
+        reasons, applied_fact_id, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        verdict = EXCLUDED.verdict,
+        risk_level = EXCLUDED.risk_level,
+        reasons = EXCLUDED.reasons,
+        applied_fact_id = EXCLUDED.applied_fact_id,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.tenantId,
+        record.subject,
+        record.predicate,
+        record.object,
+        record.verdict,
+        record.riskLevel,
+        JSON.stringify(record.reasons || []),
+        record.appliedFactId || '',
+        JSON.stringify(record.metadata || {}),
+        record.createdAt,
+        record.updatedAt,
+      ],
+    );
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] knowledge verification persistence skipped:', error?.message || error);
+    return false;
+  }
+}
+
+function evaluateKnowledgeSafety({ subject = '', predicate = '', object = '', confidence = 0.5 } = {}) {
+  const text = `${subject} ${predicate} ${object}`.toLowerCase();
+  const reasons = [];
+  let verdict = 'approved';
+  let riskLevel = 'low';
+  if (!String(subject).trim() || !String(predicate).trim() || !String(object).trim()) {
+    verdict = 'rejected';
+    riskLevel = 'high';
+    reasons.push('Knowledge must include subject, predicate, and object.');
+  }
+  if (/creator|identity/.test(String(predicate).toLowerCase()) && /ava/i.test(subject) && !/\bpbk\b/i.test(object)) {
+    verdict = 'rejected';
+    riskLevel = 'high';
+    reasons.push('Ava identity anchors are immutable and cannot replace PBK as creator/source.');
+  }
+  if (/pretend.*human|hide.*ai|do not disclose|bypass approval|ignore mao|send contract without|disable kill switch|ignore dnc|break tcpa/.test(text)) {
+    verdict = 'rejected';
+    riskLevel = 'high';
+    reasons.push('Rule conflicts with PBK safety, compliance, approval, or truthful-AI boundaries.');
+  }
+  if (Number(confidence || 0) < 0.55 && verdict !== 'rejected') {
+    verdict = 'needs_review';
+    riskLevel = 'medium';
+    reasons.push('Confidence is too low for automatic memory insertion.');
+  }
+  const conflict = (state.pbkKnowledge || []).find((fact) => (
+    String(fact.subject || '').toLowerCase() === String(subject || '').toLowerCase()
+    && String(fact.predicate || '').toLowerCase() === String(predicate || '').toLowerCase()
+    && String(fact.object || '').toLowerCase() !== String(object || '').toLowerCase()
+    && fact.metadata?.immutable
+  ));
+  if (conflict) {
+    verdict = 'rejected';
+    riskLevel = 'high';
+    reasons.push(`Conflicts with immutable knowledge fact ${conflict.id}.`);
+  }
+  if (!reasons.length) reasons.push('No safety conflict detected.');
+  return { verdict, riskLevel, reasons };
+}
+
+async function knowledgeVerifierRecord(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const subject = String(params.subject || params.topic || 'ava_strategy').trim();
+  const predicate = String(params.predicate || params.objectionType || params.kind || 'rule').trim();
+  const object = String(params.object || params.rule || params.fact || params.lesson || '').trim();
+  const confidence = Math.max(0, Math.min(1, toNumber(params.confidence, 0.72)));
+  const safety = evaluateKnowledgeSafety({ subject, predicate, object, confidence });
+  const strategic = params.strategic !== false;
+  const apply = params.apply === true || params.persistFact === true || params.persist_fact === true;
+  const passcodeValid = isProtectedLearningPasscodeValid(params);
+  let appliedFact = null;
+  let verdict = safety.verdict;
+  const reasons = [...safety.reasons];
+  if (apply && strategic && !passcodeValid && verdict === 'approved') {
+    verdict = 'needs_approval';
+    reasons.push('Strategic knowledge requires protected passcode or approval before insertion.');
+  }
+  if (apply && verdict === 'approved') {
+    const result = await recordPbkKnowledgeRecord({
+      tenantId,
+      subject,
+      predicate,
+      object,
+      confidence,
+      source: params.source || 'pbk_knowledge_verifier',
+      sourceId: params.sourceId || params.source_id || '',
+      metadata: {
+        ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+        verified: true,
+        strategic,
+      },
+    });
+    appliedFact = result.fact || null;
+  }
+  const now = isoNow();
+  const verification = {
+    id: params.id || `knowledge-verification-${slugify(subject)}-${slugify(predicate)}-${Date.now()}`,
+    tenantId,
+    subject,
+    predicate,
+    object,
+    verdict,
+    riskLevel: safety.riskLevel,
+    reasons,
+    appliedFactId: appliedFact?.id || '',
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      apply,
+      strategic,
+      confidence,
+    },
+    createdAt: params.createdAt || now,
+    updatedAt: now,
+  };
+  if (!Array.isArray(state.knowledgeVerifications)) state.knowledgeVerifications = [];
+  upsertById(state, 'knowledgeVerifications', verification);
+  const postgres = await persistKnowledgeVerificationToPg(verification);
+  addActivity(state, makeActivity({
+    actor: params.actor || 'PBK Knowledge Verifier',
+    category: 'KNOWLEDGE',
+    status: verdict === 'approved' ? 'success' : verdict === 'rejected' ? 'blocked' : 'warning',
+    text: `Knowledge verification ${verdict}: ${subject} ${predicate}.`,
+    target: subject,
+  }));
+  await persistState(state);
+  return {
+    ok: verdict !== 'rejected',
+    result: 'knowledge_verified',
+    verification,
+    appliedFact,
     storage: { localState: true, postgres },
   };
 }
@@ -20145,6 +21021,46 @@ const toolHandlers = {
     return avaOverrideOfferRecord(params);
   },
 
+  async pbk_script_test(params = {}) {
+    recordToolUse('pbk_script_test');
+    return scriptTestRecord(params);
+  },
+
+  async scriptTest(params = {}) {
+    recordToolUse('scriptTest');
+    return scriptTestRecord(params);
+  },
+
+  async pbk_outcome_analyzer(params = {}) {
+    recordToolUse('pbk_outcome_analyzer');
+    return outcomeAnalyzerRecord(params);
+  },
+
+  async outcomeAnalyzer(params = {}) {
+    recordToolUse('outcomeAnalyzer');
+    return outcomeAnalyzerRecord(params);
+  },
+
+  async pbk_suggestion_engine(params = {}) {
+    recordToolUse('pbk_suggestion_engine');
+    return suggestionEngineRecord(params);
+  },
+
+  async suggestionEngine(params = {}) {
+    recordToolUse('suggestionEngine');
+    return suggestionEngineRecord(params);
+  },
+
+  async pbk_knowledge_verifier(params = {}) {
+    recordToolUse('pbk_knowledge_verifier');
+    return knowledgeVerifierRecord(params);
+  },
+
+  async knowledgeVerifier(params = {}) {
+    recordToolUse('knowledgeVerifier');
+    return knowledgeVerifierRecord(params);
+  },
+
   async pbk_learn(params = {}) {
     recordToolUse('pbk_learn');
     return capturePbkChatLearning(params, { sourceTool: 'pbk_learn' });
@@ -24788,6 +25704,11 @@ function buildStateSnapshot() {
     avaLearningRequests: state.avaLearningRequests || [],
     repairItems: state.repairItems || [],
     offerOverrides: state.offerOverrides || [],
+    scriptTests: state.scriptTests || [],
+    scriptTestEvents: state.scriptTestEvents || [],
+    avaOutcomeReports: state.avaOutcomeReports || [],
+    avaImprovementSuggestions: state.avaImprovementSuggestions || [],
+    knowledgeVerifications: state.knowledgeVerifications || [],
     avaStories: state.avaStories || buildDefaultAvaStories(),
     inboundCallRoutes: state.inboundCallRoutes || [],
     leadScoringWeights: getLeadScoringWeights(),

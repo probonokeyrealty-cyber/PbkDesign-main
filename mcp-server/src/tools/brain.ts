@@ -74,6 +74,11 @@ const GetStateInput = z
         "avaLearningRequests",
         "repairItems",
         "offerOverrides",
+        "scriptTests",
+        "scriptTestEvents",
+        "avaOutcomeReports",
+        "avaImprovementSuggestions",
+        "knowledgeVerifications",
         "status",
       ])
       .default("all")
@@ -331,6 +336,98 @@ const AvaOverrideOfferInput = z
     rationale: z.string().optional(),
     avaScript: z.string().optional(),
     passcode: z.string().optional().describe("Protected admin passcode for direct override."),
+    actor: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const ScriptVariantInput = z
+  .object({
+    id: z.string().optional(),
+    variantId: z.string().optional(),
+    label: z.string().optional(),
+    name: z.string().optional(),
+    script: z.string().min(1),
+    hypothesis: z.string().optional(),
+    weight: z.number().positive().optional(),
+  })
+  .passthrough();
+
+const ScriptTestInput = z
+  .object({
+    action: z.enum(["create", "start", "assign", "choose", "exposure", "record_outcome", "outcome", "complete", "report", "list"]).optional(),
+    tenantId: z.string().optional(),
+    testId: z.string().optional(),
+    id: z.string().optional(),
+    objectionType: z.string().optional(),
+    topic: z.string().optional(),
+    name: z.string().optional(),
+    scriptA: z.string().optional(),
+    scriptB: z.string().optional(),
+    variants: z.array(ScriptVariantInput).optional(),
+    successMetric: z.string().optional(),
+    sampleSizeTarget: z.number().int().min(10).max(500).optional(),
+    leadId: z.string().optional(),
+    callId: z.string().optional(),
+    sessionId: z.string().optional(),
+    variantId: z.string().optional(),
+    outcomeLabel: z.string().optional(),
+    outcome: z.string().optional(),
+    success: z.boolean().optional(),
+    dealValue: z.number().nonnegative().optional(),
+    closeTest: z.boolean().optional(),
+    actor: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+
+const OutcomeAnalyzerInput = z
+  .object({
+    tenantId: z.string().optional(),
+    days: z.number().int().min(1).max(365).optional(),
+    periodDays: z.number().int().min(1).max(365).optional(),
+    persist: z.boolean().optional(),
+    actor: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const SuggestionEngineInput = z
+  .object({
+    tenantId: z.string().optional(),
+    days: z.number().int().min(1).max(365).optional(),
+    periodDays: z.number().int().min(1).max(365).optional(),
+    persist: z.boolean().optional(),
+    objectionType: z.string().optional(),
+    challengerScript: z.string().optional(),
+    successMetric: z.string().optional(),
+    rollbackCondition: z.string().optional(),
+    actor: z.string().optional(),
+    analysis: z.record(z.unknown()).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const KnowledgeVerifierInput = z
+  .object({
+    tenantId: z.string().optional(),
+    subject: z.string().optional(),
+    predicate: z.string().optional(),
+    object: z.string().optional(),
+    topic: z.string().optional(),
+    objectionType: z.string().optional(),
+    kind: z.string().optional(),
+    rule: z.string().optional(),
+    fact: z.string().optional(),
+    lesson: z.string().optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    apply: z.boolean().optional().describe("If true, insert the verified fact into PBK knowledge when approved."),
+    persistFact: z.boolean().optional(),
+    strategic: z.boolean().optional().describe("Defaults true. Strategic facts require protected passcode to apply."),
+    passcode: z.string().optional(),
+    source: z.string().optional(),
+    sourceId: z.string().optional(),
     actor: z.string().optional(),
     metadata: z.record(z.unknown()).optional(),
   })
@@ -715,6 +812,122 @@ Returns:
     async (params) => {
       try {
         const result = await bridgeInvoke("avaOverrideOffer", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_script_test",
+    {
+      title: "Run Ava script A/B test",
+      description: `Create, assign, record outcomes for, or report on Ava negotiation script tests. This is the measurable quality gate that keeps winning seller language and rolls back weak scripts.`,
+      inputSchema: ScriptTestInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_script_test", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_outcome_analyzer",
+    {
+      title: "Analyze Ava outcomes",
+      description: `Review recent approvals, feedback, intent events, coaching requests, and script test outcomes. Returns measurable patterns and recommendations for sharpening Ava.`,
+      inputSchema: OutcomeAnalyzerInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_outcome_analyzer", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_suggestion_engine",
+    {
+      title: "Generate Ava improvement suggestions",
+      description: `Turn outcome analysis into testable, rollback-safe Ava improvements. Suggestions include evidence, metric, rollback condition, and the next tool/action to run.`,
+      inputSchema: SuggestionEngineInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_suggestion_engine", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_knowledge_verifier",
+    {
+      title: "Verify PBK knowledge before learning",
+      description: `Validate proposed Ava/Rex knowledge against PBK safety, MAO, approval, DNC/TCPA, and truthful-AI boundaries. Can optionally apply safe facts to PBK knowledge with protected approval.`,
+      inputSchema: KnowledgeVerifierInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_knowledge_verifier", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

@@ -26,7 +26,9 @@
       "package.json"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signAndEditExecutable": false,
+      "signDlls": false
     },
     "mac": {
       "target": "dmg"

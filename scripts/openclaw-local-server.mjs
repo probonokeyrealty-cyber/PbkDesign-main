@@ -16316,6 +16316,9 @@ const DIRECT_ENV_UPDATE_ALLOWLIST = new Set([
   'PBK_DEEPSEEK_MODEL',
   'PBK_DEEPSEEK_FALLBACK_MODEL',
   'PBK_STRATEGIST_PROVIDER',
+  'PBK_TOTP_SECRET',
+  'PBK_TOTP_REQUIRED',
+  'PBK_TOTP_WINDOW',
 ]);
 
 function getEnvUpdateKeys(params = {}) {
@@ -22351,7 +22354,7 @@ const toolHandlers = {
           outcome: 'team_or_admin_passcode_required',
           live: false,
           key: envVars[0],
-          summary: 'Direct DeepSeek env updates require the PBK team passcode or protected ops passcode.',
+          summary: 'Direct protected env updates require the PBK team passcode or protected ops passcode.',
         };
       }
       const serviceId = String(params.serviceId || RENDER_SERVICE_ID || '').trim();
@@ -22379,8 +22382,8 @@ const toolHandlers = {
           actor: params.requestedBy || params.actor || 'PBK operator',
           category: 'ADMIN',
           status: update.ok && (!restart || restart.ok) ? 'complete' : 'warning',
-          text: `Updated Render env ${envVars[0]} for the DeepSeek strategist lane. Secret value was not stored in bridge state.`,
-          target: 'Render DeepSeek env',
+          text: `Updated Render env ${envVars[0]} for PBK protected runtime configuration. Secret value was not stored in bridge state.`,
+          target: 'Render protected env',
         }),
       );
       await persistState(state);

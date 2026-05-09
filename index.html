@@ -9894,6 +9894,7 @@
             </div>
           </div>
           <div class="ld-actions">
+            <button class="btn btn-ghost" data-lead-action="edit">Edit</button>
             <button class="btn btn-ghost">Call</button>
             <button class="btn btn-ghost">Text</button>
             <button class="btn btn-ghost">Email</button>
@@ -16043,7 +16044,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!container) return;
 
     const activity = getRealRuntimeActivity(snapshot).slice(0, 14);
-    const rows = activity.map((item) => `
+    const rows = activity.length ? activity.map((item) => `
       <div class="alog-row">
         <span class="alog-time">${escapeHtml(formatRuntimeTime(item.at || item.createdAt))}</span>
         <span class="alog-actor">${escapeHtml(item.actor || 'System')}</span>
@@ -16052,7 +16053,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         <span class="alog-target">${escapeHtml(item.target || 'PBK')}</span>
         <span><span class="status-chip ${escapeHtml(getStatusChipClass(item.category, item.status))}">${escapeHtml(item.status || 'success')}</span></span>
       </div>
-    `).join('');
+    `).join('') : `
+      <div class="alog-row">
+        <span class="alog-time">live</span>
+        <span class="alog-actor">PBK</span>
+        <span><span class="status-chip new">WAITING</span></span>
+        <span class="alog-desc">No live activity events returned yet. Static sample rows are hidden after runtime render.</span>
+        <span class="alog-target">Bridge</span>
+        <span><span class="status-chip neg">idle</span></span>
+      </div>
+    `;
 
     container.innerHTML = `
       <div class="alog-row head">
@@ -16333,12 +16343,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     if (marketPulse) {
       const pulseItems = Array.isArray(snapshot?.status?.marketPulse) ? snapshot.status.marketPulse : [];
-      marketPulse.innerHTML = pulseItems.map((item) => `
+      marketPulse.innerHTML = pulseItems.length ? pulseItems.map((item) => `
         <div class="mp-item">
           <div class="mp-hd"><span class="mp-source">${escapeHtml(item.source || 'PBK')}</span><span class="mp-time">${escapeHtml(item.age || 'now')}</span></div>
           <div class="mp-title">${escapeHtml(item.title || 'No market pulse item yet.')}</div>
         </div>
-      `).join('');
+      `).join('') : `
+        <div class="mp-item">
+          <div class="mp-hd"><span class="mp-source">PBK</span><span class="mp-time">waiting</span></div>
+          <div class="mp-title">No live market pulse yet. BrowserOS and Rex research jobs will populate this panel after sync.</div>
+        </div>
+      `;
     }
 
     if (reading) {
@@ -16347,12 +16362,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         <div class="brain-panel-title" style="margin-bottom: var(--s-3);">
           <h4 style="font-size: 16px;">? Today's <em>reading</em></h4>
         </div>
-        ${readingItems.map((item) => `
+        ${readingItems.length ? readingItems.map((item) => `
           <div class="sg-item">
             <div class="why">? ${escapeHtml(item.why || 'Because PBK is live')}</div>
             <div class="t">${escapeHtml(item.title || 'New research recommendation')}</div>
           </div>
-        `).join('')}
+        `).join('') : `
+          <div class="sg-item">
+            <div class="why">Runtime waiting</div>
+            <div class="t">Suggested reading appears after Rex has live source and outcome data.</div>
+          </div>
+        `}
       `;
     }
   }
@@ -16818,6 +16838,481 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }));
   }
 
+  function getLeadRuntimeId(lead = {}) {
+    return String(lead.id || lead.leadId || lead.importId || lead.externalId || lead.seller?.email || lead.seller?.phone || '').trim();
+  }
+
+  function getRealLeadImports(snapshot = {}) {
+    return getRuntimeLeads(snapshot);
+  }
+
+  function setActiveLeadId(leadId = '') {
+    const value = String(leadId || '').trim();
+    if (!value) return '';
+    PBK.state.activeLeadId = value;
+    try {
+      sessionStorage.setItem('pbk-active-lead-id', value);
+    } catch {}
+    return value;
+  }
+
+  function getActiveLeadId() {
+    return String(PBK.state.activeLeadId || sessionStorage.getItem('pbk-active-lead-id') || '').trim();
+  }
+
+  function getActiveRuntimeLead(snapshot = PBK.state.openclawRuntime || {}) {
+    const leads = getRuntimeLeads(snapshot);
+    const activeId = getActiveLeadId();
+    const active = activeId
+      ? leads.find((lead) => [lead.id, lead.leadId, lead.importId].some((value) => String(value || '') === activeId))
+      : null;
+    return active || leads[0] || null;
+  }
+
+  function openLeadDetail(leadId = '') {
+    if (leadId) setActiveLeadId(leadId);
+    renderLeadDetail(PBK.state.openclawRuntime || {});
+    if (typeof showPage === 'function') showPage('lead-detail');
+  }
+
+  function compactLeadNameHtml(name = 'Selected seller') {
+    const parts = String(name || 'Selected seller').trim().split(/\s+/);
+    if (parts.length <= 1) return escapeHtml(parts[0] || 'Selected seller');
+    const first = parts.shift();
+    return `${escapeHtml(first)} <em>${escapeHtml(parts.join(' '))}</em>`;
+  }
+
+  function getLeadNestedValue(lead = {}, paths = [], fallback = '') {
+    for (const path of paths) {
+      const value = String(path).split('.').reduce((current, key) => current?.[key], lead);
+      if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+    }
+    return fallback;
+  }
+
+  function getLeadProfileDefaults(lead = {}) {
+    const property = lead.property || {};
+    const seller = lead.seller || {};
+    const motivation = lead.motivation || {};
+    const compliance = lead.compliance || {};
+    const assignment = lead.assignment || {};
+    return {
+      leadId: getLeadRuntimeId(lead),
+      sellerName: getLeadSellerName(lead),
+      phone: getLeadPhone(lead),
+      email: seller.email || lead.email || '',
+      address: getLeadAddress(lead),
+      propertyType: getLeadPropertyType(lead),
+      status: lead.status || lead.stage || 'working',
+      stage: lead.stage || lead.status || 'working',
+      selectedPath: lead.selectedPath || lead.selected_path || lead.callContext?.selectedPath || lead.callContext?.selected_path || 'cash',
+      lastOffer: lead.lastOffer || lead.last_offer || lead.callContext?.lastOffer || lead.callContext?.last_offer || '',
+      sentiment: lead.sentiment || lead.callContext?.sentiment || '',
+      motivation: motivation.summary || lead.motivationSummary || lead.motivation || '',
+      timeline: motivation.timeline || lead.timeline || '',
+      askingPrice: property.askingPrice || motivation.askingPrice || lead.askingPrice || '',
+      tags: Array.isArray(lead.tags) ? lead.tags.join(', ') : (lead.tags || ''),
+      notes: lead.notes || lead.callContext?.summary || '',
+      sellerNotes: seller.notes || '',
+      assignedAgent: assignment.assignedAgent || lead.assignedAgent || lead.agentName || 'Ava',
+      arv: getLeadMoneyValue(lead, ['property.arv', 'arv', 'analysis.arv']),
+      mao: getLeadMoneyValue(lead, ['property.mao', 'mao', 'analysis.mao', 'maxAllowableOffer']),
+      estimatedRepairs: getLeadMoneyValue(lead, ['property.estimatedRepairs', 'repairs', 'repairEstimate', 'analysis.repairs']),
+      score: lead.score || lead.leadScore || lead.priorityScore || '',
+      consentStatus: compliance.consentStatus || lead.consentStatus || 'unknown',
+      dncStatus: compliance.dncStatus || lead.dncStatus || 'needs_review',
+      parcel: property.parcel || lead.parcel || '',
+      beds: property.beds || lead.beds || '',
+      baths: property.baths || lead.baths || '',
+      sqft: property.sqft || property.squareFeet || lead.sqft || '',
+      yearBuilt: property.yearBuilt || lead.yearBuilt || '',
+      occupancy: property.occupancy || lead.occupancy || '',
+      condition: property.condition || lead.condition || '',
+      relationshipToProperty: seller.relationshipToProperty || lead.relationshipToProperty || 'owner'
+    };
+  }
+
+  function renderLeadTimelineEvents(lead = {}, snapshot = PBK.state.openclawRuntime || {}) {
+    const name = getLeadSellerName(lead);
+    const address = getLeadAddress(lead);
+    const leadId = getLeadRuntimeId(lead);
+    const matchesLead = (item = {}) => {
+      const haystack = [
+        item.leadId,
+        item.id,
+        item.leadName,
+        item.name,
+        item.address,
+        item.target,
+        item.text,
+        item.body,
+        item.notes,
+        item.subject,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return (leadId && haystack.includes(leadId.toLowerCase()))
+        || (name && haystack.includes(name.toLowerCase().split(/\s+/)[0]))
+        || (address && haystack.includes(address.toLowerCase().slice(0, 18)));
+    };
+    const activity = getRealRuntimeActivity(snapshot).filter(matchesLead).slice(0, 10).map((item) => ({
+      at: item.at || item.createdAt || item.updatedAt,
+      title: item.category || 'Runtime',
+      status: item.status || 'saved',
+      desc: item.text || item.target || 'Runtime event',
+      channel: String(item.category || 'sys').toLowerCase()
+    }));
+    const messages = Array.isArray(snapshot.messages) ? snapshot.messages.filter(matchesLead).slice(0, 8).map((item) => ({
+      at: item.createdAt || item.updatedAt || item.at,
+      title: item.channel || item.direction || 'Message',
+      status: item.status || 'received',
+      desc: item.body || item.text || item.message || item.preview || 'Message record',
+      channel: item.channel || 'sms'
+    })) : [];
+    const calls = getRuntimeCalls(snapshot, { includeEnded: true }).filter(matchesLead).slice(0, 6).map((item) => ({
+      at: item.startedAt || item.createdAt || item.updatedAt,
+      title: item.status || 'Call',
+      status: item.callStatus || item.status || 'call',
+      desc: item.summary || item.nextMove || item.script || `Call ${formatCallDuration(item)} - sentiment ${formatCallScore(item.sentiment)}`,
+      channel: 'call'
+    }));
+    return sortRuntimeItems([...activity, ...messages, ...calls]).slice(0, 12);
+  }
+
+  function renderLeadDetail(snapshot = PBK.state.openclawRuntime || {}) {
+    const page = getPageNode('lead-detail');
+    if (!page) return;
+    const lead = getActiveRuntimeLead(snapshot);
+    const connected = getOpenClawConfig().status === 'connected';
+    if (!lead) {
+      page.querySelector('.ld-name').innerHTML = 'No <em>live lead</em> selected';
+      page.querySelector('.ld-details').innerHTML = connected
+        ? '<span>Bridge connected</span><span class="dot">-</span><span>Import or select a production lead to populate this portal.</span>'
+        : '<span>Connect PBK Brain in Settings to load production leads.</span>';
+      page.querySelector('.ld-av').textContent = 'P';
+      return;
+    }
+
+    const defaults = getLeadProfileDefaults(lead);
+    setActiveLeadId(defaults.leadId);
+    page.dataset.activeLeadId = defaults.leadId;
+    page.querySelector('.ld-av').textContent = getInitial(defaults.sellerName);
+    page.querySelector('.ld-name').innerHTML = compactLeadNameHtml(defaults.sellerName);
+    page.querySelector('.ld-details').innerHTML = [
+      formatPhoneForDisplay(defaults.phone),
+      defaults.address,
+      defaults.status,
+      defaults.score ? `Score ${defaults.score}` : ''
+    ].filter(Boolean).map((item, index) => `${index ? '<span class="dot">-</span>' : ''}<span>${escapeHtml(String(item))}</span>`).join('');
+    const leadType = page.querySelector('[data-type="leadtype"] .lt-value');
+    if (leadType) leadType.textContent = defaults.relationshipToProperty === 'agent' ? 'Agent' : defaults.relationshipToProperty === 'heir' ? 'Heir / probate' : 'Owner';
+    const propType = page.querySelector('[data-type="proptype"] .lt-value');
+    if (propType) propType.textContent = defaults.propertyType || 'Property';
+
+    const stats = page.querySelectorAll('.ld-stat .v');
+    const touches = renderLeadTimelineEvents(lead, snapshot).length;
+    if (stats[0]) stats[0].textContent = defaults.arv ? money(defaults.arv) : '-';
+    if (stats[1]) stats[1].textContent = defaults.mao ? money(defaults.mao) : '-';
+    if (stats[2]) {
+      const profit = defaults.arv && defaults.mao ? defaults.arv - defaults.mao - (defaults.estimatedRepairs || 0) : 0;
+      stats[2].textContent = profit ? money(profit) : '-';
+    }
+    if (stats[3]) stats[3].textContent = String(touches || 0);
+
+    const selectedPath = page.querySelector('#selectedPath');
+    if (selectedPath && defaults.selectedPath) selectedPath.value = defaults.selectedPath;
+    const finalOffer = page.querySelector('#finalOffer');
+    if (finalOffer && defaults.lastOffer) finalOffer.value = money(defaults.lastOffer);
+    const avaNotes = page.querySelector('#avaNotes');
+    if (avaNotes) avaNotes.value = defaults.notes || defaults.sellerNotes || `Use live lead context for ${defaults.sellerName}. Do not invent missing seller facts.`;
+
+    const timeline = page.querySelector('.ld-timeline');
+    const events = renderLeadTimelineEvents(lead, snapshot);
+    timeline?.querySelectorAll('.tl-event').forEach((item) => item.remove());
+    const head = timeline?.querySelector('.ld-timeline-head');
+    head?.querySelector('.tt-count')?.replaceChildren(document.createTextNode(`- ${events.length} events`));
+    if (timeline && head) {
+      const html = events.length
+        ? events.map((event) => {
+          const channel = /call/i.test(event.channel) ? 'call' : /email/i.test(event.channel) ? 'email' : /sms|text/i.test(event.channel) ? 'sms' : 'sys';
+          return `
+            <div class="tl-event">
+              <div class="tl-when">${escapeHtml(formatRelativeTime(event.at))}</div>
+              <div class="tl-dot ${escapeHtml(getActivityDotClass(event.status))}"></div>
+              <div class="tl-body">
+                <div class="tl-title">${escapeHtml(event.title || 'Runtime event')} <span class="tl-chan ${escapeHtml(channel)}">${escapeHtml(channel)}</span></div>
+                <div class="tl-desc">${escapeHtml(event.desc || 'Live bridge record')}</div>
+              </div>
+            </div>
+          `;
+        }).join('')
+        : `
+          <div class="tl-event">
+            <div class="tl-when">live</div>
+            <div class="tl-dot warn"></div>
+            <div class="tl-body">
+              <div class="tl-title">No timeline events yet <span class="tl-chan sys">System</span></div>
+              <div class="tl-desc">Calls, SMS, notes, approvals, and analyzer events will render here from PBK Brain for this selected lead.</div>
+            </div>
+          </div>
+        `;
+      head.insertAdjacentHTML('afterend', html);
+    }
+
+    const cards = page.querySelectorAll('.ld-card');
+    if (cards[0]) {
+      cards[0].innerHTML = `
+        <h4>Property</h4>
+        <div class="ld-field"><span class="l">Parcel</span><span class="v">${escapeHtml(String(defaults.parcel || '-'))}</span></div>
+        <div class="ld-field"><span class="l">Beds / Baths</span><span class="v">${escapeHtml([defaults.beds || '-', defaults.baths || '-'].join(' / '))}</span></div>
+        <div class="ld-field"><span class="l">Sq ft</span><span class="v">${escapeHtml(defaults.sqft ? Number(defaults.sqft).toLocaleString() : '-')}</span></div>
+        <div class="ld-field"><span class="l">Year built</span><span class="v">${escapeHtml(String(defaults.yearBuilt || '-'))}</span></div>
+        <div class="ld-field"><span class="l">Condition</span><span class="v">${escapeHtml(String(defaults.condition || 'unknown'))}</span></div>
+        <div class="ld-field"><span class="l">Repairs</span><span class="v">${escapeHtml(defaults.estimatedRepairs ? money(defaults.estimatedRepairs) : '-')}</span></div>
+      `;
+    }
+    if (cards[1]) {
+      cards[1].innerHTML = `
+        <h4>Motivation Signals</h4>
+        <div class="ld-field"><span class="l">Motivation</span><span class="v">${escapeHtml(String(defaults.motivation || '-'))}</span></div>
+        <div class="ld-field"><span class="l">Timeline</span><span class="v">${escapeHtml(String(defaults.timeline || '-'))}</span></div>
+        <div class="ld-field"><span class="l">Asking</span><span class="v">${escapeHtml(defaults.askingPrice ? money(defaults.askingPrice) : '-')}</span></div>
+        <div class="ld-field"><span class="l">Occupancy</span><span class="v">${escapeHtml(String(defaults.occupancy || '-'))}</span></div>
+        <div class="ld-field"><span class="l">Path</span><span class="v">${escapeHtml(DEAL_PATH_LABELS[defaults.selectedPath] || defaults.selectedPath || '-')}</span></div>
+      `;
+    }
+    if (cards[2]) {
+      cards[2].innerHTML = `
+        <h4>Compliance</h4>
+        <div class="ld-field"><span class="l">DNC status</span><span class="v">${escapeHtml(String(defaults.dncStatus || 'needs_review'))}</span></div>
+        <div class="ld-field"><span class="l">TCPA consent</span><span class="v">${escapeHtml(String(defaults.consentStatus || 'unknown'))}</span></div>
+        <div class="ld-field"><span class="l">Assigned</span><span class="v">${escapeHtml(String(defaults.assignedAgent || 'Ava'))}</span></div>
+        <div class="ld-field"><span class="l">Tags</span><span class="v">${escapeHtml(String(defaults.tags || '-'))}</span></div>
+      `;
+    }
+  }
+
+  function openLeadEditModal(lead = getActiveRuntimeLead()) {
+    if (!lead) {
+      toastOutcome({
+        outcome: 'unavailable',
+        title: 'No lead selected',
+        desc: 'Import or select a live lead before editing.'
+      });
+      return null;
+    }
+    const defaults = getLeadProfileDefaults(lead);
+    return showPbkFormModal({
+      title: `Edit ${defaults.sellerName}`,
+      intro: 'Updates save through the bridge PATCH /api/leads/:id route. Calls, contracts, campaigns, and provider writes remain approval-gated.',
+      submitLabel: 'Save lead',
+      fields: [
+        { type: 'section', kicker: 'Seller', label: 'Identity and contact' },
+        { name: 'name', label: 'Seller name', value: defaults.sellerName, required: true, full: false },
+        { name: 'phone', label: 'Phone', value: defaults.phone, full: false, inputMode: 'tel' },
+        { name: 'email', label: 'Email', value: defaults.email, full: false, type: 'email' },
+        { type: 'section', kicker: 'Property', label: 'Address and path' },
+        { name: 'address', label: 'Property address', value: defaults.address, required: true },
+        { name: 'propertyType', label: 'Property type', value: defaults.propertyType, full: false },
+        { name: 'selectedPath', label: 'Selected path', value: defaults.selectedPath, type: 'select', full: false, options: Object.entries(DEAL_PATH_LABELS).map(([value, label]) => ({ value, label })) },
+        { name: 'status', label: 'Status', value: defaults.status, type: 'select', full: false, options: [
+          { value: 'new', label: 'New' },
+          { value: 'working', label: 'Working' },
+          { value: 'contacted', label: 'Contacted' },
+          { value: 'appointment', label: 'Appointment' },
+          { value: 'analyzing', label: 'Analyzing' },
+          { value: 'offer', label: 'Offer' },
+          { value: 'contract', label: 'Contract' },
+          { value: 'won', label: 'Won' },
+          { value: 'lost', label: 'Lost' }
+        ] },
+        { type: 'section', kicker: 'Deal', label: 'Motivation and notes' },
+        { name: 'lastOffer', label: 'Last offer', value: defaults.lastOffer ? money(defaults.lastOffer) : '', full: false, inputMode: 'numeric' },
+        { name: 'askingPrice', label: 'Asking price', value: defaults.askingPrice ? money(defaults.askingPrice) : '', full: false, inputMode: 'numeric' },
+        { name: 'motivation', label: 'Motivation', value: defaults.motivation, type: 'textarea' },
+        { name: 'timeline', label: 'Timeline', value: defaults.timeline, full: false },
+        { name: 'tags', label: 'Tags', value: defaults.tags, full: false, hint: 'Comma-separated tags.' },
+        { name: 'notes', label: 'Ava/Rex notes', value: defaults.notes || defaults.sellerNotes, type: 'textarea' }
+      ],
+      validate: (values) => {
+        if (!String(values.name || '').trim()) return 'Seller name is required.';
+        if (!String(values.address || '').trim()) return 'Property address is required.';
+        if (values.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(values.email).trim())) return 'Email format looks invalid.';
+        if (!defaults.leadId) return 'This lead does not have a bridge id yet. Create/import it before editing.';
+        return '';
+      },
+      onSubmit: async (values) => {
+        const numeric = (value) => {
+          if (String(value || '').trim() === '') return undefined;
+          const parsed = num(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        const response = await requestOpenClawApi(`/api/leads/${encodeURIComponent(defaults.leadId)}`, {
+          method: 'PATCH',
+          body: {
+            actor: 'PBK Command Center',
+            name: values.name,
+            leadName: values.name,
+            phone: values.phone,
+            email: values.email,
+            address: values.address,
+            propertyType: values.propertyType,
+            status: values.status,
+            stage: values.status,
+            selectedPath: values.selectedPath,
+            selected_path: values.selectedPath,
+            lastOffer: numeric(values.lastOffer),
+            last_offer: numeric(values.lastOffer),
+            askingPrice: numeric(values.askingPrice),
+            motivation: values.motivation,
+            timeline: values.timeline,
+            tags: values.tags,
+            notes: values.notes,
+            sellerNotes: values.notes
+          },
+          timeout: 12000
+        });
+        await applyRuntimeResponse(response);
+        setActiveLeadId(defaults.leadId);
+        renderLeadDetail(response?.state || PBK.state.openclawRuntime || {});
+        toastOutcome({
+          outcome: getRuntimeOutcome(response, 'live'),
+          title: 'Lead updated',
+          desc: `${values.name} is updated for Ava, Rex, campaigns, and the analyzer.`,
+          response
+        });
+        return true;
+      }
+    });
+  }
+
+  function getRuntimeRecordingItems(snapshot = {}) {
+    const messageRecordings = Array.isArray(snapshot.messages)
+      ? snapshot.messages.filter((message) => {
+        const text = [message.channel, message.direction, message.type, message.recordingUrl, message.audioUrl, message.recordingStoragePath, message.storagePath].filter(Boolean).join(' ');
+        return /recording|voice|call/i.test(text) && !isDemoRuntimeMessage(message);
+      })
+      : [];
+    const callRecordings = getRuntimeCalls(snapshot, { includeEnded: true }).filter((call) =>
+      call.recordingMessageId || call.recordingUrl || call.audioUrl || call.transcript || /ended|complete|recording/i.test(String(call.status || call.callStatus || ''))
+    );
+    const normalizedMessages = messageRecordings.map((message, index) => ({
+      id: message.id || message.messageId || `recording-message-${index}`,
+      messageId: message.id || message.messageId || '',
+      leadName: message.leadName || message.name || message.sender || 'Recorded call',
+      address: message.address || message.leadAddress || message.subject || '',
+      at: message.createdAt || message.updatedAt || message.at,
+      durationSeconds: Number(message.durationSeconds || message.duration_seconds || 0),
+      sentiment: message.sentiment,
+      transcript: message.transcript || message.body || message.text || '',
+      status: message.status || message.direction || 'recording',
+      source: 'message'
+    }));
+    const normalizedCalls = callRecordings.map((call, index) => ({
+      id: call.recordingMessageId || call.id || `recording-call-${index}`,
+      messageId: call.recordingMessageId || call.id || '',
+      leadName: call.leadName || call.name || call.sellerName || 'Recorded call',
+      address: call.address || call.propertyAddress || '',
+      at: call.endedAt || call.updatedAt || call.startedAt || call.createdAt,
+      durationSeconds: Number(call.durationSeconds || call.duration_seconds || 0),
+      sentiment: call.sentiment,
+      transcript: Array.isArray(call.transcript)
+        ? call.transcript.map((turn) => `${turn.speaker || turn.role || 'Speaker'}: ${turn.text || turn.content || turn.message || ''}`).join('\n')
+        : (call.transcript || call.summary || ''),
+      status: call.status || call.callStatus || 'call',
+      source: 'call'
+    }));
+    const seen = new Set();
+    return sortRuntimeItems([...normalizedMessages, ...normalizedCalls]).filter((item) => {
+      const key = String(item.id || item.messageId || `${item.leadName}-${item.at}`).toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function renderRecordingTranscript(item = {}) {
+    const text = String(item.transcript || '').trim();
+    if (!text) {
+      return '<div class="rec-line current ai"><span class="ts">0:00</span><span class="speaker">PBK</span><span class="text">Transcript has not been attached yet. A real Deepgram/Telnyx recording will populate this pane after the proof call lands.</span></div>';
+    }
+    const lines = text.split(/\n+/).filter(Boolean).slice(0, 18);
+    return lines.map((line, index) => {
+      const speakerMatch = line.match(/^([^:]{1,24}):\s*(.+)$/);
+      const speaker = speakerMatch?.[1] || (index % 2 ? 'Seller' : 'Ava');
+      const body = speakerMatch?.[2] || line;
+      const isAi = /ava|rex|assistant|ai|pbk/i.test(speaker);
+      const minute = Math.floor((index * 18) / 60);
+      const second = String((index * 18) % 60).padStart(2, '0');
+      return `<div class="rec-line ${isAi ? 'ai' : 'seller'} ${index === 0 ? 'current' : ''}"><span class="ts">${minute}:${second}</span><span class="speaker">${escapeHtml(speaker.slice(0, 12))}</span><span class="text">${escapeHtml(body)}</span></div>`;
+    }).join('');
+  }
+
+  function renderRecordingsLibrary(snapshot = PBK.state.openclawRuntime || {}) {
+    const page = getPageNode('recordings');
+    if (!page) return;
+    const recordings = getRuntimeRecordingItems(snapshot);
+    const list = page.querySelector('.rec-list-body');
+    const tag = page.querySelector('.ph-tag');
+    const playerHead = page.querySelector('.rec-player-head');
+    const transcript = page.querySelector('.rec-transcript-pane');
+    const active = recordings.find((item) => String(item.id) === String(PBK.state.activeRecordingId || '')) || recordings[0] || null;
+    if (tag) {
+      tag.textContent = recordings.length
+        ? `Library - ${recordings.length} live recording${recordings.length === 1 ? '' : 's'} - bridge-backed`
+        : 'Library - waiting for first live Telnyx/Deepgram recording';
+    }
+    if (list) {
+      list.innerHTML = recordings.length
+        ? recordings.map((item, index) => `
+          <div class="rec-item ${active?.id === item.id || (!active && index === 0) ? 'active' : ''}" data-message-id="${escapeHtml(item.messageId || item.id)}" data-recording-id="${escapeHtml(item.id)}">
+            <div class="rec-play"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
+            <div class="rec-info">
+              <div class="who">${escapeHtml(item.leadName || 'Recorded call')}</div>
+              <div class="meta">${escapeHtml(formatRelativeTime(item.at))} - sentiment ${escapeHtml(formatCallScore(item.sentiment, 'pending'))}</div>
+            </div>
+            <span class="rec-dur">${escapeHtml(formatCallDuration(item))}</span>
+          </div>
+        `).join('')
+        : `
+          <div class="rec-item active" data-recording-empty>
+            <div class="rec-play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg></div>
+            <div class="rec-info">
+              <div class="who">No live recordings yet</div>
+              <div class="meta">Make one answered proof call with speech to populate this library.</div>
+            </div>
+            <span class="rec-dur">--:--</span>
+          </div>
+        `;
+      list.querySelectorAll('[data-recording-id]').forEach((item) => {
+        item.addEventListener('click', () => {
+          PBK.state.activeRecordingId = item.dataset.recordingId || '';
+          renderRecordingsLibrary(PBK.state.openclawRuntime || {});
+        });
+      });
+    }
+    if (playerHead) {
+      playerHead.innerHTML = active
+        ? `
+          <div class="rec-avatar">${escapeHtml(getInitial(active.leadName))}</div>
+          <div style="flex: 1;">
+            <div class="who">${escapeHtml(active.leadName || 'Recorded call')}</div>
+            <div class="meta">${escapeHtml(formatRelativeTime(active.at))} - ${escapeHtml(formatCallDuration(active))} - ${escapeHtml(active.address || 'Address pending')}</div>
+          </div>
+          <button class="chip-btn">Send to lead</button>
+          <button class="chip-btn">Download</button>
+        `
+        : `
+          <div class="rec-avatar">P</div>
+          <div style="flex: 1;">
+            <div class="who">Waiting for live proof call</div>
+            <div class="meta">No sandbox names are treated as production recordings.</div>
+          </div>
+          <button class="chip-btn" disabled>Send to lead</button>
+          <button class="chip-btn" disabled>Download</button>
+        `;
+    }
+    if (transcript) transcript.innerHTML = renderRecordingTranscript(active || {});
+  }
+
   function getInitial(value = '') {
     return (String(value || 'P').trim()[0] || 'P').toUpperCase();
   }
@@ -17063,7 +17558,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     tbody.querySelectorAll('[data-lead-detail="true"]').forEach((row) => {
       row.addEventListener('click', () => {
-        if (typeof showPage === 'function') showPage('lead-detail');
+        openLeadDetail(row.dataset.leadId || '');
       });
     });
   }
@@ -17101,8 +17596,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const equity = getLeadEquityPercent(lead);
       const status = lead.status || lead.stage || 'new';
       const agent = lead.agentName || lead.assignedAgent || lead.owner || 'auto';
+      const leadId = lead.id || lead.leadId || lead.importId || '';
       return `
-        <tr data-lead-detail="true" data-lead-id="${escapeHtml(lead.id || lead.leadId || lead.importId || '')}">
+        <tr data-lead-detail="true" data-lead-id="${escapeHtml(leadId)}">
           <td><div class="score"><span>${escapeHtml(String(score || '-'))}</span><span class="score-bar"><span class="score-fill ${score < 80 ? 'mid' : ''}" style="width:${score || 0}%"></span></span></div></td>
           <td><strong>${escapeHtml(getLeadSellerName(lead))}</strong></td>
           <td>${escapeHtml(getLeadAddress(lead))}</td>
@@ -17114,6 +17610,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </tr>
       `;
     }).join('');
+
+    tbody.querySelectorAll('[data-lead-detail="true"]').forEach((row) => {
+      row.addEventListener('click', () => openLeadDetail(row.dataset.leadId || ''));
+    });
   }
 
   function renderDashboardAgentConsole(snapshot = {}) {
@@ -17629,6 +18129,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderCallFloor(snapshot);
     renderDashboardLiveCall(snapshot);
     renderRuntimeLeads(snapshot);
+    renderLeadDetail(snapshot);
+    renderRecordingsLibrary(snapshot);
     renderDashboardLeadPreview(snapshot);
     renderDashboardAgentConsole(snapshot);
     renderRuntimeNotifications(snapshot);
@@ -17666,6 +18168,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   renderCallFloor(PBK.state.openclawRuntime || {});
   renderDashboardLiveCall(PBK.state.openclawRuntime || {});
   renderRuntimeLeads(PBK.state.openclawRuntime || {});
+  renderLeadDetail(PBK.state.openclawRuntime || {});
+  renderRecordingsLibrary(PBK.state.openclawRuntime || {});
   renderDashboardLeadPreview(PBK.state.openclawRuntime || {});
   renderDashboardAgentConsole(PBK.state.openclawRuntime || {});
   renderRuntimeNotifications(PBK.state.openclawRuntime || {});
@@ -18104,12 +18608,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function getLeadDetailContext() {
     const page = getPageNode('lead-detail');
-    const liveLead = getRealLeadImports(PBK.state.openclawRuntime || {})[0] || {};
+    const liveLead = getActiveRuntimeLead(PBK.state.openclawRuntime || {}) || {};
     const name = page?.querySelector('.ld-name')?.textContent?.replace(/\s+/g, ' ')?.trim() || liveLead.seller?.name || 'Selected seller';
     const details = page?.querySelector('.ld-details')?.textContent || '';
     const meta = parseMetaLine(details);
     return {
-      leadId: liveLead.leadId || '',
+      leadId: getLeadRuntimeId(liveLead) || '',
       leadName: name,
       address: meta.address || liveLead.property?.address || 'Selected property',
       phone: meta.phone || liveLead.seller?.phone || '',
@@ -21864,6 +22368,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (!button) return;
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
       const context = getLeadDetailContext();
+
+      if (label === 'edit') {
+        openLeadEditModal(getActiveRuntimeLead());
+        return;
+      }
 
       if (label === 'call') {
         await invokeRuntimeTool('telnyx_call', context, {

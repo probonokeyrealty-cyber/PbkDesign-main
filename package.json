@@ -31,6 +31,9 @@
     "deepgram:smoke:mock": "node ./scripts/deepgram-smoke.mjs --mock",
     "health:weekly": "node ./scripts/pbk-weekly-health-check.mjs",
     "health:weekly:json": "node ./scripts/pbk-weekly-health-check.mjs --json",
+    "n8n:rex:dry-run": "node ./scripts/publish-rex-workflows.mjs --dry-run",
+    "n8n:rex:publish": "node ./scripts/publish-rex-workflows.mjs --publish",
+    "n8n:rex:activate": "node ./scripts/publish-rex-workflows.mjs --publish --activate",
     "property-data:smoke": "node ./scripts/property-data-smoke.mjs",
     "property-data:endpoint-smoke": "node ./scripts/property-data-endpoint-smoke.mjs",
     "property-data:homeharvest": "node ./scripts/property-data-adapter.mjs homeharvest --location 43215 --listing-type for_sale --limit 5",
@@ -115,7 +118,8 @@
     "tailwind-merge": "3.2.0",
     "tw-animate-css": "1.3.8",
     "vaul": "1.1.2",
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "youtube-transcript": "^1.3.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",

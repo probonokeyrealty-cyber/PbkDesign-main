@@ -5,6 +5,8 @@ These workflows are the production n8n pieces the founder build relies on:
 1. `pbk-lead-intake.workflow.json`
 2. `pbk-approval-fanout.workflow.json`
 3. `pbk-nightly-ava-learning.workflow.json`
+4. `rex-strategist.workflow.json`
+5. `rex-outcome-evaluator.workflow.json`
 
 The keep-warm workflow can stay managed in n8n cloud if you already have it active. OpenClaw remains the brain; n8n only normalizes, notifies, and callbacks.
 
@@ -34,6 +36,23 @@ They are intentionally deterministic. OpenClaw remains the brain.
 - Extracts lessons from recent calls/transcripts and stores active Ava memories
 - Posts a plain-English summary via `pbk_send_update`
 - Does not fine-tune, change model IDs, deploy, or send provider messages
+
+### Rex Strategist / Outcome Evaluator
+- Trigger: daily schedule or manual dry run
+- Strategist reads campaign analytics, prior Rex decisions, and Brain context, then proposes bridge-backed optimization decisions
+- Outcome Evaluator compares applied decisions against recent performance and records which strategies worked
+- Both workflows are safe to dry-run from the repo before import/activation
+
+```bash
+npm run n8n:rex:dry-run
+```
+
+When the bridge and n8n API credentials are configured, publish or activate from the bridge:
+
+```bash
+npm run n8n:rex:publish
+npm run n8n:rex:activate
+```
 
 ## Import steps
 

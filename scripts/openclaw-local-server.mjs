@@ -148,6 +148,7 @@ hydrateWindowsUserEnv([
   'PBK_ELEVENLABS_API_KEY',
   'ELEVENLABS_API_KEY',
   'PBK_PROTECTED_OPS_PASSCODE',
+  'PBK_TEAM_PASSCODE',
   'PBK_OPERATOR_PHONE',
   'PBK_TOTP_REQUIRED',
   'PBK_TOTP_SECRET',
@@ -212,6 +213,9 @@ const OPENAI_BASE_URL = String(process.env.PBK_OPENAI_BASE_URL || process.env.OP
 const OPENAI_WEB_SEARCH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_OPENAI_WEB_SEARCH_ENABLED || 'true').trim());
 const OPENAI_WEB_SEARCH_MODEL = String(process.env.PBK_OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_WEB_SEARCH_MODEL || 'gpt-4o-mini').trim();
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
+const TEAM_PASSCODE = String(process.env.PBK_TEAM_PASSCODE || '').trim();
+const TEAM_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.PBK_TEAM_SESSION_TTL_MS || 8 * 60 * 60 * 1000));
+const TEAM_APPROVAL_LIMIT = Math.max(1, Number(process.env.PBK_TEAM_APPROVAL_LIMIT || 150000));
 const OPERATOR_PHONE = normalizePhone(process.env.PBK_OPERATOR_PHONE || HUMAN_AGENT_PHONE || '');
 const TOTP_REQUIRED = /^(1|true|yes)$/i.test(String(process.env.PBK_TOTP_REQUIRED || '').trim());
 const TOTP_SECRET = String(process.env.PBK_TOTP_SECRET || '').trim();
@@ -427,6 +431,8 @@ const TOOL_NAMES = [
   'runAvaMemoryLearning',
   'addPbkMemory',
   'recallPbkMemory',
+  'rememberPersonalFact',
+  'getPersonalContext',
   'pbk_learn',
   'pbk_learn_from_chat',
   'recordPbkFeedback',
@@ -455,6 +461,43 @@ const TOOL_NAMES = [
   'launchBrowserResearch',
   'runAgentCommand',
 ];
+
+const runtimeBrowserSockets = new Set();
+let runtimeBroadcastTimer = null;
+
+function sendRuntimeSocketMessage(socket, payload = {}) {
+  if (!socket || socket.readyState !== 1) return false;
+  try {
+    socket.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function broadcastRuntimeState(reason = 'state') {
+  if (!runtimeBrowserSockets.size) return;
+  const payload = {
+    type: 'state',
+    reason,
+    at: isoNow(),
+    snapshot: buildStateSnapshot(),
+  };
+  for (const socket of runtimeBrowserSockets) {
+    if (!sendRuntimeSocketMessage(socket, payload)) {
+      runtimeBrowserSockets.delete(socket);
+    }
+  }
+}
+
+function scheduleRuntimeStateBroadcast(reason = 'state') {
+  if (!runtimeBrowserSockets.size) return;
+  if (runtimeBroadcastTimer) clearTimeout(runtimeBroadcastTimer);
+  runtimeBroadcastTimer = setTimeout(() => {
+    runtimeBroadcastTimer = null;
+    broadcastRuntimeState(reason);
+  }, 75);
+}
 
 const LIMITS = {
   approvals: 60,
@@ -1119,10 +1162,125 @@ function getSecurityMeta() {
     bridgeBearerRequired: Boolean(BRIDGE_API_KEY),
     totpRequired: TOTP_REQUIRED,
     totpConfigured: Boolean(TOTP_SECRET),
+    totpEnrolled: Boolean(state?.settings?.security?.totpEnrolledAt),
+    totpEnrollmentAvailable: Boolean(TOTP_SECRET && !TOTP_REQUIRED),
     protectedOpsPasscodeConfigured: Boolean(PROTECTED_OPS_PASSCODE),
+    teamPasscodeConfigured: Boolean(TEAM_PASSCODE),
+    teamApprovalLimit: TEAM_APPROVAL_LIMIT,
+    teamSessionTtlMs: TEAM_SESSION_TTL_MS,
     providerWritesApprovalGated: getRuntimeOperatingMode() !== 'autopilot',
     voicePrewarmEnabled: VOICE_PREWARM_ENABLED,
   };
+}
+
+function safeCompareString(left = '', right = '') {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  if (!leftBuffer.length || leftBuffer.length !== rightBuffer.length) return false;
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isTeamPasscodeValid(passcode = '') {
+  const candidate = String(passcode || '').trim();
+  return Boolean(TEAM_PASSCODE && candidate && safeCompareString(candidate, TEAM_PASSCODE));
+}
+
+function getTeamSessionSecret() {
+  return `${BRIDGE_API_KEY || 'local-bridge'}:${TEAM_PASSCODE || 'no-team-passcode'}`;
+}
+
+function signTeamSessionPayload(payload = '') {
+  return createHmac('sha256', getTeamSessionSecret()).update(payload).digest('base64url');
+}
+
+function createTeamSessionToken({ actor = 'PBK team', role = 'team' } = {}) {
+  const expiresAt = Date.now() + TEAM_SESSION_TTL_MS;
+  const payload = Buffer.from(JSON.stringify({
+    role,
+    actor: String(actor || 'PBK team').slice(0, 80),
+    expiresAt,
+    nonce: randomUUID(),
+  })).toString('base64url');
+  const signature = signTeamSessionPayload(payload);
+  return {
+    token: `${payload}.${signature}`,
+    expiresAt: new Date(expiresAt).toISOString(),
+    ttlMs: TEAM_SESSION_TTL_MS,
+  };
+}
+
+function verifyTeamSessionToken(token = '') {
+  const value = String(token || '').trim();
+  const [payload, signature] = value.split('.');
+  if (!payload || !signature) return { ok: false, error: 'missing_team_session' };
+  if (!safeCompareString(signature, signTeamSessionPayload(payload))) {
+    return { ok: false, error: 'invalid_team_session' };
+  }
+  let decoded = null;
+  try {
+    decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch {
+    return { ok: false, error: 'invalid_team_session_payload' };
+  }
+  if (!decoded?.expiresAt || Number(decoded.expiresAt) < Date.now()) {
+    return { ok: false, error: 'expired_team_session' };
+  }
+  return {
+    ok: true,
+    role: decoded.role || 'team',
+    actor: decoded.actor || 'PBK team',
+    expiresAt: new Date(Number(decoded.expiresAt)).toISOString(),
+  };
+}
+
+function getTeamAuthMeta(request = {}, body = {}) {
+  const headerToken = String(request.headers?.['x-pbk-team-token'] || request.headers?.['x-team-token'] || '').trim();
+  const bodyToken = String(body?.teamToken || body?.team_token || '').trim();
+  const token = headerToken || bodyToken;
+  if (token) {
+    const verified = verifyTeamSessionToken(token);
+    if (verified.ok) return { ...verified, source: 'session-token' };
+  }
+  const headerPasscode = String(request.headers?.['x-pbk-team-passcode'] || request.headers?.['x-team-passcode'] || '').trim();
+  const bodyPasscode = String(body?.teamPasscode || body?.team_passcode || '').trim();
+  if (isTeamPasscodeValid(headerPasscode || bodyPasscode)) {
+    return {
+      ok: true,
+      role: 'team',
+      actor: body?.actor || 'PBK team',
+      source: 'passcode',
+      expiresAt: new Date(Date.now() + TEAM_SESSION_TTL_MS).toISOString(),
+    };
+  }
+  return { ok: false, source: 'none', error: TEAM_PASSCODE ? 'team_auth_required' : 'team_passcode_not_configured' };
+}
+
+function getTeamPermissions() {
+  return {
+    canViewLeads: true,
+    canCreateCampaignDrafts: true,
+    canApproveRoutineOffers: true,
+    canApproveOfferUpTo: TEAM_APPROVAL_LIMIT,
+    canSendContracts: false,
+    canDeleteData: false,
+    canChangeGuardrails: false,
+    canToggleKillSwitch: false,
+  };
+}
+
+function getTeamApprovalRestriction(approval = {}, status = '') {
+  const normalizedStatus = String(status || '').toLowerCase().replace(/-/g, '_');
+  if (normalizedStatus !== 'approved') return null;
+  const type = String(approval.type || approval.approvalAction || '').toLowerCase();
+  const action = String(approval.approvalAction || approval.action || '').toLowerCase();
+  const amount = Math.max(toNumber(approval.offerPrice, 0), toNumber(approval.amount, 0), toNumber(approval.metadata?.offerPrice, 0));
+  if (amount > TEAM_APPROVAL_LIMIT) {
+    return `Offer is ${currency(amount)}, above the team limit of ${currency(TEAM_APPROVAL_LIMIT)}. Admin approval required.`;
+  }
+  if (/(contract|docusign|provider|admin|kill|delete|campaign|outbound|prompt|rex-decision)/i.test(`${type} ${action}`)) {
+    return 'This approval can trigger a contract, provider write, admin change, campaign, or prompt application. Admin approval required.';
+  }
+  return null;
 }
 
 function decodeBase32Secret(secret = '') {
@@ -1172,6 +1330,29 @@ function verifyTotpCode(token = '', secret = TOTP_SECRET, windowSize = TOTP_WIND
     if (left.length === right.length && timingSafeEqual(left, right)) return true;
   }
   return false;
+}
+
+function getTotpEnrollmentPayload() {
+  const secret = String(TOTP_SECRET || '')
+    .toUpperCase()
+    .replace(/^OTPAUTH:\/\/[^?]+\?/i, '')
+    .replace(/.*SECRET=([^&]+).*/i, '$1')
+    .replace(/[^A-Z2-7]/g, '');
+  const issuer = 'PBK Command Center';
+  const account = 'operator';
+  const label = `${issuer}:${account}`;
+  return {
+    configured: Boolean(secret),
+    required: TOTP_REQUIRED,
+    enrolled: Boolean(state?.settings?.security?.totpEnrolledAt),
+    issuer,
+    account,
+    secret,
+    otpauthUrl: secret
+      ? `otpauth://totp/${encodeURIComponent(label)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`
+      : '',
+    manualEntry: secret ? secret.replace(/(.{4})/g, '$1 ').trim() : '',
+  };
 }
 
 function requiresTotpForPath(pathname = '') {
@@ -2906,8 +3087,8 @@ function buildDefaultState() {
       ],
       suggestedReading: [
         {
-          why: 'Because Diane K. is live right now',
-          title: 'Handling grief-bereaved sellers without sounding predatory - 4 min',
+          why: 'Because live seller context can include major life events',
+          title: 'Warm rapport without pressure: ask once, then return to business - 4 min',
         },
         {
           why: 'Because probate leads are queued',
@@ -3010,7 +3191,7 @@ function getPgPool() {
   if (!DATABASE_URL) return null;
   __pgPool = new PgPool({
     connectionString: DATABASE_URL,
-    max: 2,
+    max: Math.max(2, Math.min(20, Number(process.env.PBK_PG_POOL_MAX || 10))),
     // Render Postgres requires TLS but uses a self-signed cert chain.
     // Disable cert validation for managed-DB hostnames; keep it on for localhost.
     ssl: /(localhost|127\.0\.0\.1)/.test(DATABASE_URL)
@@ -3672,10 +3853,12 @@ async function persistState(nextState) {
   updateDerivedStatus(nextState);
   if (DATABASE_URL) {
     await persistStateToDb(nextState);
+    scheduleRuntimeStateBroadcast('persist');
     return;
   }
   await ensureRuntimeDir();
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
+  scheduleRuntimeStateBroadcast('persist');
 }
 
 async function persistCampaignRecord(campaign = {}) {
@@ -6799,6 +6982,144 @@ async function recallPbkMemoryRecords(params = {}) {
   };
 }
 
+function normalizePersonalFactType(value = '') {
+  const raw = String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const aliases = {
+    child: 'child_name',
+    kid: 'child_name',
+    baby: 'child_name',
+    newborn: 'child_name',
+    spouse: 'spouse_name',
+    husband: 'spouse_name',
+    wife: 'spouse_name',
+    partner: 'spouse_name',
+    pet: 'pet_name',
+    dog: 'pet_name',
+    cat: 'pet_name',
+    hobby: 'hobby',
+    callback: 'callback_preference',
+    best_time: 'callback_preference',
+  };
+  return aliases[raw] || raw || 'personal_note';
+}
+
+function buildPersonalFactLabel(type = '') {
+  return normalizePersonalFactType(type).replace(/^personal_/, '').replace(/_/g, ' ');
+}
+
+async function rememberPersonalFactRecord(params = {}) {
+  const context = findLeadContext(params);
+  const leadId = String(params.leadId || params.lead_id || context.leadId || '').trim();
+  const leadName = String(params.leadName || params.lead_name || context.leadName || '').trim();
+  const address = String(params.address || context.address || '').trim();
+  const factType = normalizePersonalFactType(params.factType || params.fact_type || params.type || params.key);
+  const factValue = String(params.factValue || params.fact_value || params.value || params.object || params.note || '').trim();
+  const subject = String(params.subject || leadId || leadName || address || params.phone || '').trim();
+  if (!subject || !factValue) {
+    return {
+      ok: false,
+      recorded: false,
+      error: 'Personal fact memory requires a lead/person identifier and a fact value.',
+    };
+  }
+
+  const metadata = {
+    ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+    leadId,
+    leadName,
+    address,
+    factType,
+    factLabel: buildPersonalFactLabel(factType),
+    conversationCue: String(params.conversationCue || params.cue || '').trim(),
+    returnToBusinessCue: String(
+      params.returnToBusinessCue
+        || params.businessCue
+        || 'I will keep this simple and get back to the property so I respect your time.',
+    ).trim(),
+    relationshipUse: 'rapport-continuity',
+    consentBoundary: 'Use naturally only when relevant; do not over-personalize or pressure.',
+  };
+  const now = isoNow();
+  const knowledge = await recordPbkKnowledgeRecord({
+    id: params.id || `pbk-personal-${Math.abs(hashString(`${subject}\n${factType}\n${factValue}`))}`,
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    subject,
+    predicate: `personal_${factType}`,
+    object: factValue,
+    confidence: params.confidence ?? 0.9,
+    source: params.source || 'ava-conversation',
+    sourceId: params.sourceId || params.source_id || params.callId || params.call_id || '',
+    metadata,
+    createdAt: params.createdAt || now,
+    updatedAt: now,
+  });
+  const memory = await addPbkMemoryRecord({
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    leadId,
+    agentName: params.agentName || 'Ava',
+    memoryType: 'personal',
+    importance: params.importance ?? 0.86,
+    content: `${leadName || subject} shared ${buildPersonalFactLabel(factType)}: ${factValue}. ${metadata.returnToBusinessCue}`,
+    source: params.source || 'ava-conversation',
+    sourceId: params.sourceId || params.source_id || params.callId || params.call_id || '',
+    metadata,
+    tags: ['personal_fact', factType],
+  });
+  return {
+    ok: Boolean(knowledge.ok && memory.ok),
+    recorded: Boolean(knowledge.ok && memory.ok),
+    fact: knowledge.fact,
+    memory: memory.memory,
+    nextBestQuestion: params.nextBestQuestion || buildPersonalFollowUpQuestion(factType, factValue),
+    returnToBusinessCue: metadata.returnToBusinessCue,
+    storage: {
+      knowledge: knowledge.storage || null,
+      memory: memory.storage || null,
+    },
+  };
+}
+
+function buildPersonalFollowUpQuestion(factType = '', factValue = '') {
+  const type = normalizePersonalFactType(factType);
+  if (/child|baby|newborn/.test(type)) return `How is ${factValue} doing?`;
+  if (/spouse/.test(type)) return `How is ${factValue} feeling about the sale timeline?`;
+  if (/pet/.test(type)) return `How is ${factValue}?`;
+  if (/hobby/.test(type)) return `Have you had any time for ${factValue} lately?`;
+  if (/callback/.test(type)) return `Is ${factValue} still the best time to reconnect?`;
+  return `How has that been going since we last talked?`;
+}
+
+function getPersonalContextRecords(params = {}) {
+  const context = findLeadContext(params);
+  const subjectCandidates = new Set(
+    [
+      params.subject,
+      params.leadId,
+      params.lead_id,
+      context.leadId,
+      params.leadName,
+      params.lead_name,
+      context.leadName,
+      params.address,
+      context.address,
+      params.phone,
+    ].map((item) => String(item || '').trim()).filter(Boolean),
+  );
+  const facts = (state.pbkKnowledge || [])
+    .filter((fact) => String(fact.predicate || '').startsWith('personal_'))
+    .filter((fact) => !subjectCandidates.size || subjectCandidates.has(String(fact.subject || '').trim()))
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0))
+    .slice(0, Math.max(1, Math.min(20, Number(params.limit || 10))));
+  return {
+    ok: true,
+    count: facts.length,
+    facts,
+    guidance: facts.length
+      ? 'Use one relevant personal detail, ask at most one warm follow-up, then return to the business reason for the call.'
+      : 'No structured personal facts yet. If the seller shares a family, pet, hobby, or callback preference, use rememberPersonalFact.',
+  };
+}
+
 function normalizePbkFeedbackRecord(params = {}) {
   const context = findLeadContext(params);
   return {
@@ -8309,6 +8630,15 @@ function createContractRecord(params = {}) {
     notes: params.notes || '',
     approvalId: params.approvalId || '',
     templateId: params.templateId || '',
+    docusignTemplateId: params.docusignTemplateId || params.docuSignTemplateId || '',
+    docusignTemplateName: params.docusignTemplateName || params.docuSignTemplateName || params.templateName || '',
+    templateName: params.templateName || params.docusignTemplateName || params.docuSignTemplateName || '',
+    templateVersion: params.templateVersion || '',
+    templateDescription: params.templateDescription || '',
+    templateDocuments: Array.isArray(params.templateDocuments) ? params.templateDocuments.filter(Boolean) : [],
+    templateRecipientRoles: Array.isArray(params.templateRecipientRoles) ? params.templateRecipientRoles.filter(Boolean) : [],
+    templateSyncedAt: params.templateSyncedAt || '',
+    contractAgentVersion: params.contractAgentVersion || params.agentVersion || '',
     templateFields: params.templateFields || {},
     templateFieldMap: params.templateFieldMap || {},
     contractPath: params.contractPath || params.selectedPath || '',
@@ -9870,6 +10200,67 @@ function getDocuSignTemplateIdForPath(params = {}) {
   if (explicit) return explicit;
   const key = normalizeDocuSignTemplateKey(params);
   return String(process.env[`DOCUSIGN_TEMPLATE_${key}`] || '').trim();
+}
+
+function getContractTemplateDocuments(template = {}) {
+  const docs = Array.isArray(template.fields?.documents) ? template.fields.documents : [];
+  return docs
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      return item?.name || item?.title || item?.label || '';
+    })
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+}
+
+function inferContractTemplateRoles(template = {}, params = {}) {
+  const raw = [
+    template.id,
+    template.pathId,
+    template.type,
+    template.name,
+    params.contractPath,
+    params.selectedPath,
+    params.selectedPathLabel,
+    params.contractType,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (/assignment|assignor|assignee/.test(raw)) return ['Seller / Assignor', 'PBK Buyer', 'End Buyer / Assignee'];
+  if (/creative|seller finance|finance/.test(raw)) return ['Seller', 'PBK Buyer', 'Agent / Broker'];
+  if (/mortgage|takeover|subject|subto/.test(raw)) return ['Seller', 'PBK Buyer', 'Agent / Broker'];
+  if (/retail|rbp/.test(raw)) return ['Seller', 'Retail Buyer', 'PBK Coordinator'];
+  if (/land/.test(raw)) return ['Seller', 'PBK Buyer', 'Listing Agent if represented'];
+  if (/probate|estate/.test(raw)) return ['Executor / Seller', 'PBK Buyer', 'Attorney if required'];
+  return ['Seller', 'PBK Buyer'];
+}
+
+function buildContractTemplateAudit(template = {}, params = {}) {
+  const selectedPath = params.selectedPath || params.contractPath || template.pathId || template.id || DEFAULT_CONTRACT_PATH;
+  const docusignTemplateId = getDocuSignTemplateIdForPath({
+    ...params,
+    selectedPath,
+    selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
+    templateName: params.templateName || params.docusignTemplateName || template.name || '',
+  });
+  const templateName = String(params.templateName || params.docusignTemplateName || template.name || selectedPath).trim();
+  const documents = Array.isArray(params.templateDocuments) && params.templateDocuments.length
+    ? params.templateDocuments
+    : getContractTemplateDocuments(template);
+  const roles = Array.isArray(params.templateRecipientRoles) && params.templateRecipientRoles.length
+    ? params.templateRecipientRoles
+    : inferContractTemplateRoles(template, params);
+
+  return {
+    docusignTemplateId,
+    docusignTemplateName: String(params.docusignTemplateName || templateName).trim(),
+    templateName,
+    templateVersion: params.templateVersion || template.version || '',
+    templateDescription: params.templateDescription || template.description || '',
+    templateDocuments: documents,
+    templateRecipientRoles: roles,
+    templateSyncedAt: params.templateSyncedAt || template.updatedAt || contractTemplateCache.loadedAt || isoNow(),
+    contractAgentVersion: params.contractAgentVersion || `PBK contract router ${template.version || 'live'}`,
+  };
 }
 
 function inferContractPathFromParams(params = {}) {
@@ -13077,6 +13468,8 @@ async function extractAttachmentText({ filename = '', contentType = '', bytes })
   const extension = fileName.toLowerCase().split('.').pop() || '';
   const textLike = /^(text\/|application\/json|application\/csv|application\/xml)/i.test(mime)
     || ['txt', 'md', 'csv', 'json', 'html', 'htm', 'xml'].includes(extension);
+  const audioVideoLike = /^(audio|video)\//i.test(mime)
+    || ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'oga', 'flac', 'webm', 'mp4', 'mov', 'm4v'].includes(extension);
 
   if (!bytes?.length) return { ok: false, text: '', error: 'No attachment bytes were available for extraction.' };
 
@@ -13117,12 +13510,324 @@ async function extractAttachmentText({ filename = '', contentType = '', bytes })
     }
   }
 
+  if (audioVideoLike) {
+    const result = await transcribeDeepgramFile({
+      bytes: Buffer.from(bytes),
+      smart_format: true,
+      sentiment: true,
+      utterances: true,
+    });
+    const text = String(result?.summary?.transcript || '').trim();
+    return {
+      ok: Boolean(result?.ok && text),
+      parser: 'deepgram',
+      text,
+      characters: text.length,
+      sentiment: result?.summary?.sentiment || null,
+      utteranceCount: result?.summary?.utteranceCount || 0,
+      error: result?.ok ? '' : result?.error || 'Deepgram could not transcribe this audio/video attachment.',
+      warnings: result?.ok ? [] : [result?.error || 'Deepgram transcription unavailable'],
+    };
+  }
+
   return {
     ok: false,
     parser: 'unsupported',
     text: '',
     error: `No text extractor is configured for ${mime || extension || 'this file type'}.`,
   };
+}
+
+function isHttpUrl(value = '') {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    return /^https?:$/i.test(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function getIngestSourceUrl(params = {}) {
+  const candidates = [params.url, params.sourceUrl, params.source, params.citation].map((item) => String(item || '').trim());
+  return candidates.find(isHttpUrl) || '';
+}
+
+function getUrlExtension(value = '') {
+  try {
+    const pathname = new URL(value).pathname || '';
+    return pathname.toLowerCase().split('.').pop() || '';
+  } catch {
+    return '';
+  }
+}
+
+function classifyRemoteIngestKind(url = '', contentType = '', fallback = '') {
+  const text = `${fallback || ''} ${url || ''} ${contentType || ''}`.toLowerCase();
+  if (/youtu\.be|youtube\.com/.test(text)) return 'video';
+  if (/audio\/|\.mp3\b|\.m4a\b|\.wav\b|\.aac\b|\.ogg\b|\.flac\b/.test(text)) return 'audio';
+  if (/video\/|\.mp4\b|\.mov\b|\.m4v\b|\.webm\b/.test(text)) return 'video';
+  if (/pdf|\.pdf\b/.test(text)) return 'paper';
+  if (/article|blog|news|html|text/.test(text)) return 'article';
+  return fallback || 'article';
+}
+
+function extractYouTubeVideoId(value = '') {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (/youtu\.be$/i.test(parsed.hostname)) return parsed.pathname.replace(/^\/+/, '').split('/')[0] || '';
+    if (/youtube\.com$/i.test(parsed.hostname) || /youtube\.com$/i.test(parsed.hostname.replace(/^www\./, ''))) {
+      return parsed.searchParams.get('v')
+        || parsed.pathname.match(/\/(?:shorts|embed|live)\/([^/?#]+)/)?.[1]
+        || '';
+    }
+  } catch {}
+  return '';
+}
+
+async function fetchYouTubeTitle(url = '') {
+  try {
+    const response = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`, {
+      headers: { 'user-agent': 'PBK-Command-Center/1.0' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return '';
+    const payload = await response.json();
+    return String(payload?.title || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+async function fetchYouTubeTranscript(url = '') {
+  const videoId = extractYouTubeVideoId(url);
+  if (!videoId) return { ok: false, transcript: '', error: 'YouTube video ID was not found.' };
+  try {
+    const mod = await import('youtube-transcript');
+    const transcriptFetcher = mod.YoutubeTranscript?.fetchTranscript || mod.fetchTranscript;
+    if (typeof transcriptFetcher !== 'function') throw new Error('youtube-transcript fetcher is unavailable.');
+    const segments = await transcriptFetcher(videoId);
+    const transcript = (segments || []).map((segment) => segment?.text || '').filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    return {
+      ok: Boolean(transcript),
+      transcript,
+      segmentCount: Array.isArray(segments) ? segments.length : 0,
+      videoId,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      transcript: '',
+      videoId,
+      error: error?.message || 'YouTube transcript unavailable.',
+    };
+  }
+}
+
+function extractHtmlTitle(html = '') {
+  const title = String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+  return title.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function htmlToReadableText(html = '') {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function fetchRemoteIngestContent(url = '', params = {}) {
+  const normalizedUrl = new URL(url).toString();
+  const youtubeId = extractYouTubeVideoId(normalizedUrl);
+  if (youtubeId) {
+    const [title, transcript] = await Promise.all([
+      fetchYouTubeTitle(normalizedUrl),
+      fetchYouTubeTranscript(normalizedUrl),
+    ]);
+    if (transcript.ok && transcript.transcript) {
+      return {
+        ok: true,
+        kind: 'transcript',
+        title: params.title || title || `YouTube video ${youtubeId}`,
+        text: transcript.transcript,
+        summary: transcript.transcript.slice(0, 2400),
+        parser: 'youtube-transcript',
+        metadata: { youtubeId, segmentCount: transcript.segmentCount || 0 },
+      };
+    }
+    return {
+      ok: false,
+      kind: 'video',
+      title: params.title || title || `YouTube video ${youtubeId}`,
+      text: '',
+      summary: '',
+      parser: 'youtube-transcript',
+      error: transcript.error || 'Captions or transcript are unavailable for this YouTube video.',
+      metadata: { youtubeId, transcriptStatus: 'unavailable' },
+    };
+  }
+
+  const extension = getUrlExtension(normalizedUrl);
+  const initialKind = classifyRemoteIngestKind(normalizedUrl, '', params.kind);
+  if (['audio', 'video'].includes(initialKind)) {
+    const transcript = await transcribeDeepgramUrl({
+      url: normalizedUrl,
+      smart_format: true,
+      sentiment: true,
+      utterances: true,
+    });
+    const text = String(transcript?.summary?.transcript || '').trim();
+    return {
+      ok: Boolean(transcript?.ok && text),
+      kind: 'transcript',
+      title: params.title || `Audio/video source: ${path.basename(new URL(normalizedUrl).pathname || 'source')}`,
+      text,
+      summary: text.slice(0, 2400),
+      parser: 'deepgram-url',
+      error: transcript?.ok ? '' : transcript?.error || 'Deepgram could not transcribe that audio/video URL.',
+      metadata: {
+        transcriptStatus: transcript?.ok ? 'transcribed' : 'unavailable',
+        sentiment: transcript?.summary?.sentiment || null,
+        utteranceCount: transcript?.summary?.utteranceCount || 0,
+      },
+    };
+  }
+
+  const response = await fetch(normalizedUrl, {
+    headers: {
+      'accept': 'text/html,application/pdf,text/plain,application/json,*/*;q=0.8',
+      'user-agent': 'PBK-Command-Center-Brain/1.0 (+https://probonoskeyrealty.com)',
+    },
+    signal: AbortSignal.timeout(14000),
+  });
+  if (!response.ok) {
+    throw new Error(`Source fetch failed (${response.status} ${response.statusText}).`);
+  }
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const filename = path.basename(new URL(normalizedUrl).pathname || `source.${extension || 'txt'}`);
+  const kind = classifyRemoteIngestKind(normalizedUrl, contentType, params.kind);
+
+  if (contentType.includes('pdf') || extension === 'pdf') {
+    const extraction = await extractAttachmentText({ filename: filename || 'source.pdf', contentType, bytes });
+    return {
+      ok: Boolean(extraction.ok && extraction.text),
+      kind: 'paper',
+      title: params.title || filename || 'PDF source',
+      text: extraction.text,
+      summary: extraction.text.slice(0, 2400),
+      parser: extraction.parser || 'pdf-url',
+      error: extraction.error || '',
+      metadata: { contentType, characters: extraction.characters || 0 },
+    };
+  }
+
+  const raw = bytes.toString('utf8');
+  const text = contentType.includes('html') || /html?/i.test(extension) ? htmlToReadableText(raw) : raw.replace(/\s+/g, ' ').trim();
+  const title = params.title || (contentType.includes('html') ? extractHtmlTitle(raw) : '') || filename || normalizedUrl;
+  return {
+    ok: Boolean(text),
+    kind,
+    title,
+    text,
+    summary: text.slice(0, 2400),
+    parser: contentType.includes('html') ? 'html-fetch' : 'text-fetch',
+    metadata: { contentType, bytes: bytes.length },
+  };
+}
+
+async function hydrateResearchIngestParams(params = {}) {
+  const sourceUrl = getIngestSourceUrl(params);
+  const hasManualContent = Boolean(String(params.summary || params.excerpt || params.content || '').trim());
+  const tags = normalizeStringList(params.tags || [params.topic || 'Wholesaling']);
+  if (!sourceUrl || hasManualContent) {
+    return {
+      ...params,
+      source: params.source || params.sourceUrl || params.url || 'Manual ingest',
+      sourceUrl: sourceUrl || params.sourceUrl || params.url || '',
+      tags,
+    };
+  }
+
+  try {
+    const fetched = await fetchRemoteIngestContent(sourceUrl, params);
+    if (!fetched.ok) {
+      return {
+        ...params,
+        kind: fetched.kind || params.kind || 'article',
+        title: params.title || fetched.title || sourceUrl,
+        source: params.source || sourceUrl,
+        sourceUrl,
+        summary: `Source saved, but full extraction needs review: ${fetched.error || 'content unavailable'}`,
+        excerpt: '',
+        citation: params.citation || sourceUrl,
+        tags: normalizeStringList([...tags, fetched.kind || 'source', 'needs-review']),
+        metadata: {
+          ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+          sourceUrl,
+          extraction: {
+            ok: false,
+            parser: fetched.parser || '',
+            error: fetched.error || 'content unavailable',
+          },
+          ...(fetched.metadata || {}),
+        },
+      };
+    }
+    return {
+      ...params,
+      kind: fetched.kind || params.kind || 'article',
+      title: params.title || fetched.title || sourceUrl,
+      source: params.source || sourceUrl,
+      sourceUrl,
+      summary: params.summary || fetched.summary || fetched.text.slice(0, 2400),
+      excerpt: params.excerpt || fetched.text,
+      citation: params.citation || sourceUrl,
+      tags: normalizeStringList([...tags, fetched.kind || 'source', fetched.parser || 'ingested-url']),
+      metadata: {
+        ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+        sourceUrl,
+        extraction: {
+          ok: true,
+          parser: fetched.parser || 'url-fetch',
+          characters: fetched.text?.length || 0,
+        },
+        ...(fetched.metadata || {}),
+      },
+    };
+  } catch (error) {
+    return {
+      ...params,
+      kind: params.kind || 'article',
+      title: params.title || sourceUrl,
+      source: params.source || sourceUrl,
+      sourceUrl,
+      summary: `Source saved, but PBK could not fetch it yet: ${error?.message || 'unknown fetch error'}`,
+      excerpt: '',
+      citation: params.citation || sourceUrl,
+      tags: normalizeStringList([...tags, 'needs-review']),
+      metadata: {
+        ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+        sourceUrl,
+        extraction: {
+          ok: false,
+          parser: 'url-fetch',
+          error: error?.message || 'unknown fetch error',
+        },
+      },
+    };
+  }
 }
 
 function parseTags(value = '') {
@@ -18160,6 +18865,30 @@ const toolHandlers = {
     return recallPbkMemoryRecords(params);
   },
 
+  async rememberPersonalFact(params = {}) {
+    recordToolUse('rememberPersonalFact');
+    const result = await rememberPersonalFactRecord(params);
+    if (result.ok) {
+      addActivity(
+        state,
+        makeActivity({
+          actor: params.agentName || 'Ava',
+          category: 'MEMORY',
+          status: 'success',
+          text: `Remembered personal context: ${result.fact?.predicate?.replace(/^personal_/, '').replace(/_/g, ' ') || 'fact'} for ${result.fact?.subject || 'lead'}.`,
+          target: params.leadName || params.address || result.fact?.subject || 'PBK brain',
+        }),
+      );
+      await persistState(state);
+    }
+    return result;
+  },
+
+  async getPersonalContext(params = {}) {
+    recordToolUse('getPersonalContext');
+    return getPersonalContextRecords(params);
+  },
+
   async pbk_learn(params = {}) {
     recordToolUse('pbk_learn');
     return capturePbkChatLearning(params, { sourceTool: 'pbk_learn' });
@@ -19998,17 +20727,20 @@ const toolHandlers = {
 
   async ingestResearchDoc(params = {}) {
     recordToolUse('ingestResearchDoc');
+    const hydrated = await hydrateResearchIngestParams(params);
     const doc = {
-      id: params.id || randomUUID(),
-      kind: params.kind || 'note',
-      topic: params.topic || 'Wholesaling',
-      title: params.title || 'Untitled source',
-      source: params.source || 'Manual ingest',
-      excerpt: params.excerpt || params.summary || 'No excerpt provided.',
-      summary: params.summary || params.excerpt || 'No summary provided.',
-      citation: params.citation || `${params.source || 'Manual ingest'} - ${new Date().toLocaleDateString()}`,
+      id: hydrated.id || randomUUID(),
+      kind: hydrated.kind || 'note',
+      topic: hydrated.topic || 'Wholesaling',
+      title: hydrated.title || 'Untitled source',
+      source: hydrated.source || hydrated.sourceUrl || 'Manual ingest',
+      sourceUrl: hydrated.sourceUrl || getIngestSourceUrl(hydrated),
+      excerpt: hydrated.excerpt || hydrated.summary || 'No excerpt provided.',
+      summary: hydrated.summary || hydrated.excerpt || 'No summary provided.',
+      citation: hydrated.citation || `${hydrated.source || hydrated.sourceUrl || 'Manual ingest'} - ${new Date().toLocaleDateString()}`,
       createdAt: isoNow(),
-      tags: Array.isArray(params.tags) ? params.tags : [params.topic || 'Wholesaling'],
+      tags: normalizeStringList(hydrated.tags || [hydrated.topic || 'Wholesaling']),
+      metadata: hydrated.metadata && typeof hydrated.metadata === 'object' ? hydrated.metadata : {},
     };
 
     addBrainDoc(state, doc);
@@ -20024,7 +20756,12 @@ const toolHandlers = {
     );
     state.status.weeklySources = toNumber(state.status.weeklySources, 0) + 1;
     await persistState(state);
-    return { ok: true, doc };
+    return {
+      ok: true,
+      result: doc.metadata?.extraction?.ok === false ? 'queued_for_review' : 'live',
+      doc,
+      extraction: doc.metadata?.extraction || null,
+    };
   },
 
   async createBrainBlogPost(params = {}) {
@@ -21307,13 +22044,19 @@ const toolHandlers = {
       selectedPath,
       selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
     });
-    const contract = createContractRecord({
+    const templateAudit = buildContractTemplateAudit(template, {
       ...params,
       selectedPath,
       selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
-      templateId: params.templateId || template.id,
       docusignTemplateId,
-      docusignTemplateName: params.docusignTemplateName || params.templateName || '',
+      docusignTemplateName: params.docusignTemplateName || params.templateName || template.name || '',
+    });
+    const contract = createContractRecord({
+      ...params,
+      ...templateAudit,
+      selectedPath,
+      selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
+      templateId: params.templateId || template.id,
       templateFields: params.templateFields || template.fields || {},
       templateFieldMap: params.templateFieldMap || template.fieldMap || template.fields || {},
       contractPath: selectedPath,
@@ -21645,13 +22388,19 @@ const toolHandlers = {
     const templates = await getContractTemplateLibrary();
     const template = selectContractTemplate(templates, params);
     const selectedPath = template.pathId || template.id || inferContractPathFromParams(params);
+    const templateAudit = buildContractTemplateAudit(template, {
+      ...params,
+      selectedPath,
+      selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
+    });
 
     const contract = createContractRecord({
       ...params,
+      ...templateAudit,
       status: 'prepared',
       provider: 'PBK Contract Prep',
       documentTitle: `${template.name} - ${params.address || params.leadName || 'PBK contract'}`,
-      notes: params.notes || `Prepared from template ${template.name}.`,
+      notes: params.notes || `Prepared from ${template.id} - ${template.name}.`,
       selectedPath,
       selectedPathLabel: params.selectedPathLabel || template.name || selectedPath,
     });
@@ -22118,6 +22867,17 @@ async function handleEvent(eventType, payload = {}) {
     approval.actor = incomingActor;
     approval.actedAt = incomingActedAt || isoNow();
     approval.notes = payload.notes || approval.notes;
+    if (payload.teamAuth && typeof payload.teamAuth === 'object') {
+      approval.metadata = {
+        ...(approval.metadata || {}),
+        teamAuth: {
+          role: payload.teamAuth.role || 'team',
+          source: payload.teamAuth.source || 'team-session',
+          expiresAt: payload.teamAuth.expiresAt || '',
+          acceptedAt: isoNow(),
+        },
+      };
+    }
     const reviewReason = String(payload.reviewReason || payload.falsePositiveTag || '').trim();
     if (reviewReason) {
       approval.reviewReason = reviewReason;
@@ -22679,10 +23439,17 @@ function buildStateSnapshot() {
       errors: contractTemplateCache.errors,
       templates: contractTemplateCache.templates.map((item) => ({
         id: item.id,
+        pathId: item.pathId,
         name: item.name,
         type: item.type,
         version: item.version,
+        description: item.description,
+        docusignTemplateId: getDocuSignTemplateIdForPath(item),
+        documents: getContractTemplateDocuments(item),
+        recipientRoles: inferContractTemplateRoles(item),
         hasTemplate: item.hasTemplate,
+        templateFile: item.templateFile,
+        templatePath: item.templatePath,
         hasNegotiation: item.hasNegotiation,
         updatedAt: item.updatedAt,
       })),
@@ -23836,6 +24603,11 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         security: getSecurityMeta(),
+        enrollment: {
+          available: Boolean(TOTP_SECRET && !TOTP_REQUIRED),
+          enrolled: Boolean(state?.settings?.security?.totpEnrolledAt),
+          safeToEnforce: Boolean(TOTP_SECRET && state?.settings?.security?.totpEnrolledAt),
+        },
         protectedPaths: [
           '/api/admin/*',
           '/api/operator/call',
@@ -23847,12 +24619,108 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/security/totp/enrollment') {
+      const enrollment = getTotpEnrollmentPayload();
+      json(response, 200, {
+        ok: true,
+        enrollment,
+        instructions: enrollment.configured
+          ? 'Scan the otpauth URL or enter the manual secret in an authenticator app, then verify a code before enabling PBK_TOTP_REQUIRED=true.'
+          : 'Set PBK_TOTP_SECRET first. Enforcement remains off until enrollment is verified.',
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/security/totp/verify') {
       const body = await readBody(request);
       json(response, 200, {
         ok: true,
         configured: Boolean(TOTP_SECRET),
         valid: verifyTotpCode(body?.code || body?.token || body?.totp || ''),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/security/totp/enroll/verify') {
+      const body = await readBody(request);
+      const valid = verifyTotpCode(body?.code || body?.token || body?.totp || '');
+      if (!valid) {
+        json(response, 401, {
+          ok: false,
+          configured: Boolean(TOTP_SECRET),
+          enrolled: Boolean(state?.settings?.security?.totpEnrolledAt),
+          error: TOTP_SECRET ? 'Invalid TOTP code.' : 'PBK_TOTP_SECRET is not configured.',
+        });
+        return;
+      }
+      const settings = ensureRuntimeSettings(state);
+      settings.security = {
+        ...(settings.security && typeof settings.security === 'object' ? settings.security : {}),
+        totpEnrolledAt: isoNow(),
+        totpEnrolledBy: body.actor || body.updatedBy || 'PBK operator',
+        totpRequired: TOTP_REQUIRED,
+      };
+      settings.updatedAt = isoNow();
+      settings.updatedBy = body.actor || body.updatedBy || 'PBK operator';
+      addActivity(
+        state,
+        makeActivity({
+          actor: settings.updatedBy,
+          category: 'SECURITY',
+          status: 'success',
+          text: 'TOTP enrollment verified. Enforcement is still controlled by PBK_TOTP_REQUIRED.',
+          target: 'operator security',
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        configured: true,
+        enrolled: true,
+        security: getSecurityMeta(),
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/auth/team/status') {
+      json(response, 200, {
+        ok: true,
+        configured: Boolean(TEAM_PASSCODE),
+        permissions: getTeamPermissions(),
+        sessionTtlMs: TEAM_SESSION_TTL_MS,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/auth/team') {
+      const body = await readBody(request);
+      if (!isTeamPasscodeValid(body?.passcode || body?.teamPasscode || body?.team_passcode || '')) {
+        json(response, 401, {
+          ok: false,
+          configured: Boolean(TEAM_PASSCODE),
+          error: TEAM_PASSCODE ? 'Invalid team passcode.' : 'PBK_TEAM_PASSCODE is not configured on the bridge.',
+        });
+        return;
+      }
+      const session = createTeamSessionToken({ actor: body.actor || 'PBK team', role: 'team' });
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'PBK team',
+          category: 'SECURITY',
+          status: 'success',
+          text: 'Team session activated for routine approval-gated operations.',
+          target: 'team access',
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        configured: true,
+        role: 'team',
+        ...session,
+        permissions: getTeamPermissions(),
       });
       return;
     }
@@ -23945,6 +24813,21 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && pathname === '/api/memory/stats') {
       json(response, 200, await buildMemoryStats());
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/ava/personal-context') {
+      json(response, 200, getPersonalContextRecords(Object.fromEntries(url.searchParams.entries())));
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/ava/personal-fact') {
+      const body = await readBody(request);
+      const result = await toolHandlers.rememberPersonalFact(body);
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
       return;
     }
 
@@ -25753,14 +26636,45 @@ const server = createServer(async (request, response) => {
     const approvalMatch = matchPath(pathname, '/api/approvals/:id');
     if (approvalMatch && request.method === 'PUT') {
       const body = await readBody(request);
+      const approval = state.approvals.find((item) => item.id === approvalMatch.groups.id);
+      const requestedStatus = body.status || body.action || 'approved';
+      if (body.teamAuthRequired === true || body.requireTeamAuth === true) {
+        const teamAuth = getTeamAuthMeta(request, body);
+        if (!teamAuth.ok) {
+          json(response, 403, {
+            ok: false,
+            error: teamAuth.error || 'Team passcode required.',
+            configured: Boolean(TEAM_PASSCODE),
+            permissions: getTeamPermissions(),
+          });
+          return;
+        }
+        const restriction = getTeamApprovalRestriction(approval || {}, requestedStatus);
+        if (restriction) {
+          json(response, 403, {
+            ok: false,
+            error: restriction,
+            adminRequired: true,
+            permissions: getTeamPermissions(),
+          });
+          return;
+        }
+        body.actor = body.actor || teamAuth.actor || 'PBK team';
+        body.teamAuth = {
+          role: teamAuth.role,
+          source: teamAuth.source,
+          expiresAt: teamAuth.expiresAt,
+        };
+      }
       const result = await handleEvent('approval-callback', {
         id: approvalMatch.groups.id,
-        status: body.status || body.action || 'approved',
+        status: requestedStatus,
         actor: body.actor || 'api',
         actedAt: body.actedAt || isoNow(),
         notes: body.notes || '',
         reviewReason: body.reviewReason || '',
         falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
+        teamAuth: body.teamAuth || null,
       });
       json(response, result.ok === false ? 404 : 200, {
         ...result,
@@ -26971,6 +27885,8 @@ const server = createServer(async (request, response) => {
         'GET /api/voice/browser/health',
         'POST /api/voice/browser/session',
         'WS /api/voice/browser/stream',
+        'WS /ws/browser',
+        'WS /api/ws/browser',
         'POST /api/voice/tts',
         'POST /api/deepgram/transcribe-url',
         'GET /api/tooling/status',
@@ -27068,6 +27984,31 @@ browserVoiceWss.on('connection', (socket, request) => {
   void handleBrowserVoiceSocket(socket, request);
 });
 
+const runtimeBrowserWss = new WebSocketServer({ noServer: true });
+runtimeBrowserWss.on('connection', (socket) => {
+  runtimeBrowserSockets.add(socket);
+  sendRuntimeSocketMessage(socket, {
+    type: 'ready',
+    at: isoNow(),
+    service: 'pbk-local-openclaw',
+    revision: BUILD_REVISION,
+  });
+  sendRuntimeSocketMessage(socket, {
+    type: 'state',
+    reason: 'connected',
+    at: isoNow(),
+    snapshot: buildStateSnapshot(),
+  });
+  socket.on('close', () => runtimeBrowserSockets.delete(socket));
+  socket.on('error', () => runtimeBrowserSockets.delete(socket));
+  socket.on('message', (raw) => {
+    const message = safeJsonParse(String(raw || ''), {});
+    if (message?.type === 'ping') {
+      sendRuntimeSocketMessage(socket, { type: 'pong', at: isoNow() });
+    }
+  });
+});
+
 server.on('upgrade', (request, socket, head) => {
   const upgradeUrl = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const upgradePath = upgradeUrl.pathname.replace(/\/+$/, '') || '/';
@@ -27097,6 +28038,21 @@ server.on('upgrade', (request, socket, head) => {
     }
     browserVoiceWss.handleUpgrade(request, socket, head, (ws) => {
       browserVoiceWss.emit('connection', ws, request);
+    });
+    return;
+  }
+
+  if (matchesPath(upgradePath, ['/ws/browser', '/api/ws/browser', '/ws/state', '/api/state/stream'])) {
+    if (BRIDGE_API_KEY) {
+      const providedToken = upgradeUrl.searchParams.get('token') || String(request.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      if (!providedToken || !safeCompareString(providedToken, BRIDGE_API_KEY)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
+    runtimeBrowserWss.handleUpgrade(request, socket, head, (ws) => {
+      runtimeBrowserWss.emit('connection', ws, request);
     });
     return;
   }

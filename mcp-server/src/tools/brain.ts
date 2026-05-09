@@ -39,12 +39,15 @@ const IngestResearchDocInput = z
   .object({
     title: z.string().min(1).describe("Document title (shows on the Brain page)."),
     source: z.string().optional().describe("Where it came from (URL, paper title, internal team name)."),
+    sourceUrl: z.string().optional().describe("Optional URL to fetch/index when the source is a web page, PDF, video, or audio URL."),
+    url: z.string().optional().describe("Alias for sourceUrl."),
     summary: z.string().optional(),
     excerpt: z.string().optional(),
     citation: z.string().optional(),
-    kind: z.enum(["note", "article", "paper", "transcript", "playbook"]).optional(),
+    kind: z.enum(["note", "article", "paper", "transcript", "playbook", "audio", "video", "attachment"]).optional(),
     topic: z.string().optional().describe("E.g., 'Tampa probate', 'wholesaling laws', 'Telnyx setup'."),
     tags: z.array(z.string()).optional(),
+    metadata: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -107,6 +110,35 @@ const RecallPbkMemoryInput = z
     memoryType: z.string().optional(),
     limit: z.number().int().min(1).max(20).optional(),
     includeGlobal: z.boolean().optional(),
+  })
+  .strict();
+
+const RememberPersonalFactInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    phone: z.string().optional(),
+    factType: z.string().min(1).describe("child_name, child_age, spouse_name, pet_name, hobby, callback_preference, or personal_note."),
+    factValue: z.string().min(1).describe("The seller-shared detail to remember."),
+    conversationCue: z.string().optional().describe("The phrase or context that caused Ava to store the fact."),
+    returnToBusinessCue: z.string().optional().describe("Natural transition Ava should use after brief rapport."),
+    nextBestQuestion: z.string().optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const GetPersonalContextInput = z
+  .object({
+    tenantId: z.string().optional(),
+    leadId: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    phone: z.string().optional(),
+    subject: z.string().optional(),
+    limit: z.number().int().min(1).max(20).optional(),
   })
   .strict();
 
@@ -376,6 +408,64 @@ Returns:
     async (params) => {
       try {
         const result = await bridgeInvoke("recallPbkMemory", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_remember_personal_fact",
+    {
+      title: "Remember seller personal context",
+      description: `Store structured personal context Ava can use for rapport continuity, such as newborn name/age, spouse, pets, hobbies, callback preferences, or meaningful life events. Use one warm follow-up later, then return to business.`,
+      inputSchema: RememberPersonalFactInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("rememberPersonalFact", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_get_personal_context",
+    {
+      title: "Get seller personal context",
+      description: `Recall structured personal context for a lead before a call. Use sparingly: one relevant warm question, then return to the seller's business goal.`,
+      inputSchema: GetPersonalContextInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("getPersonalContext", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

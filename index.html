@@ -1851,7 +1851,7 @@
           <button class="chip-btn">Approvals <span style="color:var(--amber)"> — 3</span></button>
           <button class="chip-btn">Hot</button>
         </div>
-        <div class="inbox-list">
+        <div class="inbox-list" data-dashboard-inbox-list>
 
           <div class="msg unread">
             <div class="msg-icon call">
@@ -2153,7 +2153,7 @@
       </div>
     </div>
 
-    <div class="table-wrap fade-in">
+    <div class="table-wrap fade-in" data-dashboard-leads-panel>
       <div class="table-container">
         <table>
           <thead>
@@ -2168,7 +2168,7 @@
               <th>Agent</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody data-dashboard-leads-table>
             <tr>
               <td><div class="score"><span>94</span><span class="score-bar"><span class="score-fill" style="width:94%"></span></span></div></td>
               <td><strong>Diane Kowalski</strong></td>
@@ -2933,7 +2933,7 @@
     <div class="filter-dd deal-ui-filter">Lead type: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="filter-dd deal-ui-filter">Property: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
     <div class="filter-dd" style="color: var(--sky); border-color: var(--sky-dim);">+ Add filter</div>
-    <div style="margin-left: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px;">
+    <div data-leads-count-copy style="margin-left: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px;">
       Showing <strong style="color: var(--text-primary)">247</strong> of <strong style="color: var(--text-primary)">1,247</strong>
     </div>
   </div>
@@ -4746,6 +4746,119 @@
       font-weight: 600;
       color: #0f172a;
     }
+    .contract-template-card,
+    .contract-validation-panel {
+      margin-bottom: 16px;
+      border: 1px solid rgba(37, 99, 235, 0.14);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.82);
+      padding: 14px;
+      font-family: var(--font-ui);
+    }
+    .contract-template-head,
+    .contract-validation-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .contract-template-kicker,
+    .contract-validation-kicker {
+      display: block;
+      margin-bottom: 5px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    .contract-template-title,
+    .contract-validation-title {
+      display: block;
+      color: #0f172a;
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: -0.01em;
+    }
+    .contract-template-badge,
+    .contract-validation-badge {
+      flex: 0 0 auto;
+      border: 1px solid rgba(14, 165, 233, 0.22);
+      border-radius: 999px;
+      padding: 6px 9px;
+      background: rgba(14, 165, 233, 0.08);
+      color: #0369a1;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .contract-template-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .contract-template-row {
+      min-width: 0;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 12px;
+      padding: 9px 10px;
+      background: rgba(248, 250, 252, 0.9);
+    }
+    .contract-template-row .k {
+      display: block;
+      margin-bottom: 4px;
+      color: #64748b;
+      font-family: var(--font-mono);
+      font-size: 8px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .contract-template-row .v {
+      display: block;
+      color: #0f172a;
+      font-size: 11px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .contract-validation-panel[data-state="warning"] {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: rgba(255, 251, 235, 0.9);
+    }
+    .contract-validation-panel[data-state="good"] {
+      border-color: rgba(14, 165, 233, 0.22);
+      background: rgba(240, 249, 255, 0.82);
+    }
+    .contract-validation-panel[data-state="warning"] .contract-validation-badge {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: rgba(245, 158, 11, 0.1);
+      color: #92400e;
+    }
+    .contract-validation-list {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: #475569;
+    }
+    .contract-validation-list li::before {
+      content: 'Check';
+      display: inline-block;
+      margin-right: 7px;
+      color: #0284c7;
+      font-size: 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .contract-validation-panel[data-state="warning"] .contract-validation-list li::before {
+      content: 'Needs';
+      color: #b45309;
+    }
     .contract-runtime-help {
       margin-top: 16px;
       padding-top: 16px;
@@ -4798,6 +4911,7 @@
       .contracts-ops-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 var(--s-6) var(--s-4); }
       .contracts-layout { grid-template-columns: 1fr; }
       .cp-meta-grid { grid-template-columns: 1fr; }
+      .contract-template-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) {
       .contracts-ops-strip { grid-template-columns: 1fr; }
@@ -6701,9 +6815,9 @@
 
   <div class="page-head">
     <div class="page-head-left">
-      <div class="ph-tag" data-brain-meta="header">Continuous learning — 247 sources — updated 3m ago</div>
+      <div class="ph-tag" data-brain-meta="header">Continuous learning - 247 sources - updated 3m ago</div>
       <h2>The <em>brain</em>.</h2>
-      <p>A research agent that reads everything so your acquisition team doesn't have to. Wholesaling tactics, creative finance, cash deal structures, legal shifts, and local market pulse — all ingested, summarized, and queryable.</p>
+      <p>A research agent that reads what you feed it so your acquisition team doesn't have to. Drop articles, PDFs, YouTube links, weather pages, audio clips, voice notes, and deal memos; Rex indexes the details so Ava can recall them on future calls.</p>
     </div>
     <div class="page-head-actions">
       <button class="btn btn-ghost" data-brain-action="harvest-blog">Harvest now</button>
@@ -6737,7 +6851,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
         <h5>Feed the brain</h5>
-        <p>Drop a PDF, article URL, deal memo, or voice note. Ava reads it, indexes it, cites it on future calls.</p>
+        <p>Upload PDFs, notes, deal memos, voice notes, or audio/video files. Use + Ingest source for URLs, YouTube, weather pages, public PDFs, and public audio links.</p>
         <button class="btn btn-primary" style="width: 100%; justify-content: center;" data-brain-action="ingest">Upload</button>
       </div>
 
@@ -7074,7 +7188,7 @@
           <h4 style="font-size: 16px;">? Today's <em>reading</em></h4>
         </div>
         <div class="sg-item">
-          <div class="why">? Because Diane K. is on a live call</div>
+          <div class="why">? Because active calls may include personal context</div>
           <div class="t">"Handling grief-bereaved sellers without feeling predatory" — 4 min</div>
         </div>
         <div class="sg-item">
@@ -9087,6 +9201,8 @@
 
         <div style="margin-top: var(--s-4);">
           <button class="btn btn-primary">+ Invite teammate</button>
+          <button class="btn btn-secondary" type="button" data-team-auth-open onclick="window.PBK?.actions?.openTeamAccessModal?.()">Enter team passcode</button>
+          <button class="btn btn-ghost" type="button" data-totp-enroll onclick="window.PBK?.actions?.openTotpEnrollmentModal?.()">Enroll TOTP</button>
         </div>
       </div>
 
@@ -13061,7 +13177,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     callSec++;
     const m = String(Math.floor(callSec / 60)).padStart(2, '0');
     const s = String(callSec % 60).padStart(2, '0');
-    document.querySelectorAll('.call-timer, .lc-timer').forEach(el => {
+    document.querySelectorAll('.call-timer[data-live-timer="true"], .lc-timer[data-live-timer="true"]').forEach(el => {
       if (/^\d{2}:\d{2}$/.test(el.textContent.trim())) el.textContent = `${m}:${s}`;
     });
   }, 1000);
@@ -13638,6 +13754,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   };
 
   const OPENCLAW_STORAGE_KEY = 'pbk-openclaw-config';
+  const TEAM_SESSION_STORAGE_KEY = 'pbk-team-session';
   const ANALYZER_STORAGE_KEY = 'pbk-deal-data';
   const BRANDING_STORAGE_KEY = 'pbk-branding';
   const PBK_UI_SETTINGS_KEY = 'pbk-ui-settings';
@@ -13779,6 +13896,43 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
     [data-page="analyzer"] .analyzer-runtime-copy {
       color: var(--text-tertiary);
+    }
+    [data-page="analyzer"] .analyzer-sync-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.08);
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    [data-page="analyzer"] .analyzer-sync-pill::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 0 14px currentColor;
+    }
+    [data-page="analyzer"] .analyzer-sync-pill[data-state="good"] {
+      border-color: rgba(125,211,252,0.36);
+      background: rgba(125,211,252,0.1);
+      color: var(--sky-bright);
+    }
+    [data-page="analyzer"] .analyzer-sync-pill[data-state="warning"] {
+      border-color: rgba(255,176,32,0.38);
+      background: rgba(255,176,32,0.1);
+      color: var(--amber);
+    }
+    [data-page="analyzer"] .analyzer-sync-pill[data-state="stale"] {
+      border-color: rgba(244,63,94,0.34);
+      background: rgba(244,63,94,0.08);
+      color: var(--crimson);
     }
     [data-page="analyzer"] .analyzer-ops-grid {
       display: grid;
@@ -14519,10 +14673,155 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderContractsOpsStrip();
   }
 
+  function getTeamSession() {
+    const session = parseJSONSafe(localStorage.getItem(TEAM_SESSION_STORAGE_KEY), null);
+    if (!session?.token || !session?.expiresAt) return null;
+    if (new Date(session.expiresAt).getTime() <= Date.now()) {
+      localStorage.removeItem(TEAM_SESSION_STORAGE_KEY);
+      return null;
+    }
+    return session;
+  }
+
+  function saveTeamSession(session = {}) {
+    if (!session?.token) return null;
+    const next = {
+      token: session.token,
+      role: session.role || 'team',
+      expiresAt: session.expiresAt || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+      permissions: session.permissions || {}
+    };
+    localStorage.setItem(TEAM_SESSION_STORAGE_KEY, JSON.stringify(next));
+    return next;
+  }
+
+  function clearTeamSession() {
+    localStorage.removeItem(TEAM_SESSION_STORAGE_KEY);
+  }
+
+  function getTeamSessionToken() {
+    return getTeamSession()?.token || '';
+  }
+
+  async function authenticateTeamPasscode(passcode, actor = 'PBK dashboard') {
+    const payload = await requestOpenClawApi('/api/auth/team', {
+      method: 'POST',
+      body: { passcode, actor },
+      timeout: 9000
+    });
+    if (!payload?.ok || !payload?.token) {
+      throw new Error(payload?.error || 'Team passcode was not accepted.');
+    }
+    const session = saveTeamSession(payload);
+    toast({
+      type: 'success',
+      title: 'Team mode active',
+      desc: 'Routine approvals can now include team authorization for this session.'
+    });
+    return session;
+  }
+
+  async function ensureTeamAccess(actionLabel = 'this action') {
+    const active = getTeamSession();
+    if (active) return active;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const modal = showPbkFormModal({
+        title: 'PBK team passcode',
+        intro: `Enter the PBK team code to authorize ${escapeHtml(actionLabel)}. High-value offers, contracts, campaigns, deletions, and admin changes still require admin approval.`,
+        submitLabel: 'Unlock team mode',
+        fields: [
+          { name: 'passcode', label: 'Team passcode', type: 'password', required: true, placeholder: 'Enter team code' }
+        ],
+        validate: (values) => String(values.passcode || '').trim() ? '' : 'Enter the PBK team passcode.',
+        onSubmit: async (values) => {
+          try {
+            const session = await authenticateTeamPasscode(values.passcode, 'PBK dashboard');
+            settled = true;
+            resolve(session);
+          } catch (error) {
+            settled = true;
+            reject(error);
+            throw error;
+          }
+        }
+      });
+      modal.querySelector('[data-modal-close]')?.addEventListener('click', () => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Team passcode entry cancelled.'));
+      }, { once: true });
+    });
+  }
+
+  async function openTeamAccessModal() {
+    try {
+      await ensureTeamAccess('routine team operations');
+    } catch (error) {
+      toast({
+        type: 'warning',
+        title: 'Team mode not unlocked',
+        desc: error?.message || 'Passcode entry was cancelled.'
+      });
+    }
+  }
+
+  async function openTotpEnrollmentModal() {
+    let payload = null;
+    try {
+      payload = await requestOpenClawApi('/api/security/totp/enrollment', { timeout: 9000 });
+    } catch (error) {
+      toast({ type: 'error', title: 'TOTP enrollment unavailable', desc: error?.message || 'Bridge did not return enrollment details.' });
+      return;
+    }
+    const enrollment = payload?.enrollment || {};
+    if (!enrollment.configured) {
+      toast({
+        type: 'warning',
+        title: 'TOTP secret missing',
+        desc: 'Set PBK_TOTP_SECRET in the bridge environment first. Enforcement stays off until enrollment is verified.'
+      });
+      return;
+    }
+    showPbkFormModal({
+      title: 'Enroll operator TOTP',
+      intro: `
+        <span>Scan or paste this otpauth URL into your authenticator. Verify one code here before enabling <code>PBK_TOTP_REQUIRED=true</code>.</span>
+        <span style="display:block;margin-top:8px;font-family:var(--font-mono);font-size:11px;word-break:break-all;color:var(--text-secondary);">${escapeHtml(enrollment.otpauthUrl || '')}</span>
+        <span style="display:block;margin-top:8px;">Manual secret: <code>${escapeHtml(enrollment.manualEntry || '')}</code></span>
+      `,
+      submitLabel: 'Verify enrollment',
+      fields: [
+        { name: 'code', label: '6-digit code', inputMode: 'numeric', placeholder: '123456', required: true, full: false }
+      ],
+      validate: (values) => /^\d{6}$/.test(String(values.code || '').trim()) ? '' : 'Enter the current 6-digit authenticator code.',
+      onSubmit: async (values) => {
+        await requestOpenClawApi('/api/security/totp/enroll/verify', {
+          method: 'POST',
+          body: { code: values.code, actor: 'PBK dashboard' },
+          timeout: 9000
+        });
+        toast({
+          type: 'success',
+          title: 'TOTP enrollment verified',
+          desc: 'Safe to enforce after you set PBK_TOTP_REQUIRED=true in the bridge environment.'
+        });
+        await syncOpenClawState({ silent: true }).catch(() => {});
+      }
+    });
+  }
+
+  PBK.actions = PBK.actions || {};
+  PBK.actions.openTeamAccessModal = openTeamAccessModal;
+  PBK.actions.openTotpEnrollmentModal = openTotpEnrollmentModal;
+
   function buildOpenClawHeaders(config, withJson = false) {
     const headers = {};
     if (withJson) headers['Content-Type'] = 'application/json';
     if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+    const teamToken = getTeamSessionToken();
+    if (teamToken) headers['X-PBK-Team-Token'] = teamToken;
     return headers;
   }
 
@@ -14655,6 +14954,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
       reflectOpenClawUI(next);
       PBK.events.emit('openclaw:status', next);
+      renderOpenClawState(PBK.state.openclawRuntime || {});
+      if (nextEndpoint && next.apiKey && typeof runOpenClawPoll === 'function') {
+        window.setTimeout(() => {
+          runOpenClawPoll({ silent: true }).catch(() => {});
+        }, 0);
+      }
       return next;
     },
     isConfigured() {
@@ -14724,6 +15029,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   let openClawPollFailures = 0;
   let openClawPollInFlight = false;
   let openClawLastConnectedAt = 0;
+  let openClawRealtimeSocket = null;
+  let openClawRealtimeTimer = null;
+  let openClawRealtimeAttempts = 0;
 
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
@@ -15247,21 +15555,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         return;
       }
       try {
-        const response = await requestOpenClawApi('/api/brain/blog', {
+        const response = await requestOpenClawApi('/api/brain/ingest', {
           method: 'POST',
           body: {
-            title: `Agent Fleet source for ${agent.name}`,
+            title: '',
+            source: sourceUrl,
             sourceUrl,
-            sourceType: 'agent-fleet',
-            content: `Queued from Agent Fleet for ${agent.name}. Rex should review this source and propose candidate skills only after evidence is available.`,
-            summary: `Agent Fleet research source for ${agent.name}.`,
+            url: sourceUrl,
+            kind: 'article',
+            topic: 'Agent Skills',
+            summary: '',
             tags: ['agent-fleet', 'skill-candidate', agent.id],
             requestedBy: 'Agent Fleet UI',
           },
-          timeout: 10000,
+          timeout: 45000,
         });
         if (input) input.value = '';
-        showFleetOutcome(getRuntimeOutcome(response, 'live'), 'Research source saved', 'The source was saved to the Brain Blog for Rex skill review.');
+        if (response?.state) renderOpenClawState(response.state);
+        showFleetOutcome(getRuntimeOutcome(response, 'live'), 'Research source saved', 'Rex can now use this source as evidence for skill review.');
       } catch (error) {
         showFleetOutcome('unavailable', 'Research source not saved', error?.message || 'Bridge did not accept the source.');
       }
@@ -15646,9 +15957,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       `;
 
     const activeFilter = PBK.state.approvalFilter || 'all';
-    const pendingApprovals = Array.isArray(snapshot?.approvals)
-      ? snapshot.approvals.filter((item) => item.status === 'pending')
-      : [];
+    const pendingApprovals = getRealRuntimeApprovals(snapshot).filter((item) => item.status === 'pending');
     const approvals = pendingApprovals
       .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
       .slice(0, 6);
@@ -16335,6 +16644,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function renderAnalyzerFounderOps() {
     const summary = getFounderRuntimeSummary();
+    const syncStatus = renderAnalyzerSyncIndicator(summary.dealRuntime);
     const strip = document.querySelector('[data-analyzer-ops]');
     if (!strip) return;
     paintOpsCard(strip.querySelector('[data-analyzer-card="bridge"]'), summary.bridge);
@@ -16342,7 +16652,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     paintOpsCard(strip.querySelector('[data-analyzer-card="handoff"]'), {
       state: summary.pdfReadiness.ready ? 'good' : 'warning',
       value: summary.pdfReadiness.ready ? summary.dealRuntime.selectedPathLabel : 'Packet incomplete',
-      note: summary.pdfReadiness.message
+      note: `${summary.pdfReadiness.message} ${syncStatus.detail}`
     });
     paintOpsCard(strip.querySelector('[data-analyzer-card="next"]'), summary.next);
   }
@@ -16422,6 +16732,62 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       || (/55501\d{2}$/.test(phoneDigits) && !/telnyx/i.test(String(call.provider || '')));
   }
 
+  function isDemoRuntimeApproval(approval = {}) {
+    const source = String(approval.source || approval.fixture || approval.kind || approval.origin || '').toLowerCase();
+    const text = [
+      approval.id,
+      approval.approvalId,
+      approval.taskId,
+      approval.leadId,
+      approval.leadName,
+      approval.address,
+      approval.title,
+      approval.description,
+      approval.notes,
+      approval.fileName,
+      approval.templateName,
+      approval.type
+    ].filter(Boolean).join(' ');
+    return source.includes('demo')
+      || source.includes('fixture')
+      || /approval-offer-202-cherry|approval-contract-robert-chen|approval-batch-akron|lead-diane-kowalski|lead-robert-chen|daily_probate_import\.csv|Diane Kowalski|Robert Chen|Akron Probate Batch|202 Cherry Ln|55 Birch Rd/i.test(text);
+  }
+
+  function getRealRuntimeApprovals(snapshot = {}) {
+    return Array.isArray(snapshot?.approvals)
+      ? snapshot.approvals.filter((approval) => !isDemoRuntimeApproval(approval))
+      : [];
+  }
+
+  function isDemoRuntimeLead(lead = {}) {
+    const source = String(lead.source || lead.fixture || lead.kind || lead.importSource || '').toLowerCase();
+    const seller = lead.seller || {};
+    const property = lead.property || {};
+    const tags = Array.isArray(lead.tags) ? lead.tags.join(' ') : lead.tags;
+    const text = [
+      lead.id,
+      lead.leadId,
+      lead.importId,
+      lead.batchId,
+      lead.fileName,
+      lead.name,
+      lead.leadName,
+      lead.sellerName,
+      seller.name,
+      seller.phone,
+      lead.address,
+      lead.propertyAddress,
+      property.address,
+      property.city,
+      property.state,
+      tags,
+      lead.status
+    ].filter(Boolean).join(' ');
+    return source.includes('demo')
+      || source.includes('fixture')
+      || /leadimport-daily-probate|daily_probate_import\.csv|lead-diane-kowalski|Diane Kowalski|202 Cherry Ln|614-555-0142|6145550142/i.test(text);
+  }
+
   function getRuntimeCalls(snapshot = {}, { includeEnded = false } = {}) {
     const calls = Array.isArray(snapshot.calls) ? snapshot.calls : [];
     return sortRuntimeItems(calls.filter((call) => {
@@ -16436,6 +16802,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const local = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
     if (local.length === 10) return `+1 ${local.slice(0, 3)}-${local.slice(3, 6)}-${local.slice(6)}`;
     return phone || 'Phone pending';
+  }
+
+  function getRuntimeLeads(snapshot = {}) {
+    const merged = [
+      ...(Array.isArray(snapshot.leads) ? snapshot.leads : []),
+      ...(Array.isArray(snapshot.leadImports) ? snapshot.leadImports : [])
+    ];
+    const seen = new Set();
+    return sortRuntimeItems(merged.filter((lead) => {
+      const id = String(lead.id || lead.leadId || lead.importId || `${lead.name || lead.sellerName || ''}-${lead.address || lead.propertyAddress || ''}`);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return !isDemoRuntimeLead(lead);
+    }));
   }
 
   function getInitial(value = '') {
@@ -16496,7 +16876,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             </div>
             <span class="lc-status-pill ${live ? 'live' : ''}">${escapeHtml(status)}</span>
           </div>
-          <div class="lc-timer">${escapeHtml(formatCallDuration(call))}</div>
+          <div class="lc-timer" ${live ? 'data-live-timer="true"' : ''}>${escapeHtml(formatCallDuration(call))}</div>
         </div>
         <div class="lc-body">
           ${renderCallTranscriptTurns(call)}
@@ -16567,6 +16947,334 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       : `<div class="uq-empty" data-call-floor-queue-empty><div><strong>No outbound queue loaded.</strong>${connected ? 'Approved call requests and sandboxed provider checks will show here before they go live.' : 'Connect PBK Brain to see queued call requests.'}</div></div>`;
   }
 
+  function getLeadSellerName(lead = {}) {
+    return lead.seller?.name || lead.sellerName || lead.leadName || lead.name || 'Unknown seller';
+  }
+
+  function getLeadAddress(lead = {}) {
+    return lead.property?.address || lead.propertyAddress || lead.address || 'Address pending';
+  }
+
+  function getLeadPhone(lead = {}) {
+    return lead.seller?.phone || lead.phone || lead.to || '';
+  }
+
+  function getLeadPropertyType(lead = {}) {
+    return lead.property?.propertyType || lead.property?.type || lead.propertyType || lead.type || 'Property';
+  }
+
+  function getLeadSourceBadge(lead = {}) {
+    const text = `${lead.relationshipToProperty || ''} ${lead.leadType || ''} ${lead.contactType || ''} ${lead.source || ''}`.toLowerCase();
+    if (/agent|realtor|broker/.test(text)) return { label: 'Agent', className: 'agent', icon: '&#129309;' };
+    if (/unknown|estate|probate|heir|attorney/.test(text)) return { label: 'Review', className: 'unknown', icon: '?' };
+    return { label: 'Owner', className: 'homeowner', icon: '&#127968;' };
+  }
+
+  function getLeadTags(lead = {}) {
+    if (Array.isArray(lead.tags)) return lead.tags.filter(Boolean);
+    if (typeof lead.tags === 'string') return lead.tags.split(',').map((tag) => tag.trim()).filter(Boolean);
+    return [lead.status, lead.motivation, lead.source].filter(Boolean).slice(0, 3);
+  }
+
+  function getLeadMoneyValue(lead = {}, keys = []) {
+    for (const key of keys) {
+      const value = key.split('.').reduce((current, part) => current?.[part], lead);
+      const number = Number(value);
+      if (Number.isFinite(number) && number > 0) return number;
+    }
+    return 0;
+  }
+
+  function formatLeadMoneyPair(lead = {}) {
+    const arv = getLeadMoneyValue(lead, ['property.arv', 'arv', 'analysis.arv']);
+    const mao = getLeadMoneyValue(lead, ['property.mao', 'mao', 'analysis.mao', 'maxAllowableOffer']);
+    return `${arv ? money(arv) : '-'} / ${mao ? money(mao) : '-'}`;
+  }
+
+  function getLeadEquityPercent(lead = {}) {
+    const candidates = [lead.equityPct, lead.equityPercent, lead.property?.equityPct, lead.property?.equityPercent, lead.analysis?.equityPct];
+    for (const value of candidates) {
+      const number = Number(value);
+      if (Number.isFinite(number)) return Math.max(0, Math.min(number > 1 ? number : number * 100, 100));
+    }
+    return null;
+  }
+
+  function renderRuntimeLeads(snapshot = {}) {
+    const tbody = document.querySelector('.page[data-page="leads"] .leads-table-container tbody');
+    if (!tbody) return;
+
+    const connected = getOpenClawConfig().status === 'connected';
+    const leads = getRuntimeLeads(snapshot);
+    const countCopy = document.querySelector('[data-leads-count-copy]');
+    const pageTag = document.querySelector('.page[data-page="leads"] .ph-tag');
+
+    if (countCopy) {
+      countCopy.innerHTML = leads.length
+        ? `Showing <strong style="color: var(--text-primary)">${leads.length}</strong> live bridge record${leads.length === 1 ? '' : 's'}`
+        : 'Showing <strong style="color: var(--text-primary)">0</strong> live bridge records';
+    }
+    if (pageTag) {
+      pageTag.textContent = connected
+        ? `${leads.length} live leads - demo records hidden`
+        : 'Live leads - save PBK Bridge API key in Settings';
+    }
+
+    if (!leads.length) {
+      tbody.innerHTML = `
+        <tr class="row" data-runtime-empty="leads">
+          <td colspan="11" style="padding: 24px; color: var(--text-tertiary);">
+            <strong style="color: var(--text-primary);">No live lead records loaded.</strong><br>
+            ${connected
+              ? 'Imported leads from the bridge will appear here after /api/leads or /state returns production records. Seeded demo sellers are intentionally hidden.'
+              : 'Save the private PBK Bridge API key in Settings to pull live lead records from Render.'}
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = leads.slice(0, 80).map((lead) => {
+      const score = Math.max(0, Math.min(Number(lead.score || lead.leadScore || lead.priorityScore || 0), 100));
+      const equity = getLeadEquityPercent(lead);
+      const status = lead.status || lead.stage || 'new';
+      const sellerName = getLeadSellerName(lead);
+      const address = getLeadAddress(lead);
+      const sourceBadge = getLeadSourceBadge(lead);
+      const tags = getLeadTags(lead).slice(0, 3);
+      const agent = lead.agentName || lead.assignedAgent || lead.owner || 'auto';
+      const leadId = lead.id || lead.leadId || lead.importId || '';
+      return `
+        <tr class="row" data-lead-detail="true" data-lead-id="${escapeHtml(leadId)}">
+          <td><div class="checkbox"></div></td>
+          <td><div class="score"><span>${escapeHtml(String(score || '-'))}</span><span class="score-bar"><span class="score-fill ${score < 80 ? 'mid' : ''}" style="width:${score || 0}%"></span></span></div></td>
+          <td><div class="lead-name-cell"><strong>${escapeHtml(sellerName)}</strong><span class="lead-type-badges"><span class="lead-type-badge ${escapeHtml(sourceBadge.className)}">${sourceBadge.icon} ${escapeHtml(sourceBadge.label)}</span><span class="lead-type-badge property">${escapeHtml(getLeadPropertyType(lead))}</span></span></div></td>
+          <td>${escapeHtml(address)}</td>
+          <td class="mono">${escapeHtml(formatPhoneForDisplay(getLeadPhone(lead)))}</td>
+          <td class="mono">${escapeHtml(formatLeadMoneyPair(lead))}</td>
+          <td><span class="equity-bar"><span class="eq-visual"><span class="eq-fill" style="width:${equity ?? 0}%"></span></span>${equity === null ? '-' : `${Math.round(equity)}%`}</span></td>
+          <td>${tags.length ? tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('') : '<span class="tag">Live</span>'}</td>
+          <td><span class="status-chip ${escapeHtml(getStatusChipClass('lead', status))}">${escapeHtml(status)}</span></td>
+          <td class="mono">${escapeHtml(formatRelativeTime(lead.lastTouch || lead.last_touch || lead.updatedAt || lead.createdAt))}</td>
+          <td>${/auto/i.test(String(agent)) ? '<span style="color: var(--text-ghost); font-family: var(--font-mono); font-size:11px">auto</span>' : `<div class="avatar" style="width:24px;height:24px;font-size:11px;">${escapeHtml(getInitial(agent))}</div>`}</td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('[data-lead-detail="true"]').forEach((row) => {
+      row.addEventListener('click', () => {
+        if (typeof showPage === 'function') showPage('lead-detail');
+      });
+    });
+  }
+
+  function renderDashboardLeadPreview(snapshot = {}) {
+    const panel = document.querySelector('[data-dashboard-leads-panel]');
+    const tbody = document.querySelector('[data-dashboard-leads-table]');
+    if (!panel || !tbody) return;
+
+    const subtitle = panel.previousElementSibling?.querySelector('.section-subtitle');
+    const connected = getOpenClawConfig().status === 'connected';
+    const leads = getRuntimeLeads(snapshot).slice(0, 7);
+    if (subtitle) {
+      subtitle.textContent = connected
+        ? `// ${leads.length} live bridge lead${leads.length === 1 ? '' : 's'} - demo rows hidden`
+        : '// live pipeline loads after the PBK Bridge key is saved';
+    }
+
+    if (!leads.length) {
+      tbody.innerHTML = `
+        <tr data-dashboard-leads-empty>
+          <td colspan="8" style="padding: 22px; color: var(--text-tertiary);">
+            <strong style="color: var(--text-primary);">No live pipeline records loaded.</strong><br>
+            ${connected
+              ? 'Production lead rows will appear here as soon as the bridge returns non-demo lead records.'
+              : 'Save the private PBK Bridge API key in Settings to pull the live lead pipeline.'}
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = leads.map((lead) => {
+      const score = Math.max(0, Math.min(Number(lead.score || lead.leadScore || lead.priorityScore || 0), 100));
+      const equity = getLeadEquityPercent(lead);
+      const status = lead.status || lead.stage || 'new';
+      const agent = lead.agentName || lead.assignedAgent || lead.owner || 'auto';
+      return `
+        <tr data-lead-detail="true" data-lead-id="${escapeHtml(lead.id || lead.leadId || lead.importId || '')}">
+          <td><div class="score"><span>${escapeHtml(String(score || '-'))}</span><span class="score-bar"><span class="score-fill ${score < 80 ? 'mid' : ''}" style="width:${score || 0}%"></span></span></div></td>
+          <td><strong>${escapeHtml(getLeadSellerName(lead))}</strong></td>
+          <td>${escapeHtml(getLeadAddress(lead))}</td>
+          <td class="mono">${escapeHtml(formatPhoneForDisplay(getLeadPhone(lead)))}</td>
+          <td class="mono">${escapeHtml(formatLeadMoneyPair(lead))}</td>
+          <td><span class="status-chip ${escapeHtml(getStatusChipClass('lead', status))}">${escapeHtml(status)}</span></td>
+          <td class="mono">${escapeHtml(formatRelativeTime(lead.lastTouch || lead.last_touch || lead.updatedAt || lead.createdAt))}${equity === null ? '' : ` - ${Math.round(equity)}% equity`}</td>
+          <td>${/auto/i.test(String(agent)) ? '<span style="color: var(--text-ghost); font-family: var(--font-mono); font-size:11px">auto</span>' : `<div class="avatar" style="width:24px;height:24px;font-size:11px;">${escapeHtml(getInitial(agent))}</div>`}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function renderDashboardAgentConsole(snapshot = {}) {
+    const stream = document.querySelector('.page[data-page="dashboard"] #thinkStream');
+    const memorySection = document.querySelector('.page[data-page="dashboard"] .console-side .side-section');
+    if (!stream) return;
+
+    const connected = getOpenClawConfig().status === 'connected';
+    const activity = getRealRuntimeActivity(snapshot).slice(0, 8);
+    if (!activity.length) {
+      stream.innerHTML = `
+        <div class="think-line"><span class="think-ts">now</span><span class="think-body"><span class="tag decision">runtime</span>${connected ? 'PBK Brain is connected. Waiting for live agent actions, approvals, calls, and tool decisions.' : 'Save the private PBK Bridge API key in Settings to load Ava/Rex runtime decisions.'}</span></div>
+        <div class="think-line"><span class="think-ts">safe</span><span class="think-body"><span class="tag alert">guardrail</span>Provider writes stay approval-gated. Demo call memories are hidden from this production console.</span></div>
+      `;
+    } else {
+      stream.innerHTML = activity.map((item) => `
+        <div class="think-line"><span class="think-ts">${escapeHtml(formatRuntimeTime(item.at || item.createdAt))}</span><span class="think-body"><span class="tag ${escapeHtml(getActivityDotClass(item.status))}">${escapeHtml(item.category || 'event')}</span>${escapeHtml(item.text || 'Runtime event')}</span></div>
+      `).join('');
+    }
+
+    if (!memorySection) return;
+    const leads = getRuntimeLeads(snapshot).slice(0, 3);
+    memorySection.innerHTML = `
+      <div class="side-label">Active Memory</div>
+      ${leads.length
+        ? leads.map((lead) => `
+          <div class="memory-item">
+            <div class="who">${escapeHtml(getLeadSellerName(lead))}</div>
+            <div class="summary">${escapeHtml([getLeadAddress(lead), lead.status || lead.stage, getLeadTags(lead).join(', ')].filter(Boolean).join(' - '))}</div>
+            <div class="when">${escapeHtml(formatRelativeTime(lead.updatedAt || lead.createdAt))}</div>
+          </div>
+        `).join('')
+        : `
+          <div class="memory-item">
+            <div class="who">No live lead memory loaded</div>
+            <div class="summary">${connected ? 'Ava and Rex will show real recalled memories here after the bridge returns production records.' : 'Connect PBK Brain to load memory from the bridge.'}</div>
+            <div class="when">runtime</div>
+          </div>
+        `}
+    `;
+  }
+
+  function renderDashboardTranscript(call = {}) {
+    const turns = Array.isArray(call.transcript) ? call.transcript.slice(-5) : [];
+    if (!turns.length) {
+      return `
+        <div class="turn ai">
+          <div class="turn-speaker">PBK</div>
+          <div class="turn-text">Waiting for Telnyx and Deepgram transcript events. Live words will stream here once Ava or Rex is on a real call.</div>
+        </div>
+      `;
+    }
+    return turns.map((turn) => {
+      const speaker = turn.speaker || turn.role || (turn.isAi ? 'AI' : 'Seller');
+      const isSeller = !/ai|ava|rex|assistant|agent|pbk/i.test(String(speaker));
+      return `
+        <div class="turn ${isSeller ? 'seller' : 'ai'}">
+          <div class="turn-speaker">${escapeHtml(isSeller ? 'Seller' : String(speaker))}</div>
+          <div class="turn-text">${escapeHtml(turn.text || turn.content || turn.message || '')}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderDashboardLiveCall(snapshot = {}) {
+    const card = document.querySelector('.page[data-page="dashboard"] .live-call');
+    if (!card) return;
+    const connected = getOpenClawConfig().status === 'connected';
+    const calls = getRuntimeCalls(snapshot);
+    const active = calls.find(isRuntimeCallActive) || calls[0] || null;
+
+    if (!active) {
+      card.innerHTML = `
+        <div class="live-head">
+          <div class="live-title">
+            <span class="badge">Idle</span>
+            <div>
+              <div class="lead-name">No AI calls live right now</div>
+              <div class="lead-addr">${connected ? 'Call floor is connected - real calls will appear from Telnyx and Deepgram.' : 'Save the private PBK Bridge API key in Settings to load live call state.'}</div>
+            </div>
+          </div>
+          <div class="call-timer">00:00</div>
+        </div>
+        <div class="live-body">
+          <div class="transcript" id="transcript">${renderDashboardTranscript({})}</div>
+          <div class="call-analytics">
+            <div class="sentiment-gauge">
+              <div class="sentiment-label">Seller Sentiment</div>
+              <div class="gauge-bar"><div class="gauge-fill" style="width: 0%"></div></div>
+              <div class="gauge-value">Waiting for live speech</div>
+            </div>
+            <div class="deal-math">
+              <div class="deal-row"><span class="deal-label">ARV</span><span class="deal-value">-</span></div>
+              <div class="deal-row"><span class="deal-label">Repairs</span><span class="deal-value">-</span></div>
+              <div class="deal-row"><span class="deal-label">MAO</span><span class="deal-value">-</span></div>
+              <div class="deal-row"><span class="deal-label">Target offer</span><span class="deal-value">-</span></div>
+            </div>
+            <div class="ai-next">
+              <div class="label">Next Move</div>
+              ${connected ? 'Stand by. Ava will surface live objections, BANT+ gaps, and approval-ready next moves here.' : 'Connect PBK Brain to replace this safe empty state with real call intelligence.'}
+            </div>
+          </div>
+        </div>
+        <div class="call-controls">
+          <button class="btn btn-takeover" disabled>Take Over</button>
+          <button class="btn btn-ghost" disabled>Mute AI</button>
+          <button class="btn btn-ghost" disabled>Transfer</button>
+          <button class="btn btn-ghost" disabled style="margin-left:auto">Mark DNC</button>
+          <button class="btn btn-danger" disabled>End Call</button>
+        </div>
+      `;
+      return;
+    }
+
+    const sentiment = Number(active.sentiment);
+    const sentimentPercent = Number.isFinite(sentiment) ? Math.max(0, Math.min(sentiment * 100, 100)) : 0;
+    const arv = getLeadMoneyValue(active, ['arv', 'property.arv', 'analysis.arv']);
+    const repairs = getLeadMoneyValue(active, ['repairs', 'repairEstimate', 'analysis.repairs']);
+    const mao = getLeadMoneyValue(active, ['mao', 'maxAllowableOffer', 'analysis.mao']);
+    const targetOffer = getLeadMoneyValue(active, ['targetOffer', 'offerPrice', 'analysis.targetOffer']);
+    card.innerHTML = `
+      <div class="live-head">
+        <div class="live-title">
+          <span class="badge live">Live</span>
+          <div>
+            <div class="lead-name">${escapeHtml(active.leadName || active.name || active.sellerName || 'Unknown seller')}</div>
+            <div class="lead-addr">${escapeHtml([active.address || active.propertyAddress || 'Address pending', formatPhoneForDisplay(active.phone || active.to || '')].filter(Boolean).join(' - '))}</div>
+          </div>
+        </div>
+        <div class="call-timer" data-live-timer="true">${escapeHtml(formatCallDuration(active))}</div>
+      </div>
+      <div class="live-body">
+        <div class="transcript" id="transcript">${renderDashboardTranscript(active)}</div>
+        <div class="call-analytics">
+          <div class="sentiment-gauge">
+            <div class="sentiment-label">Seller Sentiment</div>
+            <div class="gauge-bar"><div class="gauge-fill" style="width: ${sentimentPercent}%"></div></div>
+            <div class="gauge-value">${escapeHtml(formatCallScore(active.sentiment, 'Tracking'))}</div>
+          </div>
+          <div class="deal-math">
+            <div class="deal-row"><span class="deal-label">ARV</span><span class="deal-value">${arv ? escapeHtml(money(arv)) : '-'}</span></div>
+            <div class="deal-row"><span class="deal-label">Repairs</span><span class="deal-value">${repairs ? escapeHtml(money(repairs)) : '-'}</span></div>
+            <div class="deal-row"><span class="deal-label">MAO</span><span class="deal-value good">${mao ? escapeHtml(money(mao)) : '-'}</span></div>
+            <div class="deal-row"><span class="deal-label">Target offer</span><span class="deal-value">${targetOffer ? escapeHtml(money(targetOffer)) : '-'}</span></div>
+          </div>
+          <div class="ai-next">
+            <div class="label">Next Move</div>
+            ${escapeHtml(active.nextMove || active.recommendation || active.script || 'Listen for authority, condition, timeline, motivation, and price before requesting provider writes.')}
+          </div>
+        </div>
+      </div>
+      <div class="call-controls">
+        <button class="btn btn-takeover">Take Over</button>
+        <button class="btn btn-ghost">Mute AI</button>
+        <button class="btn btn-ghost">Transfer</button>
+        <button class="btn btn-ghost" style="margin-left:auto">Mark DNC</button>
+        <button class="btn btn-danger">End Call</button>
+      </div>
+    `;
+  }
+
   function isDemoRuntimeMessage(message = {}) {
     const source = String(message.source || message.kind || message.fixture || '').toLowerCase();
     const text = [
@@ -16586,22 +17294,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function getRuntimeMessageCounts(snapshot = {}) {
     const rawMessages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
-    if (!rawMessages.length && snapshot.messageCounts && typeof snapshot.messageCounts === 'object') {
-      return snapshot.messageCounts;
-    }
+    const bridgeCounts = snapshot.messageCounts && typeof snapshot.messageCounts === 'object' ? snapshot.messageCounts : {};
     const messages = rawMessages.filter((message) => !isDemoRuntimeMessage(message));
     const calls = getRuntimeCalls(snapshot);
-    const approvals = Array.isArray(snapshot.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
+    const approvals = getRealRuntimeApprovals(snapshot).filter((item) => item.status === 'pending');
     const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
     const channel = (name) => messages.filter((message) => String(message.channel || '').toLowerCase() === name).length;
     return {
-      all: messages.length,
-      unread: messages.filter((message) => /received|unread|new/i.test(String(message.status || ''))).length,
+      all: messages.length || Number(bridgeCounts.all || 0),
+      unread: messages.filter((message) => /received|unread|new/i.test(String(message.status || ''))).length || Number(bridgeCounts.unread || 0),
       approvals: approvals.length + adminTasks.length,
-      hot: (snapshot.leadImports || []).filter((lead) => /hot|urgent|probate|high-equity/i.test(`${(lead.tags || []).join(' ')} ${lead.status || ''}`)).length,
+      hot: getRuntimeLeads(snapshot).filter((lead) => /hot|urgent|probate|high-equity/i.test(`${Array.isArray(lead.tags) ? lead.tags.join(' ') : lead.tags || ''} ${lead.status || ''}`)).length,
       calls: calls.length,
-      sms: channel('sms'),
-      email: channel('email'),
+      sms: channel('sms') || Number(bridgeCounts.sms || 0),
+      email: channel('email') || Number(bridgeCounts.email || 0),
     };
   }
 
@@ -16703,6 +17409,58 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     paintConversation(items[0]);
   }
 
+  function getDashboardInboxIcon(channel = '') {
+    const normalized = String(channel || '').toLowerCase();
+    if (normalized.includes('email')) return 'email';
+    if (normalized.includes('sms') || normalized.includes('text')) return 'sms';
+    return 'call';
+  }
+
+  function renderDashboardInbox(snapshot = {}) {
+    const list = document.querySelector('[data-dashboard-inbox-list]');
+    if (!list) return;
+
+    const connected = getOpenClawConfig().status === 'connected';
+    const items = getRuntimeInboxItems(snapshot).slice(0, 6);
+    if (!items.length) {
+      list.innerHTML = `
+        <div class="msg" data-dashboard-inbox-empty>
+          <div class="msg-icon call"></div>
+          <div class="msg-body">
+            <div class="msg-head">
+              <span class="msg-name">No live inbox records</span>
+              <span class="msg-addr">${connected ? 'Bridge connected' : 'PBK Bridge key required'}</span>
+            </div>
+            <div class="msg-preview">${connected
+              ? 'SMS, email, calls, voicemail, and approval-backed follow-ups will appear here when the bridge returns production records.'
+              : 'Save the private PBK Bridge API key in Settings to replace this empty state with live inbox activity.'}</div>
+          </div>
+          <div class="msg-meta">
+            <span class="msg-time">now</span>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = items.map((item) => `
+      <div class="msg ${item.unread ? 'unread' : ''}" data-runtime-inbox-id="${escapeHtml(item.id)}">
+        <div class="msg-icon ${escapeHtml(getDashboardInboxIcon(item.channel))}"></div>
+        <div class="msg-body">
+          <div class="msg-head">
+            <span class="msg-name">${escapeHtml(item.leadName)}</span>
+            <span class="msg-addr">${escapeHtml(item.address)}</span>
+          </div>
+          <div class="msg-preview">${escapeHtml(item.preview)}</div>
+        </div>
+        <div class="msg-meta">
+          <span class="msg-time">${escapeHtml(formatRelativeTime(item.at))}</span>
+          ${item.unread ? '<span class="badge hot">Unread</span>' : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
   function buildRuntimeNotifications(snapshot = {}) {
     if (Array.isArray(snapshot.notifications?.notifications)) {
       return {
@@ -16710,7 +17468,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         counts: snapshot.notifications.counts || {},
       };
     }
-    const approvals = (snapshot.approvals || [])
+    const approvals = getRealRuntimeApprovals(snapshot)
       .filter((item) => item.status === 'pending')
       .map((item) => ({
         type: 'approval',
@@ -16719,7 +17477,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         at: item.createdAt,
         unread: true,
       }));
-    const calls = (snapshot.calls || []).slice(0, 5).map((item) => ({
+    const calls = getRuntimeCalls(snapshot, { includeEnded: true }).slice(0, 5).map((item) => ({
       type: 'call',
       title: `${item.status || 'Call'} - ${item.leadName || item.phone || 'Unknown lead'}`,
       desc: [item.address, item.phone].filter(Boolean).join(' - '),
@@ -16848,11 +17606,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const strip = document.querySelector('[data-contracts-ops]');
     if (!strip) return;
     const hasDeal = Boolean(String(runtime?.deal?.address || '').trim());
+    const analyzerSync = getAnalyzerSyncStatus(runtime);
     paintOpsCard(strip.querySelector('[data-contracts-card="source"]'), {
-      state: hasDeal ? (summary.pdfReadiness.ready ? 'good' : 'warning') : '',
-      value: hasDeal ? (runtime.address || 'Analyzer snapshot loaded') : 'No analyzer snapshot',
+      state: hasDeal ? analyzerSync.state : '',
+      value: hasDeal ? analyzerSync.label : 'No analyzer snapshot',
       note: hasDeal
-        ? `${runtime.selectedPathLabel} — ${runtime.leadName || 'Seller pending'}`
+        ? `${runtime.address || 'Analyzer snapshot loaded'} - ${runtime.selectedPathLabel} - ${analyzerSync.detail}`
         : 'Open the analyzer and sync a real deal before relying on contract previews or outbound sends.'
     });
     paintOpsCard(strip.querySelector('[data-contracts-card="pdf"]'), summary.contracts);
@@ -16865,8 +17624,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     PBK.state.openclawRuntime = snapshot;
     applyRuntimeMode(snapshot);
     renderRuntimeCounts(snapshot);
+    renderDashboardInbox(snapshot);
     renderRuntimeInbox(snapshot);
     renderCallFloor(snapshot);
+    renderDashboardLiveCall(snapshot);
+    renderRuntimeLeads(snapshot);
+    renderDashboardLeadPreview(snapshot);
+    renderDashboardAgentConsole(snapshot);
     renderRuntimeNotifications(snapshot);
     renderActivityFeed(snapshot);
     renderApprovalQueue(snapshot);
@@ -16896,8 +17660,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderContractsExperience();
   }
 
+  renderRuntimeCounts(PBK.state.openclawRuntime || {});
   renderRuntimeInbox(PBK.state.openclawRuntime || {});
+  renderDashboardInbox(PBK.state.openclawRuntime || {});
   renderCallFloor(PBK.state.openclawRuntime || {});
+  renderDashboardLiveCall(PBK.state.openclawRuntime || {});
+  renderRuntimeLeads(PBK.state.openclawRuntime || {});
+  renderDashboardLeadPreview(PBK.state.openclawRuntime || {});
+  renderDashboardAgentConsole(PBK.state.openclawRuntime || {});
+  renderRuntimeNotifications(PBK.state.openclawRuntime || {});
+  renderActivityFeed(PBK.state.openclawRuntime || {});
+  renderApprovalQueue(PBK.state.openclawRuntime || {});
 
   async function syncOpenClawState({ silent = false } = {}) {
     const config = getOpenClawConfig();
@@ -16920,6 +17693,102 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     reflectOpenClawUI(connected);
     if (!silent) PBK.events.emit('openclaw:status', connected);
     return snapshot;
+  }
+
+  function buildOpenClawRealtimeUrl(config = getOpenClawConfig()) {
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) return '';
+    const url = new URL('/ws/browser', `${base}/`);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    if (config.apiKey) url.searchParams.set('token', config.apiKey);
+    return url.toString();
+  }
+
+  function stopOpenClawRealtime() {
+    if (openClawRealtimeTimer) {
+      clearTimeout(openClawRealtimeTimer);
+      openClawRealtimeTimer = null;
+    }
+    if (openClawRealtimeSocket) {
+      openClawRealtimeSocket.onclose = null;
+      openClawRealtimeSocket.onerror = null;
+      openClawRealtimeSocket.close();
+      openClawRealtimeSocket = null;
+    }
+  }
+
+  function scheduleOpenClawRealtimeReconnect(delay = null) {
+    if (!PBK.openclaw.isConfigured()) return;
+    if (openClawRealtimeTimer) clearTimeout(openClawRealtimeTimer);
+    const wait = delay ?? Math.min(45000, 1500 * Math.pow(1.6, openClawRealtimeAttempts));
+    openClawRealtimeTimer = setTimeout(() => {
+      openClawRealtimeTimer = null;
+      startOpenClawRealtime({ immediate: true });
+    }, wait);
+  }
+
+  function startOpenClawRealtime({ immediate = false } = {}) {
+    const config = getOpenClawConfig();
+    const wsUrl = buildOpenClawRealtimeUrl(config);
+    if (!wsUrl || openClawRealtimeSocket?.readyState === WebSocket.OPEN || openClawRealtimeSocket?.readyState === WebSocket.CONNECTING) return;
+    if (!immediate && document.hidden) return;
+
+    try {
+      openClawRealtimeSocket = new WebSocket(wsUrl);
+    } catch {
+      openClawRealtimeAttempts += 1;
+      scheduleOpenClawRealtimeReconnect();
+      return;
+    }
+
+    openClawRealtimeSocket.onopen = () => {
+      openClawRealtimeAttempts = 0;
+      openClawRealtimeSocket?.send(JSON.stringify({ type: 'ping', at: new Date().toISOString() }));
+      const current = getOpenClawConfig();
+      saveOpenClawConfig({
+        ...current,
+        status: current.status === 'error' ? 'saved' : current.status,
+        lastMessage: current.lastMessage || 'Realtime stream connected.',
+        runtimeMeta: {
+          ...(current.runtimeMeta || {}),
+          lastSyncAt: new Date().toISOString()
+        }
+      });
+    };
+
+    openClawRealtimeSocket.onmessage = (event) => {
+      const payload = parseJSONSafe(event.data, null);
+      if (!payload || typeof payload !== 'object') return;
+      if (payload.type === 'state' && payload.snapshot) {
+        openClawLastConnectedAt = Date.now();
+        openClawPollFailures = 0;
+        renderOpenClawState(payload.snapshot);
+        const current = getOpenClawConfig();
+        const connected = saveOpenClawConfig({
+          ...current,
+          status: 'connected',
+          lastCheckedAt: Date.now(),
+          lastMessage: `Realtime sync ok - ${formatRuntimeTime(payload.snapshot?.status?.lastUpdatedAt || payload.at)}`,
+          runtimeMeta: sanitizeOpenClawRuntimeMeta({
+            ...(current.runtimeMeta || {}),
+            lastSyncAt: payload.at || new Date().toISOString()
+          })
+        });
+        reflectOpenClawUI(connected);
+      }
+      if (payload.type === 'transcript' || payload.type === 'sentiment' || payload.type === 'approval' || payload.type === 'agent-activity') {
+        runOpenClawPoll({ silent: true }).catch(() => {});
+      }
+    };
+
+    openClawRealtimeSocket.onclose = () => {
+      openClawRealtimeSocket = null;
+      openClawRealtimeAttempts += 1;
+      scheduleOpenClawRealtimeReconnect();
+    };
+    openClawRealtimeSocket.onerror = () => {
+      openClawRealtimeAttempts += 1;
+    };
   }
 
   function getOpenClawLastGoodAt(config = getOpenClawConfig()) {
@@ -17000,6 +17869,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function startOpenClawPolling({ immediate = true } = {}) {
     if (!PBK.openclaw.isConfigured()) return;
+    startOpenClawRealtime({ immediate: true });
     if (immediate) {
       runOpenClawPoll({ silent: true }).catch((error) => {
         console.error('Initial OpenClaw state sync failed', error);
@@ -17015,6 +17885,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   window.addEventListener('online', () => {
     openClawPollFailures = 0;
     startOpenClawPolling({ immediate: true });
+    startOpenClawRealtime({ immediate: true });
   });
 
   cpResults.addEventListener('click', (event) => {
@@ -17052,12 +17923,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
     startOpenClawPolling({ immediate: true });
+    startOpenClawRealtime({ immediate: true });
   });
 
   window.addEventListener('storage', (event) => {
     if (event.key !== OPENCLAW_STORAGE_KEY) return;
     openClawPollFailures = 0;
+    stopOpenClawRealtime();
     startOpenClawPolling({ immediate: true });
+  });
+
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const teamButton = target?.closest('[data-team-auth-open]');
+    if (teamButton) {
+      event.preventDefault();
+      openTeamAccessModal();
+      return;
+    }
+    const totpButton = target?.closest('[data-totp-enroll]');
+    if (totpButton) {
+      event.preventDefault();
+      openTotpEnrollmentModal();
+    }
   });
 
   async function handleApprovalAction(button, card) {
@@ -17083,14 +17971,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     button.disabled = true;
     try {
-      await PBK.openclaw.postEvent('approval-callback', {
-        id: approvalId,
-        status: action,
-        actor: 'PBK dashboard',
-        actedAt: new Date().toISOString(),
-        notes: decisionNotes,
-        reviewReason,
-        falsePositiveTag: reviewReason
+      const teamSession = await ensureTeamAccess(action === 'approved' ? 'this approval' : 'this decision');
+      await requestOpenClawApi(`/api/approvals/${encodeURIComponent(approvalId)}`, {
+        method: 'PUT',
+        body: {
+          status: action,
+          actor: 'PBK team dashboard',
+          actedAt: new Date().toISOString(),
+          notes: decisionNotes,
+          reviewReason,
+          falsePositiveTag: reviewReason,
+          teamAuthRequired: true,
+          teamToken: teamSession?.token || getTeamSessionToken()
+        },
+        timeout: 9000
       });
       await syncOpenClawState({ silent: true });
       toast({
@@ -17165,13 +18059,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function getDashboardCallContext() {
     const liveCall = (PBK.state.openclawRuntime?.calls || []).find((call) => call.status === 'live') || {};
+    const liveLead = getRealLeadImports(PBK.state.openclawRuntime || {})[0] || {};
     return {
-      leadId: liveCall.leadId || 'lead-diane-kowalski',
+      leadId: liveCall.leadId || liveLead.leadId || '',
       id: liveCall.id || '',
-      leadName: liveCall.leadName || 'Diane Kowalski',
-      address: liveCall.address || PBK.state.analyzer?.deal?.address || '202 Cherry Ln, Columbus OH',
-      phone: liveCall.phone || '+1 (614) 555-0142',
-      email: liveCall.email || ''
+      leadName: liveCall.leadName || liveLead.seller?.name || 'Selected seller',
+      address: liveCall.address || liveLead.property?.address || PBK.state.analyzer?.deal?.address || 'Selected property',
+      phone: liveCall.phone || liveLead.seller?.phone || '',
+      email: liveCall.email || liveLead.seller?.email || ''
     };
   }
 
@@ -17195,28 +18090,30 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function getInboxContext() {
     const page = getPageNode('inbox');
-    const name = page?.querySelector('.convo-who')?.textContent?.trim() || 'Diane Kowalski';
+    const liveLead = getRealLeadImports(PBK.state.openclawRuntime || {})[0] || {};
+    const name = page?.querySelector('.convo-who')?.textContent?.trim() || liveLead.seller?.name || 'Selected seller';
     const meta = parseMetaLine(page?.querySelector('.convo-meta')?.textContent || '');
     return {
-      leadId: 'lead-diane-kowalski',
+      leadId: liveLead.leadId || '',
       leadName: name,
-      address: meta.address || '202 Cherry Ln, Columbus OH',
-      phone: meta.phone || '+1 (614) 555-0142',
-      email: ''
+      address: meta.address || liveLead.property?.address || 'Selected property',
+      phone: meta.phone || liveLead.seller?.phone || '',
+      email: liveLead.seller?.email || ''
     };
   }
 
   function getLeadDetailContext() {
     const page = getPageNode('lead-detail');
-    const name = page?.querySelector('.ld-name')?.textContent?.replace(/\s+/g, ' ')?.trim() || 'Diane Kowalski';
+    const liveLead = getRealLeadImports(PBK.state.openclawRuntime || {})[0] || {};
+    const name = page?.querySelector('.ld-name')?.textContent?.replace(/\s+/g, ' ')?.trim() || liveLead.seller?.name || 'Selected seller';
     const details = page?.querySelector('.ld-details')?.textContent || '';
     const meta = parseMetaLine(details);
     return {
-      leadId: 'lead-diane-kowalski',
+      leadId: liveLead.leadId || '',
       leadName: name,
-      address: meta.address || '202 Cherry Ln, Columbus OH',
-      phone: meta.phone || '+1 (614) 555-0142',
-      email: ''
+      address: meta.address || liveLead.property?.address || 'Selected property',
+      phone: meta.phone || liveLead.seller?.phone || '',
+      email: liveLead.seller?.email || ''
     };
   }
 
@@ -17671,7 +18568,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'info',
         title: 'Give Ava a concrete command',
-        desc: 'Try "call Diane now", "analyze 202 Cherry Ln", or "send DocuSign to Robert Chen".'
+        desc: 'Try "call this lead now", "analyze the selected property", or "prepare the approved DocuSign packet".'
       });
       return null;
     }
@@ -21829,6 +22726,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!page || page.dataset.settingsPersistWired === 'true') return;
     page.dataset.settingsPersistWired = 'true';
 
+    page.querySelector('[data-team-auth-open]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTeamAccessModal();
+    });
+    page.querySelector('[data-totp-enroll]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTotpEnrollmentModal();
+    });
+
     const readDraft = () => parseJSONSafe(localStorage.getItem(PBK_UI_SETTINGS_KEY), {});
     const writeDraft = async (patch) => {
       const next = { ...readDraft(), ...patch, updatedAt: new Date().toISOString() };
@@ -22409,36 +23317,40 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function wireBrainApiButton() {
-    const page = getPageNode('brain');
-    if (!page || page.dataset.apiButtonWired === 'true') return;
-    page.dataset.apiButtonWired = 'true';
-    page.querySelector('.page-head-actions')?.addEventListener('click', (event) => {
-      const button = event.target.closest('button');
-      if (!button || normalizeControlText(button.textContent) !== 'api') return;
-      const base = normalizeOpenClawEndpoint(getOpenClawConfig().endpoint || DEFAULT_OPENCLAW_ENDPOINT);
-      showUtilityModal('Brain API', `
-        <code>GET ${escapeHtml(base)}/health</code><br>
-        <code>POST ${escapeHtml(base)}/invoke</code> with <code>{ "tool": "getBrainState", "params": { "query": "..." } }</code><br>
-        <code>POST ${escapeHtml(base)}/invoke</code> with <code>{ "tool": "ingestResearchDoc", "params": { "title": "...", "summary": "..." } }</code>
-      `);
+    document.querySelectorAll('.page[data-page="brain"]').forEach((page) => {
+      if (!page || page.dataset.apiButtonWired === 'true') return;
+      page.dataset.apiButtonWired = 'true';
+      page.querySelector('.page-head-actions')?.addEventListener('click', (event) => {
+        const button = event.target.closest('button');
+        if (!button || normalizeControlText(button.textContent) !== 'api') return;
+        const base = normalizeOpenClawEndpoint(getOpenClawConfig().endpoint || DEFAULT_OPENCLAW_ENDPOINT);
+        showUtilityModal('Brain API', `
+          <code>GET ${escapeHtml(base)}/health</code><br>
+          <code>POST ${escapeHtml(base)}/api/brain/ingest</code> with <code>{ "source": "https://...", "topic": "Wholesaling", "tags": ["video"] }</code><br>
+          <code>POST ${escapeHtml(base)}/api/attachments</code> for PDF, DOCX, audio, video, and voice-note uploads<br>
+          <code>POST ${escapeHtml(base)}/invoke</code> with <code>{ "tool": "getBrainState", "params": { "query": "..." } }</code><br>
+          <code>POST ${escapeHtml(base)}/invoke</code> with <code>{ "tool": "ingestResearchDoc", "params": { "sourceUrl": "https://...", "summary": "..." } }</code>
+        `);
+      });
     });
   }
 
   function wireBrainChatComposer() {
-    const page = getPageNode('brain');
-    if (!page || page.dataset.chatComposerWired === 'true') return;
-    page.dataset.chatComposerWired = 'true';
+    document.querySelectorAll('.page[data-page="brain"]').forEach((page) => {
+      if (!page || page.dataset.chatComposerWired === 'true') return;
+      page.dataset.chatComposerWired = 'true';
 
-    page.querySelector('[data-brain-action="ask"]')?.addEventListener('click', (event) => {
-      event.preventDefault();
-      submitBrainQuery();
-    });
-
-    page.querySelector('[data-brain-chat-input]')?.addEventListener('keydown', (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      page.querySelector('[data-brain-action="ask"]')?.addEventListener('click', (event) => {
         event.preventDefault();
         submitBrainQuery();
-      }
+      });
+
+      page.querySelector('[data-brain-chat-input]')?.addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault();
+          submitBrainQuery();
+        }
+      });
     });
   }
 
@@ -23041,7 +23953,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     if (preferFile) {
-      const [file] = await chooseLocalFiles({ accept: '.txt,.md,.csv,.json,.html,.htm,.pdf,.doc,.docx,text/*,application/json,application/pdf' });
+      const [file] = await chooseLocalFiles({ accept: '.txt,.md,.csv,.json,.html,.htm,.pdf,.doc,.docx,.mp3,.m4a,.wav,.aac,.ogg,.flac,.webm,.mp4,.mov,.m4v,text/*,application/json,application/pdf,audio/*,video/*' });
       if (file) {
         const topic = getSelectedBrainTopic();
         const tags = [topic, 'uploaded-file', (file.name || '').split('.').pop()].filter(Boolean);
@@ -23060,7 +23972,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             type: 'success',
             title: extraction?.ok ? 'Attachment stored and indexed' : 'Attachment stored',
             desc: extraction?.ok
-              ? `${file.name || 'File'} is now available to Rex and the Brain page.`
+              ? `${file.name || 'File'} is now available to Rex and the Brain page${extraction.parser === 'deepgram' ? ' as an audio transcript.' : '.'}`
               : `${file.name || 'File'} is stored securely; text extraction needs review.`
           });
           return;
@@ -23104,45 +24016,90 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     showPbkFormModal({
       title: 'Ingest Brain source',
-      intro: 'This stores a real research note through PBK Brain. If the bridge rejects it, PBK will show an error instead of a fake success.',
+      intro: 'Paste a URL, video, weather page, article, or manual note. PBK Brain will fetch what it can, transcribe supported audio/video, and store the source for Rex/Ava recall.',
       submitLabel: 'Ingest source',
       fields: [
-        { name: 'title', label: 'Source title', value: 'Manual PBK note', required: true, full: false },
-        { name: 'source', label: 'Source or URL', value: 'Manual ingest', required: true, full: false },
+        { name: 'title', label: 'Source title', value: '', placeholder: 'Optional - PBK can use page/video title when available', full: false },
+        { name: 'source', label: 'Source URL or origin', value: '', placeholder: 'https://... article, YouTube, PDF, MP3, weather page', required: true, full: false },
         { name: 'topic', label: 'Topic', value: getSelectedBrainTopic(), required: true, full: false },
         { name: 'tags', label: 'Tags', value: getSelectedBrainTopic(), hint: 'Comma-separated tags for Rex retrieval.', full: false },
-        { name: 'summary', label: 'What should Rex remember?', type: 'textarea', value: 'Manual research note added from PBK.', required: true, full: true }
+        { name: 'summary', label: 'What should Rex remember? (optional for URLs)', type: 'textarea', value: '', placeholder: 'Paste notes, transcript, or what Ava should learn if this source is not directly fetchable.', full: true }
       ],
+      validate: ({ source, summary }) => {
+        if (!String(source || '').trim() && !String(summary || '').trim()) {
+          return 'Add a URL/source or paste the note you want Rex and Ava to remember.';
+        }
+        return '';
+      },
       onSubmit: async ({ title, source, topic, summary, tags }) => {
         try {
-          const response = await PBK.openclaw.invoke('ingestResearchDoc', {
-            title,
-            source,
-            topic,
-            summary,
-            excerpt: summary,
-            kind: 'note',
-            tags: String(tags || topic)
-              .split(',')
-              .map((item) => item.trim())
-              .filter(Boolean),
+          const isUrl = /^https?:\/\//i.test(String(source || '').trim());
+          const response = await requestOpenClawApi('/api/brain/ingest', {
+            method: 'POST',
+            body: {
+              title: title || (isUrl ? '' : source || 'Manual PBK note'),
+              source,
+              sourceUrl: isUrl ? source : '',
+              url: isUrl ? source : '',
+              kind: isUrl ? 'article' : 'note',
+              topic,
+              summary,
+              excerpt: summary,
+              tags: String(tags || topic)
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+              requestedBy: 'Command Center Brain',
+            },
+            timeout: 45000,
           });
           if (response?.state) renderOpenClawState(response.state);
           else await syncOpenClawState({ silent: true });
+          const doc = response?.doc || response?.result?.doc || {};
+          const extraction = response?.extraction || doc?.metadata?.extraction || {};
           toastOutcome({
             outcome: getRuntimeOutcome(response, 'live'),
-            title: 'Source ingest complete',
-            desc: `${title} is now available to Rex and the Brain page.`,
+            title: extraction?.ok === false ? 'Source saved for review' : 'Source ingest complete',
+            desc: extraction?.ok === false
+              ? `${doc.title || title || source} was saved, but PBK needs a transcript or accessible content to learn it down to the detail.`
+              : `${doc.title || title || source} is now available to Rex, Ava, and the Brain page.`,
             response
           });
           return true;
         } catch (error) {
-          toast({
-            type: 'error',
-            title: 'Ingest failed',
-            desc: error?.message || 'PBK Brain did not accept that source.'
-          });
-          return false;
+          try {
+            const isUrl = /^https?:\/\//i.test(String(source || '').trim());
+            const response = await PBK.openclaw.invoke('ingestResearchDoc', {
+              title: title || source || 'Manual PBK note',
+              source,
+              sourceUrl: isUrl ? source : '',
+              url: isUrl ? source : '',
+              topic,
+              summary,
+              excerpt: summary,
+              kind: isUrl ? 'article' : 'note',
+              tags: String(tags || topic)
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            });
+            if (response?.state) renderOpenClawState(response.state);
+            else await syncOpenClawState({ silent: true });
+            toastOutcome({
+              outcome: getRuntimeOutcome(response, 'live'),
+              title: 'Source ingest complete',
+              desc: `${response?.doc?.title || title || source} is now available to Rex and the Brain page.`,
+              response
+            });
+            return true;
+          } catch (fallbackError) {
+            toast({
+              type: 'error',
+              title: 'Ingest failed',
+              desc: fallbackError?.message || error?.message || 'PBK Brain did not accept that source.'
+            });
+            return false;
+          }
         }
       }
     });
@@ -23505,77 +24462,78 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function wireBrainRuntime() {
-    const page = document.querySelector('[data-page="brain"]');
-    if (!page || page.dataset.runtimeWired === 'true') return;
-    page.dataset.runtimeWired = 'true';
+    document.querySelectorAll('[data-page="brain"]').forEach((page) => {
+      if (!page || page.dataset.runtimeWired === 'true') return;
+      page.dataset.runtimeWired = 'true';
 
-    page.addEventListener('click', (event) => {
-      const topicRow = event.target.closest('.topic-row');
-      if (topicRow) {
-        const topic = topicRow.querySelector('span')?.textContent?.trim();
-        setSelectedBrainTopic(topic);
-        renderOpenClawState(PBK.state.openclawRuntime || {});
-        return;
-      }
+      page.addEventListener('click', (event) => {
+        const topicRow = event.target.closest('.topic-row');
+        if (topicRow) {
+          const topic = topicRow.querySelector('span')?.textContent?.trim();
+          setSelectedBrainTopic(topic);
+          renderOpenClawState(PBK.state.openclawRuntime || {});
+          return;
+        }
 
-      const suggestion = event.target.closest('.rc-suggest');
-      if (suggestion) {
-        submitBrainQuery(suggestion.textContent.trim());
-        return;
-      }
+        const suggestion = event.target.closest('.rc-suggest');
+        if (suggestion) {
+          submitBrainQuery(suggestion.textContent.trim());
+          return;
+        }
 
-      const blogActionButton = event.target.closest('[data-brain-blog-action]');
-      if (blogActionButton) {
-        const postId = blogActionButton.dataset.brainBlogId || blogActionButton.closest('[data-brain-blog-id]')?.dataset.brainBlogId || '';
-        if (blogActionButton.dataset.brainBlogAction === 'read') showBrainBlogPost(postId);
-        if (blogActionButton.dataset.brainBlogAction === 'train') trainRexFromBlogPost(postId);
-        return;
-      }
+        const blogActionButton = event.target.closest('[data-brain-blog-action]');
+        if (blogActionButton) {
+          const postId = blogActionButton.dataset.brainBlogId || blogActionButton.closest('[data-brain-blog-id]')?.dataset.brainBlogId || '';
+          if (blogActionButton.dataset.brainBlogAction === 'read') showBrainBlogPost(postId);
+          if (blogActionButton.dataset.brainBlogAction === 'train') trainRexFromBlogPost(postId);
+          return;
+        }
 
-      const researchActionButton = event.target.closest('[data-browser-research-action]');
-      if (researchActionButton) {
-        const jobId = researchActionButton.dataset.jobId || researchActionButton.closest('[data-browser-research-job-id]')?.dataset.browserResearchJobId || '';
-        if (researchActionButton.dataset.browserResearchAction === 'view') showBrowserResearchJob(jobId);
-        if (researchActionButton.dataset.browserResearchAction === 'retry') retryBrowserResearchJob(jobId);
-        return;
-      }
+        const researchActionButton = event.target.closest('[data-browser-research-action]');
+        if (researchActionButton) {
+          const jobId = researchActionButton.dataset.jobId || researchActionButton.closest('[data-browser-research-job-id]')?.dataset.browserResearchJobId || '';
+          if (researchActionButton.dataset.browserResearchAction === 'view') showBrowserResearchJob(jobId);
+          if (researchActionButton.dataset.browserResearchAction === 'retry') retryBrowserResearchJob(jobId);
+          return;
+        }
 
-      const revenueAgentButton = event.target.closest('[data-revenue-agent-action]');
-      if (revenueAgentButton) {
-        runRevenueAgentAction(revenueAgentButton.dataset.revenueAgentAction);
-        return;
-      }
+        const revenueAgentButton = event.target.closest('[data-revenue-agent-action]');
+        if (revenueAgentButton) {
+          runRevenueAgentAction(revenueAgentButton.dataset.revenueAgentAction);
+          return;
+        }
 
-      const action = event.target.closest('[data-brain-action]')?.dataset.brainAction;
-      if (!action) return;
+        const action = event.target.closest('[data-brain-action]')?.dataset.brainAction;
+        if (!action) return;
 
-      if (action === 'ask') {
-        submitBrainQuery();
-      }
+        if (action === 'ask') {
+          submitBrainQuery();
+        }
 
-      if (action === 'ingest') {
-        const label = normalizeControlText(event.target.closest('[data-brain-action]')?.textContent || '');
-        promptAndIngestSource({ preferFile: label === 'upload' });
-      }
+        if (action === 'ingest') {
+          const label = normalizeControlText(event.target.closest('[data-brain-action]')?.textContent || '');
+          promptAndIngestSource({ preferFile: label === 'upload' });
+        }
 
-      if (action === 'export') {
-        exportBrainLibrary();
-      }
+        if (action === 'export') {
+          exportBrainLibrary();
+        }
 
-      if (action === 'harvest-blog') {
-        harvestBrainBlogNow();
-      }
+        if (action === 'harvest-blog') {
+          harvestBrainBlogNow();
+        }
 
-      if (action === 'browser-research') {
-        promptAndLaunchBrowserResearch();
-      }
-    });
+        if (action === 'browser-research') {
+          promptAndLaunchBrowserResearch();
+        }
+      });
 
-    page.querySelector('[data-brain-chat-input]')?.addEventListener('keydown', (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        event.preventDefault();
-        submitBrainQuery();
-      }
+      page.querySelector('[data-brain-chat-input]')?.addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+          event.preventDefault();
+          submitBrainQuery();
+        }
+      });
     });
   }
 
@@ -23585,6 +24543,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
     stopOpenClawPolling();
+    stopOpenClawRealtime();
   });
 
   PBK.events.on('openclaw:invoke', ({ payload }) => {
@@ -23622,11 +24581,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const action = button.dataset.pluginAction;
 
       if (action === 'save-later') {
-        PBK.openclaw.saveConfig(readOpenClawDraft());
+        const saved = PBK.openclaw.saveConfig(readOpenClawDraft());
         toast({
           type: 'info',
           title: 'PBK Brain config saved',
-          desc: 'PBK will remember this endpoint on this machine.'
+          desc: saved.apiKey
+            ? 'Private key saved. PBK is syncing live bridge state now and demo records stay hidden.'
+            : 'PBK will remember this endpoint on this machine.'
         });
       }
 
@@ -24006,6 +24967,231 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return 'cash';
   }
 
+  const CONTRACT_TEMPLATE_DISPLAY_MAP = {
+    cash: {
+      code: 'PBK_Cash_Offer_v1',
+      libraryId: 'cash-offer',
+      name: 'Cash Offer Deal Package',
+      roles: ['Seller', 'PBK Buyer'],
+      documents: ['Purchase & Sale Agreement', 'Assignment of Contract', 'Proof of Funds Template']
+    },
+    cf: {
+      code: 'PBK_Creative_Finance_v1',
+      libraryId: 'creative-finance-agent',
+      name: 'Creative Finance Deal Package',
+      roles: ['Seller', 'PBK Buyer', 'Agent / Broker'],
+      documents: ['Seller Finance Agreement', 'Promissory Note', 'Agent Notice']
+    },
+    mt: {
+      code: 'PBK_Mortgage_Takeover_v1',
+      libraryId: 'mortgage-takeover-agent',
+      name: 'Mortgage Takeover Deal Package',
+      roles: ['Seller', 'PBK Buyer', 'Agent / Broker'],
+      documents: ['Subject-To Purchase Agreement', 'Mortgage Authorization', 'Servicing Disclosure']
+    },
+    rbp: {
+      code: 'PBK_RBP_v1',
+      libraryId: 'retail-buyer-program',
+      name: 'Retail Buyer Program Deal Package',
+      roles: ['Seller', 'Retail Buyer', 'PBK Coordinator'],
+      documents: ['Retail Buyer Program Agreement', 'Seller Net Sheet']
+    },
+    land: {
+      code: 'PBK_Land_v1',
+      libraryId: 'land',
+      name: 'Land Deal Package',
+      roles: ['Seller', 'PBK Buyer', 'Listing Agent if represented'],
+      documents: ['Land Purchase Agreement', 'Due Diligence Addendum']
+    },
+    assignment: {
+      code: 'PBK_Assignment_v1',
+      libraryId: 'assignment',
+      name: 'Assignment Package',
+      roles: ['Seller / Assignor', 'PBK Buyer', 'End Buyer / Assignee'],
+      documents: ['Assignment of Contract']
+    },
+    probate: {
+      code: 'PBK_Probate_Addendum_v1',
+      libraryId: 'probate-addendum',
+      name: 'Probate Addendum Package',
+      roles: ['Executor / Seller', 'PBK Buyer', 'Attorney if required'],
+      documents: ['Probate Addendum', 'Authority Checklist']
+    }
+  };
+
+  function getRuntimeContractTemplateLibrary() {
+    return Array.isArray(PBK.state.openclawRuntime?.contractTemplates?.templates)
+      ? PBK.state.openclawRuntime.contractTemplates.templates
+      : [];
+  }
+
+  function normalizeTemplateLookupKey(value = '') {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/pbk_/g, '')
+      .replace(/_v\d+$/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function getContractTemplateFallback(record = {}, runtime = {}) {
+    const raw = [
+      record.contractPath,
+      record.selectedPath,
+      record.templateId,
+      record.contractType,
+      record.docusignTemplateName,
+      record.templateName,
+      record.selectedPathLabel,
+      runtime.selectedPath,
+      runtime.selectedPathLabel,
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (/assignment|assignor|assignee/.test(raw)) return CONTRACT_TEMPLATE_DISPLAY_MAP.assignment;
+    if (/probate|estate|executor/.test(raw)) return CONTRACT_TEMPLATE_DISPLAY_MAP.probate;
+    return CONTRACT_TEMPLATE_DISPLAY_MAP[getDocuSignTemplateKeyForPath(raw || runtime.selectedPath || 'cash')] || CONTRACT_TEMPLATE_DISPLAY_MAP.cash;
+  }
+
+  function findRuntimeContractTemplate(record = {}, runtime = {}) {
+    const fallback = getContractTemplateFallback(record, runtime);
+    const candidates = [
+      record.templateId,
+      record.contractPath,
+      record.contractType,
+      record.selectedPath,
+      record.docusignTemplateName,
+      record.templateName,
+      fallback.libraryId,
+      fallback.code,
+      fallback.name,
+    ].map(normalizeTemplateLookupKey).filter(Boolean);
+    return getRuntimeContractTemplateLibrary().find((item) => {
+      const itemKeys = [
+        item.id,
+        item.pathId,
+        item.type,
+        item.name,
+        item.docusignTemplateId,
+      ].map(normalizeTemplateLookupKey).filter(Boolean);
+      return candidates.some((candidate) => itemKeys.includes(candidate) || itemKeys.some((key) => key && (key.includes(candidate) || candidate.includes(key))));
+    }) || null;
+  }
+
+  function getContractTemplateDisplay(record = {}, runtime = {}) {
+    const fallback = getContractTemplateFallback(record, runtime);
+    const library = findRuntimeContractTemplate(record, runtime);
+    const docusignTemplateId = String(record.docusignTemplateId || record.docuSignTemplateId || library?.docusignTemplateId || '').trim();
+    const templateKey = String(record.templateId || library?.id || fallback.libraryId || fallback.code).trim();
+    const logicalCode = String(record.templateCode || fallback.code || templateKey).trim();
+    const name = String(record.templateName || record.docusignTemplateName || library?.name || fallback.name || 'Deal Package').trim();
+    const version = String(record.templateVersion || library?.version || 'v1').trim();
+    const roles = Array.isArray(record.templateRecipientRoles) && record.templateRecipientRoles.length
+      ? record.templateRecipientRoles
+      : Array.isArray(library?.recipientRoles) && library.recipientRoles.length
+        ? library.recipientRoles
+        : fallback.roles;
+    const documents = Array.isArray(record.templateDocuments) && record.templateDocuments.length
+      ? record.templateDocuments
+      : Array.isArray(library?.documents) && library.documents.length
+        ? library.documents
+        : fallback.documents;
+    const syncedAt = record.templateSyncedAt || library?.updatedAt || PBK.state.openclawRuntime?.contractTemplates?.loadedAt || record.updatedAt || runtime.updatedAt || '';
+    const agentVersion = String(record.contractAgentVersion || record.agentVersion || `PBK Contract Router ${version || 'live'}`).trim();
+
+    return {
+      logicalCode,
+      name,
+      version,
+      docusignTemplateId,
+      templateKey,
+      idLabel: docusignTemplateId ? 'DocuSign template ID' : 'Template key',
+      roles: roles.filter(Boolean),
+      documents: documents.filter(Boolean),
+      syncedAt,
+      agentVersion,
+    };
+  }
+
+  function summarizeListForCard(items = [], fallback = 'Not stored') {
+    const clean = items.map((item) => String(item || '').trim()).filter(Boolean);
+    if (!clean.length) return fallback;
+    if (clean.length <= 2) return clean.join(', ');
+    return `${clean.slice(0, 2).join(', ')} +${clean.length - 2} more`;
+  }
+
+  function getContractValidation(activeRecord = {}, runtime = {}, templateInfo = {}) {
+    const record = activeRecord || {};
+    const source = record.isDraft ? runtime : record;
+    const missing = [];
+    const checks = [];
+    const sellerName = String(source.leadName || record.leadName || '').trim();
+    const address = String(source.address || record.address || '').trim();
+    const email = String(source.email || record.email || '').trim();
+    const timeline = String(source.timeline || record.timeline || '').trim();
+    const amount = num(source.amount || record.amount || 0);
+
+    if (!templateInfo.templateKey && !templateInfo.logicalCode) missing.push('template selection');
+    if (!sellerName || /seller not entered|unknown seller/i.test(sellerName)) missing.push('seller name');
+    if (!isValidEmail(email)) missing.push('valid seller email');
+    if (!address || /no property loaded|unknown property/i.test(address)) missing.push('property address');
+    if (amount <= 0) missing.push('agreed price');
+    if (!timeline) missing.push('close timeline');
+
+    if (!missing.includes('template selection')) checks.push(`Template selected: ${templateInfo.logicalCode || templateInfo.templateKey}`);
+    if (!missing.includes('valid seller email')) checks.push(`Signer email ready: ${email}`);
+    if (!missing.includes('agreed price')) checks.push(`Agreement amount ready: ${money(amount)}`);
+    if (!missing.includes('close timeline')) checks.push(`Close timeline ready: ${timeline}`);
+    if (!templateInfo.docusignTemplateId) checks.push('DocuSign template ID not exposed in browser state; bridge validates it before live send.');
+
+    return {
+      state: missing.length ? 'warning' : 'good',
+      badge: missing.length ? `${missing.length} needs fix` : 'Ready',
+      title: missing.length ? 'Send validation needs attention' : 'Send validation passed',
+      items: missing.length
+        ? missing.map((item) => `Add ${item} before sending.`)
+        : checks,
+    };
+  }
+
+  function renderContractTemplateCard(templateInfo = {}) {
+    const idValue = templateInfo.docusignTemplateId || templateInfo.templateKey || templateInfo.logicalCode || 'Pending';
+    return `
+      <div class="contract-template-card">
+        <div class="contract-template-head">
+          <div>
+            <span class="contract-template-kicker">Template selected for this envelope</span>
+            <span class="contract-template-title">${escapeHtml(templateInfo.logicalCode || templateInfo.templateKey)} - ${escapeHtml(templateInfo.name)}</span>
+          </div>
+          <span class="contract-template-badge">${escapeHtml(templateInfo.version || 'live')}</span>
+        </div>
+        <div class="contract-template-grid">
+          <div class="contract-template-row"><span class="k">${escapeHtml(templateInfo.idLabel || 'Template ID')}</span><span class="v">${escapeHtml(idValue)}</span></div>
+          <div class="contract-template-row"><span class="k">Recipients</span><span class="v">${escapeHtml(summarizeListForCard(templateInfo.roles, 'Seller'))}</span></div>
+          <div class="contract-template-row"><span class="k">Last template sync</span><span class="v">${escapeHtml(templateInfo.syncedAt ? formatRelativeTime(templateInfo.syncedAt) : 'Not checked')}</span></div>
+          <div class="contract-template-row"><span class="k">Agent version</span><span class="v">${escapeHtml(templateInfo.agentVersion || 'PBK Contract Router')}</span></div>
+          <div class="contract-template-row" style="grid-column: 1 / -1;"><span class="k">Package documents</span><span class="v">${escapeHtml(summarizeListForCard(templateInfo.documents, 'Documents not stored'))}</span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderContractValidationPanel(validation = {}) {
+    return `
+      <div class="contract-validation-panel" data-state="${escapeHtml(validation.state || 'warning')}">
+        <div class="contract-validation-head">
+          <div>
+            <span class="contract-validation-kicker">Pre-send validation</span>
+            <span class="contract-validation-title">${escapeHtml(validation.title || 'Send validation')}</span>
+          </div>
+          <span class="contract-validation-badge">${escapeHtml(validation.badge || 'Review')}</span>
+        </div>
+        <ul class="contract-validation-list">
+          ${(validation.items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
   function isValidEmail(value = '') {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
   }
@@ -24282,6 +25468,50 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
   }
 
+  function getAnalyzerSyncStatus(runtime = getAnalyzerContractRuntimeSync()) {
+    const hasDeal = Boolean(String(runtime?.deal?.address || '').trim());
+    if (!hasDeal) {
+      return {
+        state: 'warning',
+        label: 'Sync pending',
+        detail: 'Open or save a property in the analyzer so contracts inherit a real deal.'
+      };
+    }
+
+    if (!runtime.pdfReadiness?.ready) {
+      return {
+        state: 'warning',
+        label: 'Needs fields',
+        detail: runtime.pdfReadiness?.message || 'Complete the required deal fields before creating the packet.'
+      };
+    }
+
+    const cachedPdf = runtime.masterPackageQuery ? getCachedContractPdf(runtime.masterPackageQuery) : null;
+    if (cachedPdf?.syncedAt) {
+      return {
+        state: 'good',
+        label: 'PDF synced',
+        detail: `Analyzer packet and PDF match - synced ${formatRelativeTime(cachedPdf.syncedAt)}.`
+      };
+    }
+
+    return {
+      state: 'good',
+      label: 'Analyzer synced',
+      detail: `${runtime.selectedPathLabel} packet updated ${formatRelativeTime(runtime.updatedAt)}. Generate PDF before live send.`
+    };
+  }
+
+  function renderAnalyzerSyncIndicator(runtime = getAnalyzerContractRuntimeSync()) {
+    const status = getAnalyzerSyncStatus(runtime);
+    document.querySelectorAll('[data-analyzer-sync-status]').forEach((node) => {
+      node.dataset.state = status.state;
+      node.textContent = status.label;
+      node.title = status.detail;
+    });
+    return status;
+  }
+
   function setContractPdfServiceStatus(status = 'unknown', message = '') {
     PBK.state.runtime.contractPdfService = {
       status,
@@ -24519,6 +25749,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function buildRuntimeContractSummary(record, runtime) {
     record = record || {};
     const statusChip = getContractStatusChip(record);
+    const templateInfo = getContractTemplateDisplay(record, runtime);
     return [
       runtime?.branding?.companyName || 'Probono Key Realty',
       'DOCUSIGN ENVELOPE SUMMARY',
@@ -24527,6 +25758,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       `Property: ${record.address || 'Unknown property'}`,
       `Provider: ${record.provider || 'DocuSign'}`,
       `Envelope ID: ${record.envelopeId || record.id || 'Pending'}`,
+      `Template: ${templateInfo.logicalCode || templateInfo.templateKey} - ${templateInfo.name}`,
+      `${templateInfo.idLabel}: ${templateInfo.docusignTemplateId || templateInfo.templateKey || 'Pending'}`,
+      `Recipients: ${summarizeListForCard(templateInfo.roles, 'Seller')}`,
+      `Template Sync: ${templateInfo.syncedAt ? formatRelativeTime(templateInfo.syncedAt) : 'Not checked'}`,
       `Status: ${statusChip.label}`,
       `Amount: ${record.amount ? money(record.amount) : 'Not set'}`,
       `Email: ${record.email || 'Not stored'}`,
@@ -24656,12 +25891,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             const chip = getContractStatusChip(record);
             const progress = getContractProgress(record);
             const isActive = record.id === activeRecord?.id;
+            const templateInfo = getContractTemplateDisplay(record, runtime);
             return `
               <div class="contract-row ${record.isDraft ? 'is-draft' : ''} ${isActive ? 'active' : ''}" data-contract-id="${escapeHtml(record.id)}">
                 <div class="c-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
                 <div>
                   <div class="c-who">${escapeHtml(record.leadName || 'Unknown seller')}${record.isDraft ? ` <span style="color: var(--sky); font-size: 10px; font-family: var(--font-mono); margin-left: 6px;">ANALYZER</span>` : ''}</div>
                   <div class="c-addr">${escapeHtml(record.address || 'Unknown property')}${record.envelopeId ? ` - ${escapeHtml(record.envelopeId)}` : ''}</div>
+                  <div class="c-addr">Template ${escapeHtml(templateInfo.logicalCode || templateInfo.templateKey)} - ${escapeHtml(templateInfo.name)}</div>
                 </div>
                 <div class="c-amount">${money(record.amount || 0)}</div>
                 <div class="c-date">${escapeHtml(record.isDraft ? 'synced now' : formatRelativeTime(record.updatedAt || record.createdAt))}</div>
@@ -24714,6 +25951,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             ? 'neg'
             : 'pending'
         : statusChip.className;
+      const templateInfo = getContractTemplateDisplay(activeRecord || {}, runtime);
+      const contractValidation = getContractValidation(activeRecord || {}, runtime, templateInfo);
 
       preview.innerHTML = `
         <div class="cp-head">
@@ -24731,6 +25970,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <span class="status-chip ${escapeHtml(rendererClass)}">${escapeHtml(rendererLabel)}</span>
             ${activeRecord?.isDraft ? `<span class="status-chip ${bridgeLegacy ? 'neg' : 'pending'}">${escapeHtml(bridgeLegacy ? 'Bridge health legacy' : 'Bridge health checked')}</span>` : ''}
           </div>
+          ${renderContractTemplateCard(templateInfo)}
+          ${renderContractValidationPanel(contractValidation)}
           <div class="cp-meta-grid">
             <div class="cp-meta-pill"><span class="k">Path</span><span class="v">${escapeHtml(runtime.selectedPathLabel)}</span></div>
             <div class="cp-meta-pill"><span class="k">Seller</span><span class="v">${escapeHtml(runtime.leadName)}</span></div>
@@ -24931,6 +26172,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
         <div class="analyzer-runtime-meta">
           <span class="analyzer-runtime-chip" id="analyzerRuntimeChip">Analyzer standalone</span>
+          <span class="analyzer-sync-pill" data-analyzer-sync-status data-state="warning">Sync pending</span>
           <span class="analyzer-runtime-copy" id="analyzerRuntimeCopy">Loading the React analyzer—</span>
         </div>
 

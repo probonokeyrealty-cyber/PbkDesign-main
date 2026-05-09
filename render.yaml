@@ -119,6 +119,14 @@ services:
 
       # Protected operator controls. Used for kill-switch restore/activation and
       # Ava-to-operator urgent calls. Do not commit the passcode value here.
+      # Team passcode lets staff unlock routine approval actions without admin
+      # privileges. Set this to the shared team code in Render's private env UI.
+      - key: PBK_TEAM_PASSCODE
+        sync: false
+      - key: PBK_TEAM_SESSION_TTL_MS
+        value: "43200000"
+      - key: PBK_TEAM_APPROVAL_LIMIT
+        value: "150000"
       - key: PBK_PROTECTED_OPS_PASSCODE
         sync: false
       - key: PBK_OPERATOR_PHONE

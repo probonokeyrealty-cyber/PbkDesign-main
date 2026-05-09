@@ -1,8 +1,20 @@
+import { readFileSync } from 'node:fs';
+
 const BASE_URL = String(process.env.PBK_HOSTED_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com')
   .trim()
   .replace(/\/+$/g, '');
 const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 const RUN_MUTATION_TESTS = /^(1|true|yes)$/i.test(String(process.env.PBK_HOSTED_SMOKE_MUTATE || '').trim());
+const SKIP_REVISION_CHECK = /^(1|true|yes)$/i.test(String(process.env.PBK_HOSTED_SMOKE_SKIP_REVISION_CHECK || '').trim());
+
+function getExpectedBridgeRevision() {
+  const explicitRevision = String(process.env.PBK_EXPECTED_BRIDGE_REVISION || '').trim();
+  if (explicitRevision) return explicitRevision;
+
+  const source = readFileSync(new URL('./openclaw-local-server.mjs', import.meta.url), 'utf8');
+  const match = source.match(/const\s+BUILD_REVISION\s*=\s*['"]([^'"]+)['"]/);
+  return match?.[1] || '';
+}
 
 function assert(condition, message) {
   if (!condition) {
@@ -30,10 +42,18 @@ function authHeaders() {
 }
 
 async function main() {
+  const expectedRevision = getExpectedBridgeRevision();
   const { response: healthResponse, parsed: health } = await requestJson('/health');
   assert(healthResponse.ok, `Hosted /health returned ${healthResponse.status}.`);
   assert(health?.ok === true, 'Hosted /health did not return ok: true.');
   assert(typeof health?.revision === 'string' && health.revision.length > 0, 'Hosted /health is missing revision.');
+  if (!SKIP_REVISION_CHECK) {
+    assert(expectedRevision, 'Hosted smoke could not determine expected bridge revision.');
+    assert(
+      health.revision === expectedRevision,
+      `Hosted bridge revision is stale. Expected ${expectedRevision}, got ${health.revision}. Trigger a Render deploy for the latest commit.`,
+    );
+  }
   assert(health?.features?.authRequired === true, 'Hosted /health did not report authRequired: true.');
   assert(health?.features?.stateBackend === 'postgres', `Expected hosted stateBackend postgres, got ${health?.features?.stateBackend || 'missing'}.`);
   assert(health?.runtime?.hosted === true, 'Hosted /health did not report hosted runtime.');
@@ -170,6 +190,8 @@ async function main() {
       {
         ok: true,
         revision: health.revision,
+        expectedRevision,
+        revisionFresh: !expectedRevision || health.revision === expectedRevision,
         healthStatus: health.status,
         authRequired: health.features.authRequired,
         stateBackend: health.features.stateBackend,

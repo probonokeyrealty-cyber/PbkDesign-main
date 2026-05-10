@@ -185,12 +185,30 @@ const checks = [
       && /stopCurrentVoiceAudio/.test(index)
       && /data-inbox-mobile-mode/.test(index)
       && /data-inbox-mobile-back/.test(index)
+      && /pbk-inbox-fullscreen-flow-fix/.test(index)
+      && /data-inbox-mobile-mode="list"[\s\S]*\.inbox-sidebar/.test(index)
+      && /data-inbox-mobile-mode="conversation"[\s\S]*\.ib-convo/.test(index)
       && /renderRuntimeLoadingState/.test(index)
       && /runtime-skeleton-card/.test(index)
       && /offlineBanner/.test(index)
       && /refreshNetworkBanner/.test(index)
       && /validateModalForm/.test(index)
       && /requestSubmit/.test(index),
+  },
+  {
+    name: 'Agent Fleet research source saves into Brain Blog for Rex review',
+    ok: /action === 'train_source'/.test(index)
+      && /\/api\/brain\/ingest/.test(index)
+      && /\/api\/brain\/blog/.test(index)
+      && /Research source saved to Brain Blog/.test(index)
+      && /sourceSurface:\s*'agent-fleet'/.test(index),
+  },
+  {
+    name: 'Ava voice avoids fake listening and gives actionable connection diagnostics',
+    ok: /Browser microphone streaming is disabled/.test(index)
+      && /this browser is missing the private PBK Bridge API key/.test(index)
+      && /Ava will stay in text mode instead of pretending to listen/.test(index)
+      && /showAvaVoiceDiagnostic/.test(index),
   },
   {
     name: 'Public Ava chat proxy and widget are present',

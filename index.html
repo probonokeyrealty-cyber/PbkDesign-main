@@ -12393,6 +12393,7 @@
     const safeMode = mode === 'conversation' ? 'conversation' : 'list';
     document.body.dataset.inboxMobileMode = safeMode;
   }
+  window.setInboxMobileMode = setInboxMobileMode;
 
   function showPage(name) {
     syncMobileViewportLocks();
@@ -16074,13 +16075,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
     if (action === 'train_source') {
       const input = document.getElementById('fleetKnowledgeUrl');
+      const button = extra.button || null;
       const sourceUrl = String(input?.value || '').trim();
       if (!sourceUrl) {
         showFleetOutcome('unavailable', 'Source URL required', 'Paste a URL before training Rex or the selected agent.');
         return;
       }
+      const previousButtonText = button?.textContent || '';
       try {
-        const response = await requestOpenClawApi('/api/brain/ingest', {
+        let sourceHost = 'source';
+        try { sourceHost = new URL(sourceUrl).hostname || sourceHost; } catch {}
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Saving...';
+        }
+        const ingestResponse = await requestOpenClawApi('/api/brain/ingest', {
           method: 'POST',
           body: {
             title: '',
@@ -16095,11 +16104,40 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           },
           timeout: 45000,
         });
+        const doc = ingestResponse?.doc || {};
+        const blogResponse = await requestOpenClawApi('/api/brain/blog', {
+          method: 'POST',
+          body: {
+            title: doc.title || `Agent skill source - ${sourceHost}`,
+            source: doc.source || sourceUrl,
+            sourceName: doc.source || 'Agent Fleet source',
+            sourceUrl,
+            sourceType: doc.kind || 'article',
+            topic: 'Agent Skills',
+            content: doc.summary || doc.excerpt || sourceUrl,
+            summary: doc.summary || doc.excerpt || `Source saved for ${agent.name} skill review.`,
+            tags: ['agent-fleet', 'skill-candidate', agent.id, ...(Array.isArray(doc.tags) ? doc.tags : [])],
+            requestedBy: 'Agent Fleet UI',
+            metadata: {
+              agentId: agent.id,
+              agentName: agent.name,
+              ingestDocId: doc.id || '',
+              sourceSurface: 'agent-fleet'
+            }
+          },
+          timeout: 15000,
+        });
         if (input) input.value = '';
-        if (response?.state) renderOpenClawState(response.state);
-        showFleetOutcome(getRuntimeOutcome(response, 'live'), 'Research source saved', 'Rex can now use this source as evidence for skill review.');
+        const nextState = blogResponse?.state || ingestResponse?.state;
+        if (nextState) renderOpenClawState(nextState);
+        showFleetOutcome(getRuntimeOutcome(blogResponse, 'live'), 'Research source saved to Brain Blog', 'Rex can now review it as evidence for candidate skills.');
       } catch (error) {
         showFleetOutcome('unavailable', 'Research source not saved', error?.message || 'Bridge did not accept the source.');
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = previousButtonText || 'Train source';
+        }
       }
     }
   }
@@ -16136,6 +16174,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         event.stopPropagation();
         await handleFleetAction(actionButton.dataset.fleetAction, actionButton.dataset.agent || fleetUiState.selected, {
           skill: actionButton.dataset.skill || '',
+          button: actionButton,
         });
         return;
       }
@@ -18854,7 +18893,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
       if (convoActions) {
         convoActions.innerHTML = `
-          <button class="chip-btn inbox-mobile-back" data-inbox-mobile-back type="button">Inbox list</button>
+          <button class="chip-btn inbox-mobile-back" data-inbox-mobile-back type="button" onclick="window.setInboxMobileMode && window.setInboxMobileMode('list')">Inbox list</button>
           <button class="chip-btn active" disabled>${escapeHtml(String(active.channel || 'inbox').toUpperCase())}</button>
           <button class="chip-btn" disabled>Swipe left to delete</button>
         `;
@@ -23290,6 +23329,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const compose = page.querySelector('.compose');
     const textarea = compose?.querySelector('textarea');
+
+    page.addEventListener('click', (event) => {
+      if (!event.target.closest('[data-inbox-mobile-back]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setInboxMobileMode('list');
+    });
 
     compose?.querySelectorAll('.compose-channels .chip-btn').forEach((chip) => {
       chip.addEventListener('click', () => {
@@ -28897,19 +28943,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       try {
         const health = await fetchVoiceHealth();
         if (!health?.browserVoice?.ready) {
-          voiceMode = 'preview';
-          setListening(true);
-          toast({
-            type: health?.browserVoice?.configured ? 'warning' : 'info',
-            title: health?.browserVoice?.configured ? 'Voice provider needs setup' : 'Voice streaming disabled',
-            desc: health?.browserVoice?.configured
-              ? 'Deepgram is not ready yet, so Ava is showing the visual listening state only.'
-              : 'Set PBK_BROWSER_VOICE_ENABLED=true when you are ready for real microphone streaming.'
-          });
+          voiceMode = 'idle';
+          setListening(false);
+          showAvaVoiceDiagnostic(
+            health?.browserVoice?.configured ? 'stt' : 'connection',
+            health?.browserVoice?.configured
+              ? 'Browser voice is enabled, but Deepgram is not ready. Ava will stay in text mode until STT is healthy.'
+              : 'Browser microphone streaming is disabled on this bridge. Ava will stay in text mode instead of pretending to listen.'
+          );
           return;
         }
         if (health?.authRequired && !getOpenClawConfig().apiKey) {
-          throw new Error('Save the private bridge API key in Settings before starting live microphone streaming.');
+          throw new Error('Voice providers are live, but this browser is missing the private PBK Bridge API key. Save it in Settings before starting Ava microphone sessions.');
         }
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
           throw new Error('This browser does not support microphone recording.');
@@ -28984,7 +29029,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           }
         });
       } catch (error) {
-        stopBrowserVoice('start-failed');
+        if (voiceRecorder || voiceSocket || voiceStream || shell.classList.contains('listening')) {
+          stopBrowserVoice('start-failed');
+        } else {
+          voiceMode = 'idle';
+          setListening(false);
+          updateVoiceCopy();
+        }
         showAvaVoiceDiagnostic(/permission|microphone|media/i.test(error?.message || '') ? 'microphone' : 'connection', error?.message || 'Microphone streaming failed before any provider action.');
       } finally {
         voiceStarting = false;
@@ -29544,61 +29595,116 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       overscroll-behavior: none;
     }
 
-    body[data-active-page="inbox"] .main,
-    body[data-active-page="inbox"] .pages {
-      height: 100dvh !important;
-      max-height: 100dvh !important;
-      overflow: hidden !important;
-    }
+  }
+</style>
+<style id="pbk-inbox-fullscreen-flow-fix">
+  html[data-active-page="inbox"],
+  body[data-active-page="inbox"] {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;
+    overscroll-behavior: none;
+  }
 
-    body[data-active-page="inbox"] .main {
-      padding-bottom: 0 !important;
-    }
+  body[data-active-page="inbox"] .app,
+  body[data-active-page="inbox"] .main,
+  body[data-active-page="inbox"] .pages {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
 
+  body[data-active-page="inbox"] .main {
+    padding-bottom: 0 !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"].active {
+    height: calc(var(--pbk-vh-px, 100dvh) - var(--pbk-topbar-px, 56px));
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding-bottom: 0 !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-layout {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-sidebar,
+  body[data-active-page="inbox"] .page[data-page="inbox"] .ib-convo {
+    height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .ib-list,
+  body[data-active-page="inbox"] .page[data-page="inbox"] .convo-body {
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .ib-convo {
+    display: flex !important;
+    flex-direction: column !important;
+    padding-bottom: 0 !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .convo-head,
+  body[data-active-page="inbox"] .page[data-page="inbox"] .compose {
+    flex: 0 0 auto !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .convo-body {
+    flex: 1 1 auto !important;
+    padding-bottom: var(--s-4) !important;
+    scroll-padding-bottom: var(--s-4);
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .compose {
+    position: relative !important;
+    bottom: auto !important;
+    margin: 0 !important;
+    z-index: 2 !important;
+    box-shadow: 0 -14px 32px rgba(0, 0, 0, 0.22) !important;
+  }
+
+  body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-mobile-back {
+    display: inline-flex !important;
+  }
+
+  body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .inbox-sidebar {
+    display: flex !important;
+  }
+
+  body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .ib-convo {
+    display: none !important;
+  }
+
+  body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .inbox-sidebar {
+    display: none !important;
+  }
+
+  body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .ib-convo {
+    display: flex !important;
+  }
+
+  @media (max-width: 720px) {
     body[data-active-page="inbox"] .page[data-page="inbox"].active {
-      height: calc(var(--pbk-vh-px, 100vh) - var(--pbk-topbar-px, 56px) - var(--pbk-mobile-nav-px, 64px));
-      overflow: hidden !important;
-      padding-bottom: 0 !important;
+      height: calc(var(--pbk-vh-px, 100dvh) - var(--pbk-topbar-px, 56px) - var(--pbk-mobile-nav-px, 64px));
     }
 
-    body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-layout {
+    body[data-active-page="inbox"] .page[data-page="inbox"] .convo-actions {
       display: grid !important;
-      grid-template-columns: minmax(0, 1fr) !important;
-      height: 100% !important;
-      min-height: 0 !important;
-      overflow: hidden !important;
-    }
-
-    body[data-active-page="inbox"] .page[data-page="inbox"] .ib-convo {
-      display: flex !important;
-      flex-direction: column !important;
-      height: 100% !important;
-      min-height: 0 !important;
-      overflow: hidden !important;
-      padding-bottom: 0 !important;
-    }
-
-    body[data-active-page="inbox"] .page[data-page="inbox"] .convo-head,
-    body[data-active-page="inbox"] .page[data-page="inbox"] .compose {
-      flex: 0 0 auto !important;
-    }
-
-    body[data-active-page="inbox"] .page[data-page="inbox"] .convo-body {
-      flex: 1 1 auto !important;
-      min-height: 0 !important;
-      overflow-y: auto !important;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-      padding-bottom: var(--s-4) !important;
-      scroll-padding-bottom: var(--s-4);
-    }
-
-    body[data-active-page="inbox"] .page[data-page="inbox"] .compose {
-      position: relative !important;
-      bottom: auto !important;
-      margin: 0 !important;
-      z-index: 2 !important;
-      box-shadow: 0 -14px 32px rgba(0, 0, 0, 0.22) !important;
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      width: 100%;
     }
   }
 </style>

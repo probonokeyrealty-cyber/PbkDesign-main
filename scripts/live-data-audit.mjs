@@ -178,6 +178,21 @@ const checks = [
       && /removeToastNode/.test(index),
   },
   {
+    name: 'UX responsiveness controls are wired for voice, mobile inbox, loading, and offline states',
+    ok: /avaConnectionDot/.test(index)
+      && /avaAvatarStop/.test(index)
+      && /avaTranscriptHistory/.test(index)
+      && /stopCurrentVoiceAudio/.test(index)
+      && /data-inbox-mobile-mode/.test(index)
+      && /data-inbox-mobile-back/.test(index)
+      && /renderRuntimeLoadingState/.test(index)
+      && /runtime-skeleton-card/.test(index)
+      && /offlineBanner/.test(index)
+      && /refreshNetworkBanner/.test(index)
+      && /validateModalForm/.test(index)
+      && /requestSubmit/.test(index),
+  },
+  {
     name: 'Public Ava chat proxy and widget are present',
     ok: /api\/public\/ava-chat/.test(bridge) && /pbk-ava-public-chat/.test(widget),
   },

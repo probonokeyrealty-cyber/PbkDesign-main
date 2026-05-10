@@ -89,6 +89,56 @@
   .skeleton.medium { width: 70%; }
   .skeleton.box { display: block; height: 80px; width: 100%; }
   .skeleton.circle { border-radius: 50%; }
+  .runtime-skeleton-card {
+    display: grid;
+    gap: 10px;
+    padding: var(--s-4);
+    border: 1px solid var(--border-dim);
+    border-radius: var(--radius);
+    background: rgba(255,255,255,.025);
+  }
+  .runtime-skeleton-row td {
+    padding: var(--s-3) var(--s-4) !important;
+  }
+  .runtime-skeleton-row .skeleton {
+    height: 14px;
+  }
+  .offline-banner {
+    position: fixed;
+    left: 50%;
+    top: 68px;
+    z-index: 980;
+    transform: translate(-50%, -16px);
+    opacity: 0;
+    pointer-events: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border: 1px solid rgba(255, 176, 32, .38);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg-panel-elevated) 92%, transparent);
+    color: var(--amber);
+    font: 700 10px/1.3 var(--font-mono);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    box-shadow: 0 18px 44px rgba(0,0,0,.4);
+    transition: opacity .18s ease, transform .18s ease;
+    backdrop-filter: blur(14px);
+  }
+  .offline-banner::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 12px rgba(255, 176, 32, .7);
+  }
+  body.is-offline .offline-banner {
+    opacity: 1;
+    transform: translate(-50%, 0);
+    pointer-events: auto;
+  }
 
   /* ============ FULLSCREEN MODE ============ */
   .fullscreen-call {
@@ -152,8 +202,24 @@
     padding: 6px 4px; cursor: pointer; color: var(--text-tertiary);
     font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em;
     text-transform: uppercase;
+    position: relative;
   }
-  .mobile-nav-item.active { color: var(--sky); }
+  .mobile-nav-item.active {
+    color: var(--sky);
+    background: linear-gradient(180deg, rgba(125, 211, 252, .12), transparent);
+  }
+  .mobile-nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 2px;
+    width: 22px;
+    height: 2px;
+    border-radius: 999px;
+    transform: translateX(-50%);
+    background: var(--sky);
+    box-shadow: 0 0 10px var(--sky-glow-strong);
+  }
   .mobile-nav-item svg { width: 20px; height: 20px; }
   @media (max-width: 720px) {
     html, body { max-width: 100%; overflow-x: hidden; }
@@ -2417,6 +2483,7 @@
       font: 700 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
     }
     .ib-item.swiped .inbox-delete-action { right: 0; }
+    .inbox-mobile-back { display: none; }
     .ib-item.active::before {
       content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--sky);
     }
@@ -2609,6 +2676,7 @@
         white-space: normal;
         text-align: center;
       }
+      .inbox-mobile-back { display: inline-flex; }
       .convo-body {
         padding: var(--s-4) var(--s-3);
         gap: var(--s-3);
@@ -2655,6 +2723,20 @@
         width: 100%;
         min-height: 44px;
         justify-content: center;
+      }
+      body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .inbox-sidebar {
+        display: flex !important;
+        height: 100% !important;
+      }
+      body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .ib-convo {
+        display: none !important;
+      }
+      body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .inbox-sidebar {
+        display: none !important;
+      }
+      body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .ib-convo {
+        display: flex !important;
+        height: 100% !important;
       }
     }
     @media (max-width: 380px) {
@@ -10482,6 +10564,12 @@
   .pbk-form-field input:focus,
   .pbk-form-field select:focus,
   .pbk-form-field textarea:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
+  .pbk-form-field.is-invalid input,
+  .pbk-form-field.is-invalid select,
+  .pbk-form-field.is-invalid textarea {
+    border-color: var(--crimson);
+    box-shadow: 0 0 0 3px var(--crimson-glow);
+  }
   .pbk-form-hint { font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--text-ghost); }
   .pbk-form-advanced {
     grid-column: 1 / -1; border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
@@ -10686,6 +10774,36 @@
     border: 3px solid var(--bg-panel);
     box-shadow: 0 0 12px rgba(34, 197, 94, .7);
   }
+  .ava-avatar-shell[data-voice-state="ready"] .ava-orb-status,
+  .ava-avatar-shell[data-voice-state="ready"] .ava-connection-dot {
+    background: var(--lime);
+    box-shadow: 0 0 12px rgba(163, 230, 53, .72);
+  }
+  .ava-avatar-shell[data-voice-state="live"] .ava-orb-status,
+  .ava-avatar-shell[data-voice-state="live"] .ava-connection-dot {
+    background: var(--sky);
+    box-shadow: 0 0 14px rgba(125, 211, 252, .8);
+  }
+  .ava-avatar-shell[data-voice-state="warning"] .ava-orb-status,
+  .ava-avatar-shell[data-voice-state="warning"] .ava-connection-dot {
+    background: var(--amber);
+    box-shadow: 0 0 14px rgba(255, 176, 32, .72);
+  }
+  .ava-avatar-shell[data-voice-state="error"] .ava-orb-status,
+  .ava-avatar-shell[data-voice-state="error"] .ava-connection-dot,
+  .ava-avatar-shell[data-voice-state="offline"] .ava-orb-status,
+  .ava-avatar-shell[data-voice-state="offline"] .ava-connection-dot {
+    background: var(--crimson);
+    box-shadow: 0 0 14px rgba(248, 113, 113, .75);
+  }
+  .ava-connection-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: var(--text-ghost);
+    display: inline-block;
+    flex: 0 0 auto;
+  }
   .ava-avatar-shell.listening .ava-avatar-orb {
     background:
       radial-gradient(circle at 34% 24%, rgba(255,255,255,.88), rgba(255,255,255,.08) 22%, transparent 32%),
@@ -10759,6 +10877,9 @@
     margin-top: 6px;
     font: 11px/1.4 var(--font-mono);
     color: var(--text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
   }
   .ava-panel-close {
     width: 34px;
@@ -10799,6 +10920,37 @@
     box-shadow: 0 0 0 4px var(--sky-glow), inset 0 1px 0 rgba(255,255,255,.035);
   }
   .ava-command-input::placeholder { color: var(--text-ghost); }
+  .ava-transcript-history {
+    margin-top: 12px;
+    display: grid;
+    gap: 8px;
+    max-height: 136px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid rgba(125, 211, 252, .14);
+    border-radius: 16px;
+    background: rgba(2, 6, 23, .44);
+  }
+  .ava-transcript-history:empty::before {
+    content: 'Voice and typed command history will appear here.';
+    color: var(--text-ghost);
+    font: 11px/1.5 var(--font-mono);
+  }
+  .ava-history-line {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 8px;
+    font: 11px/1.45 var(--font-mono);
+    color: var(--text-secondary);
+  }
+  .ava-history-line strong {
+    color: var(--sky);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .ava-history-line[data-kind="error"] strong { color: var(--crimson); }
+  .ava-history-line[data-kind="system"] strong { color: var(--amber); }
   .ava-ptt-module {
     position: relative;
     display: grid;
@@ -10934,13 +11086,21 @@
   }
   .ava-avatar-actions {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
     gap: 10px;
     margin-top: 14px;
   }
   .ava-avatar-actions .btn {
     justify-content: center;
     min-height: 42px;
+  }
+  .ava-stop-btn {
+    border-color: rgba(248, 113, 113, .34) !important;
+    color: var(--crimson) !important;
+  }
+  .ava-stop-btn:disabled {
+    opacity: .44;
+    cursor: not-allowed;
   }
   .ava-avatar-shell.listening .ava-panel-status,
   .ava-avatar-shell.listening .ava-mic-label {
@@ -11083,6 +11243,7 @@
 
 <!-- toast stack -->
 <div class="toast-stack" id="toastStack"></div>
+<div class="offline-banner" id="offlineBanner" role="status" aria-live="polite">Offline - retrying live bridge</div>
 
 <!-- ===== FULLSCREEN CALL VIEW ===== -->
 <div class="fullscreen-call" id="fullscreenCall">
@@ -11280,6 +11441,11 @@
     transition: background 0.12s;
   }
   .mob-sheet-item:active { background: var(--bg-hover); transform: scale(0.97); }
+  .mob-sheet-item.active {
+    color: var(--sky);
+    background: var(--sky-glow);
+    box-shadow: inset 0 0 0 1px var(--sky-dim);
+  }
   .mob-sheet-item svg { width: 22px; height: 22px; color: var(--sky); }
   .mob-sheet-item span {
     font-size: 11px; text-align: center; line-height: 1.2;
@@ -11600,7 +11766,7 @@
       <div>
         <div class="ava-panel-kicker">Ava command channel</div>
         <div class="ava-panel-title">Talk to <em>Ava</em></div>
-        <div class="ava-panel-status" id="avaAvatarStatus">Ready for typed or voice-style commands.</div>
+        <div class="ava-panel-status"><span class="ava-connection-dot" id="avaConnectionDot" aria-hidden="true"></span><span id="avaAvatarStatus">Ready for typed or voice-style commands.</span></div>
       </div>
       <button class="ava-panel-close" type="button" id="avaAvatarClose" aria-label="Close Ava panel">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -11608,6 +11774,7 @@
     </div>
     <div class="ava-panel-body">
       <textarea class="ava-command-input" id="avaAvatarInput" placeholder="Type a command for Ava, or use the push-to-talk control below." aria-label="Command for Ava"></textarea>
+      <div class="ava-transcript-history" id="avaTranscriptHistory" aria-live="polite"></div>
       <div class="ava-ptt-module" aria-label="Ava push to talk">
         <div class="ava-waveform" aria-hidden="true">
           <span style="--i:0"></span><span style="--i:1"></span><span style="--i:2"></span><span style="--i:3"></span><span style="--i:4"></span><span style="--i:5"></span><span style="--i:6"></span>
@@ -11630,6 +11797,7 @@
       </div>
       <div class="ava-avatar-actions">
         <button class="btn btn-primary" type="button" id="avaAvatarSend">Stage command</button>
+        <button class="btn btn-ghost ava-stop-btn" type="button" id="avaAvatarStop" disabled>Stop</button>
         <button class="btn btn-ghost" type="button" id="avaAvatarBrain">Open Brain</button>
       </div>
     </div>
@@ -12206,6 +12374,26 @@
     document.documentElement.style.setProperty('--pbk-mobile-nav-px', `${navHeight}px`);
   }
 
+  function syncMobileNavState(name) {
+    document.querySelectorAll('.mobile-nav-item').forEach((item) => {
+      const active = item.dataset.page === name || (!document.querySelector(`.mobile-nav-item[data-page="${name}"]`) && item.id === 'mobMoreBtn');
+      item.classList.toggle('active', active);
+      if (active) item.setAttribute('aria-current', 'page');
+      else item.removeAttribute('aria-current');
+    });
+    document.querySelectorAll('.mob-sheet-item').forEach((item) => {
+      const active = item.dataset.page === name;
+      item.classList.toggle('active', active);
+      if (active) item.setAttribute('aria-current', 'page');
+      else item.removeAttribute('aria-current');
+    });
+  }
+
+  function setInboxMobileMode(mode = 'list') {
+    const safeMode = mode === 'conversation' ? 'conversation' : 'list';
+    document.body.dataset.inboxMobileMode = safeMode;
+  }
+
   function showPage(name) {
     syncMobileViewportLocks();
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -12219,6 +12407,12 @@
     const rail = document.querySelector(`.rail-item[data-page="${name}"]`);
     if (rail) rail.classList.add('active');
     document.getElementById('crumb').innerHTML = `<strong>PBK</strong><span class="slash">/</span>${pageLabels[name] || 'Page'}`;
+    syncMobileNavState(name);
+    if (name !== 'inbox') {
+      delete document.body.dataset.inboxMobileMode;
+    } else if (!document.body.dataset.inboxMobileMode) {
+      setInboxMobileMode('list');
+    }
     document.querySelector('.main').scrollTop = 0;
     window.scrollTo(0, 0);
   }
@@ -12364,6 +12558,18 @@
     return t;
   }
   window.toast = toast;
+
+  function refreshNetworkBanner() {
+    const offline = navigator.onLine === false;
+    document.body.classList.toggle('is-offline', offline);
+    const banner = document.getElementById('offlineBanner');
+    if (banner) {
+      banner.textContent = offline
+        ? 'Offline - retrying live bridge'
+        : 'Back online - live bridge retrying';
+    }
+  }
+  refreshNetworkBanner();
 
   // =========================================================
   // MINOR UX: lead type, property type, deal path controls
@@ -13417,6 +13623,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
       item.classList.add('active');
       item.setAttribute('aria-current', 'page');
+      if (item.dataset.page === 'inbox') setInboxMobileMode('list');
       if (item.dataset.page) showPage(item.dataset.page);
     });
   });
@@ -15336,6 +15543,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function extractEnvVarNameFromCopy(value = '') {
     const text = String(value || '');
     const match = text.match(/"envVar"\s*:\s*"([^"]+)"/i)
+      || text.match(/"key"\s*:\s*"([^"]+)"/i)
+      || text.match(/"name"\s*:\s*"([^"]+)"/i)
       || text.match(/env\s*var(?:iable)?\s*[:=]\s*([A-Z0-9_]+)/i)
       || text.match(/\b(PBK_[A-Z0-9_]+)\b/);
     return match?.[1] || '';
@@ -15364,15 +15573,30 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function formatAdminTaskSummary(task = {}) {
     const provider = String(task.provider || 'system').toLowerCase();
-    const action = String(task.action || 'review').toLowerCase();
-    if ((provider === 'render' || provider === 'system') && action === 'update_env_var') {
-      const envVar = task.payload?.envVar || task.payload?.key || task.payload?.name || extractEnvVarNameFromCopy(task.summary || task.command || '');
+    const action = String(task.action || 'review').toLowerCase().replace(/[\s-]+/g, '_');
+    const rawAdminCopy = [
+      task.summary,
+      task.reason,
+      task.command,
+      task.details,
+      task.description,
+      task.payload ? JSON.stringify(task.payload) : ''
+    ].filter(Boolean).join(' ');
+    if ((provider === 'render' || provider === 'system') && /update_?env_?var|env/.test(action + rawAdminCopy.toLowerCase())) {
+      const envVar = task.payload?.envVar || task.payload?.key || task.payload?.name || extractEnvVarNameFromCopy(rawAdminCopy);
       return compactBoardCopy(`Protected env update${envVar ? `: ${envVar}` : ''}. Approval required before PBK applies it${task.payload?.restart ? ' and restarts the bridge' : ''}.`, 150);
     }
     return compactBoardCopy(sanitizeApprovalBoardCopy(
-      task.summary || task.reason || task.command || 'Administrative action is waiting for approval.',
+      rawAdminCopy || 'Administrative action is waiting for approval.',
       'Protected admin update is waiting for founder approval.'
     ), 150);
+  }
+
+  function formatAdminTaskLabel(task = {}) {
+    const action = String(task.action || 'review').toLowerCase();
+    if (/env|update_env_var/.test(action)) return 'Env Update';
+    if (/deploy|restart/.test(action)) return 'Deploy';
+    return 'Admin Change';
   }
 
   // =========================================================
@@ -18630,6 +18854,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
       if (convoActions) {
         convoActions.innerHTML = `
+          <button class="chip-btn inbox-mobile-back" data-inbox-mobile-back type="button">Inbox list</button>
           <button class="chip-btn active" disabled>${escapeHtml(String(active.channel || 'inbox').toUpperCase())}</button>
           <button class="chip-btn" disabled>Swipe left to delete</button>
         `;
@@ -18657,8 +18882,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const active = items.find((item) => String(item.id) === String(row.dataset.runtimeInboxId)) || items[0];
         if (active?.id) setSelectedInboxId(active.id);
         paintConversation(active);
+        setInboxMobileMode('conversation');
       });
     });
+
+    if (convoActions) {
+      convoActions.onclick = (event) => {
+        if (event.target.closest('[data-inbox-mobile-back]')) setInboxMobileMode('list');
+      };
+    }
 
     paintConversation(selectedItem);
   }
@@ -18728,6 +18960,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         if (item?.id) setSelectedInboxId(item.id);
         if (item?.leadId) setActiveLeadId(item.leadId);
         setInboxChannelFilter('all');
+        setInboxMobileMode('conversation');
         showPage('inbox');
         renderRuntimeInbox(PBK.state.openclawRuntime || snapshot);
       });
@@ -18892,8 +19125,56 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     paintOpsCard(strip.querySelector('[data-contracts-card="next"]'), summary.next);
   }
 
+  function isRuntimeSyncing() {
+    return Boolean(PBK.state.runtime?.isSyncing);
+  }
+
+  function renderRuntimeLoadingState(isLoading) {
+    PBK.state.runtime.isSyncing = Boolean(isLoading);
+    document.body.classList.toggle('runtime-syncing', Boolean(isLoading));
+    if (!isLoading) return;
+
+    const currentSnapshot = PBK.state.openclawRuntime || {};
+    const hasLeads = getRuntimeLeads(currentSnapshot).length > 0;
+    const hasApprovals = getRealRuntimeApprovals(currentSnapshot).length > 0
+      || (Array.isArray(currentSnapshot.adminTasks) && currentSnapshot.adminTasks.length > 0);
+
+    const leadTbody = document.querySelector('.page[data-page="leads"] .leads-table-container tbody');
+    if (leadTbody && !hasLeads) {
+      leadTbody.innerHTML = Array.from({ length: 5 }).map(() => `
+        <tr class="row runtime-skeleton-row" data-runtime-loading="leads">
+          <td colspan="12"><span class="skeleton line"></span></td>
+        </tr>
+      `).join('');
+    }
+
+    const approvalFeed = document.querySelector('[data-openclaw-feed="approvals"]');
+    if (approvalFeed && !hasApprovals) {
+      approvalFeed.innerHTML = Array.from({ length: 3 }).map(() => `
+        <div class="runtime-skeleton-card" data-runtime-loading="approvals">
+          <span class="skeleton short"></span>
+          <span class="skeleton line"></span>
+          <span class="skeleton medium"></span>
+        </div>
+      `).join('');
+    }
+
+    const contractPipeline = document.querySelector('.page[data-page="contracts"] .contract-pipeline');
+    if (contractPipeline && !contractPipeline.querySelector('.contract-row')) {
+      contractPipeline.querySelectorAll('.contract-empty, [data-runtime-loading="contracts"]').forEach((node) => node.remove());
+      contractPipeline.insertAdjacentHTML('beforeend', Array.from({ length: 3 }).map(() => `
+        <div class="runtime-skeleton-card" data-runtime-loading="contracts">
+          <span class="skeleton medium"></span>
+          <span class="skeleton line"></span>
+          <span class="skeleton short"></span>
+        </div>
+      `).join(''));
+    }
+  }
+
   function renderOpenClawState(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') return;
+    renderRuntimeLoadingState(false);
     PBK.state.openclawRuntime = snapshot;
     applyRuntimeMode(snapshot);
     renderRuntimeCounts(snapshot);
@@ -19185,6 +19466,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   PBK.openclaw.stopPolling = stopOpenClawPolling;
 
   window.addEventListener('online', () => {
+    refreshNetworkBanner();
+    toast({ type: 'success', title: 'Back online', desc: 'PBK is retrying live bridge and WebSocket sync.', id: 'network-status', ms: 2200 });
     openClawPollFailures = 0;
     startOpenClawPolling({ immediate: true });
     startOpenClawRealtime({ immediate: true });
@@ -19213,6 +19496,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   });
 
   window.addEventListener('offline', () => {
+    refreshNetworkBanner();
+    toast({ type: 'warning', title: 'Offline mode', desc: 'Live updates are paused. PBK will retry automatically.', id: 'network-status', ms: 0 });
     openClawPollFailures += 1;
     setOpenClawReconnecting(new Error('Browser is offline.'));
     scheduleOpenClawPoll(OPENCLAW_HIDDEN_POLL_INTERVAL);
@@ -20125,6 +20410,39 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
       </form>
     `;
+    const readValues = () => {
+      const values = {};
+      modal.querySelectorAll('[data-field-name]').forEach((field) => {
+        values[field.dataset.fieldName] = field.value;
+      });
+      return values;
+    };
+    const setFormError = (message = '') => {
+      const errorBox = modal.querySelector('[data-form-error]');
+      if (!errorBox) return;
+      errorBox.textContent = message;
+      errorBox.classList.toggle('open', Boolean(message));
+    };
+    const markLikelyInvalidField = (message = '') => {
+      modal.querySelectorAll('.pbk-form-field.is-invalid').forEach((field) => field.classList.remove('is-invalid'));
+      const lower = String(message || '').toLowerCase();
+      const candidates = [
+        ['email', ['email']],
+        ['phone', ['phone', 'contact']],
+        ['address', ['address', 'property']],
+        ['sellerName', ['name', 'seller']],
+        ['amount', ['price', 'amount', 'offer']],
+      ];
+      const match = candidates.find(([, words]) => words.some((word) => lower.includes(word)));
+      if (!match) return;
+      modal.querySelector(`[data-field-name="${match[0]}"]`)?.closest('.pbk-form-field')?.classList.add('is-invalid');
+    };
+    const validateModalForm = ({ quiet = false } = {}) => {
+      const validation = typeof validate === 'function' ? validate(readValues()) : '';
+      markLikelyInvalidField(validation);
+      if (!quiet || validation) setFormError(validation || '');
+      return validation;
+    };
     const close = () => {
       modal.remove();
       backdrop.remove();
@@ -20133,23 +20451,33 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     modal.addEventListener('click', (event) => {
       if (event.target.closest('[data-modal-close]')) close();
     });
+    modal.addEventListener('input', (event) => {
+      if (!event.target.closest('[data-field-name]')) return;
+      validateModalForm({ quiet: true });
+    });
+    modal.addEventListener('change', (event) => {
+      if (!event.target.closest('[data-field-name]')) return;
+      validateModalForm({ quiet: true });
+    });
+    modal.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        modal.querySelector('form')?.requestSubmit();
+      }
+    });
     modal.querySelector('form')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const submit = event.currentTarget.querySelector('button[type="submit"]');
-      const values = {};
-      modal.querySelectorAll('[data-field-name]').forEach((field) => {
-        values[field.dataset.fieldName] = field.value;
-      });
-      const errorBox = modal.querySelector('[data-form-error]');
-      const validation = typeof validate === 'function' ? validate(values) : '';
+      const values = readValues();
+      const validation = validateModalForm({ quiet: false });
       if (validation) {
-        if (errorBox) {
-          errorBox.textContent = validation;
-          errorBox.classList.add('open');
-        }
         return;
       }
-      errorBox?.classList.remove('open');
+      setFormError('');
       submit.disabled = true;
       try {
         const result = onSubmit ? await onSubmit(values, { modal, close }) : null;
@@ -24251,6 +24579,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (!button) return;
       const filter = button.dataset.inboxFilter || textWithoutCounts(button.textContent);
       setInboxChannelFilter(filter);
+      setInboxMobileMode('list');
       renderRuntimeCounts(PBK.state.openclawRuntime || {});
       renderRuntimeInbox(PBK.state.openclawRuntime || {});
       const shown = page.querySelectorAll('.ib-item').length;
@@ -27250,7 +27579,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const pipeline = page.querySelector('.contract-pipeline');
     if (pipeline) {
-      pipeline.querySelectorAll('.contract-row, .contract-empty').forEach((row) => row.remove());
+      pipeline.querySelectorAll('.contract-row, .contract-empty, [data-runtime-loading="contracts"]').forEach((row) => row.remove());
       if (!records.length) {
         pipeline.insertAdjacentHTML(
           'beforeend',
@@ -28151,9 +28480,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }).join('');
 
     const adminCards = adminTasks.map((task) => {
-      const providerAction = `${task.provider || 'system'}:${task.action || 'review'}`;
+      const providerAction = `${task.provider || 'system'} - ${formatAdminTaskLabel(task)}`;
       const summary = formatAdminTaskSummary(task);
-      const impact = compactBoardCopy(task.costEstimate ? `Cost ${task.costEstimate}` : (task.scope || task.risk || 'Infrastructure update'), 80);
+      const impact = compactBoardCopy(sanitizeApprovalBoardCopy(
+        task.costEstimate ? `Cost ${task.costEstimate}` : (task.scope || task.risk || task.details || 'Infrastructure update'),
+        'Protected system update'
+      ), 80);
       return `
         <div class="qcard" data-admin-task-id="${escapeHtml(task.id)}" style="border-left-color: var(--sky);">
           <div class="qcard-head">
@@ -28272,6 +28604,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   };
 
   syncOpenClawState = async function({ silent = false } = {}) {
+    if (!silent) renderRuntimeLoadingState(true);
+    try {
     const config = getOpenClawConfig();
     const health = await probeOpenClaw(config).catch(() => null);
     const authRequired = Boolean(health?.runtimeMeta?.authRequired);
@@ -28318,6 +28652,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       renderProvidersCard(connected.runtimeMeta?.providers || snapshot?.status?.providers || null, quotas, tooling);
       if (!silent) PBK.events.emit('openclaw:status', connected);
       return snapshot;
+    } finally {
+      if (!silent) renderRuntimeLoadingState(false);
+    }
     };
 
   function wireAvaAvatarRuntime() {
@@ -28329,8 +28666,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const micLabel = document.getElementById('avaMicLabel');
     const micHint = document.getElementById('avaMicHint');
     const status = document.getElementById('avaAvatarStatus');
+    const connectionDot = document.getElementById('avaConnectionDot');
+    const historyBox = document.getElementById('avaTranscriptHistory');
     const input = document.getElementById('avaAvatarInput');
     const sendBtn = document.getElementById('avaAvatarSend');
+    const stopBtn = document.getElementById('avaAvatarStop');
     const brainBtn = document.getElementById('avaAvatarBrain');
     if (!shell || !panel || !orb || shell.dataset.runtimeWired === 'true') return;
     shell.dataset.runtimeWired = 'true';
@@ -28342,6 +28682,46 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let voiceSocket = null;
     let voiceStarting = false;
     let lastVoiceDiagnosticToastAt = 0;
+    let currentVoiceAudio = null;
+    let currentVoiceAudioUrl = '';
+
+    const setVoiceState = (state = 'ready', label = '') => {
+      const next = navigator.onLine === false ? 'offline' : state;
+      shell.dataset.voiceState = next;
+      if (connectionDot) {
+        connectionDot.title = label || next;
+        connectionDot.setAttribute('aria-label', label || next);
+      }
+      if (stopBtn) {
+        stopBtn.disabled = !shell.classList.contains('listening') && !currentVoiceAudio;
+      }
+    };
+
+    const addAvaHistory = (kind = 'system', label = 'Ava', text = '') => {
+      if (!historyBox) return;
+      const clean = String(text || '').trim();
+      if (!clean) return;
+      const line = document.createElement('div');
+      line.className = 'ava-history-line';
+      line.dataset.kind = kind;
+      line.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(clean.length > 180 ? `${clean.slice(0, 177).trim()}...` : clean)}</span>`;
+      historyBox.appendChild(line);
+      while (historyBox.children.length > 8) historyBox.firstElementChild?.remove();
+      historyBox.scrollTop = historyBox.scrollHeight;
+    };
+
+    const stopCurrentVoiceAudio = () => {
+      if (currentVoiceAudio) {
+        try { currentVoiceAudio.pause(); } catch {}
+        currentVoiceAudio.src = '';
+      }
+      if (currentVoiceAudioUrl) {
+        URL.revokeObjectURL(currentVoiceAudioUrl);
+      }
+      currentVoiceAudio = null;
+      currentVoiceAudioUrl = '';
+      if (stopBtn) stopBtn.disabled = !shell.classList.contains('listening');
+    };
 
     const showAvaVoiceDiagnostic = (lane = 'connection', detail = '') => {
       const now = Date.now();
@@ -28357,7 +28737,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }[lane] || 'Voice connection';
       const desc = detail || `${laneCopy} needs attention. Ava will keep the response visible in text while the voice lane reconnects.`;
       if (status) status.textContent = desc;
-      toast({ type: 'warning', title: `${laneCopy} issue`, desc });
+      setVoiceState('error', desc);
+      addAvaHistory('error', 'Issue', desc);
+      toast({ type: 'warning', title: `${laneCopy} issue`, desc, id: `ava-voice-${lane}` });
     };
     let lastTranscript = '';
 
@@ -28387,10 +28769,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const setListening = (listening) => {
       shell.classList.toggle('listening', listening);
+      setVoiceState(listening ? 'live' : 'ready', listening ? 'Ava voice stream is live.' : 'Ava voice stream is ready.');
       if (micBtn) {
         micBtn.setAttribute('aria-pressed', listening ? 'true' : 'false');
         micBtn.setAttribute('aria-label', listening ? 'Stop Ava listening preview' : 'Press to talk to Ava');
       }
+      if (stopBtn) stopBtn.disabled = !listening && !currentVoiceAudio;
       if (micLabel) micLabel.textContent = listening ? 'LISTENING... CLICK TO STOP' : 'PRESS TO TALK';
       if (status) status.textContent = listening ? 'Listening preview active - Deepgram stream UI ready.' : 'Ready for typed or voice-style commands.';
     };
@@ -28409,6 +28793,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const elevenLabs = voiceHealth?.elevenLabs || {};
       if (browserVoice.ready) {
         const needsBridgeKey = voiceHealth?.authRequired && !getOpenClawConfig().apiKey;
+        setVoiceState(needsBridgeKey ? 'warning' : 'ready', needsBridgeKey ? 'Bridge API key required for voice.' : 'Browser microphone voice is ready.');
         if (micHint) {
           micHint.textContent = needsBridgeKey
             ? 'Voice providers are live. Save the private bridge API key in Settings to start microphone sessions.'
@@ -28420,9 +28805,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           status.textContent = needsBridgeKey ? 'Voice stack live - bridge key required.' : 'Browser microphone voice is ready.';
         }
       } else if (browserVoice.configured) {
+        setVoiceState('warning', 'Browser voice enabled, provider not ready.');
         if (micHint) micHint.textContent = 'Browser voice is enabled, but Deepgram is missing or not ready.';
         if (status && !shell.classList.contains('listening')) status.textContent = 'Voice needs provider configuration.';
       } else {
+        setVoiceState('warning', 'Voice providers are not enabled.');
         if (micHint) micHint.textContent = 'Voice providers are not enabled for this environment yet. Ava still stages actions under approval guardrails.';
         if (status && !shell.classList.contains('listening')) status.textContent = 'Ready for typed or voice-style commands.';
       }
@@ -28452,6 +28839,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     function stopBrowserVoice(reason = 'user-stop') {
+      stopCurrentVoiceAudio();
       if (voiceRecorder && voiceRecorder.state !== 'inactive') {
         try { voiceRecorder.stop(); } catch {}
       }
@@ -28470,6 +28858,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       voiceMode = 'idle';
       setListening(false);
       updateVoiceCopy();
+      addAvaHistory('system', 'Stop', reason === 'user-stop' || reason === 'operator-stop' ? 'Ava voice interrupted by operator.' : `Voice stopped: ${reason}.`);
     }
 
     async function playAvaTts(text = '') {
@@ -28489,8 +28878,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         }
         const blob = await response.blob();
         const audioUrl = URL.createObjectURL(blob);
+        stopCurrentVoiceAudio();
         const audio = new Audio(audioUrl);
-        audio.addEventListener('ended', () => URL.revokeObjectURL(audioUrl), { once: true });
+        currentVoiceAudio = audio;
+        currentVoiceAudioUrl = audioUrl;
+        if (stopBtn) stopBtn.disabled = false;
+        audio.addEventListener('ended', () => stopCurrentVoiceAudio(), { once: true });
+        audio.addEventListener('error', () => stopCurrentVoiceAudio(), { once: true });
         await audio.play();
       } catch (error) {
         showAvaVoiceDiagnostic('tts', error?.message || 'Ava text is ready, but the browser could not play the spoken response.');
@@ -28539,8 +28933,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         voiceSocket = new WebSocket(sessionPayload.session.wsUrl);
         voiceMode = 'live';
         setListening(true);
-        if (status) status.textContent = 'Connecting microphone stream...';
+          if (status) status.textContent = 'Connecting microphone stream...';
         voiceSocket.addEventListener('open', () => {
+          setVoiceState('live', 'Ava voice WebSocket connected.');
           const mimeType = MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')
             ? 'audio/webm;codecs=opus'
             : 'audio/webm';
@@ -28565,13 +28960,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             lastTranscript = data.transcript;
             if (input && data.isFinal) input.value = data.transcript;
             if (status) status.textContent = data.isFinal ? 'Transcript captured - staging Ava response.' : `Hearing: ${data.transcript.slice(0, 54)}`;
+            addAvaHistory(data.isFinal ? 'user' : 'system', data.isFinal ? 'You' : 'Live', data.transcript);
           }
           if (data.type === 'assistant_response') {
             if (status) status.textContent = data.text || 'Ava response staged.';
+            addAvaHistory(data.ok ? 'ava' : 'error', 'Ava', data.text || 'Try again when you are ready.');
             toast({
               type: data.ok ? 'success' : 'warning',
               title: data.ok ? 'Ava heard you' : 'Voice unclear',
-              desc: data.text || 'Try again when you are ready.'
+              desc: data.text || 'Try again when you are ready.',
+              id: 'ava-voice-response'
             });
             playAvaTts(data.text || '').catch(() => null);
           }
@@ -28603,8 +29001,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({
         type: 'success',
         title: 'Ava command staged',
-        desc: 'Command captured locally. Approval guardrails still apply before any live action.'
+        desc: 'Command captured locally. Approval guardrails still apply before any live action.',
+        id: 'ava-command-staged'
       });
+      addAvaHistory('user', 'Typed', command);
       if (input) input.value = '';
       setPanelOpen(false);
     };
@@ -28627,6 +29027,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ripple.style.top = `${event.clientY - rect.top}px`;
       micBtn.appendChild(ripple);
       window.setTimeout(() => ripple.remove(), 620);
+    });
+
+    stopBtn?.addEventListener('click', () => {
+      stopBrowserVoice('operator-stop');
+      if (status) status.textContent = 'Ava interrupted. Ready when you are.';
     });
 
     micBtn?.addEventListener('click', async () => {
@@ -28677,6 +29082,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       setPanelOpen(false);
     });
 
+    setVoiceState(navigator.onLine === false ? 'offline' : 'warning', 'Checking Ava voice readiness.');
     window.setTimeout(() => fetchVoiceHealth().catch(() => {
       voiceHealth = getRuntimeVoiceHealth();
       updateVoiceCopy();

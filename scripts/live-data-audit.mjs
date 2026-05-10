@@ -24,6 +24,10 @@ const checks = [
     ok: /function\s+isSellerFacingInboxMessage/.test(index)
       && /getRuntimeLeadByMessage/.test(index)
       && /data-inbox-open-lead/.test(index)
+      && /agentSurface/.test(index)
+      && /inboxChannelFilter/.test(index)
+      && /deleteRuntimeInboxMessage/.test(index)
+      && /data-inbox-delete-message/.test(index)
       && /exclude|agent_log|system_notification|website_chat|public-ava-chat/i.test(index),
   },
   {
@@ -50,16 +54,43 @@ const checks = [
     name: 'Lead delete button and bridge DELETE route are wired',
     ok: /deleteRuntimeLead/.test(index)
       && /data-lead-row-action="delete"/.test(index)
+      && /getLeadRuntimeId\(lead\)/.test(index)
+      && /clearActiveLeadId/.test(index)
       && /request\.method === 'DELETE'/.test(bridge)
-      && /deleteLeadProfileRowFromDb/.test(bridge),
+      && /findLeadImportByLookup/.test(bridge)
+      && /lead\.importId/.test(bridge)
+      && /deleteLeadProfileRowFromDb/.test(bridge)
+      && /uniqueLeadLookupValues/.test(bridge)
+      && /REGEXP_REPLACE\(COALESCE\(phone/.test(bridge)
+      && !/OR email = \$2/.test(bridge),
+  },
+  {
+    name: 'Lead intake dedupe does not collapse blank-address blank-phone leads',
+    ok: /leadAddressKey\s*=\s*slugify/.test(bridge)
+      && /leadPhoneKey\s*=\s*normalizePhone/.test(bridge)
+      && /leadEmailKey/.test(bridge)
+      && /Boolean\(leadAddressKey && leadPhoneKey/.test(bridge)
+      && !/dedupeKey\s*=\s*`\$\{slugify\(leadImport\.property\.address\)\}::\$\{normalizePhone\(leadImport\.seller\.phone\)\}`/.test(bridge),
   },
   {
     name: 'Contract tabs, delete draft, void, and status API filters are wired',
     ok: /contractStageFilter/.test(index)
       && /data-contract-action="\$\{record\.isDraft \? 'delete-draft' : 'void'\}"/.test(index)
+      && /force:\s*true/.test(index)
+      && /filter\(\(contract\) => getContractStage\(contract\) !== 'void'\)/.test(index)
       && /url\.searchParams\.get\('status'\)/.test(bridge)
       && /matchPath\(pathname,\s*'\/api\/contracts\/:id'\)/.test(bridge)
       && /request\.method === 'DELETE'/.test(bridge),
+  },
+  {
+    name: 'Inbox message delete and Supabase schema ensure endpoints are available',
+    ok: /matchPath\(pathname,\s*'\/api\/messages\/:id'\)/.test(bridge)
+      && /deleteUnifiedMessageRecordFromDb/.test(bridge)
+      && /\/api\/admin\/schema\/ensure/.test(bridge)
+      && /pbk_memories/.test(bridge)
+      && /pbk_feedback/.test(bridge)
+      && /pbk_intent_events/.test(bridge)
+      && /pbk_knowledge/.test(bridge),
   },
   {
     name: 'Slack approval buttons accept Block Kit JSON payloads and Ava thread replies',

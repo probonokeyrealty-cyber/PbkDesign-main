@@ -1222,8 +1222,12 @@
     display: grid; grid-template-columns: 36px 1fr auto;
     gap: var(--s-3); cursor: pointer; transition: background 0.1s;
     position: relative;
+    overflow: hidden; touch-action: pan-y;
   }
 [data-page="dashboard"] .msg:hover { background: var(--bg-hover); }
+[data-page="dashboard"] .msg.swiped { transform: translateX(-74px); background: rgba(255, 80, 80, .08); }
+[data-page="dashboard"] .msg .inbox-delete-action { top: 0; right: -74px; bottom: 0; }
+[data-page="dashboard"] .msg.swiped .inbox-delete-action { right: 0; }
 [data-page="dashboard"] .msg.unread::before {
     content: ''; position: absolute; left: 0; top: var(--s-4); bottom: var(--s-4);
     width: 2px; background: var(--sky);
@@ -2367,9 +2371,18 @@
     .ib-item {
       padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-dim);
       cursor: pointer; transition: background 0.1s; position: relative;
+      overflow: hidden; touch-action: pan-y;
     }
     .ib-item:hover { background: var(--bg-hover); }
     .ib-item.active { background: var(--bg-panel); }
+    .ib-item.swiped { transform: translateX(-74px); background: rgba(255, 80, 80, .08); }
+    .inbox-delete-action {
+      position: absolute; top: 0; right: -74px; bottom: 0; width: 74px;
+      border: 0; border-left: 1px solid rgba(255, 80, 80, .34);
+      background: rgba(255, 80, 80, .16); color: #ff9b9b; cursor: pointer;
+      font: 700 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+    }
+    .ib-item.swiped .inbox-delete-action { right: 0; }
     .ib-item.active::before {
       content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--sky);
     }
@@ -2500,8 +2513,35 @@
     .compose textarea:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
 
     @media (max-width: 900px) {
-      .inbox-layout { grid-template-columns: 1fr; min-height: 100dvh; height: calc(100dvh - 56px); }
-      .inbox-sidebar { display: none; }
+      .inbox-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(180px, 36dvh) minmax(0, 1fr);
+        min-height: 100dvh;
+        height: calc(100dvh - 56px);
+      }
+      .inbox-sidebar {
+        display: flex;
+        min-height: 0;
+        border-right: 0;
+        border-bottom: 1px solid var(--border-dim);
+      }
+      .ib-head {
+        padding: var(--s-3) var(--s-4) var(--s-2);
+      }
+      .ib-head h3 {
+        font-size: 20px;
+      }
+      .ib-head p {
+        display: none;
+      }
+      .ib-channels {
+        padding: var(--s-2) var(--s-4);
+        flex-wrap: nowrap;
+        overflow-x: auto;
+      }
+      .ib-channels .chip-btn {
+        flex: 0 0 auto;
+      }
     }
     @media (max-width: 720px) {
       .inbox-layout {
@@ -15144,6 +15184,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
     contractPreviewId: 'analyzer-draft',
+    inboxChannelFilter: 'all',
+    dismissedInboxIds: [],
     rexMessages: [],
     contractPdf: null,
     contractPdfService: {
@@ -16962,6 +17004,30 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return String(lead.id || lead.leadId || lead.importId || lead.externalId || lead.seller?.email || lead.seller?.phone || '').trim();
   }
 
+  function getLeadClientLookupValues(lead = {}) {
+    return [
+      getLeadRuntimeId(lead),
+      lead.id,
+      lead.leadId,
+      lead.importId,
+      lead.externalId,
+      lead.external_id,
+      lead.seller?.email,
+      lead.email,
+      lead.seller?.phone,
+      lead.phone,
+      getLeadAddress(lead)
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+  }
+
+  function findRuntimeLeadById(leadId = '', snapshot = PBK.state.openclawRuntime || {}) {
+    const needle = String(leadId || '').trim();
+    if (!needle) return null;
+    return getRuntimeLeads(snapshot).find((lead) =>
+      getLeadClientLookupValues(lead).some((value) => value === needle)
+    ) || null;
+  }
+
   function getRealLeadImports(snapshot = {}) {
     return getRuntimeLeads(snapshot);
   }
@@ -16980,11 +17046,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return String(PBK.state.activeLeadId || sessionStorage.getItem('pbk-active-lead-id') || '').trim();
   }
 
+  function clearActiveLeadId() {
+    PBK.state.activeLeadId = '';
+    try {
+      sessionStorage.removeItem('pbk-active-lead-id');
+    } catch {}
+  }
+
   function getActiveRuntimeLead(snapshot = PBK.state.openclawRuntime || {}) {
     const leads = getRuntimeLeads(snapshot);
     const activeId = getActiveLeadId();
     const active = activeId
-      ? leads.find((lead) => [lead.id, lead.leadId, lead.importId].some((value) => String(value || '') === activeId))
+      ? leads.find((lead) => getLeadClientLookupValues(lead).some((value) => value === activeId))
       : null;
     return active || leads[0] || null;
   }
@@ -17698,7 +17771,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const sourceBadge = getLeadSourceBadge(lead);
       const tags = getLeadTags(lead).slice(0, 3);
       const agent = lead.agentName || lead.assignedAgent || lead.owner || 'auto';
-      const leadId = lead.id || lead.leadId || lead.importId || '';
+      const leadId = getLeadRuntimeId(lead);
       return `
         <tr class="row" data-lead-detail="true" data-lead-id="${escapeHtml(leadId)}">
           <td><div class="checkbox"></div></td>
@@ -17766,7 +17839,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       toast({ type: 'warning', title: 'No lead selected', desc: 'Select a lead before deleting it.' });
       return null;
     }
-    const lead = getActiveRuntimeLead();
+    const lead = findRuntimeLeadById(id) || getActiveRuntimeLead();
     const label = lead ? `${getLeadSellerName(lead)} - ${getLeadAddress(lead)}` : id;
     if (!confirm(`Delete this lead from PBK Command Center?\n\n${label}\n\nThis removes the lead row and related visible runtime records. Provider sends stay untouched.`)) {
       return null;
@@ -17778,8 +17851,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         timeout: 12000
       });
       await applyRuntimeResponse(response);
-      const nextLead = getRuntimeLeads(response?.state || PBK.state.openclawRuntime || {})[0];
+      const nextLeads = getRuntimeLeads(response?.state || PBK.state.openclawRuntime || {});
+      const nextLead = nextLeads[0];
       if (nextLead) setActiveLeadId(getLeadRuntimeId(nextLead));
+      else clearActiveLeadId();
       renderRuntimeLeads(response?.state || PBK.state.openclawRuntime || {});
       renderLeadDetail(response?.state || PBK.state.openclawRuntime || {});
       toastOutcome({
@@ -17828,7 +17903,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const equity = getLeadEquityPercent(lead);
       const status = lead.status || lead.stage || 'new';
       const agent = lead.agentName || lead.assignedAgent || lead.owner || 'auto';
-      const leadId = lead.id || lead.leadId || lead.importId || '';
+      const leadId = getLeadRuntimeId(lead);
       return `
         <tr data-lead-detail="true" data-lead-id="${escapeHtml(leadId)}">
           <td><div class="score"><span>${escapeHtml(String(score || '-'))}</span><span class="score-bar"><span class="score-fill ${score < 80 ? 'mid' : ''}" style="width:${score || 0}%"></span></span></div></td>
@@ -18063,6 +18138,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     setCountChip(inboxButtons[1], 'Calls', counts.calls);
     setCountChip(inboxButtons[2], 'SMS', counts.sms);
     setCountChip(inboxButtons[3], 'Email', counts.email);
+    const activeInboxFilter = getInboxChannelFilter();
+    inboxButtons.forEach((button) => {
+      const filter = textWithoutCounts(button.textContent);
+      button.classList.toggle('active', filter === activeInboxFilter || (!activeInboxFilter && filter === 'all'));
+    });
   }
 
   function getRuntimeLeadByMessage(message = {}, snapshot = PBK.state.openclawRuntime || {}) {
@@ -18088,6 +18168,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function isSellerFacingInboxMessage(message = {}) {
     if (isDemoRuntimeMessage(message)) return false;
+    const agentSurface = [
+      message.actor,
+      message.speaker,
+      message.role,
+      message.author,
+      message.sender,
+      message.fromName,
+      message.createdBy,
+      message.agentName,
+      message.assistantName,
+      message.owner,
+      message.payload?.actor,
+      message.payload?.speaker,
+      message.payload?.role,
+      message.payload?.agentName,
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (/\b(ava|rex|openclaw|pbk brain|system|admin|n8n|slack|agent)\b/.test(agentSurface)) {
+      return false;
+    }
     const surface = [
       message.source,
       message.provider,
@@ -18103,19 +18202,107 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       message.message,
       message.notes,
     ].filter(Boolean).join(' ').toLowerCase();
-    if (/\b(agent_log|system_notification|system|runtime|admin|rex|ava internal|tool|approval|slack|activity|public-ava-chat|website_chat|visitor_log)\b/.test(surface)) {
+    if (/\b(agent_log|system_notification|system|runtime|admin|rex|ava internal|ava\s+(?:confirmed|queued|recommended|called|is\s+on|needs|approved|rejected|updated|learned|ingested)|tool|approval|slack|activity|public-ava-chat|website_chat|visitor_log)\b/.test(surface)) {
       return /instantly/i.test(surface) && /reply|received|inbound/i.test(surface);
     }
     const channel = String(message.channel || message.type || '').toLowerCase();
     const provider = String(message.provider || message.source || '').toLowerCase();
     const direction = String(message.direction || message.status || '').toLowerCase();
+    if (/\b(outbound|sent|delivered|queued|draft|assistant|ai|agent)\b/.test(direction)) return false;
     if (/instantly/.test(provider) && /reply|received|inbound/.test(surface)) return true;
     if (!/(sms|text|call|voice|voicemail|email|mail)/i.test(channel)) return false;
+    const inboundSignal = /inbound|incoming|received|reply|seller_reply|homeowner|recording|missed|voicemail|new/i.test(`${direction} ${surface}`);
+    if (!inboundSignal) return false;
     return /inbound|received|reply|recording|missed|voicemail|new/i.test(direction)
       || Boolean(message.leadId || message.leadName || message.email || message.phone || message.address);
   }
 
+  function getInboxChannelFilter() {
+    return PBK.state.runtime?.inboxChannelFilter || 'all';
+  }
+
+  function setInboxChannelFilter(filter = 'all') {
+    PBK.state.runtime.inboxChannelFilter = ['all', 'calls', 'sms', 'email'].includes(filter) ? filter : 'all';
+  }
+
+  function itemMatchesInboxChannelFilter(item = {}, filter = getInboxChannelFilter()) {
+    const channel = String(item.channel || '').toLowerCase();
+    if (filter === 'all') return true;
+    if (filter === 'calls') return /(call|voice|voicemail|recording)/i.test(channel);
+    if (filter === 'sms') return /(sms|text)/i.test(channel);
+    if (filter === 'email') return /(email|mail)/i.test(channel);
+    return true;
+  }
+
+  function getDismissedInboxIds() {
+    const ids = PBK.state.runtime?.dismissedInboxIds;
+    return Array.isArray(ids) ? ids.map((id) => String(id || '')).filter(Boolean) : [];
+  }
+
+  function markInboxIdDismissed(id = '') {
+    const next = [...new Set([...getDismissedInboxIds(), String(id || '').trim()].filter(Boolean))];
+    PBK.state.runtime.dismissedInboxIds = next.slice(-100);
+  }
+
+  function wireSwipeDelete(row, onDelete) {
+    if (!row || row.dataset.swipeDeleteWired === 'true') return;
+    row.dataset.swipeDeleteWired = 'true';
+    let startX = 0;
+    let startY = 0;
+    row.addEventListener('touchstart', (event) => {
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      startY = touch.clientY;
+    }, { passive: true });
+    row.addEventListener('touchend', (event) => {
+      const touch = event.changedTouches?.[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+      if (Math.abs(deltaX) < 45 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) return;
+      event.stopPropagation();
+      document.querySelectorAll('.ib-item.swiped, [data-page="dashboard"] .msg.swiped').forEach((item) => {
+        if (item !== row) item.classList.remove('swiped');
+      });
+      row.classList.toggle('swiped', deltaX < 0);
+    });
+    row.querySelector('[data-inbox-delete-message]')?.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await onDelete?.();
+    });
+  }
+
+  async function deleteRuntimeInboxMessage(messageId = '') {
+    const id = String(messageId || '').trim();
+    if (!id) return;
+    markInboxIdDismissed(id);
+    try {
+      const response = await requestOpenClawApi(`/api/messages/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        timeout: 8000,
+      });
+      await applyRuntimeResponse(response);
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'live'),
+        title: 'Inbox item deleted',
+        desc: 'That seller-facing inbox record was removed from the Command Center view.',
+        response,
+      });
+    } catch (error) {
+      renderDashboardInbox(PBK.state.openclawRuntime || {});
+      renderRuntimeInbox(PBK.state.openclawRuntime || {});
+      toast({
+        type: 'warning',
+        title: 'Inbox item hidden locally',
+        desc: error?.message || 'The bridge did not confirm deletion, so PBK hid it in this browser session.',
+      });
+    }
+  }
+
   function getRuntimeInboxItems(snapshot = {}) {
+    const dismissedIds = new Set(getDismissedInboxIds());
     const messages = Array.isArray(snapshot.messages)
       ? snapshot.messages.filter((message) => isSellerFacingInboxMessage(message))
       : [];
@@ -18139,7 +18326,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         email: message.email || lead?.seller?.email || lead?.email || '',
         phone: message.phone || lead?.seller?.phone || lead?.phone || '',
       };
-    });
+    }).filter((item) => !dismissedIds.has(String(item.id)));
   }
 
   function renderRuntimeInbox(snapshot = {}) {
@@ -18148,16 +18335,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const status = document.querySelector('[data-inbox-live-status]');
     if (!list || !convo) return;
 
-    const items = getRuntimeInboxItems(snapshot);
+    const activeFilter = getInboxChannelFilter();
+    const allItems = getRuntimeInboxItems(snapshot);
+    const items = allItems.filter((item) => itemMatchesInboxChannelFilter(item, activeFilter));
     const connected = getOpenClawConfig().status === 'connected';
     if (status) {
       status.textContent = connected
-        ? `Live bridge inbox - ${items.length} message${items.length === 1 ? '' : 's'}`
+        ? `Live bridge inbox - ${items.length}${activeFilter === 'all' ? '' : ` ${activeFilter}`} message${items.length === 1 ? '' : 's'}`
         : 'Connect PBK Brain to load live inbox';
     }
 
     if (!items.length) {
-      list.innerHTML = '<div class="ib-empty"><strong>No live inbox records yet.</strong><br>Once the bridge returns SMS, email, calls, or voicemail records, they will render here. This surface no longer pretends sample conversations are live.</div>';
+      list.innerHTML = `<div class="ib-empty"><strong>No ${escapeHtml(activeFilter === 'all' ? 'live inbox' : activeFilter)} records yet.</strong><br>Inbound seller SMS, email replies, calls, and voicemails render here after bridge sync. Ava/Rex internal chatter stays out of this inbox.</div>`;
       convo.innerHTML = '<div class="ib-empty"><strong>Waiting for live conversation data.</strong><br>Select a real bridge message after sync, or use the Lead Portal timeline for historical lead context.</div>';
       return;
     }
@@ -18171,6 +18360,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
         <div class="ib-addr">${escapeHtml(item.address)}</div>
         <div class="ib-preview">${escapeHtml(item.preview)}</div>
+        <button class="inbox-delete-action" type="button" data-inbox-delete-message="${escapeHtml(item.id)}">Delete</button>
       </div>
     `).join('');
 
@@ -18184,14 +18374,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       </div>
       <div class="convo-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
         <button class="chip-btn" data-inbox-open-lead="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Open lead</button>
-        <button class="chip-btn" data-inbox-load-analyzer="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Load analyzer</button>
-        <button class="chip-btn" data-inbox-edit-lead="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Edit lead</button>
       </div>
       `;
     };
 
     list.querySelectorAll('[data-runtime-inbox-id]').forEach((row) => {
+      wireSwipeDelete(row, async () => {
+        const messageId = row.dataset.runtimeInboxId || '';
+        await deleteRuntimeInboxMessage(messageId);
+      });
       row.addEventListener('click', () => {
+        if (row.classList.contains('swiped')) {
+          row.classList.remove('swiped');
+          return;
+        }
         list.querySelectorAll('.ib-item').forEach((item) => item.classList.remove('active'));
         row.classList.add('active');
         const active = items.find((item) => String(item.id) === String(row.dataset.runtimeInboxId)) || items[0];
@@ -18203,21 +18399,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       convo.dataset.runtimeInboxActionsWired = 'true';
       convo.addEventListener('click', async (event) => {
         const openButton = event.target.closest('[data-inbox-open-lead]');
-        const analyzerButton = event.target.closest('[data-inbox-load-analyzer]');
-        const editButton = event.target.closest('[data-inbox-edit-lead]');
-        const button = openButton || analyzerButton || editButton;
+        const button = openButton;
         if (!button || button.disabled) return;
-        const leadId = button.dataset.inboxOpenLead || button.dataset.inboxLoadAnalyzer || button.dataset.inboxEditLead || '';
+        const leadId = button.dataset.inboxOpenLead || '';
         if (!leadId) return;
         setActiveLeadId(leadId);
-        const lead = getActiveRuntimeLead();
-        if (openButton) {
-          openLeadDetail(leadId);
-        } else if (analyzerButton) {
-          await loadActiveLeadIntoAnalyzer(lead);
-        } else if (editButton) {
-          await openLeadEditModal(lead);
-        }
+        openLeadDetail(leadId);
       });
     }
 
@@ -18272,11 +18459,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <span class="msg-time">${escapeHtml(formatRelativeTime(item.at))}</span>
           ${item.unread ? '<span class="badge hot">Unread</span>' : ''}
         </div>
+        <button class="inbox-delete-action" type="button" data-inbox-delete-message="${escapeHtml(item.id)}">Delete</button>
       </div>
     `).join('');
 
     list.querySelectorAll('[data-runtime-inbox-id]').forEach((row) => {
+      wireSwipeDelete(row, async () => {
+        const messageId = row.dataset.runtimeInboxId || '';
+        await deleteRuntimeInboxMessage(messageId);
+      });
       row.addEventListener('click', () => {
+        if (row.classList.contains('swiped')) {
+          row.classList.remove('swiped');
+          return;
+        }
         const item = items.find((entry) => String(entry.id) === String(row.dataset.runtimeInboxId));
         if (item?.leadId) setActiveLeadId(item.leadId);
         showPage('inbox');
@@ -22989,17 +23185,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (action === 'void') {
         const contractId = button.dataset.contractId || PBK.state.runtime.contractPreviewId || '';
         if (!contractId) return;
-        const response = await requestOpenClawApi(`/api/contracts/${encodeURIComponent(contractId)}/action`, {
-          method: 'POST',
-          body: { actor: 'PBK Command Center', status: 'void' },
+        if (!confirm('Void and remove this contract from the active contract page?')) return;
+        const response = await requestOpenClawApi(`/api/contracts/${encodeURIComponent(contractId)}`, {
+          method: 'DELETE',
+          body: { actor: 'PBK Command Center', force: true, reason: 'Voided from PBK Command Center contracts page.' },
           timeout: 10000
         });
         await applyRuntimeResponse(response);
+        PBK.state.runtime.contractPreviewId = 'analyzer-draft';
         renderContractsExperience();
         toastOutcome({
           outcome: getRuntimeOutcome(response, 'live'),
-          title: 'Contract voided',
-          desc: 'The bridge marked this envelope as void for the dashboard pipeline.',
+          title: 'Contract voided and removed',
+          desc: 'The contract was removed from the active contract page.',
           response
         });
         return;
@@ -23774,15 +23972,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const button = event.target.closest('.chip-btn');
       if (!button) return;
       const filter = textWithoutCounts(button.textContent);
-      const shown = filterItemsByText(Array.from(page.querySelectorAll('.ib-item')), (item) => {
-        const text = normalizeControlText(item.textContent);
-        if (filter === 'all') return true;
-        if (filter === 'calls') return text.includes('call') || text.includes('voicemail') || text.includes('verbal');
-        if (filter === 'sms') return text.includes('sms') || text.includes('text') || text.includes('call after');
-        if (filter === 'email') return text.includes('contract') || text.includes('attorney') || text.includes('clause');
-        return true;
-      });
-      showLocalViewToast('Inbox filtered', `${shown} conversations visible.`);
+      setInboxChannelFilter(filter);
+      renderRuntimeCounts(PBK.state.openclawRuntime || {});
+      renderRuntimeInbox(PBK.state.openclawRuntime || {});
+      const shown = page.querySelectorAll('.ib-item').length;
+      showLocalViewToast('Inbox filtered', `${shown} ${filter === 'all' ? 'seller-facing' : filter} conversation${shown === 1 ? '' : 's'} visible.`);
     });
   }
 
@@ -26571,7 +26765,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function buildContractRecords(runtime) {
     const runtimeContracts = Array.isArray(PBK.state.openclawRuntime?.contracts)
-      ? PBK.state.openclawRuntime.contracts
+      ? PBK.state.openclawRuntime.contracts.filter((contract) => getContractStage(contract) !== 'void')
       : [];
 
     const draftRecord = runtime?.deal?.address

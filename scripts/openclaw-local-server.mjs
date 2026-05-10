@@ -5780,6 +5780,10 @@ function normalizeLeadLookupValue(value = '') {
   return String(value || '').trim();
 }
 
+function uniqueLeadLookupValues(values = [], transform = (value) => String(value || '').trim()) {
+  return [...new Set(values.map(transform).filter(Boolean))];
+}
+
 function findLeadImportByLookup(value = '') {
   const raw = normalizeLeadLookupValue(value);
   if (!raw) return null;
@@ -5792,17 +5796,36 @@ function findLeadImportByLookup(value = '') {
   const normalized = decoded.toLowerCase();
   const addressKey = normalizeAddressKey(decoded);
   return (state.leadImports || []).find((lead) => {
+    const addressValues = [
+      lead.property?.address,
+      lead.address,
+      lead.propertyAddress,
+      lead.property_address,
+    ];
+    const phoneValues = [
+      lead.seller?.phone,
+      lead.phone,
+    ];
     const candidates = [
       lead.id,
       lead.leadId,
+      lead.importId,
       lead.externalId,
       lead.external_id,
       lead.seller?.email,
+      lead.email,
       lead.seller?.phone,
+      lead.phone,
       lead.seller?.name,
+      lead.leadName,
+      lead.name,
       lead.property?.address,
-      slugify(lead.property?.address || ''),
-      normalizeAddressKey(lead.property?.address || ''),
+      lead.address,
+      lead.propertyAddress,
+      lead.property_address,
+      ...phoneValues.map((item) => normalizePhone(item)),
+      ...addressValues.map((item) => slugify(item || '')),
+      ...addressValues.map((item) => normalizeAddressKey(item || '')),
     ]
       .filter(Boolean)
       .map((item) => String(item || '').trim().toLowerCase());
@@ -5817,10 +5840,10 @@ function leadMatchesIdentifiers(lead = {}, identifiers = {}) {
   const address = String(identifiers.address || identifiers.propertyAddress || '').trim().toLowerCase();
   const addressKey = normalizeAddressKey(address);
   const name = String(identifiers.leadName || identifiers.name || '').trim().toLowerCase();
-  const leadAddress = String(lead.property?.address || lead.address || '').trim().toLowerCase();
+  const leadAddress = String(lead.property?.address || lead.address || lead.propertyAddress || lead.property_address || '').trim().toLowerCase();
   const leadAddressKey = normalizeAddressKey(leadAddress);
 
-  if (leadId && [lead.id, lead.leadId, lead.externalId, lead.external_id].some((value) => String(value || '').trim() === leadId)) return true;
+  if (leadId && [lead.id, lead.leadId, lead.importId, lead.externalId, lead.external_id].some((value) => String(value || '').trim() === leadId)) return true;
   if (email && String(lead.seller?.email || lead.email || '').trim().toLowerCase() === email) return true;
   if (phone && normalizePhone(lead.seller?.phone || lead.phone || '') === phone) return true;
   if (address && leadAddress === address) return true;
@@ -12704,21 +12727,65 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
 }
 
 async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
-  const leadId = String(lead.leadId || lead.id || fallbackId || '').trim();
   const seller = lead.seller || {};
   const property = lead.property || {};
-  const email = String(seller.email || lead.email || '').trim();
-  const phone = String(seller.phone || lead.phone || '').trim();
-  const address = String(property.address || lead.address || '').trim();
-  if (!leadId && !email && !phone && !address) return { ok: false, reason: 'missing_lookup' };
+  const ids = uniqueLeadLookupValues([
+    lead.leadId,
+    lead.id,
+    lead.importId,
+    lead.externalId,
+    lead.external_id,
+    fallbackId,
+  ]);
+  const emails = uniqueLeadLookupValues([
+    seller.email,
+    lead.email,
+  ], (value) => String(value || '').trim().toLowerCase());
+  const phones = uniqueLeadLookupValues([
+    seller.phone,
+    lead.phone,
+  ], (value) => normalizePhone(value));
+  const phoneDigits = uniqueLeadLookupValues(phones, (value) => String(value || '').replace(/\D+/g, ''));
+  const addresses = uniqueLeadLookupValues([
+    property.address,
+    lead.address,
+    lead.propertyAddress,
+    lead.property_address,
+  ], (value) => String(value || '').trim().toLowerCase());
+
+  const conditions = [];
+  const params = [];
+  const addParam = (value) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+
+  if (ids.length) {
+    const param = addParam(ids);
+    conditions.push(`(id = ANY(${param}::text[]) OR external_id = ANY(${param}::text[]))`);
+  }
+  if (emails.length) {
+    const param = addParam(emails);
+    conditions.push(`LOWER(email) = ANY(${param}::text[])`);
+  }
+  if (phones.length) {
+    const param = addParam(phones);
+    conditions.push(`phone = ANY(${param}::text[])`);
+  }
+  if (phoneDigits.length) {
+    const param = addParam(phoneDigits);
+    conditions.push(`REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g') = ANY(${param}::text[])`);
+  }
+  if (addresses.length) {
+    const param = addParam(addresses);
+    conditions.push(`LOWER(address) = ANY(${param}::text[])`);
+  }
+
+  if (!conditions.length) return { ok: false, reason: 'missing_lookup' };
   return queryPgRows(
     `DELETE FROM public.lead_profiles
-      WHERE id = $1
-        OR external_id = $1
-        OR email = $2
-        OR phone = $3
-        OR address = $4`,
-    [leadId, email, phone, address],
+      WHERE ${conditions.join('\n        OR ')}`,
+    params,
   );
 }
 
@@ -15135,6 +15202,12 @@ function findMessageById(messageId = '') {
       || message?.telnyxCallControlId === id
       || message?.telnyxCallSessionId === id;
   }) || null;
+}
+
+async function deleteUnifiedMessageRecordFromDb(message = {}, fallbackId = '') {
+  const id = String(message.id || message.messageId || message.callId || fallbackId || '').trim();
+  if (!id) return { ok: false, reason: 'missing_lookup' };
+  return queryPgRows('DELETE FROM public.unified_messages WHERE id = $1', [id]);
 }
 
 function getMessageRecordingPath(message = {}) {
@@ -25283,10 +25356,16 @@ async function handleEvent(eventType, payload = {}) {
 
     const leadImport = normalizeLeadIntake(payload);
     if (eventId) leadImport.eventId = eventId;
-    const dedupeKey = `${slugify(leadImport.property.address)}::${normalizePhone(leadImport.seller.phone)}`;
+    const leadAddressKey = slugify(leadImport.property.address);
+    const leadPhoneKey = normalizePhone(leadImport.seller.phone);
+    const leadEmailKey = String(leadImport.seller.email || '').trim().toLowerCase();
     const duplicate = state.leadImports.find((item) => {
-      const itemKey = `${slugify(item?.property?.address || '')}::${normalizePhone(item?.seller?.phone || '')}`;
-      return item.leadId === leadImport.leadId || itemKey === dedupeKey;
+      if (item.leadId === leadImport.leadId) return true;
+      const itemAddressKey = slugify(item?.property?.address || '');
+      const itemPhoneKey = normalizePhone(item?.seller?.phone || '');
+      const itemEmailKey = String(item?.seller?.email || '').trim().toLowerCase();
+      return Boolean(leadEmailKey && itemEmailKey === leadEmailKey)
+        || Boolean(leadAddressKey && leadPhoneKey && itemAddressKey === leadAddressKey && itemPhoneKey === leadPhoneKey);
     });
 
     if (!duplicate) {
@@ -29285,6 +29364,58 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
+      const pool = getPgPool();
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge'];
+      if (!pool) {
+        json(response, 200, {
+          ok: false,
+          result: 'no_database',
+          requiredTables: requiredTables.map((table) => ({ table, exists: false })),
+          error: 'PBK_DATABASE_URL/DATABASE_URL is not configured for this bridge.',
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        });
+        return;
+      }
+
+      try {
+        if (request.method === 'POST' || pathname.endsWith('/ensure')) {
+          await ensurePgSchema();
+        }
+        const result = await pool.query(
+          `SELECT table_name AS table, to_regclass('public.' || table_name)::text AS regclass
+           FROM unnest($1::text[]) AS table_name`,
+          [requiredTables],
+        );
+        const tables = (result.rows || []).map((row) => ({
+          table: row.table,
+          exists: Boolean(row.regclass),
+          regclass: row.regclass || null,
+        }));
+        json(response, 200, {
+          ok: tables.every((row) => row.exists),
+          result: tables.every((row) => row.exists) ? 'live' : 'missing_tables',
+          ensured: request.method === 'POST' || pathname.endsWith('/ensure'),
+          requiredTables: tables,
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        });
+      } catch (error) {
+        json(response, 500, {
+          ok: false,
+          result: 'error',
+          error: error?.message || String(error),
+          state: {
+            status: buildStateSnapshot().status,
+          },
+        });
+      }
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/admin/docusign/status') {
       const result = await toolHandlers.getDocuSignProviderStatus();
       json(response, 200, {
@@ -29581,6 +29712,60 @@ const server = createServer(async (request, response) => {
       const result = await toolHandlers.telnyx_sms(body);
       json(response, result.ok === false ? 409 : 200, {
         ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const messageDeleteMatch = matchPath(pathname, '/api/messages/:id');
+    if (messageDeleteMatch && request.method === 'DELETE') {
+      const id = decodeURIComponent(messageDeleteMatch.groups.id || '');
+      const existing = findMessageById(id);
+      if (!existing) {
+        json(response, 404, {
+          ok: false,
+          deleted: false,
+          messageId: id,
+          error: 'Message not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const messageIdentifiers = uniqueLeadLookupValues([
+        existing.id,
+        existing.messageId,
+        existing.callId,
+        existing.telnyxCallControlId,
+        existing.telnyxCallSessionId,
+        id,
+      ]);
+      state.messages = (state.messages || []).filter((message) => {
+        const candidates = [
+          message?.id,
+          message?.messageId,
+          message?.callId,
+          message?.telnyxCallControlId,
+          message?.telnyxCallSessionId,
+        ].map((value) => String(value || '').trim()).filter(Boolean);
+        return !candidates.some((value) => messageIdentifiers.includes(value));
+      });
+      const dbDelete = await deleteUnifiedMessageRecordFromDb(existing, id);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Command Center',
+          category: 'INBOX',
+          status: 'deleted',
+          text: `Deleted inbox item for ${existing.leadName || existing.from || existing.email || id}.`,
+          target: existing.address || existing.subject || id,
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        deleted: true,
+        messageId: id,
+        dbDelete,
         state: buildStateSnapshot(),
       });
       return;
@@ -30048,7 +30233,7 @@ const server = createServer(async (request, response) => {
           category: 'CONTRACT',
           status: removeRecord ? 'deleted' : 'void',
           text: removeRecord
-            ? `Deleted draft contract for ${contract.leadName || contract.address || contractId}.`
+            ? `${stage === 'draft' ? 'Deleted draft contract' : 'Removed voided contract'} for ${contract.leadName || contract.address || contractId}.`
             : `Voided contract for ${contract.leadName || contract.address || contractId}.`,
           target: contract.address || contract.leadName || contractId,
         }),
@@ -30843,6 +31028,7 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/admin/tasks',
         'GET /api/admin/audit',
         'GET /api/admin/persistence',
+        'GET/POST /api/admin/schema/ensure',
         'GET /api/admin/docusign/status',
         'POST /api/admin/route',
         'POST /api/admin/request',
@@ -30853,7 +31039,7 @@ const server = createServer(async (request, response) => {
         'POST /api/operator/update',
         'POST /api/safety/kill-switch',
         'POST /api/calls/:id/action',
-        'GET/POST /api/messages',
+        'GET/POST/DELETE /api/messages',
         'GET /api/recordings/:messageId',
         'POST /api/recordings/fixture',
         'POST /api/recordings',

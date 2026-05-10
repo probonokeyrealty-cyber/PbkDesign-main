@@ -485,6 +485,7 @@ const TOOL_NAMES = [
   'pbk_send_update',
   'pbk_call_operator',
   'pbk_kill_switch',
+  'pbk_send_slack_reply',
   'generatePersona',
   'scoreAgentLikability',
   'prepare_and_send_contract',
@@ -5809,6 +5810,25 @@ function findLeadImportByLookup(value = '') {
   }) || null;
 }
 
+function leadMatchesIdentifiers(lead = {}, identifiers = {}) {
+  const leadId = String(identifiers.leadId || identifiers.id || '').trim();
+  const email = String(identifiers.email || '').trim().toLowerCase();
+  const phone = normalizePhone(identifiers.phone || identifiers.to || '');
+  const address = String(identifiers.address || identifiers.propertyAddress || '').trim().toLowerCase();
+  const addressKey = normalizeAddressKey(address);
+  const name = String(identifiers.leadName || identifiers.name || '').trim().toLowerCase();
+  const leadAddress = String(lead.property?.address || lead.address || '').trim().toLowerCase();
+  const leadAddressKey = normalizeAddressKey(leadAddress);
+
+  if (leadId && [lead.id, lead.leadId, lead.externalId, lead.external_id].some((value) => String(value || '').trim() === leadId)) return true;
+  if (email && String(lead.seller?.email || lead.email || '').trim().toLowerCase() === email) return true;
+  if (phone && normalizePhone(lead.seller?.phone || lead.phone || '') === phone) return true;
+  if (address && leadAddress === address) return true;
+  if (addressKey && leadAddressKey === addressKey) return true;
+  if (name && String(lead.seller?.name || lead.leadName || lead.name || '').trim().toLowerCase() === name) return true;
+  return false;
+}
+
 function normalizePbkDealPath(value = '', fallback = 'cash') {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return fallback;
@@ -6870,6 +6890,52 @@ function extractOpenAiCitations(payload = {}) {
   return [...citations].slice(0, 8);
 }
 
+async function recordTokenUsage(provider = '', model = '', usage = {}, meta = {}) {
+  const promptTokens = toNumber(usage?.prompt_tokens ?? usage?.promptTokens ?? usage?.input_tokens ?? usage?.inputTokens, 0);
+  const completionTokens = toNumber(usage?.completion_tokens ?? usage?.completionTokens ?? usage?.output_tokens ?? usage?.outputTokens, 0);
+  const totalTokens = toNumber(usage?.total_tokens ?? usage?.totalTokens, promptTokens + completionTokens);
+  if (!provider || !model || !totalTokens) return { ok: false, reason: 'empty_usage' };
+  await queryPgRows(
+    `CREATE TABLE IF NOT EXISTS public.pbk_token_usage (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      call_id TEXT,
+      lead_id TEXT,
+      prompt_tokens INT NOT NULL DEFAULT 0,
+      completion_tokens INT NOT NULL DEFAULT 0,
+      total_tokens INT NOT NULL DEFAULT 0,
+      estimated_cost NUMERIC(12, 6) NOT NULL DEFAULT 0,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+    [],
+  );
+  return queryPgRows(
+    `INSERT INTO public.pbk_token_usage (
+      workspace_id, provider, model, call_id, lead_id,
+      prompt_tokens, completion_tokens, total_tokens, estimated_cost, metadata
+    )
+    VALUES ('pbk', $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+    [
+      provider,
+      model,
+      meta.callId || meta.call_id || '',
+      meta.leadId || meta.lead_id || '',
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      toNumber(meta.estimatedCost || meta.cost, 0),
+      JSON.stringify({
+        source: meta.source || 'llm',
+        responseId: meta.responseId || '',
+        usage,
+      }),
+    ],
+  );
+}
+
 async function runOpenAiWebSearch(query = '', params = {}) {
   const meta = getOpenAiWebSearchProviderMeta();
   const cleanQuery = String(query || '').trim();
@@ -6947,6 +7013,10 @@ async function runOpenAiWebSearch(query = '', params = {}) {
       }
       const answer = extractOpenAiResponseText(payload);
       const citations = extractOpenAiCitations(payload);
+      await recordTokenUsage('openai', bodyBase.model, payload?.usage || {}, {
+        source: 'rex-web-search',
+        responseId: payload?.id || '',
+      });
       return {
         ok: true,
         result: 'live',
@@ -7014,9 +7084,9 @@ function answerBrainQuery(stateRef, query = '') {
   const top = matches[0];
   const answer = top
     ? top.blogPost
-      ? `Best Brain Blog match: ${top.title}. ${top.summary} Source lens: ${top.salesMentor || 'PBK Research'}${top.revenueStreams?.length ? ` for ${top.revenueStreams.join(', ')}` : ''}.`
-      : `Best match: ${top.title}. ${top.summary}`
-    : 'No direct match yet. Ingest a new source or try a narrower query like "probate Ohio" or "subject-to".';
+      ? `Summary: ${top.summary}\n\nKey insight: ${top.salesMentor || 'PBK Research'} points this toward ${top.revenueStreams?.length ? top.revenueStreams.join(', ') : 'the next seller conversation'} instead of a raw research dump.\n\nFollow-up question: Do you want Rex to turn this into an Ava call script, an analyzer rule, or a campaign angle?`
+      : `Summary: ${top.summary}\n\nKey insight: ${top.title} is the strongest stored match for this question. Use it as the practical lens, then verify anything time-sensitive before Ava uses it on a live call.\n\nFollow-up question: Should Rex apply this to cash offer, creative finance, mortgage takeover, or follow-up strategy?`
+    : 'Summary: I do not have a direct stored match yet.\n\nKey insight: Ava should not improvise from weak memory here; ingest a source or ask Rex for live research first.\n\nFollow-up question: Do you want to ingest a source now or run a live research search?';
 
   return {
     query: trimmed,
@@ -8039,6 +8109,12 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
     }
     const message = payload?.choices?.[0]?.message || {};
     const answer = String(message.content || message.reasoning_content || '').trim();
+    await recordTokenUsage('deepseek', model, payload?.usage || {}, {
+      source: params.source || 'deepseek-strategist',
+      callId: params.callId || params.call_id || '',
+      leadId: params.leadId || params.lead_id || '',
+      responseId: payload?.id || '',
+    });
     return {
       ok: true,
       result: 'live',
@@ -9928,6 +10004,132 @@ function normalizeLeadIntake(payload = {}) {
   };
 }
 
+function pickFirstText(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function getInstantlyReplyText(body = {}) {
+  const reply = body.reply && typeof body.reply === 'object' ? body.reply : {};
+  return pickFirstText(
+    body.body,
+    body.text,
+    body.message,
+    reply.body,
+    reply.text,
+    reply.message,
+    typeof body.reply === 'string' ? body.reply : '',
+    body.latest_reply,
+    body.latestReply,
+  );
+}
+
+function normalizeInstantlyContact(body = {}) {
+  const contact = body.contact && typeof body.contact === 'object' ? body.contact : {};
+  const person = body.person && typeof body.person === 'object' ? body.person : {};
+  const lead = body.lead && typeof body.lead === 'object' ? body.lead : {};
+  const custom = {
+    ...(body.custom_fields && typeof body.custom_fields === 'object' ? body.custom_fields : {}),
+    ...(body.customFields && typeof body.customFields === 'object' ? body.customFields : {}),
+    ...(contact.custom_fields && typeof contact.custom_fields === 'object' ? contact.custom_fields : {}),
+    ...(contact.customFields && typeof contact.customFields === 'object' ? contact.customFields : {}),
+  };
+  const email = pickFirstText(body.email, body.from, body.fromEmail, contact.email, person.email, lead.email, custom.email);
+  const firstName = pickFirstText(body.firstName, body.first_name, contact.firstName, contact.first_name, person.firstName, person.first_name);
+  const lastName = pickFirstText(body.lastName, body.last_name, contact.lastName, contact.last_name, person.lastName, person.last_name);
+  const fullName = pickFirstText(
+    body.name,
+    body.leadName,
+    body.fromName,
+    contact.name,
+    contact.fullName,
+    person.name,
+    lead.name,
+    [firstName, lastName].filter(Boolean).join(' '),
+    email ? email.split('@')[0].replace(/[._-]+/g, ' ') : '',
+  );
+  const address = pickFirstText(
+    body.address,
+    body.propertyAddress,
+    body.property_address,
+    contact.address,
+    contact.propertyAddress,
+    contact.property_address,
+    lead.address,
+    lead.propertyAddress,
+    custom.address,
+    custom.property_address,
+    custom.propertyAddress,
+  );
+  return {
+    leadId: pickFirstText(body.leadId, body.lead_id, contact.leadId, contact.lead_id, lead.leadId, lead.id),
+    name: fullName || 'Instantly Reply',
+    email,
+    phone: pickFirstText(body.phone, body.phoneNumber, body.phone_number, contact.phone, contact.phoneNumber, contact.phone_number, custom.phone),
+    address,
+    campaign: pickFirstText(body.campaignName, body.campaign_name, body.campaignId, body.campaign_id, contact.campaignName, custom.campaign),
+  };
+}
+
+async function upsertLeadFromInstantlyReply(body = {}, context = {}, replyBody = '') {
+  const contact = normalizeInstantlyContact(body);
+  const leadId = contact.leadId || context.leadId || `lead-instantly-${slugify(contact.email || contact.name || randomUUID())}`;
+  const lookup = {
+    leadId,
+    email: contact.email || context.email,
+    phone: contact.phone || context.phone,
+    address: contact.address || context.address,
+    leadName: contact.name || context.leadName,
+  };
+  const existing = (state.leadImports || []).find((lead) => leadMatchesIdentifiers(lead, lookup)) || null;
+  const sourceTags = normalizeLeadTags(existing?.tags || []);
+  const replySummary = replyBody
+    ? `Instantly reply: ${String(replyBody).replace(/\s+/g, ' ').slice(0, 320)}`
+    : 'Instantly reply received.';
+  const nextLead = normalizeLeadIntake({
+    ...(existing || {}),
+    id: existing?.id || leadId,
+    leadId: existing?.leadId || leadId,
+    source: existing?.source || 'instantly_reply',
+    leadSource: 'instantly_reply',
+    status: body.status || existing?.status || 'replied',
+    stage: body.stage || existing?.stage || 'contacted',
+    seller: {
+      ...(existing?.seller || {}),
+      name: contact.name || context.leadName || existing?.seller?.name || 'Instantly Reply',
+      email: contact.email || context.email || existing?.seller?.email || '',
+      phone: contact.phone || context.phone || existing?.seller?.phone || '',
+      preferredChannel: 'email',
+      notes: pickFirstText(existing?.seller?.notes, replySummary),
+    },
+    property: {
+      ...(existing?.property || {}),
+      address: contact.address || context.address || existing?.property?.address || '',
+    },
+    motivation: {
+      ...(existing?.motivation || {}),
+      summary: pickFirstText(existing?.motivation?.summary, replySummary),
+      timeline: existing?.motivation?.timeline || 'unknown',
+    },
+    assignment: {
+      ...(existing?.assignment || {}),
+      campaign: contact.campaign || existing?.assignment?.campaign || '',
+      assignedAgent: existing?.assignment?.assignedAgent || 'Ava',
+    },
+    tags: [...new Set([...sourceTags, 'instantly-reply', 'email-reply'])],
+    notes: pickFirstText(existing?.notes, replySummary),
+    updatedAt: isoNow(),
+  });
+  const saved = existing
+    ? patchLeadImport(state, lookup, nextLead)
+    : (addLeadImport(state, nextLead), nextLead);
+  await persistLeadProfileRowToDb(saved || nextLead, 'instantly-reply');
+  return saved || nextLead;
+}
+
 function buildDncEntry(payload = {}) {
   return {
     id: payload.id || `dnc-${slugify(normalizePhone(payload.phone || payload.number || randomUUID()))}`,
@@ -10574,6 +10776,16 @@ function createContractRecord(params = {}) {
     createdAt: params.createdAt || isoNow(),
     updatedAt: params.updatedAt || isoNow(),
   };
+}
+
+function getRuntimeContractStage(contract = {}) {
+  const status = String(contract.status || '').toLowerCase();
+  if (['void', 'voided', 'cancelled', 'canceled', 'rejected'].includes(status)) return 'void';
+  if (['funded', 'closed'].includes(status)) return 'funded';
+  if (['completed', 'signed'].includes(status)) return 'signed';
+  if (['viewed', 'opened', 'review', 'reviewing', 'updated'].includes(status)) return 'viewed';
+  if (['sent', 'delivered'].includes(status)) return 'sent';
+  return 'draft';
 }
 
 function findDncEntryByPhone(phone = '') {
@@ -12488,6 +12700,25 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
       lead.assignment?.assignedAgent || 'Ava',
       JSON.stringify(lead),
     ],
+  );
+}
+
+async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
+  const leadId = String(lead.leadId || lead.id || fallbackId || '').trim();
+  const seller = lead.seller || {};
+  const property = lead.property || {};
+  const email = String(seller.email || lead.email || '').trim();
+  const phone = String(seller.phone || lead.phone || '').trim();
+  const address = String(property.address || lead.address || '').trim();
+  if (!leadId && !email && !phone && !address) return { ok: false, reason: 'missing_lookup' };
+  return queryPgRows(
+    `DELETE FROM public.lead_profiles
+      WHERE id = $1
+        OR external_id = $1
+        OR email = $2
+        OR phone = $3
+        OR address = $4`,
+    [leadId, email, phone, address],
   );
 }
 
@@ -24516,6 +24747,46 @@ const toolHandlers = {
     };
   },
 
+  async pbk_send_slack_reply(params = {}) {
+    recordToolUse('pbk_send_slack_reply');
+    const slackMeta = getSlackProviderMeta();
+    const text = params.text || params.message || 'PBK reply from Ava.';
+    const channel = params.channel || params.channelId || SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID || '#deals';
+    const threadTs = params.thread_ts || params.threadTs || params.ts || '';
+    let responsePayload = { ok: false, live: false, error: '' };
+
+    if (SLACK_BOT_TOKEN) {
+      responsePayload = await fireSlackApi('chat.postMessage', {
+        channel,
+        text,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      });
+    } else if (slackMeta.ready) {
+      responsePayload = await fireSlackWebhook({ text });
+    } else {
+      responsePayload = { ok: false, live: false, error: 'Slack is not configured.' };
+    }
+
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.actor || 'Ava',
+        category: 'SLACK',
+        status: responsePayload.ok ? 'sent' : 'pending',
+        text: responsePayload.ok ? `Slack reply sent: ${text}` : `Slack reply queued locally: ${text}`,
+        target: channel,
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: Boolean(responsePayload.ok),
+      channel,
+      threadTs,
+      slack: responsePayload,
+      state: buildStateSnapshot(),
+    };
+  },
+
   async sendSellerDocs(params = {}) {
     recordToolUse('sendSellerDocs');
     const context = findLeadContext(params);
@@ -26192,13 +26463,27 @@ async function readSlackSlashCommandRequest(request) {
 async function handleSlackApprovalInteraction(payload = {}) {
   const action = Array.isArray(payload.actions) ? payload.actions[0] : null;
   const actionId = String(action?.action_id || '').trim();
+  const valueText = String(action?.value || '').trim();
+  let valuePayload = {};
+  if (valueText.startsWith('{')) {
+    try {
+      valuePayload = JSON.parse(valueText);
+    } catch {
+      valuePayload = {};
+    }
+  }
   const approvalId = String(
-    action?.value
+    valuePayload.approvalId
+      || valuePayload.id
+      || (valueText.startsWith('{') ? '' : valueText)
       || payload.private_metadata
       || payload.message?.metadata?.event_payload?.approvalId
       || '',
   ).trim();
-  if (!approvalId || !/^pbk_approval_(approve|reject|modify)$/i.test(actionId)) {
+  const actionKind = String(valuePayload.action || actionId || '').toLowerCase();
+  const supportedAction = /^pbk_approval_(approve|reject|modify)$/i.test(actionId)
+    || /^(approve|approved|reject|rejected|decline|declined|modify|counter|needs_revision|needs-revision|review)$/i.test(actionKind);
+  if (!approvalId || !supportedAction) {
     return {
       ok: false,
       status: 400,
@@ -26207,8 +26492,9 @@ async function handleSlackApprovalInteraction(payload = {}) {
     };
   }
   const actor = payload.user?.username || payload.user?.name || payload.user?.id || 'slack';
-  const isModify = /modify/i.test(actionId);
-  const status = isModify ? 'needs_revision' : /reject/i.test(actionId) ? 'rejected' : 'approved';
+  const isModify = /modify|counter|needs_revision|needs-revision|review/i.test(actionKind);
+  const isReject = /reject|decline/i.test(actionKind);
+  const status = isModify ? 'needs_revision' : isReject ? 'rejected' : 'approved';
   let result = null;
   if (isModify) {
     const approval = state.approvals.find((item) => item.id === approvalId);
@@ -29635,9 +29921,18 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/contracts') {
+      const statusFilter = String(url.searchParams.get('status') || url.searchParams.get('stage') || 'all').trim().toLowerCase();
+      const contracts = statusFilter && statusFilter !== 'all'
+        ? state.contracts.filter((contract) => {
+          const stage = getRuntimeContractStage(contract);
+          const status = String(contract.status || '').toLowerCase();
+          return stage === statusFilter || status === statusFilter;
+        })
+        : state.contracts;
       json(response, 200, {
         ok: true,
-        contracts: state.contracts,
+        status: statusFilter,
+        contracts,
       });
       return;
     }
@@ -29711,6 +30006,58 @@ const server = createServer(async (request, response) => {
       });
       json(response, result.ok === false ? 404 : 200, {
         ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const contractDeleteMatch = matchPath(pathname, '/api/contracts/:id');
+    if (contractDeleteMatch && request.method === 'DELETE') {
+      const body = await readBody(request);
+      const contractId = contractDeleteMatch.groups.id;
+      const existingIndex = state.contracts.findIndex((item) =>
+        item.id === contractId
+        || item.envelopeId === contractId
+        || item.contractId === contractId,
+      );
+      if (existingIndex < 0) {
+        json(response, 404, {
+          ok: false,
+          error: 'Contract not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const contract = state.contracts[existingIndex];
+      const stage = getRuntimeContractStage(contract);
+      const removeRecord = body.force === true || ['draft', 'void'].includes(stage);
+      if (removeRecord) {
+        state.contracts.splice(existingIndex, 1);
+      } else {
+        state.contracts.splice(existingIndex, 1, {
+          ...contract,
+          status: 'void',
+          voidReason: body.reason || 'Deleted from PBK Command Center.',
+          updatedAt: isoNow(),
+        });
+      }
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'Contracts',
+          category: 'CONTRACT',
+          status: removeRecord ? 'deleted' : 'void',
+          text: removeRecord
+            ? `Deleted draft contract for ${contract.leadName || contract.address || contractId}.`
+            : `Voided contract for ${contract.leadName || contract.address || contractId}.`,
+          target: contract.address || contract.leadName || contractId,
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        deleted: removeRecord,
+        contract: removeRecord ? contract : state.contracts[existingIndex],
         state: buildStateSnapshot(),
       });
       return;
@@ -29796,6 +30143,83 @@ const server = createServer(async (request, response) => {
     }
 
     const leadPatchMatch = matchPath(pathname, '/api/leads/:id');
+    if (leadPatchMatch && request.method === 'DELETE') {
+      const body = await readBody(request);
+      const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      if (!existing) {
+        json(response, 404, {
+          ok: false,
+          error: 'Lead not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const identifiers = {
+        leadId: existing.leadId || leadPatchMatch.groups.id,
+        id: existing.id,
+        email: existing.seller?.email,
+        phone: existing.seller?.phone,
+        address: existing.property?.address,
+        leadName: existing.seller?.name,
+      };
+      state.leadImports = (state.leadImports || []).filter((lead) => !leadMatchesIdentifiers(lead, identifiers));
+      state.messages = (state.messages || []).filter((item) => !leadMatchesIdentifiers({
+        id: item.id,
+        leadId: item.leadId,
+        seller: { email: item.email, phone: item.phone, name: item.leadName },
+        property: { address: item.address },
+      }, identifiers));
+      state.calls = (state.calls || []).filter((item) => !leadMatchesIdentifiers({
+        id: item.id,
+        leadId: item.leadId,
+        seller: { phone: item.phone, name: item.leadName },
+        property: { address: item.address },
+      }, identifiers));
+      state.appointments = (state.appointments || []).filter((item) => !leadMatchesIdentifiers({
+        id: item.id,
+        leadId: item.leadId,
+        seller: { email: item.email, phone: item.phone, name: item.leadName },
+        property: { address: item.address },
+      }, identifiers));
+      state.contracts = (state.contracts || []).filter((item) => !leadMatchesIdentifiers({
+        id: item.id,
+        leadId: item.leadId,
+        seller: { email: item.email, phone: item.phone, name: item.leadName },
+        property: { address: item.address },
+      }, identifiers));
+      state.analyzerRuns = (state.analyzerRuns || []).filter((item) => !leadMatchesIdentifiers({
+        id: item.id,
+        leadId: item.leadId,
+        seller: { name: item.leadName },
+        property: { address: item.address },
+      }, identifiers));
+      (state.campaigns || []).forEach((campaign) => {
+        if (Array.isArray(campaign.leads)) {
+          campaign.leads = campaign.leads.filter((lead) => !leadMatchesIdentifiers(lead, identifiers));
+          campaign.updatedAt = isoNow();
+        }
+      });
+      await deleteLeadProfileRowFromDb(existing, leadPatchMatch.groups.id);
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'Lead Detail',
+          category: 'CRM',
+          status: 'deleted',
+          text: `Deleted lead ${existing.seller?.name || existing.leadId || leadPatchMatch.groups.id}.`,
+          target: existing.property?.address || existing.seller?.email || existing.seller?.phone || leadPatchMatch.groups.id,
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        deleted: true,
+        leadId: existing.leadId || existing.id,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
       const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
@@ -30133,28 +30557,40 @@ const server = createServer(async (request, response) => {
       });
 
       if (eventType.includes('reply')) {
-        const replyBody = body.body || body.reply || body.message || '';
-        upsertMessage(
-          state,
-          createMessageRecord({
-            leadId: context.leadId,
-            leadName: context.leadName,
-            address: context.address,
-            email: body.email || context.email,
+        const replyBody = getInstantlyReplyText(body);
+        const lead = await upsertLeadFromInstantlyReply(body, context, replyBody);
+        const leadContext = findLeadContext({
+          leadId: lead.leadId || context.leadId,
+          leadName: lead.seller?.name || context.leadName,
+          email: lead.seller?.email || body.email || context.email,
+          phone: lead.seller?.phone || body.phone || body.contact?.phone || '',
+          address: lead.property?.address || context.address,
+        });
+        const message = createMessageRecord({
+            leadId: leadContext.leadId,
+            leadName: leadContext.leadName,
+            address: leadContext.address,
+            email: leadContext.email || body.email || context.email,
             channel: 'email',
             direction: 'inbound',
             body: replyBody,
             status: 'received',
             provider: 'Instantly',
-          }),
-        );
+            payload: {
+              eventType,
+              campaignWebhookId: campaignWebhook?.id || '',
+              source: 'instantly-reply',
+            },
+          });
+        upsertMessage(state, message);
+        await persistUnifiedMessageRecord(message);
 
         await toolHandlers.handleReplyIntent({
-          leadId: context.leadId,
-          leadName: context.leadName,
-          address: context.address,
-          email: body.email || context.email,
-          phone: body.phone || body.contact?.phone || '',
+          leadId: leadContext.leadId,
+          leadName: leadContext.leadName,
+          address: leadContext.address,
+          email: leadContext.email || body.email || context.email,
+          phone: leadContext.phone || body.phone || body.contact?.phone || '',
           body: replyBody,
           channel: 'email',
           provider: 'Instantly',

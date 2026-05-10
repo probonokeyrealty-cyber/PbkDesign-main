@@ -2954,6 +2954,7 @@
             <th>Status</th>
             <th>Last Touch</th>
             <th>Agent</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -3391,6 +3392,7 @@
     </div>
     <div class="page-head-actions">
       <button class="btn btn-ghost">Share</button>
+      <button class="btn btn-ghost" data-analyzer-action="load-lead">Load Lead</button>
       <button class="btn btn-ghost">Save to lead</button>
       <button class="btn btn-primary">Run analysis</button>
     </div>
@@ -9843,7 +9845,7 @@
       .ld-info { min-width: 0; }
       .ld-name { font-size: clamp(28px, 9vw, 34px); }
       .ld-details { gap: 8px 12px; }
-      .ld-actions { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .ld-actions { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .ld-actions .btn { min-height: 44px; justify-content: center; padding-inline: 8px; }
       .ld-type-pill { flex: 1 1 100%; justify-content: space-between; font-size: 12px; }
       .mobile-path-selector { display: flex; }
@@ -9898,6 +9900,7 @@
             <button class="btn btn-ghost">Call</button>
             <button class="btn btn-ghost">Text</button>
             <button class="btn btn-ghost">Email</button>
+            <button class="btn btn-ghost" data-lead-action="delete">Delete</button>
             <button class="btn btn-primary">Send to Ava</button>
           </div>
         </div>
@@ -13700,12 +13703,113 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
+  function getActiveAnalyzerDealPath() {
+    const analyzerPath = document.getElementById('analyzerScriptPath')?.value;
+    const leadPath = document.getElementById('selectedPath')?.value;
+    const storedPath = PBK.state.analyzer?.deal?.selectedPath;
+    return DEAL_PATH_LABELS[analyzerPath] ? analyzerPath : DEAL_PATH_LABELS[leadPath] ? leadPath : DEAL_PATH_LABELS[storedPath] ? storedPath : 'cash';
+  }
+
+  function setAnalyzerInputByLabel(labelMatch, value) {
+    const page = getAnalyzerPage();
+    if (!page || value === undefined || value === null || value === '') return;
+    const target = Array.from(page.querySelectorAll('.field')).find((field) => {
+      const label = field.querySelector('.field-label span:first-child')?.textContent || '';
+      return labelMatch.test(label);
+    });
+    const input = target?.querySelector('input');
+    if (input) input.value = String(value);
+  }
+
+  async function syncAnalyzerDealPathToLead(deal = {}) {
+    const leadId = deal.leadId || getLeadRuntimeId(getActiveRuntimeLead?.() || {});
+    if (!leadId || !PBK.openclaw.isConfigured()) return null;
+    try {
+      const response = await requestOpenClawApi(`/api/leads/${encodeURIComponent(leadId)}`, {
+        method: 'PATCH',
+        body: {
+          actor: 'Analyzer',
+          selectedPath: deal.selectedPath || getActiveAnalyzerDealPath(),
+          selected_path: deal.selectedPath || getActiveAnalyzerDealPath(),
+          address: deal.address,
+          propertyType: deal.type,
+          lastOffer: deal.offer || deal.agreedPrice || '',
+          last_offer: deal.offer || deal.agreedPrice || '',
+          summary: `Analyzer synced ${DEAL_PATH_LABELS[deal.selectedPath] || deal.selectedPath || 'cash'} path with MAO ${fmt(deal.mao60 || 0)}.`,
+        },
+        timeout: 9000
+      });
+      await applyRuntimeResponse(response);
+      return response;
+    } catch (error) {
+      console.warn('Could not sync analyzer path to lead', error);
+      return null;
+    }
+  }
+
+  async function loadActiveLeadIntoAnalyzer(lead = getActiveRuntimeLead()) {
+    if (!lead) {
+      toast({ type: 'warning', title: 'No lead selected', desc: 'Select a lead first, then load it into the analyzer.' });
+      return null;
+    }
+    const defaults = getLeadProfileDefaults(lead);
+    showPage('analyzer');
+    setActiveLeadId(defaults.leadId);
+    setAnalyzerInputByLabel(/^property address/i, defaults.address);
+    setAnalyzerInputByLabel(/^beds/i, defaults.beds || '');
+    setAnalyzerInputByLabel(/^baths/i, defaults.baths || '');
+    setAnalyzerInputByLabel(/^sq ft/i, defaults.sqft || '');
+    setAnalyzerInputByLabel(/^year built/i, defaults.yearBuilt || '');
+    setAnalyzerInputByLabel(/^arv/i, defaults.arv ? money(defaults.arv) : '');
+    if (defaults.estimatedRepairs) {
+      const repairItems = getAnalyzerPage()?.querySelectorAll('.repair-item') || [];
+      repairItems.forEach((item, index) => {
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        const amount = item.querySelector('input[type="text"]');
+        if (checkbox) checkbox.checked = index === 0;
+        if (amount && index === 0) amount.value = money(defaults.estimatedRepairs);
+      });
+    }
+    const path = defaults.selectedPath || 'cash';
+    const scriptPath = document.getElementById('analyzerScriptPath');
+    if (scriptPath && DEAL_PATH_LABELS[path]) scriptPath.value = path;
+    syncDealPathControls(path, false);
+    renderAnalyzerScriptPanel();
+    const snapshot = runAnalyzer(false);
+    if (snapshot?.deal) {
+      const next = persistAnalyzerRuntimeSnapshot({
+        deal: {
+          ...snapshot.deal,
+          leadId: defaults.leadId,
+          sellerName: defaults.sellerName,
+          sellerPhone: defaults.phone,
+          sellerEmail: defaults.email,
+          selectedPath: path,
+          timeline: defaults.timeline || snapshot.deal.timeline,
+        },
+        activeTab: 'analyzer',
+        analyzeStatus: 'Lead loaded into analyzer'
+      });
+      await syncAnalyzerDealPathToLead(next.deal);
+      syncAnalyzerFrame(true);
+    }
+    toast({ type: 'success', title: 'Lead loaded into analyzer', desc: `${defaults.sellerName} and ${defaults.address} are now driving analyzer math and contract path.` });
+    return snapshot;
+  }
+
   function runAnalyzer(showToast = true) {
     const inputs = readAnalyzerInputs();
     if (!inputs) return;
     const result = computeAnalysis(inputs);
     renderAnalysis(result);
+    const activeLead = getActiveRuntimeLead?.() || null;
+    const activeLeadDefaults = activeLead ? getLeadProfileDefaults(activeLead) : {};
+    const selectedPath = getActiveAnalyzerDealPath();
     const deal = normalizeAnalyzerRuntimeDeal({
+      leadId: activeLeadDefaults.leadId || PBK.state.analyzer?.deal?.leadId || '',
+      sellerName: activeLeadDefaults.sellerName || PBK.state.analyzer?.deal?.sellerName || 'Analyzer Lead',
+      sellerPhone: activeLeadDefaults.phone || PBK.state.analyzer?.deal?.sellerPhone || '',
+      sellerEmail: activeLeadDefaults.email || PBK.state.analyzer?.deal?.sellerEmail || '',
       address: inputs.address,
       type: 'house',
       contact: 'owner',
@@ -13720,8 +13824,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       agreedPrice: result.walkAway,
       fee: result.assignmentFee,
       repairs: { mid: result.repairs },
-      selectedPath: 'cash',
-      timeline: 'as soon as title clears',
+      selectedPath,
+      timeline: activeLeadDefaults.timeline || 'as soon as title clears',
       source: 'legacy-analyzer'
     }, result);
     PBK.state.analyzer = { deal, activeTab: 'analyzer', analyzeStatus: 'Local analyzer complete' };
@@ -13740,6 +13844,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         title: result.walkAway > 0 ? 'Analysis complete — deal qualifies' : 'Analysis complete — marginal',
         desc: `ARV ${fmt(result.arv)} — MAO ${fmt(result.walkAway)} — profit ${fmt(result.estProfit)}`
       });
+    }
+    if (deal.leadId) {
+      syncAnalyzerDealPathToLead(deal);
     }
     return { inputs, result, deal };
   }
@@ -16834,8 +16941,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const id = String(lead.id || lead.leadId || lead.importId || `${lead.name || lead.sellerName || ''}-${lead.address || lead.propertyAddress || ''}`);
       if (seen.has(id)) return false;
       seen.add(id);
-      return !isDemoRuntimeLead(lead);
+      return !isDemoRuntimeLead(lead) && !isPublicWebsiteVisitorLead(lead);
     }));
+  }
+
+  function isPublicWebsiteVisitorLead(lead = {}) {
+    const text = [
+      lead.source,
+      lead.leadSource,
+      lead.provider,
+      lead.channel,
+      lead.status,
+      lead.stage,
+      Array.isArray(lead.tags) ? lead.tags.join(' ') : lead.tags,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /\b(website_chat|public-ava-chat|public_chat|site_visitor|visitor_log)\b/i.test(text);
   }
 
   function getLeadRuntimeId(lead = {}) {
@@ -17090,7 +17210,45 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
-  function openLeadEditModal(lead = getActiveRuntimeLead()) {
+  async function getLeadEditDefaultsWithCallContext(lead = {}) {
+    const defaults = getLeadProfileDefaults(lead);
+    if (!defaults.leadId || !PBK.openclaw.isConfigured()) return defaults;
+    try {
+      const [full, lastCall] = await Promise.all([
+        requestOpenClawApi(`/api/leads/${encodeURIComponent(defaults.leadId)}/full`, { timeout: 9000 }).catch(() => null),
+        requestOpenClawApi(`/api/leads/${encodeURIComponent(defaults.leadId)}/last-call`, { timeout: 9000 }).catch(() => null),
+      ]);
+      const enrichedLead = full?.lead || {};
+      const call = lastCall?.call || full?.lastCall || {};
+      const callSummary = String(call.summary || call.callSummary || '').trim();
+      const transcript = Array.isArray(call.transcript)
+        ? call.transcript.map((turn) => turn.text || turn.content || turn.message || '').filter(Boolean).join(' ')
+        : String(call.transcript || '').trim();
+      const callNotes = [
+        callSummary ? `Latest call: ${callSummary}` : '',
+        transcript ? `Transcript note: ${transcript.slice(0, 420)}` : '',
+      ].filter(Boolean).join('\n');
+      return {
+        ...defaults,
+        sellerName: enrichedLead.seller?.name || enrichedLead.leadName || defaults.sellerName,
+        phone: enrichedLead.seller?.phone || enrichedLead.phone || defaults.phone,
+        email: enrichedLead.seller?.email || enrichedLead.email || defaults.email,
+        address: enrichedLead.property?.address || enrichedLead.address || defaults.address,
+        propertyType: enrichedLead.property?.propertyType || enrichedLead.property?.type || defaults.propertyType,
+        selectedPath: enrichedLead.selectedPath || enrichedLead.selected_path || defaults.selectedPath,
+        status: enrichedLead.status || defaults.status,
+        lastOffer: call.last_offer || call.lastOffer || defaults.lastOffer,
+        motivation: callSummary || enrichedLead.motivation?.summary || defaults.motivation,
+        timeline: enrichedLead.motivation?.timeline || defaults.timeline,
+        notes: [defaults.notes || defaults.sellerNotes, callNotes].filter(Boolean).join('\n\n'),
+      };
+    } catch (error) {
+      console.warn('Could not enrich lead edit modal from call data', error);
+      return defaults;
+    }
+  }
+
+  async function openLeadEditModal(lead = getActiveRuntimeLead()) {
     if (!lead) {
       toastOutcome({
         outcome: 'unavailable',
@@ -17099,7 +17257,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
       return null;
     }
-    const defaults = getLeadProfileDefaults(lead);
+    const defaults = await getLeadEditDefaultsWithCallContext(lead);
     return showPbkFormModal({
       title: `Edit ${defaults.sellerName}`,
       intro: 'Updates save through the bridge PATCH /api/leads/:id route. Calls, contracts, campaigns, and provider writes remain approval-gated.',
@@ -17518,7 +17676,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!leads.length) {
       tbody.innerHTML = `
         <tr class="row" data-runtime-empty="leads">
-          <td colspan="11" style="padding: 24px; color: var(--text-tertiary);">
+          <td colspan="12" style="padding: 24px; color: var(--text-tertiary);">
             <strong style="color: var(--text-primary);">No live lead records loaded.</strong><br>
             ${connected
               ? 'Imported leads from the bridge will appear here after /api/leads or /state returns production records. Seeded demo sellers are intentionally hidden.'
@@ -17529,7 +17687,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
 
-    tbody.innerHTML = leads.slice(0, 80).map((lead) => {
+    const visibleLimit = Number(PBK.state.runtime?.leadPageSize || 10);
+    const visibleLeads = leads.slice(0, visibleLimit);
+    tbody.innerHTML = visibleLeads.map((lead) => {
       const score = Math.max(0, Math.min(Number(lead.score || lead.leadScore || lead.priorityScore || 0), 100));
       const equity = getLeadEquityPercent(lead);
       const status = lead.status || lead.stage || 'new';
@@ -17552,15 +17712,87 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <td><span class="status-chip ${escapeHtml(getStatusChipClass('lead', status))}">${escapeHtml(status)}</span></td>
           <td class="mono">${escapeHtml(formatRelativeTime(lead.lastTouch || lead.last_touch || lead.updatedAt || lead.createdAt))}</td>
           <td>${/auto/i.test(String(agent)) ? '<span style="color: var(--text-ghost); font-family: var(--font-mono); font-size:11px">auto</span>' : `<div class="avatar" style="width:24px;height:24px;font-size:11px;">${escapeHtml(getInitial(agent))}</div>`}</td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="chip-btn" data-lead-row-action="open" data-lead-id="${escapeHtml(leadId)}">Open</button>
+              <button class="chip-btn" data-lead-row-action="analyzer" data-lead-id="${escapeHtml(leadId)}">Analyze</button>
+              <button class="chip-btn" data-lead-row-action="delete" data-lead-id="${escapeHtml(leadId)}">Delete</button>
+            </div>
+          </td>
         </tr>
       `;
-    }).join('');
+    }).join('') + (leads.length > visibleLimit ? `
+      <tr class="row" data-leads-load-more>
+        <td colspan="12" style="padding: 16px; text-align:center;">
+          <button class="btn btn-ghost" type="button" data-lead-row-action="load-more">Load 10 more</button>
+        </td>
+      </tr>
+    ` : '');
 
     tbody.querySelectorAll('[data-lead-detail="true"]').forEach((row) => {
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('[data-lead-row-action]')) return;
         openLeadDetail(row.dataset.leadId || '');
       });
     });
+    tbody.querySelectorAll('[data-lead-row-action]').forEach((button) => {
+      button.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const action = button.dataset.leadRowAction || '';
+        const leadId = button.dataset.leadId || '';
+        if (action === 'load-more') {
+          PBK.state.runtime.leadPageSize = Number(PBK.state.runtime?.leadPageSize || 10) + 10;
+          renderRuntimeLeads(PBK.state.openclawRuntime || {});
+          return;
+        }
+        if (!leadId) return;
+        setActiveLeadId(leadId);
+        const lead = getActiveRuntimeLead();
+        if (action === 'open') {
+          openLeadDetail(leadId);
+        } else if (action === 'analyzer') {
+          await loadActiveLeadIntoAnalyzer(lead);
+        } else if (action === 'delete') {
+          await deleteRuntimeLead(leadId);
+        }
+      });
+    });
+  }
+
+  async function deleteRuntimeLead(leadId = getActiveLeadId()) {
+    const id = String(leadId || '').trim();
+    if (!id) {
+      toast({ type: 'warning', title: 'No lead selected', desc: 'Select a lead before deleting it.' });
+      return null;
+    }
+    const lead = getActiveRuntimeLead();
+    const label = lead ? `${getLeadSellerName(lead)} - ${getLeadAddress(lead)}` : id;
+    if (!confirm(`Delete this lead from PBK Command Center?\n\n${label}\n\nThis removes the lead row and related visible runtime records. Provider sends stay untouched.`)) {
+      return null;
+    }
+    try {
+      const response = await requestOpenClawApi(`/api/leads/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        body: { actor: 'PBK Command Center' },
+        timeout: 12000
+      });
+      await applyRuntimeResponse(response);
+      const nextLead = getRuntimeLeads(response?.state || PBK.state.openclawRuntime || {})[0];
+      if (nextLead) setActiveLeadId(getLeadRuntimeId(nextLead));
+      renderRuntimeLeads(response?.state || PBK.state.openclawRuntime || {});
+      renderLeadDetail(response?.state || PBK.state.openclawRuntime || {});
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'live'),
+        title: 'Lead deleted',
+        desc: `${label} was removed from the active pipeline.`,
+        response
+      });
+      return response;
+    } catch (error) {
+      toast({ type: 'error', title: 'Delete failed', desc: error?.message || 'The bridge did not delete the lead.' });
+      return null;
+    }
   }
 
   function renderDashboardLeadPreview(snapshot = {}) {
@@ -17795,7 +18027,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function getRuntimeMessageCounts(snapshot = {}) {
     const rawMessages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
     const bridgeCounts = snapshot.messageCounts && typeof snapshot.messageCounts === 'object' ? snapshot.messageCounts : {};
-    const messages = rawMessages.filter((message) => !isDemoRuntimeMessage(message));
+    const messages = rawMessages.filter((message) => isSellerFacingInboxMessage(message));
     const calls = getRuntimeCalls(snapshot);
     const approvals = getRealRuntimeApprovals(snapshot).filter((item) => item.status === 'pending');
     const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
@@ -17833,24 +18065,79 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     setCountChip(inboxButtons[3], 'Email', counts.email);
   }
 
+  function getRuntimeLeadByMessage(message = {}, snapshot = PBK.state.openclawRuntime || {}) {
+    const messageLeadId = String(message.leadId || message.lead_id || '').trim();
+    const messageEmail = String(message.email || message.fromEmail || '').trim().toLowerCase();
+    const messagePhone = String(message.phone || message.from || message.to || '').replace(/\D+/g, '');
+    const messageAddress = String(message.address || message.leadAddress || message.propertyAddress || '').trim().toLowerCase();
+    const messageName = String(message.leadName || message.name || message.sender || message.fromName || '').trim().toLowerCase();
+    return getRuntimeLeads(snapshot).find((lead) => {
+      const leadIds = [lead.id, lead.leadId, lead.importId, lead.externalId].map((value) => String(value || '').trim());
+      const leadEmail = String(lead.seller?.email || lead.email || '').trim().toLowerCase();
+      const leadPhone = String(lead.seller?.phone || lead.phone || '').replace(/\D+/g, '');
+      const leadAddress = String(lead.property?.address || lead.address || '').trim().toLowerCase();
+      const leadName = String(lead.seller?.name || lead.leadName || lead.name || '').trim().toLowerCase();
+      if (messageLeadId && leadIds.includes(messageLeadId)) return true;
+      if (messageEmail && leadEmail === messageEmail) return true;
+      if (messagePhone && leadPhone && leadPhone === messagePhone) return true;
+      if (messageAddress && leadAddress === messageAddress) return true;
+      if (messageName && leadName === messageName) return true;
+      return false;
+    }) || null;
+  }
+
+  function isSellerFacingInboxMessage(message = {}) {
+    if (isDemoRuntimeMessage(message)) return false;
+    const surface = [
+      message.source,
+      message.provider,
+      message.channel,
+      message.type,
+      message.category,
+      message.direction,
+      message.status,
+      message.intent,
+      message.payload?.source,
+      message.body,
+      message.text,
+      message.message,
+      message.notes,
+    ].filter(Boolean).join(' ').toLowerCase();
+    if (/\b(agent_log|system_notification|system|runtime|admin|rex|ava internal|tool|approval|slack|activity|public-ava-chat|website_chat|visitor_log)\b/.test(surface)) {
+      return /instantly/i.test(surface) && /reply|received|inbound/i.test(surface);
+    }
+    const channel = String(message.channel || message.type || '').toLowerCase();
+    const provider = String(message.provider || message.source || '').toLowerCase();
+    const direction = String(message.direction || message.status || '').toLowerCase();
+    if (/instantly/.test(provider) && /reply|received|inbound/.test(surface)) return true;
+    if (!/(sms|text|call|voice|voicemail|email|mail)/i.test(channel)) return false;
+    return /inbound|received|reply|recording|missed|voicemail|new/i.test(direction)
+      || Boolean(message.leadId || message.leadName || message.email || message.phone || message.address);
+  }
+
   function getRuntimeInboxItems(snapshot = {}) {
     const messages = Array.isArray(snapshot.messages)
-      ? snapshot.messages.filter((message) => !isDemoRuntimeMessage(message))
+      ? snapshot.messages.filter((message) => isSellerFacingInboxMessage(message))
       : [];
     return sortRuntimeItems(messages).slice(0, 24).map((message, index) => {
       const channel = String(message.channel || message.type || 'message').toLowerCase();
-      const leadName = message.leadName || message.name || message.sender || message.from || 'Unknown lead';
-      const address = message.address || message.leadAddress || message.subject || 'Live bridge record';
+      const lead = getRuntimeLeadByMessage(message, snapshot);
+      const leadId = message.leadId || message.lead_id || lead?.leadId || lead?.id || lead?.importId || '';
+      const leadName = message.leadName || message.name || message.sender || message.fromName || lead?.seller?.name || lead?.leadName || message.from || 'Unknown lead';
+      const address = message.address || message.leadAddress || message.propertyAddress || lead?.property?.address || lead?.address || message.subject || 'Live bridge record';
       const preview = message.body || message.text || message.message || message.preview || message.notes || 'No message body attached yet.';
       const status = String(message.status || '').toLowerCase();
       return {
         id: message.id || message.messageId || `runtime-message-${index}`,
+        leadId,
         channel,
         leadName,
         address,
         preview,
         at: message.createdAt || message.updatedAt || message.at,
         unread: /received|unread|new/i.test(status),
+        email: message.email || lead?.seller?.email || lead?.email || '',
+        phone: message.phone || lead?.seller?.phone || lead?.phone || '',
       };
     });
   }
@@ -17888,11 +18175,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     `).join('');
 
     const paintConversation = (active) => {
+      if (active?.leadId) setActiveLeadId(active.leadId);
       convo.innerHTML = `
       <div class="convo-day">Live bridge record</div>
       <div class="bubble ${active.channel === 'sms' || active.channel === 'email' ? 'them' : 'ai'}">
         <div class="bubble-meta"><span class="bubble-channel ${escapeHtml(active.channel)}">${escapeHtml(active.channel)}</span> ${escapeHtml(formatRelativeTime(active.at))}</div>
         ${escapeHtml(active.preview)}
+      </div>
+      <div class="convo-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
+        <button class="chip-btn" data-inbox-open-lead="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Open lead</button>
+        <button class="chip-btn" data-inbox-load-analyzer="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Load analyzer</button>
+        <button class="chip-btn" data-inbox-edit-lead="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Edit lead</button>
       </div>
       `;
     };
@@ -17905,6 +18198,28 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         paintConversation(active);
       });
     });
+
+    if (convo.dataset.runtimeInboxActionsWired !== 'true') {
+      convo.dataset.runtimeInboxActionsWired = 'true';
+      convo.addEventListener('click', async (event) => {
+        const openButton = event.target.closest('[data-inbox-open-lead]');
+        const analyzerButton = event.target.closest('[data-inbox-load-analyzer]');
+        const editButton = event.target.closest('[data-inbox-edit-lead]');
+        const button = openButton || analyzerButton || editButton;
+        if (!button || button.disabled) return;
+        const leadId = button.dataset.inboxOpenLead || button.dataset.inboxLoadAnalyzer || button.dataset.inboxEditLead || '';
+        if (!leadId) return;
+        setActiveLeadId(leadId);
+        const lead = getActiveRuntimeLead();
+        if (openButton) {
+          openLeadDetail(leadId);
+        } else if (analyzerButton) {
+          await loadActiveLeadIntoAnalyzer(lead);
+        } else if (editButton) {
+          await openLeadEditModal(lead);
+        }
+      });
+    }
 
     paintConversation(items[0]);
   }
@@ -17959,6 +18274,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
       </div>
     `).join('');
+
+    list.querySelectorAll('[data-runtime-inbox-id]').forEach((row) => {
+      row.addEventListener('click', () => {
+        const item = items.find((entry) => String(entry.id) === String(row.dataset.runtimeInboxId));
+        if (item?.leadId) setActiveLeadId(item.leadId);
+        showPage('inbox');
+        renderRuntimeInbox(PBK.state.openclawRuntime || snapshot);
+      });
+    });
   }
 
   function buildRuntimeNotifications(snapshot = {}) {
@@ -22370,7 +22694,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const context = getLeadDetailContext();
 
       if (label === 'edit') {
-        openLeadEditModal(getActiveRuntimeLead());
+        await openLeadEditModal(getActiveRuntimeLead());
         return;
       }
 
@@ -22393,6 +22717,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       if (label === 'email') {
         openLeadMessageModal({ context, channel: 'email', stage: 'followup' });
+        return;
+      }
+
+      if (label === 'delete') {
+        await deleteRuntimeLead(context.leadId || getActiveLeadId());
         return;
       }
 
@@ -22657,6 +22986,33 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         return;
       }
 
+      if (action === 'void') {
+        const contractId = button.dataset.contractId || PBK.state.runtime.contractPreviewId || '';
+        if (!contractId) return;
+        const response = await requestOpenClawApi(`/api/contracts/${encodeURIComponent(contractId)}/action`, {
+          method: 'POST',
+          body: { actor: 'PBK Command Center', status: 'void' },
+          timeout: 10000
+        });
+        await applyRuntimeResponse(response);
+        renderContractsExperience();
+        toastOutcome({
+          outcome: getRuntimeOutcome(response, 'live'),
+          title: 'Contract voided',
+          desc: 'The bridge marked this envelope as void for the dashboard pipeline.',
+          response
+        });
+        return;
+      }
+
+      if (action === 'delete-draft') {
+        if (!confirm('Delete the current analyzer draft contract? This clears the local analyzer packet only.')) return;
+        clearAnalyzerRuntimeDeal();
+        PBK.state.runtime.contractPreviewId = '';
+        renderContractsExperience();
+        return;
+      }
+
       if (label === '+ new contract') {
         const runtime = getAnalyzerContractRuntimeSync();
         if (!runtime?.deal?.address) {
@@ -22678,16 +23034,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     page.addEventListener('click', (event) => {
       const stage = event.target.closest('.pstage');
       if (stage) {
-        page.querySelectorAll('.pstage').forEach((item) => item.classList.remove('active'));
-        stage.classList.add('active');
-        const filter = normalizeControlText(stage.querySelector('.ps-label')?.textContent || '');
-        const rows = Array.from(page.querySelectorAll('.contract-row'));
-        const shown = filterItemsByText(rows, (row) => {
-          if (filter === 'funded mtd') return normalizeControlText(row.textContent).includes('signed');
-          if (filter === 'sent') return true;
-          return normalizeControlText(row.textContent).includes(filter);
-        });
-        showLocalViewToast('Contract stage filtered', `${shown} contract rows match "${stage.querySelector('.ps-label')?.textContent?.trim() || 'stage'}".`);
+        const nextFilter = stage.dataset.contractStage || 'all';
+        PBK.state.runtime.contractStageFilter = PBK.state.runtime.contractStageFilter === nextFilter ? 'all' : nextFilter;
+        renderContractsExperience();
+        const shown = page.querySelectorAll('.contract-row').length;
+        showLocalViewToast('Contract stage filtered', `${shown} contract rows match "${PBK.state.runtime.contractStageFilter}".`);
         return;
       }
 
@@ -25140,7 +25491,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       address: String(deal.address || '').trim(),
       type: deal.type || 'house',
       contact: deal.contact || 'owner',
-      selectedPath: deal.selectedPath || 'cash',
+      selectedPath: DEAL_PATH_LABELS[deal.selectedPath] ? deal.selectedPath : 'cash',
       arv: num(deal.arv ?? result?.arv ?? 0),
       mao60: mao,
       maoRBP: num(deal.maoRBP ?? result?.maoRbp ?? mao),
@@ -25232,6 +25583,37 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         desc: 'Enter or sync a property address before saving this analyzer deal to the lead pipeline.'
       });
       return null;
+    }
+
+    const activeLeadId = deal.leadId || getLeadRuntimeId(getActiveRuntimeLead() || {});
+    if (activeLeadId) {
+      const response = await requestOpenClawApi(`/api/leads/${encodeURIComponent(activeLeadId)}`, {
+        method: 'PATCH',
+        body: {
+          actor: 'Analyzer',
+          name: deal.sellerName,
+          phone: deal.sellerPhone,
+          email: deal.sellerEmail,
+          address: deal.address,
+          propertyType: deal.type || 'house',
+          selectedPath: deal.selectedPath || getActiveAnalyzerDealPath(),
+          selected_path: deal.selectedPath || getActiveAnalyzerDealPath(),
+          lastOffer: deal.offer || deal.agreedPrice,
+          last_offer: deal.offer || deal.agreedPrice,
+          notes: `Analyzer saved ARV ${money(deal.arv || 0)}, MAO ${money(deal.mao60 || 0)}, repairs ${money(deal.repairs?.mid || 0)}.`,
+          summary: `Analyzer refreshed ${DEAL_PATH_LABELS[deal.selectedPath] || deal.selectedPath || 'cash'} path.`,
+        },
+        timeout: 12000
+      });
+      await applyRuntimeResponse(response);
+      if (response) await saveAnalyzerSidecarFields(next);
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'live'),
+        title: 'Analyzer synced to lead',
+        desc: `${deal.address} updated on the selected lead instead of creating a duplicate.`,
+        response
+      });
+      return response;
     }
 
     const response = await postRuntimeEvent('lead-intake', {
@@ -26154,6 +26536,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     record = record || {};
     if (record.isDraft) return 'draft';
     const status = String(record.status || '').toLowerCase();
+    if (['void', 'voided', 'cancelled', 'canceled', 'rejected'].includes(status)) return 'void';
     if (['funded', 'closed'].includes(status)) return 'funded';
     if (['completed', 'signed'].includes(status)) return 'signed';
     if (['viewed', 'opened', 'review', 'reviewing', 'updated'].includes(status)) return 'viewed';
@@ -26171,6 +26554,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (stage === 'signed') return { label: 'Signed', className: 'won' };
     if (stage === 'viewed') return { label: 'Viewed', className: 'sent' };
     if (stage === 'sent') return { label: 'Sent', className: 'sent' };
+    if (stage === 'void') return { label: 'Void', className: 'neg' };
     return { label: 'Draft', className: 'cold' };
   }
 
@@ -26222,6 +26606,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     records.forEach((record) => {
       const key = getContractStage(record);
+      if (!stages[key]) return;
       stages[key].count += 1;
       stages[key].value += num(record.amount || 0);
     });
@@ -26353,10 +26738,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const openClawConfig = getOpenClawConfig();
     const bridgeRuntime = sanitizeOpenClawRuntimeMeta(openClawConfig.runtimeMeta || {});
 
-    const records = buildContractRecords(runtime);
-    const stages = summarizeContractStages(records);
+    const allRecords = buildContractRecords(runtime);
+    const activeFilter = PBK.state.runtime?.contractStageFilter || 'all';
+    const records = activeFilter === 'all'
+      ? allRecords
+      : allRecords.filter((record) => getContractStage(record) === activeFilter);
+    const stages = summarizeContractStages(allRecords);
     const activePreviewId = PBK.state.runtime?.contractPreviewId || 'analyzer-draft';
-    const activeRecord = records.find((record) => record.id === activePreviewId) || records[0] || null;
+    const activeRecord = records.find((record) => record.id === activePreviewId) || records[0] || allRecords[0] || null;
     if (activeRecord) {
       PBK.state.runtime.contractPreviewId = activeRecord.id;
     }
@@ -26365,7 +26754,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (headTag) {
       headTag.textContent = `Pipeline - ${records.length} active - ${money(
         Object.values(stages).reduce((sum, stage) => sum + stage.value, 0),
-      )} in motion`;
+      )} in motion${activeFilter === 'all' ? '' : ` - filtered to ${activeFilter}`}`;
     }
 
     const headCopy = page.querySelector('.page-head-left p');
@@ -26380,7 +26769,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const stageStats = stageOrder.map((key) => stages[key]);
     const activeStage = stageStats.findIndex((entry) => entry.count > 0);
     stageNodes.forEach((node, index) => {
-      node.classList.toggle('active', index === (activeStage >= 0 ? activeStage : 0));
+      const key = stageOrder[index] || 'draft';
+      node.dataset.contractStage = key;
+      node.classList.toggle('active', activeFilter === key || (activeFilter === 'all' && index === (activeStage >= 0 ? activeStage : 0)));
       node.querySelector('.ps-count').textContent = String(stageStats[index]?.count || 0);
       node.querySelector('.ps-value').textContent = money(stageStats[index]?.value || 0);
     });
@@ -26391,7 +26782,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (!records.length) {
         pipeline.insertAdjacentHTML(
           'beforeend',
-          `<div class="contract-empty">Open the analyzer and save a deal to start a live contract draft. Existing DocuSign activity will appear here after the first send.</div>`,
+          `<div class="contract-empty">${activeFilter === 'all' ? 'Open the analyzer and save a deal to start a live contract draft. Existing DocuSign activity will appear here after the first send.' : `No ${escapeHtml(activeFilter)} contracts match this tab. Click the active tab again to return to all contracts.`}</div>`,
         );
       } else {
         pipeline.insertAdjacentHTML(
@@ -26417,7 +26808,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
                   <div class="progress-label">${progress}% - ${escapeHtml(record.notes || record.status || 'Live contract activity')}</div>
                 </div>
                 <div class="c-date">${escapeHtml(record.timeline || runtime.timeline || 'TBD')}</div>
-                <div><button class="chip-btn" data-contract-action="${record.isDraft ? 'open-draft' : 'focus-contract'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Open' : 'Summary'}</button></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button class="chip-btn" data-contract-action="${record.isDraft ? 'open-draft' : 'focus-contract'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Open' : 'View'}</button>
+                  <button class="chip-btn" data-contract-action="edit" data-contract-id="${escapeHtml(record.id)}">Edit</button>
+                  <button class="chip-btn" data-contract-action="send" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Send' : 'Resend'}</button>
+                  <button class="chip-btn" data-contract-action="remind" data-contract-id="${escapeHtml(record.id)}">Remind</button>
+                  <button class="chip-btn" data-contract-action="${record.isDraft ? 'delete-draft' : 'void'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Delete' : 'Void'}</button>
+                </div>
               </div>
             `;
           }).join(''),
@@ -26671,6 +27068,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <div class="analyzer-head-actions">
             <button class="btn btn-ghost" type="button" data-analyzer-action="sync">Sync latest deal</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="load-lead">Load Lead</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="save-lead">Save Deal</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="clear-analyzer">Clear Analyzer</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="send-agent">Send to Agent</button>
@@ -26737,6 +27135,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       if (action === 'save-lead') {
         await saveAnalyzerSnapshotToLead();
+      }
+
+      if (action === 'load-lead') {
+        await loadActiveLeadIntoAnalyzer();
       }
 
       if (action === 'clear-analyzer') {

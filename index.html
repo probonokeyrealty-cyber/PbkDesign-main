@@ -18975,6 +18975,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function buildOpenClawRealtimeUrl(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) return '';
+    const authRequired = config.runtimeMeta?.authRequired !== false;
+    if (authRequired && !String(config.apiKey || '').trim()) return '';
     const url = new URL('/ws/browser', `${base}/`);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     if (config.apiKey) url.searchParams.set('token', config.apiKey);
@@ -18995,7 +18997,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function scheduleOpenClawRealtimeReconnect(delay = null) {
-    if (!PBK.openclaw.isConfigured()) return;
+    const config = getOpenClawConfig();
+    if (!PBK.openclaw.isConfigured() || (config.runtimeMeta?.authRequired !== false && !String(config.apiKey || '').trim())) return;
     if (openClawRealtimeTimer) clearTimeout(openClawRealtimeTimer);
     const wait = delay ?? Math.min(45000, 1500 * Math.pow(1.6, openClawRealtimeAttempts));
     openClawRealtimeTimer = setTimeout(() => {

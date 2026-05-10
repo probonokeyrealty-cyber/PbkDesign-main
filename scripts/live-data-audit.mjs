@@ -166,6 +166,7 @@ const checks = [
       && /new WebSocket/.test(index)
       && /queueOpenClawRealtimePayload/.test(index)
       && /flushOpenClawRealtimePayloads/.test(index)
+      && /authRequired && !String\(config\.apiKey/.test(index)
       && /perMessageDeflate/.test(bridge)
       && /openclaw:startPolling|startOpenClawPolling/.test(index),
   },

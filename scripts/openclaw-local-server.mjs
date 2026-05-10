@@ -11837,6 +11837,33 @@ function normalizeApprovalRequired(provider = '', action = '') {
   ].includes(key);
 }
 
+function extractEnvVarNameFromAdminCopy(value = '') {
+  const text = String(value || '');
+  const match = text.match(/"envVar"\s*:\s*"([^"]+)"/i)
+    || text.match(/env\s*var(?:iable)?\s*[:=]\s*([A-Z0-9_]+)/i)
+    || text.match(/\b(PBK_[A-Z0-9_]+)\b/);
+  return match?.[1] || '';
+}
+
+function sanitizeAdminApprovalCopy(value = '', context = {}) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const payload = context?.payload || context || {};
+  const envVar = payload.envVar || payload.key || payload.name || extractEnvVarNameFromAdminCopy(text);
+  const provider = String(context.provider || payload.provider || '').toLowerCase();
+  const action = String(context.action || payload.action || '').toLowerCase();
+  const restart = Boolean(payload.restart || /"restart"\s*:\s*true|restart requested/i.test(text));
+  if (envVar || ((provider === 'render' || provider === 'system') && action === 'update_env_var')) {
+    return `Protected env update${envVar ? `: ${envVar}` : ''}. Founder approval required before applying${restart ? ' and restarting the bridge' : ''}.`;
+  }
+  if (/Approval mode intercepted|Original params|passcode|secret|token|envVar/i.test(text)) {
+    if (envVar) {
+      return `Protected env update: ${envVar}. Founder approval required before applying${restart ? ' and restarting the bridge' : ''}.`;
+    }
+    return 'Protected admin update is waiting for founder approval.';
+  }
+  return text || 'Administrative action queued for review.';
+}
+
 function createAdminTaskRecord(params = {}) {
   const detected = params.detected || detectAdminIntent(params.command || '') || {};
   const provider = params.provider || detected.provider || 'system';
@@ -11849,7 +11876,7 @@ function createAdminTaskRecord(params = {}) {
     provider,
     action,
     command: params.command || '',
-    summary: params.summary || detected.summary || 'Administrative action queued for review.',
+    summary: sanitizeAdminApprovalCopy(params.summary || detected.summary || 'Administrative action queued for review.', { ...params, provider, action }),
     status: params.status || 'pending',
     requestedBy: params.requestedBy || 'Rex',
     requiresApproval,
@@ -16768,12 +16795,11 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     };
   }
 
-  let paramPreview = '';
-  try {
-    paramPreview = JSON.stringify(redactApprovalParamPreview(params || {}));
-  } catch {
-    paramPreview = '[unserializable params]';
-  }
+  const approvalNotes = sanitizeAdminApprovalCopy('', {
+    provider: params.provider || 'system',
+    action: params.action || toolName || 'provider_action',
+    payload: redactApprovalParamPreview(params || {}),
+  }) || `Approval required before PBK runs ${label}.`;
 
   const approval = await toolHandlers.createApproval({
     type: 'provider-action',
@@ -16781,7 +16807,7 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     address: params.address || params.propertyAddress || params.target || '',
     phone: params.phone || params.to || '',
     email: params.email || '',
-    notes: `Approval mode intercepted ${label}. Original params: ${paramPreview.slice(0, 900)}`,
+    notes: approvalNotes,
     source: 'operating-mode-guard',
   });
   return {
@@ -30103,6 +30129,79 @@ const server = createServer(async (request, response) => {
     }
 
     const recordingMatch = matchPath(pathname, '/api/recordings/:messageId');
+    if (recordingMatch && request.method === 'DELETE') {
+      const messageId = decodeURIComponent(recordingMatch.groups.messageId || '');
+      const existing = findMessageById(messageId);
+      if (!existing) {
+        json(response, 404, {
+          ok: false,
+          deleted: false,
+          messageId,
+          error: 'Recording message not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const storagePath = getMessageRecordingPath(existing);
+      const storageDelete = storagePath
+        ? await deleteSupabaseRecording(storagePath).catch((error) => ({ ok: false, error: error?.message || String(error) }))
+        : { ok: true, skipped: true, reason: 'no_storage_path' };
+      const identifiers = uniqueLeadLookupValues([
+        existing.id,
+        existing.messageId,
+        existing.callId,
+        existing.recordingMessageId,
+        existing.telnyxCallControlId,
+        existing.telnyxCallSessionId,
+        messageId,
+      ]);
+      state.messages = (state.messages || []).filter((message) => {
+        const candidates = [
+          message?.id,
+          message?.messageId,
+          message?.callId,
+          message?.recordingMessageId,
+          message?.telnyxCallControlId,
+          message?.telnyxCallSessionId,
+        ].map((value) => String(value || '').trim()).filter(Boolean);
+        return !candidates.some((value) => identifiers.includes(value));
+      });
+      state.calls = (state.calls || []).map((call) => {
+        const candidates = [call?.recordingMessageId, call?.recordingUrl, call?.audioUrl, call?.id]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+        if (!candidates.some((value) => identifiers.includes(value))) return call;
+        return {
+          ...call,
+          recordingMessageId: '',
+          recordingUrl: '',
+          audioUrl: '',
+          transcript: call.transcript || '',
+          updatedAt: isoNow(),
+        };
+      });
+      const dbDelete = await deleteUnifiedMessageRecordFromDb(existing, messageId);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Command Center',
+          category: 'CALL',
+          status: 'deleted',
+          text: `Deleted recording for ${existing.leadName || existing.from || existing.email || messageId}.`,
+          target: storagePath || existing.address || existing.subject || messageId,
+        }),
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        deleted: true,
+        messageId,
+        storageDelete,
+        dbDelete,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
     if (recordingMatch && request.method === 'GET') {
       const messageId = decodeURIComponent(recordingMatch.groups.messageId || '');
       const message = findMessageById(messageId);
@@ -31141,7 +31240,7 @@ const server = createServer(async (request, response) => {
         'POST /api/safety/kill-switch',
         'POST /api/calls/:id/action',
         'GET/POST/DELETE /api/messages',
-        'GET /api/recordings/:messageId',
+        'GET/DELETE /api/recordings/:messageId',
         'POST /api/recordings/fixture',
         'POST /api/recordings',
         'GET/POST /api/contracts',
@@ -31187,7 +31286,13 @@ browserVoiceWss.on('connection', (socket, request) => {
   void handleBrowserVoiceSocket(socket, request);
 });
 
-const runtimeBrowserWss = new WebSocketServer({ noServer: true });
+const runtimeBrowserWss = new WebSocketServer({
+  noServer: true,
+  perMessageDeflate: {
+    threshold: 1024,
+    zlibDeflateOptions: { level: 3 },
+  },
+});
 runtimeBrowserWss.on('connection', (socket) => {
   runtimeBrowserSockets.add(socket);
   sendRuntimeSocketMessage(socket, {

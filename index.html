@@ -2672,10 +2672,10 @@
         <div class="ib-live-status" data-inbox-live-status>Waiting for live bridge sync</div>
       </div>
       <div class="ib-channels">
-        <button class="chip-btn active">All — 12</button>
-        <button class="chip-btn">Calls — 5</button>
-        <button class="chip-btn">SMS — 4</button>
-        <button class="chip-btn">Email — 3</button>
+        <button class="chip-btn active" data-inbox-filter="all">All - 12</button>
+        <button class="chip-btn" data-inbox-filter="calls">Calls - 5</button>
+        <button class="chip-btn" data-inbox-filter="sms">SMS - 4</button>
+        <button class="chip-btn" data-inbox-filter="email">Email - 3</button>
       </div>
       <div class="ib-list" data-openclaw-inbox-list>
         <div class="ib-item unread active">
@@ -2753,11 +2753,9 @@
             <div class="convo-meta">+1 (614) 555-0142 — 202 Cherry Ln, Columbus OH — Score 94</div>
           </div>
         </div>
-        <div class="convo-actions">
-          <button class="chip-btn">Lead profile</button>
-          <button class="chip-btn">Call now</button>
-          <button class="chip-btn">Mark DNC</button>
-          <button class="chip-btn active">Send to AI</button>
+        <div class="convo-actions" data-openclaw-convo-actions>
+          <button class="chip-btn active" disabled>Conversation only</button>
+          <button class="chip-btn" disabled>Swipe left to delete</button>
         </div>
       </div>
 
@@ -7540,7 +7538,7 @@
     .rec-item {
       padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border-dim);
       cursor: pointer; transition: background 0.1s;
-      display: grid; grid-template-columns: 36px 1fr auto; gap: var(--s-3);
+      display: grid; grid-template-columns: 36px 1fr auto auto; gap: var(--s-3);
       align-items: center;
     }
     .rec-item:hover { background: var(--bg-hover); }
@@ -7554,6 +7552,29 @@
     .rec-info .who { font-weight: 600; font-size: 13px; color: var(--text-primary); margin-bottom: 2px; }
     .rec-info .meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.04em; }
     .rec-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+    .rec-delete-btn {
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      background: rgba(248, 113, 113, 0.08);
+      color: var(--crimson);
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity .15s, background .15s, border-color .15s;
+    }
+    .rec-item:hover .rec-delete-btn,
+    .rec-item.active .rec-delete-btn,
+    .rec-delete-btn:focus-visible {
+      opacity: 1;
+    }
+    .rec-delete-btn:hover {
+      background: rgba(248, 113, 113, 0.16);
+      border-color: rgba(248, 113, 113, 0.48);
+    }
 
     /* Player */
     .rec-player {
@@ -7665,6 +7686,7 @@
     @media (max-width: 1000px) {
       .rec-layout { grid-template-columns: 1fr; }
       .rec-list { max-height: 300px; }
+      .rec-delete-btn { opacity: 1; }
     }
   </style>
 
@@ -12286,29 +12308,59 @@
   // TOAST SYSTEM
   // =========================================================
   const toastStack = document.getElementById('toastStack');
+  const TOAST_LIMIT = 3;
+  const toastTimers = new WeakMap();
   const toastIcons = {
     success: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>',
     warning: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
     error: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
     info: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
   };
-  function toast({ type = 'success', title = '', desc = '', undo = null, ms = 5000 }) {
-    const t = document.createElement('div');
-    t.className = `toast ${type}`;
+  function removeToastNode(node) {
+    if (!node || !node.isConnected) return;
+    const timer = toastTimers.get(node);
+    if (timer) clearTimeout(timer);
+    node.classList.add('leaving');
+    setTimeout(() => node.remove(), 250);
+  }
+  function findToastById(id = '') {
+    return Array.from(toastStack?.querySelectorAll('[data-toast-id]') || [])
+      .find((node) => node.dataset.toastId === id) || null;
+  }
+  function toast({ type = 'success', title = '', desc = '', undo = null, ms = 5000, id = '', key = '' }) {
+    if (!toastStack) return null;
+    const toastType = toastIcons[type] ? type : 'info';
+    const toastId = String(id || key || `${toastType}:${title}:${String(desc).slice(0, 90)}`).trim();
+    let t = toastId ? findToastById(toastId) : null;
+    if (!t) {
+      t = document.createElement('div');
+      toastStack.appendChild(t);
+    } else {
+      const oldTimer = toastTimers.get(t);
+      if (oldTimer) clearTimeout(oldTimer);
+      t.classList.remove('leaving');
+    }
+    t.className = `toast ${toastType}`;
+    if (toastId) t.dataset.toastId = toastId;
     t.innerHTML = `
-      <span class="t-icon">${toastIcons[type]}</span>
+      <span class="t-icon">${toastIcons[toastType]}</span>
       <div class="t-body">
-        <div class="t-title">${title}</div>
-        ${desc ? `<div class="t-desc">${desc}</div>` : ''}
+        <div class="t-title">${escapeHtml(title)}</div>
+        ${desc ? `<div class="t-desc">${escapeHtml(desc)}</div>` : ''}
       </div>
       ${undo ? `<button class="t-undo">Undo</button>` : ''}
-      <button class="t-dismiss" aria-label="dismiss">—</button>
+      <button class="t-dismiss" aria-label="dismiss">-</button>
     `;
-    toastStack.appendChild(t);
-    const remove = () => { t.classList.add('leaving'); setTimeout(() => t.remove(), 250); };
-    t.querySelector('.t-dismiss').addEventListener('click', remove);
-    if (undo) t.querySelector('.t-undo').addEventListener('click', () => { undo(); remove(); });
-    setTimeout(remove, ms);
+    const remove = () => removeToastNode(t);
+    t.querySelector('.t-dismiss')?.addEventListener('click', remove);
+    if (undo) t.querySelector('.t-undo')?.addEventListener('click', () => { undo(); remove(); });
+    if (ms !== 0) toastTimers.set(t, setTimeout(remove, ms));
+    const visibleToasts = Array.from(toastStack.querySelectorAll('.toast:not(.leaving)'));
+    visibleToasts
+      .slice(0, Math.max(0, visibleToasts.length - TOAST_LIMIT))
+      .forEach((node) => {
+        if (node !== t) removeToastNode(node);
+      });
     return t;
   }
   window.toast = toast;
@@ -15214,6 +15266,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   let openClawRealtimeSocket = null;
   let openClawRealtimeTimer = null;
   let openClawRealtimeAttempts = 0;
+  let openClawRealtimeBuffer = [];
+  let openClawRealtimeRaf = 0;
+  let openClawRealtimePollQueued = false;
 
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
@@ -15221,6 +15276,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     inboxChannelFilter: 'all',
     selectedInboxId: '',
     dismissedInboxIds: [],
+    deletedRecordingIds: [],
     rexMessages: [],
     contractPdf: null,
     contractPdfService: {
@@ -15231,6 +15287,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   PBK.state.runtime.inboxChannelFilter = PBK.state.runtime.inboxChannelFilter || 'all';
   PBK.state.runtime.selectedInboxId = PBK.state.runtime.selectedInboxId || '';
   PBK.state.runtime.dismissedInboxIds = Array.isArray(PBK.state.runtime.dismissedInboxIds) ? PBK.state.runtime.dismissedInboxIds : [];
+  PBK.state.runtime.deletedRecordingIds = Array.isArray(PBK.state.runtime.deletedRecordingIds) ? PBK.state.runtime.deletedRecordingIds : [];
 
   function escapeHtml(value = '') {
     return String(value)
@@ -15274,6 +15331,48 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const clean = cleanBoardCopy(value);
     if (clean.length <= maxLength) return clean;
     return `${clean.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
+  }
+
+  function extractEnvVarNameFromCopy(value = '') {
+    const text = String(value || '');
+    const match = text.match(/"envVar"\s*:\s*"([^"]+)"/i)
+      || text.match(/env\s*var(?:iable)?\s*[:=]\s*([A-Z0-9_]+)/i)
+      || text.match(/\b(PBK_[A-Z0-9_]+)\b/);
+    return match?.[1] || '';
+  }
+
+  function sanitizeApprovalBoardCopy(value = '', fallback = 'Approval required before PBK changes anything live.') {
+    const text = cleanBoardCopy(value || '');
+    if (!text) return fallback;
+    if (/Approval mode intercepted|Original params|envVar|passcode|secret|token/i.test(text)) {
+      const envVar = extractEnvVarNameFromCopy(text);
+      const restart = /"restart"\s*:\s*true|restart requested|restart/i.test(text);
+      if (envVar) {
+        return `Protected env update: ${envVar}. Approval required before applying${restart ? ' and restarting the bridge' : ''}.`;
+      }
+      return fallback;
+    }
+    return text;
+  }
+
+  function formatApprovalSummary(approval = {}) {
+    return compactBoardCopy(sanitizeApprovalBoardCopy(
+      approval.notes || approval.summary || `${approval.leadName || 'Lead'} needs a decision.`,
+      `${approval.leadName || 'Lead'} needs a founder decision before PBK moves forward.`
+    ), 160);
+  }
+
+  function formatAdminTaskSummary(task = {}) {
+    const provider = String(task.provider || 'system').toLowerCase();
+    const action = String(task.action || 'review').toLowerCase();
+    if ((provider === 'render' || provider === 'system') && action === 'update_env_var') {
+      const envVar = task.payload?.envVar || task.payload?.key || task.payload?.name || extractEnvVarNameFromCopy(task.summary || task.command || '');
+      return compactBoardCopy(`Protected env update${envVar ? `: ${envVar}` : ''}. Approval required before PBK applies it${task.payload?.restart ? ' and restarts the bridge' : ''}.`, 150);
+    }
+    return compactBoardCopy(sanitizeApprovalBoardCopy(
+      task.summary || task.reason || task.command || 'Administrative action is waiting for approval.',
+      'Protected admin update is waiting for founder approval.'
+    ), 150);
   }
 
   // =========================================================
@@ -16211,7 +16310,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const primaryLabel = meta.primary;
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
-      const summary = compactBoardCopy(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`);
+      const summary = formatApprovalSummary(approval);
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
         approval.offerPrice ? `Offer ${escapeHtml(money(approval.offerPrice))}` : '',
@@ -16225,10 +16324,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <span class="qcard-time">${escapeHtml(formatRelativeTime(approval.createdAt))}</span>
           </div>
           <div class="qcard-body">
-            ${escapeHtml(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`)}
-            <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">
-              ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
-            </span>
+            <div class="qcard-summary">${escapeHtml(summary)}</div>
+            <div class="qcard-meta">
+              ${detailParts.length ? detailParts.map((part) => `<span>${part}</span>`).join('') : '<span>No offer price</span>'}
+            </div>
           </div>
           <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
             <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
@@ -17473,7 +17572,47 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  function getDeletedRecordingIds() {
+    const ids = PBK.state.runtime?.deletedRecordingIds;
+    return Array.isArray(ids) ? ids.map((id) => String(id || '')).filter(Boolean) : [];
+  }
+
+  function markRecordingIdDeleted(...ids) {
+    const next = [...new Set([...getDeletedRecordingIds(), ...ids.map((id) => String(id || '').trim()).filter(Boolean)])];
+    PBK.state.runtime.deletedRecordingIds = next.slice(-200);
+    if (next.includes(String(PBK.state.activeRecordingId || ''))) PBK.state.activeRecordingId = '';
+  }
+
+  async function deleteRuntimeRecording(messageId = '', recordingId = '') {
+    const id = String(messageId || recordingId || '').trim();
+    if (!id) return;
+    if (!window.confirm('Delete this recording from PBK Command Center? Playback and transcript will disappear from the recordings page.')) return;
+    markRecordingIdDeleted(messageId, recordingId);
+    try {
+      const response = await requestOpenClawApi(`/api/recordings/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        timeout: 10000,
+      });
+      await applyRuntimeResponse(response);
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, 'live'),
+        title: 'Recording deleted',
+        desc: 'The recording was removed from the live library.',
+        response,
+      });
+    } catch (error) {
+      renderRecordingsLibrary(PBK.state.openclawRuntime || {});
+      toast({
+        type: 'warning',
+        id: `recording-delete-${id}`,
+        title: 'Recording hidden locally',
+        desc: error?.message || 'The bridge did not confirm deletion, so PBK hid it in this browser session.',
+      });
+    }
+  }
+
   function getRuntimeRecordingItems(snapshot = {}) {
+    const deletedIds = new Set(getDeletedRecordingIds());
     const messageRecordings = Array.isArray(snapshot.messages)
       ? snapshot.messages.filter((message) => {
         const text = [message.channel, message.direction, message.type, message.recordingUrl, message.audioUrl, message.recordingStoragePath, message.storagePath].filter(Boolean).join(' ');
@@ -17513,6 +17652,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return sortRuntimeItems([...normalizedMessages, ...normalizedCalls]).filter((item) => {
       const key = String(item.id || item.messageId || `${item.leadName}-${item.at}`).toLowerCase();
       if (!key || seen.has(key)) return false;
+      if (deletedIds.has(String(item.id || '')) || deletedIds.has(String(item.messageId || ''))) return false;
       seen.add(key);
       return true;
     });
@@ -17559,6 +17699,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               <div class="meta">${escapeHtml(formatRelativeTime(item.at))} - sentiment ${escapeHtml(formatCallScore(item.sentiment, 'pending'))}</div>
             </div>
             <span class="rec-dur">${escapeHtml(formatCallDuration(item))}</span>
+            <button class="rec-delete-btn" type="button" data-recording-delete="${escapeHtml(item.messageId || item.id)}" data-recording-id="${escapeHtml(item.id)}">Delete</button>
           </div>
         `).join('')
         : `
@@ -17573,8 +17714,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         `;
       list.querySelectorAll('[data-recording-id]').forEach((item) => {
         item.addEventListener('click', () => {
+          if (item.dataset.deleteClick === 'true') {
+            item.dataset.deleteClick = 'false';
+            return;
+          }
           PBK.state.activeRecordingId = item.dataset.recordingId || '';
           renderRecordingsLibrary(PBK.state.openclawRuntime || {});
+        });
+      });
+      list.querySelectorAll('[data-recording-delete]').forEach((button) => {
+        button.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const row = button.closest('[data-recording-id]');
+          if (row) row.dataset.deleteClick = 'true';
+          await deleteRuntimeRecording(button.dataset.recordingDelete || '', button.dataset.recordingId || row?.dataset.recordingId || '');
         });
       });
     }
@@ -17588,6 +17742,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <button class="chip-btn">Send to lead</button>
           <button class="chip-btn">Download</button>
+          <button class="chip-btn" data-recording-delete-active="${escapeHtml(active.messageId || active.id)}" data-recording-id="${escapeHtml(active.id)}">Delete</button>
         `
         : `
           <div class="rec-avatar">P</div>
@@ -17600,6 +17755,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         `;
     }
     if (transcript) transcript.innerHTML = renderRecordingTranscript(active || {});
+    page.querySelector('[data-recording-delete-active]')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      await deleteRuntimeRecording(button.dataset.recordingDeleteActive || '', button.dataset.recordingId || '');
+    });
   }
 
   function getInitial(value = '') {
@@ -18178,6 +18337,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function setCountChip(button, label, count) {
     if (!button) return;
+    if (button.closest('[data-page="inbox"]')) {
+      button.dataset.inboxFilter = label === 'Calls' ? 'calls' : label.toLowerCase();
+    }
     button.textContent = Number.isFinite(Number(count)) ? `${label} - ${Number(count)}` : label;
   }
 
@@ -18192,13 +18354,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (dashboardInboxCount) dashboardInboxCount.textContent = ` - ${counts.all || 0}`;
 
     const inboxButtons = document.querySelectorAll('[data-page="inbox"] .ib-channels .chip-btn');
-    setCountChip(inboxButtons[0], 'All', counts.all);
-    setCountChip(inboxButtons[1], 'Calls', counts.calls);
-    setCountChip(inboxButtons[2], 'SMS', counts.sms);
-    setCountChip(inboxButtons[3], 'Email', counts.email);
+    const inboxItems = getRuntimeInboxItems(snapshot);
+    const inboxCounts = {
+      all: inboxItems.length,
+      calls: inboxItems.filter((item) => itemMatchesInboxChannelFilter(item, 'calls')).length,
+      sms: inboxItems.filter((item) => itemMatchesInboxChannelFilter(item, 'sms')).length,
+      email: inboxItems.filter((item) => itemMatchesInboxChannelFilter(item, 'email')).length,
+    };
+    setCountChip(inboxButtons[0], 'All', inboxCounts.all);
+    setCountChip(inboxButtons[1], 'Calls', inboxCounts.calls);
+    setCountChip(inboxButtons[2], 'SMS', inboxCounts.sms);
+    setCountChip(inboxButtons[3], 'Email', inboxCounts.email);
     const activeInboxFilter = getInboxChannelFilter();
     inboxButtons.forEach((button) => {
-      const filter = textWithoutCounts(button.textContent);
+      const filter = button.dataset.inboxFilter || textWithoutCounts(button.textContent);
       button.classList.toggle('active', filter === activeInboxFilter || (!activeInboxFilter && filter === 'all'));
     });
   }
@@ -18400,6 +18569,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const list = document.querySelector('[data-openclaw-inbox-list]');
     const convo = document.querySelector('[data-openclaw-convo-body]');
     const status = document.querySelector('[data-inbox-live-status]');
+    const convoTitle = document.querySelector('[data-page="inbox"] .convo-title');
+    const convoActions = document.querySelector('[data-page="inbox"] [data-openclaw-convo-actions], [data-page="inbox"] .convo-actions');
     if (!list || !convo) return;
 
     const activeFilter = getInboxChannelFilter();
@@ -18418,6 +18589,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!items.length) {
       list.innerHTML = `<div class="ib-empty"><strong>No ${escapeHtml(activeFilter === 'all' ? 'live inbox' : activeFilter)} records yet.</strong><br>Inbound seller SMS, email replies, calls, and voicemails render here after bridge sync. Ava/Rex internal chatter stays out of this inbox.</div>`;
       convo.innerHTML = '<div class="ib-empty"><strong>Waiting for live conversation data.</strong><br>Select a real bridge message after sync, or use the Lead Portal timeline for historical lead context.</div>';
+      if (convoTitle) {
+        convoTitle.innerHTML = `
+          <div class="convo-avatar">P</div>
+          <div>
+            <div class="convo-who">No seller conversation selected</div>
+            <div class="convo-meta">Inbound replies, calls, voicemails, and seller emails only.</div>
+          </div>
+        `;
+      }
+      if (convoActions) {
+        convoActions.innerHTML = '<button class="chip-btn active" disabled>Conversation only</button>';
+      }
       return;
     }
 
@@ -18436,14 +18619,26 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const paintConversation = (active) => {
       if (active?.leadId) setActiveLeadId(active.leadId);
+      if (convoTitle) {
+        convoTitle.innerHTML = `
+          <div class="convo-avatar">${escapeHtml(getInitial(active.leadName))}</div>
+          <div>
+            <div class="convo-who">${escapeHtml(active.leadName || 'Seller conversation')}</div>
+            <div class="convo-meta">${escapeHtml([active.phone ? formatPhoneForDisplay(active.phone) : '', active.address, active.email].filter(Boolean).join(' - ') || 'Live bridge conversation')}</div>
+          </div>
+        `;
+      }
+      if (convoActions) {
+        convoActions.innerHTML = `
+          <button class="chip-btn active" disabled>${escapeHtml(String(active.channel || 'inbox').toUpperCase())}</button>
+          <button class="chip-btn" disabled>Swipe left to delete</button>
+        `;
+      }
       convo.innerHTML = `
       <div class="convo-day">Live bridge record</div>
       <div class="bubble ${active.channel === 'sms' || active.channel === 'email' ? 'them' : 'ai'}">
         <div class="bubble-meta"><span class="bubble-channel ${escapeHtml(active.channel)}">${escapeHtml(active.channel)}</span> ${escapeHtml(formatRelativeTime(active.at))}</div>
         ${escapeHtml(active.preview)}
-      </div>
-      <div class="convo-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
-        <button class="chip-btn" data-inbox-open-lead="${escapeHtml(active.leadId || '')}" ${active.leadId ? '' : 'disabled'}>Open lead</button>
       </div>
       `;
     };
@@ -18464,19 +18659,6 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         paintConversation(active);
       });
     });
-
-    if (convo.dataset.runtimeInboxActionsWired !== 'true') {
-      convo.dataset.runtimeInboxActionsWired = 'true';
-      convo.addEventListener('click', async (event) => {
-        const openButton = event.target.closest('[data-inbox-open-lead]');
-        const button = openButton;
-        if (!button || button.disabled) return;
-        const leadId = button.dataset.inboxOpenLead || '';
-        if (!leadId) return;
-        setActiveLeadId(leadId);
-        openLeadDetail(leadId);
-      });
-    }
 
     paintConversation(selectedItem);
   }
@@ -18822,6 +19004,47 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }, wait);
   }
 
+  function queueOpenClawRealtimePayload(payload) {
+    openClawRealtimeBuffer.push(payload);
+    if (openClawRealtimeRaf) return;
+    const schedule = window.requestAnimationFrame || ((callback) => setTimeout(callback, 16));
+    openClawRealtimeRaf = schedule(flushOpenClawRealtimePayloads);
+  }
+
+  function flushOpenClawRealtimePayloads() {
+    openClawRealtimeRaf = 0;
+    const batch = openClawRealtimeBuffer.splice(0);
+    if (!batch.length) return;
+    const latestState = batch.filter((payload) => payload?.type === 'state' && payload.snapshot).at(-1);
+    const needsPoll = batch.some((payload) => ['transcript', 'sentiment', 'approval', 'agent-activity'].includes(payload?.type));
+
+    if (latestState?.snapshot) {
+      openClawLastConnectedAt = Date.now();
+      openClawPollFailures = 0;
+      renderOpenClawState(latestState.snapshot);
+      const current = getOpenClawConfig();
+      const connected = saveOpenClawConfig({
+        ...current,
+        status: 'connected',
+        lastCheckedAt: Date.now(),
+        lastMessage: `Realtime sync ok - ${formatRuntimeTime(latestState.snapshot?.status?.lastUpdatedAt || latestState.at)}`,
+        runtimeMeta: sanitizeOpenClawRuntimeMeta({
+          ...(current.runtimeMeta || {}),
+          lastSyncAt: latestState.at || new Date().toISOString()
+        })
+      });
+      reflectOpenClawUI(connected);
+    }
+
+    if (needsPoll && !openClawRealtimePollQueued) {
+      openClawRealtimePollQueued = true;
+      setTimeout(() => {
+        openClawRealtimePollQueued = false;
+        runOpenClawPoll({ silent: true }).catch(() => {});
+      }, 120);
+    }
+  }
+
   function startOpenClawRealtime({ immediate = false } = {}) {
     const config = getOpenClawConfig();
     const wsUrl = buildOpenClawRealtimeUrl(config);
@@ -18854,26 +19077,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     openClawRealtimeSocket.onmessage = (event) => {
       const payload = parseJSONSafe(event.data, null);
       if (!payload || typeof payload !== 'object') return;
-      if (payload.type === 'state' && payload.snapshot) {
-        openClawLastConnectedAt = Date.now();
-        openClawPollFailures = 0;
-        renderOpenClawState(payload.snapshot);
-        const current = getOpenClawConfig();
-        const connected = saveOpenClawConfig({
-          ...current,
-          status: 'connected',
-          lastCheckedAt: Date.now(),
-          lastMessage: `Realtime sync ok - ${formatRuntimeTime(payload.snapshot?.status?.lastUpdatedAt || payload.at)}`,
-          runtimeMeta: sanitizeOpenClawRuntimeMeta({
-            ...(current.runtimeMeta || {}),
-            lastSyncAt: payload.at || new Date().toISOString()
-          })
-        });
-        reflectOpenClawUI(connected);
-      }
-      if (payload.type === 'transcript' || payload.type === 'sentiment' || payload.type === 'approval' || payload.type === 'agent-activity') {
-        runOpenClawPoll({ silent: true }).catch(() => {});
-      }
+      queueOpenClawRealtimePayload(payload);
     };
 
     openClawRealtimeSocket.onclose = () => {
@@ -19820,7 +20024,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function textWithoutCounts(value = '') {
     return String(value)
-      .replace(/[—-]\s*\d+.*/g, '')
+      .replace(/\s*(?:-|—|–|â€”|â€“)\s*\d+.*/g, '')
       .replace(/\s+/g, ' ')
       .trim()
       .toLowerCase();
@@ -24042,7 +24246,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     page.querySelector('.ib-channels')?.addEventListener('click', (event) => {
       const button = event.target.closest('.chip-btn');
       if (!button) return;
-      const filter = textWithoutCounts(button.textContent);
+      const filter = button.dataset.inboxFilter || textWithoutCounts(button.textContent);
       setInboxChannelFilter(filter);
       renderRuntimeCounts(PBK.state.openclawRuntime || {});
       renderRuntimeInbox(PBK.state.openclawRuntime || {});
@@ -27910,7 +28114,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const primaryLabel = meta.primary;
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
-      const summary = compactBoardCopy(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`);
+      const summary = formatApprovalSummary(approval);
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
         approval.offerPrice ? `Offer ${escapeHtml(money(approval.offerPrice))}` : '',
@@ -27927,9 +28131,6 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <div class="qcard-meta">
               ${detailParts.length ? detailParts.map((part) => `<span>${part}</span>`).join('') : '<span>No offer price</span>'}
             </div>
-            <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">
-              ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
-            </span>
           </div>
           <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
             <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
@@ -27948,7 +28149,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const adminCards = adminTasks.map((task) => {
       const providerAction = `${task.provider || 'system'}:${task.action || 'review'}`;
-      const summary = compactBoardCopy(task.summary || task.reason || task.command || 'Administrative action is waiting for approval.');
+      const summary = formatAdminTaskSummary(task);
       const impact = compactBoardCopy(task.costEstimate ? `Cost ${task.costEstimate}` : (task.scope || task.risk || 'Infrastructure update'), 80);
       return `
         <div class="qcard" data-admin-task-id="${escapeHtml(task.id)}" style="border-left-color: var(--sky);">
@@ -27959,10 +28160,6 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <div class="qcard-body">
             <div class="qcard-summary"><strong>${escapeHtml(providerAction)}</strong> - ${escapeHtml(summary)}</div>
             <div class="qcard-meta"><span>${escapeHtml(impact)}</span></div>
-            <!-- Legacy raw admin copy is kept only as source context and hidden from the compact board.
-            <strong>${escapeHtml(String(task.kind || 'admin').replace(/-/g, ' '))}</strong> — ${escapeHtml(summary)}
-            <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">${escapeHtml(impact)}</span>
-            -->
           </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-admin-action="approved">Approve safely</button>

@@ -23,13 +23,18 @@ const checks = [
     name: 'Unified inbox is seller/homeowner facing only and lead-click aware',
     ok: /function\s+isSellerFacingInboxMessage/.test(index)
       && /getRuntimeLeadByMessage/.test(index)
-      && /data-inbox-open-lead/.test(index)
       && /agentSurface/.test(index)
       && /inboxChannelFilter/.test(index)
       && /selectedInboxId/.test(index)
       && /setSelectedInboxId/.test(index)
       && /deleteRuntimeInboxMessage/.test(index)
       && /data-inbox-delete-message/.test(index)
+      && /data-inbox-filter="calls"/.test(index)
+      && /data-openclaw-convo-actions/.test(index)
+      && /Conversation only/.test(index)
+      && !/data-inbox-open-lead/.test(index)
+      && !/>Lead profile</.test(index)
+      && !/>Call now</.test(index)
       && /exclude|agent_log|system_notification|website_chat|public-ava-chat/i.test(index),
   },
   {
@@ -120,6 +125,10 @@ const checks = [
     ok: /qcard-summary/.test(index)
       && /qcard-meta/.test(index)
       && /compactBoardCopy/.test(index)
+      && /formatAdminTaskSummary/.test(index)
+      && /sanitizeAdminApprovalCopy/.test(bridge)
+      && !/Original params:\s*\$\{paramPreview/.test(bridge)
+      && !/Legacy raw admin copy/.test(index)
       && /showAvaVoiceDiagnostic/.test(index)
       && /type:\s*'diagnostic'/.test(bridge),
   },
@@ -143,10 +152,29 @@ const checks = [
       && /No live recordings yet/.test(index),
   },
   {
+    name: 'Recordings can be deleted from UI and bridge storage/state',
+    ok: /deleteRuntimeRecording/.test(index)
+      && /data-recording-delete/.test(index)
+      && /data-recording-delete-active/.test(index)
+      && /recordingMatch && request\.method === 'DELETE'/.test(bridge)
+      && /deleteSupabaseRecording/.test(bridge)
+      && /GET\/DELETE \/api\/recordings\/:messageId/.test(bridge),
+  },
+  {
     name: 'Real-time WebSocket startup is wired',
     ok: /function\s+startOpenClawRealtime/.test(index)
       && /new WebSocket/.test(index)
+      && /queueOpenClawRealtimePayload/.test(index)
+      && /flushOpenClawRealtimePayloads/.test(index)
+      && /perMessageDeflate/.test(bridge)
       && /openclaw:startPolling|startOpenClawPolling/.test(index),
+  },
+  {
+    name: 'Toast noise is capped and deduplicated',
+    ok: /TOAST_LIMIT\s*=\s*3/.test(index)
+      && /data-toast-id/.test(index)
+      && /findToastById/.test(index)
+      && /removeToastNode/.test(index),
   },
   {
     name: 'Public Ava chat proxy and widget are present',

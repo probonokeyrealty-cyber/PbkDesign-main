@@ -26,6 +26,8 @@ const checks = [
       && /data-inbox-open-lead/.test(index)
       && /agentSurface/.test(index)
       && /inboxChannelFilter/.test(index)
+      && /selectedInboxId/.test(index)
+      && /setSelectedInboxId/.test(index)
       && /deleteRuntimeInboxMessage/.test(index)
       && /data-inbox-delete-message/.test(index)
       && /exclude|agent_log|system_notification|website_chat|public-ava-chat/i.test(index),
@@ -109,7 +111,17 @@ const checks = [
     ok: /Summary:/.test(bridge)
       && /Key insight:/.test(bridge)
       && /Follow-up question:/.test(bridge)
+      && /looksLikeRexTroubleshootingQuery/.test(bridge)
+      && /buildRexTroubleshootingAnswer/.test(bridge)
       && /DeepSeek strategist/.test(bridge),
+  },
+  {
+    name: 'Approval board is compact and Ava voice diagnostics are visible',
+    ok: /qcard-summary/.test(index)
+      && /qcard-meta/.test(index)
+      && /compactBoardCopy/.test(index)
+      && /showAvaVoiceDiagnostic/.test(index)
+      && /type:\s*'diagnostic'/.test(bridge),
   },
   {
     name: 'Campaign detail can add and remove leads through bridge actions',

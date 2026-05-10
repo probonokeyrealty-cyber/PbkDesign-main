@@ -7119,6 +7119,49 @@ function answerBrainQuery(stateRef, query = '') {
   };
 }
 
+function looksLikeRexTroubleshootingQuery(query = '') {
+  const text = String(query || '').toLowerCase();
+  return /\b(why\s+(can'?t|cannot|won'?t|isn'?t|doesn'?t)|can'?t|cannot|won'?t|isn'?t|doesn'?t|missing|broken|bug|error|failed|failing|stuck|confused|not\s+(showing|working|finding|loading|syncing))\b/i.test(text);
+}
+
+function buildRexTroubleshootingAnswer(stateRef, query = '') {
+  const text = String(query || '').toLowerCase();
+  let symptom = 'I see a workflow symptom, but I need one more exact target to isolate it.';
+  let action = 'Tell me the page or object name you clicked, and I will check that specific bridge/UI path.';
+
+  if (/\b(comps?|arv|comparables?|zillow|redfin|address|parcel)\b/i.test(text)) {
+    symptom = 'The symptom is missing or weak property data, usually because the address, radius, or source match is incomplete.';
+    action = 'Try the full property address or parcel number first; if that fails, I will widen the search radius.';
+  } else if (/\b(inbox|message|sms|email|instantly|conversation|reply)\b/i.test(text)) {
+    symptom = 'The symptom is an inbox routing issue, usually caused by source filtering, lead id mismatch, or a hidden/deleted message id.';
+    action = 'Open the exact inbox item once; I will verify whether it maps to a seller-facing lead conversation.';
+  } else if (/\b(contract|docusign|pdf|void|draft|send)\b/i.test(text)) {
+    symptom = 'The symptom is a contract state mismatch between the dashboard card and the bridge contract record.';
+    action = 'Check the contract status/id first; then void or regenerate from the selected lead only.';
+  } else if (/\b(voice|ava|hear|listen|mic|microphone|deepgram|eleven|tts|websocket|socket)\b/i.test(text)) {
+    symptom = 'The symptom is in the voice pipeline: microphone permission, Deepgram transcript, model processing, TTS, or WebSocket delivery.';
+    action = 'Check the voice panel status and browser console first; if voice is down, keep Ava in text while reconnecting.';
+  } else if (/\b(approval|board|slack|approve|decline|button)\b/i.test(text)) {
+    symptom = 'The symptom is an approval-state display or action mismatch, not a seller conversation problem.';
+    action = 'Use the approval id/admin task id as the source of truth, then retry the single approve/hold action.';
+  } else if (/\b(lead|crm|portal|profile|delete|edit)\b/i.test(text)) {
+    symptom = 'The symptom is a lead identity mismatch, usually caused by runtime id, imported id, phone, or address lookup differences.';
+    action = 'Use the selected lead row first, then perform one edit/delete action from that active lead context.';
+  }
+
+  return {
+    query: String(query || '').trim(),
+    answer: `Symptom: ${symptom}\n\nNext action: ${action}`,
+    citations: ['PBK Rex troubleshooting mode'],
+    diagnostic: {
+      mode: 'troubleshooting',
+      maxSentences: 3,
+      stateBackend: getRuntimeMeta().stateBackend,
+      pendingApprovals: Array.isArray(stateRef?.approvals) ? stateRef.approvals.filter((item) => item.status === 'pending').length : 0,
+    },
+  };
+}
+
 function normalizeConversationMessages(messages = []) {
   if (!Array.isArray(messages)) return [];
   return messages
@@ -23607,12 +23650,35 @@ const toolHandlers = {
     const query = getLastUserMessage(messages, params.query || params.q || '');
     const isReadableSummaryIntent = looksLikeReadableSummaryQuery(query);
     const isBrowserResearchIntent = looksLikeBrowserResearchIntent(query);
-    const isOpenAiWebSearchIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && looksLikeOpenAiWebSearchIntent(query);
-    const isAdminIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isOpenAiWebSearchIntent && looksLikeAdminIntent(query);
-    const response = isAdminIntent || isBrowserResearchIntent || isReadableSummaryIntent || isOpenAiWebSearchIntent
+    const isTroubleshootingIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && looksLikeRexTroubleshootingQuery(query);
+    const isOpenAiWebSearchIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isTroubleshootingIntent && looksLikeOpenAiWebSearchIntent(query);
+    const isAdminIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isOpenAiWebSearchIntent && !isTroubleshootingIntent && looksLikeAdminIntent(query);
+    const response = isAdminIntent || isBrowserResearchIntent || isReadableSummaryIntent || isOpenAiWebSearchIntent || isTroubleshootingIntent
       ? null
       : answerBrainQuery(state, query);
     state.status.queryCountToday = toNumber(state.status.queryCountToday, 0) + 1;
+
+    if (isTroubleshootingIntent) {
+      const diagnostic = buildRexTroubleshootingAnswer(state, query);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Rex',
+          category: 'DIAGNOSTIC',
+          status: 'served',
+          text: `Rex diagnosed one next action for: "${query}"`,
+          target: 'Troubleshooting',
+        }),
+      );
+      diagnostic.memory = await storeRexConversationMemory(state, { ...params, query, messages }, diagnostic);
+      await persistState(state);
+      return {
+        ...diagnostic,
+        brainDocs: state.brainDocs.slice(0, 8),
+        brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
+        status: state.status,
+      };
+    }
 
     if (isReadableSummaryIntent) {
       const summary = buildReadableOperatorSummary(state, {
@@ -27011,6 +27077,12 @@ async function handleBrowserVoiceSocket(socket, request) {
 
   const meta = getDeepgramProviderMeta(process.env);
   if (!meta.ready) {
+    sendVoiceSocket(socket, {
+      type: 'diagnostic',
+      lane: 'stt',
+      message: 'I am having trouble with transcription. Deepgram is not ready, so I will fall back to text once the voice lane is reconnected.',
+      missing: meta.missing || [],
+    });
     socket.close(1011, 'Deepgram not configured');
     return;
   }
@@ -27045,20 +27117,30 @@ async function handleBrowserVoiceSocket(socket, request) {
     let pipeline = null;
     let reply = '';
     if (transcriptText) {
-      pipeline = await runPbkAgentPipelineRecord({
-        tenantId: 'pbk',
-        leadId: session.leadId,
-        leadName: session.leadName,
-        address: session.address,
-        text: transcriptText,
-        transcript: transcriptText,
-        source: 'browser-voice',
-        metadata: {
-          browserVoiceSessionId: session.id,
-          reason,
-        },
-      });
-      reply = buildBrowserVoiceReply(pipeline, transcriptText);
+      try {
+        pipeline = await runPbkAgentPipelineRecord({
+          tenantId: 'pbk',
+          leadId: session.leadId,
+          leadName: session.leadName,
+          address: session.address,
+          text: transcriptText,
+          transcript: transcriptText,
+          source: 'browser-voice',
+          metadata: {
+            browserVoiceSessionId: session.id,
+            reason,
+          },
+        });
+        reply = buildBrowserVoiceReply(pipeline, transcriptText);
+      } catch (error) {
+        reply = 'I am having trouble with processing. I captured the transcript, and I can keep this in text while the agent lane reconnects.';
+        sendVoiceSocket(socket, {
+          type: 'diagnostic',
+          lane: 'processing',
+          message: reply,
+          error: error?.message || 'Agent pipeline failed.',
+        });
+      }
       upsertMessage(state, createMessageRecord({
         id: `msg-browser-voice-${slugify(session.id)}-${Date.now()}`,
         leadId: session.leadId,
@@ -27085,6 +27167,16 @@ async function handleBrowserVoiceSocket(socket, request) {
         target: session.leadName || session.address || 'Ava',
       }));
       await persistState(state);
+    }
+
+    if (!transcriptText) {
+      sendVoiceSocket(socket, {
+        type: 'diagnostic',
+        lane: session.frameCount ? 'stt' : 'microphone',
+        message: session.frameCount
+          ? 'I am having trouble with transcription. I received audio frames, but no clean transcript came back.'
+          : 'I am having trouble with microphone capture. I did not receive audio frames before the voice session closed.',
+      });
     }
 
     sendVoiceSocket(socket, {
@@ -27133,12 +27225,21 @@ async function handleBrowserVoiceSocket(socket, request) {
       });
     });
     deepgramConnection.on('error', (error) => {
-      sendVoiceSocket(socket, { type: 'error', error: error?.message || 'Deepgram stream error.' });
+      sendVoiceSocket(socket, {
+        type: 'error',
+        lane: 'stt',
+        error: error?.message || 'Deepgram stream error.',
+      });
     });
     deepgramConnection.connect();
     await deepgramConnection.waitForOpen();
     sendVoiceSocket(socket, { type: 'ready', sessionId: session.id });
   } catch (error) {
+    sendVoiceSocket(socket, {
+      type: 'diagnostic',
+      lane: 'connection',
+      message: error?.message || 'Browser voice stream failed before Deepgram opened.',
+    });
     socket.close(1011, error?.message || 'Browser voice stream failed');
     return;
   }

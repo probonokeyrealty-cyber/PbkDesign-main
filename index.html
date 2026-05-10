@@ -1452,6 +1452,7 @@
     border-left: 3px solid var(--amber);
     border-radius: var(--radius);
     padding: var(--s-3) var(--s-4);
+    overflow: hidden;
   }
 [data-page="dashboard"] .qcard-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -1463,15 +1464,47 @@
     color: var(--amber); font-weight: 600;
   }
 [data-page="dashboard"] .qcard-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-ghost); }
-[data-page="dashboard"] .qcard-body { font-size: 13px; color: var(--text-primary); margin-bottom: var(--s-3); line-height: 1.5; }
+[data-page="dashboard"] .qcard-body {
+    font-size: 13px;
+    color: var(--text-primary);
+    margin-bottom: var(--s-3);
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
 [data-page="dashboard"] .qcard-body strong { color: var(--sky); font-family: var(--font-mono); font-weight: 500; }
-[data-page="dashboard"] .qcard-actions { display: flex; gap: var(--s-2); }
-[data-page="dashboard"] .qcard-actions .btn { flex: 1; justify-content: center; padding: 6px 10px; font-size: 10px; }
-[data-page="dashboard"] .qcard-review {
+[data-page="dashboard"] .qcard-summary {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+[data-page="dashboard"] .qcard-meta {
     display: flex;
     flex-wrap: wrap;
+    gap: 4px 8px;
+    margin-top: 8px;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.35;
+  }
+[data-page="dashboard"] .qcard-meta span {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+[data-page="dashboard"] .qcard-body > br,
+[data-page="dashboard"] .qcard-body > strong,
+[data-page="dashboard"] .qcard-body > span[style*="text-tertiary"] {
+    display: none;
+  }
+[data-page="dashboard"] .qcard-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+[data-page="dashboard"] .qcard-actions .btn { flex: 1; justify-content: center; padding: 6px 10px; font-size: 10px; }
+[data-page="dashboard"] .qcard-review {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
-    align-items: center;
     margin: 0 0 var(--s-3);
     padding: 8px;
     border: 1px solid var(--border-dim);
@@ -1479,7 +1512,7 @@
     background: color-mix(in srgb, var(--bg-panel) 72%, transparent);
   }
 [data-page="dashboard"] .qcard-review-label {
-    flex: 1 0 100%;
+    grid-column: 1 / -1;
     font-family: var(--font-mono);
     font-size: 9px;
     letter-spacing: 0.14em;
@@ -1490,7 +1523,8 @@
     border-left-color: var(--sky-dim);
   }
 [data-page="dashboard"] .qcard-review .btn {
-    flex: 0 1 auto;
+    flex: 1 1 auto;
+    width: 100%;
     min-height: 30px;
     padding: 5px 8px;
     font-size: 9px;
@@ -15185,6 +15219,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     brainTopic: 'Wholesaling',
     contractPreviewId: 'analyzer-draft',
     inboxChannelFilter: 'all',
+    selectedInboxId: '',
     dismissedInboxIds: [],
     rexMessages: [],
     contractPdf: null,
@@ -15193,6 +15228,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       message: ''
     }
   };
+  PBK.state.runtime.inboxChannelFilter = PBK.state.runtime.inboxChannelFilter || 'all';
+  PBK.state.runtime.selectedInboxId = PBK.state.runtime.selectedInboxId || '';
+  PBK.state.runtime.dismissedInboxIds = Array.isArray(PBK.state.runtime.dismissedInboxIds) ? PBK.state.runtime.dismissedInboxIds : [];
 
   function escapeHtml(value = '') {
     return String(value)
@@ -15222,6 +15260,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (diffHours < 24) return `${diffHours}h ago`;
     const diffDays = Math.round(diffHours / 24);
     return `${diffDays}d ago`;
+  }
+
+  function cleanBoardCopy(value = '') {
+    return String(value || '')
+      .replace(/â€”|—/g, '-')
+      .replace(/Â·|·/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function compactBoardCopy(value = '', maxLength = 170) {
+    const clean = cleanBoardCopy(value);
+    if (clean.length <= maxLength) return clean;
+    return `${clean.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
   }
 
   // =========================================================
@@ -16159,6 +16211,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const primaryLabel = meta.primary;
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
+      const summary = compactBoardCopy(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`);
+      const detailParts = [
+        approval.address ? escapeHtml(approval.address) : '',
+        approval.offerPrice ? `Offer ${escapeHtml(money(approval.offerPrice))}` : '',
+        approval.mao ? `MAO ${escapeHtml(money(approval.mao))}` : '',
+      ].filter(Boolean);
 
       return `
         <div class="qcard" data-approval-id="${escapeHtml(approval.id)}" style="border-left-color: ${accent};">
@@ -18225,6 +18283,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     PBK.state.runtime.inboxChannelFilter = ['all', 'calls', 'sms', 'email'].includes(filter) ? filter : 'all';
   }
 
+  function getSelectedInboxId() {
+    return String(PBK.state.runtime?.selectedInboxId || '').trim();
+  }
+
+  function setSelectedInboxId(id = '') {
+    PBK.state.runtime.selectedInboxId = String(id || '').trim();
+  }
+
   function itemMatchesInboxChannelFilter(item = {}, filter = getInboxChannelFilter()) {
     const channel = String(item.channel || '').toLowerCase();
     if (filter === 'all') return true;
@@ -18242,6 +18308,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function markInboxIdDismissed(id = '') {
     const next = [...new Set([...getDismissedInboxIds(), String(id || '').trim()].filter(Boolean))];
     PBK.state.runtime.dismissedInboxIds = next.slice(-100);
+    if (String(id || '').trim() === getSelectedInboxId()) setSelectedInboxId('');
   }
 
   function wireSwipeDelete(row, onDelete) {
@@ -18338,6 +18405,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const activeFilter = getInboxChannelFilter();
     const allItems = getRuntimeInboxItems(snapshot);
     const items = allItems.filter((item) => itemMatchesInboxChannelFilter(item, activeFilter));
+    const selectedId = getSelectedInboxId();
+    const selectedItem = items.find((item) => String(item.id) === selectedId) || items[0];
+    if (selectedItem?.id && selectedItem.id !== selectedId) setSelectedInboxId(selectedItem.id);
     const connected = getOpenClawConfig().status === 'connected';
     if (status) {
       status.textContent = connected
@@ -18351,8 +18421,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
 
-    list.innerHTML = items.map((item, index) => `
-      <div class="ib-item ${item.unread ? 'unread' : ''} ${index === 0 ? 'active' : ''}" data-runtime-inbox-id="${escapeHtml(item.id)}">
+    list.innerHTML = items.map((item) => `
+      <div class="ib-item ${item.unread ? 'unread' : ''} ${String(item.id) === getSelectedInboxId() ? 'active' : ''}" data-runtime-inbox-id="${escapeHtml(item.id)}">
         <div class="ib-row1">
           <span class="bubble-channel ${escapeHtml(item.channel)}">${escapeHtml(item.channel)}</span>
           <span class="ib-name">${escapeHtml(item.leadName)}</span>
@@ -18386,11 +18456,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       row.addEventListener('click', () => {
         if (row.classList.contains('swiped')) {
           row.classList.remove('swiped');
-          return;
         }
         list.querySelectorAll('.ib-item').forEach((item) => item.classList.remove('active'));
         row.classList.add('active');
         const active = items.find((item) => String(item.id) === String(row.dataset.runtimeInboxId)) || items[0];
+        if (active?.id) setSelectedInboxId(active.id);
         paintConversation(active);
       });
     });
@@ -18408,7 +18478,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
     }
 
-    paintConversation(items[0]);
+    paintConversation(selectedItem);
   }
 
   function getDashboardInboxIcon(channel = '') {
@@ -18471,10 +18541,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       row.addEventListener('click', () => {
         if (row.classList.contains('swiped')) {
           row.classList.remove('swiped');
-          return;
         }
         const item = items.find((entry) => String(entry.id) === String(row.dataset.runtimeInboxId));
+        if (item?.id) setSelectedInboxId(item.id);
         if (item?.leadId) setActiveLeadId(item.leadId);
+        setInboxChannelFilter('all');
         showPage('inbox');
         renderRuntimeInbox(PBK.state.openclawRuntime || snapshot);
       });
@@ -27839,6 +27910,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const primaryLabel = meta.primary;
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
+      const summary = compactBoardCopy(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`);
+      const detailParts = [
+        approval.address ? escapeHtml(approval.address) : '',
+        approval.offerPrice ? `Offer ${escapeHtml(money(approval.offerPrice))}` : '',
+        approval.mao ? `MAO ${escapeHtml(money(approval.mao))}` : '',
+      ].filter(Boolean);
       return `
         <div class="qcard" data-approval-id="${escapeHtml(approval.id)}" style="border-left-color: ${accent};">
           <div class="qcard-head">
@@ -27846,7 +27923,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <span class="qcard-time">${escapeHtml(formatRelativeTime(approval.createdAt))}</span>
           </div>
           <div class="qcard-body">
-            ${escapeHtml(approval.notes || `${approval.leadName || 'Lead'} needs a decision.`)}
+            <div class="qcard-summary">${escapeHtml(summary)}</div>
+            <div class="qcard-meta">
+              ${detailParts.length ? detailParts.map((part) => `<span>${part}</span>`).join('') : '<span>No offer price</span>'}
+            </div>
             <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">
               ${approval.address ? `${escapeHtml(approval.address)} — ` : ''}${approval.offerPrice ? `${escapeHtml(money(approval.offerPrice))}` : 'No offer price'}${approval.mao ? ` — MAO ${escapeHtml(money(approval.mao))}` : ''}
             </span>
@@ -27867,8 +27947,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }).join('');
 
     const adminCards = adminTasks.map((task) => {
-      const summary = task.summary || task.reason || 'Administrative action is waiting for approval.';
-      const impact = task.costEstimate ? `Estimated cost ${task.costEstimate}` : (task.scope || 'Infrastructure update');
+      const providerAction = `${task.provider || 'system'}:${task.action || 'review'}`;
+      const summary = compactBoardCopy(task.summary || task.reason || task.command || 'Administrative action is waiting for approval.');
+      const impact = compactBoardCopy(task.costEstimate ? `Cost ${task.costEstimate}` : (task.scope || task.risk || 'Infrastructure update'), 80);
       return `
         <div class="qcard" data-admin-task-id="${escapeHtml(task.id)}" style="border-left-color: var(--sky);">
           <div class="qcard-head">
@@ -27876,8 +27957,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <span class="qcard-time">${escapeHtml(formatRelativeTime(task.createdAt))}</span>
           </div>
           <div class="qcard-body">
+            <div class="qcard-summary"><strong>${escapeHtml(providerAction)}</strong> - ${escapeHtml(summary)}</div>
+            <div class="qcard-meta"><span>${escapeHtml(impact)}</span></div>
+            <!-- Legacy raw admin copy is kept only as source context and hidden from the compact board.
             <strong>${escapeHtml(String(task.kind || 'admin').replace(/-/g, ' '))}</strong> — ${escapeHtml(summary)}
             <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">${escapeHtml(impact)}</span>
+            -->
           </div>
           <div class="qcard-actions">
             <button class="btn btn-primary" data-admin-action="approved">Approve safely</button>
@@ -28056,6 +28141,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let voiceRecorder = null;
     let voiceSocket = null;
     let voiceStarting = false;
+    let lastVoiceDiagnosticToastAt = 0;
+
+    const showAvaVoiceDiagnostic = (lane = 'connection', detail = '') => {
+      const now = Date.now();
+      if (now - lastVoiceDiagnosticToastAt < 2500) return;
+      lastVoiceDiagnosticToastAt = now;
+      const laneCopy = {
+        microphone: 'Microphone capture',
+        stt: 'Deepgram transcription',
+        processing: 'Ava processing',
+        tts: 'ElevenLabs voice output',
+        websocket: 'Browser voice connection',
+        connection: 'Voice connection',
+      }[lane] || 'Voice connection';
+      const desc = detail || `${laneCopy} needs attention. Ava will keep the response visible in text while the voice lane reconnects.`;
+      if (status) status.textContent = desc;
+      toast({ type: 'warning', title: `${laneCopy} issue`, desc });
+    };
     let lastTranscript = '';
 
     const getVoiceBase = () => normalizeOpenClawEndpoint(getOpenClawConfig().endpoint);
@@ -28180,14 +28283,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           headers: getVoiceHeaders(true),
           body: JSON.stringify({ text: clean }),
         }, 30000);
-        if (!response.ok) return;
+        if (!response.ok) {
+          showAvaVoiceDiagnostic('tts', `Ava text is ready, but ElevenLabs returned ${response.status}. Check the TTS key or quota.`);
+          return;
+        }
         const blob = await response.blob();
         const audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(audioUrl);
         audio.addEventListener('ended', () => URL.revokeObjectURL(audioUrl), { once: true });
         await audio.play();
-      } catch {
-        // Spoken replies are additive; text response remains the source of truth.
+      } catch (error) {
+        showAvaVoiceDiagnostic('tts', error?.message || 'Ava text is ready, but the browser could not play the spoken response.');
       }
     }
 
@@ -28252,6 +28358,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           let data = {};
           try { data = JSON.parse(event.data); } catch { return; }
           if (data.type === 'ready' && status) status.textContent = 'Listening live - Deepgram stream open.';
+          if (data.type === 'diagnostic') {
+            showAvaVoiceDiagnostic(data.lane || 'processing', data.message || 'Ava found a voice pipeline issue and switched to text fallback.');
+          }
           if (data.type === 'transcript' && data.transcript) {
             lastTranscript = data.transcript;
             if (input && data.isFinal) input.value = data.transcript;
@@ -28267,19 +28376,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             playAvaTts(data.text || '').catch(() => null);
           }
           if (data.type === 'error') {
-            toast({ type: 'error', title: 'Voice stream issue', desc: data.error || 'Ava voice stream reported an error.' });
+            showAvaVoiceDiagnostic(data.lane || 'stt', data.error || 'Ava voice stream reported an error.');
           }
         });
         voiceSocket.addEventListener('close', () => {
-          if (voiceMode === 'live') stopBrowserVoice('socket-close');
+          if (voiceMode === 'live') {
+            showAvaVoiceDiagnostic('websocket', 'Ava voice connection closed. If this was not intentional, check the WebSocket connection and retry.');
+            stopBrowserVoice('socket-close');
+          }
         });
       } catch (error) {
         stopBrowserVoice('start-failed');
-        toast({
-          type: 'error',
-          title: 'Ava voice could not start',
-          desc: error?.message || 'Microphone streaming failed before any provider action.'
-        });
+        showAvaVoiceDiagnostic(/permission|microphone|media/i.test(error?.message || '') ? 'microphone' : 'connection', error?.message || 'Microphone streaming failed before any provider action.');
       } finally {
         voiceStarting = false;
       }

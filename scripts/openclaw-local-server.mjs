@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-browser-voice-direct-ws';
+const BUILD_REVISION = '2026-05-11-inbound-call-media-fix';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -11215,6 +11215,7 @@ function createCallRecord(params = {}) {
     humanJoined: Boolean(params.humanJoined),
     aiMuted: Boolean(params.aiMuted),
     startedAt: params.startedAt || isoNow(),
+    endedAt: params.endedAt || params.ended_at || '',
     updatedAt: params.updatedAt || isoNow(),
     transcript: Array.isArray(params.transcript) ? params.transcript : [],
   };
@@ -13911,6 +13912,31 @@ async function recordTelnyxCall(callControlId = '') {
   });
 }
 
+async function startTelnyxMediaStream(callControlId = '', params = {}) {
+  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  const streamUrl = getTelnyxDeepgramStreamUrl(params);
+  if (!streamUrl) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'provider_missing',
+      error: 'PBK_PUBLIC_BASE_URL or PBK_BRIDGE_PUBLIC_URL is required before Telnyx can stream media to PBK.',
+    };
+  }
+  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/streaming_start`, {
+    stream_url: streamUrl,
+    stream_track: params.streamTrack || DEEPGRAM_STREAM_TRACK || 'inbound_track',
+    stream_codec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
+    client_state: encodeClientState({
+      source: 'pbk-inbound',
+      callControlId,
+      route: params.route || '',
+      leadId: params.leadId || '',
+      startedAt: isoNow(),
+    }),
+  });
+}
+
 async function startTelnyxAiAssistant(callControlId = '', promptOverride = '') {
   if (!callControlId) return { ok: false, skipped: true, result: 'unavailable', error: 'Missing Telnyx call_control_id.' };
   if (!TELNYX_AI_ASSISTANT_ID) {
@@ -14235,6 +14261,24 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       actions.push({ action: 'speak', result: await speakTelnyxCall(callControlId, 'You have reached Probono Key Realty after hours. Please leave your name, number, property address, and what you need help with. We will call you back first thing next business day.') });
       actions.push({ action: 'record', result: await recordTelnyxCall(callControlId) });
     } else {
+      actions.push({
+        action: 'streaming_start',
+        result: await startTelnyxMediaStream(callControlId, {
+          route,
+          leadId: lead.leadId,
+          streamTrack: DEEPGRAM_STREAM_TRACK,
+          streamCodec: DEEPGRAM_STREAM_CODEC,
+        }),
+      });
+      actions.push({
+        action: 'speak',
+        result: await speakTelnyxCall(
+          callControlId,
+          lead.found
+            ? `Hi ${lead.leadName || 'there'}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?`
+            : 'Hi, this is Ava with Probono Key Realty. Thanks for calling. What property can I help you with today?',
+        ),
+      });
       actions.push({ action: 'start_ai_assistant', result: await startTelnyxAiAssistant(callControlId, promptContext) });
     }
   }
@@ -26484,11 +26528,16 @@ async function handleEvent(eventType, payload = {}) {
         item.id === payload.id ||
         item.id === payload.callId ||
         item.id === payload.call_control_id ||
+        item.telnyxCallControlId === payload.call_control_id ||
+        item.telnyxCallControlId === payload.id ||
+        item.telnyxCallLegId === payload.call_leg_id ||
+        item.telnyxCallSessionId === payload.call_session_id ||
         (normalizePhone(item.phone) && normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')),
     );
+    const nextStatus = payload.status || existingCall?.status || 'live';
     if (
       existingCall &&
-      existingCall.status === (payload.status || existingCall.status) &&
+      existingCall.status === nextStatus &&
       normalizePhone(existingCall.phone) === normalizePhone(payload.phone || payload.to || existingCall.phone || '')
     ) {
       return {
@@ -26499,9 +26548,14 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     const call = createCallRecord({
+      ...(existingCall || {}),
       ...payload,
-      id: payload.id || payload.callId || payload.call_control_id || randomUUID(),
-      status: payload.status || 'live',
+      id: existingCall?.id || payload.id || payload.callId || payload.call_control_id || randomUUID(),
+      status: nextStatus,
+      endedAt: /ended|hangup|completed|failed|busy|no-answer|cancel/i.test(String(nextStatus)) ? (payload.endedAt || isoNow()) : existingCall?.endedAt || '',
+      telnyxCallControlId: payload.call_control_id || payload.callControlId || existingCall?.telnyxCallControlId || '',
+      telnyxCallLegId: payload.call_leg_id || payload.callLegId || existingCall?.telnyxCallLegId || '',
+      telnyxCallSessionId: payload.call_session_id || payload.callSessionId || existingCall?.telnyxCallSessionId || '',
     });
     upsertCall(state, call);
     addActivity(
@@ -27547,6 +27601,9 @@ function mapTelnyxWebhook(body = {}) {
         address: payload.address || '',
         actor: 'Telnyx',
         call_control_id: payload.call_control_id || payload.id || '',
+        call_leg_id: payload.call_leg_id || payload.callLegId || '',
+        call_session_id: payload.call_session_id || payload.callSessionId || '',
+        endedAt: eventType.includes('hangup') ? isoNow() : '',
       },
     };
   }
@@ -28111,24 +28168,49 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   };
 
   try {
-    deepgramConnection = await createDeepgramLiveConnection({}, process.env);
+    deepgramConnection = await createDeepgramLiveConnection({
+      manualWebSocket: true,
+      encoding: 'mulaw',
+      sampleRate: 8000,
+      channels: 1,
+      interimResults: true,
+      utteranceEndMs: 900,
+    }, process.env);
     deepgramConnection.on('message', (data) => {
-      if (data?.type !== 'Results') return;
-      const alt = data.channel?.alternatives?.[0] || {};
-      const transcript = String(alt.transcript || '').trim();
+      const normalized = normalizeDeepgramLiveTranscript(data);
+      const transcript = normalized.transcript;
       if (!transcript) return;
       const sentiment = normalizeDeepgramLiveSentiment(data);
       if (sentiment.pbkScore !== null) session.sentiment = sentiment;
-      session.transcript.push({
+      const item = {
         transcript,
-        confidence: Number.isFinite(Number(alt.confidence)) ? Number(alt.confidence) : null,
-        isFinal: Boolean(data.is_final),
-        speechFinal: Boolean(data.speech_final),
+        confidence: normalized.confidence,
+        isFinal: normalized.isFinal,
+        speechFinal: normalized.speechFinal,
         start: data.start ?? null,
         duration: data.duration ?? null,
         sentiment,
         capturedAt: isoNow(),
-      });
+      };
+      session.transcript.push(item);
+      const contextCall = getCallById(session.callId);
+      if (contextCall) {
+        upsertCall(state, {
+          ...contextCall,
+          transcript: [
+            ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
+            {
+              speaker: 'Seller',
+              text: transcript,
+              ...item,
+            },
+          ].slice(-50),
+          sentiment: sentiment.pbkScore ?? contextCall.sentiment,
+          nextMove: "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
+          updatedAt: isoNow(),
+        });
+        scheduleRuntimeStateBroadcast('telnyx-transcript');
+      }
     });
     deepgramConnection.on('error', (error) => {
       console.warn('[pbk-local-openclaw] Deepgram live stream error:', error?.message || error);

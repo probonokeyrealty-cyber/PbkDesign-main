@@ -18505,10 +18505,30 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return `
         <div class="turn ${isSeller ? 'seller' : 'ai'}">
           <div class="turn-speaker">${escapeHtml(isSeller ? 'Seller' : String(speaker))}</div>
-          <div class="turn-text">${escapeHtml(turn.text || turn.content || turn.message || '')}</div>
+          <div class="turn-text">${escapeHtml(turn.text || turn.content || turn.message || turn.transcript || '')}</div>
         </div>
       `;
     }).join('');
+  }
+
+  function getSafeLiveCallNextMove(call = {}) {
+    const unsafePattern = /(^|\n)\s*##|you are ava|inbound call mode|core rules:|pbk core path library|recent self-learned memories|bant\+ status|routing decision|system prompt|agents\.md/i;
+    const candidates = [
+      call.nextMove,
+      call.operatorNextMove,
+      call.recommendation,
+      call.guidance,
+      call.summary,
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    const safeCandidate = candidates.find((value) => value.length <= 280 && !unsafePattern.test(value));
+    if (safeCandidate) return safeCandidate;
+    const script = String(call.script || '').trim();
+    if (script && script.length <= 220 && !unsafePattern.test(script)) return script;
+    const status = String(call.status || '').toLowerCase();
+    if (/waiting|no_transcript|queued/.test(status)) {
+      return 'Confirm audio is flowing, then ask for the property address, timeline, condition, and motivation.';
+    }
+    return 'Ask one clean question: property address, timeline, condition, motivation, or authority. Do not show internal prompts.';
   }
 
   function renderDashboardLiveCall(snapshot = {}) {
@@ -18594,7 +18614,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <div class="ai-next">
             <div class="label">Next Move</div>
-            ${escapeHtml(active.nextMove || active.recommendation || active.script || 'Listen for authority, condition, timeline, motivation, and price before requesting provider writes.')}
+            ${escapeHtml(getSafeLiveCallNextMove(active))}
           </div>
         </div>
       </div>

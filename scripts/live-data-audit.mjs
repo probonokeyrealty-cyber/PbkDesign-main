@@ -267,6 +267,23 @@ const checks = [
       && /transcriptFinal/.test(bridge),
   },
   {
+    name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',
+    ok: /startTelnyxMediaStream/.test(bridge)
+      && /\/actions\/streaming_start/.test(bridge)
+      && /action:\s*'streaming_start'/.test(bridge)
+      && /action:\s*'speak'/.test(bridge)
+      && /manualWebSocket:\s*true/.test(bridge)
+      && /encoding:\s*'mulaw'/.test(bridge)
+      && /scheduleRuntimeStateBroadcast\('telnyx-transcript'\)/.test(bridge)
+      && /telnyxCallControlId === payload\.call_control_id/.test(bridge)
+      && /telnyxCallLegId === payload\.call_leg_id/.test(bridge)
+      && /endedAt:\s*eventType\.includes\('hangup'\)/.test(bridge)
+      && /function\s+getSafeLiveCallNextMove/.test(index)
+      && /unsafePattern/.test(index)
+      && /getSafeLiveCallNextMove\(active\)/.test(index)
+      && /turn\.transcript/.test(index),
+  },
+  {
     name: 'Public Ava chat proxy and widget are present',
     ok: /api\/public\/ava-chat/.test(bridge) && /pbk-ava-public-chat/.test(widget),
   },

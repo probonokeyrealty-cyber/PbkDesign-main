@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-browser-voice-flux-v2';
+const BUILD_REVISION = '2026-05-11-browser-voice-flux-fallback';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -210,6 +210,7 @@ const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROW
 const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
 const BROWSER_VOICE_DEEPGRAM_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || 'flux-general-en').trim();
+const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2').trim();
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
@@ -27863,14 +27864,47 @@ async function handleBrowserVoiceSocket(socket, request) {
     });
   };
 
+  const openDeepgramBrowserVoiceConnection = async (options, label, notifyErrors = true) => {
+    const connection = await createDeepgramLiveConnection(options, process.env);
+    connection.on('error', (error) => {
+      if (!notifyErrors) return;
+      sendVoiceSocket(socket, {
+        type: 'error',
+        lane: 'stt',
+        provider: label,
+        error: error?.message || 'Deepgram stream error.',
+      });
+    });
+    connection.connect();
+    await connection.waitForOpen();
+    return connection;
+  };
+
   try {
-    deepgramConnection = await createDeepgramLiveConnection({
-      model: BROWSER_VOICE_DEEPGRAM_MODEL,
-      listenVersion: 'v2',
-      containerizedAudio: true,
-      channels: 1,
-      eotTimeoutMs: 1200,
-    }, process.env);
+    try {
+      deepgramConnection = await openDeepgramBrowserVoiceConnection({
+        model: BROWSER_VOICE_DEEPGRAM_MODEL,
+        listenVersion: 'v2',
+        containerizedAudio: true,
+        channels: 1,
+      }, 'deepgram-flux-v2', false);
+    } catch (primaryError) {
+      sendVoiceSocket(socket, {
+        type: 'diagnostic',
+        lane: 'stt',
+        provider: 'deepgram-flux-v2',
+        message: `Flux browser STT did not open (${primaryError?.message || 'unknown error'}). Retrying Nova browser STT fallback.`,
+      });
+      deepgramConnection?.close?.();
+      deepgramConnection = await openDeepgramBrowserVoiceConnection({
+        model: BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL,
+        listenVersion: 'v1',
+        containerizedAudio: true,
+        channels: 1,
+        interimResults: true,
+        utteranceEndMs: 900,
+      }, 'deepgram-nova-v1-fallback');
+    }
     deepgramConnection.on('message', (data) => {
       const normalized = normalizeDeepgramLiveTranscript(data);
       const transcript = normalized.transcript;
@@ -27897,15 +27931,6 @@ async function handleBrowserVoiceSocket(socket, request) {
         intent: detected,
       });
     });
-    deepgramConnection.on('error', (error) => {
-      sendVoiceSocket(socket, {
-        type: 'error',
-        lane: 'stt',
-        error: error?.message || 'Deepgram stream error.',
-      });
-    });
-    deepgramConnection.connect();
-    await deepgramConnection.waitForOpen();
     sendVoiceSocket(socket, { type: 'ready', sessionId: session.id });
   } catch (error) {
     sendVoiceSocket(socket, {

@@ -131,6 +131,8 @@ services:
       # containerized browser audio without raw encoding/sample_rate params.
       - key: PBK_DEEPGRAM_BROWSER_LIVE_MODEL
         value: flux-general-en
+      - key: PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL
+        value: nova-2
 
       - key: PBK_INSTANTLY_API_KEY
         sync: false

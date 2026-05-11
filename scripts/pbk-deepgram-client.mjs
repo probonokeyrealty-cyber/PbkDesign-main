@@ -269,7 +269,10 @@ export async function createDeepgramLiveConnection(options = {}, env = process.e
   const params = {
     model,
     channels: String(options.channels || 1),
-    Authorization: `Token ${config.apiKey}`,
+    // Deepgram SDK v5 live sockets expect the raw API key in Authorization.
+    // HTTP transcription calls use the SDK auth provider, but WebSocket connect
+    // only forwards this explicit value.
+    Authorization: config.apiKey,
   };
   if (useListenV2) {
     if (!containerizedAudio) {

@@ -20,19 +20,22 @@ const checks = [
     ok: /function\s+renderLeadDetail/.test(index) && /function\s+openLeadEditModal/.test(index) && /PATCH/.test(bridge) && /\/api\/leads\/:id/.test(bridge),
   },
   {
-    name: 'Unified inbox is seller/homeowner facing only and lead-click aware',
+    name: 'Unified inbox is seller/homeowner facing only and lead-edit aware',
     ok: /function\s+isSellerFacingInboxMessage/.test(index)
       && /getRuntimeLeadByMessage/.test(index)
       && /agentSurface/.test(index)
       && /inboxChannelFilter/.test(index)
       && /selectedInboxId/.test(index)
       && /setSelectedInboxId/.test(index)
-      && /deleteRuntimeInboxMessage/.test(index)
-      && /data-inbox-delete-message/.test(index)
+      && /syncInboxItemToLead/.test(index)
+      && /wireInboxLeadEdit/.test(index)
+      && /data-inbox-edit-lead/.test(index)
       && /data-inbox-filter="calls"/.test(index)
       && /data-openclaw-convo-actions/.test(index)
       && /Conversation only/.test(index)
       && !/data-inbox-open-lead/.test(index)
+      && !/data-inbox-delete-message/.test(index)
+      && !/Swipe left to delete/.test(index)
       && !/>Lead profile</.test(index)
       && !/>Call now</.test(index)
       && /exclude|agent_log|system_notification|website_chat|public-ava-chat/i.test(index),
@@ -90,7 +93,7 @@ const checks = [
       && /request\.method === 'DELETE'/.test(bridge),
   },
   {
-    name: 'Inbox message delete and Supabase schema ensure endpoints are available',
+    name: 'Inbox message archive route and Supabase schema ensure endpoints are available',
     ok: /matchPath\(pathname,\s*'\/api\/messages\/:id'\)/.test(bridge)
       && /deleteUnifiedMessageRecordFromDb/.test(bridge)
       && /\/api\/admin\/schema\/ensure/.test(bridge)
@@ -133,6 +136,13 @@ const checks = [
       && /type:\s*'diagnostic'/.test(bridge),
   },
   {
+    name: 'Approval BANT review only appears for lead or qualification approval types',
+    ok: /function\s+shouldShowApprovalBantCheck/.test(index)
+      && /contract\|docusign\|doc\|outbound\|campaign\|call\|sms\|email\|admin\|schema\|settings/.test(index)
+      && /lead\|qualification\|qualify\|bant/.test(index)
+      && /const bantReviewButton = shouldShowApprovalBantCheck/.test(index),
+  },
+  {
     name: 'Campaign detail can add and remove leads through bridge actions',
     ok: /function\s+saveCampaignLeadSelector/.test(index)
       && /removeCampaignLeadLocally/.test(index)
@@ -166,9 +176,22 @@ const checks = [
       && /new WebSocket/.test(index)
       && /queueOpenClawRealtimePayload/.test(index)
       && /flushOpenClawRealtimePayloads/.test(index)
+      && /startOpenClawRealtimeHeartbeat/.test(index)
       && /authRequired && !String\(config\.apiKey/.test(index)
       && /perMessageDeflate/.test(bridge)
+      && /runtimeWsHeartbeatTimer/.test(bridge)
+      && /socket\.ping\(\)/.test(bridge)
       && /openclaw:startPolling|startOpenClawPolling/.test(index),
+  },
+  {
+    name: 'OpenClaw gateway status is first-class in bridge health and dashboard diagnostics',
+    ok: /OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS/.test(bridge)
+      && /buildOpenClawGatewayStatus/.test(bridge)
+      && /\/api\/gateway\/status/.test(bridge)
+      && /openclawGateway: getOpenClawGatewayHealthComponent/.test(bridge)
+      && /fetchOpenClawGatewayStatus/.test(index)
+      && /PBK\.state\.openclawGatewayStatus/.test(index)
+      && /OpenClaw Brain Gateway/.test(index),
   },
   {
     name: 'Toast noise is capped and deduplicated',
@@ -209,6 +232,14 @@ const checks = [
       && /this browser is missing the private PBK Bridge API key/.test(index)
       && /Ava will stay in text mode instead of pretending to listen/.test(index)
       && /showAvaVoiceDiagnostic/.test(index),
+  },
+  {
+    name: 'Deepgram phone proof writes call transcript memory and intent analytics',
+    ok: /memoryType:\s*'call_transcript'/.test(bridge)
+      && /source:\s*'telnyx-deepgram'/.test(bridge)
+      && /recordPbkIntentEvent\(\{[\s\S]*source:\s*'telnyx-media-stream'/.test(bridge)
+      && /finalTranscriptItems/.test(bridge)
+      && /transcriptFinal/.test(bridge),
   },
   {
     name: 'Public Ava chat proxy and widget are present',

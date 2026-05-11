@@ -1291,9 +1291,8 @@
     overflow: hidden; touch-action: pan-y;
   }
 [data-page="dashboard"] .msg:hover { background: var(--bg-hover); }
-[data-page="dashboard"] .msg.swiped { transform: translateX(-74px); background: rgba(255, 80, 80, .08); }
-[data-page="dashboard"] .msg .inbox-delete-action { top: 0; right: -74px; bottom: 0; }
-[data-page="dashboard"] .msg.swiped .inbox-delete-action { right: 0; }
+[data-page="dashboard"] .msg { padding-right: 112px; }
+[data-page="dashboard"] .msg .inbox-lead-edit-action { top: 12px; right: 12px; }
 [data-page="dashboard"] .msg.unread::before {
     content: ''; position: absolute; left: 0; top: var(--s-4); bottom: var(--s-4);
     width: 2px; background: var(--sky);
@@ -2471,18 +2470,23 @@
     .ib-item {
       padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-dim);
       cursor: pointer; transition: background 0.1s; position: relative;
-      overflow: hidden; touch-action: pan-y;
+      overflow: hidden; touch-action: manipulation;
+      padding-right: 112px;
     }
     .ib-item:hover { background: var(--bg-hover); }
     .ib-item.active { background: var(--bg-panel); }
-    .ib-item.swiped { transform: translateX(-74px); background: rgba(255, 80, 80, .08); }
-    .inbox-delete-action {
-      position: absolute; top: 0; right: -74px; bottom: 0; width: 74px;
-      border: 0; border-left: 1px solid rgba(255, 80, 80, .34);
-      background: rgba(255, 80, 80, .16); color: #ff9b9b; cursor: pointer;
+    .inbox-lead-edit-action {
+      position: absolute; top: 12px; right: 12px;
+      border: 1px solid var(--border-dim);
+      border-radius: 999px;
+      background: var(--bg-panel-elevated);
+      color: var(--sky);
+      cursor: pointer;
+      padding: 7px 10px;
       font: 700 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, .16);
     }
-    .ib-item.swiped .inbox-delete-action { right: 0; }
+    .inbox-lead-edit-action:hover { border-color: var(--sky-dim); background: var(--sky-glow); }
     .inbox-mobile-back { display: none; }
     .ib-item.active::before {
       content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--sky);
@@ -2837,7 +2841,7 @@
         </div>
         <div class="convo-actions" data-openclaw-convo-actions>
           <button class="chip-btn active" disabled>Conversation only</button>
-          <button class="chip-btn" disabled>Swipe left to delete</button>
+          <button class="chip-btn" type="button" data-inbox-edit-lead>Edit lead</button>
         </div>
       </div>
 
@@ -8806,7 +8810,7 @@
         <span data-detail-status></span>
       </div>
       <h1 class="cd-title" data-detail-title>Campaign</h1>
-      <div class="cd-meta" data-detail-meta></div>
+      <div class="cd-meta" data-detail-meta hidden></div>
     </div>
     <div class="cd-actions-bar">
       <button class="btn btn-ghost" type="button" data-campaign-detail-action="pause">Pause campaign</button>
@@ -12369,7 +12373,8 @@
     const mobileNav = document.getElementById('mobileNav');
     const navRect = mobileNav?.getBoundingClientRect();
     const navHeight = navRect && navRect.height > 0 ? navRect.height : 64;
-    document.documentElement.style.setProperty('--pbk-vh-px', `${window.innerHeight}px`);
+    const viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0);
+    document.documentElement.style.setProperty('--pbk-vh-px', `${viewportHeight || window.innerHeight}px`);
     document.documentElement.style.setProperty('--pbk-topbar-px', `${topbar}px`);
     document.documentElement.style.setProperty('--pbk-mobile-nav-px', `${navHeight}px`);
   }
@@ -14701,13 +14706,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ready,
       voiceReady: meta.voiceReady == null ? null : Boolean(meta.voiceReady),
       messagingReady: meta.messagingReady == null ? null : Boolean(meta.messagingReady),
-      missing: Array.isArray(meta.missing) ? meta.missing.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8) : []
+      missing: Array.isArray(meta.missing) ? meta.missing.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8) : [],
+      note: String(meta.note || '').trim(),
+      latencyMs: Number.isFinite(Number(meta.latencyMs)) ? Number(meta.latencyMs) : null
     };
   }
 
   function sanitizeOpenClawProviders(providers) {
     if (!providers || typeof providers !== 'object') return null;
     return {
+      ...(providers.openclawGateway ? { openclawGateway: sanitizeOpenClawProviderMeta('openclawGateway', providers.openclawGateway) } : {}),
       telnyx: sanitizeOpenClawProviderMeta('telnyx', providers.telnyx),
       instantly: sanitizeOpenClawProviderMeta('instantly', providers.instantly),
       deepgram: sanitizeOpenClawProviderMeta('deepgram', providers.deepgram),
@@ -14838,6 +14846,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (healthShape === 'legacy') {
       warnings.unshift('Bridge responded with a legacy health payload. Redeploy Render to expose runtime metadata.');
     }
+    const rawProviders = body?.providers || runtime?.providers || features?.providers || extra.providers || null;
+    const gatewayComponent = body?.openClawGateway || body?.components?.openclawGateway || runtime?.components?.openclawGateway || null;
+    const providers = rawProviders || gatewayComponent
+      ? {
+          ...(rawProviders || {}),
+          ...(gatewayComponent ? {
+            openclawGateway: {
+              configured: gatewayComponent.configured,
+              ready: gatewayComponent.ready,
+              note: gatewayComponent.note || '',
+              latencyMs: gatewayComponent.latencyMs,
+              missing: gatewayComponent.ready ? [] : [gatewayComponent.note || 'Gateway probe pending'].filter(Boolean)
+            }
+          } : {})
+        }
+      : null;
     return sanitizeOpenClawRuntimeMeta({
       bridgeRevision: body?.revision || runtime?.revision || extra.bridgeRevision || '',
       stateBackend: runtime?.stateBackend || features?.stateBackend || extra.stateBackend || '',
@@ -14849,7 +14873,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       lastSyncAt: extra.lastSyncAt || body?.lastUpdatedAt || '',
       healthUrl: extra.healthUrl || '',
       warnings,
-      providers: body?.providers || runtime?.providers || features?.providers || extra.providers || null
+      providers
     });
   }
 
@@ -15477,6 +15501,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   let openClawRealtimeBuffer = [];
   let openClawRealtimeRaf = 0;
   let openClawRealtimePollQueued = false;
+  let openClawRealtimeHeartbeatTimer = null;
 
   PBK.state.runtime = PBK.state.runtime || {
     brainTopic: 'Wholesaling',
@@ -16499,6 +16524,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return { filter: 'offer', label: 'Seller Offer', primary: 'Approve offer', secondary: 'Revise first', accent: 'var(--amber)' };
   }
 
+  function shouldShowApprovalBantCheck(type = '', approval = {}) {
+    const normalized = String(type || approval.type || '').toLowerCase();
+    if (/(contract|docusign|doc|outbound|campaign|call|sms|email|admin|schema|settings)/.test(normalized)) return false;
+    return /(lead|qualification|qualify|bant)/.test(normalized);
+  }
+
   function renderApprovalQueue(snapshot) {
     const container = document.querySelector('[data-openclaw-feed="approvals"]');
     const countNode = document.querySelector('[data-openclaw-count="approvals"]');
@@ -16574,6 +16605,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
       const summary = formatApprovalSummary(approval);
+      const bantReviewButton = shouldShowApprovalBantCheck(type, approval)
+        ? '<button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
+        : '';
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
         approval.offerPrice ? `Offer ${escapeHtml(money(approval.offerPrice))}` : '',
@@ -16595,7 +16629,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
             <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
             <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
+            ${bantReviewButton}
             <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
             <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
@@ -18743,33 +18777,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (String(id || '').trim() === getSelectedInboxId()) setSelectedInboxId('');
   }
 
-  function wireSwipeDelete(row, onDelete) {
-    if (!row || row.dataset.swipeDeleteWired === 'true') return;
-    row.dataset.swipeDeleteWired = 'true';
-    let startX = 0;
-    let startY = 0;
-    row.addEventListener('touchstart', (event) => {
-      const touch = event.touches?.[0];
-      if (!touch) return;
-      startX = touch.clientX;
-      startY = touch.clientY;
-    }, { passive: true });
-    row.addEventListener('touchend', (event) => {
-      const touch = event.changedTouches?.[0];
-      if (!touch) return;
-      const deltaX = touch.clientX - startX;
-      const deltaY = touch.clientY - startY;
-      if (Math.abs(deltaX) < 45 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) return;
-      event.stopPropagation();
-      document.querySelectorAll('.ib-item.swiped, [data-page="dashboard"] .msg.swiped').forEach((item) => {
-        if (item !== row) item.classList.remove('swiped');
-      });
-      row.classList.toggle('swiped', deltaX < 0);
-    });
-    row.querySelector('[data-inbox-delete-message]')?.addEventListener('click', async (event) => {
+  function syncInboxItemToLead(item = {}) {
+    if (!item || typeof item !== 'object') return null;
+    const leadId = item.leadId || getRuntimeLeadByMessage(item, PBK.state.openclawRuntime || {})?.leadId || '';
+    if (leadId) setActiveLeadId(leadId);
+    return leadId || null;
+  }
+
+  function wireInboxLeadEdit(row, getItem) {
+    if (!row || row.dataset.inboxLeadEditWired === 'true') return;
+    row.dataset.inboxLeadEditWired = 'true';
+    row.querySelector('[data-inbox-edit-lead]')?.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
-      await onDelete?.();
+      const item = typeof getItem === 'function' ? getItem() : null;
+      syncInboxItemToLead(item || {});
+      await openLeadEditModal(getActiveRuntimeLead());
     });
   }
 
@@ -18876,7 +18899,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
         <div class="ib-addr">${escapeHtml(item.address)}</div>
         <div class="ib-preview">${escapeHtml(item.preview)}</div>
-        <button class="inbox-delete-action" type="button" data-inbox-delete-message="${escapeHtml(item.id)}">Delete</button>
+        <button class="inbox-lead-edit-action" type="button" data-inbox-edit-lead="${escapeHtml(item.leadId || item.id)}">Edit lead</button>
       </div>
     `).join('');
 
@@ -18895,7 +18918,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         convoActions.innerHTML = `
           <button class="chip-btn inbox-mobile-back" data-inbox-mobile-back type="button" onclick="window.setInboxMobileMode && window.setInboxMobileMode('list')">Inbox list</button>
           <button class="chip-btn active" disabled>${escapeHtml(String(active.channel || 'inbox').toUpperCase())}</button>
-          <button class="chip-btn" disabled>Swipe left to delete</button>
+          <button class="chip-btn" type="button" data-inbox-edit-lead="${escapeHtml(active.leadId || active.id || '')}">Edit lead</button>
         `;
       }
       convo.innerHTML = `
@@ -18908,18 +18931,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
 
     list.querySelectorAll('[data-runtime-inbox-id]').forEach((row) => {
-      wireSwipeDelete(row, async () => {
-        const messageId = row.dataset.runtimeInboxId || '';
-        await deleteRuntimeInboxMessage(messageId);
-      });
+      wireInboxLeadEdit(row, () => items.find((item) => String(item.id) === String(row.dataset.runtimeInboxId)) || null);
       row.addEventListener('click', () => {
-        if (row.classList.contains('swiped')) {
-          row.classList.remove('swiped');
-        }
         list.querySelectorAll('.ib-item').forEach((item) => item.classList.remove('active'));
         row.classList.add('active');
         const active = items.find((item) => String(item.id) === String(row.dataset.runtimeInboxId)) || items[0];
         if (active?.id) setSelectedInboxId(active.id);
+        syncInboxItemToLead(active);
         paintConversation(active);
         setInboxMobileMode('conversation');
       });
@@ -18928,6 +18946,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (convoActions) {
       convoActions.onclick = (event) => {
         if (event.target.closest('[data-inbox-mobile-back]')) setInboxMobileMode('list');
+        if (event.target.closest('[data-inbox-edit-lead]')) {
+          const selected = items.find((item) => String(item.id) === getSelectedInboxId()) || selectedItem;
+          syncInboxItemToLead(selected);
+          void openLeadEditModal(getActiveRuntimeLead());
+        }
       };
     }
 
@@ -18982,22 +19005,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <span class="msg-time">${escapeHtml(formatRelativeTime(item.at))}</span>
           ${item.unread ? '<span class="badge hot">Unread</span>' : ''}
         </div>
-        <button class="inbox-delete-action" type="button" data-inbox-delete-message="${escapeHtml(item.id)}">Delete</button>
+        <button class="inbox-lead-edit-action" type="button" data-inbox-edit-lead="${escapeHtml(item.leadId || item.id)}">Edit lead</button>
       </div>
     `).join('');
 
     list.querySelectorAll('[data-runtime-inbox-id]').forEach((row) => {
-      wireSwipeDelete(row, async () => {
-        const messageId = row.dataset.runtimeInboxId || '';
-        await deleteRuntimeInboxMessage(messageId);
-      });
+      wireInboxLeadEdit(row, () => items.find((entry) => String(entry.id) === String(row.dataset.runtimeInboxId)) || null);
       row.addEventListener('click', () => {
-        if (row.classList.contains('swiped')) {
-          row.classList.remove('swiped');
-        }
         const item = items.find((entry) => String(entry.id) === String(row.dataset.runtimeInboxId));
         if (item?.id) setSelectedInboxId(item.id);
-        if (item?.leadId) setActiveLeadId(item.leadId);
+        syncInboxItemToLead(item || {});
         setInboxChannelFilter('all');
         setInboxMobileMode('conversation');
         showPage('inbox');
@@ -19271,11 +19288,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function syncOpenClawState({ silent = false } = {}) {
     const config = getOpenClawConfig();
-    const [snapshot, health] = await Promise.all([
+    const [snapshot, health, gatewayStatus] = await Promise.all([
       fetchOpenClawState(config),
-      probeOpenClaw(config).catch(() => null)
+      probeOpenClaw(config).catch(() => null),
+      fetchOpenClawGatewayStatus(config).catch(() => null)
     ]);
     openClawPollFailures = 0;
+    PBK.state.openclawGatewayStatus = gatewayStatus;
     renderOpenClawState(snapshot);
     const connected = saveOpenClawConfig({
       ...config,
@@ -19308,12 +19327,32 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       clearTimeout(openClawRealtimeTimer);
       openClawRealtimeTimer = null;
     }
+    if (openClawRealtimeHeartbeatTimer) {
+      clearInterval(openClawRealtimeHeartbeatTimer);
+      openClawRealtimeHeartbeatTimer = null;
+    }
     if (openClawRealtimeSocket) {
       openClawRealtimeSocket.onclose = null;
       openClawRealtimeSocket.onerror = null;
       openClawRealtimeSocket.close();
       openClawRealtimeSocket = null;
     }
+  }
+
+  function startOpenClawRealtimeHeartbeat() {
+    if (openClawRealtimeHeartbeatTimer) clearInterval(openClawRealtimeHeartbeatTimer);
+    openClawRealtimeHeartbeatTimer = setInterval(() => {
+      if (!openClawRealtimeSocket || openClawRealtimeSocket.readyState !== WebSocket.OPEN) {
+        clearInterval(openClawRealtimeHeartbeatTimer);
+        openClawRealtimeHeartbeatTimer = null;
+        return;
+      }
+      try {
+        openClawRealtimeSocket.send(JSON.stringify({ type: 'ping', at: new Date().toISOString() }));
+      } catch {
+        openClawRealtimeSocket?.close();
+      }
+    }, 20000);
   }
 
   function scheduleOpenClawRealtimeReconnect(delay = null) {
@@ -19385,6 +19424,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     openClawRealtimeSocket.onopen = () => {
       openClawRealtimeAttempts = 0;
       openClawRealtimeSocket?.send(JSON.stringify({ type: 'ping', at: new Date().toISOString() }));
+      startOpenClawRealtimeHeartbeat();
       const current = getOpenClawConfig();
       saveOpenClawConfig({
         ...current,
@@ -19404,6 +19444,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
 
     openClawRealtimeSocket.onclose = () => {
+      if (openClawRealtimeHeartbeatTimer) {
+        clearInterval(openClawRealtimeHeartbeatTimer);
+        openClawRealtimeHeartbeatTimer = null;
+      }
       openClawRealtimeSocket = null;
       openClawRealtimeAttempts += 1;
       scheduleOpenClawRealtimeReconnect();
@@ -21751,12 +21795,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     page.querySelector('[data-detail-channel]').innerHTML = renderCampaignBadge(campaign.channel);
     page.querySelector('[data-detail-status]').innerHTML = renderCampaignStatus(campaign.status);
     page.querySelector('[data-detail-title]').innerHTML = stylizeCampaignName(campaign);
-    page.querySelector('[data-detail-meta]').innerHTML = [
-      `${campaignProviderForChannel(campaign.channel)} provider: ${campaign.provider}`,
-      `Owner: ${campaign.owner || 'PBK'}`,
-      `Template: ${campaign.templateId || 'pending'}`,
-      `Mode: approval-gated`
-    ].map((item) => `<span>${escapeHtml(item)}</span>`).join('<span>-</span>');
+    const detailMeta = page.querySelector('[data-detail-meta]');
+    if (detailMeta) {
+      detailMeta.innerHTML = '';
+      detailMeta.hidden = true;
+    }
     page.querySelector('[data-detail-stats]').innerHTML = (campaign.detailStats || []).map(([label, value, delta, tone]) => `
       <div class="cd-stat"><div class="l">${escapeHtml(label)}</div><div class="v ${escapeHtml(tone === 'good' ? 'good' : tone === 'warn' ? 'warn' : '')}">${escapeHtml(value)}</div><div class="delta ${escapeHtml(tone === 'up' ? 'up' : '')}">${escapeHtml(delta || '')}</div></div>
     `).join('');
@@ -22732,6 +22775,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           event.stopPropagation();
           const leadId = action.dataset.campaignRemoveLeadId || action.closest('[data-campaign-lead-id]')?.dataset.campaignLeadId || '';
           removeCampaignLeadLocally(campaign, leadId);
+          return;
+        }
+        if (value === 'open-lead') {
+          event.preventDefault();
+          event.stopPropagation();
+          const leadId = action.closest('[data-campaign-lead-id]')?.dataset.campaignLeadId || '';
+          openLeadDetail(leadId);
           return;
         }
         handleCampaignAction(value, campaign);
@@ -28174,6 +28224,33 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     throw lastError || new Error('OpenClaw tooling endpoint did not respond.');
   }
 
+  async function fetchOpenClawGatewayStatus(config = getOpenClawConfig()) {
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+
+    const candidates = [
+      `${base}/api/gateway/status?force=0`,
+      `${base}/api/openclaw/gateway/status?force=0`
+    ];
+
+    let lastError = null;
+    for (const url of candidates) {
+      try {
+        const response = await fetchWithTimeout(url, {
+          headers: buildOpenClawHeaders(config)
+        }, 5000);
+        const type = response.headers.get('content-type') || '';
+        const body = type.includes('json') ? await response.json() : await response.text();
+        if (!response.ok && !body?.gateway) throw new Error(`${response.status} ${response.statusText}`);
+        return body?.gateway || body || null;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('OpenClaw gateway status endpoint did not respond.');
+  }
+
   function ensureProviderRow(listEl, key, label) {
     if (!listEl) return null;
     let row = listEl.querySelector(`.settings-providers-row[data-provider="${key}"]`);
@@ -28258,6 +28335,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     const providerLabels = {
+      openclawGateway: 'OpenClaw Brain Gateway',
       telnyx: 'Telnyx',
       instantly: 'Instantly',
       deepgram: 'Deepgram',
@@ -28275,7 +28353,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       render: 'Render'
     };
 
-    const order = ['telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
+    const gatewayStatus = PBK.state.openclawGatewayStatus || null;
+    const runtimeProviders = {
+      ...(providers || {}),
+      ...(gatewayStatus ? {
+        openclawGateway: {
+          configured: gatewayStatus.configured,
+          ready: gatewayStatus.ready,
+          note: gatewayStatus.note || '',
+          latencyMs: gatewayStatus.websocket?.ok ? gatewayStatus.websocket.latencyMs : gatewayStatus.http?.latencyMs,
+          missing: gatewayStatus.ready ? [] : [gatewayStatus.note || 'Gateway probe pending'].filter(Boolean)
+        }
+      } : {})
+    };
+
+    const order = ['openclawGateway', 'telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
     const optionalProviders = new Set(['batchdata']);
     const coreOrder = order.filter((key) => !optionalProviders.has(key));
     const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
@@ -28305,19 +28397,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return '';
     };
 
-    if (!providers) {
+    if (!providers && !gatewayStatus) {
       if (quotaEl) quotaEl.textContent = 'Quota and delivery counters appear here once the bridge responds.';
       if (toolingEl) toolingEl.textContent = 'Advanced tooling readiness appears here once the bridge responds.';
       return;
     }
 
-    const coreVisibleOrder = coreOrder.filter((key) => providers?.[key]);
+    const coreVisibleOrder = coreOrder.filter((key) => runtimeProviders?.[key]);
     const coreVisibleTotal = coreVisibleOrder.length || coreOrder.length;
     let coreLiveCount = 0;
     let coreConfiguredCount = 0;
 
     order.forEach((key) => {
-      const meta = providers?.[key];
+      const meta = runtimeProviders?.[key];
       if (!meta) return;
       const row = ensureProviderRow(listEl, key, providerLabels[key] || key);
       if (!row) return;
@@ -28357,6 +28449,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = 'Live - current web search ready';
         } else if (key === 'render') {
           label = 'Live - deploy control ready';
+        } else if (key === 'openclawGateway') {
+          label = meta.latencyMs ? `Live - gateway ${Math.round(meta.latencyMs)}ms` : 'Live - gateway connected';
         }
       } else if (isConfigured) {
         state = 'warning';
@@ -28370,6 +28464,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = hint ? `Configured · ${hint}` : 'Configured · awaiting quota check';
         } else if (key === 'render') {
           label = hint ? `Configured · ${hint}` : 'Configured · awaiting deploy check';
+        } else if (key === 'openclawGateway') {
+          label = meta.note || hint || 'Configured - gateway probe retrying';
         } else {
           const prefix = 'Configured · not ready';
           label = hint ? `${prefix} · ${hint}` : prefix;
@@ -28377,7 +28473,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       } else if (isOptional) {
         label = hint ? `Optional setup - ${hint}` : 'Optional setup';
       } else {
-        label = hint ? `Not configured · ${hint}` : 'Not configured';
+        label = meta.note || (hint ? `Not configured - ${hint}` : 'Not configured');
       }
 
       row.dataset.state = state;
@@ -28389,7 +28485,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (coreLiveCount === 0 && coreConfiguredCount === 0) {
         summaryEl.textContent = 'Core providers not configured';
       } else if (coreLiveCount === coreVisibleTotal) {
-        const optionalReady = order.filter((key) => optionalProviders.has(key) && providers?.[key]?.ready).length;
+        const optionalReady = order.filter((key) => optionalProviders.has(key) && runtimeProviders?.[key]?.ready).length;
         summaryEl.textContent = optionalReady ? `Core live + ${optionalReady} optional` : 'Core providers live';
       } else {
         summaryEl.textContent = `${coreLiveCount} of ${coreVisibleTotal} core live - ${coreVisibleTotal - coreLiveCount} need setup`;
@@ -28397,7 +28493,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     if (noteEl) {
-      const optionalMissing = order.some((key) => optionalProviders.has(key) && providers?.[key] && !providers[key].ready);
+      const optionalMissing = order.some((key) => optionalProviders.has(key) && runtimeProviders?.[key] && !runtimeProviders[key].ready);
       if (coreLiveCount === coreVisibleTotal && optionalMissing) {
         noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers can be added later in Render.';
       } else if (coreLiveCount === coreVisibleTotal) {
@@ -28413,7 +28509,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
     if (toolingEl) {
       const toolingSummary = buildToolingSummary(tooling);
-      toolingEl.textContent = toolingSummary || 'Advanced tooling readiness will appear after the next bridge sync.';
+      const gatewaySummary = gatewayStatus
+        ? `OpenClaw gateway ${gatewayStatus.ready ? 'healthy' : 'retrying'} - ${gatewayStatus.note || 'probe pending'}`
+        : '';
+      toolingEl.textContent = [gatewaySummary, toolingSummary].filter(Boolean).join(' | ') || 'Advanced tooling readiness will appear after the next bridge sync.';
     }
   };
 
@@ -28493,6 +28592,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
       const summary = formatApprovalSummary(approval);
+      const bantReviewButton = shouldShowApprovalBantCheck(type, approval)
+        ? '<button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
+        : '';
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
         approval.offerPrice ? `Offer ${escapeHtml(money(approval.offerPrice))}` : '',
@@ -28513,7 +28615,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
             <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
             <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>
+            ${bantReviewButton}
             <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
             <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
@@ -28675,14 +28777,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return PBK.state.openclawRuntime || {};
     }
 
-    const [snapshot, quotas, tooling] = await Promise.all([
+    const [snapshot, quotas, tooling, gatewayStatus] = await Promise.all([
       fetchOpenClawState(config),
       fetchOpenClawQuotas(config).catch(() => null),
-      fetchOpenClawToolingStatus(config).catch(() => null)
+      fetchOpenClawToolingStatus(config).catch(() => null),
+      fetchOpenClawGatewayStatus(config).catch(() => null)
     ]);
     openClawPollFailures = 0;
     PBK.state.openclawQuotas = quotas;
     PBK.state.openclawTooling = tooling;
+    PBK.state.openclawGatewayStatus = gatewayStatus;
     renderOpenClawState(snapshot);
     const connected = saveOpenClawConfig({
       ...config,
@@ -29628,7 +29732,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-layout {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) !important;
     height: 100% !important;
     max-height: 100% !important;
@@ -29677,28 +29781,36 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-mobile-back {
-    display: inline-flex !important;
-  }
-
-  body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .inbox-sidebar {
-    display: flex !important;
-  }
-
-  body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .ib-convo {
     display: none !important;
-  }
-
-  body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .inbox-sidebar {
-    display: none !important;
-  }
-
-  body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .ib-convo {
-    display: flex !important;
   }
 
   @media (max-width: 720px) {
     body[data-active-page="inbox"] .page[data-page="inbox"].active {
       height: calc(var(--pbk-vh-px, 100dvh) - var(--pbk-topbar-px, 56px) - var(--pbk-mobile-nav-px, 64px));
+    }
+
+    body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-layout {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    body[data-active-page="inbox"] .page[data-page="inbox"] .inbox-mobile-back {
+      display: inline-flex !important;
+    }
+
+    body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .inbox-sidebar {
+      display: flex !important;
+    }
+
+    body[data-active-page="inbox"][data-inbox-mobile-mode="list"] .page[data-page="inbox"] .ib-convo {
+      display: none !important;
+    }
+
+    body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .inbox-sidebar {
+      display: none !important;
+    }
+
+    body[data-active-page="inbox"][data-inbox-mobile-mode="conversation"] .page[data-page="inbox"] .ib-convo {
+      display: flex !important;
     }
 
     body[data-active-page="inbox"] .page[data-page="inbox"] .convo-actions {

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import chromium from '@sparticuz/chromium';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer-core';
 import pg from 'pg';
 import {
@@ -362,6 +362,58 @@ const BRAIN_BLOG_DEFAULT_FEEDS = [
   },
 ];
 
+const OPENCLAW_GATEWAY_URL = String(
+  process.env.OPENCLAW_GATEWAY_URL
+    || process.env.OPENCLAW_GATEWAY_WS_URL
+    || process.env.PBK_OPENCLAW_GATEWAY_URL
+    || 'ws://127.0.0.1:18789',
+)
+  .trim()
+  .replace(/\/+$/g, '');
+const OPENCLAW_GATEWAY_HTTP_URL = String(
+  process.env.OPENCLAW_GATEWAY_HTTP_URL
+    || process.env.PBK_OPENCLAW_GATEWAY_HTTP_URL
+    || '',
+)
+  .trim()
+  .replace(/\/+$/g, '');
+const OPENCLAW_GATEWAY_TOKEN = String(
+  process.env.OPENCLAW_GATEWAY_TOKEN
+    || process.env.PBK_OPENCLAW_GATEWAY_TOKEN
+    || '',
+).trim();
+const OPENCLAW_TIMEOUT_MS = Math.max(
+  30000,
+  Number(process.env.OPENCLAW_TIMEOUT_MS || process.env.PBK_OPENCLAW_TIMEOUT_MS || 300000),
+);
+const OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS = Math.max(
+  5000,
+  Number(
+    process.env.OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS
+      || process.env.PBK_OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS
+      || 30000,
+  ),
+);
+const OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS = Math.max(
+  1000,
+  Math.min(
+    OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS,
+    Number(process.env.PBK_OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS || 4000),
+  ),
+);
+const OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS = Math.max(
+  5000,
+  Number(process.env.OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS || process.env.PBK_OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS || 15000),
+);
+const OPENCLAW_GATEWAY_HEARTBEAT_TIMEOUT_MS = Math.max(
+  OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS,
+  Number(process.env.OPENCLAW_GATEWAY_HEARTBEAT_TIMEOUT_MS || process.env.PBK_OPENCLAW_GATEWAY_HEARTBEAT_TIMEOUT_MS || 30000),
+);
+const OPENCLAW_GATEWAY_STATUS_TTL_MS = Math.max(
+  5000,
+  Number(process.env.PBK_OPENCLAW_GATEWAY_STATUS_TTL_MS || 15000),
+);
+
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
 const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
@@ -505,6 +557,12 @@ const TOOL_NAMES = [
 
 const runtimeBrowserSockets = new Set();
 let runtimeBroadcastTimer = null;
+const runtimeWebSocketStats = {
+  lastOpenAt: '',
+  lastMessageAt: '',
+  lastCloseAt: '',
+  staleTerminations: 0,
+};
 
 function sendRuntimeSocketMessage(socket, payload = {}) {
   if (!socket || socket.readyState !== 1) return false;
@@ -1004,6 +1062,7 @@ function getRuntimeMeta() {
     stateBackend: STATE_BACKEND,
     productionReady: !IS_HOSTED || warnings.length === 0,
     providers: {
+      openclawGateway: getOpenClawGatewayHealthComponent(),
       telnyx: getTelnyxProviderMeta(),
       deepgram: getDeepgramProviderMeta(process.env),
       browserVoice: getBrowserVoiceProviderMeta(),
@@ -1100,6 +1159,7 @@ function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
       revision: BUILD_REVISION,
       note: `${runtimeMeta.mode} runtime using ${runtimeMeta.stateBackend} state.`,
     },
+    openclawGateway: getOpenClawGatewayHealthComponent(),
     postgres: {
       label: 'Postgres state backend',
       status: STATE_BACKEND === 'postgres' ? 'up' : 'file_mode',
@@ -1210,6 +1270,268 @@ function jsonStringify(value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let openClawGatewayStatusCache = null;
+let openClawGatewayStatusCheckedAt = 0;
+let openClawGatewayStatusPromise = null;
+
+function redactGatewayUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    parsed.username = '';
+    parsed.password = '';
+    for (const key of ['token', 'api_key', 'apikey', 'key', 'auth', 'authorization']) {
+      parsed.searchParams.delete(key);
+    }
+    return parsed.toString().replace(/\/+$/g, '');
+  } catch {
+    return raw.replace(/(token|api_key|apikey|key|auth|authorization)=([^&\s]+)/gi, '$1=[redacted]');
+  }
+}
+
+function buildGatewayWsUrl() {
+  const raw = OPENCLAW_GATEWAY_URL || '';
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+  }
+  return raw;
+}
+
+function buildGatewayHttpUrl() {
+  const explicit = OPENCLAW_GATEWAY_HTTP_URL || '';
+  if (explicit) return explicit;
+  const wsUrl = buildGatewayWsUrl();
+  if (!wsUrl) return '';
+  if (/^wss?:\/\//i.test(wsUrl)) {
+    return wsUrl.replace(/^ws:/i, 'http:').replace(/^wss:/i, 'https:');
+  }
+  return '';
+}
+
+async function fetchGatewayProbe(url, timeoutMs = OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: OPENCLAW_GATEWAY_TOKEN ? { Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}` } : {},
+      signal: controller.signal,
+    });
+    const contentType = response.headers.get('content-type') || '';
+    const body = contentType.includes('json')
+      ? await response.json().catch(() => null)
+      : await response.text().catch(() => '');
+    return {
+      ok: response.ok,
+      status: response.status,
+      latencyMs: Date.now() - startedAt,
+      bodyKind: contentType.includes('json') ? 'json' : 'text',
+      service: typeof body === 'object' && body ? body.service || body.name || '' : '',
+      revision: typeof body === 'object' && body ? body.revision || body.version || '' : '',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      latencyMs: Date.now() - startedAt,
+      error: error?.name === 'AbortError' ? `timeout_${timeoutMs}ms` : (error?.message || String(error)),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function probeOpenClawGatewayHttp(timeoutMs = OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) {
+  const base = buildGatewayHttpUrl();
+  if (!base) {
+    return { ok: false, configured: false, error: 'OPENCLAW_GATEWAY_HTTP_URL not configured' };
+  }
+  const candidates = ['/health', '/status', '/api/health', '/api/status', '']
+    .map((suffix) => `${base}${suffix}`)
+    .filter(Boolean);
+  const attempts = await Promise.all(
+    candidates.map(async (url) => ({ url: redactGatewayUrl(url), ...(await fetchGatewayProbe(url, timeoutMs)) })),
+  );
+  const winner = attempts.find((result) => result.ok);
+  if (winner) {
+    return {
+      ok: true,
+      configured: true,
+      url: winner.url,
+      latencyMs: winner.latencyMs,
+      status: winner.status,
+      service: winner.service,
+      revision: winner.revision,
+      attempts: attempts.slice(0, 3),
+    };
+  }
+  const last = attempts.at(-1) || {};
+  return {
+    ok: false,
+    configured: true,
+    url: redactGatewayUrl(base),
+    latencyMs: Number(last.latencyMs || 0),
+    status: Number(last.status || 0),
+    error: last.error || 'gateway_http_probe_failed',
+    attempts: attempts.slice(0, 3),
+  };
+}
+
+function probeOpenClawGatewaySocket(timeoutMs = OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS) {
+  const wsUrl = buildGatewayWsUrl();
+  if (!wsUrl) {
+    return Promise.resolve({ ok: false, configured: false, error: 'OPENCLAW_GATEWAY_URL not configured' });
+  }
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let settled = false;
+    let socket = null;
+    const finish = (result = {}) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket?.terminate?.();
+      } catch {
+        // Best-effort probe cleanup only.
+      }
+      resolve({
+        configured: true,
+        url: redactGatewayUrl(wsUrl),
+        latencyMs: Date.now() - startedAt,
+        ...result,
+      });
+    };
+    const timer = setTimeout(() => {
+      finish({ ok: false, readyState: socket?.readyState ?? WebSocket.CLOSED, error: `handshake_timeout_${timeoutMs}ms` });
+    }, timeoutMs);
+
+    try {
+      socket = new WebSocket(wsUrl, {
+        headers: OPENCLAW_GATEWAY_TOKEN ? { Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}` } : {},
+        handshakeTimeout: timeoutMs,
+      });
+      socket.once('open', () => {
+        if (OPENCLAW_GATEWAY_TOKEN) {
+          try {
+            socket.send(JSON.stringify({ type: 'connect', token: OPENCLAW_GATEWAY_TOKEN }));
+          } catch {
+            // Token send is non-fatal; a successful WebSocket handshake is the connectivity signal.
+          }
+        }
+        finish({ ok: true, readyState: WebSocket.OPEN });
+      });
+      socket.once('error', (error) => {
+        finish({ ok: false, readyState: socket?.readyState ?? WebSocket.CLOSED, error: error?.message || String(error) });
+      });
+      socket.once('close', (code, reason) => {
+        if (settled) return;
+        finish({
+          ok: false,
+          readyState: WebSocket.CLOSED,
+          closeCode: code,
+          error: String(reason || '').trim() || `closed_${code || 'unknown'}`,
+        });
+      });
+    } catch (error) {
+      finish({ ok: false, readyState: WebSocket.CLOSED, error: error?.message || String(error) });
+    }
+  });
+}
+
+async function buildOpenClawGatewayStatus({ force = false, timeoutMs = OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS } = {}) {
+  const now = Date.now();
+  if (!force && openClawGatewayStatusCache && now - openClawGatewayStatusCheckedAt < OPENCLAW_GATEWAY_STATUS_TTL_MS) {
+    return openClawGatewayStatusCache;
+  }
+  if (openClawGatewayStatusPromise) return openClawGatewayStatusPromise;
+
+  openClawGatewayStatusPromise = (async () => {
+    const httpTimeoutMs = Math.max(1000, Math.min(timeoutMs, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS));
+    const wsTimeoutMs = Math.max(5000, Math.min(OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS, timeoutMs * 2));
+    const [http, websocket] = await Promise.all([
+      probeOpenClawGatewayHttp(httpTimeoutMs),
+      probeOpenClawGatewaySocket(wsTimeoutMs),
+    ]);
+    const ready = Boolean(http.ok || websocket.ok);
+    const note = ready
+      ? `${websocket.ok ? 'WebSocket' : 'HTTP'} gateway responded in ${Math.min(
+          Number(websocket.latencyMs || Infinity),
+          Number(http.latencyMs || Infinity),
+        )}ms.`
+      : `${websocket.error || http.error || 'OpenClaw gateway did not respond'}; bridge keeps retrying.`;
+    const status = {
+      ok: ready,
+      ready,
+      configured: Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
+      checkedAt: isoNow(),
+      mode: RUNTIME_MODE,
+      timeoutMs: OPENCLAW_TIMEOUT_MS,
+      handshakeTimeoutMs: OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS,
+      heartbeatIntervalMs: OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS,
+      heartbeatTimeoutMs: OPENCLAW_GATEWAY_HEARTBEAT_TIMEOUT_MS,
+      tokenConfigured: Boolean(OPENCLAW_GATEWAY_TOKEN),
+      websocket,
+      http,
+      note,
+      runtime: {
+        uptimeSeconds: Math.round(process.uptime()),
+        memory: process.memoryUsage(),
+      },
+      runtimeWebSocket: {
+        clients: runtimeBrowserSockets.size,
+        heartbeatIntervalMs: OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS,
+        heartbeatTimeoutMs: OPENCLAW_GATEWAY_HEARTBEAT_TIMEOUT_MS,
+        lastOpenAt: runtimeWebSocketStats.lastOpenAt,
+        lastMessageAt: runtimeWebSocketStats.lastMessageAt,
+        lastCloseAt: runtimeWebSocketStats.lastCloseAt,
+        staleTerminations: runtimeWebSocketStats.staleTerminations,
+      },
+    };
+    openClawGatewayStatusCache = status;
+    openClawGatewayStatusCheckedAt = Date.now();
+    return status;
+  })();
+
+  try {
+    return await openClawGatewayStatusPromise;
+  } finally {
+    openClawGatewayStatusPromise = null;
+  }
+}
+
+function getOpenClawGatewayHealthComponent() {
+  const cached = openClawGatewayStatusCache;
+  const configured = Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL);
+  if (!cached) {
+    return {
+      label: 'OpenClaw brain gateway',
+      status: configured ? 'unknown' : 'optional',
+      ready: false,
+      configured,
+      optional: true,
+      endpoint: redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
+      note: configured
+        ? 'Gateway probe has not run yet. Call /api/gateway/status or open the dashboard to force a probe.'
+        : 'Set OPENCLAW_GATEWAY_URL to monitor the local OpenClaw gateway.',
+    };
+  }
+  return {
+    label: 'OpenClaw brain gateway',
+    status: cached.ready ? 'up' : 'degraded',
+    ready: cached.ready,
+    configured: cached.configured,
+    optional: true,
+    endpoint: cached.websocket?.url || cached.http?.url || redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
+    checkedAt: cached.checkedAt,
+    latencyMs: cached.websocket?.ok ? cached.websocket.latencyMs : cached.http?.latencyMs,
+    note: cached.note,
+  };
 }
 
 function getSecurityMeta() {
@@ -26070,8 +26392,12 @@ function buildStateSnapshot() {
     status: {
       ...state.status,
       providers: {
+        openclawGateway: getOpenClawGatewayHealthComponent(),
         telnyx: getTelnyxProviderMeta(),
         instantly: getInstantlyProviderMeta(),
+        deepgram: getDeepgramProviderMeta(process.env),
+        browserVoice: getBrowserVoiceProviderMeta(),
+        elevenLabs: getElevenLabsProviderMeta(),
         openAiWebSearch: getOpenAiWebSearchProviderMeta(),
         deepSeek: getDeepSeekProviderMeta(),
         googleCalendar: getGoogleCalendarProviderMeta(),
@@ -27133,8 +27459,11 @@ async function handleBrowserVoiceSocket(socket, request) {
     } catch {
       // Best-effort close.
     }
-    const transcriptText = session.transcript
-      .filter((item) => item.transcript && (item.isFinal || item.speechFinal))
+    const finalTranscriptItems = session.transcript.filter((item) => item.transcript && (item.isFinal || item.speechFinal));
+    const transcriptItems = finalTranscriptItems.length
+      ? finalTranscriptItems
+      : session.transcript.filter((item) => item.transcript);
+    const transcriptText = transcriptItems
       .map((item) => item.transcript)
       .join(' ')
       .replace(/\s+/g, ' ')
@@ -27167,7 +27496,7 @@ async function handleBrowserVoiceSocket(socket, request) {
           error: error?.message || 'Agent pipeline failed.',
         });
       }
-      upsertMessage(state, createMessageRecord({
+      const message = createMessageRecord({
         id: `msg-browser-voice-${slugify(session.id)}-${Date.now()}`,
         leadId: session.leadId,
         leadName: session.leadName || 'Ava voice command',
@@ -27183,8 +27512,29 @@ async function handleBrowserVoiceSocket(socket, request) {
           frameCount: session.frameCount,
           reply,
           pipeline,
+          transcriptFinal: finalTranscriptItems.length > 0,
         },
-      }));
+      });
+      upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
+      await addPbkMemoryRecord({
+        tenantId: 'pbk',
+        leadId: session.leadId,
+        agentName: 'Ava',
+        memoryType: 'call_transcript',
+        content: transcriptText,
+        importance: 0.74,
+        source: 'browser-voice-deepgram',
+        sourceId: session.id,
+        metadata: {
+          channel: 'browser_voice',
+          provider: 'Deepgram',
+          sentiment: session.sentiment,
+          pipeline,
+          transcriptFinal: finalTranscriptItems.length > 0,
+          reason,
+        },
+      });
       addActivity(state, makeActivity({
         actor: session.actor || 'PBK dashboard',
         category: 'VOICE',
@@ -27331,8 +27681,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       // Closing best-effort; Telnyx already ended the stream.
     }
 
-    const transcriptText = session.transcript
-      .filter((item) => item.transcript && (item.isFinal || item.speechFinal))
+    const finalTranscriptItems = session.transcript.filter((item) => item.transcript && (item.isFinal || item.speechFinal));
+    const transcriptItems = finalTranscriptItems.length
+      ? finalTranscriptItems
+      : session.transcript.filter((item) => item.transcript);
+    const transcriptText = transcriptItems
       .map((item) => item.transcript)
       .join(' ')
       .replace(/\s+/g, ' ')
@@ -27359,11 +27712,52 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         startedAt: session.startedAt,
         endedAt: isoNow(),
         sentiment: session.sentiment,
+        transcriptFinal: finalTranscriptItems.length > 0,
         transcript: session.transcript.slice(-50),
       },
     });
     upsertMessage(state, message);
     await persistUnifiedMessageRecord(message);
+
+    if (transcriptText) {
+      const classification = classifyPbkIntent(transcriptText);
+      await recordPbkIntentEvent({
+        tenantId: 'pbk',
+        leadId: message.leadId || contextCall?.leadId || '',
+        callId: message.callId || session.callId || contextCall?.id || '',
+        text: transcriptText,
+        metadata: {
+          source: 'telnyx-media-stream',
+          provider: 'Deepgram',
+          streamId: session.streamId,
+          frameCount: session.frameCount,
+          reason,
+          sentiment: session.sentiment,
+          transcriptFinal: finalTranscriptItems.length > 0,
+        },
+      }, classification);
+      await addPbkMemoryRecord({
+        tenantId: 'pbk',
+        leadId: message.leadId || contextCall?.leadId || '',
+        agentName: 'Ava',
+        memoryType: 'call_transcript',
+        content: transcriptText,
+        importance: 0.86,
+        source: 'telnyx-deepgram',
+        sourceId: message.callId || message.id,
+        metadata: {
+          channel: 'phone',
+          provider: 'Deepgram',
+          streamId: session.streamId,
+          callId: message.callId || session.callId || contextCall?.id || '',
+          reason,
+          sentiment: session.sentiment,
+          intent: classification.intent,
+          recommendedAction: classification.recommendedAction,
+          transcriptFinal: finalTranscriptItems.length > 0,
+        },
+      });
+    }
 
     if (contextCall) {
       upsertCall(state, {
@@ -27550,10 +27944,29 @@ const server = createServer(async (request, response) => {
           productionReady: runtimeMeta.productionReady,
           hosted: runtimeMeta.hosted,
           mode: runtimeMeta.mode,
+          openClawGateway: Boolean(openClawGatewayStatusCache?.ready),
         },
+        openClawGateway: getOpenClawGatewayHealthComponent(),
         runtime: runtimeMeta,
         warnings: runtimeMeta.warnings,
         lastUpdatedAt: state.status.lastUpdatedAt,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/gateway/status', '/api/openclaw/gateway/status'])) {
+      const timeoutMs = Math.max(
+        1000,
+        Math.min(
+          OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS,
+          Number(url.searchParams.get('timeoutMs') || OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS),
+        ),
+      );
+      const force = !/^(0|false|no)$/i.test(String(url.searchParams.get('force') || 'true'));
+      const gatewayStatus = await buildOpenClawGatewayStatus({ force, timeoutMs });
+      json(response, gatewayStatus.ready ? 200 : 503, {
+        ok: gatewayStatus.ready,
+        gateway: gatewayStatus,
       });
       return;
     }
@@ -31273,7 +31686,7 @@ const server = createServer(async (request, response) => {
 
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
-server.requestTimeout = 120000;
+server.requestTimeout = OPENCLAW_TIMEOUT_MS;
 server.maxRequestsPerSocket = 1000;
 
 const telnyxDeepgramWss = new WebSocketServer({ noServer: true });
@@ -31294,6 +31707,8 @@ const runtimeBrowserWss = new WebSocketServer({
   },
 });
 runtimeBrowserWss.on('connection', (socket) => {
+  socket.isAlive = true;
+  runtimeWebSocketStats.lastOpenAt = isoNow();
   runtimeBrowserSockets.add(socket);
   sendRuntimeSocketMessage(socket, {
     type: 'ready',
@@ -31307,15 +31722,45 @@ runtimeBrowserWss.on('connection', (socket) => {
     at: isoNow(),
     snapshot: buildStateSnapshot(),
   });
-  socket.on('close', () => runtimeBrowserSockets.delete(socket));
+  socket.on('pong', () => {
+    socket.isAlive = true;
+    runtimeWebSocketStats.lastMessageAt = isoNow();
+  });
+  socket.on('close', () => {
+    runtimeWebSocketStats.lastCloseAt = isoNow();
+    runtimeBrowserSockets.delete(socket);
+  });
   socket.on('error', () => runtimeBrowserSockets.delete(socket));
   socket.on('message', (raw) => {
+    runtimeWebSocketStats.lastMessageAt = isoNow();
     const message = safeJsonParse(String(raw || ''), {});
     if (message?.type === 'ping') {
       sendRuntimeSocketMessage(socket, { type: 'pong', at: isoNow() });
     }
   });
 });
+
+const runtimeWsHeartbeatTimer = setInterval(() => {
+  for (const socket of runtimeBrowserWss.clients) {
+    if (socket.isAlive === false) {
+      runtimeWebSocketStats.staleTerminations += 1;
+      runtimeBrowserSockets.delete(socket);
+      try {
+        socket.terminate();
+      } catch {
+        // Socket was already gone.
+      }
+      continue;
+    }
+    socket.isAlive = false;
+    try {
+      socket.ping();
+    } catch {
+      runtimeBrowserSockets.delete(socket);
+    }
+  }
+}, OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS);
+runtimeWsHeartbeatTimer.unref?.();
 
 server.on('upgrade', (request, socket, head) => {
   const upgradeUrl = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
@@ -31448,6 +31893,14 @@ server.listen(PORT, HOST, () => {
   prewarmVoiceProviders().catch((error) => {
     console.warn('[pbk-local-openclaw] voice provider prewarm failed:', error?.message || error);
   });
+  buildOpenClawGatewayStatus({ force: true, timeoutMs: Math.min(2500, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) })
+    .then((status) => {
+      const label = status.ready ? 'ok' : 'degraded';
+      console.log(`[pbk-local-openclaw] OpenClaw gateway probe ${label}: ${status.note}`);
+    })
+    .catch((error) => {
+      console.warn('[pbk-local-openclaw] OpenClaw gateway probe skipped:', error?.message || error);
+    });
   console.log(`[pbk-local-openclaw] listening on http://${HOST}:${PORT}`);
   console.log(`[pbk-local-openclaw] state backend: ${STATE_BACKEND}${DATABASE_URL ? ' (postgres)' : ` (file: ${STATE_FILE})`}`);
   console.log(`[pbk-local-openclaw] state file: ${STATE_FILE}`);

@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-browser-voice-webm-fix';
+const BUILD_REVISION = '2026-05-11-browser-voice-flux-v2';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -27602,6 +27602,36 @@ function normalizeDeepgramLiveSentiment(data = {}) {
   };
 }
 
+function normalizeDeepgramLiveTranscript(data = {}) {
+  const alt = data?.channel?.alternatives?.[0] || {};
+  const transcript = String(
+    alt.transcript
+      || data?.transcript
+      || data?.turn?.transcript
+      || data?.channel?.transcript
+      || '',
+  ).trim();
+  const words = Array.isArray(alt.words)
+    ? alt.words
+    : Array.isArray(data?.words)
+      ? data.words
+      : [];
+  const confidence = Number(
+    alt.confidence
+      ?? data?.confidence
+      ?? words.find((word) => Number.isFinite(Number(word?.confidence)))?.confidence,
+  );
+  const type = String(data?.type || data?.event || '').trim();
+  const isFinal = Boolean(data?.is_final || data?.isFinal || data?.final || type === 'TurnInfo');
+  const speechFinal = Boolean(data?.speech_final || data?.speechFinal || data?.end_of_turn || data?.endOfTurn || type === 'EndOfTurn');
+  return {
+    transcript,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    isFinal,
+    speechFinal,
+  };
+}
+
 const browserVoiceSessions = new Map();
 
 function pruneBrowserVoiceSessions() {
@@ -27836,24 +27866,23 @@ async function handleBrowserVoiceSocket(socket, request) {
   try {
     deepgramConnection = await createDeepgramLiveConnection({
       model: BROWSER_VOICE_DEEPGRAM_MODEL,
+      listenVersion: 'v2',
       containerizedAudio: true,
       channels: 1,
-      interimResults: true,
-      utteranceEndMs: 900,
+      eotTimeoutMs: 1200,
     }, process.env);
     deepgramConnection.on('message', (data) => {
-      if (data?.type !== 'Results') return;
-      const alt = data.channel?.alternatives?.[0] || {};
-      const transcript = String(alt.transcript || '').trim();
+      const normalized = normalizeDeepgramLiveTranscript(data);
+      const transcript = normalized.transcript;
       if (!transcript) return;
       const sentiment = normalizeDeepgramLiveSentiment(data);
       if (sentiment.pbkScore !== null) session.sentiment = sentiment;
       const detected = classifyPbkIntent(transcript);
       const item = {
         transcript,
-        confidence: Number.isFinite(Number(alt.confidence)) ? Number(alt.confidence) : null,
-        isFinal: Boolean(data.is_final),
-        speechFinal: Boolean(data.speech_final),
+        confidence: normalized.confidence,
+        isFinal: normalized.isFinal,
+        speechFinal: normalized.speechFinal,
         sentiment,
         intent: detected,
         capturedAt: isoNow(),

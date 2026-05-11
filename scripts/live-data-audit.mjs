@@ -249,8 +249,10 @@ const checks = [
     ok: /PBK_DEEPGRAM_BROWSER_LIVE_MODEL/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_MODEL/.test(bridge)
       && /containerizedAudio:\s*true/.test(bridge)
+      && /listenVersion:\s*'v2'/.test(bridge)
+      && /normalizeDeepgramLiveTranscript/.test(bridge)
       && /webm-opus-container/.test(bridge)
-      && /containerizedAudio/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
+      && /client\.listen\.v2\.connect/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
   },
   {
     name: 'Deepgram phone proof writes call transcript memory and intent analytics',

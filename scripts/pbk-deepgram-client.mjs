@@ -263,23 +263,36 @@ export async function createDeepgramLiveConnection(options = {}, env = process.e
   const config = getDeepgramConfig(env);
   const client = createDeepgramClient(env);
   const containerizedAudio = Boolean(options.containerizedAudio || options.containerized_audio);
+  const model = options.model || config.liveModel;
+  const listenVersion = String(options.listenVersion || options.listen_version || '').trim().toLowerCase();
+  const useListenV2 = listenVersion === 'v2' || /^flux-/i.test(String(model || ''));
   const params = {
-    model: options.model || config.liveModel,
-    language: options.language || config.language,
-    smart_format: String(options.smartFormat ?? options.smart_format ?? true),
-    interim_results: String(options.interimResults ?? options.interim_results ?? true),
-    punctuate: String(options.punctuate ?? true),
+    model,
     channels: String(options.channels || 1),
-    vad_events: String(options.vadEvents ?? options.vad_events ?? true),
-    utterance_end_ms: String(options.utteranceEndMs || options.utterance_end_ms || 1000),
     Authorization: `Token ${config.apiKey}`,
   };
+  if (useListenV2) {
+    if (!containerizedAudio) {
+      params.encoding = options.encoding || config.telnyxEncoding;
+      params.sample_rate = String(options.sampleRate || options.sample_rate || config.telnyxSampleRate);
+    }
+    if (options.eotThreshold || options.eot_threshold) params.eot_threshold = String(options.eotThreshold || options.eot_threshold);
+    if (options.eagerEotThreshold || options.eager_eot_threshold) params.eager_eot_threshold = String(options.eagerEotThreshold || options.eager_eot_threshold);
+    if (options.eotTimeoutMs || options.eot_timeout_ms) params.eot_timeout_ms = String(options.eotTimeoutMs || options.eot_timeout_ms);
+    return client.listen.v2.connect(params);
+  }
+
+  params.language = options.language || config.language;
+  params.smart_format = String(options.smartFormat ?? options.smart_format ?? true);
+  params.interim_results = String(options.interimResults ?? options.interim_results ?? true);
+  params.punctuate = String(options.punctuate ?? true);
+  params.vad_events = String(options.vadEvents ?? options.vad_events ?? true);
+  params.utterance_end_ms = String(options.utteranceEndMs || options.utterance_end_ms || 1000);
   if (!containerizedAudio) {
     params.encoding = options.encoding || config.telnyxEncoding;
     params.sample_rate = String(options.sampleRate || options.sample_rate || config.telnyxSampleRate);
   }
-  const connection = await client.listen.v1.connect(params);
-  return connection;
+  return client.listen.v1.connect(params);
 }
 
 export function sendDeepgramAudio(connection, bytes) {

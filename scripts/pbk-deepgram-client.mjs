@@ -1,4 +1,5 @@
 import { DeepgramClient } from '@deepgram/sdk';
+import { WebSocket } from 'ws';
 
 export const DEEPGRAM_SAMPLE_URL = 'https://static.deepgram.com/examples/Bueller-Life-moves-pretty-fast.wav';
 
@@ -69,6 +70,81 @@ export function createDeepgramClient(env = process.env) {
     apiKey: config.apiKey,
     ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
   });
+}
+
+function compactQuery(params = {}) {
+  const entries = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => [key, String(value)]);
+  return new URLSearchParams(entries).toString();
+}
+
+function createManualDeepgramLiveConnection({ url, headers = {} }) {
+  let socket = null;
+  const handlers = new Map();
+  const emit = (event, payload) => {
+    const handler = handlers.get(event);
+    if (typeof handler === 'function') handler(payload);
+  };
+  return {
+    get readyState() {
+      return socket?.readyState;
+    },
+    on(event, callback) {
+      handlers.set(event, callback);
+    },
+    connect() {
+      if (socket && socket.readyState < WebSocket.CLOSING) return this;
+      socket = new WebSocket(url, { headers });
+      socket.on('open', () => emit('open'));
+      socket.on('message', (raw) => {
+        const text = raw.toString('utf8');
+        try {
+          emit('message', JSON.parse(text));
+        } catch {
+          emit('message', text);
+        }
+      });
+      socket.on('error', (error) => emit('error', error));
+      socket.on('close', (code, reason) => emit('close', { code, reason: reason?.toString?.() || '' }));
+      return this;
+    },
+    waitForOpen() {
+      if (socket?.readyState === WebSocket.OPEN) return Promise.resolve(socket);
+      return new Promise((resolve, reject) => {
+        const cleanup = () => {
+          socket?.off?.('open', onOpen);
+          socket?.off?.('error', onError);
+          socket?.off?.('unexpected-response', onUnexpectedResponse);
+        };
+        const onOpen = () => {
+          cleanup();
+          resolve(socket);
+        };
+        const onError = (error) => {
+          cleanup();
+          reject(error);
+        };
+        const onUnexpectedResponse = (_request, response) => {
+          cleanup();
+          reject(new Error(`Unexpected server response: ${response.statusCode}`));
+        };
+        socket?.once?.('open', onOpen);
+        socket?.once?.('error', onError);
+        socket?.once?.('unexpected-response', onUnexpectedResponse);
+      });
+    },
+    sendMedia(bytes) {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(bytes);
+    },
+    close() {
+      try {
+        socket?.close?.(1000, 'closed');
+      } catch {
+        // Ignore close races during reconnect/error cleanup.
+      }
+    },
+  };
 }
 
 function assertHttpUrl(value = '') {
@@ -261,6 +337,36 @@ export async function transcribeDeepgramFile(options = {}, env = process.env) {
 
 export async function createDeepgramLiveConnection(options = {}, env = process.env) {
   const config = getDeepgramConfig(env);
+  if (options.manualWebSocket || options.manual_websocket) {
+    const model = options.model || config.liveModel;
+    const listenVersion = String(options.listenVersion || options.listen_version || '').trim().toLowerCase();
+    const useListenV2 = listenVersion === 'v2' || /^flux-/i.test(String(model || ''));
+    const baseUrl = (config.baseUrl || 'wss://api.deepgram.com').replace(/^http/i, 'ws').replace(/\/+$/, '');
+    const path = useListenV2 ? '/v2/listen' : '/v1/listen';
+    const query = {
+      model,
+      ...(useListenV2
+        ? {}
+        : {
+          language: options.language || config.language,
+          smart_format: String(options.smartFormat ?? options.smart_format ?? true),
+          interim_results: String(options.interimResults ?? options.interim_results ?? true),
+          punctuate: String(options.punctuate ?? true),
+          vad_events: String(options.vadEvents ?? options.vad_events ?? true),
+          utterance_end_ms: String(options.utteranceEndMs || options.utterance_end_ms || 1000),
+        }),
+    };
+    if (!Boolean(options.containerizedAudio || options.containerized_audio)) {
+      query.encoding = options.encoding || config.telnyxEncoding;
+      query.sample_rate = String(options.sampleRate || options.sample_rate || config.telnyxSampleRate);
+    }
+    const queryString = compactQuery(query);
+    return createManualDeepgramLiveConnection({
+      url: `${baseUrl}${path}${queryString ? `?${queryString}` : ''}`,
+      headers: { Authorization: `Token ${config.apiKey}` },
+    });
+  }
+
   const client = createDeepgramClient(env);
   const containerizedAudio = Boolean(options.containerizedAudio || options.containerized_audio);
   const model = options.model || config.liveModel;
@@ -269,10 +375,7 @@ export async function createDeepgramLiveConnection(options = {}, env = process.e
   const params = {
     model,
     channels: String(options.channels || 1),
-    // Deepgram SDK v5 live sockets expect the raw API key in Authorization.
-    // HTTP transcription calls use the SDK auth provider, but WebSocket connect
-    // only forwards this explicit value.
-    Authorization: config.apiKey,
+    Authorization: `Token ${config.apiKey}`,
   };
   if (useListenV2) {
     if (!containerizedAudio) {

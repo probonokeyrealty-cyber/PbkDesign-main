@@ -252,10 +252,11 @@ const checks = [
       && /listenVersion:\s*'v2'/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL/.test(bridge)
       && /deepgram-nova-v1-fallback/.test(bridge)
+      && /manualWebSocket:\s*true/.test(bridge)
       && /normalizeDeepgramLiveTranscript/.test(bridge)
       && /webm-opus-container/.test(bridge)
-      && /client\.listen\.v2\.connect/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8'))
-      && /Authorization:\s*config\.apiKey/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
+      && /createManualDeepgramLiveConnection/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8'))
+      && /Authorization:\s*`Token \$\{config\.apiKey\}`/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
   },
   {
     name: 'Deepgram phone proof writes call transcript memory and intent analytics',

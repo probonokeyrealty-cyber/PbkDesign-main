@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-browser-voice-live-auth';
+const BUILD_REVISION = '2026-05-11-browser-voice-direct-ws';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -27885,6 +27885,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       deepgramConnection = await openDeepgramBrowserVoiceConnection({
         model: BROWSER_VOICE_DEEPGRAM_MODEL,
         listenVersion: 'v2',
+        manualWebSocket: true,
         containerizedAudio: true,
         channels: 1,
       }, 'deepgram-flux-v2', false);
@@ -27899,6 +27900,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       deepgramConnection = await openDeepgramBrowserVoiceConnection({
         model: BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL,
         listenVersion: 'v1',
+        manualWebSocket: true,
         containerizedAudio: true,
         channels: 1,
         interimResults: true,

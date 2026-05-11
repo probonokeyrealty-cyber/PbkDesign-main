@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-hermes-suggest-only';
+const BUILD_REVISION = '2026-05-11-browser-voice-webm-fix';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -209,6 +209,7 @@ const BROWSER_VOICE_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_BROW
 const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROWSER_VOICE_SESSION_TTL_MS || 5 * 60 * 1000));
 const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
+const BROWSER_VOICE_DEEPGRAM_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || 'flux-general-en').trim();
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
@@ -1030,10 +1031,12 @@ function getBrowserVoiceProviderMeta() {
     ready: browserVoiceEnabled && deepgramMeta.ready,
     provider: 'Deepgram',
     mode: 'browser-microphone-websocket',
+    model: BROWSER_VOICE_DEEPGRAM_MODEL,
     streamPath: '/api/voice/browser/stream',
     sessionPath: '/api/voice/browser/session',
     encoding: BROWSER_VOICE_ENCODING,
     sampleRate: BROWSER_VOICE_SAMPLE_RATE,
+    audioTransport: 'webm-opus-container',
     requiresUserGesture: true,
     approvalGated: true,
     enabledBy: BROWSER_VOICE_ENABLED ? 'env' : browserVoiceEnabled ? 'runtime-settings' : 'disabled',
@@ -27832,8 +27835,8 @@ async function handleBrowserVoiceSocket(socket, request) {
 
   try {
     deepgramConnection = await createDeepgramLiveConnection({
-      encoding: BROWSER_VOICE_ENCODING,
-      sampleRate: BROWSER_VOICE_SAMPLE_RATE,
+      model: BROWSER_VOICE_DEEPGRAM_MODEL,
+      containerizedAudio: true,
       channels: 1,
       interimResults: true,
       utteranceEndMs: 900,

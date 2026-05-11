@@ -127,6 +127,10 @@ services:
         value: inbound_track
       - key: PBK_DEEPGRAM_STREAM_CODEC
         value: PCMU
+      # Browser microphone sends WebM/Opus container chunks. Flux accepts
+      # containerized browser audio without raw encoding/sample_rate params.
+      - key: PBK_DEEPGRAM_BROWSER_LIVE_MODEL
+        value: flux-general-en
 
       - key: PBK_INSTANTLY_API_KEY
         sync: false

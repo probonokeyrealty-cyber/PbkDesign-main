@@ -245,6 +245,14 @@ const checks = [
       && /showAvaVoiceDiagnostic/.test(index),
   },
   {
+    name: 'Browser voice sends WebM container audio to Deepgram without raw Opus handshake params',
+    ok: /PBK_DEEPGRAM_BROWSER_LIVE_MODEL/.test(bridge)
+      && /BROWSER_VOICE_DEEPGRAM_MODEL/.test(bridge)
+      && /containerizedAudio:\s*true/.test(bridge)
+      && /webm-opus-container/.test(bridge)
+      && /containerizedAudio/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
+  },
+  {
     name: 'Deepgram phone proof writes call transcript memory and intent analytics',
     ok: /memoryType:\s*'call_transcript'/.test(bridge)
       && /source:\s*'telnyx-deepgram'/.test(bridge)

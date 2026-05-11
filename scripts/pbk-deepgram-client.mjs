@@ -29,6 +29,7 @@ export function getDeepgramConfig(env = process.env) {
     baseUrl,
     model: envValue(env, ['PBK_DEEPGRAM_MODEL', 'DEEPGRAM_MODEL']) || 'nova-2',
     liveModel: envValue(env, ['PBK_DEEPGRAM_LIVE_MODEL', 'DEEPGRAM_LIVE_MODEL']) || 'nova-2-meeting',
+    browserLiveModel: envValue(env, ['PBK_DEEPGRAM_BROWSER_LIVE_MODEL', 'DEEPGRAM_BROWSER_LIVE_MODEL']) || 'flux-general-en',
     language: envValue(env, ['PBK_DEEPGRAM_LANGUAGE', 'DEEPGRAM_LANGUAGE']) || 'en',
     telnyxEncoding: envValue(env, ['PBK_DEEPGRAM_TELNYX_ENCODING', 'DEEPGRAM_TELNYX_ENCODING']) || 'mulaw',
     telnyxSampleRate: numberEnv(env, 'PBK_DEEPGRAM_TELNYX_SAMPLE_RATE', numberEnv(env, 'DEEPGRAM_TELNYX_SAMPLE_RATE', 8000)),
@@ -46,6 +47,7 @@ export function getDeepgramProviderMeta(env = process.env) {
     mode: 'deepgram-sdk',
     model: config.model,
     liveModel: config.liveModel,
+    browserLiveModel: config.browserLiveModel,
     language: config.language,
     telnyxEncoding: config.telnyxEncoding,
     telnyxSampleRate: config.telnyxSampleRate,
@@ -260,19 +262,23 @@ export async function transcribeDeepgramFile(options = {}, env = process.env) {
 export async function createDeepgramLiveConnection(options = {}, env = process.env) {
   const config = getDeepgramConfig(env);
   const client = createDeepgramClient(env);
-  const connection = await client.listen.v1.connect({
+  const containerizedAudio = Boolean(options.containerizedAudio || options.containerized_audio);
+  const params = {
     model: options.model || config.liveModel,
     language: options.language || config.language,
     smart_format: String(options.smartFormat ?? options.smart_format ?? true),
     interim_results: String(options.interimResults ?? options.interim_results ?? true),
     punctuate: String(options.punctuate ?? true),
-    encoding: options.encoding || config.telnyxEncoding,
-    sample_rate: String(options.sampleRate || options.sample_rate || config.telnyxSampleRate),
     channels: String(options.channels || 1),
     vad_events: String(options.vadEvents ?? options.vad_events ?? true),
     utterance_end_ms: String(options.utteranceEndMs || options.utterance_end_ms || 1000),
     Authorization: `Token ${config.apiKey}`,
-  });
+  };
+  if (!containerizedAudio) {
+    params.encoding = options.encoding || config.telnyxEncoding;
+    params.sample_rate = String(options.sampleRate || options.sample_rate || config.telnyxSampleRate);
+  }
+  const connection = await client.listen.v1.connect(params);
   return connection;
 }
 

@@ -413,6 +413,10 @@ const OPENCLAW_GATEWAY_STATUS_TTL_MS = Math.max(
   5000,
   Number(process.env.PBK_OPENCLAW_GATEWAY_STATUS_TTL_MS || 15000),
 );
+const OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS = Math.max(
+  OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS * 2,
+  Number(process.env.PBK_OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS || 90_000),
+);
 
 // Bearer token required on mutating endpoints when set. Leave unset for local
 // dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
@@ -1276,6 +1280,108 @@ let openClawGatewayStatusCache = null;
 let openClawGatewayStatusCheckedAt = 0;
 let openClawGatewayStatusPromise = null;
 
+function normalizeGatewayProbeSnapshot(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    ok: Boolean(source.ok || source.ready),
+    configured: source.configured !== false,
+    url: redactGatewayUrl(source.url || source.endpoint || ''),
+    latencyMs: Number.isFinite(Number(source.latencyMs)) ? Number(source.latencyMs) : null,
+    status: Number.isFinite(Number(source.status)) ? Number(source.status) : 0,
+    readyState: Number.isFinite(Number(source.readyState)) ? Number(source.readyState) : null,
+    service: String(source.service || '').slice(0, 80),
+    revision: String(source.revision || '').slice(0, 80),
+    error: String(source.error || '').slice(0, 240),
+  };
+}
+
+function getOpenClawGatewayHeartbeat() {
+  const heartbeat = state?.status?.openClawGatewayHeartbeat;
+  return heartbeat && typeof heartbeat === 'object' ? heartbeat : null;
+}
+
+function getFreshOpenClawGatewayHeartbeat() {
+  const heartbeat = getOpenClawGatewayHeartbeat();
+  if (!heartbeat) return null;
+  const receivedAt = Date.parse(heartbeat.receivedAt || heartbeat.checkedAt || heartbeat.reportedAt || '');
+  if (!Number.isFinite(receivedAt)) return null;
+  const ageMs = Date.now() - receivedAt;
+  return {
+    ...heartbeat,
+    ageMs,
+    fresh: ageMs >= 0 && ageMs <= OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS,
+  };
+}
+
+function buildOpenClawGatewayHeartbeat(body = {}, request = null) {
+  const now = Date.now();
+  const reportedAtMs = Date.parse(body.checkedAt || body.generatedAt || body.reportedAt || '') || now;
+  const http = normalizeGatewayProbeSnapshot(body.http || body.local?.http || {});
+  const websocket = normalizeGatewayProbeSnapshot(body.websocket || body.local?.websocket || {});
+  const ready = Boolean(body.ready ?? body.ok ?? http.ok ?? websocket.ok);
+  const hostname = String(body.host || body.hostname || body.machine || '').trim().slice(0, 120);
+  return {
+    ok: ready,
+    ready,
+    status: ready ? 'up' : 'degraded',
+    source: String(body.source || 'openclaw-heartbeat').trim().slice(0, 80),
+    host: hostname || 'local-openclaw',
+    mode: String(body.mode || 'local').trim().slice(0, 40),
+    receivedAt: new Date(now).toISOString(),
+    reportedAt: new Date(reportedAtMs).toISOString(),
+    reporterPid: Number.isFinite(Number(body.pid)) ? Number(body.pid) : null,
+    platform: String(body.platform || '').trim().slice(0, 80),
+    gatewayUrl: redactGatewayUrl(body.gatewayUrl || body.url || body.endpoint || ''),
+    http,
+    websocket,
+    runtime: {
+      uptimeSeconds: Number.isFinite(Number(body.runtime?.uptimeSeconds)) ? Number(body.runtime.uptimeSeconds) : null,
+      memory: body.runtime?.memory && typeof body.runtime.memory === 'object'
+        ? {
+            rss: Number(body.runtime.memory.rss || 0),
+            heapUsed: Number(body.runtime.memory.heapUsed || 0),
+            heapTotal: Number(body.runtime.memory.heapTotal || 0),
+          }
+        : null,
+    },
+    note: ready
+      ? `Local OpenClaw heartbeat from ${hostname || 'local machine'} is fresh.`
+      : `Local OpenClaw heartbeat from ${hostname || 'local machine'} reported degraded.`,
+    remoteAddress: request?.socket?.remoteAddress ? String(request.socket.remoteAddress).slice(0, 80) : '',
+  };
+}
+
+async function recordOpenClawGatewayHeartbeat(body = {}, request = null) {
+  const previous = getFreshOpenClawGatewayHeartbeat();
+  const heartbeat = buildOpenClawGatewayHeartbeat(body, request);
+  state.status.openClawGatewayHeartbeat = heartbeat;
+  openClawGatewayStatusCache = null;
+  openClawGatewayStatusCheckedAt = 0;
+  const previousReady = Boolean(previous?.fresh && previous?.ready);
+  const previousLoggedAt = Date.parse(state.status.openClawGatewayHeartbeatLoggedAt || '');
+  const shouldLogHeartbeat = !previous
+    || previousReady !== heartbeat.ready
+    || !Number.isFinite(previousLoggedAt)
+    || Date.now() - previousLoggedAt > 15 * 60 * 1000;
+  if (shouldLogHeartbeat) {
+    state.status.openClawGatewayHeartbeatLoggedAt = heartbeat.receivedAt;
+    addActivity(
+      state,
+      makeActivity({
+        actor: 'OpenClaw heartbeat',
+        category: 'SYSTEM',
+        status: heartbeat.ready ? 'complete' : 'warning',
+        text: heartbeat.ready
+          ? `Local OpenClaw gateway heartbeat received from ${heartbeat.host}.`
+          : `Local OpenClaw gateway heartbeat reported degraded from ${heartbeat.host}.`,
+        target: 'openclaw-gateway',
+      }),
+    );
+  }
+  await persistState(state);
+  return heartbeat;
+}
+
 function redactGatewayUrl(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -1458,26 +1564,52 @@ async function buildOpenClawGatewayStatus({ force = false, timeoutMs = OPENCLAW_
       probeOpenClawGatewayHttp(httpTimeoutMs),
       probeOpenClawGatewaySocket(wsTimeoutMs),
     ]);
-    const ready = Boolean(http.ok || websocket.ok);
-    const note = ready
+    const heartbeat = getFreshOpenClawGatewayHeartbeat();
+    const heartbeatReady = Boolean(heartbeat?.fresh && heartbeat?.ready);
+    const directReady = Boolean(http.ok || websocket.ok);
+    const ready = Boolean(directReady || heartbeatReady);
+    const directNote = directReady
       ? `${websocket.ok ? 'WebSocket' : 'HTTP'} gateway responded in ${Math.min(
           Number(websocket.latencyMs || Infinity),
           Number(http.latencyMs || Infinity),
         )}ms.`
       : `${websocket.error || http.error || 'OpenClaw gateway did not respond'}; bridge keeps retrying.`;
+    const note = directReady
+      ? directNote
+      : heartbeatReady
+        ? `Local OpenClaw heartbeat from ${heartbeat.host || 'local machine'} is fresh (${Math.round(heartbeat.ageMs / 1000)}s old); hosted direct probe is unavailable.`
+        : directNote;
     const status = {
       ok: ready,
       ready,
-      configured: Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
+      configured: Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL || heartbeat),
       checkedAt: isoNow(),
       mode: RUNTIME_MODE,
       timeoutMs: OPENCLAW_TIMEOUT_MS,
       handshakeTimeoutMs: OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS,
       heartbeatIntervalMs: OPENCLAW_GATEWAY_HEARTBEAT_INTERVAL_MS,
       heartbeatTimeoutMs: OPENCLAW_GATEWAY_HEARTBEAT_TIMEOUT_MS,
+      heartbeatMaxAgeMs: OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS,
       tokenConfigured: Boolean(OPENCLAW_GATEWAY_TOKEN),
       websocket,
       http,
+      heartbeat: heartbeat
+        ? {
+            ready: heartbeat.ready,
+            fresh: heartbeat.fresh,
+            ageMs: heartbeat.ageMs,
+            host: heartbeat.host,
+            mode: heartbeat.mode,
+            source: heartbeat.source,
+            receivedAt: heartbeat.receivedAt,
+            reportedAt: heartbeat.reportedAt,
+            platform: heartbeat.platform,
+            gatewayUrl: heartbeat.gatewayUrl,
+            http: heartbeat.http,
+            websocket: heartbeat.websocket,
+            note: heartbeat.note,
+          }
+        : null,
       note,
       runtime: {
         uptimeSeconds: Math.round(process.uptime()),
@@ -1507,7 +1639,8 @@ async function buildOpenClawGatewayStatus({ force = false, timeoutMs = OPENCLAW_
 
 function getOpenClawGatewayHealthComponent() {
   const cached = openClawGatewayStatusCache;
-  const configured = Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL);
+  const heartbeat = getFreshOpenClawGatewayHeartbeat();
+  const configured = Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL || heartbeat);
   if (!cached) {
     return {
       label: 'OpenClaw brain gateway',
@@ -1515,9 +1648,11 @@ function getOpenClawGatewayHealthComponent() {
       ready: false,
       configured,
       optional: true,
-      endpoint: redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
+      endpoint: heartbeat?.gatewayUrl || redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
       note: configured
-        ? 'Gateway probe has not run yet. Call /api/gateway/status or open the dashboard to force a probe.'
+        ? heartbeat?.fresh
+          ? `Fresh local heartbeat is available from ${heartbeat.host || 'local machine'}; call /api/gateway/status for details.`
+          : 'Gateway probe has not run yet. Call /api/gateway/status or open the dashboard to force a probe.'
         : 'Set OPENCLAW_GATEWAY_URL to monitor the local OpenClaw gateway.',
     };
   }
@@ -1527,9 +1662,10 @@ function getOpenClawGatewayHealthComponent() {
     ready: cached.ready,
     configured: cached.configured,
     optional: true,
-    endpoint: cached.websocket?.url || cached.http?.url || redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
+    endpoint: cached.heartbeat?.gatewayUrl || cached.websocket?.url || cached.http?.url || redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
     checkedAt: cached.checkedAt,
-    latencyMs: cached.websocket?.ok ? cached.websocket.latencyMs : cached.http?.latencyMs,
+    latencyMs: cached.websocket?.ok ? cached.websocket.latencyMs : cached.http?.ok ? cached.http.latencyMs : cached.heartbeat?.websocket?.latencyMs || cached.heartbeat?.http?.latencyMs,
+    heartbeatAgeMs: cached.heartbeat?.ageMs ?? heartbeat?.ageMs ?? null,
     note: cached.note,
   };
 }
@@ -3448,6 +3584,8 @@ function buildDefaultState() {
       lastLeadTransitionAt: null,
       lastAdminTaskAt: null,
       lastStreakBootstrapAt: null,
+      openClawGatewayHeartbeat: null,
+      openClawGatewayHeartbeatLoggedAt: null,
       streakStageMap: {},
       streakFieldMap: {},
       providerKillSwitch: {
@@ -27966,6 +28104,18 @@ const server = createServer(async (request, response) => {
       const gatewayStatus = await buildOpenClawGatewayStatus({ force, timeoutMs });
       json(response, gatewayStatus.ready ? 200 : 503, {
         ok: gatewayStatus.ready,
+        gateway: gatewayStatus,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/gateway/heartbeat', '/api/openclaw/gateway/heartbeat'])) {
+      const body = await readBody(request);
+      const heartbeat = await recordOpenClawGatewayHeartbeat(body, request);
+      const gatewayStatus = await buildOpenClawGatewayStatus({ force: true, timeoutMs: 1000 });
+      json(response, heartbeat.ready ? 200 : 202, {
+        ok: heartbeat.ready,
+        heartbeat,
         gateway: gatewayStatus,
       });
       return;

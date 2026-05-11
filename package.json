@@ -10,6 +10,8 @@
     "dev": "vite",
     "openclaw:local": "node ./scripts/openclaw-local-server.mjs",
     "openclaw:lan": "node ./scripts/openclaw-local-server.mjs --lan",
+    "openclaw:heartbeat": "node ./scripts/openclaw-gateway-heartbeat.mjs",
+    "openclaw:heartbeat:once": "node ./scripts/openclaw-gateway-heartbeat.mjs --once",
     "openclaw:reset": "node ./scripts/openclaw-local-server.mjs --reset",
     "brain:export": "node ./scripts/export-logseq-brain.mjs",
     "brain:build-conversation": "node ./scripts/build-pbk-conversation-brain.mjs",

@@ -6,9 +6,11 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const indexPath = resolve(root, 'index.html');
 const bridgePath = resolve(root, 'scripts/openclaw-local-server.mjs');
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
+const packagePath = resolve(root, 'package.json');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
+const pkg = readFileSync(packagePath, 'utf8');
 
 const checks = [
   {
@@ -188,6 +190,10 @@ const checks = [
     ok: /OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS/.test(bridge)
       && /buildOpenClawGatewayStatus/.test(bridge)
       && /\/api\/gateway\/status/.test(bridge)
+      && /\/api\/gateway\/heartbeat/.test(bridge)
+      && /openClawGatewayHeartbeat/.test(bridge)
+      && /OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS/.test(bridge)
+      && /openclaw:heartbeat/.test(pkg)
       && /openclawGateway: getOpenClawGatewayHealthComponent/.test(bridge)
       && /fetchOpenClawGatewayStatus/.test(index)
       && /PBK\.state\.openclawGatewayStatus/.test(index)

@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const indexPath = resolve(root, 'index.html');
 const bridgePath = resolve(root, 'scripts/openclaw-local-server.mjs');
+const heartbeatManagerPath = resolve(root, 'scripts/pbk-openclaw-heartbeat.ps1');
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
+const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
 
@@ -194,6 +196,9 @@ const checks = [
       && /openClawGatewayHeartbeat/.test(bridge)
       && /OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS/.test(bridge)
       && /openclaw:heartbeat/.test(pkg)
+      && /openclaw:heartbeat:start/.test(pkg)
+      && /PBK-OpenClaw-Gateway-Heartbeat/.test(heartbeatManager)
+      && /Get-HeartbeatStatus/.test(heartbeatManager)
       && /openclawGateway: getOpenClawGatewayHealthComponent/.test(bridge)
       && /fetchOpenClawGatewayStatus/.test(index)
       && /PBK\.state\.openclawGatewayStatus/.test(index)

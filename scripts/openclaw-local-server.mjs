@@ -167,6 +167,13 @@ hydrateWindowsUserEnv([
   'PBK_DEEPSEEK_MODEL',
   'PBK_DEEPSEEK_FALLBACK_MODEL',
   'PBK_STRATEGIST_PROVIDER',
+  'PBK_HERMES_ENABLED',
+  'PBK_HERMES_GATEWAY_URL',
+  'PBK_HERMES_API_KEY',
+  'PBK_HERMES_WEBHOOK_URL',
+  'PBK_HERMES_SLACK_CHANNEL',
+  'PBK_HERMES_SUGGEST_ONLY',
+  'PBK_HERMES_TIMEOUT_MS',
 ]);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
@@ -224,6 +231,13 @@ const DEEPSEEK_MODEL = String(process.env.PBK_DEEPSEEK_MODEL || 'deepseek-v4-pro
 const DEEPSEEK_FALLBACK_MODEL = String(process.env.PBK_DEEPSEEK_FALLBACK_MODEL || 'deepseek-v4-flash').trim();
 const STRATEGIST_PROVIDER = String(process.env.PBK_STRATEGIST_PROVIDER || 'deepseek').trim().toLowerCase();
 const DEEPSEEK_TIMEOUT_MS = Math.max(5000, Math.min(90000, Number(process.env.PBK_DEEPSEEK_TIMEOUT_MS || 30000)));
+const HERMES_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_HERMES_ENABLED || 'true').trim());
+const HERMES_GATEWAY_URL = String(process.env.PBK_HERMES_GATEWAY_URL || process.env.HERMES_GATEWAY_URL || '').trim().replace(/\/+$/g, '');
+const HERMES_API_KEY = String(process.env.PBK_HERMES_API_KEY || process.env.HERMES_API_SERVER_KEY || process.env.API_SERVER_KEY || '').trim();
+const HERMES_WEBHOOK_URL = String(process.env.PBK_HERMES_WEBHOOK_URL || '').trim().replace(/\/+$/g, '');
+const HERMES_SLACK_CHANNEL = String(process.env.PBK_HERMES_SLACK_CHANNEL || '#hermes-insights').trim();
+const HERMES_SUGGEST_ONLY = !/^(0|false|no|off)$/i.test(String(process.env.PBK_HERMES_SUGGEST_ONLY || 'true').trim());
+const HERMES_TIMEOUT_MS = Math.max(1000, Math.min(60000, Number(process.env.PBK_HERMES_TIMEOUT_MS || 8000)));
 const PROTECTED_OPS_PASSCODE = String(process.env.PBK_PROTECTED_OPS_PASSCODE || '').trim();
 const TEAM_PASSCODE = String(process.env.PBK_TEAM_PASSCODE || '').trim();
 const TEAM_SESSION_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.PBK_TEAM_SESSION_TTL_MS || 8 * 60 * 60 * 1000));
@@ -1073,6 +1087,7 @@ function getRuntimeMeta() {
       elevenLabs: getElevenLabsProviderMeta(),
       openAiWebSearch: getOpenAiWebSearchProviderMeta(),
       deepSeek: getDeepSeekProviderMeta(),
+      hermes: getHermesProviderMeta(),
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
       supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -1199,6 +1214,11 @@ function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
       label: 'DeepSeek strategist',
       optional: true,
       note: 'Ava/Rex coaching lane for low-confidence objections and negotiation scripts.',
+    }),
+    hermes: summarizeProviderComponent(providers.hermes, {
+      label: 'Hermes suggest-only analyst',
+      optional: true,
+      note: 'Analyzes PBK feedback, knowledge, and transcripts; recommendations only, never provider writes.',
     }),
     docusign: summarizeProviderComponent(providers.docusign, {
       label: 'DocuSign envelopes',
@@ -15652,6 +15672,106 @@ function getDeepSeekProviderMeta() {
   };
 }
 
+function getHermesProviderMeta() {
+  const deepSeek = getDeepSeekProviderMeta();
+  const gatewayConfigured = Boolean(HERMES_GATEWAY_URL);
+  const webhookConfigured = Boolean(HERMES_WEBHOOK_URL);
+  const bridgeStrategistReady = Boolean(deepSeek.ready);
+  const missing = [];
+  if (!HERMES_ENABLED) missing.push('PBK_HERMES_ENABLED=true');
+  if (!HERMES_SUGGEST_ONLY) missing.push('PBK_HERMES_SUGGEST_ONLY=true');
+  if (!gatewayConfigured && !bridgeStrategistReady) missing.push('PBK_HERMES_GATEWAY_URL or PBK_DEEPSEEK_API_KEY');
+
+  return {
+    configured: Boolean(HERMES_ENABLED && (gatewayConfigured || webhookConfigured || deepSeek.configured)),
+    ready: Boolean(HERMES_ENABLED && HERMES_SUGGEST_ONLY && (gatewayConfigured || webhookConfigured || bridgeStrategistReady)),
+    provider: 'Hermes',
+    mode: gatewayConfigured ? 'external-gateway-with-pbk-fallback' : 'pbk-bridge-strategist',
+    writeMode: 'suggest-only',
+    approvalGate: true,
+    gatewayConfigured,
+    gatewayUrl: redactGatewayUrl(HERMES_GATEWAY_URL),
+    webhookConfigured,
+    slackChannel: HERMES_SLACK_CHANNEL,
+    fallbackProvider: deepSeek.ready ? 'deepseek' : 'local-pbk-brain',
+    deepSeekReady: Boolean(deepSeek.ready),
+    timeoutMs: HERMES_TIMEOUT_MS,
+    missing,
+    note: HERMES_SUGGEST_ONLY
+      ? 'Hermes is constrained to recommendations only; PBK approval gates still own provider writes.'
+      : 'Hermes suggest-only mode is disabled; keep PBK_HERMES_SUGGEST_ONLY=true for launch safety.',
+  };
+}
+
+async function probeHermesGateway({ timeoutMs = HERMES_TIMEOUT_MS } = {}) {
+  const meta = getHermesProviderMeta();
+  if (!HERMES_GATEWAY_URL) {
+    return {
+      configured: false,
+      ready: Boolean(meta.ready),
+      mode: meta.mode,
+      endpoint: '',
+      status: meta.ready ? 'bridge-strategist-ready' : 'not-configured',
+      note: meta.ready
+        ? 'External Hermes gateway is not configured; PBK DeepSeek strategist lane is ready as the suggest-only fallback.'
+        : 'Set PBK_HERMES_GATEWAY_URL or PBK_DEEPSEEK_API_KEY to enable Hermes recommendations.',
+    };
+  }
+
+  const candidates = [
+    `${HERMES_GATEWAY_URL}/health`,
+    `${HERMES_GATEWAY_URL}/status`,
+    `${HERMES_GATEWAY_URL}/v1/models`,
+  ];
+
+  let lastError = '';
+  for (const candidate of candidates) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+    try {
+      const response = await fetch(candidate, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          ...(HERMES_API_KEY ? {
+            Authorization: `Bearer ${HERMES_API_KEY}`,
+            'X-API-Key': HERMES_API_KEY,
+          } : {}),
+        },
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const body = contentType.includes('json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
+      clearTimeout(timeout);
+      return {
+        configured: true,
+        ready: response.ok,
+        mode: meta.mode,
+        endpoint: redactGatewayUrl(HERMES_GATEWAY_URL),
+        checkedUrl: redactGatewayUrl(candidate),
+        status: response.ok ? 'up' : `http_${response.status}`,
+        httpStatus: response.status,
+        bodyPreview: typeof body === 'string' ? body.slice(0, 240) : body,
+        note: response.ok
+          ? 'External Hermes gateway responded.'
+          : 'External Hermes gateway is configured but did not return a healthy response; PBK can fall back to the internal DeepSeek strategist lane.',
+      };
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error?.name === 'AbortError' ? 'Hermes gateway probe timed out.' : (error?.message || 'Hermes gateway probe failed.');
+    }
+  }
+
+  return {
+    configured: true,
+    ready: false,
+    mode: meta.mode,
+    endpoint: redactGatewayUrl(HERMES_GATEWAY_URL),
+    status: 'degraded',
+    error: lastError,
+    note: 'External Hermes gateway did not answer; PBK can fall back to the internal DeepSeek strategist lane.',
+  };
+}
+
 function getSupabaseStorageProviderMeta() {
   const missing = [];
   if (!SUPABASE_URL) missing.push('PBK_SUPABASE_URL');
@@ -17150,6 +17270,12 @@ const DIRECT_ENV_UPDATE_ALLOWLIST = new Set([
   'PBK_DEEPSEEK_MODEL',
   'PBK_DEEPSEEK_FALLBACK_MODEL',
   'PBK_STRATEGIST_PROVIDER',
+  'PBK_HERMES_ENABLED',
+  'PBK_HERMES_GATEWAY_URL',
+  'PBK_HERMES_API_KEY',
+  'PBK_HERMES_WEBHOOK_URL',
+  'PBK_HERMES_SLACK_CHANNEL',
+  'PBK_HERMES_SUGGEST_ONLY',
   'PBK_TOTP_SECRET',
   'PBK_TOTP_REQUIRED',
   'PBK_TOTP_WINDOW',
@@ -26538,6 +26664,7 @@ function buildStateSnapshot() {
         elevenLabs: getElevenLabsProviderMeta(),
         openAiWebSearch: getOpenAiWebSearchProviderMeta(),
         deepSeek: getDeepSeekProviderMeta(),
+        hermes: getHermesProviderMeta(),
         googleCalendar: getGoogleCalendarProviderMeta(),
         supabaseStorage: getSupabaseStorageProviderMeta(),
         n8nWorkflows: getN8nWorkflowProviderMeta(),
@@ -28055,6 +28182,7 @@ const server = createServer(async (request, response) => {
           elevenLabs: getElevenLabsProviderMeta(),
           openAiWebSearch: getOpenAiWebSearchProviderMeta(),
           deepSeek: getDeepSeekProviderMeta(),
+          hermes: getHermesProviderMeta(),
           instantly: getInstantlyProviderMeta(),
           googleCalendar: getGoogleCalendarProviderMeta(),
           supabaseStorage: getSupabaseStorageProviderMeta(),
@@ -28117,6 +28245,55 @@ const server = createServer(async (request, response) => {
         ok: heartbeat.ready,
         heartbeat,
         gateway: gatewayStatus,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/hermes/status', '/api/strategist/hermes/status'])) {
+      const timeoutMs = Math.max(1000, Math.min(HERMES_TIMEOUT_MS, Number(url.searchParams.get('timeoutMs') || HERMES_TIMEOUT_MS)));
+      const hermes = getHermesProviderMeta();
+      const gateway = await probeHermesGateway({ timeoutMs });
+      json(response, hermes.ready ? 200 : 503, {
+        ok: Boolean(hermes.ready),
+        hermes,
+        gateway,
+        deepSeek: getDeepSeekProviderMeta(),
+        safety: {
+          suggestOnly: HERMES_SUGGEST_ONLY,
+          approvalGate: true,
+          providerWrites: 'blocked',
+          mission: 'Hermes may analyze PBK data and recommend actions. PBK bridge approval gates still own calls, SMS, contracts, deletes, admin env updates, and offer increases.',
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/hermes/recommend', '/api/strategist/hermes/recommend'])) {
+      const body = await readBody(request);
+      const result = await askStrategistRecord({
+        ...body,
+        agentName: body.agentName || body.agent || 'Hermes',
+        status: body.status || 'suggested',
+        metadata: {
+          ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {}),
+          surface: 'hermes-suggest-only',
+          suggestOnly: true,
+          providerWrites: 'blocked',
+        },
+      });
+      json(response, 200, {
+        ok: true,
+        result: 'suggestion',
+        hermes: getHermesProviderMeta(),
+        recommendation: result.strategy,
+        request: result.request,
+        fallbackChain: result.fallbackChain,
+        storage: result.storage,
+        safety: {
+          suggestOnly: true,
+          approvalGate: true,
+          providerWrites: 'blocked',
+        },
       });
       return;
     }

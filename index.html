@@ -9635,7 +9635,7 @@
           <article class="settings-runtime-card" data-settings-card="providers">
             <span class="settings-runtime-label">Provider APIs</span>
             <strong class="settings-runtime-value" data-providers-summary>Waiting on health</strong>
-            <p class="settings-runtime-note" data-providers-note>Telnyx, DocuSign, BatchData, and Slack readiness appears here after the next health check. Set their env vars on Render to flip ready.</p>
+            <p class="settings-runtime-note" data-providers-note>Telnyx, DocuSign, DeepSeek, Hermes, and Slack readiness appears here after the next health check. Set their env vars on Render to flip ready.</p>
             <ul class="settings-providers-list" data-providers-list>
               <li class="settings-providers-row" data-provider="telnyx">
                 <span class="settings-providers-dot" aria-hidden="true"></span>
@@ -9645,6 +9645,16 @@
               <li class="settings-providers-row" data-provider="docusign">
                 <span class="settings-providers-dot" aria-hidden="true"></span>
                 <span class="settings-providers-name">DocuSign</span>
+                <span class="settings-providers-state">-</span>
+              </li>
+              <li class="settings-providers-row" data-provider="deepSeek">
+                <span class="settings-providers-dot" aria-hidden="true"></span>
+                <span class="settings-providers-name">DeepSeek</span>
+                <span class="settings-providers-state">-</span>
+              </li>
+              <li class="settings-providers-row" data-provider="hermes">
+                <span class="settings-providers-dot" aria-hidden="true"></span>
+                <span class="settings-providers-name">Hermes</span>
                 <span class="settings-providers-state">-</span>
               </li>
               <li class="settings-providers-row" data-provider="batchdata">
@@ -14722,6 +14732,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       browserVoice: sanitizeOpenClawProviderMeta('browserVoice', providers.browserVoice),
       elevenLabs: sanitizeOpenClawProviderMeta('elevenLabs', providers.elevenLabs),
       googleCalendar: sanitizeOpenClawProviderMeta('googleCalendar', providers.googleCalendar),
+      deepSeek: sanitizeOpenClawProviderMeta('deepSeek', providers.deepSeek),
+      hermes: sanitizeOpenClawProviderMeta('hermes', providers.hermes),
       supabaseStorage: sanitizeOpenClawProviderMeta('supabaseStorage', providers.supabaseStorage),
       n8nWorkflows: sanitizeOpenClawProviderMeta('n8nWorkflows', providers.n8nWorkflows),
       streak: sanitizeOpenClawProviderMeta('streak', providers.streak),
@@ -28342,6 +28354,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       browserVoice: 'Browser Voice',
       elevenLabs: 'ElevenLabs',
       openAiWebSearch: 'OpenAI Web Search',
+      deepSeek: 'DeepSeek Strategist',
+      hermes: 'Hermes Analyst',
       googleCalendar: 'Google Calendar',
       supabaseStorage: 'Supabase Storage',
       n8nWorkflows: 'n8n Workflows',
@@ -28367,8 +28381,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       } : {})
     };
 
-    const order = ['openclawGateway', 'telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
-    const optionalProviders = new Set(['batchdata']);
+    const order = ['openclawGateway', 'telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'deepSeek', 'hermes', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
+    const optionalProviders = new Set(['batchdata', 'hermes']);
     const coreOrder = order.filter((key) => !optionalProviders.has(key));
     const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
     const shortList = (items, limit = 2) => {
@@ -28447,6 +28461,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = 'Live - STT ready';
         } else if (key === 'openAiWebSearch') {
           label = 'Live - current web search ready';
+        } else if (key === 'deepSeek') {
+          label = 'Live - strategist ready';
+        } else if (key === 'hermes') {
+          label = 'Live - suggest-only analyst';
         } else if (key === 'render') {
           label = 'Live - deploy control ready';
         } else if (key === 'openclawGateway') {

@@ -1,0 +1,24 @@
+services:
+  hermes:
+    image: nousresearch/hermes-agent:latest
+    container_name: pbk-hermes
+    restart: unless-stopped
+    command: gateway run
+    ports:
+      - "8642:8642"
+      - "9119:9119"
+    volumes:
+      - ./data:/opt/data
+    env_file:
+      - ./.env
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: "0.0.0.0"
+      API_SERVER_CORS_ORIGINS: "http://localhost:5173,https://pbkcommandcenter.netlify.app"
+      HERMES_DASHBOARD: "1"
+    shm_size: "1gb"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"

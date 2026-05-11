@@ -34,6 +34,7 @@
     "infra:smoke": "node ./scripts/pbk-runtime-smoke.mjs",
     "llm:smoke": "node ./scripts/pbk-llm-provider-smoke.mjs",
     "llm:smoke:mock": "node ./scripts/pbk-llm-provider-smoke.mjs --mock",
+    "hermes:smoke": "node ./scripts/hermes-pbk-smoke.mjs",
     "deepgram:smoke": "node ./scripts/deepgram-smoke.mjs",
     "deepgram:smoke:mock": "node ./scripts/deepgram-smoke.mjs --mock",
     "health:weekly": "node ./scripts/pbk-weekly-health-check.mjs",

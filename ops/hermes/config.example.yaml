@@ -1,0 +1,21 @@
+model:
+  provider: deepseek
+  default: deepseek-v4-flash
+
+fallback_model:
+  provider: openai
+  model: gpt-5
+
+auxiliary:
+  compression:
+    provider: main
+  web_extract:
+    provider: main
+  session_search:
+    provider: main
+
+approval:
+  mode: suggest_only
+
+gateway:
+  default_channel: "#hermes-insights"

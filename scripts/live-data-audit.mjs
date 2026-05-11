@@ -271,6 +271,18 @@ const checks = [
       && /PBK_DEEPSEEK_API_KEY/.test(bridge)
       && !/sk-[A-Za-z0-9]{20,}/.test(index + bridge),
   },
+  {
+    name: 'Hermes analyst lane is suggest-only and visible in production health',
+    ok: /getHermesProviderMeta/.test(bridge)
+      && /\/api\/hermes\/status/.test(bridge)
+      && /\/api\/hermes\/recommend/.test(bridge)
+      && /PBK_HERMES_SUGGEST_ONLY/.test(bridge)
+      && /providerWrites:\s*'blocked'/.test(bridge)
+      && /Hermes Analyst/.test(index)
+      && /deepSeek: sanitizeOpenClawProviderMeta/.test(index)
+      && /hermes: sanitizeOpenClawProviderMeta/.test(index)
+      && !/sk-[A-Za-z0-9]{20,}/.test(index + bridge),
+  },
 ];
 
 const failed = checks.filter((check) => !check.ok);

@@ -54,6 +54,23 @@ services:
       - key: PBK_STRATEGIST_PROVIDER
         value: deepseek
 
+      # Hermes analyst lane. Keep this suggest-only: Hermes can recommend
+      # scripts/strategy from PBK data, but provider writes remain approval-gated.
+      - key: PBK_HERMES_ENABLED
+        value: "true"
+      - key: PBK_HERMES_SUGGEST_ONLY
+        value: "true"
+      - key: PBK_HERMES_GATEWAY_URL
+        sync: false
+      - key: PBK_HERMES_API_KEY
+        sync: false
+      - key: PBK_HERMES_WEBHOOK_URL
+        sync: false
+      - key: PBK_HERMES_SLACK_CHANNEL
+        value: "#hermes-insights"
+      - key: PBK_HERMES_TIMEOUT_MS
+        value: "8000"
+
       # Public website Ava chat. This route is read-only except lead capture:
       # no calls, SMS, email, contracts, deletes, or admin tool execution.
       - key: PBK_PUBLIC_AVA_CHAT_ENABLED

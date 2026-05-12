@@ -72,6 +72,18 @@ export default defineConfig({
         changeOrigin: true,
         headers: devBridgeProxyHeaders,
       },
+      '/ws': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        ws: true,
+        headers: devBridgeProxyHeaders,
+      },
+      '/api/ws': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        ws: true,
+        headers: devBridgeProxyHeaders,
+      },
     },
   },
 

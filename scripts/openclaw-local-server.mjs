@@ -707,6 +707,40 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+const LIVE_CALL_STALE_AFTER_MS = Math.max(15, toNumber(process.env.PBK_LIVE_CALL_STALE_MINUTES, 240)) * 60_000;
+
+function callTimeMs(call = {}) {
+  const candidates = [call.updatedAt, call.updated_at, call.startedAt, call.started_at, call.createdAt, call.created_at];
+  for (const candidate of candidates) {
+    const parsed = Date.parse(String(candidate || ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function normalizeStaleLiveCall(call = {}) {
+  if (!call || typeof call !== 'object') return call;
+  if (String(call.status || '').toLowerCase() !== 'live') return call;
+  const timestamp = callTimeMs(call);
+  if (!timestamp || Date.now() - timestamp <= LIVE_CALL_STALE_AFTER_MS) return call;
+  return {
+    ...call,
+    status: 'ended',
+    endedAt: call.endedAt || call.ended_at || new Date(timestamp).toISOString(),
+    updatedAt: call.updatedAt || call.updated_at || new Date(timestamp).toISOString(),
+    staleLiveCall: true,
+    staleReason: `No live call update within ${Math.round(LIVE_CALL_STALE_AFTER_MS / 60_000)} minutes.`,
+  };
+}
+
+function normalizeStaleLiveCalls(calls = []) {
+  return Array.isArray(calls) ? calls.map((call) => normalizeStaleLiveCall(call)) : [];
+}
+
+function isActiveLiveCall(call = {}) {
+  return String(normalizeStaleLiveCall(call)?.status || '').toLowerCase() === 'live';
+}
+
 function toMoneyNumber(value, fallback = 0) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const raw = String(value ?? '').trim().toLowerCase();
@@ -5709,7 +5743,7 @@ function limitStateArrays(nextState) {
   nextState.analyzerRuns = sortNewest(nextState.analyzerRuns).slice(0, LIMITS.analyzerRuns);
   nextState.propertyCache = sortNewest(nextState.propertyCache || []).slice(0, LIMITS.propertyCache);
   nextState.dncEntries = sortNewest(nextState.dncEntries).slice(0, LIMITS.dncEntries);
-  nextState.calls = sortNewest(nextState.calls).slice(0, LIMITS.calls);
+  nextState.calls = sortNewest(normalizeStaleLiveCalls(nextState.calls)).slice(0, LIMITS.calls);
   nextState.messages = sortNewest(nextState.messages).slice(0, LIMITS.messages);
   nextState.appointments = sortNewest(nextState.appointments).slice(0, LIMITS.appointments);
   nextState.leadStageTransitions = sortNewest(nextState.leadStageTransitions).slice(0, LIMITS.leadStageTransitions);
@@ -5747,6 +5781,7 @@ function limitStateArrays(nextState) {
 }
 
 function updateDerivedStatus(nextState) {
+  nextState.calls = normalizeStaleLiveCalls(nextState.calls || []);
   const settings = nextState.settings && typeof nextState.settings === 'object' ? nextState.settings : {};
   const operatingMode = String(settings.operatingMode || settings.ui?.operatingMode || nextState.status.mode || 'approval').trim();
   nextState.status.mode = ['autopilot', 'approval', 'manual'].includes(operatingMode) ? operatingMode : 'approval';
@@ -5760,7 +5795,7 @@ function updateDerivedStatus(nextState) {
   nextState.status.systemAuditReports = (nextState.systemAuditReports || []).length;
   nextState.status.pendingApprovals = nextState.approvals.filter((approval) => approval.status === 'pending').length;
   nextState.status.pendingAdminTasks = nextState.adminTasks.filter((task) => task.status === 'pending').length;
-  nextState.status.activeCalls = nextState.calls.filter((call) => call.status === 'live').length;
+  nextState.status.activeCalls = nextState.calls.filter((call) => isActiveLiveCall(call)).length;
   nextState.status.appointmentsScheduled = nextState.appointments.filter((appointment) => ['scheduled', 'confirmed'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.pendingBookingRequests = nextState.appointments.filter((appointment) => ['requested', 'call-now', 'pending-confirmation'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.leadStageTransitionsToday = nextState.leadStageTransitions.filter((transition) => String(transition.createdAt || '').slice(0, 10) === isoNow().slice(0, 10)).length;
@@ -6264,7 +6299,7 @@ function upsertContract(stateRef, contract) {
 function findLeadContext(params = {}) {
   const fallbackImport = state.leadImports[0] || {};
   const fallbackApproval = state.approvals[0] || {};
-  const fallbackCall = state.calls.find((call) => call.status === 'live') || state.calls[0] || {};
+  const fallbackCall = state.calls.find((call) => isActiveLiveCall(call)) || state.calls[0] || {};
   const explicitPhone = normalizePhone(params.phone || params.to || params.number);
   const explicitLeadName = params.leadName || params.name || '';
   const explicitAddress = params.address || '';
@@ -14015,7 +14050,7 @@ function buildQuotasSnapshot() {
       configured: Boolean(TELNYX_API_KEY),
       phoneNumbersConfigured: getEffectiveTelnyxFromNumber() ? 1 : 0,
       defaultFromNumber: getEffectiveTelnyxFromNumber(),
-      activeCalls: state.calls.filter((item) => item.status === 'live').length,
+      activeCalls: state.calls.filter((item) => isActiveLiveCall(item)).length,
       note: TELNYX_API_KEY ? 'Voice and messaging runtime is reporting locally.' : 'Add PBK_TELNYX_API_KEY and PBK_TELNYX_FROM_NUMBER for live quota visibility.',
     },
     docs: {
@@ -14031,7 +14066,7 @@ function buildPrometheusMetrics() {
   const quotas = buildQuotasSnapshot();
   const pendingApprovals = state.approvals.filter((item) => item.status === 'pending').length;
   const pendingAdminTasks = state.adminTasks.filter((item) => item.status === 'pending').length;
-  const liveCalls = state.calls.filter((item) => item.status === 'live').length;
+  const liveCalls = state.calls.filter((item) => isActiveLiveCall(item)).length;
   const openContracts = quotas.docs.openContracts;
   const documentDeliveriesToday = quotas.docs.deliveredToday;
   const totalMessages = state.messages.length;
@@ -26956,7 +26991,7 @@ async function handleEvent(eventType, payload = {}) {
     const call =
       state.calls.find((item) => item.id === payload.id) ||
       state.calls.find((item) => normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')) ||
-      state.calls.find((item) => item.status === 'live');
+      state.calls.find((item) => isActiveLiveCall(item));
 
     if (!call) {
       return {
@@ -27088,7 +27123,7 @@ async function handleEvent(eventType, payload = {}) {
     const call =
       state.calls.find((item) => item.id === payload.id) ||
       state.calls.find((item) => normalizePhone(item.phone) === normalizePhone(payload.phone || '')) ||
-      state.calls.find((item) => item.status === 'live');
+      state.calls.find((item) => isActiveLiveCall(item));
     if (!call) {
       return {
         ok: false,

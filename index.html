@@ -19350,7 +19350,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (authRequired && !String(config.apiKey || '').trim()) return '';
     const url = new URL('/ws/browser', `${base}/`);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    if (config.apiKey) url.searchParams.set('token', config.apiKey);
+    // Local Vite QA uses a sentinel key so HTTP requests can be authenticated
+    // by the dev proxy without leaking the real bridge token into browser logs.
+    if (config.apiKey && config.apiKey !== 'local-vite-proxy') url.searchParams.set('token', config.apiKey);
     return url.toString();
   }
 

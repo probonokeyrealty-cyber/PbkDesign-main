@@ -1,4 +1,6 @@
 import os from 'node:os';
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 
@@ -11,6 +13,7 @@ const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 const OPENCLAW_GATEWAY_TOKEN = String(
   process.env.OPENCLAW_GATEWAY_TOKEN
     || process.env.PBK_OPENCLAW_GATEWAY_TOKEN
+    || readOpenClawGatewayToken()
     || '',
 ).trim();
 const OPENCLAW_GATEWAY_WS_URL = String(
@@ -48,6 +51,27 @@ function getArgValue(name) {
 function deriveHttpUrl(value = '') {
   if (/^wss?:\/\//i.test(value)) return value.replace(/^ws:/i, 'http:').replace(/^wss:/i, 'https:');
   if (/^https?:\/\//i.test(value)) return value;
+  return '';
+}
+
+function readOpenClawGatewayToken() {
+  const candidates = [
+    process.env.OPENCLAW_CONFIG_PATH,
+    path.join(os.homedir(), '.openclaw', 'openclaw.json'),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const config = JSON.parse(readFileSync(candidate, 'utf8'));
+      const token = String(
+        config?.gateway?.auth?.token
+          || config?.gateway?.token
+          || '',
+      ).trim();
+      if (token) return token;
+    } catch {
+      // Local heartbeat fallback only. Never log config paths or token material here.
+    }
+  }
   return '';
 }
 

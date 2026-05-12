@@ -21,17 +21,24 @@ import {
 } from './pbk-deepgram-client.mjs';
 const { Pool: PgPool } = pg;
 
+const OUTBOUND_MAX_SOCKETS = Math.max(20, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_SOCKETS || 160));
+const OUTBOUND_MAX_FREE_SOCKETS = Math.max(
+  8,
+  Math.min(64, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_FREE_SOCKETS || Math.ceil(OUTBOUND_MAX_SOCKETS / 3))),
+);
 httpGlobalAgent.keepAlive = true;
 httpGlobalAgent.keepAliveMsecs = 1000;
-httpGlobalAgent.maxSockets = 80;
+httpGlobalAgent.maxSockets = OUTBOUND_MAX_SOCKETS;
+httpGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 httpsGlobalAgent.keepAlive = true;
 httpsGlobalAgent.keepAliveMsecs = 1000;
-httpsGlobalAgent.maxSockets = 80;
+httpsGlobalAgent.maxSockets = OUTBOUND_MAX_SOCKETS;
+httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-12-ava-suite-streaming-tts';
+const BUILD_REVISION = '2026-05-12-bridge-speed-heartbeat-hardening';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');

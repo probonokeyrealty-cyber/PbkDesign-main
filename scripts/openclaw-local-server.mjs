@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-ava-rex-flow-state';
+const BUILD_REVISION = '2026-05-12-pbk-jarvis-mode';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -7164,6 +7164,102 @@ function buildAvaDoctrineCommandResult(command = '', context = {}) {
       bantFields: BANT_FIELDS,
     },
     command,
+  };
+}
+
+function detectAvaJarvisCommand(command = '') {
+  const normalized = String(command || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (/\b(telegram|personal\s+ava|personal\s+mode|sqlite|sheets|haiku|sonnet|inventory|sales\s+order|purchase\s+order|erp)\b/i.test(normalized)) {
+    return {
+      type: 'architecture_guardrail',
+      reason: 'non_pbk_lane',
+    };
+  }
+  if (/\b(switch|enter|activate|turn on|go into|use)\b.{0,32}\b(wholesale|work|jarvis|pbk|command center)\b/i.test(normalized)
+    || /\b(wholesale|work|jarvis|pbk)\s+mode\b/i.test(normalized)) {
+    return {
+      type: 'activate_pbk_work_mode',
+      reason: 'operator_mode_switch',
+    };
+  }
+  if (/\b(what can you do|what tools|which tools|your tools|your hands|computer control|openclaw hands|jarvis capabilities|capability map)\b/i.test(normalized)) {
+    return {
+      type: 'capability_map',
+      reason: 'operator_capability_query',
+    };
+  }
+  return null;
+}
+
+async function applyAvaJarvisCommand(modeCommand = {}, context = {}, params = {}) {
+  const gateway = await buildOpenClawGatewayStatus({ timeoutMs: 1000 }).catch((error) => ({
+    ok: false,
+    status: 'unknown',
+    note: error?.message || 'OpenClaw gateway status unavailable.',
+  }));
+  const commandSurface = 'Slack approvals + Electron/dashboard voice and typed commands';
+  const approvalLane = 'calls, SMS, email, DocuSign, admin changes, deletes, and offer increases';
+  const readOnlyTools = ['lead search', 'lead details', 'deal analysis', 'Rex research', 'Hermes recommendations', 'memory recall', 'gateway health'];
+  const approvalTools = ['Telnyx calls', 'Telnyx SMS', 'cold email', 'DocuSign contracts', 'campaign launches', 'admin/provider changes'];
+
+  if (modeCommand.type === 'architecture_guardrail') {
+    state.status.avaWorkMode = state.status.avaWorkMode || 'pbk_wholesale';
+    state.status.avaCommandSurface = commandSurface;
+    state.status.avaArchitectureNote = 'PBK does not use Telegram, inventory, ERP, sales-order, SQLite, or Sheets lanes for command-center control.';
+    state.status.avaLastModeUpdatedAt = isoNow();
+    return {
+      ok: true,
+      mode: state.status.avaWorkMode,
+      answer: [
+        'I am keeping this inside the PBK Command Center architecture.',
+        'No Telegram, inventory, ERP, or sales-order lane is being loaded because those are not part of this wholesale real-estate stack.',
+        `Use ${commandSurface}; read-only tools can answer immediately, and ${approvalLane} stay approval-gated.`,
+      ].join(' '),
+      skipped: ['telegram', 'inventory', 'sales_orders', 'erp'],
+      reason: modeCommand.reason,
+    };
+  }
+
+  state.status.avaWorkMode = 'pbk_wholesale';
+  state.status.avaCommandSurface = commandSurface;
+  state.status.avaHandsStatus = gateway.status || (gateway.ok ? 'up' : 'unknown');
+  state.status.avaLastModeUpdatedAt = isoNow();
+
+  const gatewayLine = gateway.ready || gateway.ok || gateway.status === 'up'
+    ? 'OpenClaw heartbeat is present, so the hands lane is available through the existing gateway path.'
+    : `OpenClaw hands are not fully confirmed right now: ${gateway.note || gateway.status || 'status unknown'}.`;
+  const answer = modeCommand.type === 'capability_map'
+    ? [
+        `I can operate PBK from ${commandSurface}.`,
+        `Safe reads include ${readOnlyTools.join(', ')}.`,
+        `Actions like ${approvalTools.join(', ')} still ask for approval first. ${gatewayLine}`,
+      ].join(' ')
+    : [
+        'Wholesale Jarvis mode is active inside PBK.',
+        `I will use the existing ${commandSurface}, not a new app or Telegram lane.`,
+        `Safe reads run directly; ${approvalLane} stay behind approvals. ${gatewayLine}`,
+      ].join(' ');
+
+  addActivity(
+    state,
+    makeActivity({
+      actor: params.actor || 'Ava',
+      category: 'MODE',
+      status: 'active',
+      text: `Ava PBK work mode confirmed via ${params.source || 'command lane'}.`,
+      target: context.address || context.leadName || 'PBK Command Center',
+    }),
+  );
+
+  return {
+    ok: true,
+    mode: 'pbk_wholesale',
+    commandSurface,
+    readOnlyTools,
+    approvalTools,
+    openClawGateway: gateway,
+    answer,
   };
 }
 
@@ -25997,8 +26093,12 @@ const toolHandlers = {
     const urlMatch = command.match(/https?:\/\/[^\s)]+/i);
     const zipMatch = command.match(/\b\d{5}(?:-\d{4})?\b/);
     const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(command);
+    const avaJarvisCommand = detectAvaJarvisCommand(command);
 
-    if (looksLikeAgentDoctrineCommand(command)) {
+    if (avaJarvisCommand) {
+      routedTo = 'ava_pbk_jarvis_mode';
+      response = await applyAvaJarvisCommand(avaJarvisCommand, context, params);
+    } else if (looksLikeAgentDoctrineCommand(command)) {
       routedTo = 'agent_brain';
       response = buildAvaDoctrineCommandResult(command, context);
     } else if (isPropertyDataIntent) {

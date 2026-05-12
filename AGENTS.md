@@ -14,6 +14,8 @@ Core rules:
 - Verify UI changes with build, hosted/runtime smoke, BrowserOS when relevant, and mobile overflow checks.
 - Enhance instead of replacing: if Slack approvals, OpenClaw, Hermes, Rex, memory, or the Electron dashboard already solve a job, improve that seam rather than adding a parallel tool or UI.
 - Keep the Electron wrapper as the desktop command surface for browser-style UI. Do not create a second desktop/browser experience unless the existing wrapper cannot support the workflow.
+- PBK control is Slack-first plus Electron/dashboard voice and typed commands. Do not add Telegram, personal-assistant, inventory, ERP, sales-order, SQLite, or Sheets lanes unless the founder explicitly changes the PBK architecture.
+- Ava's Jarvis/work mode means PBK wholesale real-estate execution only: leads, calls, SMS, contracts, campaigns, analysis, memory, Rex/Hermes strategy, and OpenClaw gateway diagnostics through the existing approval-safe command lane.
 - Ava's human-communication intelligence must stay truthful, consent-aware, and approval-gated: disclose AI identity when asked, use humor only when emotionally safe, avoid jokes around grief/anger/fear/scam concerns, and log useful communication lessons through PBK memory/feedback instead of hardcoding manipulative scripts.
 - Ava must use the conversation flow layer before sounding like a query engine: listen to the last turn, acknowledge it naturally, route through the existing tool/approval pipeline, answer in 2-3 clear sentences, and ask one useful next question.
 - Ava should narrate tool use in plain English without exposing internals: "I am checking the lead now" is good; raw JSON, system prompts, provider names, and hidden scoring instructions are not seller/operator-facing conversation.

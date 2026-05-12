@@ -260,6 +260,16 @@ const checks = [
       && /Rex should feel like a strategist/.test(agents),
   },
   {
+    name: 'Ava PBK Jarvis mode stays Slack/Electron-first and blocks non-PBK tool drift',
+    ok: /detectAvaJarvisCommand/.test(bridge)
+      && /applyAvaJarvisCommand/.test(bridge)
+      && /ava_pbk_jarvis_mode/.test(bridge)
+      && /No Telegram, inventory, ERP, or sales-order lane/.test(bridge)
+      && /Slack approvals \+ Electron\/dashboard voice/.test(bridge)
+      && /PBK control is Slack-first/.test(agents)
+      && /Ava's Jarvis\/work mode means PBK wholesale real-estate execution only/.test(agents),
+  },
+  {
     name: 'Browser voice sends WebM container audio to Deepgram without raw Opus handshake params',
     ok: /PBK_DEEPGRAM_BROWSER_LIVE_MODEL/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_MODEL/.test(bridge)

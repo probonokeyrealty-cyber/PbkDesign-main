@@ -222,7 +222,8 @@ const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
-const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || 'EXAVITQu4L4D8Xk9nI0J').trim();
+const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
+const ELEVENLABS_FALLBACK_VOICE_ID = String(process.env.PBK_ELEVENLABS_FALLBACK_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
 const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
 const ELEVENLABS_STREAMING_TTS_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_ELEVENLABS_STREAMING_TTS_ENABLED || 'true').trim());
 const ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
@@ -27451,15 +27452,28 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
 
 async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
   const request = buildElevenLabsTtsRequest(body, text, options);
-  const response = await fetch(request.url, {
+  const fireRequest = (ttsRequest) => fetch(ttsRequest.url, {
     method: 'POST',
     headers: {
       Accept: 'audio/mpeg',
       'Content-Type': 'application/json',
       'xi-api-key': ELEVENLABS_API_KEY,
     },
-    body: JSON.stringify(request.payload),
+    body: JSON.stringify(ttsRequest.payload),
   });
+  let response = await fireRequest(request);
+  if (response.status === 404 && ELEVENLABS_FALLBACK_VOICE_ID && request.voiceId !== ELEVENLABS_FALLBACK_VOICE_ID) {
+    const fallbackRequest = buildElevenLabsTtsRequest({
+      ...body,
+      voiceId: ELEVENLABS_FALLBACK_VOICE_ID,
+    }, text, options);
+    const fallbackResponse = await fireRequest(fallbackRequest);
+    return {
+      ...fallbackRequest,
+      response: fallbackResponse,
+      fallbackFromVoiceId: request.voiceId,
+    };
+  }
   return {
     ...request,
     response,

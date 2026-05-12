@@ -15503,12 +15503,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   const OPENCLAW_HIDDEN_POLL_INTERVAL = 60000;
   const OPENCLAW_MAX_RETRY_INTERVAL = 60000;
   const OPENCLAW_STALE_GRACE_MS = 120000;
+  const OPENCLAW_REALTIME_CONNECT_TIMEOUT_MS = 9000;
   let openClawPollTimer = null;
   let openClawPollFailures = 0;
   let openClawPollInFlight = false;
   let openClawLastConnectedAt = 0;
   let openClawRealtimeSocket = null;
   let openClawRealtimeTimer = null;
+  let openClawRealtimeConnectTimer = null;
   let openClawRealtimeAttempts = 0;
   let openClawRealtimeBuffer = [];
   let openClawRealtimeRaf = 0;
@@ -19343,11 +19345,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return snapshot;
   }
 
-  function buildOpenClawRealtimeUrl(config = getOpenClawConfig()) {
+  async function buildOpenClawRealtimeUrl(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) return '';
     const authRequired = config.runtimeMeta?.authRequired !== false;
     if (authRequired && !String(config.apiKey || '').trim()) return '';
+    if (authRequired && config.apiKey && config.apiKey !== 'local-vite-proxy') {
+      try {
+        const sessionResponse = await fetchWithTimeout(`${base}/api/ws/browser/session`, {
+          method: 'POST',
+          headers: buildOpenClawHeaders(config, true),
+          body: JSON.stringify({ source: 'dashboard-realtime', actor: 'PBK dashboard' })
+        }, 5000);
+        const sessionPayload = await sessionResponse.json().catch(() => null);
+        if (sessionResponse.ok && sessionPayload?.session?.wsUrl) return sessionPayload.session.wsUrl;
+      } catch (error) {
+        console.warn('OpenClaw realtime session unavailable; falling back to polling.', error);
+      }
+      return '';
+    }
     const url = new URL('/ws/browser', `${base}/`);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     // Local Vite QA uses a sentinel key so HTTP requests can be authenticated
@@ -19360,6 +19376,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (openClawRealtimeTimer) {
       clearTimeout(openClawRealtimeTimer);
       openClawRealtimeTimer = null;
+    }
+    if (openClawRealtimeConnectTimer) {
+      clearTimeout(openClawRealtimeConnectTimer);
+      openClawRealtimeConnectTimer = null;
     }
     if (openClawRealtimeHeartbeatTimer) {
       clearInterval(openClawRealtimeHeartbeatTimer);
@@ -19441,23 +19461,42 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
-  function startOpenClawRealtime({ immediate = false } = {}) {
+  async function startOpenClawRealtime({ immediate = false } = {}) {
     const config = getOpenClawConfig();
-    const wsUrl = buildOpenClawRealtimeUrl(config);
+    const wsUrl = await buildOpenClawRealtimeUrl(config);
     if (!wsUrl || openClawRealtimeSocket?.readyState === WebSocket.OPEN || openClawRealtimeSocket?.readyState === WebSocket.CONNECTING) return;
     if (!immediate && document.hidden) return;
 
+    let socket = null;
     try {
-      openClawRealtimeSocket = new WebSocket(wsUrl);
+      socket = new WebSocket(wsUrl);
+      openClawRealtimeSocket = socket;
     } catch {
       openClawRealtimeAttempts += 1;
       scheduleOpenClawRealtimeReconnect();
       return;
     }
 
-    openClawRealtimeSocket.onopen = () => {
+    if (openClawRealtimeConnectTimer) clearTimeout(openClawRealtimeConnectTimer);
+    openClawRealtimeConnectTimer = setTimeout(() => {
+      if (openClawRealtimeSocket !== socket || socket.readyState !== WebSocket.CONNECTING) return;
+      openClawRealtimeAttempts += 1;
+      try {
+        socket.close();
+      } catch {
+        openClawRealtimeSocket = null;
+        scheduleOpenClawRealtimeReconnect();
+      }
+    }, OPENCLAW_REALTIME_CONNECT_TIMEOUT_MS);
+
+    socket.onopen = () => {
+      if (openClawRealtimeSocket !== socket) return;
+      if (openClawRealtimeConnectTimer) {
+        clearTimeout(openClawRealtimeConnectTimer);
+        openClawRealtimeConnectTimer = null;
+      }
       openClawRealtimeAttempts = 0;
-      openClawRealtimeSocket?.send(JSON.stringify({ type: 'ping', at: new Date().toISOString() }));
+      socket.send(JSON.stringify({ type: 'ping', at: new Date().toISOString() }));
       startOpenClawRealtimeHeartbeat();
       const current = getOpenClawConfig();
       saveOpenClawConfig({
@@ -19471,13 +19510,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
     };
 
-    openClawRealtimeSocket.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (openClawRealtimeSocket !== socket) return;
       const payload = parseJSONSafe(event.data, null);
       if (!payload || typeof payload !== 'object') return;
       queueOpenClawRealtimePayload(payload);
     };
 
-    openClawRealtimeSocket.onclose = () => {
+    socket.onclose = () => {
+      if (openClawRealtimeSocket !== socket) return;
+      if (openClawRealtimeConnectTimer) {
+        clearTimeout(openClawRealtimeConnectTimer);
+        openClawRealtimeConnectTimer = null;
+      }
       if (openClawRealtimeHeartbeatTimer) {
         clearInterval(openClawRealtimeHeartbeatTimer);
         openClawRealtimeHeartbeatTimer = null;
@@ -19486,7 +19531,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       openClawRealtimeAttempts += 1;
       scheduleOpenClawRealtimeReconnect();
     };
-    openClawRealtimeSocket.onerror = () => {
+    socket.onerror = () => {
+      if (openClawRealtimeSocket !== socket) return;
       openClawRealtimeAttempts += 1;
     };
   }

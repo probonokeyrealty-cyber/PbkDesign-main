@@ -590,6 +590,7 @@ const TOOL_NAMES = [
 ];
 
 const runtimeBrowserSockets = new Set();
+const runtimeBrowserSessions = new Map();
 let runtimeBroadcastTimer = null;
 const runtimeWebSocketStats = {
   lastOpenAt: '',
@@ -606,6 +607,40 @@ function sendRuntimeSocketMessage(socket, payload = {}) {
   } catch {
     return false;
   }
+}
+
+function pruneRuntimeBrowserSessions() {
+  const now = Date.now();
+  for (const [token, session] of runtimeBrowserSessions.entries()) {
+    if (!session || Number(session.expiresAt || 0) < now) runtimeBrowserSessions.delete(token);
+  }
+}
+
+function makeRuntimeBrowserWsUrl(request, token) {
+  const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = forwardedProto
+    ? (forwardedProto === 'https' ? 'wss' : 'ws')
+    : (IS_HOSTED ? 'wss' : 'ws');
+  const host = request.headers['x-forwarded-host'] || request.headers.host || `${HOST}:${PORT}`;
+  return `${protocol}://${host}/ws/browser?token=${encodeURIComponent(token)}`;
+}
+
+function createRuntimeBrowserSession(request, body = {}) {
+  pruneRuntimeBrowserSessions();
+  const token = randomUUID();
+  const session = {
+    token,
+    actor: body.actor || body.requestedBy || 'PBK dashboard',
+    source: body.source || 'dashboard-realtime',
+    createdAt: isoNow(),
+    expiresAt: Date.now() + BROWSER_VOICE_SESSION_TTL_MS,
+  };
+  runtimeBrowserSessions.set(token, session);
+  return {
+    ...session,
+    wsUrl: makeRuntimeBrowserWsUrl(request, token),
+    ttlMs: BROWSER_VOICE_SESSION_TTL_MS,
+  };
 }
 
 function broadcastRuntimeState(reason = 'state') {
@@ -29934,6 +29969,17 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ws/browser/session', '/api/state/stream/session'])) {
+      const body = await readBody(request);
+      const session = createRuntimeBrowserSession(request, body);
+      json(response, 200, {
+        ok: true,
+        result: 'ready',
+        session,
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/browser/session', '/api/browser-voice/session'])) {
       const body = await readBody(request);
       const browserVoice = getBrowserVoiceProviderMeta();
@@ -32876,6 +32922,7 @@ const server = createServer(async (request, response) => {
         'POST /api/slack/commands',
         'GET /api/deepgram/health',
         'GET /api/voice/browser/health',
+        'POST /api/ws/browser/session',
         'POST /api/voice/browser/session',
         'WS /api/voice/browser/stream',
         'WS /ws/browser',
@@ -33077,12 +33124,16 @@ server.on('upgrade', (request, socket, head) => {
 
   if (matchesPath(upgradePath, ['/ws/browser', '/api/ws/browser', '/ws/state', '/api/state/stream'])) {
     if (BRIDGE_API_KEY) {
+      pruneRuntimeBrowserSessions();
       const providedToken = upgradeUrl.searchParams.get('token') || String(request.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-      if (!providedToken || !safeCompareString(providedToken, BRIDGE_API_KEY)) {
+      const sessionAuthorized = providedToken && runtimeBrowserSessions.has(providedToken);
+      const bridgeAuthorized = providedToken && safeCompareString(providedToken, BRIDGE_API_KEY);
+      if (!sessionAuthorized && !bridgeAuthorized) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
+      if (sessionAuthorized) runtimeBrowserSessions.delete(providedToken);
     }
     runtimeBrowserWss.handleUpgrade(request, socket, head, (ws) => {
       runtimeBrowserWss.emit('connection', ws, request);

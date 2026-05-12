@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-11-inbound-call-media-fix';
+const BUILD_REVISION = '2026-05-11-ava-rex-flow-state';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -10369,6 +10369,75 @@ async function queryPbkKnowledgeRecords(params = {}) {
   };
 }
 
+function humanizeBantField(field = '') {
+  const normalized = String(field || '').trim().toLowerCase();
+  return {
+    budget: 'price range',
+    authority: 'decision-maker',
+    need: 'reason for selling',
+    timeline: 'timeline',
+    urgency: 'timing pressure',
+  }[normalized] || normalized || 'next qualifier';
+}
+
+function buildAvaFlowTurn(pipeline = {}, transcript = '', options = {}) {
+  const missing = Array.isArray(pipeline?.qualifier?.missingBant) ? pipeline.qualifier.missingBant : [];
+  const intent = String(pipeline?.intent?.intent || '').trim();
+  const firstMissing = humanizeBantField(missing[0]);
+  const leadName = pipeline?.lead?.leadName || options?.lead?.leadName || '';
+  const nextAgent = pipeline?.nextAgent || 'Ava';
+  const action = pipeline?.action || 'continue safely';
+  let reply = '';
+  let nextQuestion = '';
+
+  if (intent === 'ai_identity_question') {
+    nextQuestion = 'Do you want me to keep helping, or would you rather have a person step in?';
+    reply = `You caught me. I am Ava, PBK's AI acquisition assistant, and anything that moves money, contracts, calls, or messages still goes through human approval. ${nextQuestion}`;
+  } else if (intent === 'trust_scam') {
+    nextQuestion = 'Would it help if I send the company details first?';
+    reply = `That is fair to question. I can slow down, verify who we are, and keep this human-approved before anything moves forward. ${nextQuestion}`;
+  } else if (intent === 'grief_or_overwhelm') {
+    nextQuestion = 'What timeline would feel manageable for you?';
+    reply = `I am sorry you are carrying that. We can slow this down and just make the property part easier, no pressure. ${nextQuestion}`;
+  } else if (intent === 'sarcasm_or_joking') {
+    nextQuestion = 'What matters more right now, the number or the timing?';
+    reply = `Fair enough, I walked into that one. I will keep it straight: my job is to see whether PBK can give you a clean option. ${nextQuestion}`;
+  } else if (missing.length) {
+    nextQuestion = firstMissing === 'price range'
+      ? 'What number would make this worth considering?'
+      : firstMissing === 'decision-maker'
+        ? 'Is anyone else helping make the final decision?'
+        : firstMissing === 'timeline'
+          ? 'How soon would you ideally want this handled?'
+          : `Can you tell me a little more about the ${firstMissing}?`;
+    reply = `I am with you${leadName ? ` on ${leadName}` : ''}. Before I recommend the next move, I only need the ${firstMissing}. ${nextQuestion}`;
+  } else if (intent === 'callback_request') {
+    nextQuestion = 'What time should I put on the board?';
+    reply = `Got it. I will stage the callback instead of forcing this now, and I will keep any outbound follow-up approval-gated. ${nextQuestion}`;
+  } else if (intent === 'ready_to_close') {
+    nextQuestion = 'Do you want me to prepare the contract draft for review?';
+    reply = `That sounds like we may have a path. I can prepare the paperwork lane, but nothing gets sent without approval. ${nextQuestion}`;
+  } else if (intent === 'objection_price') {
+    nextQuestion = 'What number would make this worth saying yes today?';
+    reply = `I hear you on the number. I will keep us inside the MAO guardrail and use repairs, speed, and certainty to explain the tradeoff. ${nextQuestion}`;
+  } else {
+    nextQuestion = 'Do you want me to continue with the next safe step?';
+    reply = `I heard you. I routed this to ${nextAgent} for ${String(action).replace(/_/g, ' ')}, and provider writes still stay approval-gated. ${nextQuestion}`;
+  }
+
+  return {
+    mode: 'flow-state',
+    reply,
+    spokenReply: reply,
+    nextQuestion,
+    style: {
+      maxSentences: 3,
+      approvalGated: true,
+      enhanceExistingArchitecture: true,
+    },
+  };
+}
+
 async function runPbkAgentPipelineRecord(params = {}) {
   const context = findLeadContext(params);
   const transcript = String(params.transcript || params.text || params.query || '').trim();
@@ -10421,8 +10490,7 @@ async function runPbkAgentPipelineRecord(params = {}) {
     nextAgent = 'negotiator';
     action = 'continue_negotiation';
   }
-  return {
-    ok: true,
+  const pipelinePreview = {
     lead: context,
     qualifier: {
       bant,
@@ -10431,6 +10499,19 @@ async function runPbkAgentPipelineRecord(params = {}) {
     },
     intent: intent.event,
     memory: memories.memories,
+    nextAgent,
+    action,
+  };
+  const conversation = buildAvaFlowTurn(pipelinePreview, transcript, {
+    lead: context,
+    memories: memories.memories,
+  });
+  return {
+    ok: true,
+    ...pipelinePreview,
+    conversation,
+    reply: conversation.reply,
+    spokenReply: conversation.spokenReply,
     nextAgent,
     action,
     approvalGated: true,
@@ -17453,6 +17534,12 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     approval,
     message: `${label} was queued because Approval mode is active.`,
   };
+}
+
+async function invokeToolWithOperatingGuard(toolName, params = {}) {
+  const guarded = await enforceOperatingModeForTool(toolName, params);
+  if (guarded) return guarded;
+  return toolHandlers[toolName](params);
 }
 
 function getRangeStart(range = '30d') {
@@ -25941,7 +26028,7 @@ const toolHandlers = {
       routedTo = response?.routedTo || 'routeAdminCommand';
     } else if (lower.includes('cold email') || lower.includes('send email') || lower.includes('follow-up email')) {
       routedTo = 'sendColdEmail';
-      response = await toolHandlers.sendColdEmail({
+      response = await invokeToolWithOperatingGuard('sendColdEmail', {
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
@@ -25962,7 +26049,7 @@ const toolHandlers = {
       });
     } else if (lower.includes('contract') || lower.includes('docusign') || lower.includes('docu sign')) {
       routedTo = 'sendDocuSign';
-      response = await toolHandlers.sendDocuSign({
+      response = await invokeToolWithOperatingGuard('sendDocuSign', {
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
@@ -25972,7 +26059,7 @@ const toolHandlers = {
       });
     } else if (lower.includes('text') || lower.includes('sms')) {
       routedTo = 'telnyx_sms';
-      response = await toolHandlers.telnyx_sms({
+      response = await invokeToolWithOperatingGuard('telnyx_sms', {
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
@@ -25983,7 +26070,7 @@ const toolHandlers = {
       });
     } else if (lower.includes('call') || lower.includes('dial')) {
       routedTo = 'telnyx_call';
-      response = await toolHandlers.telnyx_call({
+      response = await invokeToolWithOperatingGuard('telnyx_call', {
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
@@ -27739,35 +27826,35 @@ function sendVoiceSocket(socket, payload = {}) {
 }
 
 function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
-  const missing = Array.isArray(pipeline?.qualifier?.missingBant) ? pipeline.qualifier.missingBant : [];
-  if (pipeline?.intent?.intent === 'ai_identity_question') {
-    return "You caught me. I am Ava, PBK's AI acquisition assistant. I do not drink coffee, but I do keep this process clear and human-approved. I staged the transparency response safely.";
+  const conversation = pipeline?.conversation || buildAvaFlowTurn(pipeline, transcript);
+  return conversation.spokenReply || conversation.reply || 'I heard you. I staged the next safe move under PBK approval guardrails.';
+}
+
+function looksLikeDashboardOperatorCommand(text = '') {
+  const clean = String(text || '').trim();
+  if (!clean) return false;
+  if (/\b(hi|hello),?\s+(this is a test|i want to sell|the roof needs work)\b/i.test(clean)) return false;
+  return /\b(search|find|show|open|pull|analyze|analyse|run|comps|mao|arv|call|dial|text|sms|email|send|prepare|contract|docusign|docu sign|update|mark|create|add lead|delete|void|status|remember|recall|schedule|book)\b/i.test(clean);
+}
+
+function buildAvaCommandFlowReply(commandResult = {}, fallbackReply = '') {
+  if (!commandResult?.ok) {
+    return fallbackReply || 'I heard you, but the command lane hit a snag. I kept the transcript visible so we can retry without losing context.';
   }
-  if (pipeline?.intent?.intent === 'trust_scam') {
-    return 'I heard a trust concern. I staged the verification response and human handoff option before anything moves forward.';
+  const routedTo = String(commandResult.routedTo || 'the right PBK tool').replace(/_/g, ' ');
+  const response = commandResult.response || {};
+  if (response.result === 'queued_for_approval' || response.outcome === 'queued_for_approval') {
+    return `I staged that safely. ${response.message || `PBK needs approval before running ${routedTo}.`} Check the approval board or Slack before anything moves.`;
   }
-  if (pipeline?.intent?.intent === 'grief_or_overwhelm') {
-    return 'I heard a sensitive or overwhelming situation. I staged a slower, dignity-first response with no pressure.';
+  if (response.result === 'provider_writes_disabled' || response.outcome === 'provider_writes_disabled') {
+    return `I caught the command, but the provider kill switch is active. I will keep this in review mode until you turn writes back on.`;
   }
-  if (pipeline?.intent?.intent === 'sarcasm_or_joking') {
-    return 'I heard a playful or sarcastic cue. I staged a brief warm response, then a reset back to the seller goal.';
+  if (response.result === 'unavailable' || response.outcome === 'unavailable') {
+    return response.message || `I routed this to ${routedTo}, but the current operating mode blocks that action.`;
   }
-  if (missing.length) {
-    return `I heard you. Before I recommend a live action, I still need ${missing.join(', ')} for BANT+. I staged this under approval guardrails.`;
-  }
-  if (pipeline?.intent?.intent === 'callback_request') {
-    return 'I heard a callback request. I staged the follow-up timing for review before anything is scheduled.';
-  }
-  if (pipeline?.intent?.intent === 'ready_to_close') {
-    return 'I heard buying intent. I staged contract preparation for approval before any document is sent.';
-  }
-  if (pipeline?.intent?.intent === 'objection_price') {
-    return 'I heard a price objection. I staged the negotiation playbook and will keep the offer under the MAO guardrail.';
-  }
-  if (pipeline?.nextAgent && pipeline?.action) {
-    return `I heard: "${String(transcript || '').slice(0, 120)}". I routed this to ${pipeline.nextAgent} with action ${pipeline.action}.`;
-  }
-  return `I heard: "${String(transcript || '').slice(0, 160)}". I staged it safely for Ava under approval guardrails.`;
+  const answer = response.answer || response.reply || response.message || response.summary || '';
+  if (answer) return String(answer).trim();
+  return `I routed that through ${routedTo} and kept the action inside PBK guardrails. Want me to open the lead or run the next safe step?`;
 }
 
 async function handleBrowserVoiceSocket(socket, request) {
@@ -27827,6 +27914,7 @@ async function handleBrowserVoiceSocket(socket, request) {
 
     let pipeline = null;
     let reply = '';
+    let commandResult = null;
     if (transcriptText) {
       try {
         pipeline = await runPbkAgentPipelineRecord({
@@ -27843,6 +27931,18 @@ async function handleBrowserVoiceSocket(socket, request) {
           },
         });
         reply = buildBrowserVoiceReply(pipeline, transcriptText);
+        if (looksLikeDashboardOperatorCommand(transcriptText)) {
+          commandResult = await toolHandlers.runAgentCommand({
+            command: transcriptText,
+            text: transcriptText,
+            actor: session.actor || 'PBK dashboard voice',
+            source: 'browser-voice',
+            leadId: session.leadId,
+            leadName: session.leadName,
+            address: session.address,
+          });
+          reply = buildAvaCommandFlowReply(commandResult, reply);
+        }
       } catch (error) {
         reply = 'I am having trouble with processing. I captured the transcript, and I can keep this in text while the agent lane reconnects.';
         sendVoiceSocket(socket, {
@@ -27868,6 +27968,7 @@ async function handleBrowserVoiceSocket(socket, request) {
           frameCount: session.frameCount,
           reply,
           pipeline,
+          commandResult,
           transcriptFinal: finalTranscriptItems.length > 0,
         },
       });
@@ -27887,6 +27988,7 @@ async function handleBrowserVoiceSocket(socket, request) {
           provider: 'Deepgram',
           sentiment: session.sentiment,
           pipeline,
+          commandResult,
           transcriptFinal: finalTranscriptItems.length > 0,
           reason,
         },
@@ -27917,6 +28019,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       transcript: transcriptText,
       text: reply || 'I did not catch a clean transcript. Try again when you are ready.',
       pipeline,
+      commandResult,
       reason,
     });
   };

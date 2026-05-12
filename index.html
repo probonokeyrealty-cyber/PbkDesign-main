@@ -11780,7 +11780,7 @@
       <div>
         <div class="ava-panel-kicker">Ava command channel</div>
         <div class="ava-panel-title">Talk to <em>Ava</em></div>
-        <div class="ava-panel-status"><span class="ava-connection-dot" id="avaConnectionDot" aria-hidden="true"></span><span id="avaAvatarStatus">Ready for typed or voice-style commands.</span></div>
+        <div class="ava-panel-status"><span class="ava-connection-dot" id="avaConnectionDot" aria-hidden="true"></span><span id="avaAvatarStatus">Ready for typed or voice commands.</span></div>
       </div>
       <button class="ava-panel-close" type="button" id="avaAvatarClose" aria-label="Close Ava panel">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -28964,7 +28964,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
       if (stopBtn) stopBtn.disabled = !listening && !currentVoiceAudio;
       if (micLabel) micLabel.textContent = listening ? 'LISTENING... CLICK TO STOP' : 'PRESS TO TALK';
-      if (status) status.textContent = listening ? 'Listening preview active - Deepgram stream UI ready.' : 'Ready for typed or voice-style commands.';
+      if (status) status.textContent = listening ? 'Listening live - Deepgram stream UI ready.' : 'Ready for typed or voice commands.';
     };
 
     const arrayBufferToBase64 = (buffer) => {
@@ -28999,7 +28999,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       } else {
         setVoiceState('warning', 'Voice providers are not enabled.');
         if (micHint) micHint.textContent = 'Voice providers are not enabled for this environment yet. Ava still stages actions under approval guardrails.';
-        if (status && !shell.classList.contains('listening')) status.textContent = 'Ready for typed or voice-style commands.';
+        if (status && !shell.classList.contains('listening')) status.textContent = 'Ready for typed or voice commands.';
       }
     };
 
@@ -29184,22 +29184,46 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
     }
 
-    const stageCommand = () => {
+    const getCommandResponseText = (response) => {
+      const result = response?.result || response || {};
+      const toolResponse = result.response || {};
+      return toolResponse.answer
+        || toolResponse.reply
+        || toolResponse.message
+        || result.answer
+        || result.message
+        || (result.routedTo ? `Routed to ${String(result.routedTo).replace(/_/g, ' ')} under PBK guardrails.` : '');
+    };
+
+    const stageCommand = async () => {
       const command = (input?.value || '').trim();
       if (!command) {
         input?.focus();
-        toast({ type: 'info', title: 'Tell Ava what to do', desc: 'Type a command or use the voice-style button to stage one.' });
+        toast({ type: 'info', title: 'Tell Ava what to do', desc: 'Type a command or use the voice button to stage one.' });
         return;
       }
-      toast({
-        type: 'success',
-        title: 'Ava command staged',
-        desc: 'Command captured locally. Approval guardrails still apply before any live action.',
-        id: 'ava-command-staged'
-      });
       addAvaHistory('user', 'Typed', command);
+      if (sendBtn) sendBtn.disabled = true;
+      if (status) status.textContent = 'Ava is routing this through the live command lane...';
       if (input) input.value = '';
-      setPanelOpen(false);
+      try {
+        const response = await submitAgentCommand(command, {
+          actor: 'PBK desktop voice panel',
+          source: 'ava-avatar-typed',
+        });
+        const answer = response
+          ? (getCommandResponseText(response) || 'I staged that under PBK approval guardrails.')
+          : 'I could not reach the PBK brain from this panel yet. The command stayed local so no live action ran.';
+        addAvaHistory(response ? 'ava' : 'error', 'Ava', answer);
+        if (status) status.textContent = answer;
+        if (response) playAvaTts(answer).catch(() => null);
+      } catch (error) {
+        const message = error?.message || 'Ava could not route that command.';
+        addAvaHistory('error', 'Issue', message);
+        if (status) status.textContent = message;
+      } finally {
+        if (sendBtn) sendBtn.disabled = false;
+      }
     };
 
     orb.addEventListener('click', (event) => {

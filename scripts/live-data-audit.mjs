@@ -8,11 +8,13 @@ const bridgePath = resolve(root, 'scripts/openclaw-local-server.mjs');
 const heartbeatManagerPath = resolve(root, 'scripts/pbk-openclaw-heartbeat.ps1');
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
+const agentsPath = resolve(root, 'AGENTS.md');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
+const agents = readFileSync(agentsPath, 'utf8');
 
 const checks = [
   {
@@ -243,6 +245,19 @@ const checks = [
       && /this browser is missing the private PBK Bridge API key/.test(index)
       && /Ava will stay in text mode instead of pretending to listen/.test(index)
       && /showAvaVoiceDiagnostic/.test(index),
+  },
+  {
+    name: 'Ava/Rex flow-state layer enhances existing tools without bypassing approvals',
+    ok: /function buildAvaFlowTurn/.test(bridge)
+      && /looksLikeDashboardOperatorCommand/.test(bridge)
+      && /buildAvaCommandFlowReply/.test(bridge)
+      && /invokeToolWithOperatingGuard/.test(bridge)
+      && /source:\s*'browser-voice'/.test(bridge)
+      && /stageCommand = async/.test(index)
+      && /submitAgentCommand\(command/.test(index)
+      && /conversation flow layer/.test(agents)
+      && /Enhance instead of replacing/.test(agents)
+      && /Rex should feel like a strategist/.test(agents),
   },
   {
     name: 'Browser voice sends WebM container audio to Deepgram without raw Opus handshake params',

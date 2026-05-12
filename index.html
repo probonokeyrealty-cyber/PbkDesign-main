@@ -19632,6 +19632,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   window.addEventListener('storage', (event) => {
     if (event.key !== OPENCLAW_STORAGE_KEY) return;
+    const previous = sanitizeOpenClawConfig(parseJSONSafe(event.oldValue, {}));
+    const next = sanitizeOpenClawConfig(parseJSONSafe(event.newValue, {}));
+    const previousRealtimeKey = `${previous.endpoint || ''}|${previous.apiKey || ''}`;
+    const nextRealtimeKey = `${next.endpoint || ''}|${next.apiKey || ''}`;
+    if (previousRealtimeKey === nextRealtimeKey) {
+      reflectOpenClawUI(next);
+      return;
+    }
     openClawPollFailures = 0;
     stopOpenClawRealtime();
     startOpenClawPolling({ immediate: true });

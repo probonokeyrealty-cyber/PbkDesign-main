@@ -218,13 +218,17 @@ const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
 const BROWSER_VOICE_DEEPGRAM_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || 'flux-general-en').trim();
 const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2').trim();
+const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.env.PBK_BROWSER_VOICE_AUTO_REPLY_MS || 1250)));
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
-const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
+const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || 'EXAVITQu4L4D8Xk9nI0J').trim();
 const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
 const ELEVENLABS_STREAMING_TTS_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_ELEVENLABS_STREAMING_TTS_ENABLED || 'true').trim());
 const ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
+const ELEVENLABS_STABILITY = Number(process.env.PBK_ELEVENLABS_STABILITY || 0.42);
+const ELEVENLABS_SIMILARITY_BOOST = Number(process.env.PBK_ELEVENLABS_SIMILARITY_BOOST || 0.78);
+const ELEVENLABS_SPEED = Number(process.env.PBK_ELEVENLABS_SPEED || 0.98);
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -9145,6 +9149,10 @@ function buildStrategistMessages(params = {}) {
     'You are the PBK strategist coaching Ava, an approval-gated real estate acquisition agent.',
     'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.',
     'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.',
+    'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.',
+    'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.',
+    'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.',
+    'Use PBK masterclass behavior: emotional intelligence, phone EQ, ego handling, sensitive-topic deflection, BANT+ discipline, and path discipline across Cash Offer, Land, RBP/novation, Creative Finance, and Mortgage Takeover.',
     'Never authorize calls, contracts, SMS, email, or offer increases directly. If money or provider writes are sensitive, set approvalNeeded true.',
     'Truth boundary: Ava must not pretend to be human if asked. Offers and actions are real but approval-gated.',
     'Return JSON only with keys: immediateScript, strategy, risk, rule, nextQuestion, returnToBusiness, approvalNeeded, confidence.',
@@ -9154,7 +9162,7 @@ function buildStrategistMessages(params = {}) {
     `Transcript: ${transcript || '(none provided)'}`,
     `Attempted actions: ${attemptedActions.join('; ') || '(none)'}`,
     `Deal context: ${JSON.stringify(dealContext)}`,
-    'Write short, natural language Ava can say immediately. Include one smart question and one transition back to business.',
+    'Write natural language Ava can say immediately. Start by acknowledging the human. Include one smart question and one transition back to business.',
   ].join('\n\n');
   return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], context, situation, transcript, attemptedActions, dealContext };
 }
@@ -14611,7 +14619,7 @@ async function findInboundLeadContext(phone = '') {
     found: false,
     source: 'new-caller',
     leadId: `lead-inbound-${slugify(normalizedPhone || randomUUID())}`,
-    leadName: 'New inbound caller',
+    leadName: '',
     address: '',
     phone: normalizedPhone,
     email: '',
@@ -14751,7 +14759,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       leadId: lead.leadId,
       status: 'callback_requested',
       source: 'inbound-call',
-      seller: { name: 'New inbound caller', phone: parsed.from, email: '' },
+      seller: { name: 'Inbound caller', phone: parsed.from, email: '' },
       property: { address: '' },
       motivationScore: 0,
       createdAt: isoNow(),
@@ -27423,9 +27431,10 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
     text: String(text || '').slice(0, 1800),
     model_id: modelId,
     voice_settings: {
-      stability: Number(body.stability ?? 0.5),
-      similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? 0.75),
-      speed: Number(body.speed ?? 0.95),
+      stability: Number(body.stability ?? ELEVENLABS_STABILITY),
+      similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? ELEVENLABS_SIMILARITY_BOOST),
+      speed: Number(body.speed ?? ELEVENLABS_SPEED),
+      use_speaker_boost: Boolean(body.useSpeakerBoost ?? body.use_speaker_boost ?? true),
     },
   };
   const pathSuffix = stream ? '/stream' : '';
@@ -28411,6 +28420,65 @@ function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
   return conversation.spokenReply || conversation.reply || 'I heard you. I staged the next safe move under PBK approval guardrails.';
 }
 
+function normalizeAvaVoiceReplyText(text = '', fallback = '') {
+  const clean = String(text || fallback || '')
+    .replace(/\bnew inbound caller\b/gi, 'there')
+    .replace(/\bI routed this to [^.?!]+[.?!]\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return 'I hear you. Let me slow this down and make sure I understand the property situation before I recommend anything. What matters most right now: speed, certainty, or price?';
+  const wordCount = clean.split(/\s+/).filter(Boolean).length;
+  if (wordCount >= 24) return clean;
+  return `${clean} Let me ask one clean question so I do not guess wrong: what matters most right now, speed, certainty, or price?`;
+}
+
+async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript = '', session = {} } = {}) {
+  const fallback = buildBrowserVoiceReply(pipeline, transcript);
+  try {
+    const strategist = await askStrategistRecord({
+      tenantId: 'pbk',
+      leadId: session.leadId || pipeline?.lead?.leadId || '',
+      leadName: session.leadName || pipeline?.lead?.leadName || '',
+      address: session.address || pipeline?.lead?.address || '',
+      situation: [
+        'Browser microphone voice turn for Ava.',
+        'Ava must respond like a senior wholesale acquisition specialist, not like a query result.',
+        'Use emotional intelligence and BANT+ probing; do not execute provider writes.',
+      ].join(' '),
+      transcript,
+      attemptedActions: [
+        'captured-live-browser-speech',
+        `intent:${pipeline?.intent?.intent || 'unknown'}`,
+        `next:${pipeline?.nextAgent || 'ava'}:${pipeline?.action || 'qualify'}`,
+      ],
+      confidence: 0.84,
+      temperature: 0.68,
+      maxTokens: 900,
+      storeRule: false,
+      status: 'suggested',
+      metadata: {
+        source: 'browser-voice',
+        browserVoiceSessionId: session.id || '',
+        approvalGated: true,
+      },
+    });
+    const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
+    return {
+      text: normalizeAvaVoiceReplyText(script, fallback),
+      strategist,
+    };
+  } catch (error) {
+    return {
+      text: normalizeAvaVoiceReplyText(fallback),
+      strategist: {
+        ok: false,
+        result: 'voice_reply_fallback',
+        error: error?.message || 'Strategist reply unavailable.',
+      },
+    };
+  }
+}
+
 function looksLikeDashboardOperatorCommand(text = '') {
   const clean = String(text || '').trim();
   if (!clean) return false;
@@ -28474,10 +28542,26 @@ async function handleBrowserVoiceSocket(socket, request) {
 
   let deepgramConnection = null;
   let finalized = false;
+  let autoReplyTimer = null;
+
+  const clearAutoReplyTimer = () => {
+    if (autoReplyTimer) {
+      clearTimeout(autoReplyTimer);
+      autoReplyTimer = null;
+    }
+  };
+
+  const scheduleAutoReply = (reason = 'speech-final') => {
+    clearAutoReplyTimer();
+    autoReplyTimer = setTimeout(() => {
+      void finalize(reason);
+    }, BROWSER_VOICE_AUTO_REPLY_MS);
+  };
 
   const finalize = async (reason = 'closed') => {
     if (finalized) return;
     finalized = true;
+    clearAutoReplyTimer();
     try {
       deepgramConnection?.close?.();
     } catch {
@@ -28496,6 +28580,7 @@ async function handleBrowserVoiceSocket(socket, request) {
     let pipeline = null;
     let reply = '';
     let commandResult = null;
+    let voiceStrategist = null;
     if (transcriptText) {
       try {
         pipeline = await runPbkAgentPipelineRecord({
@@ -28511,7 +28596,13 @@ async function handleBrowserVoiceSocket(socket, request) {
             reason,
           },
         });
-        reply = buildBrowserVoiceReply(pipeline, transcriptText);
+        const coachedReply = await buildBrowserVoiceConversationalReply({
+          pipeline,
+          transcript: transcriptText,
+          session,
+        });
+        reply = coachedReply.text;
+        voiceStrategist = coachedReply.strategist || null;
         if (looksLikeDashboardOperatorCommand(transcriptText)) {
           commandResult = await toolHandlers.runAgentCommand({
             command: transcriptText,
@@ -28522,7 +28613,7 @@ async function handleBrowserVoiceSocket(socket, request) {
             leadName: session.leadName,
             address: session.address,
           });
-          reply = buildAvaCommandFlowReply(commandResult, reply);
+          reply = normalizeAvaVoiceReplyText(buildAvaCommandFlowReply(commandResult, reply), reply);
         }
       } catch (error) {
         reply = 'I am having trouble with processing. I captured the transcript, and I can keep this in text while the agent lane reconnects.';
@@ -28550,6 +28641,7 @@ async function handleBrowserVoiceSocket(socket, request) {
           reply,
           pipeline,
           commandResult,
+          voiceStrategist,
           transcriptFinal: finalTranscriptItems.length > 0,
         },
       });
@@ -28570,6 +28662,7 @@ async function handleBrowserVoiceSocket(socket, request) {
           sentiment: session.sentiment,
           pipeline,
           commandResult,
+          voiceStrategist,
           transcriptFinal: finalTranscriptItems.length > 0,
           reason,
         },
@@ -28601,8 +28694,16 @@ async function handleBrowserVoiceSocket(socket, request) {
       text: reply || 'I did not catch a clean transcript. Try again when you are ready.',
       pipeline,
       commandResult,
+      voiceStrategist,
       reason,
     });
+    setTimeout(() => {
+      try {
+        socket.close(1000, 'browser-voice-turn-complete');
+      } catch {
+        // Ignore close races after the response has been delivered.
+      }
+    }, 120);
   };
 
   const openDeepgramBrowserVoiceConnection = async (options, label, notifyErrors = true) => {
@@ -28673,6 +28774,7 @@ async function handleBrowserVoiceSocket(socket, request) {
         sentiment,
         intent: detected,
       });
+      if (item.isFinal || item.speechFinal) scheduleAutoReply(item.speechFinal ? 'speech-final' : 'final-transcript');
     });
     sendVoiceSocket(socket, { type: 'ready', sessionId: session.id });
   } catch (error) {

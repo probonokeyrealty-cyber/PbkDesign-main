@@ -28879,10 +28879,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let voiceRecorder = null;
     let voiceSocket = null;
     let voiceStarting = false;
+    let voiceSessionCompleted = false;
+    let avaVoiceSpeaking = false;
+    let voiceChunkStats = { chunks: 0, bytes: 0, lastAt: 0 };
     let lastVoiceDiagnosticToastAt = 0;
     let currentVoiceAudio = null;
     let currentVoiceAudioUrl = '';
     let currentVoiceAudioStreamAbort = null;
+
+    const setAvaVoiceSpeaking = (speaking = false) => {
+      avaVoiceSpeaking = Boolean(speaking);
+      shell.dataset.avaSpeaking = avaVoiceSpeaking ? 'true' : 'false';
+    };
 
     const setVoiceState = (state = 'ready', label = '') => {
       const next = navigator.onLine === false ? 'offline' : state;
@@ -28923,6 +28931,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
       currentVoiceAudio = null;
       currentVoiceAudioUrl = '';
+      setAvaVoiceSpeaking(false);
       if (stopBtn) stopBtn.disabled = !shell.classList.contains('listening');
     };
 
@@ -29041,12 +29050,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return voiceHealth;
     }
 
-    function stopBrowserVoice(reason = 'user-stop') {
-      stopCurrentVoiceAudio();
+    function cleanupBrowserVoiceCapture(reason = 'capture-stop', options = {}) {
+      const sendStop = options.sendStop !== false;
       if (voiceRecorder && voiceRecorder.state !== 'inactive') {
         try { voiceRecorder.stop(); } catch {}
       }
-      if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
+      if (sendStop && voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
         try { voiceSocket.send(JSON.stringify({ event: 'stop', reason })); } catch {}
       }
       if (voiceSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(voiceSocket.readyState)) {
@@ -29061,6 +29070,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       voiceMode = 'idle';
       setListening(false);
       updateVoiceCopy();
+    }
+
+    function stopBrowserVoice(reason = 'user-stop') {
+      stopCurrentVoiceAudio();
+      cleanupBrowserVoiceCapture(reason);
       addAvaHistory('system', 'Stop', reason === 'user-stop' || reason === 'operator-stop' ? 'Ava voice interrupted by operator.' : `Voice stopped: ${reason}.`);
     }
 
@@ -29087,6 +29101,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const blob = await response.blob();
         const audioUrl = URL.createObjectURL(blob);
         stopCurrentVoiceAudio();
+        setAvaVoiceSpeaking(true);
         const audio = new Audio(audioUrl);
         currentVoiceAudio = audio;
         currentVoiceAudioUrl = audioUrl;
@@ -29140,6 +29155,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const mimeType = getAvaTtsStreamingMimeType();
       if (!mimeType) return false;
       stopCurrentVoiceAudio();
+      setAvaVoiceSpeaking(true);
       const controller = new AbortController();
       const abortCurrentStream = () => controller.abort();
       currentVoiceAudioStreamAbort = abortCurrentStream;
@@ -29250,7 +29266,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         }
         const base = getVoiceBase();
         if (!base) throw new Error('PBK Brain bridge is not configured.');
-        voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        voiceSessionCompleted = false;
+        voiceChunkStats = { chunks: 0, bytes: 0, lastAt: 0 };
+        voiceStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
         const sessionResponse = await fetchWithTimeout(`${base}/api/voice/browser/session`, {
           method: 'POST',
           headers: getVoiceHeaders(true),
@@ -29277,11 +29301,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           voiceRecorder = new MediaRecorder(voiceStream, { mimeType });
           voiceRecorder.addEventListener('dataavailable', async (event) => {
             if (!event.data?.size || !voiceSocket || voiceSocket.readyState !== WebSocket.OPEN) return;
+            if (avaVoiceSpeaking) return;
+            voiceChunkStats.chunks += 1;
+            voiceChunkStats.bytes += event.data.size;
+            voiceChunkStats.lastAt = Date.now();
+            if (status && voiceChunkStats.chunks <= 3) {
+              status.textContent = `Microphone is streaming (${voiceChunkStats.chunks} audio chunk${voiceChunkStats.chunks === 1 ? '' : 's'} sent). Keep speaking naturally.`;
+            }
             const payload = arrayBufferToBase64(await event.data.arrayBuffer());
             voiceSocket.send(JSON.stringify({ event: 'media', media: { payload, mimeType } }));
           });
           voiceRecorder.start(700);
           if (status) status.textContent = 'Listening live - speak naturally.';
+          window.setTimeout(() => {
+            if (!shell.classList.contains('listening') || voiceSessionCompleted) return;
+            if (voiceChunkStats.chunks === 0) {
+              showAvaVoiceDiagnostic('microphone', 'The browser opened the microphone, but no audio chunks reached Ava. Check the selected input device and browser microphone permission.');
+            }
+          }, 2600);
         });
         voiceSocket.addEventListener('message', (event) => {
           let data = {};
@@ -29297,6 +29334,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             addAvaHistory(data.isFinal ? 'user' : 'system', data.isFinal ? 'You' : 'Live', data.transcript);
           }
           if (data.type === 'assistant_response') {
+            voiceSessionCompleted = true;
             if (status) status.textContent = data.text || 'Ava response staged.';
             addAvaHistory(data.ok ? 'ava' : 'error', 'Ava', data.text || 'Try again when you are ready.');
             toast({
@@ -29305,6 +29343,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               desc: data.text || 'Try again when you are ready.',
               id: 'ava-voice-response'
             });
+            cleanupBrowserVoiceCapture('assistant-response', { sendStop: false });
             playAvaTts(data.text || '').catch(() => null);
           }
           if (data.type === 'error') {
@@ -29312,6 +29351,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           }
         });
         voiceSocket.addEventListener('close', () => {
+          if (voiceSessionCompleted) {
+            cleanupBrowserVoiceCapture('turn-complete', { sendStop: false });
+            return;
+          }
           if (voiceMode === 'live') {
             showAvaVoiceDiagnostic('websocket', 'Ava voice connection closed. If this was not intentional, check the WebSocket connection and retry.');
             stopBrowserVoice('socket-close');

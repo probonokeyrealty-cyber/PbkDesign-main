@@ -7507,18 +7507,20 @@ function getAvaMasterclassKnowledgeMatches(query = '', limit = 4) {
 function looksLikeAvaMasterclassCommand(command = '') {
   const normalized = String(command || '').toLowerCase();
   if (!normalized) return false;
-  return /\b(masterclass|teach|training|train|coach|playbook|script|scripts|small talk|rapport|sports|politics|deflect|deflection|ego|emotional intelligence|phone eq|listening|interpretation|authority|understanding|7[-\s]?figure|seven[-\s]?figure|best books|influence|never split|spin selling|challenger|mortgage takeover|subject-to|subto|creative finance|novation|rbp|cash land|land offer)\b/i.test(normalized)
+  return /\b(masterclass|teach|training|train|coach|playbook|script|scripts|small talk|rapport|sports|politics|deflect|deflection|ego|emotional intelligence|phone eq|listening|interpretation|authority|understanding|7[-\s]?figure|seven[-\s]?figure|best books|influence|never split|spin selling|challenger|mortgage takeover|subject-to|subto|creative finance|novation|rbp|cash land|land offer|dumb|robotic|query-like|stuck|loop|probe|probing|natural|fluid|microphone|voice pipeline|transcript)\b/i.test(normalized)
     && /\b(ava|rex|ai|closer|agent|sales|wholesale|seller|call|phone|conversation|operator)\b/i.test(normalized);
 }
 
 function looksLikeAgentDoctrineCommand(command = '') {
   const normalized = String(command || '').toLowerCase();
   return /\b(ava|rex)\b/i.test(normalized)
-    && /\b(who are you|what are you|explain|remember|instruction|instructions|bant|deal path|paths|script|objection|cash offer|doctrine|playbook|aware|small talk|rapport|sports|politics|ego|emotional intelligence|phone eq|listening|authority|understanding|seven figure|7-figure|books|mortgage takeover|creative finance|novation|rbp|land)\b/i.test(normalized);
+    && /\b(who are you|what are you|explain|remember|instruction|instructions|bant|deal path|paths|script|objection|cash offer|doctrine|playbook|aware|small talk|rapport|sports|politics|ego|emotional intelligence|phone eq|listening|authority|understanding|seven figure|7-figure|books|mortgage takeover|creative finance|novation|rbp|land|dumb|robotic|query-like|stuck|loop|probe|probing|natural|fluid|microphone|voice|transcript|conversation flow|troubleshoot)\b/i.test(normalized);
 }
 
 function buildAvaDoctrineCommandResult(command = '', context = {}) {
   const masterclassMatches = getAvaMasterclassKnowledgeMatches(command, 5);
+  const normalizedCommand = String(command || '').toLowerCase();
+  const voiceOrQualityConcern = /\b(dumb|robotic|query-like|stuck|loop|probe|probing|natural|fluid|microphone|voice|transcript|conversation flow|troubleshoot)\b/i.test(normalizedCommand);
   const masterclassLines = masterclassMatches
     .map((fact) => `- ${String(fact.predicate || '').replace(/_/g, ' ')}: ${fact.object}`)
     .filter(Boolean);
@@ -7535,6 +7537,8 @@ function buildAvaDoctrineCommandResult(command = '', context = {}) {
       '- Cash Offer wording stays consistent. I do not call it Cash Wholesale to sellers.',
       '- Scam/fake objections get verification, no defensiveness, and a graceful exit if trust is not restored.',
       '- Contracts, calls, SMS, email, and offer actions remain approval-safe unless operating mode explicitly allows them.',
+      voiceOrQualityConcern ? '- If Ava sounds dumb or robotic, diagnose the pipeline first: no microphone audio or no Deepgram transcript starves her brain. Then verify the command is routed through agent_brain/strategist with pbk_knowledge, not a short fallback response.' : '',
+      voiceOrQualityConcern ? '- Recovery behavior: name the broken lane, fall back to text, acknowledge the last real words, ask one BANT+ probing question, and do not pretend she heard a caller when the transcript is empty.' : '',
       context.address ? `- Current context address: ${context.address}.` : '',
       masterclassLines.length ? '' : '',
       masterclassLines.length ? 'Relevant pbk_knowledge masterclass:' : '',
@@ -28464,6 +28468,22 @@ function sendVoiceSocket(socket, payload = {}) {
   }
 }
 
+function sendBrowserVoiceStatus(socket, session = {}, payload = {}) {
+  return sendVoiceSocket(socket, {
+    type: 'voice_status',
+    frameCount: session.frameCount || 0,
+    audioBytes: session.audioBytes || 0,
+    ...payload,
+  });
+}
+
+function buildNoTranscriptBrowserVoiceReply(session = {}) {
+  if (session.frameCount > 0) {
+    return `I received ${session.frameCount} audio chunk${session.frameCount === 1 ? '' : 's'} from the browser, but Deepgram did not return clean words yet. That means the microphone stream reached PBK, but speech-to-text did not hear usable speech. Try again closer to the mic, or type the command and I will keep reasoning from there.`;
+  }
+  return 'I am not receiving microphone audio from Chrome yet, so I will not pretend I heard you. PBK providers are ready, but the browser or Windows input is not sending sound. Select a real microphone, allow this site, refresh, and I will pick the conversation back up.';
+}
+
 function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
   const conversation = pipeline?.conversation || buildAvaFlowTurn(pipeline, transcript);
   return conversation.spokenReply || conversation.reply || 'I heard you. I staged the next safe move under PBK approval guardrails.';
@@ -28584,6 +28604,9 @@ async function handleBrowserVoiceSocket(socket, request) {
     ...sessionAuth,
     id: `browser-voice-${Date.now()}-${randomUUID().slice(0, 8)}`,
     frameCount: 0,
+    audioBytes: 0,
+    firstAudioAt: '',
+    lastAudioAt: '',
     transcript: [],
     sentiment: null,
     startedAt: isoNow(),
@@ -28687,6 +28710,7 @@ async function handleBrowserVoiceSocket(socket, request) {
         payload: {
           source: 'browser-voice',
           frameCount: session.frameCount,
+          audioBytes: session.audioBytes,
           reply,
           pipeline,
           commandResult,
@@ -28708,6 +28732,8 @@ async function handleBrowserVoiceSocket(socket, request) {
         metadata: {
           channel: 'browser_voice',
           provider: 'Deepgram',
+          frameCount: session.frameCount,
+          audioBytes: session.audioBytes,
           sentiment: session.sentiment,
           pipeline,
           commandResult,
@@ -28727,12 +28753,19 @@ async function handleBrowserVoiceSocket(socket, request) {
     }
 
     if (!transcriptText) {
+      reply = buildNoTranscriptBrowserVoiceReply(session);
+      console.warn('[pbk-local-openclaw] Browser voice ended without transcript:', {
+        sessionId: session.id,
+        reason,
+        frameCount: session.frameCount,
+        audioBytes: session.audioBytes,
+      });
       sendVoiceSocket(socket, {
         type: 'diagnostic',
         lane: session.frameCount ? 'stt' : 'microphone',
-        message: session.frameCount
-          ? 'I am having trouble with transcription. I received audio frames, but no clean transcript came back.'
-          : 'I am having trouble with microphone capture. I did not receive audio frames before the voice session closed.',
+        frameCount: session.frameCount,
+        audioBytes: session.audioBytes,
+        message: reply,
       });
     }
 
@@ -28740,7 +28773,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       type: 'assistant_response',
       ok: Boolean(transcriptText),
       transcript: transcriptText,
-      text: reply || 'I did not catch a clean transcript. Try again when you are ready.',
+      text: reply || buildNoTranscriptBrowserVoiceReply(session),
       pipeline,
       commandResult,
       voiceStrategist,
@@ -28798,6 +28831,13 @@ async function handleBrowserVoiceSocket(socket, request) {
         utteranceEndMs: 900,
       }, 'deepgram-nova-v1-fallback');
     }
+    sendBrowserVoiceStatus(socket, session, {
+      state: 'live',
+      ws: 'open',
+      deepgram: 'open',
+      provider: deepgramConnection === null ? '' : 'Deepgram',
+      message: 'Bridge received the voice session and opened Deepgram. Start speaking naturally.',
+    });
     deepgramConnection.on('message', (data) => {
       const normalized = normalizeDeepgramLiveTranscript(data);
       const transcript = normalized.transcript;
@@ -28815,6 +28855,12 @@ async function handleBrowserVoiceSocket(socket, request) {
         capturedAt: isoNow(),
       };
       session.transcript.push(item);
+      console.log('[pbk-local-openclaw] Browser voice transcript:', {
+        sessionId: session.id,
+        isFinal: item.isFinal,
+        speechFinal: item.speechFinal,
+        preview: transcript.slice(0, 120),
+      });
       sendVoiceSocket(socket, {
         type: 'transcript',
         transcript,
@@ -28825,7 +28871,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       });
       if (item.isFinal || item.speechFinal) scheduleAutoReply(item.speechFinal ? 'speech-final' : 'final-transcript');
     });
-    sendVoiceSocket(socket, { type: 'ready', sessionId: session.id });
+    sendVoiceSocket(socket, { type: 'ready', sessionId: session.id, provider: 'Deepgram' });
   } catch (error) {
     sendVoiceSocket(socket, {
       type: 'diagnostic',
@@ -28839,6 +28885,22 @@ async function handleBrowserVoiceSocket(socket, request) {
   socket.on('message', (raw) => {
     if (Buffer.isBuffer(raw) && raw.length && raw[0] !== 123) {
       session.frameCount += 1;
+      session.audioBytes += raw.length;
+      if (!session.firstAudioAt) session.firstAudioAt = isoNow();
+      session.lastAudioAt = isoNow();
+      if (session.frameCount === 1 || session.frameCount % 10 === 0) {
+        console.log('[pbk-local-openclaw] Browser voice audio received:', {
+          sessionId: session.id,
+          frameCount: session.frameCount,
+          audioBytes: session.audioBytes,
+        });
+        sendBrowserVoiceStatus(socket, session, {
+          state: 'live',
+          ws: 'receiving',
+          deepgram: 'listening',
+          message: `Bridge is receiving browser audio (${session.frameCount} chunk${session.frameCount === 1 ? '' : 's'}).`,
+        });
+      }
       sendDeepgramAudio(deepgramConnection, raw);
       return;
     }
@@ -28851,7 +28913,36 @@ async function handleBrowserVoiceSocket(socket, request) {
     if (event.event === 'media' && event.media?.payload) {
       const frame = Buffer.from(String(event.media.payload), 'base64');
       session.frameCount += 1;
+      session.audioBytes += frame.length;
+      if (!session.firstAudioAt) session.firstAudioAt = isoNow();
+      session.lastAudioAt = isoNow();
+      if (session.frameCount === 1 || session.frameCount % 10 === 0) {
+        console.log('[pbk-local-openclaw] Browser voice audio received:', {
+          sessionId: session.id,
+          frameCount: session.frameCount,
+          audioBytes: session.audioBytes,
+          mimeType: event.media?.mimeType || '',
+        });
+        sendBrowserVoiceStatus(socket, session, {
+          state: 'live',
+          ws: 'receiving',
+          deepgram: 'listening',
+          message: `Bridge is receiving browser audio (${session.frameCount} chunk${session.frameCount === 1 ? '' : 's'}).`,
+        });
+      }
       sendDeepgramAudio(deepgramConnection, frame);
+      return;
+    }
+    if (event.event === 'start') {
+      session.mimeType = String(event.mimeType || '').slice(0, 80);
+      sendBrowserVoiceStatus(socket, session, {
+        state: 'live',
+        ws: 'open',
+        deepgram: 'listening',
+        message: session.mimeType
+          ? `Browser recorder started (${session.mimeType}). Speak a full sentence so Deepgram can finalize it.`
+          : 'Browser recorder started. Speak a full sentence so Deepgram can finalize it.',
+      });
       return;
     }
     if (event.event === 'stop') {

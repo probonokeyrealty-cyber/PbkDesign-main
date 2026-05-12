@@ -11098,6 +11098,36 @@
     text-align: center;
     font: 11px/1.55 var(--font-mono);
   }
+  .ava-voice-doctor {
+    width: min(100%, 320px);
+    display: grid;
+    gap: 5px;
+    padding: 10px 12px;
+    border: 1px solid rgba(125, 211, 252, .14);
+    border-radius: 14px;
+    background: rgba(2, 6, 23, .38);
+    color: var(--text-tertiary);
+    font: 10px/1.45 var(--font-mono);
+    text-align: left;
+  }
+  .ava-voice-doctor strong {
+    color: var(--sky-bright);
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .ava-voice-doctor[data-state="warning"] {
+    border-color: rgba(255, 176, 32, .35);
+    background: rgba(255, 176, 32, .08);
+  }
+  .ava-voice-doctor[data-state="error"] {
+    border-color: rgba(248, 113, 113, .36);
+    background: rgba(248, 113, 113, .08);
+  }
+  .ava-voice-doctor[data-state="live"] {
+    border-color: rgba(34, 197, 94, .34);
+    background: rgba(34, 197, 94, .07);
+  }
   .ava-avatar-actions {
     display: grid;
     grid-template-columns: 1fr auto auto;
@@ -11808,6 +11838,10 @@
         </div>
         <div class="ava-mic-label" id="avaMicLabel">PRESS TO TALK</div>
         <div class="ava-mic-hint" id="avaMicHint">Checking live voice readiness. Ava still stages actions under approval guardrails.</div>
+        <div class="ava-voice-doctor" id="avaVoiceDoctor" data-state="checking" aria-live="polite">
+          <strong>Voice doctor</strong>
+          <span>Mic not checked yet · WebSocket idle · Deepgram idle · 0 chunks</span>
+        </div>
       </div>
       <div class="ava-avatar-actions">
         <button class="btn btn-primary" type="button" id="avaAvatarSend">Stage command</button>
@@ -28909,6 +28943,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const micBtn = document.getElementById('avaMicBtn');
     const micLabel = document.getElementById('avaMicLabel');
     const micHint = document.getElementById('avaMicHint');
+    const voiceDoctor = document.getElementById('avaVoiceDoctor');
     const status = document.getElementById('avaAvatarStatus');
     const connectionDot = document.getElementById('avaConnectionDot');
     const historyBox = document.getElementById('avaTranscriptHistory');
@@ -28928,6 +28963,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let voiceSessionCompleted = false;
     let avaVoiceSpeaking = false;
     let voiceChunkStats = { chunks: 0, bytes: 0, lastAt: 0 };
+    let voiceDeviceState = { supported: false, permission: 'unknown', audioInputCount: null, labels: [], activeTrackLabel: '' };
+    let voiceBridgeStats = { ws: 'idle', deepgram: 'idle', transcripts: 0, last: '' };
     let lastVoiceDiagnosticToastAt = 0;
     let currentVoiceAudio = null;
     let currentVoiceAudioUrl = '';
@@ -28937,6 +28974,64 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       avaVoiceSpeaking = Boolean(speaking);
       shell.dataset.avaSpeaking = avaVoiceSpeaking ? 'true' : 'false';
     };
+
+    const formatVoiceBytes = (value = 0) => {
+      const bytes = Number(value || 0);
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+      if (bytes < 1024) return `${Math.round(bytes)} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+    };
+
+    const renderVoiceDoctor = (state = '') => {
+      if (!voiceDoctor) return;
+      const micCopy = voiceDeviceState.supported
+        ? `${voiceDeviceState.audioInputCount ?? '?'} mic${voiceDeviceState.audioInputCount === 1 ? '' : 's'} · ${voiceDeviceState.permission}`
+        : 'mic unsupported';
+      const active = voiceDeviceState.activeTrackLabel ? ` · active: ${voiceDeviceState.activeTrackLabel}` : '';
+      const chunkCopy = `${voiceChunkStats.chunks || 0} chunks · ${formatVoiceBytes(voiceChunkStats.bytes)}`;
+      const tail = voiceBridgeStats.last ? ` · ${voiceBridgeStats.last}` : '';
+      const doctorState = state
+        || (voiceBridgeStats.transcripts > 0 ? 'live' : voiceDeviceState.audioInputCount === 0 || voiceDeviceState.permission === 'denied' ? 'error' : voiceChunkStats.chunks > 0 ? 'live' : 'checking');
+      voiceDoctor.dataset.state = doctorState;
+      voiceDoctor.innerHTML = `<strong>Voice doctor</strong><span>Mic ${micCopy}${active} · WS ${voiceBridgeStats.ws} · Deepgram ${voiceBridgeStats.deepgram} · ${chunkCopy}${tail}</span>`;
+    };
+
+    async function inspectBrowserAudioInputs() {
+      const supported = Boolean(navigator.mediaDevices?.enumerateDevices);
+      let permission = 'unknown';
+      if (navigator.permissions?.query) {
+        try {
+          const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+          permission = permissionStatus?.state || permission;
+          permissionStatus.onchange = () => {
+            voiceDeviceState.permission = permissionStatus.state || voiceDeviceState.permission;
+            renderVoiceDoctor();
+            updateVoiceCopy();
+          };
+        } catch {
+          permission = 'unknown';
+        }
+      }
+      let audioInputs = [];
+      if (supported) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          audioInputs = devices.filter((device) => device.kind === 'audioinput');
+        } catch {
+          audioInputs = [];
+        }
+      }
+      voiceDeviceState = {
+        ...voiceDeviceState,
+        supported,
+        permission,
+        audioInputCount: supported ? audioInputs.length : 0,
+        labels: audioInputs.map((device) => device.label || 'Microphone').slice(0, 3),
+      };
+      renderVoiceDoctor();
+      return voiceDeviceState;
+    }
 
     const setVoiceState = (state = 'ready', label = '') => {
       const next = navigator.onLine === false ? 'offline' : state;
@@ -28996,6 +29091,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const desc = detail || `${laneCopy} needs attention. Ava will keep the response visible in text while the voice lane reconnects.`;
       if (status) status.textContent = desc;
       setVoiceState('error', desc);
+      voiceBridgeStats.last = desc.slice(0, 90);
+      if (lane === 'websocket' || lane === 'connection') voiceBridgeStats.ws = 'issue';
+      if (lane === 'stt') voiceBridgeStats.deepgram = 'issue';
+      renderVoiceDoctor('error');
       addAvaHistory('error', 'Issue', desc);
       toast({ type: 'warning', title: `${laneCopy} issue`, desc, id: `ava-voice-${lane}` });
     };
@@ -29021,6 +29120,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       orb.setAttribute('aria-expanded', open ? 'true' : 'false');
       if (open) {
         fetchVoiceHealth().catch(() => null);
+        inspectBrowserAudioInputs().then(() => updateVoiceCopy()).catch(() => null);
         window.setTimeout(() => input?.focus(), 80);
       }
     };
@@ -29051,16 +29151,26 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const elevenLabs = voiceHealth?.elevenLabs || {};
       if (browserVoice.ready) {
         const needsBridgeKey = voiceHealth?.authRequired && !getOpenClawConfig().apiKey;
-        setVoiceState(needsBridgeKey ? 'warning' : 'ready', needsBridgeKey ? 'Bridge API key required for voice.' : 'Browser microphone voice is ready.');
+        const micDenied = voiceDeviceState.permission === 'denied';
+        const micMissing = voiceDeviceState.audioInputCount === 0;
+        const localMicIssue = micDenied || micMissing;
+        const readyCopy = localMicIssue
+          ? (micDenied ? 'Chrome microphone permission is blocked.' : 'Chrome sees 0 microphone input devices.')
+          : (needsBridgeKey ? 'Bridge API key required for voice.' : 'Voice providers are ready. Click mic to grant/use your input.');
+        setVoiceState(needsBridgeKey || localMicIssue ? 'warning' : 'ready', readyCopy);
         if (micHint) {
           micHint.textContent = needsBridgeKey
             ? 'Voice providers are live. Save the private bridge API key in Settings to start microphone sessions.'
+            : micDenied
+            ? 'Chrome has blocked the microphone for this site. Open site settings and set Microphone to Allow.'
+            : micMissing
+            ? 'PBK providers are live, but this Chrome/OS session exposes 0 microphones. Select or plug in an input device, then refresh.'
             : elevenLabs.ready
-            ? 'Live browser voice is ready. Ava will transcribe, stage the command, and speak back.'
-            : 'Live browser voice is ready. Spoken replies stay off until ElevenLabs is enabled.';
+            ? 'Voice providers are ready. Once Chrome exposes a mic, Ava will transcribe, reason, and speak back.'
+            : 'Voice providers are ready. Spoken replies stay off until ElevenLabs is enabled.';
         }
         if (status && !shell.classList.contains('listening')) {
-          status.textContent = needsBridgeKey ? 'Voice stack live - bridge key required.' : 'Browser microphone voice is ready.';
+          status.textContent = readyCopy;
         }
       } else if (browserVoice.configured) {
         setVoiceState('warning', 'Browser voice enabled, provider not ready.');
@@ -29071,6 +29181,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         if (micHint) micHint.textContent = 'Voice providers are not enabled for this environment yet. Ava still stages actions under approval guardrails.';
         if (status && !shell.classList.contains('listening')) status.textContent = 'Ready for typed or voice commands.';
       }
+      renderVoiceDoctor();
     };
 
     async function fetchVoiceHealth() {
@@ -29310,17 +29421,39 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
           throw new Error('This browser does not support microphone recording.');
         }
+        const devicePreflight = await inspectBrowserAudioInputs();
+        if (devicePreflight.permission === 'denied') {
+          throw new Error('Chrome microphone permission is blocked for this site. Open site settings, set Microphone to Allow, then refresh PBK.');
+        }
+        if (devicePreflight.audioInputCount === 0 && devicePreflight.permission !== 'prompt') {
+          throw new Error('Chrome and Windows are exposing 0 microphone input devices. Select an input device in Windows Sound settings or plug in a USB headset, then refresh PBK.');
+        }
         const base = getVoiceBase();
         if (!base) throw new Error('PBK Brain bridge is not configured.');
         voiceSessionCompleted = false;
         voiceChunkStats = { chunks: 0, bytes: 0, lastAt: 0 };
-        voiceStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        voiceBridgeStats = { ws: 'opening', deepgram: 'waiting', transcripts: 0, last: '' };
+        renderVoiceDoctor();
+        try {
+          voiceStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+        } catch (micError) {
+          await inspectBrowserAudioInputs().catch(() => null);
+          const name = micError?.name || 'MicrophoneError';
+          const message = micError?.message || 'Microphone capture failed.';
+          throw new Error(`${name}: ${message}. If Chrome still shows 0 inputs, fix the Windows input device first, then reload PBK.`);
+        }
+        const audioTracks = voiceStream.getAudioTracks?.() || [];
+        if (!audioTracks.length) {
+          throw new Error('Chrome opened a media stream, but it contains 0 audio tracks. Select a real microphone input and retry.');
+        }
+        voiceDeviceState.activeTrackLabel = audioTracks[0]?.label || 'selected input';
+        await inspectBrowserAudioInputs().catch(() => null);
         const sessionResponse = await fetchWithTimeout(`${base}/api/voice/browser/session`, {
           method: 'POST',
           headers: getVoiceHeaders(true),
@@ -29339,18 +29472,27 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         setListening(true);
           if (status) status.textContent = 'Connecting microphone stream...';
         voiceSocket.addEventListener('open', () => {
+          voiceBridgeStats.ws = 'open';
+          renderVoiceDoctor('live');
           setVoiceState('live', 'Ava voice WebSocket connected.');
-          const mimeType = MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')
-            ? 'audio/webm;codecs=opus'
-            : 'audio/webm';
-          voiceSocket.send(JSON.stringify({ event: 'start', mimeType }));
-          voiceRecorder = new MediaRecorder(voiceStream, { mimeType });
+          const mimeType = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/ogg;codecs=opus',
+          ].find((type) => MediaRecorder.isTypeSupported?.(type)) || '';
+          voiceRecorder = mimeType
+            ? new MediaRecorder(voiceStream, { mimeType })
+            : new MediaRecorder(voiceStream);
+          voiceSocket.send(JSON.stringify({ event: 'start', mimeType: voiceRecorder.mimeType || mimeType || 'browser-default' }));
           voiceRecorder.addEventListener('dataavailable', async (event) => {
             if (!event.data?.size || !voiceSocket || voiceSocket.readyState !== WebSocket.OPEN) return;
             if (avaVoiceSpeaking) return;
             voiceChunkStats.chunks += 1;
             voiceChunkStats.bytes += event.data.size;
             voiceChunkStats.lastAt = Date.now();
+            voiceBridgeStats.ws = 'sending';
+            voiceBridgeStats.last = `sent ${formatVoiceBytes(event.data.size)}`;
+            renderVoiceDoctor('live');
             if (status && voiceChunkStats.chunks <= 3) {
               status.textContent = `Microphone is streaming (${voiceChunkStats.chunks} audio chunk${voiceChunkStats.chunks === 1 ? '' : 's'} sent). Keep speaking naturally.`;
             }
@@ -29370,11 +29512,36 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           let data = {};
           try { data = JSON.parse(event.data); } catch { return; }
           if (data.type === 'ready' && status) status.textContent = 'Listening live - Deepgram stream open.';
+          if (data.type === 'ready') {
+            voiceBridgeStats.ws = 'open';
+            voiceBridgeStats.deepgram = data.provider || 'open';
+            voiceBridgeStats.last = data.sessionId ? `session ${String(data.sessionId).slice(-8)}` : 'ready';
+            renderVoiceDoctor('live');
+          }
+          if (data.type === 'voice_status') {
+            if (data.frameCount !== undefined) voiceChunkStats.chunks = Math.max(voiceChunkStats.chunks, Number(data.frameCount || 0));
+            if (data.audioBytes !== undefined) voiceChunkStats.bytes = Math.max(voiceChunkStats.bytes, Number(data.audioBytes || 0));
+            if (data.ws) voiceBridgeStats.ws = data.ws;
+            if (data.deepgram) voiceBridgeStats.deepgram = data.deepgram;
+            voiceBridgeStats.last = data.message ? String(data.message).slice(0, 90) : voiceBridgeStats.last;
+            if (status && data.message) status.textContent = data.message;
+            renderVoiceDoctor(data.state || 'live');
+          }
           if (data.type === 'diagnostic') {
+            if (data.frameCount !== undefined) voiceChunkStats.chunks = Math.max(voiceChunkStats.chunks, Number(data.frameCount || 0));
+            if (data.audioBytes !== undefined) voiceChunkStats.bytes = Math.max(voiceChunkStats.bytes, Number(data.audioBytes || 0));
+            if (data.lane === 'stt') voiceBridgeStats.deepgram = data.provider || 'issue';
+            if (data.lane === 'microphone') voiceBridgeStats.ws = data.frameCount ? 'receiving' : voiceBridgeStats.ws;
+            voiceBridgeStats.last = data.message ? String(data.message).slice(0, 90) : voiceBridgeStats.last;
+            renderVoiceDoctor(data.lane === 'microphone' && data.frameCount ? 'live' : '');
             showAvaVoiceDiagnostic(data.lane || 'processing', data.message || 'Ava found a voice pipeline issue and switched to text fallback.');
           }
           if (data.type === 'transcript' && data.transcript) {
             lastTranscript = data.transcript;
+            voiceBridgeStats.transcripts += 1;
+            voiceBridgeStats.deepgram = 'transcribing';
+            voiceBridgeStats.last = `heard "${data.transcript.slice(0, 34)}"`;
+            renderVoiceDoctor('live');
             if (input && data.isFinal) input.value = data.transcript;
             if (status) status.textContent = data.isFinal ? 'Transcript captured - staging Ava response.' : `Hearing: ${data.transcript.slice(0, 54)}`;
             addAvaHistory(data.isFinal ? 'user' : 'system', data.isFinal ? 'You' : 'Live', data.transcript);

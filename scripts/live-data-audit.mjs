@@ -246,7 +246,10 @@ const checks = [
     ok: /Browser microphone streaming is disabled/.test(index)
       && /this browser is missing the private PBK Bridge API key/.test(index)
       && /Ava will stay in text mode instead of pretending to listen/.test(index)
-      && /showAvaVoiceDiagnostic/.test(index),
+      && /showAvaVoiceDiagnostic/.test(index)
+      && /avaVoiceDoctor/.test(index)
+      && /inspectBrowserAudioInputs/.test(index)
+      && /Chrome sees 0 microphone input devices/.test(index),
   },
   {
     name: 'ElevenLabs streaming TTS is bridge-backed with dashboard fallback',

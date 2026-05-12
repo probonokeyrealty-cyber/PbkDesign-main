@@ -31,7 +31,7 @@ httpsGlobalAgent.maxSockets = 80;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-12-ava-masterclass-knowledge';
+const BUILD_REVISION = '2026-05-12-ava-suite-streaming-tts';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -216,6 +216,8 @@ const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
 const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
 const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
+const ELEVENLABS_STREAMING_TTS_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_ELEVENLABS_STREAMING_TTS_ENABLED || 'true').trim());
+const ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -1055,10 +1057,13 @@ function getElevenLabsProviderMeta() {
     configured: ELEVENLABS_TTS_ENABLED,
     ready: credentialReady && !validationFailed,
     provider: 'ElevenLabs',
-    mode: 'tts-http',
+    mode: ELEVENLABS_STREAMING_TTS_ENABLED ? 'tts-http-streaming' : 'tts-http',
     model: ELEVENLABS_MODEL_ID,
     voiceId: ELEVENLABS_VOICE_ID,
     endpoint: '/api/voice/tts',
+    streamingReady: credentialReady && !validationFailed && ELEVENLABS_STREAMING_TTS_ENABLED,
+    streamingEndpoint: '/api/voice/tts/stream',
+    outputFormat: ELEVENLABS_OUTPUT_FORMAT,
     validated: __elevenLabsValidation.ok === true,
     validation: __elevenLabsValidation.ok === null ? null : { ...__elevenLabsValidation },
     missing,
@@ -7126,7 +7131,7 @@ const PBK_CORE_DEAL_PATHS = [
   },
 ];
 
-const AVA_MASTERCLASS_KNOWLEDGE_REVISION = '2026-05-12-ava-masterclass-knowledge';
+const AVA_MASTERCLASS_KNOWLEDGE_REVISION = '2026-05-12-ava-suite-streaming-tts';
 const AVA_MASTERCLASS_SOURCE_ID = 'ava-wholesale-conversation-masterclass';
 const AVA_MASTERCLASS_KNOWLEDGE = [
   {
@@ -7233,6 +7238,104 @@ const AVA_MASTERCLASS_KNOWLEDGE = [
     predicate: 'ethical_boundary',
     object: 'Ethical boundary: Ava may use persuasion to create clarity, safety, and momentum, but must not deceive, invent proof, fake human identity, give legal advice, hide material risks, bypass agents, pressure vulnerable people, or execute provider writes without the approval lane. If truth, safety, and PBK profit conflict, truth and safety win.',
     tags: ['ethics', 'truthful_ai_disclosure', 'approval_gated', 'no_deception', 'safety'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-legal-compliance',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'legal_compliance_guardrails',
+    object: 'Legal/compliance guardrails: Ava is not a lawyer and never gives legal advice. For creative strategies, separate PBK process knowledge from attorney review. Subject-to conversations must disclose due-on-sale risk, never guarantee lender behavior, and explain that the loan can stay in the seller name until payoff. RBP/novation must describe marketing equitable interest or assigned interest without promising an end buyer. Assignment fee answers must state PBK earns the spread and seller net remains the agreed number. Pre-foreclosure leads require state-specific pbk_knowledge scripts and right-to-cancel protections.',
+    tags: ['legal', 'compliance', 'subject_to', 'due_on_sale', 'novation', 'assignment_fee', 'pre_foreclosure', 'attorney_review'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-negotiation-pressure',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'advanced_negotiation_pressure_cooker',
+    object: 'Advanced negotiation: use precise offer numbers, silence/flinch when a counter is far above MAO, bracket ranges so PBK maximum is framed as the high end, defend against nibbles by trading value for value, diagnose competing offers without badmouthing, keep buyer re-trades off the seller side, and walk away with a deadline when the number exceeds authority.',
+    tags: ['negotiation', 'mao', 'bracketing', 'flinch', 'nibble', 'competing_offer', 'buyer_retrade', 'walk_away'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-decision-makers',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'multiple_decision_makers',
+    object: 'Multiple decision-makers: detect spouse, adult child, co-owner, attorney, or missing signer language immediately. Invite decision-makers into the conversation instead of accepting a stall. For couples, address emotional and logical needs separately, then ask if both can get behind the next step. Protective adult children become allies through transparency. MIA or hostile co-owners block execution until all required owners can sign.',
+    tags: ['decision_makers', 'spouse', 'adult_child', 'co_owner', 'authority', 'tandem_close'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-trauma-informed',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'trauma_informed_selling',
+    object: 'Trauma-informed selling: pre-foreclosure requires dignity and no shame; divorce requires neutral Switzerland language; probate/death requires slow pacing, condolences, and low-pressure next steps. In distress, use permission-based closing and give the seller control. Never exploit fear, grief, or urgency; help the person feel safe enough to choose.',
+    tags: ['trauma_informed', 'pre_foreclosure', 'divorce', 'probate', 'grief', 'permission_based_close'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-cultural-fluency',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'cultural_fluency',
+    object: 'Cultural fluency: adapt to direct vs indirect communication without stereotyping. Notice if family hierarchy or elder blessing matters and offer to include them. Honor heritage land and family property as identity, not just asset value. Mirror the prospect vocabulary exactly: family home, parcel, ranch, land, or house. Never assume culture from identity; ask respectfully and let the seller show the decision style.',
+    tags: ['cultural_fluency', 'family_hierarchy', 'heritage_land', 'vocabulary_mirroring', 'communication_style'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-follow-up',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'follow_up_alchemy',
+    object: 'Follow-up alchemy: use a respectful 5-touch sequence after contact: day 1 call/text summary, day 2 voicemail with a new insight, day 5 market/comp text, day 10 case-study style email when approved, day 14 break-up/archive note, then long-tail revival later. Follow-ups should add new value, not repeat pressure. Always end with a low-friction next step.',
+    tags: ['follow_up', 'cadence', 'voicemail', 'text', 'case_study', 'breakup_message', 'revival'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-gatekeepers',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'gatekeeper_navigation',
+    object: 'Gatekeeper navigation: treat assistants, receptionists, spouses, children, and screeners as important allies. Ask for help, be respectful of time, and log gatekeeper names when appropriate. If blocked by a family member, ask permission to leave a simple offer summary and promise not to keep calling if the decision-maker says no.',
+    tags: ['gatekeeper', 'assistant', 'family_member', 'screening', 'rapport', 'pbk_knowledge'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-continuous-improvement',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'ai_continuous_improvement_protocol',
+    object: 'Continuous improvement: after calls, Ava should identify the key connection moment, resistance phrase, objection loop quality, and next-step clarity. Winning phrases can be proposed for pbk_knowledge phrase bank after verification. Losses are categorized as price, timeline, trust, competition, or emotion. Three repeated losses in a category triggers a script tweak proposal. Extreme distress, legal fog, or high-value/JV potential triggers human escalation.',
+    tags: ['continuous_improvement', 'post_call_audit', 'phrase_bank', 'loss_patterns', 'human_escalation'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-vocal-persona',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'vocal_persona_engineering',
+    object: 'Vocal persona engineering: empathy moments use lower, slower warmth; discovery uses baseline pitch and curious upward inflection; authority and offer delivery use slightly lower pitch, slower pace, and downward inflection; small talk uses more dynamic range. Use short pauses after open questions, emotional labels, and price delivery. Avoid uncanny delivery by using occasional thinking phrases and truthful self-corrections.',
+    tags: ['voice', 'tts', 'vocal_persona', 'pauses', 'inflection', 'elevenlabs', 'flow_state'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-market-intelligence',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'real_time_market_intelligence',
+    object: 'Market intelligence: before calls, Ava should pull current mortgage rate trend, local months of supply, median days on market, recent zip-code closings, and condition-adjusted comps from pbk_knowledge/tools. Use market data conversationally to create authority, urgency, and clarity without overwhelming the seller.',
+    tags: ['market_intelligence', 'mortgage_rates', 'months_supply', 'days_on_market', 'comps', 'local_expert'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-personality-typing',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'seller_personality_typing_disc_lite',
+    object: 'DISC-lite seller typing: Drivers want speed and bottom line; Expressives want rapport, story, and emotional relief; Analyticals want proof, formulas, and verification time; Amiables want safety, relationship, and gentle guidance. Detect within the first minute and adapt pace, detail level, and objection handling accordingly.',
+    tags: ['disc_lite', 'driver', 'expressive', 'analytical', 'amiable', 'personality_typing', 'call_mode'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-launch-gap-register',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'launch_gap_register',
+    object: 'Launch gap register: inbound call speak/stream/transcript and live-call cleanup are implemented and audited in code, but the remaining critical operator proof is one real Telnyx-to-Deepgram call with speech that verifies transcript and sentiment logs. UI raw-prompt leakage has a safe next-move filter and should be spot-checked after deploy. Post-launch enhancements: proactive idle builder, OmniParser/computer-vision hands wired into Ava tools, and any future Hermes autonomy. Hermes remains suggest-only by design until explicitly changed.',
+    tags: ['launch_gaps', 'operator_proof', 'telnyx', 'deepgram', 'transcript', 'omniparser', 'hermes', 'idle_builder'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-flow-upgrade',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'conversational_flow_upgrade_requirements',
+    object: 'Conversational flow upgrade: Ava must acknowledge before answering, use natural openings/closings, frame raw data, ask one useful follow-up, keep normal turns to 2-3 sentences, narrate tool use in plain English, and never sound like a query engine. Rex must synthesize before listing: conclusion, supporting context, why it matters, and one useful next question.',
+    tags: ['flow_state', 'ava', 'rex', 'query_like', 'conversation', 'tool_narration', 'follow_up_question'],
+  },
+  {
+    id: 'pbk-knowledge-ava-masterclass-streaming-tts',
+    subject: 'Ava Missing Pieces Suite',
+    predicate: 'elevenlabs_streaming_tts_requirement',
+    object: 'Streaming TTS requirement: keep the existing ElevenLabs TTS endpoint as fallback, but prefer PBK bridge streaming audio when available. The goal is to reduce awkward silence and make Ava sound responsive. The client must handle streaming safely, stop current audio on operator interrupt, and fall back to full audio playback if MediaSource streaming is not supported.',
+    tags: ['elevenlabs', 'streaming_tts', 'tts', 'voice_latency', 'dashboard_voice', 'fallback'],
   },
 ];
 
@@ -27270,6 +27373,130 @@ function sendBinary(response, statusCode, body, headers = {}) {
   response.end(body);
 }
 
+function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}) {
+  const voiceId = String(body.voiceId || body.voice_id || ELEVENLABS_VOICE_ID).trim();
+  const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
+  const outputFormat = String(body.outputFormat || body.output_format || ELEVENLABS_OUTPUT_FORMAT).trim();
+  const payload = {
+    text: String(text || '').slice(0, 1800),
+    model_id: modelId,
+    voice_settings: {
+      stability: Number(body.stability ?? 0.5),
+      similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? 0.75),
+      speed: Number(body.speed ?? 0.95),
+    },
+  };
+  const pathSuffix = stream ? '/stream' : '';
+  const url = new URL(`${ELEVENLABS_BASE_URL}/v1/text-to-speech/${encodeURIComponent(voiceId)}${pathSuffix}`);
+  if (outputFormat) url.searchParams.set('output_format', outputFormat);
+  return {
+    voiceId,
+    modelId,
+    outputFormat,
+    url: url.toString(),
+    payload,
+  };
+}
+
+async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
+  const request = buildElevenLabsTtsRequest(body, text, options);
+  const response = await fetch(request.url, {
+    method: 'POST',
+    headers: {
+      Accept: 'audio/mpeg',
+      'Content-Type': 'application/json',
+      'xi-api-key': ELEVENLABS_API_KEY,
+    },
+    body: JSON.stringify(request.payload),
+  });
+  return {
+    ...request,
+    response,
+  };
+}
+
+async function sendElevenLabsTtsStream(response, body = {}, text = '') {
+  const tts = await fetchElevenLabsTts(body, text, { stream: true });
+  if (!tts.response.ok) {
+    const errorText = await tts.response.text().catch(() => '');
+    recordElevenLabsValidation({
+      ok: false,
+      status: tts.response.status,
+      voiceId: tts.voiceId,
+      error: errorText || 'ElevenLabs streaming TTS request failed.',
+    });
+    json(response, tts.response.status || 502, {
+      ok: false,
+      result: 'provider_error',
+      provider: 'ElevenLabs',
+      status: tts.response.status,
+      error: errorText.slice(0, 500) || 'ElevenLabs streaming TTS request failed.',
+    });
+    return;
+  }
+
+  response.writeHead(200, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Content-Type': 'audio/mpeg',
+    'Cache-Control': 'no-store',
+    'Transfer-Encoding': 'chunked',
+    'X-PBK-TTS-Provider': 'ElevenLabs',
+    'X-PBK-TTS-Model': tts.modelId,
+    'X-PBK-TTS-Streaming': 'true',
+    'X-PBK-TTS-Output-Format': tts.outputFormat,
+  });
+
+  let bytes = 0;
+  let chunks = 0;
+  try {
+    const reader = tts.response.body?.getReader?.();
+    if (!reader) throw new Error('ElevenLabs streaming response did not expose a readable body.');
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      chunks += 1;
+      bytes += value.byteLength;
+      if (response.destroyed || response.writableEnded) break;
+      response.write(Buffer.from(value));
+    }
+    recordElevenLabsValidation({
+      ok: true,
+      status: 200,
+      voiceId: tts.voiceId,
+      error: '',
+    });
+  } catch (error) {
+    recordElevenLabsValidation({
+      ok: false,
+      status: 502,
+      voiceId: tts.voiceId,
+      error: error?.message || 'ElevenLabs streaming TTS failed.',
+    });
+    if (!response.headersSent) {
+      json(response, 502, {
+        ok: false,
+        result: 'stream_failed',
+        error: error?.message || 'ElevenLabs streaming TTS failed.',
+      });
+      return;
+    }
+    try {
+      response.destroy(error);
+    } catch {
+      // Best-effort close.
+    }
+    return;
+  } finally {
+    if (!response.destroyed && !response.writableEnded) response.end();
+  }
+  if (!bytes || !chunks) {
+    console.warn('[pbk-local-openclaw] ElevenLabs streaming TTS returned no audio chunks.');
+  }
+}
+
 async function readRawBodyBuffer(request) {
   const chunks = [];
   for await (const chunk of request) {
@@ -29574,6 +29801,34 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/tts/stream', '/api/elevenlabs/tts/stream'])) {
+      const body = await readBody(request);
+      const text = String(body.text || body.message || '').trim();
+      const meta = getElevenLabsProviderMeta();
+      const credentialsPresent = ELEVENLABS_TTS_ENABLED && ELEVENLABS_STREAMING_TTS_ENABLED && Boolean(ELEVENLABS_API_KEY);
+      if (!credentialsPresent) {
+        json(response, ELEVENLABS_TTS_ENABLED ? 503 : 202, {
+          ok: false,
+          result: ELEVENLABS_TTS_ENABLED ? 'provider_missing' : 'disabled',
+          elevenLabs: meta,
+          message: ELEVENLABS_TTS_ENABLED
+            ? 'ElevenLabs streaming TTS is enabled but not ready. Check API key, validation, or PBK_ELEVENLABS_STREAMING_TTS_ENABLED.'
+            : 'ElevenLabs TTS is disabled. Set PBK_ELEVENLABS_TTS_ENABLED=true to activate spoken responses.',
+        });
+        return;
+      }
+      if (!text) {
+        json(response, 400, {
+          ok: false,
+          result: 'invalid_request',
+          error: 'Text is required for streaming TTS.',
+        });
+        return;
+      }
+      await sendElevenLabsTtsStream(response, body, text);
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/tts', '/api/elevenlabs/tts'])) {
       const body = await readBody(request);
       const text = String(body.text || body.message || '').trim();
@@ -29598,24 +29853,7 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      const voiceId = String(body.voiceId || body.voice_id || ELEVENLABS_VOICE_ID).trim();
-      const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
-      const ttsResponse = await fetch(`${ELEVENLABS_BASE_URL}/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
-        method: 'POST',
-        headers: {
-          Accept: 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': ELEVENLABS_API_KEY,
-        },
-        body: JSON.stringify({
-          text: text.slice(0, 1800),
-          model_id: modelId,
-          voice_settings: {
-            stability: Number(body.stability ?? 0.5),
-            similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? 0.75),
-          },
-        }),
-      });
+      const { response: ttsResponse, voiceId, modelId } = await fetchElevenLabsTts(body, text);
       if (!ttsResponse.ok) {
         const errorText = await ttsResponse.text().catch(() => '');
         recordElevenLabsValidation({
@@ -32485,6 +32723,7 @@ const server = createServer(async (request, response) => {
         'WS /ws/browser',
         'WS /api/ws/browser',
         'POST /api/voice/tts',
+        'POST /api/voice/tts/stream',
         'POST /api/deepgram/transcribe-url',
         'GET /api/tooling/status',
         'GET/POST /api/workflows',

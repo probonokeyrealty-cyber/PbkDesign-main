@@ -28872,6 +28872,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let lastVoiceDiagnosticToastAt = 0;
     let currentVoiceAudio = null;
     let currentVoiceAudioUrl = '';
+    let currentVoiceAudioStreamAbort = null;
 
     const setVoiceState = (state = 'ready', label = '') => {
       const next = navigator.onLine === false ? 'offline' : state;
@@ -28899,6 +28900,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
 
     const stopCurrentVoiceAudio = () => {
+      if (currentVoiceAudioStreamAbort) {
+        try { currentVoiceAudioStreamAbort(); } catch {}
+        currentVoiceAudioStreamAbort = null;
+      }
       if (currentVoiceAudio) {
         try { currentVoiceAudio.pause(); } catch {}
         currentVoiceAudio.src = '';
@@ -29055,6 +29060,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const base = getVoiceBase();
       if (!base) return;
       try {
+        const streamed = await playAvaTtsStream(clean, base).catch((error) => {
+          console.warn('[pbk-ava-voice] Streaming TTS fallback:', error?.message || error);
+          return false;
+        });
+        if (streamed) return;
         const response = await fetchWithTimeout(`${base}/api/voice/tts`, {
           method: 'POST',
           headers: getVoiceHeaders(true),
@@ -29076,6 +29086,133 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         await audio.play();
       } catch (error) {
         showAvaVoiceDiagnostic('tts', error?.message || 'Ava text is ready, but the browser could not play the spoken response.');
+      }
+    }
+
+    const getAvaTtsStreamingMimeType = () => {
+      if (!window.MediaSource?.isTypeSupported || !window.ReadableStream) return '';
+      return ['audio/mpeg', 'audio/mpeg; codecs="mp3"'].find((type) => MediaSource.isTypeSupported(type)) || '';
+    };
+
+    const waitForMediaSourceOpen = (mediaSource) => new Promise((resolve, reject) => {
+      if (!mediaSource) {
+        reject(new Error('MediaSource is not available for streaming TTS.'));
+        return;
+      }
+      if (mediaSource.readyState === 'open') {
+        resolve();
+        return;
+      }
+      const cleanup = () => {
+        mediaSource.removeEventListener('sourceopen', onOpen);
+        mediaSource.removeEventListener('sourceended', onEnded);
+        mediaSource.removeEventListener('sourceclose', onClose);
+      };
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onEnded = () => {
+        cleanup();
+        reject(new Error('Streaming TTS MediaSource ended before opening.'));
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error('Streaming TTS MediaSource closed before opening.'));
+      };
+      mediaSource.addEventListener('sourceopen', onOpen, { once: true });
+      mediaSource.addEventListener('sourceended', onEnded, { once: true });
+      mediaSource.addEventListener('sourceclose', onClose, { once: true });
+    });
+
+    async function playAvaTtsStream(clean = '', base = '') {
+      if (!voiceHealth?.elevenLabs?.streamingReady) return false;
+      const mimeType = getAvaTtsStreamingMimeType();
+      if (!mimeType) return false;
+      stopCurrentVoiceAudio();
+      const controller = new AbortController();
+      const abortCurrentStream = () => controller.abort();
+      currentVoiceAudioStreamAbort = abortCurrentStream;
+      const timeout = window.setTimeout(() => controller.abort(), 45000);
+      try {
+        if (status) status.textContent = 'Ava voice stream is starting...';
+        const response = await fetch(`${base}/api/voice/tts/stream`, {
+          method: 'POST',
+          headers: getVoiceHeaders(true),
+          body: JSON.stringify({ text: clean }),
+          signal: controller.signal,
+          keepalive: false,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(`ElevenLabs streaming returned ${response.status || 'no stream'}.`);
+        }
+
+        const mediaSource = new MediaSource();
+        const audioUrl = URL.createObjectURL(mediaSource);
+        const audio = new Audio(audioUrl);
+        currentVoiceAudio = audio;
+        currentVoiceAudioUrl = audioUrl;
+        if (stopBtn) stopBtn.disabled = false;
+        if (status) status.textContent = 'Ava is speaking.';
+        audio.addEventListener('ended', () => stopCurrentVoiceAudio(), { once: true });
+        audio.addEventListener('error', () => stopCurrentVoiceAudio(), { once: true });
+
+        await waitForMediaSourceOpen(mediaSource);
+        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+        try { sourceBuffer.mode = 'sequence'; } catch {}
+        const reader = response.body.getReader();
+        const queue = [];
+        let streamDone = false;
+        let playbackStarted = false;
+        let appendError = null;
+
+        const startPlayback = () => {
+          if (playbackStarted) return;
+          playbackStarted = true;
+          audio.play().catch((error) => {
+            appendError = error;
+          });
+        };
+        const finalizeIfReady = () => {
+          if (!streamDone || queue.length || sourceBuffer.updating || mediaSource.readyState !== 'open') return;
+          try { mediaSource.endOfStream(); } catch {}
+        };
+        const pump = () => {
+          if (appendError || sourceBuffer.updating || !queue.length || mediaSource.readyState !== 'open') {
+            finalizeIfReady();
+            return;
+          }
+          try {
+            sourceBuffer.appendBuffer(queue.shift());
+          } catch (error) {
+            appendError = error;
+          }
+        };
+        sourceBuffer.addEventListener('updateend', () => {
+          startPlayback();
+          pump();
+          finalizeIfReady();
+        });
+
+        while (true) {
+          if (appendError) throw appendError;
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value?.byteLength) continue;
+          const chunk = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+          queue.push(chunk);
+          pump();
+        }
+        streamDone = true;
+        finalizeIfReady();
+        return true;
+      } catch (error) {
+        if (currentVoiceAudioStreamAbort === abortCurrentStream) currentVoiceAudioStreamAbort = null;
+        stopCurrentVoiceAudio();
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+        if (currentVoiceAudioStreamAbort === abortCurrentStream) currentVoiceAudioStreamAbort = null;
       }
     }
 

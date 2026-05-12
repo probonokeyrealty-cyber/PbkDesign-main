@@ -249,6 +249,17 @@ const checks = [
       && /showAvaVoiceDiagnostic/.test(index),
   },
   {
+    name: 'ElevenLabs streaming TTS is bridge-backed with dashboard fallback',
+    ok: /ELEVENLABS_STREAMING_TTS_ENABLED/.test(bridge)
+      && /sendElevenLabsTtsStream/.test(bridge)
+      && /\/api\/voice\/tts\/stream/.test(bridge)
+      && /X-PBK-TTS-Streaming/.test(bridge)
+      && /playAvaTtsStream/.test(index)
+      && /MediaSource\.isTypeSupported/.test(index)
+      && /\/api\/voice\/tts\/stream/.test(index)
+      && /\/api\/voice\/tts/.test(index),
+  },
+  {
     name: 'Ava/Rex flow-state layer enhances existing tools without bypassing approvals',
     ok: /function buildAvaFlowTurn/.test(bridge)
       && /looksLikeDashboardOperatorCommand/.test(bridge)
@@ -281,11 +292,17 @@ const checks = [
       && /sports_politics_deflection/.test(bridge)
       && /phone_emotional_intelligence_decoder/.test(bridge)
       && /wholesale_deal_path_audience_matrix/.test(bridge)
+      && /legal_compliance_guardrails/.test(bridge)
+      && /launch_gap_register/.test(bridge)
+      && /elevenlabs_streaming_tts_requirement/.test(bridge)
       && /Ava must treat the Ava masterclass facts/.test(agents)
+      && /Ava's missing-pieces suite/.test(agents)
       && /All proprietary PBK business material lives in `pbk_knowledge`/.test(avaMasterclass)
       && /Mortgage Takeover \/ subject-to/.test(avaMasterclass)
       && /Politics pattern/.test(avaMasterclass)
-      && /Ava has none/.test(avaMasterclass),
+      && /Ava has none/.test(avaMasterclass)
+      && /Complete Missing Pieces Suite/.test(avaMasterclass)
+      && /Streaming TTS/.test(avaMasterclass),
   },
   {
     name: 'Browser voice sends WebM container audio to Deepgram without raw Opus handshake params',

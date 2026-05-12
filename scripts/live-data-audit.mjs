@@ -9,12 +9,14 @@ const heartbeatManagerPath = resolve(root, 'scripts/pbk-openclaw-heartbeat.ps1')
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
 const agentsPath = resolve(root, 'AGENTS.md');
+const avaMasterclassPath = resolve(root, 'knowledge/ava-wholesale-conversation-masterclass.md');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
 const agents = readFileSync(agentsPath, 'utf8');
+const avaMasterclass = readFileSync(avaMasterclassPath, 'utf8');
 
 const checks = [
   {
@@ -268,6 +270,22 @@ const checks = [
       && /Slack approvals \+ Electron\/dashboard voice/.test(bridge)
       && /PBK control is Slack-first/.test(agents)
       && /Ava's Jarvis\/work mode means PBK wholesale real-estate execution only/.test(agents),
+  },
+  {
+    name: 'Ava masterclass knowledge is seeded, routable, and source-of-truth aware',
+    ok: /AVA_MASTERCLASS_KNOWLEDGE_REVISION/.test(bridge)
+      && /buildAvaMasterclassKnowledgeFacts/.test(bridge)
+      && /seedAvaMasterclassKnowledgeToPg/.test(bridge)
+      && /looksLikeAvaMasterclassCommand/.test(bridge)
+      && /getAvaMasterclassKnowledgeMatches/.test(bridge)
+      && /sports_politics_deflection/.test(bridge)
+      && /phone_emotional_intelligence_decoder/.test(bridge)
+      && /wholesale_deal_path_audience_matrix/.test(bridge)
+      && /Ava must treat the Ava masterclass facts/.test(agents)
+      && /All proprietary PBK business material lives in `pbk_knowledge`/.test(avaMasterclass)
+      && /Mortgage Takeover \/ subject-to/.test(avaMasterclass)
+      && /Politics pattern/.test(avaMasterclass)
+      && /Ava has none/.test(avaMasterclass),
   },
   {
     name: 'Browser voice sends WebM container audio to Deepgram without raw Opus handshake params',

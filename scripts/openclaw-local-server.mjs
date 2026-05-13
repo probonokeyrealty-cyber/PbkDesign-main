@@ -28623,6 +28623,16 @@ async function handleBrowserVoiceSocket(socket, request) {
   let deepgramConnection = null;
   let finalized = false;
   let autoReplyTimer = null;
+  const earlyBrowserMessages = [];
+  let liveBrowserMessageHandler = null;
+
+  socket.on('message', (raw) => {
+    if (liveBrowserMessageHandler) {
+      liveBrowserMessageHandler(raw);
+      return;
+    }
+    if (earlyBrowserMessages.length < 200) earlyBrowserMessages.push(raw);
+  });
 
   const clearAutoReplyTimer = () => {
     if (autoReplyTimer) {
@@ -28925,7 +28935,7 @@ async function handleBrowserVoiceSocket(socket, request) {
     return;
   }
 
-  socket.on('message', (raw) => {
+  liveBrowserMessageHandler = (raw) => {
     if (Buffer.isBuffer(raw) && raw.length && raw[0] !== 123) {
       session.frameCount += 1;
       session.audioBytes += raw.length;
@@ -29001,7 +29011,8 @@ async function handleBrowserVoiceSocket(socket, request) {
     if (event.event === 'stop') {
       void finalize('browser-stop');
     }
-  });
+  };
+  for (const queuedRaw of earlyBrowserMessages.splice(0)) liveBrowserMessageHandler(queuedRaw);
 
   socket.on('close', () => {
     void finalize('browser-close');

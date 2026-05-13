@@ -29471,10 +29471,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         voiceMode = 'live';
         setListening(true);
           if (status) status.textContent = 'Connecting microphone stream...';
-        voiceSocket.addEventListener('open', () => {
-          voiceBridgeStats.ws = 'open';
-          renderVoiceDoctor('live');
-          setVoiceState('live', 'Ava voice WebSocket connected.');
+        let recorderStarted = false;
+        const startVoiceRecorderWhenBridgeReady = () => {
+          if (recorderStarted || !voiceSocket || voiceSocket.readyState !== WebSocket.OPEN || !voiceStream) return;
+          recorderStarted = true;
           const mimeType = [
             'audio/webm',
             'audio/webm;codecs=opus',
@@ -29511,17 +29511,28 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           });
           voiceRecorder.start(recorderTimesliceMs);
           if (status) status.textContent = 'Listening live - speak naturally.';
+        };
+        voiceSocket.addEventListener('open', () => {
+          voiceBridgeStats.ws = 'open';
+          renderVoiceDoctor('live');
+          setVoiceState('live', 'Ava voice WebSocket connected. Waiting for Deepgram...');
+          if (status) status.textContent = 'Bridge connected. Waiting for Deepgram before recording...';
           window.setTimeout(() => {
             if (!shell.classList.contains('listening') || voiceSessionCompleted) return;
             if (voiceChunkStats.chunks === 0) {
-              showAvaVoiceDiagnostic('microphone', 'The browser opened the microphone, but no audio chunks reached Ava. Check the selected input device and browser microphone permission.');
+              showAvaVoiceDiagnostic('microphone', recorderStarted
+                ? 'The browser opened the microphone, but no audio chunks reached Ava. Check the selected input device and browser microphone permission.'
+                : 'The bridge did not report Deepgram ready, so Ava waited instead of dropping the first audio header. Check bridge logs for the STT connection.');
             }
           }, 2600);
         });
         voiceSocket.addEventListener('message', (event) => {
           let data = {};
           try { data = JSON.parse(event.data); } catch { return; }
-          if (data.type === 'ready' && status) status.textContent = 'Listening live - Deepgram stream open.';
+          if (data.type === 'ready') {
+            if (status) status.textContent = 'Listening live - Deepgram stream open.';
+            startVoiceRecorderWhenBridgeReady();
+          }
           if (data.type === 'ready') {
             voiceBridgeStats.ws = 'open';
             voiceBridgeStats.deepgram = data.provider || 'open';
@@ -29536,6 +29547,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             voiceBridgeStats.last = data.message ? String(data.message).slice(0, 90) : voiceBridgeStats.last;
             if (status && data.message) status.textContent = data.message;
             renderVoiceDoctor(data.state || 'live');
+            if (data.deepgram === 'open') startVoiceRecorderWhenBridgeReady();
           }
           if (data.type === 'diagnostic') {
             if (data.frameCount !== undefined) voiceChunkStats.chunks = Math.max(voiceChunkStats.chunks, Number(data.frameCount || 0));

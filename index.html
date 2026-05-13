@@ -1054,7 +1054,7 @@
   <!-- ==================== MAIN ==================== -->
   <main class="main">
 
-    <button class="rail-collapse-btn" id="railCollapseBtn" title="Collapse rail" aria-label="Collapse navigation">
+    <button type="button" class="rail-collapse-btn" id="railCollapseBtn" title="Collapse rail" aria-label="Collapse navigation">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
 
@@ -1101,11 +1101,11 @@
             </div>
           </div>
         </div>
-        <button class="icon-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle light/dark theme">
+        <button type="button" class="icon-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle light/dark theme">
           <svg id="themeIconDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           <svg id="themeIconLight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         </button>
-        <button class="icon-btn" title="Notifications">
+        <button type="button" class="icon-btn" title="Notifications">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           <span class="notif-dot"></span>
         </button>
@@ -1946,13 +1946,13 @@
       <div class="panel fade-in" style="animation-delay: 0.05s">
         <div class="panel-head">
           <div class="panel-title">Unified Inbox <span class="tt-count">— 12</span></div>
-          <button class="chip-btn">+ New</button>
+          <button type="button" class="chip-btn">+ New</button>
         </div>
         <div class="inbox-filters">
-          <button class="chip-btn active">All</button>
-          <button class="chip-btn">Unread</button>
-          <button class="chip-btn">Approvals <span style="color:var(--amber)"> — 3</span></button>
-          <button class="chip-btn">Hot</button>
+          <button type="button" class="chip-btn active">All</button>
+          <button type="button" class="chip-btn">Unread</button>
+          <button type="button" class="chip-btn">Approvals <span style="color:var(--amber)"> — 3</span></button>
+          <button type="button" class="chip-btn">Hot</button>
         </div>
         <div class="inbox-list" data-dashboard-inbox-list>
 
@@ -2120,14 +2120,14 @@
         </div>
 
         <div class="call-controls">
-          <button class="btn btn-takeover">
+          <button type="button" class="btn btn-takeover">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
             Take Over
           </button>
-          <button class="btn btn-ghost">Mute AI</button>
-          <button class="btn btn-ghost">Transfer</button>
-          <button class="btn btn-ghost" style="margin-left:auto">Mark DNC</button>
-          <button class="btn btn-danger">End Call</button>
+          <button type="button" class="btn btn-ghost">Mute AI</button>
+          <button type="button" class="btn btn-ghost">Transfer</button>
+          <button type="button" class="btn btn-ghost" style="margin-left:auto">Mark DNC</button>
+          <button type="button" class="btn btn-danger">End Call</button>
         </div>
       </div>
 
@@ -2137,7 +2137,7 @@
         <div class="panel">
           <div class="panel-head">
             <div class="panel-title">Activity Feed</div>
-            <button class="chip-btn">Live</button>
+            <button type="button" class="chip-btn">Live</button>
           </div>
           <div class="activity-feed" data-openclaw-feed="activity">
             <div class="activity-row">
@@ -2205,8 +2205,8 @@
                 <br><span style="color: var(--text-tertiary); font-size: 11px; font-family: var(--font-mono);">MAO $91.5k - probate empathy - no provider action until approved</span>
               </div>
               <div class="qcard-actions">
-                <button class="btn btn-primary">Approve offer</button>
-                <button class="btn btn-ghost">Revise first</button>
+                <button type="button" class="btn btn-primary">Approve offer</button>
+                <button type="button" class="btn btn-ghost">Revise first</button>
               </div>
             </div>
 
@@ -2219,8 +2219,8 @@
                 Approve the configured DocuSign template for <strong>R. Chen</strong> at <strong>55 Birch Rd</strong>?
               </div>
               <div class="qcard-actions">
-                <button class="btn btn-primary">Approve contract</button>
-                <button class="btn btn-ghost">Edit packet</button>
+                <button type="button" class="btn btn-primary">Approve contract</button>
+                <button type="button" class="btn btn-ghost">Edit packet</button>
               </div>
             </div>
 
@@ -2233,8 +2233,8 @@
                 Review <strong>342 fresh leads</strong> before PBK queues any outbound touches.
               </div>
               <div class="qcard-actions">
-                <button class="btn btn-primary">Approve launch</button>
-                <button class="btn btn-ghost">Hold</button>
+                <button type="button" class="btn btn-primary">Approve launch</button>
+                <button type="button" class="btn btn-ghost">Hold</button>
               </div>
             </div>
 
@@ -2250,9 +2250,9 @@
         <div class="section-subtitle">// 1,247 leads — 12 need eyes on them right now</div>
       </div>
       <div style="display: flex; gap: var(--s-2);">
-        <button class="chip-btn">Import CSV</button>
-        <button class="chip-btn">Filter</button>
-        <button class="chip-btn active">Sort: Score ?</button>
+        <button type="button" class="chip-btn">Import CSV</button>
+        <button type="button" class="chip-btn">Filter</button>
+        <button type="button" class="chip-btn active">Sort: Score ?</button>
       </div>
     </div>
 
@@ -2372,8 +2372,8 @@
 
         <div class="command-bar">
           <textarea placeholder="Tell Ava what to do. Example: 'call the top 10 probate leads from yesterday's import and qualify them'"></textarea>
-          <button class="btn btn-ghost">Attach</button>
-          <button class="btn btn-primary">
+          <button type="button" class="btn btn-ghost">Attach</button>
+          <button type="button" class="btn btn-primary">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             Send
           </button>
@@ -2758,10 +2758,10 @@
         <div class="ib-live-status" data-inbox-live-status>Waiting for live bridge sync</div>
       </div>
       <div class="ib-channels">
-        <button class="chip-btn active" data-inbox-filter="all">All - 12</button>
-        <button class="chip-btn" data-inbox-filter="calls">Calls - 5</button>
-        <button class="chip-btn" data-inbox-filter="sms">SMS - 4</button>
-        <button class="chip-btn" data-inbox-filter="email">Email - 3</button>
+        <button type="button" class="chip-btn active" data-inbox-filter="all">All - 12</button>
+        <button type="button" class="chip-btn" data-inbox-filter="calls">Calls - 5</button>
+        <button type="button" class="chip-btn" data-inbox-filter="sms">SMS - 4</button>
+        <button type="button" class="chip-btn" data-inbox-filter="email">Email - 3</button>
       </div>
       <div class="ib-list" data-openclaw-inbox-list>
         <div class="ib-item unread active">
@@ -2840,7 +2840,7 @@
           </div>
         </div>
         <div class="convo-actions" data-openclaw-convo-actions>
-          <button class="chip-btn active" disabled>Conversation only</button>
+          <button type="button" class="chip-btn active" disabled>Conversation only</button>
           <button class="chip-btn" type="button" data-inbox-edit-lead>Edit lead</button>
         </div>
       </div>
@@ -2894,13 +2894,13 @@
 
       <div class="compose">
         <div class="compose-channels">
-          <button class="chip-btn active">SMS</button>
-          <button class="chip-btn">Email</button>
-          <button class="chip-btn">Call</button>
+          <button type="button" class="chip-btn active">SMS</button>
+          <button type="button" class="chip-btn">Email</button>
+          <button type="button" class="chip-btn">Call</button>
         </div>
         <textarea placeholder="Type a reply to Diane — or hand it to Ava to send—"></textarea>
-        <button class="btn btn-ghost">Ask AI</button>
-        <button class="btn btn-primary">Send</button>
+        <button type="button" class="btn btn-ghost">Ask AI</button>
+        <button type="button" class="btn btn-primary">Send</button>
       </div>
     </div>
   </div>
@@ -3061,8 +3061,8 @@
       <p>Every lead, scored and sorted. Upload skip-traced CSVs, filter by motivation signals, and hand the hottest ones straight to Ava.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">Export</button>
-      <button class="btn btn-primary">+ New Lead</button>
+      <button type="button" class="btn btn-ghost">Export</button>
+      <button type="button" class="btn btn-primary">+ New Lead</button>
     </div>
   </div>
 
@@ -3074,8 +3074,8 @@
       <h4>Drop skip-traced CSV or GHL export here</h4>
       <p>Auto-deduplicates on address + phone — geocodes — scores — flags DNC matches — enriches with public records</p>
     </div>
-    <button class="btn btn-ghost">Browse files</button>
-    <button class="btn btn-primary">Import from BatchData</button>
+    <button type="button" class="btn btn-ghost">Browse files</button>
+    <button type="button" class="btn btn-primary">Import from BatchData</button>
   </div>
 
   <div class="leads-toolbar">
@@ -3254,12 +3254,12 @@
   <div class="bulk-bar">
     <span class="bulk-count">3 selected</span>
     <span style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px;">—</span>
-    <button class="chip-btn">Assign to Ava</button>
-    <button class="chip-btn">Start campaign</button>
-    <button class="chip-btn">Tag</button>
-    <button class="chip-btn">Export</button>
-    <button class="chip-btn" style="color: var(--crimson); border-color: rgba(248, 113, 113, 0.3);">Add to DNC</button>
-    <div style="margin-left: auto"><button class="btn btn-primary">Hand to AI agent</button></div>
+    <button type="button" class="chip-btn">Assign to Ava</button>
+    <button type="button" class="chip-btn">Start campaign</button>
+    <button type="button" class="chip-btn">Tag</button>
+    <button type="button" class="chip-btn">Export</button>
+    <button type="button" class="chip-btn" style="color: var(--crimson); border-color: rgba(248, 113, 113, 0.3);">Add to DNC</button>
+    <div style="margin-left: auto"><button type="button" class="btn btn-primary">Hand to AI agent</button></div>
   </div>
 </section>
 
@@ -3549,10 +3549,10 @@
       <p>Plug an address. Pull comps. Get ARV, MAO, repair ranges, holding costs, and a walk-away price — in seconds. Ava reads this live during calls and never offers above your cap.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">Share</button>
-      <button class="btn btn-ghost" data-analyzer-action="load-lead">Load Lead</button>
-      <button class="btn btn-ghost">Save to lead</button>
-      <button class="btn btn-primary">Run analysis</button>
+      <button type="button" class="btn btn-ghost">Share</button>
+      <button type="button" class="btn btn-ghost" data-analyzer-action="load-lead">Load Lead</button>
+      <button type="button" class="btn btn-ghost">Save to lead</button>
+      <button type="button" class="btn btn-primary">Run analysis</button>
     </div>
   </div>
 
@@ -3638,7 +3638,7 @@
         </div>
 
         <div style="padding: 6px 0;">
-          <button class="chip-btn" style="width: 100%; padding: 6px;">+ Add item</button>
+          <button type="button" class="chip-btn" style="width: 100%; padding: 6px;">+ Add item</button>
         </div>
 
         <div class="repair-total">
@@ -3670,7 +3670,7 @@
       </div>
 
       <div class="run-analyzer">
-        <button class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px;">
+        <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 12px;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           Re-run Analysis
         </button>
@@ -3803,7 +3803,7 @@
           <strong>STEP 2:</strong> If still pushing, $91,500 firm ("that's my ceiling — past that I'm losing money on this one").<br><br>
           <strong>CLOSE:</strong> Verbal yes ? DocuSign instantly.
         </div>
-        <button class="btn btn-primary" style="width: 100%; justify-content: center;">Push script to Ava</button>
+        <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center;">Push script to Ava</button>
       </div>
 
       <div class="strategy-card" style="border-color: var(--amber-glow); background: var(--amber-glow);">
@@ -4088,10 +4088,10 @@
           </div>
         </div>
         <div style="display: flex; gap: var(--s-2);">
-          <button class="chip-btn" onclick="window.showPage('fleet')">Agent Fleet</button>
-          <button class="chip-btn">Edit prompt</button>
-          <button class="chip-btn">View logs</button>
-          <button class="chip-btn active">Active</button>
+          <button type="button" class="chip-btn" onclick="window.showPage('fleet')">Agent Fleet</button>
+          <button type="button" class="chip-btn">Edit prompt</button>
+          <button type="button" class="chip-btn">View logs</button>
+          <button type="button" class="chip-btn active">Active</button>
         </div>
       </div>
 
@@ -4147,9 +4147,9 @@
 
       <div class="command-bar">
         <textarea placeholder="Tell Ava what to do. She'll plan, check the analyzer, and ask before any call, SMS, or contract goes out—"></textarea>
-        <button class="btn btn-ghost">Attach</button>
-        <button class="btn btn-ghost">Voice</button>
-        <button class="btn btn-primary">
+        <button type="button" class="btn btn-ghost">Attach</button>
+        <button type="button" class="btn btn-ghost">Voice</button>
+        <button type="button" class="btn btn-primary">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           Send
         </button>
@@ -4368,9 +4368,9 @@
         <p>Every AI closer, researcher, and campaign operator in one place. Agents can earn skills from research, call outcomes, analytics, and approved programming changes, then pass proven skills to the next agent.</p>
       </div>
       <div class="fleet-actions">
-        <button class="btn btn-ghost" id="fleetSkillsLibBtn">Skills library</button>
-        <button class="btn btn-ghost" id="fleetKnowledgeBtn">Knowledge sources</button>
-        <button class="btn btn-primary" id="deployAgentBtn">+ Deploy new agent</button>
+        <button type="button" class="btn btn-ghost" id="fleetSkillsLibBtn">Skills library</button>
+        <button type="button" class="btn btn-ghost" id="fleetKnowledgeBtn">Knowledge sources</button>
+        <button type="button" class="btn btn-primary" id="deployAgentBtn">+ Deploy new agent</button>
       </div>
     </div>
 
@@ -4592,9 +4592,9 @@
       <p>Every live AI call on one screen. Read the transcript, watch sentiment, barge in, or let Ava close. Multi-call takeover and DNC controls on every tile.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">Call history</button>
-      <button class="btn btn-ghost">Recordings</button>
-      <button class="btn btn-primary">Start outbound batch</button>
+      <button type="button" class="btn btn-ghost">Call history</button>
+      <button type="button" class="btn btn-ghost">Recordings</button>
+      <button type="button" class="btn btn-primary">Start outbound batch</button>
     </div>
   </div>
 
@@ -4631,10 +4631,10 @@
         <div class="lc-meter"><div class="l">Yell risk</div><div class="v good">0.04</div></div>
       </div>
       <div class="lc-ctrls">
-        <button class="btn btn-takeover">Take over</button>
-        <button class="btn btn-ghost">Mute AI</button>
-        <button class="btn btn-ghost">Transfer</button>
-        <button class="btn btn-danger">End</button>
+        <button type="button" class="btn btn-takeover">Take over</button>
+        <button type="button" class="btn btn-ghost">Mute AI</button>
+        <button type="button" class="btn btn-ghost">Transfer</button>
+        <button type="button" class="btn btn-danger">End</button>
       </div>
     </div>
 
@@ -4664,10 +4664,10 @@
         <div class="lc-meter"><div class="l">Yell risk</div><div class="v good">0.08</div></div>
       </div>
       <div class="lc-ctrls">
-        <button class="btn btn-takeover">Take over</button>
-        <button class="btn btn-ghost">Mute AI</button>
-        <button class="btn btn-ghost">Transfer</button>
-        <button class="btn btn-danger">End</button>
+        <button type="button" class="btn btn-takeover">Take over</button>
+        <button type="button" class="btn btn-ghost">Mute AI</button>
+        <button type="button" class="btn btn-ghost">Transfer</button>
+        <button type="button" class="btn btn-danger">End</button>
       </div>
     </div>
   </div>
@@ -5085,9 +5085,9 @@
       <p>Every envelope from "draft" to "funded." Clauses auto-populate from the analyzer. Ava only sends after you approve — and she watches for stuck signatures.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">Templates</button>
-      <button class="btn btn-ghost">Audit log</button>
-      <button class="btn btn-primary">+ New contract</button>
+      <button type="button" class="btn btn-ghost">Templates</button>
+      <button type="button" class="btn btn-ghost">Audit log</button>
+      <button type="button" class="btn btn-primary">+ New contract</button>
     </div>
   </div>
   <div class="contracts-ops-strip" data-contracts-ops>
@@ -5157,7 +5157,7 @@
           <div class="progress-label">60%</div>
         </div>
         <div class="c-date">Apr 28 close</div>
-        <div><button class="chip-btn">View</button></div>
+        <div><button type="button" class="chip-btn">View</button></div>
       </div>
 
       <div class="contract-row">
@@ -5174,7 +5174,7 @@
           <div class="progress-label">100% — all parties</div>
         </div>
         <div class="c-date">Apr 25 close</div>
-        <div><button class="chip-btn">View</button></div>
+        <div><button type="button" class="chip-btn">View</button></div>
       </div>
 
       <div class="contract-row">
@@ -5191,7 +5191,7 @@
           <div class="progress-label">40% — clause 4.2 edits</div>
         </div>
         <div class="c-date">TBD</div>
-        <div><button class="chip-btn">View</button></div>
+        <div><button type="button" class="chip-btn">View</button></div>
       </div>
 
       <div class="contract-row">
@@ -5208,7 +5208,7 @@
           <div class="progress-label">25%</div>
         </div>
         <div class="c-date">May 2 close</div>
-        <div><button class="chip-btn">View</button></div>
+        <div><button type="button" class="chip-btn">View</button></div>
       </div>
 
       <div class="contract-row">
@@ -5225,7 +5225,7 @@
           <div class="progress-label">follow-up queued</div>
         </div>
         <div class="c-date">TBD</div>
-        <div><button class="chip-btn">View</button></div>
+        <div><button type="button" class="chip-btn">View</button></div>
       </div>
     </div>
 
@@ -5237,7 +5237,7 @@
             <div class="cp-title">DOC#DS-4821</div>
             <div class="c-addr">55 Birch Rd — Robert Chen — $98,500</div>
           </div>
-          <button class="chip-btn active">DocuSign</button>
+          <button type="button" class="chip-btn active">DocuSign</button>
         </div>
         <div class="cp-doc">
           <h4>Purchase & Sale Agreement</h4>
@@ -5255,9 +5255,9 @@
           <p style="font-size: 10px; margin-top: 4px;">Jordan — Probono Key Realty — date</p>
         </div>
         <div class="cp-footer">
-          <button class="btn btn-ghost">Edit</button>
-          <button class="btn btn-ghost">Remind</button>
-          <button class="btn btn-primary">Open in DocuSign</button>
+          <button type="button" class="btn btn-ghost">Edit</button>
+          <button type="button" class="btn btn-ghost">Remind</button>
+          <button type="button" class="btn btn-primary">Open in DocuSign</button>
         </div>
       </div>
 
@@ -5493,7 +5493,7 @@
       </div>
 
       <div style="margin-top: var(--s-5);">
-        <button class="btn btn-primary" style="width: 100%; justify-content: center;">+ New automation</button>
+        <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center;">+ New automation</button>
       </div>
     </aside>
 
@@ -5631,13 +5631,13 @@
       </div>
 
       <div style="margin-top: var(--s-6);">
-        <button class="btn btn-ghost" style="width: 100%; justify-content: center;">Test trigger</button>
+        <button type="button" class="btn btn-ghost" style="width: 100%; justify-content: center;">Test trigger</button>
       </div>
       <div style="margin-top: var(--s-2);">
-        <button class="btn btn-primary" style="width: 100%; justify-content: center;">Save changes</button>
+        <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center;">Save changes</button>
       </div>
       <div style="margin-top: var(--s-2);">
-        <button class="btn btn-ghost" style="width: 100%; justify-content: center;">Publish to n8n</button>
+        <button type="button" class="btn btn-ghost" style="width: 100%; justify-content: center;">Publish to n8n</button>
       </div>
     </aside>
   </div>
@@ -5812,11 +5812,11 @@
       <p>Deal flow, AI performance, and cost per lead — all from one source of truth. Drill down to any call, lead, or contract in two clicks.</p>
     </div>
     <div class="page-head-actions">
-      <button class="chip-btn">7d</button>
-      <button class="chip-btn active">30d</button>
-      <button class="chip-btn">90d</button>
-      <button class="chip-btn">YTD</button>
-      <button class="btn btn-ghost">Export CSV</button>
+      <button type="button" class="chip-btn">7d</button>
+      <button type="button" class="chip-btn active">30d</button>
+      <button type="button" class="chip-btn">90d</button>
+      <button type="button" class="chip-btn">YTD</button>
+      <button type="button" class="btn btn-ghost">Export CSV</button>
     </div>
   </div>
 
@@ -6147,9 +6147,9 @@
       <p>Every service that powers the machine. Connect, disconnect, rotate keys, and monitor sync health — all in one place. Nothing hidden.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">API keys</button>
-      <button class="btn btn-ghost">Webhooks</button>
-      <button class="btn btn-primary">+ Connect new</button>
+      <button type="button" class="btn btn-ghost">API keys</button>
+      <button type="button" class="btn btn-ghost">Webhooks</button>
+      <button type="button" class="btn btn-primary">+ Connect new</button>
     </div>
   </div>
 
@@ -6171,8 +6171,8 @@
         <div><div class="l">Self-hosted</div><div class="v">Vercel Edge</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Logs</button>
-        <button class="btn btn-ghost">Configure</button>
+        <button type="button" class="btn btn-ghost">Logs</button>
+        <button type="button" class="btn btn-ghost">Configure</button>
       </div>
     </div>
 
@@ -6192,8 +6192,8 @@
         <div><div class="l">Usage — MTD</div><div class="v">$187</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Numbers</button>
-        <button class="btn btn-ghost">Test call</button>
+        <button type="button" class="btn btn-ghost">Numbers</button>
+        <button type="button" class="btn btn-ghost">Test call</button>
       </div>
     </div>
 
@@ -6215,8 +6215,8 @@
         <div><div class="l">Rows — leads</div><div class="v">1,247</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">SQL editor</button>
-        <button class="btn btn-ghost">Backups</button>
+        <button type="button" class="btn btn-ghost">SQL editor</button>
+        <button type="button" class="btn btn-ghost">Backups</button>
       </div>
     </div>
 
@@ -6238,8 +6238,8 @@
         <div><div class="l">Cost — MTD</div><div class="v">$42.80</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Playground</button>
-        <button class="btn btn-ghost">Rotate key</button>
+        <button type="button" class="btn btn-ghost">Playground</button>
+        <button type="button" class="btn btn-ghost">Rotate key</button>
       </div>
     </div>
 
@@ -6259,8 +6259,8 @@
         <div><div class="l">Signed — MTD</div><div class="v">23</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Templates</button>
-        <button class="btn btn-ghost">Webhooks</button>
+        <button type="button" class="btn btn-ghost">Templates</button>
+        <button type="button" class="btn btn-ghost">Webhooks</button>
       </div>
     </div>
 
@@ -6280,8 +6280,8 @@
         <div><div class="l">Runs — today</div><div class="v">1,842</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Open n8n</button>
-        <button class="btn btn-ghost">Health</button>
+        <button type="button" class="btn btn-ghost">Open n8n</button>
+        <button type="button" class="btn btn-ghost">Health</button>
       </div>
     </div>
 
@@ -6301,8 +6301,8 @@
         <div><div class="l">Hit rate</div><div class="v">78%</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Usage</button>
-        <button class="btn btn-ghost">Buy list</button>
+        <button type="button" class="btn btn-ghost">Usage</button>
+        <button type="button" class="btn btn-ghost">Buy list</button>
       </div>
     </div>
 
@@ -6322,8 +6322,8 @@
         <div><div class="l">Channels</div><div class="v">#deals — #alerts</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Test ping</button>
-        <button class="btn btn-ghost">Channels</button>
+        <button type="button" class="btn btn-ghost">Test ping</button>
+        <button type="button" class="btn btn-ghost">Channels</button>
       </div>
     </div>
 
@@ -6343,7 +6343,7 @@
         <div><div class="l">Account</div><div class="v">jordan@pbk.capital</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-amber">Re-authorize</button>
+        <button type="button" class="btn btn-amber">Re-authorize</button>
       </div>
     </div>
 
@@ -6363,7 +6363,7 @@
         <div><div class="l">Coverage</div><div class="v">US nationwide</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-primary">Connect</button>
+        <button type="button" class="btn btn-primary">Connect</button>
       </div>
     </div>
 
@@ -6383,7 +6383,7 @@
         <div><div class="l">ACH</div><div class="v">0.8% — cap $5</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-primary">Connect</button>
+        <button type="button" class="btn btn-primary">Connect</button>
       </div>
     </div>
 
@@ -6403,8 +6403,8 @@
         <div><div class="l">Uptime — 30d</div><div class="v">99.98%</div></div>
       </div>
       <div class="int-actions">
-        <button class="btn btn-ghost">Dashboard</button>
-        <button class="btn btn-ghost">Logs</button>
+        <button type="button" class="btn btn-ghost">Dashboard</button>
+        <button type="button" class="btn btn-ghost">Logs</button>
       </div>
     </div>
 
@@ -6980,11 +6980,11 @@
       <p>A research agent that reads what you feed it so your acquisition team doesn't have to. Drop articles, PDFs, YouTube links, weather pages, audio clips, voice notes, and deal memos; Rex indexes the details so Ava can recall them on future calls.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost" data-brain-action="harvest-blog">Harvest now</button>
-      <button class="btn btn-ghost" data-brain-action="browser-research">Browser research</button>
-      <button class="btn btn-ghost" data-brain-action="export">Export library</button>
-      <button class="btn btn-ghost">API</button>
-      <button class="btn btn-primary" data-brain-action="ingest">+ Ingest source</button>
+      <button type="button" class="btn btn-ghost" data-brain-action="harvest-blog">Harvest now</button>
+      <button type="button" class="btn btn-ghost" data-brain-action="browser-research">Browser research</button>
+      <button type="button" class="btn btn-ghost" data-brain-action="export">Export library</button>
+      <button type="button" class="btn btn-ghost">API</button>
+      <button type="button" class="btn btn-primary" data-brain-action="ingest">+ Ingest source</button>
     </div>
   </div>
 
@@ -7012,7 +7012,7 @@
         </div>
         <h5>Feed the brain</h5>
         <p>Upload PDFs, notes, deal memos, voice notes, or audio/video files. Use + Ingest source for URLs, YouTube, weather pages, public PDFs, and public audio links.</p>
-        <button class="btn btn-primary" style="width: 100%; justify-content: center;" data-brain-action="ingest">Upload</button>
+        <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center;" data-brain-action="ingest">Upload</button>
       </div>
 
       <div class="brain-bookmarks">
@@ -7310,7 +7310,7 @@
 
         <div class="rc-composer">
           <textarea placeholder="Ask Rex anything—" data-brain-chat-input></textarea>
-          <button class="btn btn-primary" data-brain-action="ask">Ask</button>
+          <button type="button" class="btn btn-primary" data-brain-action="ask">Ask</button>
         </div>
       </div>
 
@@ -7452,9 +7452,9 @@
       <p>Every action — by you, your team, Ava, or the system. Searchable, filterable, exportable. Compliance-ready audit trail.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">Export CSV</button>
-      <button class="btn btn-ghost">Webhook</button>
-      <button class="btn btn-primary">Refresh live</button>
+      <button type="button" class="btn btn-ghost">Export CSV</button>
+      <button type="button" class="btn btn-ghost">Webhook</button>
+      <button type="button" class="btn btn-primary">Refresh live</button>
     </div>
   </div>
 
@@ -7783,9 +7783,9 @@
       <p>Every call recorded with consent. Searchable transcripts, sentiment markers along the timeline, jump to any moment by clicking the transcript. Compliance-ready.</p>
     </div>
     <div class="page-head-actions">
-      <button class="btn btn-ghost">Bulk export</button>
-      <button class="btn btn-ghost">Retention policy</button>
-      <button class="btn btn-primary">Download recording</button>
+      <button type="button" class="btn btn-ghost">Bulk export</button>
+      <button type="button" class="btn btn-ghost">Retention policy</button>
+      <button type="button" class="btn btn-primary">Download recording</button>
     </div>
   </div>
 
@@ -7793,7 +7793,7 @@
     <aside class="rec-list">
       <div class="rec-list-head">
         <input placeholder="Search recordings—"/>
-        <button class="chip-btn">Filter</button>
+        <button type="button" class="chip-btn">Filter</button>
       </div>
       <div class="rec-list-body">
         <div class="rec-item active">
@@ -7878,8 +7878,8 @@
           <div class="who">Diane Kowalski</div>
           <div class="meta">Apr 22 — 3:02pm ? 3:11pm — 8:42 — 202 Cherry Ln</div>
         </div>
-        <button class="chip-btn">Send to lead</button>
-        <button class="chip-btn">Download</button>
+        <button type="button" class="chip-btn">Send to lead</button>
+        <button type="button" class="chip-btn">Download</button>
       </div>
 
       <div class="scrubber">
@@ -7900,10 +7900,10 @@
       </div>
 
       <div class="player-controls">
-        <button class="pc-btn" title="Skip back 15s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/></svg></button>
-        <button class="pc-btn play" title="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
-        <button class="pc-btn" title="Skip forward 15s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><polyline points="21 3 21 8 16 8"/></svg></button>
-        <button class="pc-speed">1.0—</button>
+        <button type="button" class="pc-btn" title="Skip back 15s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/></svg></button>
+        <button type="button" class="pc-btn play" title="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></button>
+        <button type="button" class="pc-btn" title="Skip forward 15s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><polyline points="21 3 21 8 16 8"/></svg></button>
+        <button type="button" class="pc-speed">1.0—</button>
       </div>
 
       <div class="rec-transcript-pane">
@@ -8120,14 +8120,14 @@
     <article class="memory-card">
       <div class="memory-card-head"><h3>Skill performance - top 8</h3><button class="memory-card-action" type="button" data-memory-action="skills">all 47 skills -></button></div>
       <div class="memory-card-body" data-memory-skills-list>
-        <div class="memory-skill-row" data-memory-skill="Tactical Empathy" data-memory-agent="ava"><div class="memory-skill-name">Tactical Empathy<span class="memory-skill-source">audiobook - Voss</span></div><div class="memory-skill-num">187x</div><div class="memory-skill-num good">71%</div><div class="memory-skill-bar"><span class="lime" style="--w:94%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="Contract delivery v2" data-memory-agent="max"><div class="memory-skill-name">Contract delivery v2<span class="memory-skill-source">self-programmed - Max</span></div><div class="memory-skill-num">14x</div><div class="memory-skill-num good">96%</div><div class="memory-skill-bar"><span class="lime" style="--w:96%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="Mirroring - last 3 words" data-memory-agent="ava"><div class="memory-skill-name">Mirroring - last 3 words<span class="memory-skill-source">audiobook - Voss</span></div><div class="memory-skill-num">142x</div><div class="memory-skill-num good">68%</div><div class="memory-skill-bar"><span style="--w:88%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="Source synthesis" data-memory-agent="rex"><div class="memory-skill-name">Source synthesis<span class="memory-skill-source">research - Rex native</span></div><div class="memory-skill-num">619x</div><div class="memory-skill-num good">93%</div><div class="memory-skill-bar"><span class="lime" style="--w:93%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="Ackerman Negotiation v3" data-memory-agent="max"><div class="memory-skill-name">Ackerman Negotiation v3<span class="memory-skill-source">self-programmed - evolving</span></div><div class="memory-skill-num">23x</div><div class="memory-skill-num">52%</div><div class="memory-skill-bar"><span class="amber" style="--w:71%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="What would need to be true" data-memory-agent="ava"><div class="memory-skill-name">What would need to be true?<span class="memory-skill-source">analytics - evolving</span></div><div class="memory-skill-num">11x</div><div class="memory-skill-num warn">45%</div><div class="memory-skill-bar"><span class="amber" style="--w:64%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="Direct close" data-memory-agent="max"><div class="memory-skill-name">Direct close<span class="memory-skill-source">trained - Max default</span></div><div class="memory-skill-num">94x</div><div class="memory-skill-num good">62%</div><div class="memory-skill-bar"><span style="--w:91%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
-        <div class="memory-skill-row" data-memory-skill="Comp analysis" data-memory-agent="rex"><div class="memory-skill-name">Comp analysis<span class="memory-skill-source">tool integration - Rex</span></div><div class="memory-skill-num">412x</div><div class="memory-skill-num good">89%</div><div class="memory-skill-bar"><span class="lime" style="--w:89%"></span></div><div class="memory-skill-actions"><button class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Tactical Empathy" data-memory-agent="ava"><div class="memory-skill-name">Tactical Empathy<span class="memory-skill-source">audiobook - Voss</span></div><div class="memory-skill-num">187x</div><div class="memory-skill-num good">71%</div><div class="memory-skill-bar"><span class="lime" style="--w:94%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Contract delivery v2" data-memory-agent="max"><div class="memory-skill-name">Contract delivery v2<span class="memory-skill-source">self-programmed - Max</span></div><div class="memory-skill-num">14x</div><div class="memory-skill-num good">96%</div><div class="memory-skill-bar"><span class="lime" style="--w:96%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Mirroring - last 3 words" data-memory-agent="ava"><div class="memory-skill-name">Mirroring - last 3 words<span class="memory-skill-source">audiobook - Voss</span></div><div class="memory-skill-num">142x</div><div class="memory-skill-num good">68%</div><div class="memory-skill-bar"><span style="--w:88%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Source synthesis" data-memory-agent="rex"><div class="memory-skill-name">Source synthesis<span class="memory-skill-source">research - Rex native</span></div><div class="memory-skill-num">619x</div><div class="memory-skill-num good">93%</div><div class="memory-skill-bar"><span class="lime" style="--w:93%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Ackerman Negotiation v3" data-memory-agent="max"><div class="memory-skill-name">Ackerman Negotiation v3<span class="memory-skill-source">self-programmed - evolving</span></div><div class="memory-skill-num">23x</div><div class="memory-skill-num">52%</div><div class="memory-skill-bar"><span class="amber" style="--w:71%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="What would need to be true" data-memory-agent="ava"><div class="memory-skill-name">What would need to be true?<span class="memory-skill-source">analytics - evolving</span></div><div class="memory-skill-num">11x</div><div class="memory-skill-num warn">45%</div><div class="memory-skill-bar"><span class="amber" style="--w:64%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Direct close" data-memory-agent="max"><div class="memory-skill-name">Direct close<span class="memory-skill-source">trained - Max default</span></div><div class="memory-skill-num">94x</div><div class="memory-skill-num good">62%</div><div class="memory-skill-bar"><span style="--w:91%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+        <div class="memory-skill-row" data-memory-skill="Comp analysis" data-memory-agent="rex"><div class="memory-skill-name">Comp analysis<span class="memory-skill-source">tool integration - Rex</span></div><div class="memory-skill-num">412x</div><div class="memory-skill-num good">89%</div><div class="memory-skill-bar"><span class="lime" style="--w:89%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
       </div>
     </article>
 
@@ -9300,38 +9300,38 @@
         <div class="dnc-list">
           <div class="dnc-toolbar">
             <input placeholder="Search phone, reason, date—"/>
-            <button class="chip-btn">Import CSV</button>
-            <button class="chip-btn">+ Add</button>
+            <button type="button" class="chip-btn">Import CSV</button>
+            <button type="button" class="chip-btn">+ Add</button>
           </div>
           <div class="dnc-row">
             <span class="phone">+1 216-555-0401</span>
             <span class="reason">Yelling detected — "stop calling" at 00:23 — auto-added</span>
             <span class="date">Apr 22 — 22m ago</span>
-            <span><button class="chip-btn">Remove</button></span>
+            <span><button type="button" class="chip-btn">Remove</button></span>
           </div>
           <div class="dnc-row">
             <span class="phone">+1 440-555-0622</span>
             <span class="reason">Requested removal via SMS "STOP"</span>
             <span class="date">Apr 21</span>
-            <span><button class="chip-btn">Remove</button></span>
+            <span><button type="button" class="chip-btn">Remove</button></span>
           </div>
           <div class="dnc-row">
             <span class="phone">+1 937-555-0088</span>
             <span class="reason">Imported from federal DNC list</span>
             <span class="date">Apr 15</span>
-            <span><button class="chip-btn">Remove</button></span>
+            <span><button type="button" class="chip-btn">Remove</button></span>
           </div>
           <div class="dnc-row">
             <span class="phone">+1 614-555-0914</span>
             <span class="reason">Manual add — prior client — "no more calls"</span>
             <span class="date">Apr 12</span>
-            <span><button class="chip-btn">Remove</button></span>
+            <span><button type="button" class="chip-btn">Remove</button></span>
           </div>
           <div class="dnc-row">
             <span class="phone">+1 330-555-0221</span>
             <span class="reason">Litigator-pattern match — auto-flagged</span>
             <span class="date">Apr 8</span>
-            <span><button class="chip-btn">Remove</button></span>
+            <span><button type="button" class="chip-btn">Remove</button></span>
           </div>
         </div>
       </div>
@@ -9349,7 +9349,7 @@
             </div>
             <span class="role-chip admin">Admin</span>
             <span class="role-chip">All permissions</span>
-            <span><button class="chip-btn">Edit</button></span>
+            <span><button type="button" class="chip-btn">Edit</button></span>
           </div>
           <div class="role-row">
             <div class="ra" style="background: linear-gradient(135deg, var(--magenta), var(--sky));">N</div>
@@ -9359,7 +9359,7 @@
             </div>
             <span class="role-chip">Manager</span>
             <span class="role-chip">Approve &lt; $150k</span>
-            <span><button class="chip-btn">Edit</button></span>
+            <span><button type="button" class="chip-btn">Edit</button></span>
           </div>
           <div class="role-row">
             <div class="ra" style="background: linear-gradient(135deg, var(--lime), var(--sky));">K</div>
@@ -9369,7 +9369,7 @@
             </div>
             <span class="role-chip">Agent</span>
             <span class="role-chip">Leads — call — SMS</span>
-            <span><button class="chip-btn">Edit</button></span>
+            <span><button type="button" class="chip-btn">Edit</button></span>
           </div>
           <div class="role-row">
             <div class="ra" style="background: linear-gradient(135deg, var(--amber), var(--crimson));">M</div>
@@ -9379,12 +9379,12 @@
             </div>
             <span class="role-chip">Viewer</span>
             <span class="role-chip">Read-only</span>
-            <span><button class="chip-btn">Edit</button></span>
+            <span><button type="button" class="chip-btn">Edit</button></span>
           </div>
         </div>
 
         <div style="margin-top: var(--s-4);">
-          <button class="btn btn-primary">+ Invite teammate</button>
+          <button type="button" class="btn btn-primary">+ Invite teammate</button>
           <button class="btn btn-secondary" type="button" data-team-auth-open onclick="window.PBK?.actions?.openTeamAccessModal?.()">Enter team passcode</button>
           <button class="btn btn-ghost" type="button" data-totp-enroll onclick="window.PBK?.actions?.openTotpEnrollmentModal?.()">Enroll TOTP</button>
         </div>
@@ -9400,8 +9400,8 @@
             <div class="setting-help">Played at second 0 of every outbound call. Variable: <code>{seller_name}</code> is substituted live.</div>
           </div>
           <div class="setting-ctrl">
-            <button class="chip-btn">Edit script</button>
-            <button class="chip-btn active">Active</button>
+            <button type="button" class="chip-btn">Edit script</button>
+            <button type="button" class="chip-btn active">Active</button>
           </div>
         </div>
 
@@ -9702,9 +9702,9 @@
             </div>
 
             <div class="plugin-actions">
-              <button class="btn btn-ghost" data-plugin-action="test" disabled>Test connection</button>
-              <button class="btn btn-ghost" data-plugin-action="save-later">Save for later</button>
-              <button class="btn btn-primary" data-plugin-action="connect">Connect PBK Brain</button>
+              <button type="button" class="btn btn-ghost" data-plugin-action="test" disabled>Test connection</button>
+              <button type="button" class="btn btn-ghost" data-plugin-action="save-later">Save for later</button>
+              <button type="button" class="btn btn-primary" data-plugin-action="connect">Connect PBK Brain</button>
             </div>
 
             <div class="plugin-footer">
@@ -9722,7 +9722,7 @@
 
         <!-- ===== Empty slot for future plugins ===== -->
         <div class="plugin-add-row">
-          <button class="btn btn-ghost" data-action="add-plugin">+ Add another plugin</button>
+          <button type="button" class="btn btn-ghost" data-action="add-plugin">+ Add another plugin</button>
           <span class="plugin-add-hint">Codex on local — BatchData — custom MCP servers</span>
         </div>
 
@@ -10088,12 +10088,12 @@
             </div>
           </div>
           <div class="ld-actions">
-            <button class="btn btn-ghost" data-lead-action="edit">Edit</button>
-            <button class="btn btn-ghost">Call</button>
-            <button class="btn btn-ghost">Text</button>
-            <button class="btn btn-ghost">Email</button>
-            <button class="btn btn-ghost" data-lead-action="delete">Delete</button>
-            <button class="btn btn-primary">Send to Ava</button>
+            <button type="button" class="btn btn-ghost" data-lead-action="edit">Edit</button>
+            <button type="button" class="btn btn-ghost" data-lead-action="call">Call</button>
+            <button type="button" class="btn btn-ghost" data-lead-action="text">Text</button>
+            <button type="button" class="btn btn-ghost" data-lead-action="email">Email</button>
+            <button type="button" class="btn btn-ghost" data-lead-action="delete">Delete</button>
+            <button type="button" class="btn btn-primary" data-lead-action="send-to-ava">Send to Ava</button>
           </div>
         </div>
         <div class="ld-stats">
@@ -10194,10 +10194,10 @@
         <div class="ld-timeline-head">
           <div class="panel-title">Full Timeline <span class="tt-count">— 11 events</span></div>
           <div style="display: flex; gap: 4px;">
-            <button class="chip-btn active">All</button>
-            <button class="chip-btn">Calls</button>
-            <button class="chip-btn">Messages</button>
-            <button class="chip-btn">System</button>
+            <button type="button" class="chip-btn active">All</button>
+            <button type="button" class="chip-btn">Calls</button>
+            <button type="button" class="chip-btn">Messages</button>
+            <button type="button" class="chip-btn">System</button>
           </div>
         </div>
 
@@ -11296,10 +11296,10 @@
     <h2>Diane <em>Kowalski</em></h2>
     <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); margin-left: var(--s-2);">202 Cherry Ln — +1 (614) 555-0142</span>
     <span style="margin-left: auto; font-family: var(--font-mono); font-size: 18px; color: var(--sky);" id="fcTimer">03:47</span>
-    <button class="icon-btn" id="exitFullscreenBtn" title="Exit fullscreen" aria-label="Exit fullscreen">
+    <button type="button" class="icon-btn" id="exitFullscreenBtn" title="Exit fullscreen" aria-label="Exit fullscreen">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
     </button>
-    <button class="icon-btn" id="exitFullscreenBtn2" title="Close" aria-label="Close fullscreen">
+    <button type="button" class="icon-btn" id="exitFullscreenBtn2" title="Close" aria-label="Close fullscreen">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
   </div>
@@ -11350,11 +11350,11 @@
     </div>
   </div>
   <div class="fc-controls">
-    <button class="btn btn-takeover">Take over</button>
-    <button class="btn btn-ghost">Mute AI</button>
-    <button class="btn btn-ghost">Transfer to manager</button>
-    <button class="btn btn-ghost">Mark DNC</button>
-    <button class="btn btn-danger">End call</button>
+    <button type="button" class="btn btn-takeover">Take over</button>
+    <button type="button" class="btn btn-ghost">Mute AI</button>
+    <button type="button" class="btn btn-ghost">Transfer to manager</button>
+    <button type="button" class="btn btn-ghost">Mark DNC</button>
+    <button type="button" class="btn btn-danger">End call</button>
   </div>
 </div>
 
@@ -11581,8 +11581,8 @@
       <span class="tp-dot"></span>
     </div>
     <div class="tour-buttons">
-      <button class="tour-skip" id="tourSkip">Skip tour</button>
-      <button class="btn btn-primary" id="tourNext">Next ?</button>
+      <button type="button" class="tour-skip" id="tourSkip">Skip tour</button>
+      <button type="button" class="btn btn-primary" id="tourNext">Next ?</button>
     </div>
   </div>
 </div>
@@ -11639,13 +11639,13 @@
 <div class="notif-panel" id="notifPanel">
   <div class="np-head">
     <div class="t">Notifications</div>
-    <button class="chip-btn">Mark all read</button>
+    <button type="button" class="chip-btn">Mark all read</button>
   </div>
   <div class="np-tabs">
-    <button class="chip-btn active">All — 8</button>
-    <button class="chip-btn">Approvals — 3</button>
-    <button class="chip-btn">Calls — 2</button>
-    <button class="chip-btn">System</button>
+    <button type="button" class="chip-btn active">All — 8</button>
+    <button type="button" class="chip-btn">Approvals — 3</button>
+    <button type="button" class="chip-btn">Calls — 2</button>
+    <button type="button" class="chip-btn">System</button>
   </div>
   <div class="np-list">
     <div class="np-item unread">
@@ -11798,8 +11798,8 @@
   <h3 id="confirmTitle">Switch to <em style="font-style:italic;color:var(--sky);font-family:var(--font-display);">Autopilot</em>?</h3>
   <p id="confirmDesc">Ava will make calls, send SMS, and generate contracts without asking you first. She still respects every guardrail — DNC, MAO ceiling, calling hours — but you won't see approvals before they happen.</p>
   <div class="modal-actions">
-    <button class="btn btn-ghost" id="confirmCancel">Cancel</button>
-    <button class="btn btn-primary" id="confirmOk">Yes, go autopilot</button>
+    <button type="button" class="btn btn-ghost" id="confirmCancel">Cancel</button>
+    <button type="button" class="btn btn-primary" id="confirmOk">Yes, go autopilot</button>
   </div>
 </div>
 
@@ -12467,6 +12467,10 @@
     window.scrollTo(0, 0);
   }
 
+  function isLeadRowInteractiveTarget(event) {
+    return !!event?.target?.closest?.('button, a, input, select, textarea, [role="button"], .tag, .chip, .chip-btn, .filter-dd, .status-chip, [data-filter-tag], [data-lead-action], [data-lead-row-action], [data-path-override]');
+  }
+
   window.addEventListener('resize', syncMobileViewportLocks);
   window.visualViewport?.addEventListener('resize', syncMobileViewportLocks);
   window.visualViewport?.addEventListener('scroll', syncMobileViewportLocks);
@@ -12476,7 +12480,10 @@
   });
 
   document.querySelectorAll('tr.row').forEach(row => {
-    row.addEventListener('click', () => showPage('lead-detail'));
+    row.addEventListener('click', (event) => {
+      if (isLeadRowInteractiveTarget(event)) return;
+      showPage('lead-detail');
+    });
   });
 
   document.querySelectorAll('.settings-nav-item').forEach(item => {
@@ -12592,8 +12599,8 @@
         <div class="t-title">${escapeHtml(title)}</div>
         ${desc ? `<div class="t-desc">${escapeHtml(desc)}</div>` : ''}
       </div>
-      ${undo ? `<button class="t-undo">Undo</button>` : ''}
-      <button class="t-dismiss" aria-label="dismiss">-</button>
+      ${undo ? `<button type="button" class="t-undo">Undo</button>` : ''}
+      <button type="button" class="t-dismiss" aria-label="dismiss">-</button>
     `;
     const remove = () => removeToastNode(t);
     t.querySelector('.t-dismiss')?.addEventListener('click', remove);
@@ -16513,8 +16520,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           ${tags.map((tag) => `<span class="chip" data-filter-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`).join('')}
         </div>
         <div class="blog-actions">
-          <button class="chip-btn" data-brain-blog-action="read" data-brain-blog-id="${escapeHtml(post.id)}">Read full</button>
-          <button class="chip-btn" data-brain-blog-action="train" data-brain-blog-id="${escapeHtml(post.id)}">${trained ? 'Trained' : 'Train Rex'}</button>
+          <button type="button" class="chip-btn" data-brain-blog-action="read" data-brain-blog-id="${escapeHtml(post.id)}">Read full</button>
+          <button type="button" class="chip-btn" data-brain-blog-action="train" data-brain-blog-id="${escapeHtml(post.id)}">${trained ? 'Trained' : 'Train Rex'}</button>
           ${post.sourceUrl ? `<a class="chip-btn" href="${escapeHtml(post.sourceUrl)}" target="_blank" rel="noopener">Source</a>` : ''}
         </div>
       </article>
@@ -16654,7 +16661,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const accent = meta.accent;
       const summary = formatApprovalSummary(approval);
       const bantReviewButton = shouldShowApprovalBantCheck(type, approval)
-        ? '<button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
+        ? '<button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
         : '';
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
@@ -16676,14 +16683,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
             <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
             ${bantReviewButton}
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
           <div class="qcard-actions">
-            <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
-            <button class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
+            <button type="button" class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
           </div>
         </div>
       `;
@@ -16761,7 +16768,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         <span class="phone">${escapeHtml(entry.phone || 'Unknown')}</span>
         <span class="reason">${escapeHtml(entry.reason || 'Manual DNC add')}</span>
         <span class="date">${escapeHtml(formatRelativeTime(entry.addedAt || entry.createdAt))}</span>
-        <span><button class="chip-btn" data-dnc-action="remove">Remove</button></span>
+        <span><button type="button" class="chip-btn" data-dnc-action="remove">Remove</button></span>
       `;
       list.appendChild(row);
     });
@@ -16866,7 +16873,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         <div class="revenue-agent-meta"><span class="chip">${escapeHtml(card.metric)}</span><span class="chip">production-honest</span></div>
         <p class="revenue-agent-note">${escapeHtml(card.note)}</p>
         <div class="revenue-agent-actions">
-          <button class="chip-btn" data-revenue-agent-action="${escapeHtml(card.action)}">${escapeHtml(card.cta)}</button>
+          <button type="button" class="chip-btn" data-revenue-agent-action="${escapeHtml(card.action)}">${escapeHtml(card.cta)}</button>
         </div>
       </article>
     `).join('');
@@ -18085,9 +18092,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <div class="who">${escapeHtml(active.leadName || 'Recorded call')}</div>
             <div class="meta">${escapeHtml(formatRelativeTime(active.at))} - ${escapeHtml(formatCallDuration(active))} - ${escapeHtml(active.address || 'Address pending')}</div>
           </div>
-          <button class="chip-btn">Send to lead</button>
-          <button class="chip-btn">Download</button>
-          <button class="chip-btn" data-recording-delete-active="${escapeHtml(active.messageId || active.id)}" data-recording-id="${escapeHtml(active.id)}">Delete</button>
+          <button type="button" class="chip-btn">Send to lead</button>
+          <button type="button" class="chip-btn">Download</button>
+          <button type="button" class="chip-btn" data-recording-delete-active="${escapeHtml(active.messageId || active.id)}" data-recording-id="${escapeHtml(active.id)}">Delete</button>
         `
         : `
           <div class="rec-avatar">P</div>
@@ -18095,8 +18102,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <div class="who">Waiting for live proof call</div>
             <div class="meta">No sandbox names are treated as production recordings.</div>
           </div>
-          <button class="chip-btn" disabled>Send to lead</button>
-          <button class="chip-btn" disabled>Download</button>
+          <button type="button" class="chip-btn" disabled>Send to lead</button>
+          <button type="button" class="chip-btn" disabled>Download</button>
         `;
     }
     if (transcript) transcript.innerHTML = renderRecordingTranscript(active || {});
@@ -18349,9 +18356,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <td>${/auto/i.test(String(agent)) ? '<span style="color: var(--text-ghost); font-family: var(--font-mono); font-size:11px">auto</span>' : `<div class="avatar" style="width:24px;height:24px;font-size:11px;">${escapeHtml(getInitial(agent))}</div>`}</td>
           <td>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              <button class="chip-btn" data-lead-row-action="open" data-lead-id="${escapeHtml(leadId)}">Open</button>
-              <button class="chip-btn" data-lead-row-action="analyzer" data-lead-id="${escapeHtml(leadId)}">Analyze</button>
-              <button class="chip-btn" data-lead-row-action="delete" data-lead-id="${escapeHtml(leadId)}">Delete</button>
+              <button type="button" class="chip-btn" data-lead-row-action="open" data-lead-id="${escapeHtml(leadId)}">Open</button>
+              <button type="button" class="chip-btn" data-lead-row-action="analyzer" data-lead-id="${escapeHtml(leadId)}">Analyze</button>
+              <button type="button" class="chip-btn" data-lead-row-action="delete" data-lead-id="${escapeHtml(leadId)}">Delete</button>
             </div>
           </td>
         </tr>
@@ -18366,7 +18373,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     tbody.querySelectorAll('[data-lead-detail="true"]').forEach((row) => {
       row.addEventListener('click', (event) => {
-        if (event.target.closest('[data-lead-row-action]')) return;
+        if (isLeadRowInteractiveTarget(event)) return;
         openLeadDetail(row.dataset.leadId || '');
       });
     });
@@ -18481,7 +18488,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }).join('');
 
     tbody.querySelectorAll('[data-lead-detail="true"]').forEach((row) => {
-      row.addEventListener('click', () => openLeadDetail(row.dataset.leadId || ''));
+      row.addEventListener('click', (event) => {
+        if (isLeadRowInteractiveTarget(event)) return;
+        openLeadDetail(row.dataset.leadId || '');
+      });
     });
   }
 
@@ -18607,11 +18617,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
         </div>
         <div class="call-controls">
-          <button class="btn btn-takeover" disabled>Take Over</button>
-          <button class="btn btn-ghost" disabled>Mute AI</button>
-          <button class="btn btn-ghost" disabled>Transfer</button>
-          <button class="btn btn-ghost" disabled style="margin-left:auto">Mark DNC</button>
-          <button class="btn btn-danger" disabled>End Call</button>
+          <button type="button" class="btn btn-takeover" disabled>Take Over</button>
+          <button type="button" class="btn btn-ghost" disabled>Mute AI</button>
+          <button type="button" class="btn btn-ghost" disabled>Transfer</button>
+          <button type="button" class="btn btn-ghost" disabled style="margin-left:auto">Mark DNC</button>
+          <button type="button" class="btn btn-danger" disabled>End Call</button>
         </div>
       `;
       return;
@@ -18655,11 +18665,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
       </div>
       <div class="call-controls">
-        <button class="btn btn-takeover">Take Over</button>
-        <button class="btn btn-ghost">Mute AI</button>
-        <button class="btn btn-ghost">Transfer</button>
-        <button class="btn btn-ghost" style="margin-left:auto">Mark DNC</button>
-        <button class="btn btn-danger">End Call</button>
+        <button type="button" class="btn btn-takeover">Take Over</button>
+        <button type="button" class="btn btn-ghost">Mute AI</button>
+        <button type="button" class="btn btn-ghost">Transfer</button>
+        <button type="button" class="btn btn-ghost" style="margin-left:auto">Mark DNC</button>
+        <button type="button" class="btn btn-danger">End Call</button>
       </div>
     `;
   }
@@ -18953,7 +18963,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         `;
       }
       if (convoActions) {
-        convoActions.innerHTML = '<button class="chip-btn active" disabled>Conversation only</button>';
+        convoActions.innerHTML = '<button type="button" class="chip-btn active" disabled>Conversation only</button>';
       }
       return;
     }
@@ -18985,7 +18995,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (convoActions) {
         convoActions.innerHTML = `
           <button class="chip-btn inbox-mobile-back" data-inbox-mobile-back type="button" onclick="window.setInboxMobileMode && window.setInboxMobileMode('list')">Inbox list</button>
-          <button class="chip-btn active" disabled>${escapeHtml(String(active.channel || 'inbox').toUpperCase())}</button>
+          <button type="button" class="chip-btn active" disabled>${escapeHtml(String(active.channel || 'inbox').toUpperCase())}</button>
           <button class="chip-btn" type="button" data-inbox-edit-lead="${escapeHtml(active.leadId || active.id || '')}">Edit lead</button>
         `;
       }
@@ -23711,14 +23721,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const button = event.target.closest('.btn');
       if (!button) return;
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+      const action = button.dataset.leadAction || label;
       const context = getLeadDetailContext();
 
-      if (label === 'edit') {
+      if (action === 'edit') {
         await openLeadEditModal(getActiveRuntimeLead());
         return;
       }
 
-      if (label === 'call') {
+      if (action === 'call') {
         await invokeRuntimeTool('telnyx_call', context, {
           actionLabel: 'outbound calls',
           successTitle: 'Lead call request complete',
@@ -23730,22 +23741,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         return;
       }
 
-      if (label === 'text') {
+      if (action === 'text') {
         openLeadMessageModal({ context, channel: 'sms', stage: 'followup' });
         return;
       }
 
-      if (label === 'email') {
+      if (action === 'email') {
         openLeadMessageModal({ context, channel: 'email', stage: 'followup' });
         return;
       }
 
-      if (label === 'delete') {
+      if (action === 'delete') {
         await deleteRuntimeLead(context.leadId || getActiveLeadId());
         return;
       }
 
-      if (label === 'send to ava') {
+      if (action === 'send-to-ava' || action === 'send to ava') {
         await submitAgentCommand(`work this lead and report back on ${context.address}`, context);
       }
     });
@@ -24102,6 +24113,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const button = event.target.closest('.chip-btn');
       if (!button) return;
       const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+      const action = button.dataset.dncAction || label;
 
       if (label === 'import csv') {
         showTextareaActionModal({
@@ -24154,7 +24166,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         return;
       }
 
-      if (label === 'remove') {
+      if (action === 'remove') {
         const row = button.closest('.dnc-row');
         const phone = row?.dataset.dncPhone || row?.querySelector('.phone')?.textContent || '';
         await postRuntimeEvent('dnc-remove', {
@@ -25356,27 +25368,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     document.body.dataset.tagFiltersWired = 'true';
 
     document.addEventListener('click', (event) => {
-      const tag = event.target.closest('.tag, .status-chip');
+      const tag = event.target.closest('.tag, .status-chip, [data-filter-tag]');
       if (!tag || tag.closest('.think-stream') || tag.closest('.alog-table')) return;
       const page = tag.closest('.page');
       if (!page) return;
-      const value = normalizeControlText(tag.textContent);
+      event.preventDefault();
+      event.stopPropagation();
+      const value = normalizeControlText(tag.dataset.filterTag || tag.textContent);
       let shown = 0;
 
       if (page.dataset.page === 'leads') {
-        shown = filterItemsByText(getLeadRows(), (row) => normalizeControlText(row.textContent).includes(value));
+        shown = filterItemsByText(getLeadRows(), (row) => normalizeControlText(row.dataset.filterValue || row.textContent).includes(value));
         showLocalViewToast('Lead tag filter applied', `${shown} leads match "${tag.textContent.trim()}".`);
         return;
       }
 
       if (page.dataset.page === 'brain') {
-        shown = filterItemsByText(Array.from(page.querySelectorAll('.insight-row, .lib-card, .blog-card')), (item) => normalizeControlText(item.textContent).includes(value));
+        shown = filterItemsByText(Array.from(page.querySelectorAll('.insight-row, .lib-card, .blog-card')), (item) => normalizeControlText(item.dataset.filterValue || item.textContent).includes(value));
         showLocalViewToast('Brain filtered', `${shown} research cards match "${tag.textContent.trim()}".`);
         return;
       }
 
       if (page.dataset.page === 'dashboard') {
-        shown = filterItemsByText(Array.from(page.querySelectorAll('.table-container tbody tr, .msg')), (item) => normalizeControlText(item.textContent).includes(value));
+        shown = filterItemsByText(Array.from(page.querySelectorAll('.table-container tbody tr, .msg')), (item) => normalizeControlText(item.dataset.filterValue || item.textContent).includes(value));
         showLocalViewToast('Dashboard filtered', `${shown} visible items match "${tag.textContent.trim()}".`);
       }
     });
@@ -26029,7 +26043,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <div style="max-height:260px; overflow:auto; padding:var(--s-3); border:1px solid var(--border-dim); border-radius:var(--radius-md); background:var(--bg-console); color:var(--text-secondary); line-height:1.55; font-size:12px;">${escapeHtml(post.content || post.summary || 'No full content stored yet.')}</div>
         </div>
       `,
-      `<button class="btn btn-primary" data-modal-close>Close</button>`
+      `<button type="button" class="btn btn-primary" data-modal-close>Close</button>`
     );
   }
 
@@ -26078,7 +26092,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           ${resultPreview ? `<pre style="max-height:260px; overflow:auto; white-space:pre-wrap; padding:var(--s-3); border:1px solid var(--border-dim); border-radius:var(--radius-md); background:var(--bg-console); color:var(--text-secondary); font-size:11px; line-height:1.5;">${escapeHtml(resultPreview)}</pre>` : ''}
         </div>
       `,
-      `<button class="btn btn-ghost" data-browser-research-action="retry" data-job-id="${escapeHtml(job.id || job.jobId || '')}">Retry</button>`
+      `<button type="button" class="btn btn-ghost" data-browser-research-action="retry" data-job-id="${escapeHtml(job.id || job.jobId || '')}">Retry</button>`
     );
     modal.addEventListener('click', (event) => {
       const retryButton = event.target.closest('[data-browser-research-action="retry"]');
@@ -27828,11 +27842,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
                 </div>
                 <div class="c-date">${escapeHtml(record.timeline || runtime.timeline || 'TBD')}</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                  <button class="chip-btn" data-contract-action="${record.isDraft ? 'open-draft' : 'focus-contract'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Open' : 'View'}</button>
-                  <button class="chip-btn" data-contract-action="edit" data-contract-id="${escapeHtml(record.id)}">Edit</button>
-                  <button class="chip-btn" data-contract-action="send" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Send' : 'Resend'}</button>
-                  <button class="chip-btn" data-contract-action="remind" data-contract-id="${escapeHtml(record.id)}">Remind</button>
-                  <button class="chip-btn" data-contract-action="${record.isDraft ? 'delete-draft' : 'void'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Delete' : 'Void'}</button>
+                  <button type="button" class="chip-btn" data-contract-action="${record.isDraft ? 'open-draft' : 'focus-contract'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Open' : 'View'}</button>
+                  <button type="button" class="chip-btn" data-contract-action="edit" data-contract-id="${escapeHtml(record.id)}">Edit</button>
+                  <button type="button" class="chip-btn" data-contract-action="send" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Send' : 'Resend'}</button>
+                  <button type="button" class="chip-btn" data-contract-action="remind" data-contract-id="${escapeHtml(record.id)}">Remind</button>
+                  <button type="button" class="chip-btn" data-contract-action="${record.isDraft ? 'delete-draft' : 'void'}" data-contract-id="${escapeHtml(record.id)}">${record.isDraft ? 'Delete' : 'Void'}</button>
                 </div>
               </div>
             `;
@@ -27886,7 +27900,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <div class="c-addr">${escapeHtml(activeRecord?.address || runtime.address)} - ${escapeHtml(activeRecord?.leadName || runtime.leadName)} - ${money(activeRecord?.amount || runtime.amount)}</div>
             <div class="contracts-inline-status">${escapeHtml(activeRecord?.isDraft ? runtime.pdfReadiness.message : syncedCopy)}</div>
           </div>
-          <button class="chip-btn ${activeRecord?.isDraft ? 'active' : ''}" data-contract-action="${activeRecord?.isDraft ? 'open-draft' : 'return-draft'}">${activeRecord?.isDraft ? 'Analyzer source' : 'Back to draft'}</button>
+          <button type="button" class="chip-btn ${activeRecord?.isDraft ? 'active' : ''}" data-contract-action="${activeRecord?.isDraft ? 'open-draft' : 'return-draft'}">${activeRecord?.isDraft ? 'Analyzer source' : 'Back to draft'}</button>
         </div>
         <div class="cp-doc">
           <div class="contract-runtime-note">
@@ -27911,15 +27925,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         <div class="cp-footer">
           ${activeRecord?.isDraft
             ? `
-                <button class="btn btn-ghost" data-contract-action="edit">Edit in Analyzer</button>
-                <button class="btn btn-ghost" data-contract-action="open-preview">Open Analyzer Preview</button>
-                <button class="btn btn-ghost" data-contract-action="open-pdf">Open Live PDF</button>
-                <button class="btn btn-primary" data-contract-action="send">Send via DocuSign</button>
+                <button type="button" class="btn btn-ghost" data-contract-action="edit">Edit in Analyzer</button>
+                <button type="button" class="btn btn-ghost" data-contract-action="open-preview">Open Analyzer Preview</button>
+                <button type="button" class="btn btn-ghost" data-contract-action="open-pdf">Open Live PDF</button>
+                <button type="button" class="btn btn-primary" data-contract-action="send">Send via DocuSign</button>
               `
             : `
-                <button class="btn btn-ghost" data-contract-action="return-draft">Back to draft</button>
-                <button class="btn btn-ghost" data-contract-action="remind">Remind seller</button>
-                <button class="btn btn-primary" data-contract-action="open-draft">Open draft</button>
+                <button type="button" class="btn btn-ghost" data-contract-action="return-draft">Back to draft</button>
+                <button type="button" class="btn btn-ghost" data-contract-action="remind">Remind seller</button>
+                <button type="button" class="btn btn-primary" data-contract-action="open-draft">Open draft</button>
               `}
         </div>
       `;
@@ -28721,7 +28735,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const accent = meta.accent;
       const summary = formatApprovalSummary(approval);
       const bantReviewButton = shouldShowApprovalBantCheck(type, approval)
-        ? '<button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
+        ? '<button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
         : '';
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
@@ -28742,14 +28756,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
             <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
             ${bantReviewButton}
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
-            <button class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
           </div>
           <div class="qcard-actions">
-            <button class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
-            <button class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
+            <button type="button" class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
+            <button type="button" class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
           </div>
         </div>
       `;
@@ -28773,8 +28787,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             <div class="qcard-meta"><span>${escapeHtml(impact)}</span></div>
           </div>
           <div class="qcard-actions">
-            <button class="btn btn-primary" data-admin-action="approved">Approve safely</button>
-            <button class="btn btn-ghost" data-admin-action="rejected">Hold</button>
+            <button type="button" class="btn btn-primary" data-admin-action="approved">Approve safely</button>
+            <button type="button" class="btn btn-ghost" data-admin-action="rejected">Hold</button>
           </div>
         </div>
       `;

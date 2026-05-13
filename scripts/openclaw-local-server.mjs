@@ -29592,7 +29592,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && pathname === '/api/quotas') {
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/quotas', '/quotas'])) {
       json(response, 200, {
         ok: true,
         quotas: buildQuotasSnapshot(),
@@ -30312,7 +30312,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && pathname === '/api/tooling/status') {
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/tooling/status', '/tooling/status'])) {
       json(response, 200, {
         ok: true,
         tooling: await buildToolingStatus(),

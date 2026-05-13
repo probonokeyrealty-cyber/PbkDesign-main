@@ -19385,6 +19385,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       })
     });
     reflectOpenClawUI(connected);
+    if (connected) void flushDisconnectedActionQueue();
     if (!silent) PBK.events.emit('openclaw:status', connected);
     return snapshot;
   }
@@ -19750,6 +19751,58 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   });
 
+  const DISCONNECTED_ACTION_QUEUE_KEY = 'pbk_disconnected_action_queue_v1';
+
+  function readDisconnectedActionQueue() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(DISCONNECTED_ACTION_QUEUE_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writeDisconnectedActionQueue(queue = []) {
+    localStorage.setItem(DISCONNECTED_ACTION_QUEUE_KEY, JSON.stringify(queue.slice(-100)));
+  }
+
+  function queueDisconnectedAction(action = {}) {
+    const queued = {
+      id: action.id || `offline-action-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      queuedAt: new Date().toISOString(),
+      ...action
+    };
+    const queue = readDisconnectedActionQueue().filter((item) => item.id !== queued.id);
+    queue.push(queued);
+    writeDisconnectedActionQueue(queue);
+    return queued;
+  }
+
+  async function flushDisconnectedActionQueue() {
+    if (!PBK.openclaw.isConnected()) return;
+    const queue = readDisconnectedActionQueue();
+    if (!queue.length) return;
+    const remaining = [];
+    for (const item of queue) {
+      try {
+        await requestOpenClawApi(item.path, {
+          method: item.method || 'POST',
+          body: item.body || {}
+        });
+      } catch (error) {
+        remaining.push({ ...item, lastError: error?.message || 'Replay failed', lastTriedAt: new Date().toISOString() });
+      }
+    }
+    writeDisconnectedActionQueue(remaining);
+    if (remaining.length !== queue.length) {
+      toast({
+        type: remaining.length ? 'warning' : 'success',
+        title: remaining.length ? 'Some offline actions still queued' : 'Offline actions replayed',
+        desc: remaining.length ? `${remaining.length} action${remaining.length === 1 ? '' : 's'} still need bridge replay.` : 'Queued approval/admin decisions reached PBK Brain.'
+      });
+    }
+  }
+
   async function handleApprovalAction(button, card) {
     const approvalId = card.dataset.approvalId;
     const action = button.dataset.approvalAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
@@ -19759,14 +19812,27 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!approvalId) return;
 
     if (!PBK.openclaw.isConnected()) {
-      card.style.transition = 'opacity 0.3s, transform 0.3s';
-      card.style.opacity = '0';
-      card.style.transform = 'translateX(-12px)';
-      setTimeout(() => card.remove(), 300);
+      const queued = queueDisconnectedAction({
+        id: `approval-${approvalId}-${action}`,
+        kind: 'approval',
+        path: `/api/approvals/${encodeURIComponent(approvalId)}`,
+        method: 'PUT',
+        body: {
+          status: action,
+          actor: 'PBK team dashboard',
+          actedAt: new Date().toISOString(),
+          notes: decisionNotes,
+          reviewReason,
+          falsePositiveTag: reviewReason,
+          queuedOffline: true
+        }
+      });
+      card.setAttribute('data-pending-offline-action', queued.id);
+      card.style.outline = '1px solid rgba(245, 158, 11, 0.55)';
       toast({
-        type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval removed locally' : 'Decision removed locally',
-        desc: 'Reconnect PBK Brain to replay this as a live approval callback.'
+        type: 'warning',
+        title: 'Approval queued offline',
+        desc: 'The card stayed visible and will replay when PBK Brain reconnects.'
       });
       return;
     }
@@ -20441,8 +20507,23 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return response;
   }
 
+  function hasValidLiveCallContext(context = {}, action = '') {
+    const hasCallId = Boolean(String(context.id || '').trim());
+    const hasPhone = /\d{7,}/.test(String(context.phone || '').replace(/\D+/g, ''));
+    const valid = action === 'mark dnc' ? hasPhone : hasCallId;
+    if (!valid) {
+      toast({
+        type: 'warning',
+        title: 'No live call selected',
+        desc: 'PBK will not send call controls from placeholder seller data. Start or select a real live call first.'
+      });
+    }
+    return valid;
+  }
+
   async function handleLiveCallAction(action, context, transferTarget = '') {
     const normalized = String(action || '').toLowerCase();
+    if (!hasValidLiveCallContext(context, normalized)) return null;
 
     if (normalized === 'mark dnc') {
       const response = await postRuntimeEvent('dnc-add', {
@@ -20951,9 +21032,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return Array.from(document.querySelectorAll('[data-page="leads"] tbody tr.row'));
   }
 
+  function toggleLeadRowCheckbox(checkbox) {
+    if (!checkbox) return;
+    checkbox.classList.toggle('checked');
+    updateBulkCount();
+  }
+
   function getSelectedLeadRows() {
     const selected = getLeadRows().filter((row) => row.querySelector('.checkbox.checked'));
-    return selected.length ? selected : getLeadRows().slice(0, 3);
+    return selected;
   }
 
   function getLeadRowPayload(row) {
@@ -24822,14 +24909,27 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!page || page.dataset.bulkWired === 'true') return;
     page.dataset.bulkWired = 'true';
     page.addEventListener('click', (event) => {
-      if (event.target.closest('.checkbox')) setTimeout(updateBulkCount, 0);
+      const checkbox = event.target.closest('.checkbox');
+      if (!checkbox) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleLeadRowCheckbox(checkbox);
     });
 
     page.querySelector('.bulk-bar')?.addEventListener('click', async (event) => {
       const button = event.target.closest('button');
       if (!button) return;
       const label = normalizeControlText(button.textContent);
-      const rows = getSelectedLeadRows();
+      const selectedRows = getSelectedLeadRows();
+      if (!selectedRows.length && label !== 'export') {
+        toast({
+          type: 'warning',
+          title: 'Select leads first',
+          desc: 'PBK will not run bulk actions against a silent fallback list. Check the exact lead rows you want, then try again.'
+        });
+        return;
+      }
+      const rows = selectedRows.length ? selectedRows : getLeadRows();
       const leads = rows.map(getLeadRowPayload);
 
       if (label === 'export') {
@@ -28822,14 +28922,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!taskId) return;
 
     if (!PBK.openclaw.isConnected()) {
-      card.style.transition = 'opacity 0.3s, transform 0.3s';
-      card.style.opacity = '0';
-      card.style.transform = 'translateX(-12px)';
-      setTimeout(() => card.remove(), 300);
+      const queued = queueDisconnectedAction({
+        id: `admin-task-${taskId}-${action}`,
+        kind: 'admin-task',
+        path: `/api/admin/tasks/${encodeURIComponent(taskId)}`,
+        method: 'PUT',
+        body: {
+          status: action,
+          actor: 'PBK dashboard',
+          note: `Dashboard queued task ${action} while offline.`,
+          queuedOffline: true
+        }
+      });
+      card.setAttribute('data-pending-offline-action', queued.id);
+      card.style.outline = '1px solid rgba(245, 158, 11, 0.55)';
       toast({
-        type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin approval removed locally' : 'Admin decline removed locally',
-        desc: 'Reconnect PBK Brain to replay this as a live admin callback.'
+        type: 'warning',
+        title: 'Admin decision queued offline',
+        desc: 'The task stayed visible and will replay when PBK Brain reconnects.'
       });
       return;
     }

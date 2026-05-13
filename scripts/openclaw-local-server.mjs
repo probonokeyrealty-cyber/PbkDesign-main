@@ -204,6 +204,9 @@ const DEEPGRAM_STREAM_TRACK = String(process.env.PBK_DEEPGRAM_STREAM_TRACK || 'i
 const DEEPGRAM_STREAM_CODEC = String(process.env.PBK_DEEPGRAM_STREAM_CODEC || 'PCMU').trim();
 const TELNYX_AI_ASSISTANT_ID = String(process.env.PBK_TELNYX_AI_ASSISTANT_ID || process.env.TELNYX_AI_ASSISTANT_ID || '').trim();
 const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED || '').trim());
+const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED || 'true').trim());
+const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
+const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
 const HUMAN_AGENT_PHONE = normalizePhone(process.env.PBK_HUMAN_AGENT_PHONE || process.env.HUMAN_AGENT_PHONE || '');
 const UNDERWRITING_AGENT_PHONE = normalizePhone(process.env.PBK_UNDERWRITING_AGENT_PHONE || process.env.UNDERWRITING_AGENT_PHONE || HUMAN_AGENT_PHONE || '');
 const INBOUND_QUALIFY_BEFORE_TRANSFER = /^(1|true|yes)$/i.test(String(process.env.PBK_INBOUND_QUALIFY_BEFORE_TRANSFER || '').trim());
@@ -216,9 +219,11 @@ const BROWSER_VOICE_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_BROW
 const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROWSER_VOICE_SESSION_TTL_MS || 5 * 60 * 1000));
 const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
-const BROWSER_VOICE_DEEPGRAM_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || 'flux-general-en').trim();
+const BROWSER_VOICE_DEEPGRAM_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2').trim();
 const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2').trim();
 const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.env.PBK_BROWSER_VOICE_AUTO_REPLY_MS || 1250)));
+const BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS = Math.max(1200, Math.min(7000, Number(process.env.PBK_BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS || 2600)));
+const BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT = Math.max(4, Math.min(80, Number(process.env.PBK_BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT || 32)));
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
@@ -14207,6 +14212,18 @@ function encodeClientState(payload = {}) {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
 }
 
+function decodeTelnyxClientState(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return {};
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function getTelnyxFromNumber(params = {}) {
   return normalizePhone(params.from || params.fromNumber || params.selectedFromNumber || params.selected_from_number || getEffectiveTelnyxFromNumber());
 }
@@ -14493,6 +14510,17 @@ async function recordTelnyxCall(callControlId = '') {
   });
 }
 
+function buildTelnyxDeepgramLiveOptions(codec = DEEPGRAM_STREAM_CODEC) {
+  const normalized = String(codec || 'PCMU').trim().toUpperCase();
+  if (normalized === 'PCMA') {
+    return { encoding: 'alaw', sampleRate: 8000 };
+  }
+  if (normalized === 'L16' || normalized === 'LINEAR16') {
+    return { encoding: 'linear16', sampleRate: Number(process.env.PBK_DEEPGRAM_TELNYX_SAMPLE_RATE || 16000) };
+  }
+  return { encoding: 'mulaw', sampleRate: 8000 };
+}
+
 async function startTelnyxMediaStream(callControlId = '', params = {}) {
   if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
   const streamUrl = getTelnyxDeepgramStreamUrl(params);
@@ -14508,11 +14536,14 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
     stream_url: streamUrl,
     stream_track: params.streamTrack || DEEPGRAM_STREAM_TRACK || 'inbound_track',
     stream_codec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
+    ...(TELNYX_MEDIA_STREAM_TOKEN ? { stream_auth_token: TELNYX_MEDIA_STREAM_TOKEN } : {}),
     client_state: encodeClientState({
       source: 'pbk-inbound',
       callControlId,
       route: params.route || '',
       leadId: params.leadId || '',
+      telnyxAiAssistantStarted: Boolean(TELNYX_AI_ASSISTANT_ID && TELNYX_AI_ASSISTANT_ACTION_ENABLED),
+      streamCodec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
       startedAt: isoNow(),
     }),
   });
@@ -14599,6 +14630,7 @@ function parseTelnyxCallPayload(body = {}) {
 function isTelnyxInboundCallWebhook(body = {}) {
   const parsed = parseTelnyxCallPayload(body);
   if (!parsed.eventType.includes('call')) return false;
+  if (!/initiated|incoming|ringing/.test(parsed.eventType)) return false;
   if (/(inbound|incoming|terminating)/i.test(parsed.direction)) return true;
   return Boolean(parsed.from && parsed.to && parsed.eventType.includes('initiated') && normalizePhone(parsed.to) === normalizePhone(TELNYX_FROM_NUMBER));
 }
@@ -14866,7 +14898,18 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
 
   const liveAction = actions.some((item) => item.result?.ok);
   const missingProvider = actions.some((item) => item.result?.skipped || item.result?.result === 'provider_missing');
-  const result = liveAction ? 'live' : missingProvider ? 'provider_missing' : callControlId ? 'queued_for_approval' : 'local_view_only';
+  const streamingAction = actions.find((item) => item.action === 'streaming_start');
+  const streamRequired = route === 'ava_qualify' && Boolean(callControlId);
+  const streamFailed = streamRequired && (!streamingAction || !streamingAction.result?.ok);
+  const result = streamFailed
+    ? 'provider_missing'
+    : liveAction
+      ? 'live'
+      : missingProvider
+        ? 'provider_missing'
+        : callControlId
+          ? 'queued_for_approval'
+          : 'local_view_only';
   routeRecord.status = result;
   routeRecord.payload = { ...routeRecord.payload, actions };
   if (!Array.isArray(state.inboundCallRoutes)) state.inboundCallRoutes = [];
@@ -28504,6 +28547,27 @@ function normalizeAvaVoiceReplyText(text = '', fallback = '') {
   return `${clean} Let me ask one clean question so I do not guess wrong: what matters most right now, speed, certainty, or price?`;
 }
 
+function isDeepgramFluxModel(model = '') {
+  return /^flux-/i.test(String(model || '').trim());
+}
+
+function buildBrowserVoiceDeepgramOptions(model = BROWSER_VOICE_DEEPGRAM_MODEL) {
+  return {
+    model,
+    listenVersion: isDeepgramFluxModel(model) ? 'v2' : 'v1',
+    manualWebSocket: true,
+    containerizedAudio: true,
+    channels: 1,
+    interimResults: true,
+    utteranceEndMs: 900,
+  };
+}
+
+function getBrowserVoiceDeepgramLabel(model = '', fallback = false) {
+  if (fallback) return 'deepgram-nova-v1-fallback';
+  return isDeepgramFluxModel(model) ? 'deepgram-flux-v2' : 'deepgram-nova-v1';
+}
+
 async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript = '', session = {} } = {}) {
   const fallback = buildBrowserVoiceReply(pipeline, transcript);
   try {
@@ -28623,7 +28687,11 @@ async function handleBrowserVoiceSocket(socket, request) {
   let deepgramConnection = null;
   let finalized = false;
   let autoReplyTimer = null;
+  let noTranscriptFallbackTimer = null;
+  let browserFallbackActive = false;
+  let deepgramProviderLabel = '';
   const earlyBrowserMessages = [];
+  const recentAudioChunks = [];
   let liveBrowserMessageHandler = null;
 
   socket.on('message', (raw) => {
@@ -28641,6 +28709,13 @@ async function handleBrowserVoiceSocket(socket, request) {
     }
   };
 
+  const clearNoTranscriptFallbackTimer = () => {
+    if (noTranscriptFallbackTimer) {
+      clearTimeout(noTranscriptFallbackTimer);
+      noTranscriptFallbackTimer = null;
+    }
+  };
+
   const scheduleAutoReply = (reason = 'speech-final') => {
     clearAutoReplyTimer();
     autoReplyTimer = setTimeout(() => {
@@ -28652,6 +28727,7 @@ async function handleBrowserVoiceSocket(socket, request) {
     if (finalized) return;
     finalized = true;
     clearAutoReplyTimer();
+    clearNoTranscriptFallbackTimer();
     try {
       deepgramConnection?.close?.();
     } catch {
@@ -28826,103 +28902,166 @@ async function handleBrowserVoiceSocket(socket, request) {
     return connection;
   };
 
+  const rememberBrowserAudioChunk = (chunk) => {
+    if (!chunk?.length) return;
+    recentAudioChunks.push(Buffer.from(chunk));
+    if (recentAudioChunks.length > BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT) recentAudioChunks.shift();
+  };
+
+  const handleDeepgramBrowserVoiceMessage = (data) => {
+    const normalized = normalizeDeepgramLiveTranscript(data);
+    const transcript = normalized.transcript;
+    if (!transcript) {
+      const deepgramEventType = String(
+        data?.type
+        || data?.event
+        || data?.message_type
+        || data?.metadata?.request_id
+        || ''
+      ).trim();
+      const deepgramError = data?.error || data?.err_msg || data?.message || '';
+      if (deepgramEventType || deepgramError) {
+        session.deepgramEventCount += 1;
+        session.lastDeepgramEvent = deepgramEventType || (deepgramError ? 'error' : 'message');
+        if (deepgramError || /error/i.test(session.lastDeepgramEvent)) {
+          sendVoiceSocket(socket, {
+            type: 'diagnostic',
+            lane: 'stt',
+            provider: 'Deepgram',
+            frameCount: session.frameCount,
+            audioBytes: session.audioBytes,
+            message: `Deepgram returned ${session.lastDeepgramEvent} without transcript text: ${String(deepgramError || 'no words yet').slice(0, 180)}`,
+          });
+        } else if (session.deepgramEventCount <= 3 || session.deepgramEventCount % 10 === 0) {
+          sendBrowserVoiceStatus(socket, session, {
+            state: 'live',
+            ws: 'receiving',
+            deepgram: 'event',
+            message: `Deepgram ${session.lastDeepgramEvent} event received; waiting for transcript words.`,
+          });
+        }
+      }
+      return;
+    }
+    clearNoTranscriptFallbackTimer();
+    const sentiment = normalizeDeepgramLiveSentiment(data);
+    if (sentiment.pbkScore !== null) session.sentiment = sentiment;
+    const detected = classifyPbkIntent(transcript);
+    const item = {
+      transcript,
+      confidence: normalized.confidence,
+      isFinal: normalized.isFinal,
+      speechFinal: normalized.speechFinal,
+      sentiment,
+      intent: detected,
+      capturedAt: isoNow(),
+    };
+    session.transcript.push(item);
+    console.log('[pbk-local-openclaw] Browser voice transcript:', {
+      sessionId: session.id,
+      provider: deepgramProviderLabel,
+      isFinal: item.isFinal,
+      speechFinal: item.speechFinal,
+      preview: transcript.slice(0, 120),
+    });
+    sendVoiceSocket(socket, {
+      type: 'transcript',
+      transcript,
+      isFinal: item.isFinal,
+      speechFinal: item.speechFinal,
+      sentiment,
+      intent: detected,
+    });
+    if (item.isFinal || item.speechFinal) scheduleAutoReply(item.speechFinal ? 'speech-final' : 'final-transcript');
+  };
+
+  const attachDeepgramBrowserVoiceHandlers = (connection, label) => {
+    deepgramProviderLabel = label;
+    connection.on('message', handleDeepgramBrowserVoiceMessage);
+  };
+
+  const rotateBrowserVoiceToFallback = async (reason = 'no-transcript') => {
+    if (finalized || browserFallbackActive || !BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL) return false;
+    browserFallbackActive = true;
+    clearNoTranscriptFallbackTimer();
+    const fallbackLabel = getBrowserVoiceDeepgramLabel(BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL, true);
+    sendVoiceSocket(socket, {
+      type: 'diagnostic',
+      lane: 'stt',
+      provider: fallbackLabel,
+      frameCount: session.frameCount,
+      audioBytes: session.audioBytes,
+      message: `Deepgram opened but returned no words, so PBK is switching this browser turn to Nova fallback and replaying the last ${recentAudioChunks.length} audio chunk${recentAudioChunks.length === 1 ? '' : 's'}.`,
+      reason,
+    });
+    try {
+      deepgramConnection?.close?.();
+      deepgramConnection = await openDeepgramBrowserVoiceConnection(
+        buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL),
+        fallbackLabel,
+      );
+      attachDeepgramBrowserVoiceHandlers(deepgramConnection, fallbackLabel);
+      for (const chunk of recentAudioChunks) sendDeepgramAudio(deepgramConnection, chunk);
+      sendBrowserVoiceStatus(socket, session, {
+        state: 'live',
+        ws: 'receiving',
+        deepgram: 'fallback',
+        provider: fallbackLabel,
+        message: 'Nova fallback is listening now. Keep speaking naturally.',
+      });
+      return true;
+    } catch (error) {
+      sendVoiceSocket(socket, {
+        type: 'error',
+        lane: 'stt',
+        provider: fallbackLabel,
+        error: error?.message || 'Deepgram Nova fallback failed.',
+      });
+      return false;
+    }
+  };
+
+  const scheduleNoTranscriptFallback = () => {
+    if (finalized || browserFallbackActive || session.transcript.length > 0 || noTranscriptFallbackTimer) return;
+    noTranscriptFallbackTimer = setTimeout(() => {
+      if (!finalized && !browserFallbackActive && session.frameCount > 0 && session.transcript.length === 0) {
+        void rotateBrowserVoiceToFallback('no-transcript-after-browser-audio');
+      }
+    }, BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS);
+  };
+
   try {
     try {
-      deepgramConnection = await openDeepgramBrowserVoiceConnection({
-        model: BROWSER_VOICE_DEEPGRAM_MODEL,
-        listenVersion: 'v2',
-        manualWebSocket: true,
-        containerizedAudio: true,
-        channels: 1,
-      }, 'deepgram-flux-v2', false);
+      const primaryLabel = getBrowserVoiceDeepgramLabel(BROWSER_VOICE_DEEPGRAM_MODEL);
+      deepgramConnection = await openDeepgramBrowserVoiceConnection(
+        buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_MODEL),
+        primaryLabel,
+        false,
+      );
+      attachDeepgramBrowserVoiceHandlers(deepgramConnection, primaryLabel);
     } catch (primaryError) {
+      const primaryLabel = getBrowserVoiceDeepgramLabel(BROWSER_VOICE_DEEPGRAM_MODEL);
+      browserFallbackActive = true;
       sendVoiceSocket(socket, {
         type: 'diagnostic',
         lane: 'stt',
-        provider: 'deepgram-flux-v2',
-        message: `Flux browser STT did not open (${primaryError?.message || 'unknown error'}). Retrying Nova browser STT fallback.`,
+        provider: primaryLabel,
+        message: `${primaryLabel} browser STT did not open (${primaryError?.message || 'unknown error'}). Retrying Nova browser STT fallback.`,
       });
       deepgramConnection?.close?.();
-      deepgramConnection = await openDeepgramBrowserVoiceConnection({
-        model: BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL,
-        listenVersion: 'v1',
-        manualWebSocket: true,
-        containerizedAudio: true,
-        channels: 1,
-        interimResults: true,
-        utteranceEndMs: 900,
-      }, 'deepgram-nova-v1-fallback');
+      const fallbackLabel = getBrowserVoiceDeepgramLabel(BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL, true);
+      deepgramConnection = await openDeepgramBrowserVoiceConnection(
+        buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL),
+        fallbackLabel,
+      );
+      attachDeepgramBrowserVoiceHandlers(deepgramConnection, fallbackLabel);
     }
     sendBrowserVoiceStatus(socket, session, {
       state: 'live',
       ws: 'open',
       deepgram: 'open',
-      provider: deepgramConnection === null ? '' : 'Deepgram',
+      provider: deepgramProviderLabel || 'Deepgram',
       message: 'Bridge received the voice session and opened Deepgram. Start speaking naturally.',
-    });
-    deepgramConnection.on('message', (data) => {
-      const normalized = normalizeDeepgramLiveTranscript(data);
-      const transcript = normalized.transcript;
-      if (!transcript) {
-        const deepgramEventType = String(
-          data?.type
-          || data?.event
-          || data?.message_type
-          || data?.metadata?.request_id
-          || ''
-        ).trim();
-        const deepgramError = data?.error || data?.err_msg || data?.message || '';
-        if (deepgramEventType || deepgramError) {
-          session.deepgramEventCount += 1;
-          session.lastDeepgramEvent = deepgramEventType || (deepgramError ? 'error' : 'message');
-          if (deepgramError || /error/i.test(session.lastDeepgramEvent)) {
-            sendVoiceSocket(socket, {
-              type: 'diagnostic',
-              lane: 'stt',
-              provider: 'Deepgram',
-              frameCount: session.frameCount,
-              audioBytes: session.audioBytes,
-              message: `Deepgram returned ${session.lastDeepgramEvent} without transcript text: ${String(deepgramError || 'no words yet').slice(0, 180)}`,
-            });
-          } else if (session.deepgramEventCount <= 3 || session.deepgramEventCount % 10 === 0) {
-            sendBrowserVoiceStatus(socket, session, {
-              state: 'live',
-              ws: 'receiving',
-              deepgram: 'event',
-              message: `Deepgram ${session.lastDeepgramEvent} event received; waiting for transcript words.`,
-            });
-          }
-        }
-        return;
-      }
-      const sentiment = normalizeDeepgramLiveSentiment(data);
-      if (sentiment.pbkScore !== null) session.sentiment = sentiment;
-      const detected = classifyPbkIntent(transcript);
-      const item = {
-        transcript,
-        confidence: normalized.confidence,
-        isFinal: normalized.isFinal,
-        speechFinal: normalized.speechFinal,
-        sentiment,
-        intent: detected,
-        capturedAt: isoNow(),
-      };
-      session.transcript.push(item);
-      console.log('[pbk-local-openclaw] Browser voice transcript:', {
-        sessionId: session.id,
-        isFinal: item.isFinal,
-        speechFinal: item.speechFinal,
-        preview: transcript.slice(0, 120),
-      });
-      sendVoiceSocket(socket, {
-        type: 'transcript',
-        transcript,
-        isFinal: item.isFinal,
-        speechFinal: item.speechFinal,
-        sentiment,
-        intent: detected,
-      });
-      if (item.isFinal || item.speechFinal) scheduleAutoReply(item.speechFinal ? 'speech-final' : 'final-transcript');
     });
     sendVoiceSocket(socket, { type: 'ready', sessionId: session.id, provider: 'Deepgram' });
   } catch (error) {
@@ -28956,7 +29095,9 @@ async function handleBrowserVoiceSocket(socket, request) {
           message: `Bridge is receiving browser audio (${session.frameCount} chunk${session.frameCount === 1 ? '' : 's'}).`,
         });
       }
+      rememberBrowserAudioChunk(raw);
       sendDeepgramAudio(deepgramConnection, raw);
+      scheduleNoTranscriptFallback();
       return;
     }
     let event = {};
@@ -28985,7 +29126,9 @@ async function handleBrowserVoiceSocket(socket, request) {
           message: `Bridge is receiving browser audio (${session.frameCount} chunk${session.frameCount === 1 ? '' : 's'}).`,
         });
       }
+      rememberBrowserAudioChunk(frame);
       sendDeepgramAudio(deepgramConnection, frame);
+      scheduleNoTranscriptFallback();
       return;
     }
     if (event.event === 'start') {
@@ -29023,6 +29166,76 @@ async function handleBrowserVoiceSocket(socket, request) {
   });
 }
 
+async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
+  const leadId = contextCall?.leadId || session.leadId || '';
+  const leadName = contextCall?.leadName || session.leadName || 'caller';
+  const address = contextCall?.address || session.address || '';
+  let pipeline = null;
+  try {
+    pipeline = await runPbkAgentPipelineRecord({
+      tenantId: 'pbk',
+      leadId,
+      leadName,
+      address,
+      text: transcript,
+      transcript,
+      source: 'telnyx-live-call',
+      metadata: {
+        callId: session.callId || '',
+        streamId: session.streamId || '',
+      },
+    });
+  } catch {
+    pipeline = null;
+  }
+  try {
+    const strategist = await askStrategistRecord({
+      tenantId: 'pbk',
+      leadId,
+      leadName,
+      address,
+      situation: [
+        'Live Telnyx inbound call turn for Ava.',
+        'Ava must sound conversational, emotionally intelligent, and concise.',
+        'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.',
+      ].join(' '),
+      transcript,
+      attemptedActions: [
+        'captured-live-telnyx-speech',
+        `call:${session.callId || 'unknown'}`,
+        `intent:${pipeline?.intent?.intent || 'unknown'}`,
+      ],
+      confidence: 0.82,
+      temperature: 0.68,
+      maxTokens: 700,
+      storeRule: false,
+      status: 'suggested',
+      metadata: {
+        source: 'telnyx-live-call',
+        callId: session.callId || '',
+        streamId: session.streamId || '',
+      },
+    });
+    const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
+    const fallback = buildBrowserVoiceReply(pipeline, transcript);
+    return {
+      text: normalizeAvaVoiceReplyText(script, fallback),
+      pipeline,
+      strategist,
+    };
+  } catch (error) {
+    return {
+      text: normalizeAvaVoiceReplyText('', 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
+      pipeline,
+      strategist: {
+        ok: false,
+        result: 'telnyx_live_reply_fallback',
+        error: error?.message || 'Strategist reply unavailable.',
+      },
+    };
+  }
+}
+
 async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const meta = getDeepgramProviderMeta(process.env);
   const session = {
@@ -29032,6 +29245,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     frameCount: 0,
     transcript: [],
     sentiment: null,
+    leadId: '',
+    leadName: '',
+    address: '',
+    telnyxAiAssistantStarted: false,
+    lastAvaReplyAt: 0,
     startedAt: isoNow(),
   };
 
@@ -29042,6 +29260,16 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 
   let deepgramConnection = null;
   let finalized = false;
+  const earlyTelnyxMessages = [];
+  let liveTelnyxMessageHandler = null;
+
+  socket.on('message', (raw) => {
+    if (liveTelnyxMessageHandler) {
+      liveTelnyxMessageHandler(raw);
+      return;
+    }
+    if (earlyTelnyxMessages.length < 200) earlyTelnyxMessages.push(raw);
+  });
 
   const finalize = async (reason = 'closed') => {
     if (finalized) return;
@@ -29157,51 +29385,91 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     await persistState(state);
   };
 
+  const maybeSpeakTelnyxAvaReply = async (item) => {
+    if (!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED) return;
+    if (session.telnyxAiAssistantStarted && !PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE) return;
+    if (!session.callId || !(item.isFinal || item.speechFinal)) return;
+    const now = Date.now();
+    if (now - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_REPLY_MIN_MS) return;
+    session.lastAvaReplyAt = now;
+    const contextCall = getCallById(session.callId);
+    const reply = await buildTelnyxLiveAvaReply({
+      session,
+      transcript: item.transcript,
+      contextCall,
+    });
+    const spoken = String(reply.text || '').trim();
+    if (!spoken) return;
+    const speakResult = await speakTelnyxCall(session.callId, spoken);
+    addActivity(state, makeActivity({
+      actor: 'Ava',
+      category: 'CALL',
+      status: speakResult.ok ? 'served' : 'warning',
+      text: speakResult.ok
+        ? `Ava replied live on Telnyx: ${spoken.slice(0, 120)}`
+        : `Ava live Telnyx reply failed: ${speakResult.error || 'unknown error'}`,
+      target: session.callId || session.streamId || session.id,
+    }));
+    if (contextCall) {
+      upsertCall(state, {
+        ...contextCall,
+        nextMove: spoken,
+        updatedAt: isoNow(),
+      });
+    }
+    await persistState(state);
+    scheduleRuntimeStateBroadcast('telnyx-ava-reply');
+  };
+
+  const handleTelnyxDeepgramMessage = (data) => {
+    const normalized = normalizeDeepgramLiveTranscript(data);
+    const transcript = normalized.transcript;
+    if (!transcript) return;
+    const sentiment = normalizeDeepgramLiveSentiment(data);
+    if (sentiment.pbkScore !== null) session.sentiment = sentiment;
+    const item = {
+      transcript,
+      confidence: normalized.confidence,
+      isFinal: normalized.isFinal,
+      speechFinal: normalized.speechFinal,
+      start: data.start ?? null,
+      duration: data.duration ?? null,
+      sentiment,
+      capturedAt: isoNow(),
+    };
+    session.transcript.push(item);
+    const contextCall = getCallById(session.callId);
+    if (contextCall) {
+      upsertCall(state, {
+        ...contextCall,
+        transcript: [
+          ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
+          {
+            speaker: 'Seller',
+            text: transcript,
+            ...item,
+          },
+        ].slice(-50),
+        sentiment: sentiment.pbkScore ?? contextCall.sentiment,
+        nextMove: "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
+        updatedAt: isoNow(),
+      });
+      scheduleRuntimeStateBroadcast('telnyx-transcript');
+    }
+    void maybeSpeakTelnyxAvaReply(item);
+  };
+
   try {
+    const codecOptions = buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC);
     deepgramConnection = await createDeepgramLiveConnection({
       manualWebSocket: true,
-      encoding: 'mulaw',
-      sampleRate: 8000,
+      encoding: codecOptions.encoding,
+      sampleRate: codecOptions.sampleRate,
       channels: 1,
       interimResults: true,
       utteranceEndMs: 900,
     }, process.env);
-    deepgramConnection.on('message', (data) => {
-      const normalized = normalizeDeepgramLiveTranscript(data);
-      const transcript = normalized.transcript;
-      if (!transcript) return;
-      const sentiment = normalizeDeepgramLiveSentiment(data);
-      if (sentiment.pbkScore !== null) session.sentiment = sentiment;
-      const item = {
-        transcript,
-        confidence: normalized.confidence,
-        isFinal: normalized.isFinal,
-        speechFinal: normalized.speechFinal,
-        start: data.start ?? null,
-        duration: data.duration ?? null,
-        sentiment,
-        capturedAt: isoNow(),
-      };
-      session.transcript.push(item);
-      const contextCall = getCallById(session.callId);
-      if (contextCall) {
-        upsertCall(state, {
-          ...contextCall,
-          transcript: [
-            ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
-            {
-              speaker: 'Seller',
-              text: transcript,
-              ...item,
-            },
-          ].slice(-50),
-          sentiment: sentiment.pbkScore ?? contextCall.sentiment,
-          nextMove: "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
-          updatedAt: isoNow(),
-        });
-        scheduleRuntimeStateBroadcast('telnyx-transcript');
-      }
-    });
+    deepgramConnection.on('message', handleTelnyxDeepgramMessage);
     deepgramConnection.on('error', (error) => {
       console.warn('[pbk-local-openclaw] Deepgram live stream error:', error?.message || error);
     });
@@ -29213,7 +29481,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     return;
   }
 
-  socket.on('message', (raw) => {
+  liveTelnyxMessageHandler = (raw) => {
     let event = {};
     try {
       event = JSON.parse(raw.toString('utf8'));
@@ -29222,13 +29490,17 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
 
     if (event.event === 'start') {
+      const clientState = decodeTelnyxClientState(event.start?.client_state || event.start?.clientState || event.client_state || event.clientState || '');
       session.streamId = event.stream_id || event.start?.stream_id || session.streamId;
       session.callId = event.start?.call_control_id
         || event.start?.callControlId
         || event.start?.call_session_id
         || event.start?.callSessionId
         || event.call_control_id
+        || clientState.callControlId
         || session.callId;
+      session.leadId = clientState.leadId || session.leadId;
+      session.telnyxAiAssistantStarted = Boolean(clientState.telnyxAiAssistantStarted || session.telnyxAiAssistantStarted);
       return;
     }
 
@@ -29240,11 +29512,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
 
     if (event.event === 'stop') {
+      const clientState = decodeTelnyxClientState(event.stop?.client_state || event.stop?.clientState || event.client_state || event.clientState || '');
       session.streamId = event.stream_id || event.stop?.stream_id || session.streamId;
-      session.callId = event.stop?.call_control_id || event.stop?.callControlId || session.callId;
+      session.callId = event.stop?.call_control_id || event.stop?.callControlId || clientState.callControlId || session.callId;
       void finalize('telnyx-stop');
     }
-  });
+  };
+  for (const queuedRaw of earlyTelnyxMessages.splice(0)) liveTelnyxMessageHandler(queuedRaw);
 
   socket.on('close', () => {
     void finalize('websocket-close');
@@ -33249,7 +33523,11 @@ server.on('upgrade', (request, socket, head) => {
   const upgradePath = upgradeUrl.pathname.replace(/\/+$/, '') || '/';
   if (matchesPath(upgradePath, ['/api/webhooks/telnyx/media', '/webhooks/telnyx/media'])) {
     if (TELNYX_MEDIA_STREAM_TOKEN) {
-      const providedToken = upgradeUrl.searchParams.get('token') || String(request.headers['x-pbk-stream-token'] || '').trim();
+      const providedToken = upgradeUrl.searchParams.get('token')
+        || String(request.headers['x-pbk-stream-token'] || '').trim()
+        || String(request.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
+        || String(request.headers['sec-websocket-protocol'] || '').split(',').map((item) => item.trim()).find(Boolean)
+        || '';
       if (providedToken !== TELNYX_MEDIA_STREAM_TOKEN) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
@@ -33318,13 +33596,7 @@ async function prewarmVoiceProviders() {
   const deepgramMeta = getDeepgramProviderMeta(process.env);
   if (deepgramMeta.ready) {
     try {
-      const connection = await createDeepgramLiveConnection({
-        encoding: BROWSER_VOICE_ENCODING,
-        sampleRate: BROWSER_VOICE_SAMPLE_RATE,
-        channels: 1,
-        interimResults: true,
-        utteranceEndMs: 900,
-      }, process.env);
+      const connection = await createDeepgramLiveConnection(buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_MODEL), process.env);
       await withPrewarmTimeout((async () => {
         connection.connect();
         await connection.waitForOpen();

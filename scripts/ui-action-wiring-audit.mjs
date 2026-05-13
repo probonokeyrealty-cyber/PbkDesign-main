@@ -194,6 +194,39 @@ if (dataActionsMissingHandler.length) {
   });
 }
 
+const leadBulkSelectionSafe = /function\s+getSelectedLeadRows\(\)[\s\S]*?return\s+selected;/.test(index)
+  && !/return\s+selected\.length\s*\?\s*selected\s*:\s*getLeadRows\(\)\.slice\(0,\s*3\)/.test(index)
+  && /toggleLeadRowCheckbox/.test(index)
+  && /checkbox\.classList\.toggle\('checked'\)/.test(index);
+if (!leadBulkSelectionSafe) {
+  fail.push({
+    name: 'Lead bulk actions must require explicit selected rows',
+    details: ['No silent first-3 fallback, and delegated live-row checkbox toggling must exist.'],
+  });
+}
+
+const offlineDecisionQueueSafe = /queueDisconnectedAction/.test(index)
+  && /data-pending-offline-action/.test(index)
+  && /flushDisconnectedActionQueue/.test(index)
+  && !/Approval removed locally/.test(index)
+  && !/Admin approval removed locally/.test(index);
+if (!offlineDecisionQueueSafe) {
+  fail.push({
+    name: 'Offline approval/admin actions must queue instead of disappearing locally',
+    details: ['Disconnected decisions should stay visible and be queued for replay.'],
+  });
+}
+
+const liveCallControlsGuarded = /function\s+hasValidLiveCallContext/.test(index)
+  && /No live call selected/.test(index)
+  && /if\s*\(!hasValidLiveCallContext\(context,\s*normalized\)\)\s*return\s+null;/.test(index);
+if (!liveCallControlsGuarded) {
+  fail.push({
+    name: 'Live call controls must require a real call id or phone',
+    details: ['Dashboard controls must not post call-control or DNC events for placeholder context.'],
+  });
+}
+
 const destructiveButtonLabels = buttons
   .filter(({ text, attrs }) => /\b(delete|void|send|call|sms|email|approve|reject|archive|remove|run|deploy|purchase|restart)\b/i.test(text || attrs['aria-label'] || ''))
   .map(({ text, attrs }) => ({

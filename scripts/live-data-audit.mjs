@@ -308,11 +308,15 @@ const checks = [
       && /Streaming TTS/.test(avaMasterclass),
   },
   {
-    name: 'Browser voice sends WebM container audio to Deepgram without raw Opus handshake params',
+    name: 'Browser voice sends WebM container audio to Deepgram and falls back when no words arrive',
     ok: /PBK_DEEPGRAM_BROWSER_LIVE_MODEL/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_MODEL/.test(bridge)
+      && /BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS/.test(bridge)
+      && /buildBrowserVoiceDeepgramOptions/.test(bridge)
+      && /rotateBrowserVoiceToFallback/.test(bridge)
+      && /recentAudioChunks/.test(bridge)
       && /containerizedAudio:\s*true/.test(bridge)
-      && /listenVersion:\s*'v2'/.test(bridge)
+      && /listenVersion:\s*isDeepgramFluxModel\(model\)\s*\?\s*'v2'\s*:\s*'v1'/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL/.test(bridge)
       && /deepgram-nova-v1-fallback/.test(bridge)
       && /manualWebSocket:\s*true/.test(bridge)
@@ -339,6 +343,10 @@ const checks = [
     name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',
     ok: /startTelnyxMediaStream/.test(bridge)
       && /\/actions\/streaming_start/.test(bridge)
+      && /decodeTelnyxClientState/.test(bridge)
+      && /buildTelnyxLiveAvaReply/.test(bridge)
+      && /PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED/.test(bridge)
+      && /telnyxAiAssistantStarted/.test(bridge)
       && /action:\s*'streaming_start'/.test(bridge)
       && /action:\s*'speak'/.test(bridge)
       && /manualWebSocket:\s*true/.test(bridge)

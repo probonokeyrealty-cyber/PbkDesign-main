@@ -17,6 +17,7 @@ const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
 const agents = readFileSync(agentsPath, 'utf8');
 const avaMasterclass = readFileSync(avaMasterclassPath, 'utf8');
+const defaultAgentFleetBlock = bridge.match(/function buildDefaultAgentFleet\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
 const checks = [
   {
@@ -240,6 +241,14 @@ const checks = [
       && /\/api\/brain\/blog/.test(index)
       && /Research source saved to Brain Blog/.test(index)
       && /sourceSurface:\s*'agent-fleet'/.test(index),
+  },
+  {
+    name: 'Agent Fleet defaults are honest runtime records, not fake live/demo activity',
+    ok: /function buildDefaultAgentFleet/.test(bridge)
+      && /activity:\s*'Waiting for approved PBK work.'/.test(defaultAgentFleetBlock)
+      && /Ready for approved Rex research and strategist proposals/.test(defaultAgentFleetBlock)
+      && /status:\s*'idle'/.test(defaultAgentFleetBlock)
+      && !/id:\s*'max'|id:\s*'nora'|id:\s*'zed'|Diane Kowalski|Probate Warm-up Q2|On call with Diane|Spanish acquisitions|Outbound SMS/i.test(defaultAgentFleetBlock),
   },
   {
     name: 'Ava voice avoids fake listening and gives actionable connection diagnostics',

@@ -227,6 +227,38 @@ if (!liveCallControlsGuarded) {
   });
 }
 
+const comprehensiveLeadFiltersWired = /const\s+leadListFilters\s*=/.test(index)
+  && /function\s+applyLeadListFilters/.test(index)
+  && /function\s+updateLeadFilterCopy/.test(index)
+  && /data-leads-search/.test(index)
+  && /data-lead-filter="score"/.test(index)
+  && /data-lead-filter="status"/.test(index)
+  && /data-lead-filter="tag"/.test(index)
+  && /data-lead-filter="equity"/.test(index)
+  && /data-lead-filter="assigned"/.test(index)
+  && /data-lead-filter="leadType"/.test(index)
+  && /data-lead-filter="propertyType"/.test(index)
+  && /applyLeadListFilters\(getRuntimeLeads\(snapshot\)\)/.test(index)
+  && /leadListFilters\.search/.test(index);
+if (!comprehensiveLeadFiltersWired) {
+  fail.push({
+    name: 'Leads toolbar filters must execute against the rendered lead list',
+    details: ['Score, status, tag, equity, assigned, lead type, property type, and search must filter live rows instead of only showing preview toasts.'],
+  });
+}
+
+const agentFleetNoDemoFallback = /function\s+sanitizeFleetAgentForProduction/.test(index)
+  && /function\s+isSeededFleetExample/.test(index)
+  && /No live agents loaded/.test(index)
+  && !/return\s+FLEET_AGENT_SEED\s*;/.test(index)
+  && !/On call with Diane Kowalski/.test(index);
+if (!agentFleetNoDemoFallback) {
+  fail.push({
+    name: 'Agent Fleet must not render old static/demo agents as production state',
+    details: ['When no runtime agents are available, show an honest empty/connection state instead of fake Ava/Rex call examples.'],
+  });
+}
+
 const destructiveButtonLabels = buttons
   .filter(({ text, attrs }) => /\b(delete|void|send|call|sms|email|approve|reject|archive|remove|run|deploy|purchase|restart)\b/i.test(text || attrs['aria-label'] || ''))
   .map(({ text, attrs }) => ({

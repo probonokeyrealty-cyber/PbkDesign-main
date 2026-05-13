@@ -158,6 +158,20 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const avaCommand = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'runAgentCommand',
+        params: {
+          command: 'Ava masterclass: explain the subject-to due-on-sale guardrail in one conversational answer.',
+          source: 'smoke-test',
+        },
+      }),
+    }).then((response) => response.json());
     const brainIngest = await fetch(`${BASE_URL}/brain/ingest`, {
       method: 'POST',
       headers: {
@@ -181,6 +195,29 @@ async function main() {
       },
       body: JSON.stringify({
         query: 'Smoke Test Brain Ingest recording workflow',
+      }),
+    }).then((response) => response.json());
+    const rexDecisions = await fetch(`${BASE_URL}/api/rex/decisions`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const rexProposal = await fetch(`${BASE_URL}/api/rex/strategist/proposals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        requestApproval: true,
+        actor: 'Rex Smoke Test',
+        source: 'smoke-test',
+        proposals: [{
+          tool: 'update_campaign_script',
+          params: { campaignId: 'smoke-campaign', change: 'Add one tactical empathy opener.' },
+          rationale: 'Rex should queue strategist proposals through approval, not mutate providers directly.',
+          outcomeExpected: 'Smoke test proves Rex proposal lane is alive.',
+        }],
       }),
     }).then((response) => response.json());
     const workflowSave = await fetch(`${BASE_URL}/api/workflows`, {
@@ -370,8 +407,14 @@ async function main() {
     assert(firstApprovalDecision?.ok === true, 'First approval callback did not succeed.');
     assert(secondApprovalDecision?.replayed === true, 'Second identical approval callback was not treated as a replay.');
     assert(invoke?.ok === true, 'Authenticated /invoke getBrainState did not succeed.');
+    assert(avaCommand?.ok === true, 'Ava runAgentCommand smoke did not succeed.');
+    assert(avaCommand?.result?.routedTo === 'agent_brain', `Ava masterclass command routed to ${avaCommand?.result?.routedTo || 'missing'} instead of agent_brain.`);
+    assert(/due[- ]on[- ]sale|attorney|loan/i.test(String(avaCommand?.result?.response?.answer || avaCommand?.result?.response?.verbiage || '')), 'Ava masterclass command did not return subject-to guardrail language.');
     assert(brainIngest?.ok === true, 'Brain ingest endpoint did not succeed.');
     assert(Array.isArray(brainQuery?.brainDocs), 'Brain query endpoint did not return brainDocs.');
+    assert(rexDecisions?.ok === true && Array.isArray(rexDecisions?.decisions), 'Rex decisions endpoint did not return decisions.');
+    assert(rexProposal?.ok === true, 'Rex strategist proposal endpoint did not queue a proposal.');
+    assert(rexProposal?.approval || rexProposal?.decision || rexProposal?.state, 'Rex strategist proposal did not return approval/decision state.');
     assert(workflowSave?.ok === true, 'Workflow persistence endpoint did not save a draft.');
     assert(Array.isArray(workflows?.workflows), 'Workflow list endpoint did not return workflows.');
     assert(recordingSave?.ok === true, 'Recording metadata endpoint did not save.');
@@ -399,6 +442,8 @@ async function main() {
       approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
       activity: Array.isArray(state?.activity) ? state.activity.length : 0,
       contractTemplates: Array.isArray(contractTemplates?.templates) ? contractTemplates.templates.length : 0,
+      avaRoutedTo: avaCommand?.result?.routedTo || '',
+      rexDecisions: Array.isArray(rexDecisions?.decisions) ? rexDecisions.decisions.length : 0,
       toolingReady: Number(tooling?.tooling?.summary?.readyCount || 0),
       browserOsReady: Boolean(tooling?.tooling?.browserOs?.ready),
       docsDeliveredToday: Number(quotas?.quotas?.docs?.deliveredToday || 0),

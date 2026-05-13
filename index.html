@@ -3081,16 +3081,16 @@
   <div class="leads-toolbar">
     <div class="leads-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input placeholder="Name, address, phone—"/>
+      <input data-leads-search placeholder="Name, address, phone—"/>
     </div>
-    <div class="filter-dd">Score: 70+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd">Status: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd">Tag: Any<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd">Equity: &gt;50%<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd">Assigned: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd deal-ui-filter">Lead type: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd deal-ui-filter">Property: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></div>
-    <div class="filter-dd" style="color: var(--sky); border-color: var(--sky-dim);">+ Add filter</div>
+    <button class="filter-dd" type="button" data-lead-filter="score">Score: 70+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd" type="button" data-lead-filter="status">Status: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd" type="button" data-lead-filter="tag">Tag: Any<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd" type="button" data-lead-filter="equity">Equity: &gt;50%<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd" type="button" data-lead-filter="assigned">Assigned: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd deal-ui-filter" type="button" data-lead-filter="leadType">Lead type: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd deal-ui-filter" type="button" data-lead-filter="propertyType">Property: All<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></button>
+    <button class="filter-dd" type="button" data-lead-filter="reset" style="color: var(--sky); border-color: var(--sky-dim);">Reset filters</button>
     <div data-leads-count-copy style="margin-left: auto; color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px;">
       Showing <strong style="color: var(--text-primary)">247</strong> of <strong style="color: var(--text-primary)">1,247</strong>
     </div>
@@ -4363,7 +4363,7 @@
   <div class="fleet-page">
     <div class="fleet-head">
       <div class="page-head">
-        <div class="ph-tag" id="fleetTag">Agent Fleet - 3 active - 1 building - skills self-evolving</div>
+        <div class="ph-tag" id="fleetTag">Agent Fleet - waiting for live runtime state</div>
         <h2>The <em>agent fleet</em>.</h2>
         <p>Every AI closer, researcher, and campaign operator in one place. Agents can earn skills from research, call outcomes, analytics, and approved programming changes, then pass proven skills to the next agent.</p>
       </div>
@@ -13114,6 +13114,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   document.querySelectorAll('.deal-ui-filter').forEach((filter) => {
     filter.addEventListener('click', () => {
+      if (filter.dataset.leadFilter) return;
       toast({ type: 'info', title: 'Lead filter preview active', desc: `${filter.textContent.trim()} routing is previewed locally before campaign action.` });
     });
   });
@@ -15691,12 +15692,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       role: 'Acquisitions',
       version: 'v2.1',
       target: 'production',
-      status: 'on_call',
-      activity: 'On call with Diane Kowalski - probate seller - Columbus',
+      status: 'idle',
+      activity: 'Waiting for approved PBK work.',
       lastSeen: new Date(Date.now() - 12000).toISOString(),
       style: 'Empathetic closer',
       hometown: 'Akron, OH',
-      campaigns: 2,
+      campaigns: 0,
       sentiment: 72,
       skillsTotal: 47,
       skillSource: '12 audiobook, 18 call outcomes',
@@ -15705,20 +15706,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         { name: 'Ackerman price walk', level: 'proven', confidence: 88, evidence: 'Protected MAO on 23 live negotiations.' },
         { name: 'Grief-safe probate framing', level: 'evolving', confidence: 79, evidence: 'Positive sentiment trend on bereavement calls.' },
       ],
-      stream: [
-        ['10:33:54', 'emotion', 'Seller mentioned double shift. Ava softened pace and validated the pressure.'],
-        ['10:34:03', 'memory', 'Pulled prior note: seller wants a clean close before June probate hearing.'],
-        ['10:34:19', 'decision', 'Use repair burden story before anchoring. Keep offer below MAO ceiling.'],
-        ['10:34:42', 'tool', 'analyzeDeal refreshed ARV and MAO for Cherry Ln.'],
-      ],
-      call: {
-        transcript: [
-          ['Seller', 'I just do not want to deal with repairs or showings.'],
-          ['Ava', 'I hear you. If the goal is clean and quiet, I can make the numbers simple and you can decide if it helps.'],
-          ['Seller', 'Okay, what would that look like?'],
-        ],
-        math: [['ARV', '$185,000'], ['Repairs', '$38,000'], ['MAO', '$91,500'], ['Current anchor', '$78,000']],
-      },
+      stream: [],
+      call: null,
       knowledge: [
         { title: 'Never Split the Difference', meta: 'book principles - labeling, mirroring, calibrated questions', status: 'trained' },
         { title: 'PBK probate calls', meta: '23 call outcomes - Columbus and Akron', status: 'live evidence' },
@@ -15733,12 +15722,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       role: 'Closer',
       version: 'v1.4',
       target: 'production',
-      status: 'running_campaign',
-      activity: 'Running campaign: Probate Warm-up Q2 - 241 leads',
+      status: 'idle',
+      activity: 'Waiting for approved PBK work.',
       lastSeen: new Date(Date.now() - 45000).toISOString(),
       style: 'Direct closer',
       hometown: 'Cleveland, OH',
-      campaigns: 3,
+      campaigns: 0,
       sentiment: 66,
       skillsTotal: 31,
       skillSource: '8 audiobook, 11 campaign outcomes',
@@ -15747,11 +15736,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         { name: 'Urgency without pressure', level: 'proven', confidence: 86, evidence: 'Reduced ghosting after verbal yes.' },
         { name: 'Walk-away line discipline', level: 'evolving', confidence: 81, evidence: 'Needs more data on high-equity sellers.' },
       ],
-      stream: [
-        ['10:30:11', 'campaign', 'Outbound batch pacing held under daily cap.'],
-        ['10:31:26', 'decision', 'Move hesitant sellers to Ava follow-up instead of forcing close.'],
-        ['10:32:08', 'tool', 'Checked campaign suppression before next SMS touch.'],
-      ],
+      stream: [],
       call: null,
       knowledge: [
         { title: 'PBK counter-offer library', meta: 'campaign analytics - 9 winning phrases', status: 'trained' },
@@ -15767,8 +15752,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       role: 'Research and strategist',
       version: 'v3.0',
       target: 'production',
-      status: 'learning',
-      activity: 'Learning from campaign analytics, Brain Blog posts, and Deepgram sentiment',
+      status: 'idle',
+      activity: 'Ready for approved Rex research and strategist proposals.',
       lastSeen: new Date(Date.now() - 7000).toISOString(),
       style: 'Analytical strategist',
       hometown: 'Boston, MA',
@@ -15892,16 +15877,64 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
   }
 
+  function sanitizeFleetAgentForProduction(agent = {}) {
+    const normalized = normalizeFleetAgentFromRuntime(agent);
+    const id = String(normalized.id || '').toLowerCase();
+    const demoText = [
+      normalized.activity,
+      normalized.name,
+      normalized.call ? JSON.stringify(normalized.call) : '',
+      ...(Array.isArray(normalized.stream) ? normalized.stream.flat() : [])
+    ].join(' ');
+    if (['ava', 'rex'].includes(id) && /pause applied by PBK dashboard|config(?:ure)? applied by PBK dashboard/i.test(demoText)) {
+      return {
+        ...normalized,
+        status: 'idle',
+        activity: id === 'rex'
+          ? 'Ready for approved Rex research and strategist proposals.'
+          : 'Waiting for approved PBK work.',
+        campaigns: 0,
+        stream: [],
+        call: null,
+      };
+    }
+    if (/Diane Kowalski|Cherry Ln|Probate Warm-up Q2|614-555|demo|fixture/i.test(demoText)) {
+      return {
+        ...normalized,
+        status: 'idle',
+        activity: 'Waiting for approved PBK work.',
+        campaigns: 0,
+        stream: [],
+        call: null,
+      };
+    }
+    return normalized;
+  }
+
+  function isSeededFleetExample(agent = {}) {
+    const id = String(agent.id || '').toLowerCase();
+    if (['ava', 'rex'].includes(id)) return false;
+    const demoText = [
+      agent.name,
+      agent.role,
+      agent.activity,
+      agent.skillSource,
+      ...(Array.isArray(agent.stream) ? agent.stream.flat() : []),
+      ...(Array.isArray(agent.skills) ? agent.skills.map((skill) => `${skill.name || ''} ${skill.evidence || ''}`) : [])
+    ].join(' ');
+    return /Max|Nora|Zed|pause applied by PBK dashboard|config(?:ure)? applied by PBK dashboard|Spanish acquisitions|Outbound SMS|Ava skill inheritance|sandbox calls|demo|fixture/i.test(demoText);
+  }
+
   function getFleetAgents() {
     const runtimeAgents = Array.isArray(PBK.state.openclawRuntime?.agents) ? PBK.state.openclawRuntime.agents : [];
     if (runtimeAgents.length) {
       const byId = new Map(FLEET_AGENT_SEED.map((agent) => [agent.id, agent]));
       return runtimeAgents.map((agent) => ({
         ...(byId.get(agent.id) || {}),
-        ...normalizeFleetAgentFromRuntime(agent),
-      }));
+        ...sanitizeFleetAgentForProduction(agent),
+      })).filter((agent) => agent.id && !isSeededFleetExample(agent));
     }
-    return FLEET_AGENT_SEED;
+    return [];
   }
 
   function getFleetAgent(id = fleetUiState.selected) {
@@ -15917,8 +15950,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!node) return;
     const agents = getFleetAgents();
     const active = agents.filter((agent) => ['on_call', 'running_campaign', 'learning'].includes(agent.status)).length;
+    const building = agents.filter((agent) => ['building', 'deploying'].includes(agent.status)).length;
     const proven = agents.flatMap((agent) => agent.skills || []).filter((skill) => skill.level === 'proven').length;
     const evolving = agents.flatMap((agent) => agent.skills || []).filter((skill) => skill.level !== 'proven').length;
+    const tag = document.getElementById('fleetTag');
+    if (tag) {
+      tag.textContent = agents.length
+        ? `Agent Fleet - ${agents.length} live agent${agents.length === 1 ? '' : 's'} - ${active} active - ${building} building`
+        : 'Agent Fleet - no live agents loaded';
+    }
     node.innerHTML = [
       ['Active agents', active, 'calls, campaigns, or research'],
       ['Proven skills', proven, 'eligible for transfer'],
@@ -15936,7 +15976,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function renderFleetCards() {
     const grid = document.getElementById('fleetAgentGrid');
     if (!grid) return;
-    grid.innerHTML = getFleetAgents().map((agent) => `
+    const agents = getFleetAgents();
+    if (!agents.length) {
+      grid.innerHTML = `
+        <article class="fleet-card" data-fleet-empty>
+          <div class="fleet-card-head">
+            <div class="fleet-avatar gray">P</div>
+            <div class="fleet-title">
+              <strong>No live agents loaded</strong>
+              <span>Connect PBK Brain or deploy an approved agent</span>
+            </div>
+            <span class="fleet-env">runtime</span>
+          </div>
+          <div class="fleet-activity">Agent Fleet is waiting on /api/agents or /state runtime records. Static sample agents stay hidden on this production surface.</div>
+        </article>
+      `;
+      return;
+    }
+    grid.innerHTML = agents.map((agent) => `
       <article class="fleet-card ${agent.id === fleetUiState.selected ? 'selected' : ''}" data-fleet-agent="${escapeHtml(agent.id)}">
         <div class="fleet-card-head">
           <div class="fleet-avatar ${escapeHtml(agent.tone || '')}">${escapeHtml(agent.avatar)}<span class="fleet-dot ${escapeHtml(agent.status)}"></span></div>
@@ -15963,7 +16020,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function renderFleetDetail(id = fleetUiState.selected) {
     const agent = getFleetAgent(id);
-    if (!agent) return;
+    if (!agent) {
+      const avatar = document.getElementById('fleetDetailAvatar');
+      const name = document.getElementById('fleetDetailName');
+      const meta = document.getElementById('fleetDetailMeta');
+      const badges = document.getElementById('fleetDetailBadges');
+      if (avatar) {
+        avatar.className = 'fleet-avatar gray';
+        avatar.textContent = 'P';
+      }
+      if (name) name.textContent = 'No live agents loaded';
+      if (meta) meta.textContent = 'Waiting for PBK Brain runtime records';
+      if (badges) badges.innerHTML = '<span class="fleet-badge">production empty state</span><span class="fleet-badge">approval-first</span>';
+      ['fleetPaneStream', 'fleetPaneCall', 'fleetPaneSkills', 'fleetPaneKnowledge', 'fleetPaneTools'].forEach((id) => {
+        const pane = document.getElementById(id);
+        if (pane) pane.innerHTML = '<div class="fleet-knowledge-card"><h4>Connect runtime data</h4><p>No static agent examples are shown as production. Once Ava, Rex, or a deployed agent appears in PBK Brain, this panel will populate from live state.</p></div>';
+      });
+      return;
+    }
     fleetUiState.selected = agent.id;
     const avatar = document.getElementById('fleetDetailAvatar');
     const name = document.getElementById('fleetDetailName');
@@ -16088,6 +16162,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const body = document.getElementById('fleetSkillsLibraryBody');
     if (!body) return;
     const allSkills = getFleetAgents().flatMap((agent) => (agent.skills || []).map((skill) => ({ ...skill, agent: agent.name })));
+    if (!allSkills.length) {
+      body.innerHTML = '<div class="fleet-knowledge-card"><h4>No live skills loaded</h4><p>Rex decisions and approved agent outcomes will populate this library after runtime sync.</p></div>';
+      return;
+    }
     body.innerHTML = allSkills.map((skill) => `
       <div class="fleet-skill-card">
         <h4>${escapeHtml(skill.name)}</h4>
@@ -18295,23 +18373,193 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return null;
   }
 
+  const leadListFilters = {
+    search: '',
+    score: '70',
+    status: 'all',
+    tag: 'any',
+    equity: '50',
+    assigned: 'all',
+    leadType: 'all',
+    propertyType: 'all'
+  };
+  const LEAD_FILTER_OPTIONS = {
+    score: [
+      { value: '70', label: '70+' },
+      { value: '85', label: '85+' },
+      { value: '50', label: '50+' },
+      { value: 'all', label: 'All' }
+    ],
+    status: [
+      { value: 'all', label: 'All' },
+      { value: 'new', label: 'New' },
+      { value: 'queued', label: 'Queued' },
+      { value: 'negotiating', label: 'Negotiating' },
+      { value: 'signed', label: 'Signed' },
+      { value: 'cold', label: 'Cold' }
+    ],
+    tag: [
+      { value: 'any', label: 'Any' },
+      { value: 'probate', label: 'Probate' },
+      { value: 'absentee', label: 'Absentee' },
+      { value: 'vacant', label: 'Vacant' },
+      { value: 'pre-fc', label: 'Pre-FC' }
+    ],
+    equity: [
+      { value: '50', label: '>50%' },
+      { value: '75', label: '>75%' },
+      { value: 'all', label: 'All' },
+      { value: 'under50', label: '<50%' }
+    ],
+    assigned: [
+      { value: 'all', label: 'All' },
+      { value: 'ava', label: 'Ava' },
+      { value: 'rex', label: 'Rex' },
+      { value: 'auto', label: 'Auto' },
+      { value: 'unassigned', label: 'Unassigned' }
+    ],
+    leadType: [
+      { value: 'all', label: 'All' },
+      { value: 'owner', label: 'Owner' },
+      { value: 'agent', label: 'Agent' },
+      { value: 'unknown', label: 'Review' }
+    ],
+    propertyType: [
+      { value: 'all', label: 'All' },
+      { value: 'single', label: 'Single family' },
+      { value: 'multi', label: 'Multi-family' },
+      { value: 'land', label: 'Land' },
+      { value: 'condo', label: 'Condo' }
+    ]
+  };
+  const LEAD_FILTER_LABELS = {
+    score: 'Score',
+    status: 'Status',
+    tag: 'Tag',
+    equity: 'Equity',
+    assigned: 'Assigned',
+    leadType: 'Lead type',
+    propertyType: 'Property'
+  };
+  const LEAD_FILTER_CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
+
+  function getLeadScoreValue(lead = {}) {
+    return Number(lead.score || lead.leadScore || lead.priorityScore || 0);
+  }
+
+  function getLeadAssignedAgent(lead = {}) {
+    return String(lead.agentName || lead.assignedAgent || lead.owner || lead.assignment?.assignedAgent || '').trim();
+  }
+
+  function getLeadFilterOption(filter, value) {
+    return (LEAD_FILTER_OPTIONS[filter] || []).find((option) => option.value === value) || LEAD_FILTER_OPTIONS[filter]?.[0] || { value: 'all', label: 'All' };
+  }
+
+  function updateLeadFilterCopy(filter = '') {
+    const button = document.querySelector(`[data-lead-filter="${filter}"]`);
+    if (!button || filter === 'reset') return;
+    const option = getLeadFilterOption(filter, leadListFilters[filter]);
+    button.innerHTML = `${escapeHtml(LEAD_FILTER_LABELS[filter] || filter)}: ${escapeHtml(option.label)}${LEAD_FILTER_CHEVRON}`;
+    button.classList.toggle('active', !['all', 'any'].includes(String(option.value)));
+  }
+
+  function updateAllLeadFilterCopy() {
+    Object.keys(LEAD_FILTER_OPTIONS).forEach(updateLeadFilterCopy);
+  }
+
+  function cycleLeadListFilter(filter = '') {
+    const options = LEAD_FILTER_OPTIONS[filter] || [];
+    if (!options.length) return;
+    const current = leadListFilters[filter] || options[0].value;
+    const index = Math.max(0, options.findIndex((option) => option.value === current));
+    leadListFilters[filter] = options[(index + 1) % options.length].value;
+    updateLeadFilterCopy(filter);
+  }
+
+  function resetLeadListFilters() {
+    Object.assign(leadListFilters, {
+      search: '',
+      score: '70',
+      status: 'all',
+      tag: 'any',
+      equity: '50',
+      assigned: 'all',
+      leadType: 'all',
+      propertyType: 'all'
+    });
+    const input = document.querySelector('[data-leads-search], .leads-search input');
+    if (input) input.value = '';
+    updateAllLeadFilterCopy();
+  }
+
+  function applyLeadListFilters(leads = []) {
+    const search = String(leadListFilters.search || '').trim().toLowerCase();
+    return leads.filter((lead) => {
+      const score = getLeadScoreValue(lead);
+      if (leadListFilters.score !== 'all' && score < Number(leadListFilters.score || 0)) return false;
+
+      const status = String(lead.status || lead.stage || '').toLowerCase();
+      if (leadListFilters.status !== 'all' && !status.includes(leadListFilters.status)) return false;
+
+      const tags = getLeadTags(lead).map((tag) => String(tag).toLowerCase());
+      if (leadListFilters.tag !== 'any' && !tags.some((tag) => tag.includes(leadListFilters.tag))) return false;
+
+      const equity = getLeadEquityPercent(lead);
+      if (leadListFilters.equity === 'under50' && !(equity !== null && equity < 50)) return false;
+      if (!['all', 'under50'].includes(leadListFilters.equity) && !(equity !== null && equity >= Number(leadListFilters.equity))) return false;
+
+      const assigned = getLeadAssignedAgent(lead).toLowerCase();
+      if (leadListFilters.assigned === 'unassigned' && assigned) return false;
+      if (!['all', 'unassigned'].includes(leadListFilters.assigned) && !assigned.includes(leadListFilters.assigned)) return false;
+
+      const sourceBadge = getLeadSourceBadge(lead);
+      if (leadListFilters.leadType !== 'all' && sourceBadge.className !== leadListFilters.leadType) return false;
+
+      const propertyType = getLeadPropertyType(lead).toLowerCase();
+      if (leadListFilters.propertyType !== 'all') {
+        const propertyMatches = leadListFilters.propertyType === 'single'
+          ? /single|sfh|house/.test(propertyType)
+          : leadListFilters.propertyType === 'multi'
+            ? /multi|duplex|triplex|quad|2-4|5\+/.test(propertyType)
+            : propertyType.includes(leadListFilters.propertyType);
+        if (!propertyMatches) return false;
+      }
+
+      if (search) {
+        const haystack = [
+          getLeadSellerName(lead),
+          getLeadAddress(lead),
+          getLeadPhone(lead),
+          getLeadPropertyType(lead),
+          getLeadAssignedAgent(lead),
+          status,
+          tags.join(' ')
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      return true;
+    });
+  }
+
   function renderRuntimeLeads(snapshot = {}) {
     const tbody = document.querySelector('.page[data-page="leads"] .leads-table-container tbody');
     if (!tbody) return;
 
     const connected = getOpenClawConfig().status === 'connected';
-    const leads = getRuntimeLeads(snapshot);
+    const allLeads = getRuntimeLeads(snapshot);
+    const leads = applyLeadListFilters(getRuntimeLeads(snapshot));
     const countCopy = document.querySelector('[data-leads-count-copy]');
     const pageTag = document.querySelector('.page[data-page="leads"] .ph-tag');
+    updateAllLeadFilterCopy();
 
     if (countCopy) {
       countCopy.innerHTML = leads.length
-        ? `Showing <strong style="color: var(--text-primary)">${leads.length}</strong> live bridge record${leads.length === 1 ? '' : 's'}`
+        ? `Showing <strong style="color: var(--text-primary)">${leads.length}</strong> of <strong style="color: var(--text-primary)">${allLeads.length}</strong> live bridge record${allLeads.length === 1 ? '' : 's'}`
         : 'Showing <strong style="color: var(--text-primary)">0</strong> live bridge records';
     }
     if (pageTag) {
       pageTag.textContent = connected
-        ? `${leads.length} live leads - demo records hidden`
+        ? `${allLeads.length} live leads - ${leads.length} visible - demo records hidden`
         : 'Live leads - save PBK Bridge API key in Settings';
     }
 
@@ -18319,8 +18567,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       tbody.innerHTML = `
         <tr class="row" data-runtime-empty="leads">
           <td colspan="12" style="padding: 24px; color: var(--text-tertiary);">
-            <strong style="color: var(--text-primary);">No live lead records loaded.</strong><br>
-            ${connected
+            <strong style="color: var(--text-primary);">${allLeads.length ? 'No leads match these filters.' : 'No live lead records loaded.'}</strong><br>
+            ${allLeads.length
+              ? 'Adjust or reset the filters to show the loaded production records.'
+              : connected
               ? 'Imported leads from the bridge will appear here after /api/leads or /state returns production records. Seeded demo sellers are intentionally hidden.'
               : 'Save the private PBK Bridge API key in Settings to pull live lead records from Render.'}
           </td>
@@ -24904,6 +25154,38 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  function wireLeadFilterControls() {
+    const page = getPageNode('leads');
+    if (!page || page.dataset.leadFiltersWired === 'true') return;
+    page.dataset.leadFiltersWired = 'true';
+
+    const search = page.querySelector('[data-leads-search], .leads-search input');
+    search?.addEventListener('input', () => {
+      leadListFilters.search = String(search.value || '').trim();
+      PBK.state.runtime.leadPageSize = 10;
+      renderRuntimeLeads(PBK.state.openclawRuntime || {});
+    });
+
+    page.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-lead-filter]');
+      if (!button || !page.contains(button)) return;
+      event.preventDefault();
+      const filter = button.dataset.leadFilter || '';
+      PBK.state.runtime.leadPageSize = 10;
+      if (filter === 'reset') {
+        resetLeadListFilters();
+        renderRuntimeLeads(PBK.state.openclawRuntime || {});
+        toast({ type: 'info', title: 'Lead filters reset', desc: 'Showing the default 70+ live lead view.' });
+        return;
+      }
+      cycleLeadListFilter(filter);
+      renderRuntimeLeads(PBK.state.openclawRuntime || {});
+      const label = getLeadFilterOption(filter, leadListFilters[filter]).label;
+      toast({ type: 'info', title: 'Lead filter applied', desc: `${LEAD_FILTER_LABELS[filter] || filter}: ${label}` });
+    });
+    updateAllLeadFilterCopy();
+  }
+
   function wireLeadBulkControls() {
     const page = getPageNode('leads');
     if (!page || page.dataset.bulkWired === 'true') return;
@@ -25858,6 +26140,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     wireLeadDetailFilters();
     wireFullscreenCallControls();
     wireInboxFilterControls();
+    wireLeadFilterControls();
     wireLeadBulkControls();
     wireCampaignsControls();
     wireMemoryAnalyticsControls();

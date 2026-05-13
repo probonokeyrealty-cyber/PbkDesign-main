@@ -29476,14 +29476,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           renderVoiceDoctor('live');
           setVoiceState('live', 'Ava voice WebSocket connected.');
           const mimeType = [
-            'audio/webm;codecs=opus',
             'audio/webm',
+            'audio/webm;codecs=opus',
             'audio/ogg;codecs=opus',
+            'audio/mp4',
           ].find((type) => MediaRecorder.isTypeSupported?.(type)) || '';
+          const recorderTimesliceMs = 250;
           voiceRecorder = mimeType
             ? new MediaRecorder(voiceStream, { mimeType })
             : new MediaRecorder(voiceStream);
-          voiceSocket.send(JSON.stringify({ event: 'start', mimeType: voiceRecorder.mimeType || mimeType || 'browser-default' }));
+          voiceSocket.send(JSON.stringify({
+            event: 'start',
+            mimeType: voiceRecorder.mimeType || mimeType || 'browser-default',
+            audioTransport: 'binary-mediarecorder',
+            timesliceMs: recorderTimesliceMs,
+          }));
           voiceRecorder.addEventListener('dataavailable', async (event) => {
             if (!event.data?.size || !voiceSocket || voiceSocket.readyState !== WebSocket.OPEN) return;
             if (avaVoiceSpeaking) return;
@@ -29494,12 +29501,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             voiceBridgeStats.last = `sent ${formatVoiceBytes(event.data.size)}`;
             renderVoiceDoctor('live');
             if (status && voiceChunkStats.chunks <= 3) {
-              status.textContent = `Microphone is streaming (${voiceChunkStats.chunks} audio chunk${voiceChunkStats.chunks === 1 ? '' : 's'} sent). Keep speaking naturally.`;
+              status.textContent = `Microphone is streaming (${voiceChunkStats.chunks} binary audio chunk${voiceChunkStats.chunks === 1 ? '' : 's'} sent). Keep speaking naturally.`;
             }
-            const payload = arrayBufferToBase64(await event.data.arrayBuffer());
-            voiceSocket.send(JSON.stringify({ event: 'media', media: { payload, mimeType } }));
+            const audioChunk = await event.data.arrayBuffer();
+            voiceSocket.send(audioChunk);
           });
-          voiceRecorder.start(700);
+          voiceRecorder.addEventListener('error', (event) => {
+            showAvaVoiceDiagnostic('microphone', event?.error?.message || 'Chrome recorder reported an audio capture error.');
+          });
+          voiceRecorder.start(recorderTimesliceMs);
           if (status) status.textContent = 'Listening live - speak naturally.';
           window.setTimeout(() => {
             if (!shell.classList.contains('listening') || voiceSessionCompleted) return;

@@ -317,6 +317,10 @@ const checks = [
       && /deepgram-nova-v1-fallback/.test(bridge)
       && /manualWebSocket:\s*true/.test(bridge)
       && /normalizeDeepgramLiveTranscript/.test(bridge)
+      && /audioTransport:\s*'binary-mediarecorder'/.test(index)
+      && /voiceSocket\.send\(audioChunk\)/.test(index)
+      && /voiceRecorder\.start\(recorderTimesliceMs\)/.test(index)
+      && /lastDeepgramEvent/.test(bridge)
       && /webm-opus-container/.test(bridge)
       && /createManualDeepgramLiveConnection/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8'))
       && /Authorization:\s*`Token \$\{config\.apiKey\}`/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),

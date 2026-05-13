@@ -28479,7 +28479,10 @@ function sendBrowserVoiceStatus(socket, session = {}, payload = {}) {
 
 function buildNoTranscriptBrowserVoiceReply(session = {}) {
   if (session.frameCount > 0) {
-    return `I received ${session.frameCount} audio chunk${session.frameCount === 1 ? '' : 's'} from the browser, but Deepgram did not return clean words yet. That means the microphone stream reached PBK, but speech-to-text did not hear usable speech. Try again closer to the mic, or type the command and I will keep reasoning from there.`;
+    const deepgramHint = session.lastDeepgramEvent
+      ? ` Deepgram did respond with ${session.lastDeepgramEvent} event${session.deepgramEventCount === 1 ? '' : 's'}, but no transcript text.`
+      : ' Deepgram opened, but PBK did not receive any transcript or status event back from it.';
+    return `I received ${session.frameCount} audio chunk${session.frameCount === 1 ? '' : 's'} from the browser, but Deepgram did not return clean words yet.${deepgramHint} That means the microphone stream reached PBK, but speech-to-text did not hear usable speech. Try one full sentence closer to the mic, or type the command and I will keep reasoning from there.`;
   }
   return 'I am not receiving microphone audio from Chrome yet, so I will not pretend I heard you. PBK providers are ready, but the browser or Windows input is not sending sound. Select a real microphone, allow this site, refresh, and I will pick the conversation back up.';
 }
@@ -28607,6 +28610,11 @@ async function handleBrowserVoiceSocket(socket, request) {
     audioBytes: 0,
     firstAudioAt: '',
     lastAudioAt: '',
+    mimeType: '',
+    audioTransport: '',
+    timesliceMs: null,
+    deepgramEventCount: 0,
+    lastDeepgramEvent: '',
     transcript: [],
     sentiment: null,
     startedAt: isoNow(),
@@ -28765,6 +28773,10 @@ async function handleBrowserVoiceSocket(socket, request) {
         lane: session.frameCount ? 'stt' : 'microphone',
         frameCount: session.frameCount,
         audioBytes: session.audioBytes,
+        deepgramEventCount: session.deepgramEventCount,
+        lastDeepgramEvent: session.lastDeepgramEvent,
+        mimeType: session.mimeType,
+        audioTransport: session.audioTransport,
         message: reply,
       });
     }
@@ -28841,7 +28853,38 @@ async function handleBrowserVoiceSocket(socket, request) {
     deepgramConnection.on('message', (data) => {
       const normalized = normalizeDeepgramLiveTranscript(data);
       const transcript = normalized.transcript;
-      if (!transcript) return;
+      if (!transcript) {
+        const deepgramEventType = String(
+          data?.type
+          || data?.event
+          || data?.message_type
+          || data?.metadata?.request_id
+          || ''
+        ).trim();
+        const deepgramError = data?.error || data?.err_msg || data?.message || '';
+        if (deepgramEventType || deepgramError) {
+          session.deepgramEventCount += 1;
+          session.lastDeepgramEvent = deepgramEventType || (deepgramError ? 'error' : 'message');
+          if (deepgramError || /error/i.test(session.lastDeepgramEvent)) {
+            sendVoiceSocket(socket, {
+              type: 'diagnostic',
+              lane: 'stt',
+              provider: 'Deepgram',
+              frameCount: session.frameCount,
+              audioBytes: session.audioBytes,
+              message: `Deepgram returned ${session.lastDeepgramEvent} without transcript text: ${String(deepgramError || 'no words yet').slice(0, 180)}`,
+            });
+          } else if (session.deepgramEventCount <= 3 || session.deepgramEventCount % 10 === 0) {
+            sendBrowserVoiceStatus(socket, session, {
+              state: 'live',
+              ws: 'receiving',
+              deepgram: 'event',
+              message: `Deepgram ${session.lastDeepgramEvent} event received; waiting for transcript words.`,
+            });
+          }
+        }
+        return;
+      }
       const sentiment = normalizeDeepgramLiveSentiment(data);
       if (sentiment.pbkScore !== null) session.sentiment = sentiment;
       const detected = classifyPbkIntent(transcript);
@@ -28893,6 +28936,8 @@ async function handleBrowserVoiceSocket(socket, request) {
           sessionId: session.id,
           frameCount: session.frameCount,
           audioBytes: session.audioBytes,
+          transport: session.audioTransport || 'binary',
+          mimeType: session.mimeType || '',
         });
         sendBrowserVoiceStatus(socket, session, {
           state: 'live',
@@ -28935,12 +28980,20 @@ async function handleBrowserVoiceSocket(socket, request) {
     }
     if (event.event === 'start') {
       session.mimeType = String(event.mimeType || '').slice(0, 80);
+      session.audioTransport = String(event.audioTransport || 'json-base64').slice(0, 80);
+      session.timesliceMs = Number(event.timesliceMs || 0) || null;
+      console.log('[pbk-local-openclaw] Browser recorder started:', {
+        sessionId: session.id,
+        mimeType: session.mimeType,
+        audioTransport: session.audioTransport,
+        timesliceMs: session.timesliceMs,
+      });
       sendBrowserVoiceStatus(socket, session, {
         state: 'live',
         ws: 'open',
         deepgram: 'listening',
         message: session.mimeType
-          ? `Browser recorder started (${session.mimeType}). Speak a full sentence so Deepgram can finalize it.`
+          ? `Browser recorder started (${session.mimeType}, ${session.audioTransport || 'browser audio'}). Speak a full sentence so Deepgram can finalize it.`
           : 'Browser recorder started. Speak a full sentence so Deepgram can finalize it.',
       });
       return;

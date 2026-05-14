@@ -376,6 +376,14 @@ const checks = [
       && /transcriptFinal/.test(bridge),
   },
   {
+    name: 'PBK transcript memory and intent analytics dual-write to Supabase REST',
+    ok: /persistPbkMemoryToSupabaseRest/.test(bridge)
+      && /upsertSupabaseRestRows\('pbk_memories'/.test(bridge)
+      && /upsertSupabaseRestRows\('pbk_intent_events'/.test(bridge)
+      && /SUPABASE_SERVICE_ROLE_KEY/.test(bridge)
+      && /supabaseRest/.test(bridge),
+  },
+  {
     name: 'Outbound Telnyx calls authenticate media streaming and classify stream webhooks',
     ok: /requestPayload\.stream_auth_token\s*=\s*TELNYX_MEDIA_STREAM_TOKEN/.test(bridge)
       && /eventType\.includes\('streaming'\)/.test(bridge)

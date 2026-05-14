@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-deepgram-close-stream-flush';
+const BUILD_REVISION = '2026-05-14-supabase-transcript-dual-write';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -8373,6 +8373,52 @@ async function persistPbkMemoryToPg(memory = {}) {
   }
 }
 
+async function upsertSupabaseRestRows(tableName = '', rows = [], conflictTarget = 'id') {
+  const table = String(tableName || '').trim();
+  const payload = Array.isArray(rows) ? rows.filter(Boolean) : [rows].filter(Boolean);
+  if (!table || !payload.length || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return false;
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/${encodeURIComponent(table)}?on_conflict=${encodeURIComponent(conflictTarget)}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.warn('[pbk-local-openclaw] Supabase REST upsert skipped:', table, response.status, text.slice(0, 240));
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] Supabase REST upsert skipped:', table, error?.message || error);
+    return false;
+  }
+}
+
+async function persistPbkMemoryToSupabaseRest(memory = {}) {
+  if (!memory.content) return false;
+  return upsertSupabaseRestRows('pbk_memories', {
+    id: memory.id,
+    tenant_id: memory.tenantId,
+    lead_id: memory.leadId,
+    agent_name: memory.agentName,
+    memory_type: memory.memoryType,
+    content: memory.content,
+    importance: memory.importance,
+    source: memory.source,
+    source_id: memory.sourceId,
+    metadata: memory.metadata || {},
+    created_at: memory.createdAt,
+    updated_at: memory.updatedAt,
+  });
+}
+
 async function addPbkMemoryRecord(params = {}) {
   const memory = normalizePbkMemoryRecord(params);
   if (!memory.content) {
@@ -8385,6 +8431,7 @@ async function addPbkMemoryRecord(params = {}) {
   if (!Array.isArray(state.pbkMemories)) state.pbkMemories = [];
   upsertById(state, 'pbkMemories', memory);
   const postgres = await persistPbkMemoryToPg(memory);
+  const supabaseRest = await persistPbkMemoryToSupabaseRest(memory);
   return {
     ok: true,
     stored: true,
@@ -8392,6 +8439,7 @@ async function addPbkMemoryRecord(params = {}) {
     storage: {
       localState: true,
       postgres,
+      supabaseRest,
       vector: false,
       note: 'Native PBK memory stored safely; embeddings/Mem0 can be layered on later.',
     },
@@ -8902,10 +8950,22 @@ async function recordPbkIntentEvent(params = {}, classification = null) {
       console.warn('[pbk-local-openclaw] PBK intent persistence skipped:', error?.message || error);
     }
   }
+  const supabaseRest = await upsertSupabaseRestRows('pbk_intent_events', {
+    id: event.id,
+    tenant_id: event.tenantId,
+    lead_id: event.leadId,
+    call_id: event.callId,
+    transcript_snippet: event.transcriptSnippet,
+    intent: event.intent,
+    confidence: event.confidence,
+    recommended_action: event.recommendedAction,
+    metadata: event.metadata || {},
+    created_at: event.createdAt,
+  });
   return {
     ok: true,
     event,
-    storage: { localState: true, postgres },
+    storage: { localState: true, postgres, supabaseRest },
   };
 }
 

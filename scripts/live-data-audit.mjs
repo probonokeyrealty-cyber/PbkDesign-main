@@ -390,6 +390,12 @@ const checks = [
       && /session\.frameCount === 1/.test(bridge),
   },
   {
+    name: 'Outbound Telnyx answered calls get an Ava greeting instead of silent dead air',
+    ok: /outboundAvaGreetingSpoken/.test(bridge)
+      && /speakTelnyxCall\(call\.telnyxCallControlId/.test(bridge)
+      && /Ava outbound greeting/.test(bridge),
+  },
+  {
     name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',
     ok: /startTelnyxMediaStream/.test(bridge)
       && /\/actions\/streaming_start/.test(bridge)

@@ -38,7 +38,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-telnyx-media-diagnostics';
+const BUILD_REVISION = '2026-05-14-outbound-ava-greeting';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -11804,6 +11804,9 @@ function createCallRecord(params = {}) {
     mediaStreamStatus: params.mediaStreamStatus || params.media_stream_status || '',
     mediaStreamError: params.mediaStreamError || params.media_stream_error || '',
     mediaStreamUpdatedAt: params.mediaStreamUpdatedAt || params.media_stream_updated_at || '',
+    outboundAvaGreetingSpoken: Boolean(params.outboundAvaGreetingSpoken || params.outbound_ava_greeting_spoken),
+    outboundAvaGreetingAt: params.outboundAvaGreetingAt || params.outbound_ava_greeting_at || '',
+    outboundAvaGreetingError: params.outboundAvaGreetingError || params.outbound_ava_greeting_error || '',
     script: params.script || params.notes || '',
     sentiment: toNumber(params.sentiment, 0.66),
     yellRisk: toNumber(params.yellRisk, 0.05),
@@ -27244,6 +27247,34 @@ async function handleEvent(eventType, payload = {}) {
       telnyxCallSessionId: payload.call_session_id || payload.callSessionId || existingCall?.telnyxCallSessionId || '',
     });
     upsertCall(state, call);
+    let outboundGreetingResult = null;
+    const shouldPlayOutboundGreeting =
+      /^(live|answered)$/i.test(String(nextStatus || ''))
+      && String(call.direction || '').toLowerCase() === 'outbound'
+      && String(call.provider || '').toLowerCase() === 'telnyx'
+      && Boolean(call.telnyxCallControlId)
+      && !call.outboundAvaGreetingSpoken;
+    if (shouldPlayOutboundGreeting) {
+      const greeting = String(payload.greeting || payload.outboundGreeting || '').trim()
+        || 'Hi, this is Ava with Probono Key Realty. Thanks for picking up. I am here about the property. If you can hear me, tell me the property address and what you are hoping to do next.';
+      outboundGreetingResult = await speakTelnyxCall(call.telnyxCallControlId, greeting);
+      call.outboundAvaGreetingSpoken = Boolean(outboundGreetingResult.ok);
+      call.outboundAvaGreetingAt = isoNow();
+      call.outboundAvaGreetingError = outboundGreetingResult.ok ? '' : outboundGreetingResult.error || 'Telnyx speak failed.';
+      upsertCall(state, call);
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Ava',
+          category: 'CALL',
+          status: outboundGreetingResult.ok ? 'served' : 'warning',
+          text: outboundGreetingResult.ok
+            ? `Ava outbound greeting played for ${call.leadName}.`
+            : `Ava outbound greeting failed for ${call.leadName}: ${call.outboundAvaGreetingError}`,
+          target: call.address || call.phone,
+        }),
+      );
+    }
     addActivity(
       state,
       makeActivity({
@@ -27258,6 +27289,7 @@ async function handleEvent(eventType, payload = {}) {
     return {
       ok: true,
       call,
+      outboundGreetingResult,
     };
   }
 

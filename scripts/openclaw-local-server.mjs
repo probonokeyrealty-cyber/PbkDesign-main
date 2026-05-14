@@ -1533,6 +1533,10 @@ function shouldSkipHostedGatewayProbe(value = '') {
   return Boolean(IS_HOSTED && isLoopbackGatewayUrl(value));
 }
 
+function isOpenClawDirectGatewayConfigured() {
+  return Boolean(buildGatewayWsUrl() || buildGatewayHttpUrl());
+}
+
 function buildGatewayWsUrl() {
   const raw = OPENCLAW_GATEWAY_URL || '';
   if (!raw) return '';
@@ -1696,20 +1700,41 @@ async function buildOpenClawGatewayStatus({ force = false, timeoutMs = OPENCLAW_
   openClawGatewayStatusPromise = (async () => {
     const httpTimeoutMs = Math.max(1000, Math.min(timeoutMs, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS));
     const wsTimeoutMs = Math.max(5000, Math.min(OPENCLAW_GATEWAY_WS_HANDSHAKE_TIMEOUT_MS, timeoutMs * 2));
-    const [http, websocket] = await Promise.all([
-      probeOpenClawGatewayHttp(httpTimeoutMs),
-      probeOpenClawGatewaySocket(wsTimeoutMs),
-    ]);
+    const directProbeConfigured = isOpenClawDirectGatewayConfigured();
+    const [http, websocket] = directProbeConfigured
+      ? await Promise.all([
+          probeOpenClawGatewayHttp(httpTimeoutMs),
+          probeOpenClawGatewaySocket(wsTimeoutMs),
+        ])
+      : [
+          {
+            ok: false,
+            configured: false,
+            skipped: true,
+            reason: 'heartbeat_only',
+            note: 'Direct HTTP probe disabled; local OpenClaw reports through outbound heartbeat.',
+          },
+          {
+            ok: false,
+            configured: false,
+            skipped: true,
+            reason: 'heartbeat_only',
+            note: 'Direct WebSocket probe disabled; local OpenClaw reports through outbound heartbeat.',
+          },
+        ];
     const heartbeat = getFreshOpenClawGatewayHeartbeat();
     const heartbeatReady = Boolean(heartbeat?.fresh && heartbeat?.ready);
     const directReady = Boolean(http.ok || websocket.ok);
     const ready = Boolean(directReady || heartbeatReady);
+    const heartbeatOnlyNote = 'Heartbeat-only mode: hosted Render does not dial local OpenClaw; waiting for the local outbound heartbeat.';
     const directNote = directReady
       ? `${websocket.ok ? 'WebSocket' : 'HTTP'} gateway responded in ${Math.min(
           Number(websocket.latencyMs || Infinity),
           Number(http.latencyMs || Infinity),
         )}ms.`
-      : `${websocket.error || http.error || 'OpenClaw gateway did not respond'}; bridge keeps retrying.`;
+      : directProbeConfigured
+        ? `${websocket.error || http.error || 'OpenClaw gateway did not respond'}; direct probe unavailable.`
+        : heartbeatOnlyNote;
     const note = directReady
       ? directNote
       : heartbeatReady
@@ -1718,7 +1743,10 @@ async function buildOpenClawGatewayStatus({ force = false, timeoutMs = OPENCLAW_
     const status = {
       ok: ready,
       ready,
-      configured: Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL || heartbeat),
+      configured: Boolean(directProbeConfigured || heartbeat || IS_HOSTED),
+      optional: true,
+      directProbeConfigured,
+      connectionMode: directReady ? 'direct_probe' : heartbeatReady ? 'outbound_heartbeat' : directProbeConfigured ? 'direct_probe_unavailable' : 'heartbeat_only',
       checkedAt: isoNow(),
       mode: RUNTIME_MODE,
       timeoutMs: OPENCLAW_TIMEOUT_MS,
@@ -1776,28 +1804,38 @@ async function buildOpenClawGatewayStatus({ force = false, timeoutMs = OPENCLAW_
 function getOpenClawGatewayHealthComponent() {
   const cached = openClawGatewayStatusCache;
   const heartbeat = getFreshOpenClawGatewayHeartbeat();
-  const configured = Boolean(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL || heartbeat);
+  const directProbeConfigured = isOpenClawDirectGatewayConfigured();
+  const heartbeatReady = Boolean(heartbeat?.fresh && heartbeat?.ready);
+  const heartbeatOnlyConfigured = Boolean(IS_HOSTED && !directProbeConfigured);
+  const configured = Boolean(directProbeConfigured || heartbeat || heartbeatOnlyConfigured);
   if (!cached) {
     return {
       label: 'OpenClaw brain gateway',
-      status: configured ? 'unknown' : 'optional',
-      ready: false,
+      status: heartbeatReady ? 'up' : directProbeConfigured ? 'unknown' : 'standby',
+      ready: heartbeatReady,
       configured,
       optional: true,
+      directProbeConfigured,
+      connectionMode: heartbeatReady ? 'outbound_heartbeat' : directProbeConfigured ? 'direct_probe_pending' : 'heartbeat_only',
       endpoint: heartbeat?.gatewayUrl || redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
       note: configured
-        ? heartbeat?.fresh
+        ? heartbeatReady
           ? `Fresh local heartbeat is available from ${heartbeat.host || 'local machine'}; call /api/gateway/status for details.`
-          : 'Gateway probe has not run yet. Call /api/gateway/status or open the dashboard to force a probe.'
-        : 'Set OPENCLAW_GATEWAY_URL to monitor the local OpenClaw gateway.',
+          : directProbeConfigured
+            ? 'Gateway probe has not run yet. Call /api/gateway/status or open the dashboard to force a probe.'
+            : 'Heartbeat-only mode: local OpenClaw reports outbound to Render; direct Render-to-local dialing is disabled.'
+        : 'Heartbeat-only mode: local OpenClaw reports outbound to Render; direct Render-to-local dialing is disabled.',
     };
   }
+  const cachedDirectProbeConfigured = Boolean(cached.directProbeConfigured || cached.websocket?.configured || cached.http?.configured);
   return {
     label: 'OpenClaw brain gateway',
-    status: cached.ready ? 'up' : 'degraded',
+    status: cached.ready ? 'up' : cachedDirectProbeConfigured ? 'degraded' : 'standby',
     ready: cached.ready,
     configured: cached.configured,
     optional: true,
+    directProbeConfigured: cachedDirectProbeConfigured,
+    connectionMode: cached.connectionMode || (cached.ready ? 'outbound_heartbeat' : cachedDirectProbeConfigured ? 'direct_probe_unavailable' : 'heartbeat_only'),
     endpoint: cached.heartbeat?.gatewayUrl || cached.websocket?.url || cached.http?.url || redactGatewayUrl(OPENCLAW_GATEWAY_URL || OPENCLAW_GATEWAY_HTTP_URL),
     checkedAt: cached.checkedAt,
     latencyMs: cached.websocket?.ok ? cached.websocket.latencyMs : cached.http?.ok ? cached.http.latencyMs : cached.heartbeat?.websocket?.latencyMs || cached.heartbeat?.http?.latencyMs,
@@ -33614,8 +33652,9 @@ server.listen(PORT, HOST, () => {
   });
   buildOpenClawGatewayStatus({ force: true, timeoutMs: Math.min(2500, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) })
     .then((status) => {
-      const label = status.ready ? 'ok' : 'degraded';
-      console.log(`[pbk-local-openclaw] OpenClaw gateway probe ${label}: ${status.note}`);
+      const label = status.ready ? 'ok' : status.directProbeConfigured ? 'degraded' : 'standby';
+      const probeLabel = status.directProbeConfigured ? 'gateway probe' : 'gateway heartbeat mode';
+      console.log(`[pbk-local-openclaw] OpenClaw ${probeLabel} ${label}: ${status.note}`);
     })
     .catch((error) => {
       console.warn('[pbk-local-openclaw] OpenClaw gateway probe skipped:', error?.message || error);

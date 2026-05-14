@@ -223,6 +223,14 @@ const checks = [
       && /const statusCode = shouldReturnGatewayStatusOk\(gatewayStatus\) \? 200 : 503/.test(bridge),
   },
   {
+    name: 'OpenClaw hosted diagnostics use heartbeat-only language instead of retry errors',
+    ok: /function isOpenClawDirectGatewayConfigured/.test(bridge)
+      && /connectionMode/.test(bridge)
+      && /heartbeat_only/.test(bridge)
+      && !/bridge keeps retrying/.test(bridge)
+      && /OpenClaw gateway \$\{gatewayStatus\.ready \? 'healthy' : gatewayStatus\.directProbeConfigured \? 'direct probe unavailable' : 'standby'\}/.test(index),
+  },
+  {
     name: 'Toast noise is capped and deduplicated',
     ok: /TOAST_LIMIT\s*=\s*3/.test(index)
       && /data-toast-id/.test(index)

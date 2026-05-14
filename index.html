@@ -28881,16 +28881,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         openclawGateway: {
           configured: gatewayStatus.configured,
           ready: gatewayStatus.ready,
+          optional: gatewayStatus.optional,
+          connectionMode: gatewayStatus.connectionMode || gatewayStatus.mode,
+          directProbeConfigured: gatewayStatus.directProbeConfigured,
+          heartbeatFresh: gatewayStatus.heartbeat?.fresh,
           note: gatewayStatus.note || '',
           latencyMs: gatewayStatus.websocket?.ok ? gatewayStatus.websocket.latencyMs : gatewayStatus.http?.latencyMs,
-          missing: gatewayStatus.ready ? [] : [gatewayStatus.note || 'Gateway probe pending'].filter(Boolean)
+          missing: gatewayStatus.ready || !gatewayStatus.directProbeConfigured ? [] : [gatewayStatus.note || 'Gateway probe pending'].filter(Boolean)
         }
       } : {})
     };
 
     const order = ['openclawGateway', 'telnyx', 'instantly', 'deepgram', 'browserVoice', 'elevenLabs', 'openAiWebSearch', 'deepSeek', 'hermes', 'docusign', 'googleCalendar', 'supabaseStorage', 'n8nWorkflows', 'streak', 'crmSync', 'batchdata', 'slack', 'render'];
     const optionalProviders = new Set(['batchdata', 'hermes']);
-    const coreOrder = order.filter((key) => !optionalProviders.has(key));
+    const isProviderOptional = (key, meta = runtimeProviders?.[key]) => optionalProviders.has(key) || Boolean(meta?.optional);
+    const coreOrder = order.filter((key) => !isProviderOptional(key));
     const normalizeMissing = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
     const shortList = (items, limit = 2) => {
       const list = normalizeMissing(items);
@@ -28937,7 +28942,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       const isReady = Boolean(meta.ready);
       const isConfigured = Boolean(meta.configured);
-      const isOptional = optionalProviders.has(key);
+      const isOptional = isProviderOptional(key, meta);
+      const isHeartbeatOnlyGateway = key === 'openclawGateway' && meta?.connectionMode === 'heartbeat_only';
       const hint = buildMissingHint(meta, key);
       const stateEl = row.querySelector('.settings-providers-state');
       const nameEl = row.querySelector('.settings-providers-name');
@@ -28977,6 +28983,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         } else if (key === 'openclawGateway') {
           label = meta.latencyMs ? `Live - gateway ${Math.round(meta.latencyMs)}ms` : 'Live - gateway connected';
         }
+      } else if (isHeartbeatOnlyGateway) {
+        state = 'warning';
+        label = meta.note || 'Standby - waiting for local OpenClaw outbound heartbeat';
       } else if (isConfigured) {
         state = 'warning';
         if (key === 'telnyx') {
@@ -28990,7 +28999,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         } else if (key === 'render') {
           label = hint ? `Configured · ${hint}` : 'Configured · awaiting deploy check';
         } else if (key === 'openclawGateway') {
-          label = meta.note || hint || 'Configured - gateway probe retrying';
+          label = meta.note || hint || 'Configured - gateway direct probe unavailable';
         } else {
           const prefix = 'Configured · not ready';
           label = hint ? `${prefix} · ${hint}` : prefix;
@@ -29035,7 +29044,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (toolingEl) {
       const toolingSummary = buildToolingSummary(tooling);
       const gatewaySummary = gatewayStatus
-        ? `OpenClaw gateway ${gatewayStatus.ready ? 'healthy' : 'retrying'} - ${gatewayStatus.note || 'probe pending'}`
+        ? `OpenClaw gateway ${gatewayStatus.ready ? 'healthy' : gatewayStatus.directProbeConfigured ? 'direct probe unavailable' : 'standby'} - ${gatewayStatus.note || 'waiting for local heartbeat'}`
         : '';
       toolingEl.textContent = [gatewaySummary, toolingSummary].filter(Boolean).join(' | ') || 'Advanced tooling readiness will appear after the next bridge sync.';
     }

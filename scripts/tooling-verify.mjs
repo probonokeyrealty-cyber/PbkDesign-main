@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,9 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 const SERVER_ENTRY = path.join(ROOT_DIR, 'scripts', 'openclaw-local-server.mjs');
-const PORT = Number(process.env.PBK_TOOLING_PORT || 18791);
+let PORT = Number(process.env.PBK_TOOLING_PORT || 18791);
 const API_KEY = String(process.env.PBK_TOOLING_API_KEY || 'pbk-tooling-test-key').trim();
-const BASE_URL = `http://127.0.0.1:${PORT}`;
+let BASE_URL = `http://127.0.0.1:${PORT}`;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -33,6 +34,30 @@ async function waitForHealth(timeoutMs = 15000) {
   throw lastError || new Error('Timed out waiting for bridge health.');
 }
 
+async function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(port, '127.0.0.1');
+  });
+}
+
+async function pickToolingPort(preferredPort) {
+  if (await isPortAvailable(preferredPort)) return preferredPort;
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.once('listening', () => {
+      const address = probe.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+    probe.listen(0, '127.0.0.1');
+  });
+}
 async function runNodeScript(scriptPath, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [scriptPath, ...args], {
@@ -59,6 +84,9 @@ async function runNodeScript(scriptPath, args = []) {
 }
 
 async function main() {
+  PORT = await pickToolingPort(PORT);
+  BASE_URL = `http://127.0.0.1:${PORT}`;
+
   const child = spawn(process.execPath, [SERVER_ENTRY, '--reset'], {
     cwd: ROOT_DIR,
     env: {

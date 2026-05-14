@@ -380,7 +380,14 @@ const checks = [
     ok: /requestPayload\.stream_auth_token\s*=\s*TELNYX_MEDIA_STREAM_TOKEN/.test(bridge)
       && /eventType\.includes\('streaming'\)/.test(bridge)
       && /eventType:\s*'call-stream'/.test(bridge)
-      && /normalizedEvent === 'call-stream'/.test(bridge),
+      && /normalizedEvent === 'call-stream'/.test(bridge)
+      && /mediaStreamError:\s*status === 'failed'/.test(bridge),
+  },
+  {
+    name: 'Telnyx media WebSocket diagnostics prove connection and first audio frame',
+    ok: /Telnyx media WebSocket connected to PBK bridge/.test(bridge)
+      && /Telnyx media stream delivered first audio frame/.test(bridge)
+      && /session\.frameCount === 1/.test(bridge),
   },
   {
     name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',

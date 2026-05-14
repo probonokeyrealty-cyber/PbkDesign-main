@@ -38,7 +38,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-telnyx-stream-auth';
+const BUILD_REVISION = '2026-05-14-telnyx-media-diagnostics';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -27280,7 +27280,7 @@ async function handleEvent(eventType, payload = {}) {
       phone: payload.phone || existingCall?.phone || '',
       provider: existingCall?.provider || 'Telnyx',
       mediaStreamStatus: status,
-      mediaStreamError: payload.reason || existingCall?.mediaStreamError || '',
+      mediaStreamError: status === 'failed' ? (payload.reason || existingCall?.mediaStreamError || '') : '',
       mediaStreamUpdatedAt: isoNow(),
       telnyxCallControlId: payload.call_control_id || existingCall?.telnyxCallControlId || '',
       telnyxCallLegId: payload.call_leg_id || existingCall?.telnyxCallLegId || '',
@@ -29385,6 +29385,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     return;
   }
 
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'Telnyx Media',
+      category: 'CALL',
+      status: 'connected',
+      text: 'Telnyx media WebSocket connected to PBK bridge.',
+      target: request.url || '/api/webhooks/telnyx/media',
+    }),
+  );
+  void persistState(state);
+
   let deepgramConnection = null;
   let finalized = false;
   const earlyTelnyxMessages = [];
@@ -29634,6 +29646,19 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (event.event === 'media' && event.media?.payload) {
       const frame = Buffer.from(String(event.media.payload), 'base64');
       session.frameCount += 1;
+      if (session.frameCount === 1) {
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Telnyx Media',
+            category: 'CALL',
+            status: 'streaming',
+            text: `Telnyx media stream delivered first audio frame for ${session.callId || session.streamId || session.id}.`,
+            target: session.callId || session.streamId || session.id,
+          }),
+        );
+        void persistState(state);
+      }
       sendDeepgramAudio(deepgramConnection, frame);
       return;
     }

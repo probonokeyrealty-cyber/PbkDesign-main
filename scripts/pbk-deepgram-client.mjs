@@ -126,8 +126,14 @@ function createManualDeepgramLiveConnection({ url, headers = {} }) {
           reject(error);
         };
         const onUnexpectedResponse = (_request, response) => {
-          cleanup();
-          reject(new Error(`Unexpected server response: ${response.statusCode}`));
+          const chunks = [];
+          response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          response.on('end', () => {
+            cleanup();
+            const body = Buffer.concat(chunks).toString('utf8').slice(0, 500);
+            reject(new Error(`Unexpected server response: ${response.statusCode}${body ? ` ${body}` : ''}`));
+          });
+          response.resume();
         };
         socket?.once?.('open', onOpen);
         socket?.once?.('error', onError);

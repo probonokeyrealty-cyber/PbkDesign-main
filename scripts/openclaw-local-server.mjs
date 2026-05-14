@@ -38,7 +38,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-telnyx-media-open-guard';
+const BUILD_REVISION = '2026-05-14-telnyx-deepgram-phone-model';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -14576,6 +14576,14 @@ function buildTelnyxDeepgramLiveOptions(codec = DEEPGRAM_STREAM_CODEC) {
     return { encoding: 'linear16', sampleRate: Number(process.env.PBK_DEEPGRAM_TELNYX_SAMPLE_RATE || 16000) };
   }
   return { encoding: 'mulaw', sampleRate: 8000 };
+}
+
+function getTelnyxDeepgramLiveModel() {
+  return String(
+    process.env.PBK_DEEPGRAM_TELNYX_LIVE_MODEL
+      || process.env.DEEPGRAM_TELNYX_LIVE_MODEL
+      || 'nova-2',
+  ).trim();
 }
 
 async function startTelnyxMediaStream(callControlId = '', params = {}) {
@@ -29751,6 +29759,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       const codecOptions = buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC);
       deepgramConnection = await createDeepgramLiveConnection({
         manualWebSocket: true,
+        model: getTelnyxDeepgramLiveModel(),
         encoding: codecOptions.encoding,
         sampleRate: codecOptions.sampleRate,
         channels: 1,

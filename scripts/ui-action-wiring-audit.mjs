@@ -61,7 +61,7 @@ function bridgeRoutes() {
 function routeToRegex(route = '') {
   const escaped = route
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\\:([A-Za-z0-9_]+)/g, '[^/]+');
+    .replace(/:([A-Za-z0-9_]+)/g, '[^/]+');
   return new RegExp(`^${escaped}(?:[/?#]|$)`);
 }
 
@@ -90,6 +90,26 @@ if (missingRoutes.length) {
   fail.push({
     name: 'Frontend API requests must map to bridge routes',
     details: missingRoutes.slice(0, 40),
+  });
+}
+
+const requiredArchitectureRoutes = [
+  { label: '/api/analyzeDeal', path: '/api/analyzeDeal' },
+  { label: '/api/approvals/:id/approve', path: '/api/approvals/approval-smoke/approve' },
+  { label: '/api/approvals/:id/deny', path: '/api/approvals/approval-smoke/deny' },
+  { label: '/api/contracts/draft', path: '/api/contracts/draft' },
+  { label: '/api/contracts/:id/send', path: '/api/contracts/contract-smoke/send' },
+  { label: '/api/contracts/:id/remind', path: '/api/contracts/contract-smoke/remind' },
+  { label: '/api/contracts/:id/void', path: '/api/contracts/contract-smoke/void' },
+  { label: '/api/contracts/:id/pdf', path: '/api/contracts/contract-smoke/pdf' },
+];
+const missingArchitectureRoutes = requiredArchitectureRoutes
+  .filter(({ path }) => !routeMatchers.some(({ regex }) => regex.test(path)))
+  .map(({ label }) => label);
+if (missingArchitectureRoutes.length) {
+  fail.push({
+    name: 'Documented production control routes must exist on the bridge',
+    details: missingArchitectureRoutes,
   });
 }
 

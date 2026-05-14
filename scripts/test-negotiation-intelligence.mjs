@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,12 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function expectedBridgeRevision() {
+  const source = readFileSync(SERVER_ENTRY, 'utf8');
+  const match = source.match(/const\s+BUILD_REVISION\s*=\s*['"]([^'"]+)['"]/);
+  return match?.[1] || '';
 }
 
 async function request(pathname, options = {}) {
@@ -81,7 +88,8 @@ async function main() {
 
   try {
     const health = await waitForHealth();
-    assert(health.revision === '2026-05-09-ava-quality-gates', `Unexpected revision ${health.revision}`);
+    const expectedRevision = expectedBridgeRevision();
+    assert(expectedRevision && health.revision === expectedRevision, `Unexpected revision ${health.revision}; expected ${expectedRevision || 'source revision'}`);
     assert(health.tools.includes('avaAskStrategist'), 'avaAskStrategist missing from health tools.');
     assert(health.tools.includes('recordRepairs'), 'recordRepairs missing from health tools.');
     assert(health.tools.includes('pbk_script_test'), 'pbk_script_test missing from health tools.');

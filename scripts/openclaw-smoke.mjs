@@ -335,6 +335,123 @@ async function main() {
         selectedPathLabel: 'Cash Offer',
       }),
     }).then((response) => response.json());
+    const canonicalDraftContract = await fetch(`${BASE_URL}/api/contracts/draft`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        email: 'smoke@example.com',
+        amount: 91500,
+        selectedPath: 'cash',
+        selectedPathLabel: 'Cash Offer',
+      }),
+    }).then((response) => response.json());
+    const canonicalAnalyzeDeal = await fetch(`${BASE_URL}/api/analyzeDeal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        address: '808 Smoke Test Ave, Columbus OH',
+        condition: 'needs roof work',
+        sellerFacing: false,
+      }),
+    }).then((response) => response.json());
+    const canonicalApproveRequest = await fetch(`${BASE_URL}/api/approvals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        id: 'smoke-approval-route-approve',
+        type: 'offer',
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        offerPrice: 91500,
+      }),
+    }).then((response) => response.json());
+    const canonicalApprove = await fetch(`${BASE_URL}/api/approvals/smoke-approval-route-approve/approve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+        actedAt: '2026-04-26T18:05:00.000Z',
+      }),
+    }).then((response) => response.json());
+    const canonicalDenyRequest = await fetch(`${BASE_URL}/api/approvals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        id: 'smoke-approval-route-deny',
+        type: 'offer',
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        offerPrice: 95000,
+      }),
+    }).then((response) => response.json());
+    const canonicalDeny = await fetch(`${BASE_URL}/api/approvals/smoke-approval-route-deny/deny`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+        actedAt: '2026-04-26T18:06:00.000Z',
+      }),
+    }).then((response) => response.json());
+    const preparedContractId = preparedContract?.contract?.id || '';
+    const canonicalContractSend = await fetch(`${BASE_URL}/api/contracts/${encodeURIComponent(preparedContractId)}/send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const canonicalContractRemind = await fetch(`${BASE_URL}/api/contracts/${encodeURIComponent(preparedContractId)}/remind`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const canonicalContractPdfResponse = await fetch(`${BASE_URL}/api/contracts/${encodeURIComponent(preparedContractId)}/pdf`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    });
+    const canonicalContractPdfBuffer = Buffer.from(await canonicalContractPdfResponse.arrayBuffer());
+    const canonicalContractVoid = await fetch(`${BASE_URL}/api/contracts/${encodeURIComponent(preparedContractId)}/void`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+      }),
+    }).then((response) => response.json());
     const instantlyWebhook = await fetch(`${BASE_URL}/api/webhooks/instantly`, {
       method: 'POST',
       headers: {
@@ -425,6 +542,18 @@ async function main() {
     assert(adminRequest?.ok === true, 'Admin request endpoint did not succeed.');
     assert(adminApproval?.ok === true, 'Admin approval endpoint did not succeed.');
     assert(preparedContract?.ok === true, 'Contract prepare endpoint did not succeed.');
+    assert(canonicalDraftContract?.ok === true, 'Canonical contract draft endpoint did not succeed.');
+    assert(canonicalAnalyzeDeal?.ok === true && typeof canonicalAnalyzeDeal?.mao === 'number', 'Canonical analyzeDeal endpoint did not return analysis.');
+    assert(canonicalApproveRequest?.ok === true, 'Canonical approval setup for approve endpoint did not succeed.');
+    assert(canonicalApprove?.ok === true && canonicalApprove?.approval?.status === 'approved', 'Canonical approval approve endpoint did not approve.');
+    assert(canonicalDenyRequest?.ok === true, 'Canonical approval setup for deny endpoint did not succeed.');
+    assert(canonicalDeny?.ok === true && canonicalDeny?.approval?.status === 'rejected', 'Canonical approval deny endpoint did not reject.');
+    assert(canonicalContractSend?.ok === true, 'Canonical contract send endpoint did not succeed.');
+    assert(canonicalContractRemind?.ok === true, 'Canonical contract remind endpoint did not succeed.');
+    assert(canonicalContractPdfResponse.ok, `Canonical contract PDF endpoint returned ${canonicalContractPdfResponse.status}.`);
+    assert((canonicalContractPdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'Canonical contract PDF endpoint did not return application/pdf.');
+    assert(canonicalContractPdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'Canonical contract PDF endpoint did not return a valid PDF signature.');
+    assert(canonicalContractVoid?.ok === true && String(canonicalContractVoid?.contract?.status || '').includes('void'), 'Canonical contract void endpoint did not void the contract.');
     assert(instantlyWebhook?.ok === true, 'Instantly webhook endpoint did not succeed.');
     assert(emailWebhook?.ok === true, 'Email webhook endpoint did not succeed.');
     assert(pdfResponse.ok, `PDF endpoint returned ${pdfResponse.status}.`);

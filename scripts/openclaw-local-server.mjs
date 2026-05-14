@@ -7216,7 +7216,7 @@ const PBK_CORE_DEAL_PATHS = [
   },
 ];
 
-const AVA_MASTERCLASS_KNOWLEDGE_REVISION = '2026-05-12-ava-suite-streaming-tts';
+const AVA_MASTERCLASS_KNOWLEDGE_REVISION = '2026-05-14-command-center-debug-reference';
 const AVA_MASTERCLASS_SOURCE_ID = 'ava-wholesale-conversation-masterclass';
 const AVA_MASTERCLASS_KNOWLEDGE = [
   {
@@ -7422,6 +7422,14 @@ const AVA_MASTERCLASS_KNOWLEDGE = [
     object: 'Streaming TTS requirement: keep the existing ElevenLabs TTS endpoint as fallback, but prefer PBK bridge streaming audio when available. The goal is to reduce awkward silence and make Ava sound responsive. The client must handle streaming safely, stop current audio on operator interrupt, and fall back to full audio playback if MediaSource streaming is not supported.',
     tags: ['elevenlabs', 'streaming_tts', 'tts', 'voice_latency', 'dashboard_voice', 'fallback'],
   },
+  {
+    id: 'pbk-knowledge-command-center-debug-reference',
+    subject: 'PBK Command Center Debug Reference',
+    predicate: 'production_control_route_contract',
+    object: 'PBK Command Center controls are validated against the durable debug reference. Canonical routes include lead CRUD, approval approve/deny aliases, contract draft/send/remind/void/pdf aliases, analyzer POST /api/analyzeDeal, Brain ingestion, browser voice session plus /ws/browser, and Telnyx live-call controls. Ava and Rex must route through agent_brain, preserve approval guardrails, and use this contract to debug button wiring before launch.',
+    tags: ['debug_reference', 'ui_wiring', 'route_contract', 'ava', 'rex', 'openclaw', 'websocket', 'production'],
+    sourceFile: 'knowledge/pbk-command-center-debug-reference.md',
+  },
 ];
 
 function buildAvaMasterclassKnowledgeFacts(now = isoNow()) {
@@ -7429,7 +7437,7 @@ function buildAvaMasterclassKnowledgeFacts(now = isoNow()) {
     tenantId: 'pbk',
     confidence: 0.99,
     source: 'pbk-immutable-seed',
-    sourceId: AVA_MASTERCLASS_SOURCE_ID,
+    sourceId: fact.sourceId || AVA_MASTERCLASS_SOURCE_ID,
     createdAt: now,
     updatedAt: now,
     ...fact,
@@ -7437,7 +7445,7 @@ function buildAvaMasterclassKnowledgeFacts(now = isoNow()) {
       immutable: true,
       safety: 'ethical_conversation_masterclass',
       revision: AVA_MASTERCLASS_KNOWLEDGE_REVISION,
-      sourceFile: 'knowledge/ava-wholesale-conversation-masterclass.md',
+      sourceFile: fact.sourceFile || 'knowledge/ava-wholesale-conversation-masterclass.md',
       topic: fact.predicate,
       tags: fact.tags,
     },
@@ -11921,6 +11929,35 @@ function getRuntimeContractStage(contract = {}) {
   if (['viewed', 'opened', 'review', 'reviewing', 'updated'].includes(status)) return 'viewed';
   if (['sent', 'delivered'].includes(status)) return 'sent';
   return 'draft';
+}
+
+function findContractByLookup(contractId = '') {
+  const lookup = String(contractId || '').trim();
+  if (!lookup) return null;
+  return state.contracts.find((item) =>
+    item.id === lookup
+    || item.envelopeId === lookup
+    || item.contractId === lookup,
+  ) || null;
+}
+
+function buildContractPdfPayload(contract = {}, extra = {}) {
+  return {
+    ...contract,
+    ...extra,
+    documentTitle: contract.documentTitle || `PBK Contract - ${contract.leadName || contract.address || contract.id || 'Deal'}`,
+    propertyAddress: contract.address || extra.propertyAddress || '',
+    selectedPathLabel: contract.selectedPathLabel || contract.contractPath || contract.contractType || 'PBK Contract',
+    content: extra.content || [
+      `Lead: ${contract.leadName || 'Unknown seller'}`,
+      `Property: ${contract.address || 'Unknown property'}`,
+      `Amount: ${contract.amount ? currency(contract.amount) : 'Not set'}`,
+      `Status: ${contract.status || 'draft'}`,
+      `Template: ${contract.templateName || contract.docusignTemplateName || contract.templateId || 'PBK contract template'}`,
+      '',
+      contract.notes || 'Generated from PBK Command Center contract record.',
+    ].join('\n'),
+  };
 }
 
 function findDncEntryByPhone(phone = '') {
@@ -31159,6 +31196,18 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/analyzeDeal') {
+      const body = await readBody(request);
+      const result = await toolHandlers.analyzeDeal(body);
+      json(response, result.ok === false ? 400 : 200, {
+        ok: result.ok !== false,
+        analysis: result,
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/send-seller-docs') {
       const body = await readBody(request);
       const guard = await enforceOperatingModeForTool('sendSellerDocs', body);
@@ -31829,6 +31878,67 @@ const server = createServer(async (request, response) => {
       const result = await toolHandlers.createApproval(body);
       json(response, 200, {
         ok: true,
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const approvalDecisionMatch = matchPath(pathname, '/api/approvals/:id/:decision');
+    if (approvalDecisionMatch && request.method === 'POST') {
+      const decision = String(approvalDecisionMatch.groups.decision || '').trim().toLowerCase();
+      const status = decision === 'approve' ? 'approved' : decision === 'deny' ? 'rejected' : '';
+      if (!status) {
+        json(response, 404, {
+          ok: false,
+          error: `Unsupported approval decision ${decision || '(missing)'}.`,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+
+      const body = await readBody(request);
+      const approval = state.approvals.find((item) => item.id === approvalDecisionMatch.groups.id);
+      if (body.teamAuthRequired === true || body.requireTeamAuth === true) {
+        const teamAuth = getTeamAuthMeta(request, body);
+        if (!teamAuth.ok) {
+          json(response, 403, {
+            ok: false,
+            error: teamAuth.error || 'Team passcode required.',
+            configured: Boolean(TEAM_PASSCODE),
+            permissions: getTeamPermissions(),
+          });
+          return;
+        }
+        const restriction = getTeamApprovalRestriction(approval || {}, status);
+        if (restriction) {
+          json(response, 403, {
+            ok: false,
+            error: restriction,
+            adminRequired: true,
+            permissions: getTeamPermissions(),
+          });
+          return;
+        }
+        body.actor = body.actor || teamAuth.actor || 'PBK team';
+        body.teamAuth = {
+          role: teamAuth.role,
+          source: teamAuth.source,
+          expiresAt: teamAuth.expiresAt,
+        };
+      }
+
+      const result = await handleEvent('approval-callback', {
+        id: approvalDecisionMatch.groups.id,
+        status,
+        actor: body.actor || 'api',
+        actedAt: body.actedAt || isoNow(),
+        notes: body.notes || '',
+        reviewReason: body.reviewReason || '',
+        falsePositiveTag: body.falsePositiveTag || body.reviewReason || '',
+        teamAuth: body.teamAuth || null,
+      });
+      json(response, result.ok === false ? 404 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -32525,6 +32635,19 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/contracts/draft') {
+      const body = await readBody(request);
+      const result = await toolHandlers.prepareContract({
+        ...body,
+        status: body.status || 'draft',
+      });
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/contracts') {
       const body = await readBody(request);
       const guard = await enforceOperatingModeForTool('sendDocuSign', body);
@@ -32561,6 +32684,28 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const contractPdfMatch = matchPath(pathname, '/api/contracts/:id/pdf');
+    if (contractPdfMatch && request.method === 'GET') {
+      const contract = findContractByLookup(contractPdfMatch.groups.id);
+      if (!contract) {
+        json(response, 404, {
+          ok: false,
+          error: 'Contract not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+
+      const pdf = await generatePdfDocument(buildContractPdfPayload(contract));
+      const filename = `${safeFilename(contract.documentTitle || contract.leadName || contract.address || contract.id || 'PBK_Contract')}.pdf`;
+      sendBinary(response, 200, pdf, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-store',
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/contracts/prepare') {
       const body = await readBody(request);
       const result = await toolHandlers.prepareContract(body);
@@ -32579,6 +32724,93 @@ const server = createServer(async (request, response) => {
         state: buildStateSnapshot(),
       });
       return;
+    }
+
+    const contractAliasActionMatch = matchPath(pathname, '/api/contracts/:id/:action');
+    if (contractAliasActionMatch && request.method === 'POST') {
+      const action = String(contractAliasActionMatch.groups.action || '').trim().toLowerCase();
+      if (['send', 'remind', 'void'].includes(action)) {
+        const body = await readBody(request);
+        const contract = findContractByLookup(contractAliasActionMatch.groups.id);
+        if (!contract) {
+          json(response, 404, {
+            ok: false,
+            error: 'Contract not found.',
+            state: buildStateSnapshot(),
+          });
+          return;
+        }
+
+        if (action === 'send') {
+          const payload = {
+            ...contract,
+            ...body,
+            id: contract.id,
+            leadId: contract.leadId,
+            leadName: contract.leadName,
+            address: contract.address,
+            email: body.email || contract.email,
+            amount: body.amount ?? contract.amount,
+          };
+          const guard = await enforceOperatingModeForTool('sendDocuSign', payload);
+          if (guard) {
+            json(response, guard.ok === false ? 409 : 202, {
+              ...guard,
+              state: buildStateSnapshot(),
+            });
+            return;
+          }
+          const result = await toolHandlers.sendDocuSign(payload);
+          json(response, result.ok === false ? 400 : 200, {
+            ...result,
+            state: buildStateSnapshot(),
+          });
+          return;
+        }
+
+        if (action === 'void') {
+          const result = await handleEvent('contract-status', {
+            ...body,
+            id: contract.id,
+            contractId: contract.id,
+            envelopeId: contract.envelopeId,
+            status: 'void',
+            actor: body.actor || 'api',
+            leadName: body.leadName || contract.leadName,
+            address: body.address || contract.address,
+            amount: body.amount ?? contract.amount,
+          });
+          json(response, result.ok === false ? 404 : 200, {
+            ...result,
+            state: buildStateSnapshot(),
+          });
+          return;
+        }
+
+        contract.lastReminderAt = isoNow();
+        contract.lastReminderActor = body.actor || 'api';
+        contract.updatedAt = isoNow();
+        upsertContract(state, contract);
+        addActivity(
+          state,
+          makeActivity({
+            actor: body.actor || 'Contracts',
+            category: 'CONTRACT',
+            status: 'reminder',
+            text: `Reminder requested for ${contract.leadName || contract.address || contract.id}.`,
+            target: contract.address || contract.leadName || contract.id,
+          }),
+        );
+        await persistState(state);
+        json(response, 200, {
+          ok: true,
+          result: 'recorded',
+          verbiage: 'Contract reminder recorded in PBK. DocuSign reminder delivery can be attached when provider support is enabled.',
+          contract,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
     }
 
     const contractActionMatch = matchPath(pathname, '/api/contracts/:id/action');
@@ -33413,6 +33645,7 @@ const server = createServer(async (request, response) => {
         'GET /api/lead-transitions',
         'POST /api/participants/classify',
         'POST /api/documents/pdf',
+        'POST /api/analyzeDeal',
         'POST /api/cold-email/send',
         'POST /api/replies/handle',
         'POST /api/crm/streak/bootstrap',
@@ -33438,6 +33671,8 @@ const server = createServer(async (request, response) => {
         'POST /api/admin/route',
         'POST /api/admin/request',
         'GET/POST /api/approvals',
+        'POST /api/approvals/:id/approve',
+        'POST /api/approvals/:id/deny',
         'GET/POST/DELETE /api/dnc',
         'GET/POST /api/calls',
         'POST /api/operator/call',
@@ -33449,9 +33684,14 @@ const server = createServer(async (request, response) => {
         'POST /api/recordings/fixture',
         'POST /api/recordings',
         'GET/POST /api/contracts',
+        'POST /api/contracts/draft',
         'POST /api/contracts/prepare',
         'POST /api/contracts/lawyer-review',
         'POST /api/contract/send',
+        'POST /api/contracts/:id/send',
+        'POST /api/contracts/:id/remind',
+        'POST /api/contracts/:id/void',
+        'GET /api/contracts/:id/pdf',
         'POST /api/underwriting/sign',
         'GET /api/leads/:id/full',
         'PATCH /api/leads/:id',

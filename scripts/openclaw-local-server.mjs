@@ -16,6 +16,7 @@ import {
   createDeepgramLiveConnection,
   getDeepgramProviderMeta,
   sendDeepgramAudio,
+  sendDeepgramControl,
   transcribeDeepgramFile,
   transcribeDeepgramUrl,
 } from './pbk-deepgram-client.mjs';
@@ -38,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-deepgram-live-valid-vad';
+const BUILD_REVISION = '2026-05-14-deepgram-close-stream-flush';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -205,6 +206,10 @@ const DEEPGRAM_STREAM_CODEC = String(process.env.PBK_DEEPGRAM_STREAM_CODEC || 'P
 const TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS = Math.max(
   1500,
   Number(process.env.PBK_TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS || process.env.TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS || 7000),
+);
+const TELNYX_DEEPGRAM_FINALIZE_GRACE_MS = Math.max(
+  250,
+  Number(process.env.PBK_TELNYX_DEEPGRAM_FINALIZE_GRACE_MS || process.env.TELNYX_DEEPGRAM_FINALIZE_GRACE_MS || 1400),
 );
 const TELNYX_AI_ASSISTANT_ID = String(process.env.PBK_TELNYX_AI_ASSISTANT_ID || process.env.TELNYX_AI_ASSISTANT_ID || '').trim();
 const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED || '').trim());
@@ -29472,6 +29477,25 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const finalize = async (reason = 'closed') => {
     if (finalized) return;
     finalized = true;
+    if (deepgramConnection && deepgramReady) {
+      const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
+      const didFinalize = sendDeepgramControl(deepgramConnection, { type: 'Finalize' });
+      if (didFinalize) await sleep(halfGraceMs);
+      const didCloseStream = sendDeepgramControl(deepgramConnection, { type: 'CloseStream' });
+      if (didFinalize || didCloseStream) {
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Deepgram',
+            category: 'CALL',
+            status: 'flushing',
+            text: `Deepgram close-stream flush requested for Telnyx media (${reason}).`,
+            target: session.callId || session.streamId || session.id,
+          }),
+        );
+        await sleep(didCloseStream ? TELNYX_DEEPGRAM_FINALIZE_GRACE_MS : halfGraceMs);
+      }
+    }
     try {
       deepgramConnection?.close?.();
     } catch {

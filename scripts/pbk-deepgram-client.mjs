@@ -143,6 +143,9 @@ function createManualDeepgramLiveConnection({ url, headers = {} }) {
     sendMedia(bytes) {
       if (socket?.readyState === WebSocket.OPEN) socket.send(bytes);
     },
+    sendControl(payload = {}) {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
+    },
     close() {
       try {
         socket?.close?.(1000, 'closed');
@@ -415,6 +418,24 @@ export function sendDeepgramAudio(connection, bytes) {
   }
   if (connection.socket && typeof connection.socket.send === 'function') {
     connection.socket.send(bytes);
+    return true;
+  }
+  return false;
+}
+
+export function sendDeepgramControl(connection, payload = {}) {
+  if (!connection || !payload || typeof payload !== 'object') return false;
+  const serialized = JSON.stringify(payload);
+  if (typeof connection.sendControl === 'function') {
+    connection.sendControl(payload);
+    return true;
+  }
+  if (typeof connection.send === 'function') {
+    connection.send(serialized);
+    return true;
+  }
+  if (connection.socket && typeof connection.socket.send === 'function') {
+    connection.socket.send(serialized);
     return true;
   }
   return false;

@@ -407,6 +407,14 @@ const checks = [
       && /Unexpected server response: \$\{response\.statusCode\}\$\{body/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
   },
   {
+    name: 'Telnyx Deepgram live socket flushes buffered audio before closing',
+    ok: /sendDeepgramControl/.test(bridge)
+      && /type:\s*'Finalize'/.test(bridge)
+      && /type:\s*'CloseStream'/.test(bridge)
+      && /TELNYX_DEEPGRAM_FINALIZE_GRACE_MS/.test(bridge)
+      && /Deepgram close-stream flush requested for Telnyx media/.test(bridge),
+  },
+  {
     name: 'Outbound Telnyx answered calls get an Ava greeting instead of silent dead air',
     ok: /outboundAvaGreetingSpoken/.test(bridge)
       && /speakTelnyxCall\(call\.telnyxCallControlId/.test(bridge)

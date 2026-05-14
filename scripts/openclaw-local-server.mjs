@@ -16542,6 +16542,18 @@ function getMessageRecordingPath(message = {}) {
   );
 }
 
+function isMetadataOnlySmokeRecording(message = {}) {
+  const storagePath = getMessageRecordingPath(message);
+  const id = String(message.id || message.messageId || message.callId || '').trim();
+  const upload = message.payload?.upload;
+  return Boolean(
+    (id.startsWith('smoke-recording-') || storagePath.startsWith('smoke/'))
+      && !message.recordingUrl
+      && !message.audioUrl
+      && (!upload || upload.ok !== true),
+  );
+}
+
 function getMessageRecordingUrl(message = {}) {
   return String(
     message.recordingUrl
@@ -32171,6 +32183,18 @@ const server = createServer(async (request, response) => {
       const directUrl = getMessageRecordingUrl(message);
       let signed = null;
       const storagePath = getMessageRecordingPath(message);
+      if (!directUrl && isMetadataOnlySmokeRecording(message)) {
+        json(response, 501, {
+          ok: false,
+          configured: true,
+          skipped: true,
+          reason: 'metadata_only_smoke_recording',
+          messageId,
+          storagePath,
+          error: 'Smoke recording metadata has no uploaded audio object, so PBK skipped Supabase signed URL creation.',
+        });
+        return;
+      }
       if (!directUrl) {
         signed = await createSupabaseRecordingSignedUrl(
           storagePath,
@@ -32387,6 +32411,19 @@ const server = createServer(async (request, response) => {
         return;
       }
       const storagePath = getMessageRecordingPath(message);
+      if (isMetadataOnlySmokeRecording(message)) {
+        json(response, 501, {
+          ok: false,
+          configured: true,
+          skipped: true,
+          reason: 'metadata_only_smoke_recording',
+          messageId,
+          storagePath,
+          error: 'Smoke recording metadata has no uploaded audio object, so PBK skipped Supabase signed URL creation.',
+          message,
+        });
+        return;
+      }
       const signed = await createSupabaseRecordingSignedUrl(
         storagePath,
         Number(url.searchParams.get('expiresIn') || SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS),

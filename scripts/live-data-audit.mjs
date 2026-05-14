@@ -171,6 +171,12 @@ const checks = [
       && /No live recordings yet/.test(index),
   },
   {
+    name: 'Metadata-only smoke recordings do not spam Supabase signed URL errors',
+    ok: /function isMetadataOnlySmokeRecording/.test(bridge)
+      && /metadata_only_smoke_recording/.test(bridge)
+      && /skipped:\s*true/.test(bridge),
+  },
+  {
     name: 'Recordings can be deleted from UI and bridge storage/state',
     ok: /deleteRuntimeRecording/.test(index)
       && /data-recording-delete/.test(index)

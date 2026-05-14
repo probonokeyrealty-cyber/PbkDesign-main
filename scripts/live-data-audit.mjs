@@ -218,6 +218,11 @@ const checks = [
       && /shouldSkipHostedGatewayProbe\(explicit\)/.test(bridge),
   },
   {
+    name: 'Optional OpenClaw gateway diagnostics do not create browser console 503 noise',
+    ok: /function shouldReturnGatewayStatusOk/.test(bridge)
+      && /const statusCode = shouldReturnGatewayStatusOk\(gatewayStatus\) \? 200 : 503/.test(bridge),
+  },
+  {
     name: 'Toast noise is capped and deduplicated',
     ok: /TOAST_LIMIT\s*=\s*3/.test(index)
       && /data-toast-id/.test(index)

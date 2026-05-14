@@ -1806,6 +1806,12 @@ function getOpenClawGatewayHealthComponent() {
   };
 }
 
+function shouldReturnGatewayStatusOk(gatewayStatus = {}) {
+  if (gatewayStatus.ready) return true;
+  const directProbeConfigured = Boolean(gatewayStatus.websocket?.configured || gatewayStatus.http?.configured);
+  return Boolean(gatewayStatus.optional || !directProbeConfigured);
+}
+
 function getSecurityMeta() {
   return {
     bridgeBearerRequired: Boolean(BRIDGE_API_KEY),
@@ -29589,7 +29595,8 @@ const server = createServer(async (request, response) => {
       );
       const force = !/^(0|false|no)$/i.test(String(url.searchParams.get('force') || 'true'));
       const gatewayStatus = await buildOpenClawGatewayStatus({ force, timeoutMs });
-      json(response, gatewayStatus.ready ? 200 : 503, {
+      const statusCode = shouldReturnGatewayStatusOk(gatewayStatus) ? 200 : 503;
+      json(response, statusCode, {
         ok: gatewayStatus.ready,
         gateway: gatewayStatus,
       });

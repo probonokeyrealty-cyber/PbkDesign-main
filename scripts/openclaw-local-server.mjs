@@ -38,7 +38,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-telnyx-deepgram-phone-model';
+const BUILD_REVISION = '2026-05-14-deepgram-live-valid-vad';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -29764,7 +29764,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         sampleRate: codecOptions.sampleRate,
         channels: 1,
         interimResults: true,
-        utteranceEndMs: 900,
+        utteranceEndMs: 1000,
       }, process.env);
       deepgramConnection.on('message', handleTelnyxDeepgramMessage);
       deepgramConnection.on('error', (error) => {

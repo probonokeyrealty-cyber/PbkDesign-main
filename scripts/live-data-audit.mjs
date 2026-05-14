@@ -403,6 +403,7 @@ const checks = [
     name: 'Telnyx Deepgram live socket uses phone-safe model and captures 400 bodies',
     ok: /PBK_DEEPGRAM_TELNYX_LIVE_MODEL/.test(bridge)
       && /model:\s*getTelnyxDeepgramLiveModel\(\)/.test(bridge)
+      && /utteranceEndMs:\s*1000/.test(bridge)
       && /Unexpected server response: \$\{response\.statusCode\}\$\{body/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
   },
   {

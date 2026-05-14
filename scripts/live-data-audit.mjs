@@ -390,6 +390,16 @@ const checks = [
       && /session\.frameCount === 1/.test(bridge),
   },
   {
+    name: 'Telnyx media handler buffers immediately and diagnoses Deepgram live open',
+    ok: /TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS/.test(bridge)
+      && /pendingTelnyxMediaFrames/.test(bridge)
+      && /flushPendingTelnyxMediaFrames/.test(bridge)
+      && /withTimeout\(deepgramConnection\.waitForOpen\(\),\s*TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS/.test(bridge)
+      && /Deepgram live stream connected for Telnyx media/.test(bridge)
+      && /Deepgram live stream failed before Telnyx media could be transcribed/.test(bridge)
+      && /Telnyx media stream started for/.test(bridge),
+  },
+  {
     name: 'Outbound Telnyx answered calls get an Ava greeting instead of silent dead air',
     ok: /outboundAvaGreetingSpoken/.test(bridge)
       && /speakTelnyxCall\(call\.telnyxCallControlId/.test(bridge)

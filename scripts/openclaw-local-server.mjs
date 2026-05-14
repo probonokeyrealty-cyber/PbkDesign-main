@@ -38,7 +38,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-outbound-ava-greeting';
+const BUILD_REVISION = '2026-05-14-telnyx-media-open-guard';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -202,6 +202,10 @@ const TELNYX_MEDIA_STREAM_TOKEN = String(process.env.PBK_TELNYX_MEDIA_STREAM_TOK
 const DEEPGRAM_STREAM_CALLS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_DEEPGRAM_STREAM_CALLS || '').trim());
 const DEEPGRAM_STREAM_TRACK = String(process.env.PBK_DEEPGRAM_STREAM_TRACK || 'inbound_track').trim();
 const DEEPGRAM_STREAM_CODEC = String(process.env.PBK_DEEPGRAM_STREAM_CODEC || 'PCMU').trim();
+const TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS = Math.max(
+  1500,
+  Number(process.env.PBK_TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS || process.env.TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS || 7000),
+);
 const TELNYX_AI_ASSISTANT_ID = String(process.env.PBK_TELNYX_AI_ASSISTANT_ID || process.env.TELNYX_AI_ASSISTANT_ID || '').trim();
 const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED || 'true').trim());
@@ -1389,6 +1393,18 @@ function jsonStringify(value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, ms, label = 'operation') {
+  let timer = null;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 let openClawGatewayStatusCache = null;
@@ -29430,8 +29446,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   void persistState(state);
 
   let deepgramConnection = null;
+  let deepgramReady = false;
+  let deepgramOpenStarted = false;
   let finalized = false;
   const earlyTelnyxMessages = [];
+  const pendingTelnyxMediaFrames = [];
   let liveTelnyxMessageHandler = null;
 
   socket.on('message', (raw) => {
@@ -29630,33 +29649,43 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     void maybeSpeakTelnyxAvaReply(item);
   };
 
-  try {
-    const codecOptions = buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC);
-    deepgramConnection = await createDeepgramLiveConnection({
-      manualWebSocket: true,
-      encoding: codecOptions.encoding,
-      sampleRate: codecOptions.sampleRate,
-      channels: 1,
-      interimResults: true,
-      utteranceEndMs: 900,
-    }, process.env);
-    deepgramConnection.on('message', handleTelnyxDeepgramMessage);
-    deepgramConnection.on('error', (error) => {
-      console.warn('[pbk-local-openclaw] Deepgram live stream error:', error?.message || error);
-    });
-    deepgramConnection.connect();
-    await deepgramConnection.waitForOpen();
-  } catch (error) {
-    console.warn('[pbk-local-openclaw] Deepgram live stream could not start:', error?.message || error);
-    socket.close(1011, 'Deepgram connection failed');
-    return;
-  }
+  const flushPendingTelnyxMediaFrames = () => {
+    if (!deepgramReady || !deepgramConnection) return;
+    for (const frame of pendingTelnyxMediaFrames.splice(0)) {
+      sendDeepgramAudio(deepgramConnection, frame);
+    }
+  };
+
+  const sendOrBufferTelnyxMediaFrame = (frame) => {
+    if (deepgramReady && deepgramConnection) {
+      sendDeepgramAudio(deepgramConnection, frame);
+      return;
+    }
+    if (pendingTelnyxMediaFrames.length >= 1500) pendingTelnyxMediaFrames.shift();
+    pendingTelnyxMediaFrames.push(frame);
+  };
 
   liveTelnyxMessageHandler = (raw) => {
     let event = {};
     try {
       event = JSON.parse(raw.toString('utf8'));
     } catch {
+      return;
+    }
+
+    if (event.event === 'error') {
+      const detail = event.payload?.detail || event.payload?.title || event.payload?.code || 'unknown media stream error';
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Telnyx Media',
+          category: 'CALL',
+          status: 'warning',
+          text: `Telnyx media WebSocket error for ${session.callId || session.streamId || session.id}: ${String(detail).slice(0, 180)}`,
+          target: session.callId || session.streamId || session.id,
+        }),
+      );
+      void persistState(state);
       return;
     }
 
@@ -29672,6 +29701,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         || session.callId;
       session.leadId = clientState.leadId || session.leadId;
       session.telnyxAiAssistantStarted = Boolean(clientState.telnyxAiAssistantStarted || session.telnyxAiAssistantStarted);
+      const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
+      addActivity(
+        state,
+        makeActivity({
+          actor: 'Telnyx Media',
+          category: 'CALL',
+          status: 'started',
+          text: `Telnyx media stream started for ${session.callId || session.streamId || session.id} (${mediaFormat.encoding || 'unknown'} ${mediaFormat.sample_rate || mediaFormat.sampleRate || 'unknown'}Hz).`,
+          target: session.callId || session.streamId || session.id,
+        }),
+      );
+      void persistState(state);
       return;
     }
 
@@ -29691,7 +29732,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         );
         void persistState(state);
       }
-      sendDeepgramAudio(deepgramConnection, frame);
+      sendOrBufferTelnyxMediaFrame(frame);
       return;
     }
 
@@ -29703,6 +29744,66 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
   };
   for (const queuedRaw of earlyTelnyxMessages.splice(0)) liveTelnyxMessageHandler(queuedRaw);
+
+  void (async () => {
+    try {
+      deepgramOpenStarted = true;
+      const codecOptions = buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC);
+      deepgramConnection = await createDeepgramLiveConnection({
+        manualWebSocket: true,
+        encoding: codecOptions.encoding,
+        sampleRate: codecOptions.sampleRate,
+        channels: 1,
+        interimResults: true,
+        utteranceEndMs: 900,
+      }, process.env);
+      deepgramConnection.on('message', handleTelnyxDeepgramMessage);
+      deepgramConnection.on('error', (error) => {
+        console.warn('[pbk-local-openclaw] Deepgram live stream error:', error?.message || error);
+        addActivity(state, makeActivity({
+          actor: 'Deepgram',
+          category: 'CALL',
+          status: 'warning',
+          text: `Deepgram live stream error for Telnyx media: ${String(error?.message || error || 'unknown error').slice(0, 180)}`,
+          target: session.callId || session.streamId || session.id,
+        }));
+        void persistState(state);
+      });
+      deepgramConnection.connect();
+      await withTimeout(deepgramConnection.waitForOpen(), TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS, 'Deepgram live stream open');
+      if (finalized) {
+        deepgramConnection.close?.();
+        return;
+      }
+      deepgramReady = true;
+      addActivity(state, makeActivity({
+        actor: 'Deepgram',
+        category: 'CALL',
+        status: 'connected',
+        text: `Deepgram live stream connected for Telnyx media ${session.callId || session.streamId || session.id}.`,
+        target: session.callId || session.streamId || session.id,
+      }));
+      flushPendingTelnyxMediaFrames();
+      await persistState(state);
+    } catch (error) {
+      const message = String(error?.message || error || 'unknown error').slice(0, 240);
+      console.warn('[pbk-local-openclaw] Deepgram live stream could not start:', message);
+      addActivity(state, makeActivity({
+        actor: 'Deepgram',
+        category: 'CALL',
+        status: 'warning',
+        text: `Deepgram live stream failed before Telnyx media could be transcribed: ${message}`,
+        target: session.callId || session.streamId || session.id,
+      }));
+      await persistState(state);
+      try {
+        socket.close(1011, 'Deepgram connection failed');
+      } catch {
+        // The socket may have already closed while Deepgram was opening.
+      }
+      void finalize(deepgramOpenStarted ? 'deepgram-open-failed' : 'deepgram-not-started');
+    }
+  })();
 
   socket.on('close', () => {
     void finalize('websocket-close');

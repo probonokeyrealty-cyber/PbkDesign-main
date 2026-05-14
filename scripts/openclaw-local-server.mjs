@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-live-sentiment-fallback';
+const BUILD_REVISION = '2026-05-14-proof-complete-audit';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -7426,7 +7426,7 @@ const AVA_MASTERCLASS_KNOWLEDGE = [
     id: 'pbk-knowledge-ava-masterclass-launch-gap-register',
     subject: 'Ava Missing Pieces Suite',
     predicate: 'launch_gap_register',
-    object: 'Launch gap register: inbound call speak/stream/transcript and live-call cleanup are implemented and audited in code, but the remaining critical operator proof is one real Telnyx-to-Deepgram call with speech that verifies transcript and sentiment logs. UI raw-prompt leakage has a safe next-move filter and should be spot-checked after deploy. Post-launch enhancements: proactive idle builder, OmniParser/computer-vision hands wired into Ava tools, and any future Hermes autonomy. Hermes remains suggest-only by design until explicitly changed.',
+    object: 'Launch gap register: inbound call speak/stream/transcript, live-call cleanup, and the Telnyx-to-Deepgram proof call are implemented and verified with durable transcript plus sentiment rows. UI raw-prompt leakage has a safe next-move filter and should remain part of routine spot checks after deploy. Post-launch enhancements: proactive idle builder, OmniParser/computer-vision hands wired into Ava tools, and any future Hermes autonomy. Hermes remains suggest-only by design until explicitly changed.',
     tags: ['launch_gaps', 'operator_proof', 'telnyx', 'deepgram', 'transcript', 'omniparser', 'hermes', 'idle_builder'],
   },
   {

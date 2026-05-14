@@ -493,8 +493,10 @@ const report = {
   ok: failed.length === 0,
   checkedAt: new Date().toISOString(),
   checks,
+  completedProductionProof: [
+    'One answered Telnyx -> Deepgram phone call with speech created durable transcript and sentiment rows',
+  ],
   remainingOperatorProof: [
-    'One answered Telnyx -> Deepgram phone call with speech',
     'Authenticator enrollment verification before setting PBK_TOTP_REQUIRED=true',
     'Marketing-site snippet placement if that site is a separate repository',
   ],

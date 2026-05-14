@@ -401,7 +401,7 @@ const OPENCLAW_GATEWAY_URL = String(
   process.env.OPENCLAW_GATEWAY_URL
     || process.env.OPENCLAW_GATEWAY_WS_URL
     || process.env.PBK_OPENCLAW_GATEWAY_URL
-    || 'ws://127.0.0.1:18789',
+    || (IS_HOSTED ? '' : 'ws://127.0.0.1:18789'),
 )
   .trim()
   .replace(/\/+$/g, '');
@@ -1513,9 +1513,30 @@ function redactGatewayUrl(value = '') {
   }
 }
 
+function isLoopbackGatewayUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return hostname === 'localhost'
+      || hostname === '::1'
+      || hostname === '0:0:0:0:0:0:0:1'
+      || hostname === '0.0.0.0'
+      || /^127(?:\.\d{1,3}){0,3}$/.test(hostname);
+  } catch {
+    return /\b(?:localhost|127(?:\.\d{1,3}){0,3}|0\.0\.0\.0|\[?::1\]?)\b/i.test(raw);
+  }
+}
+
+function shouldSkipHostedGatewayProbe(value = '') {
+  return Boolean(IS_HOSTED && isLoopbackGatewayUrl(value));
+}
+
 function buildGatewayWsUrl() {
   const raw = OPENCLAW_GATEWAY_URL || '';
   if (!raw) return '';
+  if (shouldSkipHostedGatewayProbe(raw)) return '';
   if (/^https?:\/\//i.test(raw)) {
     return raw.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
   }
@@ -1524,7 +1545,7 @@ function buildGatewayWsUrl() {
 
 function buildGatewayHttpUrl() {
   const explicit = OPENCLAW_GATEWAY_HTTP_URL || '';
-  if (explicit) return explicit;
+  if (explicit) return shouldSkipHostedGatewayProbe(explicit) ? '' : explicit;
   const wsUrl = buildGatewayWsUrl();
   if (!wsUrl) return '';
   if (/^wss?:\/\//i.test(wsUrl)) {

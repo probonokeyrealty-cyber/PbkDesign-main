@@ -210,6 +210,14 @@ const checks = [
       && /OpenClaw Brain Gateway/.test(index),
   },
   {
+    name: 'Hosted bridge never direct-dials local OpenClaw loopback gateway URLs',
+    ok: /IS_HOSTED\s*\?\s*''\s*:\s*'ws:\/\/127\.0\.0\.1:18789'/.test(bridge)
+      && /function isLoopbackGatewayUrl/.test(bridge)
+      && /function shouldSkipHostedGatewayProbe/.test(bridge)
+      && /shouldSkipHostedGatewayProbe\(raw\)/.test(bridge)
+      && /shouldSkipHostedGatewayProbe\(explicit\)/.test(bridge),
+  },
+  {
     name: 'Toast noise is capped and deduplicated',
     ok: /TOAST_LIMIT\s*=\s*3/.test(index)
       && /data-toast-id/.test(index)

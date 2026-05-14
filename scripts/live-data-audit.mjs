@@ -384,6 +384,12 @@ const checks = [
       && /supabaseRest/.test(bridge),
   },
   {
+    name: 'Live Telnyx transcripts persist fallback sentiment when Deepgram sentiment is absent',
+    ok: /function\s+estimatePbkLiveSentiment/.test(bridge)
+      && /pbk-lexical-fallback/.test(bridge)
+      && /session\.sentiment\s*=\s*estimatePbkLiveSentiment\(transcriptText\)/.test(bridge),
+  },
+  {
     name: 'Outbound Telnyx calls authenticate media streaming and classify stream webhooks',
     ok: /requestPayload\.stream_auth_token\s*=\s*TELNYX_MEDIA_STREAM_TOKEN/.test(bridge)
       && /eventType\.includes\('streaming'\)/.test(bridge)

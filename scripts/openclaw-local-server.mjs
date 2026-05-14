@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-supabase-transcript-dual-write';
+const BUILD_REVISION = '2026-05-14-live-sentiment-fallback';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -28681,6 +28681,30 @@ function normalizeDeepgramLiveSentiment(data = {}) {
   };
 }
 
+function estimatePbkLiveSentiment(text = '') {
+  const normalized = String(text || '').toLowerCase();
+  if (!normalized.trim()) {
+    return { label: 'unknown', score: null, pbkScore: null, source: 'pbk-lexical-fallback' };
+  }
+  const positiveTokens = [
+    'yes', 'yeah', 'okay', 'ok', 'sure', 'good', 'great', 'thanks', 'thank you', 'interested', 'quickly', 'help',
+  ];
+  const negativeTokens = [
+    "can't", 'cannot', "don't", 'not', 'no', 'angry', 'mad', 'lawsuit', 'stop calling', 'leave me alone', 'problem',
+  ];
+  const positiveHits = positiveTokens.reduce((count, token) => count + (normalized.includes(token) ? 1 : 0), 0);
+  const negativeHits = negativeTokens.reduce((count, token) => count + (normalized.includes(token) ? 1 : 0), 0);
+  const rawScore = Math.max(-1, Math.min(1, (positiveHits - negativeHits) / Math.max(3, positiveHits + negativeHits + 1)));
+  const pbkScore = Number(((rawScore + 1) / 2).toFixed(3));
+  const label = rawScore >= 0.2 ? 'positive' : rawScore <= -0.2 ? 'negative' : 'neutral';
+  return {
+    label,
+    score: Number(rawScore.toFixed(4)),
+    pbkScore,
+    source: 'pbk-lexical-fallback',
+  };
+}
+
 function normalizeDeepgramLiveTranscript(data = {}) {
   const alt = data?.channel?.alternatives?.[0] || {};
   const transcript = String(
@@ -29571,6 +29595,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
+    if (transcriptText && (!session.sentiment || session.sentiment.pbkScore === null || session.sentiment.pbkScore === undefined)) {
+      session.sentiment = estimatePbkLiveSentiment(transcriptText);
+    }
     const contextCall = getCallById(session.callId);
     const message = createMessageRecord({
       id: `msg-deepgram-live-${slugify(session.callId || session.streamId || session.id)}-${Date.now()}`,

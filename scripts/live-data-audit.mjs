@@ -376,6 +376,13 @@ const checks = [
       && /transcriptFinal/.test(bridge),
   },
   {
+    name: 'Outbound Telnyx calls authenticate media streaming and classify stream webhooks',
+    ok: /requestPayload\.stream_auth_token\s*=\s*TELNYX_MEDIA_STREAM_TOKEN/.test(bridge)
+      && /eventType\.includes\('streaming'\)/.test(bridge)
+      && /eventType:\s*'call-stream'/.test(bridge)
+      && /normalizedEvent === 'call-stream'/.test(bridge),
+  },
+  {
     name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',
     ok: /startTelnyxMediaStream/.test(bridge)
       && /\/actions\/streaming_start/.test(bridge)

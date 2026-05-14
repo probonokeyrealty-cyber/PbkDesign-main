@@ -38,7 +38,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-command-center-route-hardening';
+const BUILD_REVISION = '2026-05-14-telnyx-stream-auth';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -11801,6 +11801,9 @@ function createCallRecord(params = {}) {
     durationSeconds: toNumber(params.durationSeconds || params.duration_seconds, 0),
     recordingUrl: params.recordingUrl || params.audioUrl || params.url || '',
     recordingMessageId: params.recordingMessageId || params.messageId || '',
+    mediaStreamStatus: params.mediaStreamStatus || params.media_stream_status || '',
+    mediaStreamError: params.mediaStreamError || params.media_stream_error || '',
+    mediaStreamUpdatedAt: params.mediaStreamUpdatedAt || params.media_stream_updated_at || '',
     script: params.script || params.notes || '',
     sentiment: toNumber(params.sentiment, 0.66),
     yellRisk: toNumber(params.yellRisk, 0.05),
@@ -25490,6 +25493,7 @@ const toolHandlers = {
         requestPayload.stream_url = deepgramStreamUrl;
         requestPayload.stream_track = params.streamTrack || DEEPGRAM_STREAM_TRACK;
         requestPayload.stream_codec = params.streamCodec || DEEPGRAM_STREAM_CODEC;
+        if (TELNYX_MEDIA_STREAM_TOKEN) requestPayload.stream_auth_token = TELNYX_MEDIA_STREAM_TOKEN;
       }
 
       const telnyxResponse = await fireTelnyxRequest('POST', '/calls', requestPayload);
@@ -27257,6 +27261,57 @@ async function handleEvent(eventType, payload = {}) {
     };
   }
 
+  if (normalizedEvent === 'call-stream') {
+    const existingCall = state.calls.find(
+      (item) =>
+        item.id === payload.id ||
+        item.id === payload.callId ||
+        item.id === payload.call_control_id ||
+        item.telnyxCallControlId === payload.call_control_id ||
+        item.telnyxCallControlId === payload.id ||
+        item.telnyxCallLegId === payload.call_leg_id ||
+        item.telnyxCallSessionId === payload.call_session_id ||
+        (normalizePhone(item.phone) && normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')),
+    );
+    const status = String(payload.status || 'updated').trim().toLowerCase();
+    const streamPatch = {
+      ...(existingCall || {}),
+      id: existingCall?.id || payload.call_control_id || payload.id || randomUUID(),
+      phone: payload.phone || existingCall?.phone || '',
+      provider: existingCall?.provider || 'Telnyx',
+      mediaStreamStatus: status,
+      mediaStreamError: payload.reason || existingCall?.mediaStreamError || '',
+      mediaStreamUpdatedAt: isoNow(),
+      telnyxCallControlId: payload.call_control_id || existingCall?.telnyxCallControlId || '',
+      telnyxCallLegId: payload.call_leg_id || existingCall?.telnyxCallLegId || '',
+      telnyxCallSessionId: payload.call_session_id || existingCall?.telnyxCallSessionId || '',
+      updatedAt: isoNow(),
+    };
+    const call = createCallRecord(streamPatch);
+    upsertCall(state, call);
+    addActivity(
+      state,
+      makeActivity({
+        actor: payload.actor || 'Telnyx',
+        category: 'CALL',
+        status: status === 'failed' ? 'warning' : status || 'updated',
+        text: `Telnyx media stream ${status || 'updated'} for ${call.leadName}${payload.reason ? `: ${payload.reason}` : ''}`,
+        target: call.address || call.phone || payload.stream_id || '',
+      }),
+    );
+    await persistState(state);
+    return {
+      ok: status !== 'failed',
+      call,
+      stream: {
+        status,
+        reason: payload.reason || '',
+        streamId: payload.stream_id || '',
+        rawEventType: payload.rawEventType || '',
+      },
+    };
+  }
+
   if (normalizedEvent === 'call-transcript') {
     const call =
       state.calls.find((item) => item.id === payload.id) ||
@@ -28401,6 +28456,31 @@ function mapTelnyxWebhook(body = {}) {
     return {
       eventType: 'recording-capture',
       payload: normalizeRecordingCapturePayload(body),
+    };
+  }
+
+  if (eventType.includes('streaming')) {
+    const streamStatus = eventType.includes('failed')
+      ? 'failed'
+      : eventType.includes('stopped') || eventType.includes('ended')
+        ? 'stopped'
+        : eventType.includes('started')
+          ? 'started'
+          : payload.status || 'updated';
+    return {
+      eventType: 'call-stream',
+      payload: {
+        id: payload.call_control_id || payload.id || payload.call_leg_id || payload.call_session_id || randomUUID(),
+        phone: payloadTo || payloadFrom || payload.phone_number,
+        status: streamStatus,
+        reason: payload.reason || payload.error || payload.error_code || payload.failure_reason || payload.cause || '',
+        stream_id: payload.stream_id || payload.streamId || '',
+        call_control_id: payload.call_control_id || payload.id || '',
+        call_leg_id: payload.call_leg_id || payload.callLegId || '',
+        call_session_id: payload.call_session_id || payload.callSessionId || '',
+        rawEventType: eventType,
+        actor: 'Telnyx',
+      },
     };
   }
 

@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-15-tool-first-router';
+const BUILD_REVISION = '2026-05-15-deepgram-browser-model-guard';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -238,8 +238,12 @@ const BROWSER_VOICE_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_BROW
 const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROWSER_VOICE_SESSION_TTL_MS || 5 * 60 * 1000));
 const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
-const BROWSER_VOICE_DEEPGRAM_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2').trim();
-const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = String(process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2').trim();
+const BROWSER_VOICE_DEEPGRAM_MODEL = normalizeBrowserVoiceDeepgramModel(
+  process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || process.env.DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2-general',
+);
+const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = normalizeBrowserVoiceDeepgramModel(
+  process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || process.env.DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2-general',
+);
 const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.env.PBK_BROWSER_VOICE_AUTO_REPLY_MS || 1250)));
 const BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS = Math.max(1200, Math.min(7000, Number(process.env.PBK_BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS || 2600)));
 const BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT = Math.max(4, Math.min(80, Number(process.env.PBK_BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT || 32)));
@@ -29429,14 +29433,30 @@ function normalizeAvaVoiceReplyText(text = '', fallback = '') {
   return `${clean} Let me ask one clean question so I do not guess wrong: what matters most right now, speed, certainty, or price?`;
 }
 
+function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2-general') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  const model = raw
+    .replace(/^deepgram[:_-]?/i, '')
+    .replace(/-fallback$/i, '')
+    .trim()
+    .toLowerCase();
+  if (!model) return fallback;
+  if (/^nova[-_]?v?1$/i.test(model) || model === 'nova-v1') return fallback;
+  if (model === 'flux-v2') return 'flux-general-en';
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(model)) return fallback;
+  return model;
+}
+
 function isDeepgramFluxModel(model = '') {
   return /^flux-/i.test(String(model || '').trim());
 }
 
 function buildBrowserVoiceDeepgramOptions(model = BROWSER_VOICE_DEEPGRAM_MODEL) {
+  const normalizedModel = normalizeBrowserVoiceDeepgramModel(model);
   return {
-    model,
-    listenVersion: isDeepgramFluxModel(model) ? 'v2' : 'v1',
+    model: normalizedModel,
+    listenVersion: isDeepgramFluxModel(normalizedModel) ? 'v2' : 'v1',
     manualWebSocket: true,
     containerizedAudio: true,
     channels: 1,
@@ -29446,8 +29466,8 @@ function buildBrowserVoiceDeepgramOptions(model = BROWSER_VOICE_DEEPGRAM_MODEL) 
 }
 
 function getBrowserVoiceDeepgramLabel(model = '', fallback = false) {
-  if (fallback) return 'deepgram-nova-v1-fallback';
-  return isDeepgramFluxModel(model) ? 'deepgram-flux-v2' : 'deepgram-nova-v1';
+  const normalizedModel = normalizeBrowserVoiceDeepgramModel(model);
+  return `deepgram:${normalizedModel}${fallback ? ':fallback' : ''}`;
 }
 
 async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript = '', session = {} } = {}) {

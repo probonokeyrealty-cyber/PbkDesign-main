@@ -30,7 +30,7 @@ export function getDeepgramConfig(env = process.env) {
     baseUrl,
     model: envValue(env, ['PBK_DEEPGRAM_MODEL', 'DEEPGRAM_MODEL']) || 'nova-2',
     liveModel: envValue(env, ['PBK_DEEPGRAM_LIVE_MODEL', 'DEEPGRAM_LIVE_MODEL']) || 'nova-2-meeting',
-    browserLiveModel: envValue(env, ['PBK_DEEPGRAM_BROWSER_LIVE_MODEL', 'DEEPGRAM_BROWSER_LIVE_MODEL']) || 'flux-general-en',
+    browserLiveModel: envValue(env, ['PBK_DEEPGRAM_BROWSER_LIVE_MODEL', 'DEEPGRAM_BROWSER_LIVE_MODEL']) || 'nova-2-general',
     language: envValue(env, ['PBK_DEEPGRAM_LANGUAGE', 'DEEPGRAM_LANGUAGE']) || 'en',
     telnyxEncoding: envValue(env, ['PBK_DEEPGRAM_TELNYX_ENCODING', 'DEEPGRAM_TELNYX_ENCODING']) || 'mulaw',
     telnyxSampleRate: numberEnv(env, 'PBK_DEEPGRAM_TELNYX_SAMPLE_RATE', numberEnv(env, 'DEEPGRAM_TELNYX_SAMPLE_RATE', 8000)),

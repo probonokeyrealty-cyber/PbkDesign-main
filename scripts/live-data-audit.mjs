@@ -296,6 +296,29 @@ const checks = [
       && !/id:\s*'max'|id:\s*'nora'|id:\s*'zed'|Diane Kowalski|Probate Warm-up Q2|On call with Diane|Spanish acquisitions|Outbound SMS/i.test(defaultAgentFleetBlock),
   },
   {
+    name: 'Agent orchestration exposes Ava supervisor with Rex and Hermes workers',
+    ok: /function buildAgentOrchestrationSnapshot/.test(bridge)
+      && /function buildAgentHealthProbe/.test(bridge)
+      && /function ensureRequiredAgentRoster/.test(bridge)
+      && /orchestrationRole:\s*'supervisor'/.test(defaultAgentFleetBlock)
+      && /supervises:\s*\[\s*'rex',\s*'hermes'\s*\]/.test(defaultAgentFleetBlock)
+      && /id:\s*'hermes'/.test(defaultAgentFleetBlock)
+      && /supervisor:\s*'ava'/.test(defaultAgentFleetBlock)
+      && /\/api\/agents\/orchestration/.test(bridge)
+      && /agentTasks/.test(bridge)
+      && /Ava is the supervisor/.test(agents),
+  },
+  {
+    name: 'Agent handoff smoke proves Ava, Rex, and Hermes use existing PBK lanes',
+    ok: /async function runAgentOrchestrationSmoke/.test(bridge)
+      && /recordAgentHandoffTask/.test(bridge)
+      && /tool_first:analyze_deal/.test(bridge)
+      && /createRexDecision/.test(bridge)
+      && /getHermesProviderMeta/.test(bridge)
+      && /\/api\/agents\/orchestration\/smoke/.test(bridge)
+      && /providerWrites:\s*'blocked'/.test(bridge),
+  },
+  {
     name: 'Ava voice avoids fake listening and gives actionable connection diagnostics',
     ok: /Browser microphone streaming is disabled/.test(index)
       && /this browser is missing the private PBK Bridge API key/.test(index)

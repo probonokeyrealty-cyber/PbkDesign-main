@@ -220,6 +220,22 @@ async function main() {
         }],
       }),
     }).then((response) => response.json());
+    const agentOrchestration = await fetch(`${BASE_URL}/api/agents/orchestration`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const agentOrchestrationSmoke = await fetch(`${BASE_URL}/api/agents/orchestration/smoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+        command: 'What is the MAO on 202 Cherry Lane?',
+      }),
+    }).then((response) => response.json());
     const workflowSave = await fetch(`${BASE_URL}/api/workflows`, {
       method: 'POST',
       headers: {
@@ -532,6 +548,15 @@ async function main() {
     assert(rexDecisions?.ok === true && Array.isArray(rexDecisions?.decisions), 'Rex decisions endpoint did not return decisions.');
     assert(rexProposal?.ok === true, 'Rex strategist proposal endpoint did not queue a proposal.');
     assert(rexProposal?.approval || rexProposal?.decision || rexProposal?.state, 'Rex strategist proposal did not return approval/decision state.');
+    assert(agentOrchestration?.ok === true, 'Agent orchestration endpoint did not report ok.');
+    assert(agentOrchestration?.orchestration?.topology === 'supervisor-worker', 'Agent orchestration did not report supervisor-worker topology.');
+    assert(agentOrchestration?.orchestration?.supervisor?.id === 'ava', 'Agent orchestration did not report Ava as supervisor.');
+    assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'rex'), 'Agent orchestration did not include Rex as a worker.');
+    assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'hermes'), 'Agent orchestration did not include Hermes as a worker.');
+    assert(agentOrchestrationSmoke?.ok === true, 'Agent orchestration smoke endpoint did not pass.');
+    assert(agentOrchestrationSmoke?.probes?.ava?.routedTo === 'tool_first:analyze_deal', 'Agent orchestration smoke did not force Ava through analyze_deal.');
+    assert(agentOrchestrationSmoke?.probes?.rex?.ok === true, 'Agent orchestration smoke did not verify Rex handoff.');
+    assert(Array.isArray(agentOrchestrationSmoke?.tasks) && agentOrchestrationSmoke.tasks.length >= 3, 'Agent orchestration smoke did not create a full task trail.');
     assert(workflowSave?.ok === true, 'Workflow persistence endpoint did not save a draft.');
     assert(Array.isArray(workflows?.workflows), 'Workflow list endpoint did not return workflows.');
     assert(recordingSave?.ok === true, 'Recording metadata endpoint did not save.');
@@ -573,6 +598,8 @@ async function main() {
       contractTemplates: Array.isArray(contractTemplates?.templates) ? contractTemplates.templates.length : 0,
       avaRoutedTo: avaCommand?.result?.routedTo || '',
       rexDecisions: Array.isArray(rexDecisions?.decisions) ? rexDecisions.decisions.length : 0,
+      agentOrchestration: agentOrchestration?.orchestration?.result || '',
+      agentOrchestrationTasks: Array.isArray(agentOrchestrationSmoke?.tasks) ? agentOrchestrationSmoke.tasks.length : 0,
       toolingReady: Number(tooling?.tooling?.summary?.readyCount || 0),
       browserOsReady: Boolean(tooling?.tooling?.browserOs?.ready),
       docsDeliveredToday: Number(quotas?.quotas?.docs?.deliveredToday || 0),

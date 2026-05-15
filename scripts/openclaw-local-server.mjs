@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-15-deepgram-browser-model-guard';
+const BUILD_REVISION = '2026-05-15-agent-orchestration-probes';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -723,6 +723,7 @@ const LIMITS = {
   campaignEvents: 1600,
   campaignSuppressions: 400,
   campaignExecutions: 120,
+  agentTasks: 240,
   rexDecisions: 240,
   avaActiveMemories: 120,
   pbkMemories: 240,
@@ -1286,6 +1287,7 @@ function summarizeHealthComponents(components = {}) {
 function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
   const providers = runtimeMeta.providers || {};
   const tooling = buildToolingStatus();
+  const agentOrchestration = buildAgentOrchestrationSnapshot();
   const components = {
     bridge: {
       label: 'PBK Bridge',
@@ -1338,6 +1340,17 @@ function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
       optional: true,
       note: 'Analyzes PBK feedback, knowledge, and transcripts; recommendations only, never provider writes.',
     }),
+    agentOrchestration: {
+      label: 'Agent orchestration',
+      status: agentOrchestration.ok ? 'up' : 'degraded',
+      ready: Boolean(agentOrchestration.ok),
+      configured: true,
+      optional: false,
+      topology: agentOrchestration.topology,
+      supervisor: agentOrchestration.supervisor?.id || 'ava',
+      workers: (agentOrchestration.workers || []).map((agent) => agent.id),
+      note: 'Ava supervises Rex and Hermes through existing PBK tool, approval, and task lanes.',
+    },
     docusign: summarizeProviderComponent(providers.docusign, {
       label: 'DocuSign envelopes',
       note: 'Contract envelope provider readiness; provider writes remain approval-gated.',
@@ -1393,6 +1406,7 @@ function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
     hosted: IS_HOSTED,
     stateBackend: STATE_BACKEND,
     components,
+    agentOrchestration,
     summary,
   };
 }
@@ -3646,6 +3660,43 @@ function buildDefaultAdminAudit() {
   ];
 }
 
+function normalizeAgentRosterId(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function mergeAgentRosterRecord(existing = {}, required = {}) {
+  return {
+    ...required,
+    ...existing,
+    orchestrationRole: existing.orchestrationRole || required.orchestrationRole || 'worker',
+    supervisor: existing.supervisor || required.supervisor || '',
+    supervises: normalizeStringList(existing.supervises || required.supervises || []),
+    communication: existing.communication || required.communication || 'pbk-bridge-mcp',
+    healthProbe: existing.healthProbe || required.healthProbe || `agent:${required.id || existing.id}:heartbeat`,
+    requiredTools: normalizeStringList(existing.requiredTools || required.requiredTools || []),
+    safety: {
+      ...(required.safety || {}),
+      ...(existing.safety && typeof existing.safety === 'object' ? existing.safety : {}),
+    },
+    skills: Array.isArray(existing.skills) && existing.skills.length ? existing.skills : (required.skills || []),
+  };
+}
+
+function ensureRequiredAgentRoster(agents = []) {
+  const current = Array.isArray(agents) ? [...agents] : [];
+  const required = buildDefaultAgentFleet();
+  for (const requiredAgent of required) {
+    const requiredId = normalizeAgentRosterId(requiredAgent.id || requiredAgent.name);
+    const index = current.findIndex((agent) => normalizeAgentRosterId(agent.id || agent.name) === requiredId);
+    if (index === -1) {
+      current.push(requiredAgent);
+    } else {
+      current[index] = mergeAgentRosterRecord(current[index], requiredAgent);
+    }
+  }
+  return current;
+}
+
 function buildDefaultAgentFleet() {
   const now = Date.now();
   return [
@@ -3658,6 +3709,12 @@ function buildDefaultAgentFleet() {
       target: 'production',
       status: 'idle',
       activity: 'Waiting for approved PBK work.',
+      orchestrationRole: 'supervisor',
+      supervises: ['rex', 'hermes'],
+      communication: 'hub-and-spoke',
+      healthProbe: 'agent:ava:heartbeat',
+      requiredTools: ['runAgentCommand', 'search_leads', 'analyze_deal', 'prepare_contract', 'telnyx_call', 'pbk_recall_memory'],
+      safety: { approvalGate: true, providerWrites: 'approval-gated' },
       lastSeen: new Date(now - 12000).toISOString(),
       style: 'Empathetic closer',
       hometown: 'Akron, OH',
@@ -3681,6 +3738,12 @@ function buildDefaultAgentFleet() {
       target: 'production',
       status: 'idle',
       activity: 'Ready for approved Rex research and strategist proposals.',
+      orchestrationRole: 'worker',
+      supervisor: 'ava',
+      communication: 'pbk-bridge-mcp',
+      healthProbe: 'agent:rex:heartbeat',
+      requiredTools: ['openAiWebSearch', 'launchBrowserResearch', 'createRexDecision', 'queryPbkKnowledge'],
+      safety: { approvalGate: true, providerWrites: 'approval-gated' },
       lastSeen: new Date(now - 7000).toISOString(),
       style: 'Analytical strategist',
       hometown: 'Boston, MA',
@@ -3692,6 +3755,35 @@ function buildDefaultAgentFleet() {
         { name: 'Skill discovery from analytics', level: 'proven', confidence: 93, evidence: 'Creates Rex proposals with measurable outcome targets.' },
         { name: 'Campaign script diagnosis', level: 'proven', confidence: 89, evidence: 'Finds low reply-rate patterns and proposes copy changes.' },
         { name: 'Local market story mining', level: 'evolving', confidence: 76, evidence: 'Needs more city-specific source material.' },
+      ],
+    },
+    {
+      id: 'hermes',
+      name: 'Hermes',
+      avatar: 'H',
+      tone: 'amber',
+      role: 'Suggest-only analyst',
+      version: 'v1.0',
+      target: 'production',
+      status: 'idle',
+      activity: 'Ready to analyze PBK feedback, transcripts, and knowledge without provider writes.',
+      orchestrationRole: 'worker',
+      supervisor: 'ava',
+      communication: 'pbk-bridge-strategist',
+      healthProbe: 'agent:hermes:heartbeat',
+      requiredTools: ['askStrategist', 'avaAskStrategist', 'recordPbkFeedback'],
+      safety: { approvalGate: true, providerWrites: 'blocked', suggestOnly: true },
+      lastSeen: new Date(now - 5000).toISOString(),
+      style: 'Pattern analyst',
+      hometown: 'PBK bridge',
+      campaigns: 0,
+      sentiment: 78,
+      skillsTotal: 64,
+      skillSource: 'PBK feedback, transcripts, and knowledge base',
+      skills: [
+        { name: 'Loss pattern diagnosis', level: 'proven', confidence: 91, evidence: 'Reviews pbk_feedback and proposes script changes without direct provider writes.' },
+        { name: 'Sentiment trend reading', level: 'proven', confidence: 87, evidence: 'Uses transcript and intent analytics to flag objection drift.' },
+        { name: 'Approval-safe recommendation', level: 'proven', confidence: 95, evidence: 'Suggest-only lane keeps PBK writes behind Ava/founder approvals.' },
       ],
     },
   ];
@@ -3811,6 +3903,7 @@ function buildDefaultState() {
     campaignSuppressions: [],
     campaignExecutions: [],
     agents: buildDefaultAgentFleet(),
+    agentTasks: [],
     agentSkillTransfers: [],
     agentSkillExperiments: [],
     agentVersions: [],
@@ -4105,6 +4198,21 @@ async function ensurePgSchema() {
       error_message TEXT NOT NULL DEFAULT '',
       context JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_tasks (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      from_agent TEXT NOT NULL DEFAULT '',
+      to_agent TEXT NOT NULL DEFAULT '',
+      task_type TEXT NOT NULL DEFAULT 'handoff',
+      status TEXT NOT NULL DEFAULT 'complete',
+      summary TEXT NOT NULL DEFAULT '',
+      correlation_id TEXT NOT NULL DEFAULT '',
+      provider_writes TEXT NOT NULL DEFAULT 'blocked',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS public.pbk_learning_requests (
@@ -4417,6 +4525,17 @@ async function ensurePgSchema() {
       ON public.pbk_tool_usage USING gin (context);
 
     ALTER TABLE public.pbk_tool_usage ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_tasks_lookup_idx
+      ON public.pbk_tasks (tenant_id, to_agent, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_tasks_correlation_idx
+      ON public.pbk_tasks (tenant_id, correlation_id);
+
+    CREATE INDEX IF NOT EXISTS pbk_tasks_metadata_idx
+      ON public.pbk_tasks USING gin (metadata);
+
+    ALTER TABLE public.pbk_tasks ENABLE ROW LEVEL SECURITY;
 
     CREATE INDEX IF NOT EXISTS pbk_learning_requests_lookup_idx
       ON public.pbk_learning_requests (tenant_id, status, created_at DESC);
@@ -5860,6 +5979,7 @@ function limitStateArrays(nextState) {
   nextState.campaignEvents = sortNewest(nextState.campaignEvents || []).slice(0, LIMITS.campaignEvents);
   nextState.campaignSuppressions = sortNewest(nextState.campaignSuppressions || []).slice(0, LIMITS.campaignSuppressions);
   nextState.campaignExecutions = sortNewest(nextState.campaignExecutions || []).slice(0, LIMITS.campaignExecutions);
+  nextState.agentTasks = sortNewest(nextState.agentTasks || []).slice(0, LIMITS.agentTasks);
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
@@ -5913,6 +6033,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.activeCampaigns = (nextState.campaigns || []).filter((campaign) => String(campaign.status || '').toLowerCase() === 'active').length;
   nextState.status.pendingCampaigns = (nextState.campaigns || []).filter((campaign) => ['pending', 'approval_required'].includes(String(campaign.status || '').toLowerCase())).length;
   nextState.status.campaignEvents = (nextState.campaignEvents || []).length;
+  nextState.status.agentTasks = (nextState.agentTasks || []).length;
+  nextState.status.pendingAgentTasks = (nextState.agentTasks || []).filter((task) => ['pending', 'queued', 'running'].includes(String(task.status || '').toLowerCase())).length;
   nextState.status.avaActiveMemories = (nextState.avaActiveMemories || []).length;
   nextState.status.pbkMemories = (nextState.pbkMemories || []).length;
   nextState.status.pbkFeedback = (nextState.pbkFeedback || []).length;
@@ -6020,6 +6142,8 @@ function hydrateState(raw = {}) {
     campaignEvents: trimArray(raw.campaignEvents || defaults.campaignEvents, LIMITS.campaignEvents),
     campaignSuppressions: trimArray(raw.campaignSuppressions || defaults.campaignSuppressions, LIMITS.campaignSuppressions),
     campaignExecutions: trimArray(raw.campaignExecutions || defaults.campaignExecutions, LIMITS.campaignExecutions),
+    agents: ensureRequiredAgentRoster(trimArray(raw.agents || defaults.agents, 40)),
+    agentTasks: trimArray(raw.agentTasks || defaults.agentTasks, LIMITS.agentTasks),
     agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
@@ -6125,6 +6249,44 @@ async function recordPbkToolUsage(params = {}) {
     return { ok: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK tool usage persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+async function persistPbkTaskRecord(task = {}) {
+  const pool = getPgPool();
+  if (!pool || !task?.id) return { ok: false, reason: pool ? 'missing_task_id' : 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_tasks (
+        id, tenant_id, from_agent, to_agent, task_type, status, summary,
+        correlation_id, provider_writes, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+      ON CONFLICT (id) DO UPDATE SET
+        status = EXCLUDED.status,
+        summary = EXCLUDED.summary,
+        provider_writes = EXCLUDED.provider_writes,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        task.id,
+        normalizeTenantId(task.tenantId || task.tenant_id || 'pbk'),
+        normalizeAgentName(task.fromAgent || task.from_agent || ''),
+        normalizeAgentName(task.toAgent || task.to_agent || ''),
+        String(task.taskType || task.task_type || 'handoff').trim(),
+        String(task.status || 'complete').trim(),
+        String(task.summary || '').slice(0, 1000),
+        String(task.correlationId || task.correlation_id || '').trim(),
+        String(task.providerWrites || task.provider_writes || 'blocked').trim(),
+        JSON.stringify(task.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
+        task.createdAt || task.created_at || isoNow(),
+        task.updatedAt || task.updated_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK task persistence skipped:', error?.message || error);
     return { ok: false, error: error?.message || String(error) };
   }
 }
@@ -18882,8 +19044,236 @@ function ensureRexCollections() {
 
 function ensureAgentFleetCollections() {
   if (!Array.isArray(state.agents)) state.agents = buildDefaultAgentFleet();
+  state.agents = ensureRequiredAgentRoster(state.agents);
+  if (!Array.isArray(state.agentTasks)) state.agentTasks = [];
   if (!Array.isArray(state.agentSkillTransfers)) state.agentSkillTransfers = [];
   if (!Array.isArray(state.agentSkillExperiments)) state.agentSkillExperiments = [];
+}
+
+function getAgentToolProbe(toolName = '') {
+  const name = String(toolName || '').trim();
+  return {
+    tool: name,
+    ready: Boolean(name && toolHandlers && Object.prototype.hasOwnProperty.call(toolHandlers, name)),
+  };
+}
+
+function buildAgentHealthProbe(agent = {}) {
+  const agentId = normalizeAgentRosterId(agent.id || agent.name);
+  const requiredTools = normalizeStringList(agent.requiredTools || []);
+  const toolProbes = requiredTools.map(getAgentToolProbe);
+  const missingTools = toolProbes.filter((item) => !item.ready).map((item) => item.tool);
+  const hermesMeta = agentId === 'hermes' ? getHermesProviderMeta() : null;
+  const providerReady = agentId === 'hermes' ? Boolean(hermesMeta?.ready) : true;
+  const present = Boolean(agentId);
+  return {
+    id: agentId,
+    name: agent.name || agentId,
+    role: agent.role || '',
+    orchestrationRole: agent.orchestrationRole || (agent.supervisor ? 'worker' : 'worker'),
+    supervisor: agent.supervisor || '',
+    supervises: normalizeStringList(agent.supervises || []),
+    status: agent.status || 'unknown',
+    activity: agent.activity || '',
+    present,
+    ready: present && missingTools.length === 0 && providerReady,
+    providerReady,
+    provider: hermesMeta ? {
+      ready: Boolean(hermesMeta.ready),
+      mode: hermesMeta.mode,
+      writeMode: hermesMeta.writeMode,
+      missing: hermesMeta.missing || [],
+    } : null,
+    tools: toolProbes,
+    missingTools,
+    healthProbe: agent.healthProbe || `agent:${agentId}:heartbeat`,
+    safety: agent.safety || {},
+    lastSeen: agent.lastSeen || '',
+  };
+}
+
+function buildAgentOrchestrationSnapshot() {
+  ensureAgentFleetCollections();
+  const probes = (state.agents || []).map(buildAgentHealthProbe);
+  const supervisor = probes.find((agent) => agent.id === 'ava') || null;
+  const workers = probes.filter((agent) => agent.supervisor === 'ava' || ['rex', 'hermes'].includes(agent.id));
+  const requiredIds = ['ava', 'rex', 'hermes'];
+  const missingAgents = requiredIds.filter((id) => !probes.find((agent) => agent.id === id));
+  const requiredToolGaps = probes
+    .filter((agent) => requiredIds.includes(agent.id) && agent.missingTools.length)
+    .map((agent) => ({ agentId: agent.id, missingTools: agent.missingTools }));
+  const handoffQueues = {
+    agentTasks: (state.agentTasks || []).filter((task) => !['complete', 'completed', 'failed', 'cancelled'].includes(String(task.status || '').toLowerCase())).length,
+    rexDecisions: (state.rexDecisions || []).filter((decision) => ['proposed', 'queued_for_approval', 'approved'].includes(String(decision.status || '').toLowerCase())).length,
+    adminTasks: (state.adminTasks || []).filter((task) => ['pending', 'approved', 'executing'].includes(String(task.status || '').toLowerCase())).length,
+    approvals: (state.approvals || []).filter((approval) => String(approval.status || '').toLowerCase() === 'pending').length,
+  };
+  const registryReady = missingAgents.length === 0 && Boolean(supervisor) && workers.some((agent) => agent.id === 'rex') && workers.some((agent) => agent.id === 'hermes');
+  const toolsReady = requiredToolGaps.length === 0;
+  return {
+    ok: registryReady && toolsReady,
+    result: registryReady && toolsReady ? 'live' : 'degraded',
+    topology: 'supervisor-worker',
+    generatedAt: isoNow(),
+    supervisor,
+    workers,
+    registry: {
+      ready: registryReady,
+      requiredAgents: requiredIds,
+      missingAgents,
+      count: probes.length,
+    },
+    mcp: {
+      ready: toolsReady,
+      registeredTools: toolHandlers ? Object.keys(toolHandlers).length : 0,
+      requiredToolGaps,
+    },
+    communication: {
+      pattern: 'hub-and-spoke',
+      supervisor: 'ava',
+      channels: ['runAgentCommand', 'rexDecisions', 'hermes-suggest-only', 'approvals', 'agentTasks'],
+      taskTrail: 'pbk_tasks + bridge_state.agentTasks',
+    },
+    handoffQueues,
+    recentTasks: (state.agentTasks || []).slice(0, 8),
+    safety: {
+      approvalGate: true,
+      providerWrites: 'blocked',
+      hermesSuggestOnly: true,
+    },
+    agents: probes,
+  };
+}
+
+async function recordAgentHandoffTask(task = {}) {
+  ensureAgentFleetCollections();
+  const record = {
+    id: task.id || `pbk-agent-task-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    tenantId: normalizeTenantId(task.tenantId || task.tenant_id || 'pbk'),
+    fromAgent: normalizeAgentName(task.fromAgent || task.from_agent || 'Ava'),
+    toAgent: normalizeAgentName(task.toAgent || task.to_agent || 'Rex'),
+    taskType: String(task.taskType || task.task_type || task.type || 'handoff').trim(),
+    status: String(task.status || 'complete').trim(),
+    summary: String(task.summary || '').trim(),
+    correlationId: String(task.correlationId || task.correlation_id || '').trim(),
+    providerWrites: String(task.providerWrites || task.provider_writes || 'blocked').trim(),
+    metadata: task.metadata && typeof task.metadata === 'object' ? task.metadata : {},
+    createdAt: task.createdAt || task.created_at || isoNow(),
+    updatedAt: task.updatedAt || task.updated_at || isoNow(),
+  };
+  state.agentTasks.unshift(record);
+  state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
+  void persistPbkTaskRecord(record);
+  return record;
+}
+
+async function runAgentOrchestrationSmoke(params = {}) {
+  ensureAgentFleetCollections();
+  const correlationId = params.correlationId || `agent-orchestration-smoke-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const command = String(params.command || 'What is the MAO on 202 Cherry Lane?').trim();
+  const avaResult = await toolHandlers.runAgentCommand({
+    command,
+    actor: params.actor || 'Agent Orchestration Smoke',
+    source: 'agent-orchestration-smoke',
+  });
+  const avaRoutedTo = String(avaResult?.routedTo || '');
+  const avaTask = await recordAgentHandoffTask({
+    correlationId,
+    fromAgent: 'Operator',
+    toAgent: 'Ava',
+    taskType: 'supervisor_command',
+    status: avaRoutedTo === 'tool_first:analyze_deal' ? 'complete' : 'warning',
+    summary: `Ava supervisor routed smoke command to ${avaRoutedTo || 'unknown'}.`,
+    providerWrites: 'blocked',
+    metadata: {
+      command,
+      routedTo: avaRoutedTo,
+      expectedRoute: 'tool_first:analyze_deal',
+      source: 'agent-orchestration-smoke',
+    },
+  });
+  const rexResult = await createRexDecision({
+    requestApproval: false,
+    source: 'agent-orchestration-smoke',
+    actor: 'Ava Supervisor',
+    status: 'probe',
+    tool: 'update_campaign_script',
+    params: {
+      campaignId: 'agent-orchestration-smoke',
+      change: 'Probe only: Rex can receive a campaign-script diagnosis handoff without provider writes.',
+    },
+    rationale: 'Smoke probe verifies Ava can hand research/strategy work to Rex through rexDecisions.',
+    outcomeExpected: 'Rex proposal record exists and remains approval-safe.',
+  }, {
+    requestApproval: false,
+    actor: 'Ava Supervisor',
+    source: 'agent-orchestration-smoke',
+  });
+  const rexTask = await recordAgentHandoffTask({
+    correlationId,
+    fromAgent: 'Ava',
+    toAgent: 'Rex',
+    taskType: 'research_strategy_probe',
+    status: rexResult?.ok ? 'complete' : 'warning',
+    summary: 'Ava delegated a safe Rex strategist probe through rexDecisions.',
+    providerWrites: 'blocked',
+    metadata: {
+      decisionId: rexResult?.decision?.id || '',
+      tool: rexResult?.decision?.tool || 'update_campaign_script',
+      source: 'agent-orchestration-smoke',
+    },
+  });
+  const hermes = getHermesProviderMeta();
+  const hermesTask = await recordAgentHandoffTask({
+    correlationId,
+    fromAgent: 'Ava',
+    toAgent: 'Hermes',
+    taskType: 'suggest_only_probe',
+    status: hermes.ready ? 'complete' : 'standby',
+    summary: 'Ava verified Hermes suggest-only analyst lane without provider writes.',
+    providerWrites: 'blocked',
+    metadata: {
+      ready: Boolean(hermes.ready),
+      mode: hermes.mode || '',
+      writeMode: hermes.writeMode || 'suggest-only',
+      missing: hermes.missing || [],
+      source: 'agent-orchestration-smoke',
+    },
+  });
+  await persistState(state);
+  const orchestration = buildAgentOrchestrationSnapshot();
+  return {
+    ok: Boolean(orchestration.registry?.ready && avaRoutedTo === 'tool_first:analyze_deal' && rexResult?.ok && hermesTask?.id),
+    result: 'live',
+    correlationId,
+    supervisor: 'ava',
+    workers: ['rex', 'hermes'],
+    safety: {
+      approvalGate: true,
+      providerWrites: 'blocked',
+      hermesSuggestOnly: true,
+    },
+    probes: {
+      ava: {
+        ok: Boolean(avaResult?.ok),
+        routedTo: avaRoutedTo,
+        expectedRoute: 'tool_first:analyze_deal',
+      },
+      rex: {
+        ok: Boolean(rexResult?.ok),
+        decisionId: rexResult?.decision?.id || '',
+        status: rexResult?.decision?.status || '',
+      },
+      hermes: {
+        ok: Boolean(hermes.ready),
+        status: hermes.ready ? 'ready' : 'standby',
+        mode: hermes.mode || '',
+        writeMode: hermes.writeMode || 'suggest-only',
+      },
+    },
+    tasks: [avaTask, rexTask, hermesTask],
+    orchestration,
+  };
 }
 
 function normalizeRexTool(value = '') {
@@ -23183,6 +23573,19 @@ const toolHandlers = {
   async web_search_plus(params = {}) {
     recordToolUse('web_search_plus');
     return toolHandlers.openAiWebSearch(params);
+  },
+
+  async createRexDecision(params = {}) {
+    recordToolUse('createRexDecision');
+    return createRexDecision({
+      ...params,
+      source: params.source || 'rex-tool',
+      actor: params.actor || 'Rex',
+    }, {
+      requestApproval: params.requestApproval !== false,
+      actor: params.actor || 'Rex',
+      source: params.source || 'rex-tool',
+    });
   },
 
   async addPbkMemory(params = {}) {
@@ -28139,6 +28542,8 @@ function buildStateSnapshot() {
     campaignLeadSources: getCampaignLeadSourceOptions(),
     campaignExecutions: state.campaignExecutions || [],
     agents: Array.isArray(state.agents) ? state.agents : buildDefaultAgentFleet(),
+    agentOrchestration: buildAgentOrchestrationSnapshot(),
+    agentTasks: state.agentTasks || [],
     agentSkillTransfers: state.agentSkillTransfers || [],
     agentSkillExperiments: state.agentSkillExperiments || [],
     agentVersions: state.agentVersions || [],
@@ -30638,6 +31043,7 @@ const server = createServer(async (request, response) => {
         checkedAt: commandCenterHealth.checkedAt,
         components: commandCenterHealth.components,
         componentSummary: commandCenterHealth.summary,
+        agentOrchestration: commandCenterHealth.agentOrchestration,
         tools: state.status.tools,
         toolUsage: state.status.toolUsage,
         n8n: state.status.n8n,
@@ -30761,6 +31167,42 @@ const server = createServer(async (request, response) => {
           approvalGate: true,
           providerWrites: 'blocked',
         },
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/orchestration', '/api/agent-orchestration'])) {
+      const orchestration = buildAgentOrchestrationSnapshot();
+      json(response, orchestration.ok ? 200 : 503, {
+        ok: Boolean(orchestration.ok),
+        result: orchestration.result,
+        orchestration,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/health', '/api/agent-health'])) {
+      const orchestration = buildAgentOrchestrationSnapshot();
+      json(response, orchestration.ok ? 200 : 503, {
+        ok: Boolean(orchestration.ok),
+        result: orchestration.result,
+        agents: orchestration.agents,
+        registry: orchestration.registry,
+        mcp: orchestration.mcp,
+        safety: orchestration.safety,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/orchestration/smoke', '/api/agent-orchestration/smoke'])) {
+      const body = await readBody(request);
+      const result = await runAgentOrchestrationSmoke(body);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -32742,7 +33184,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks'];
       if (!pool) {
         json(response, 200, {
           ok: false,

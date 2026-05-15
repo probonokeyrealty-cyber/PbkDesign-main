@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-proof-complete-audit';
+const BUILD_REVISION = '2026-05-14-ava-conversation-guard';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -9080,6 +9080,39 @@ function extractJsonObjectFromText(value = '') {
   return null;
 }
 
+function looksLikeStrategistMetaText(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  return /\b(we need to generate|we are asked to|given a transcript|based on the given situation|generate (?:a )?json|json response|immediatescript|nextquestion|returntobusiness|approvalneeded|pbk strategist|operatorread)\b/i.test(text)
+    || /^\s*\{[\s\S]*"(?:strategy|risk|rule|nextQuestion|immediateScript)"/i.test(text);
+}
+
+function normalizeAvaSpokenScript(value = '') {
+  let text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = extractJsonObjectFromText(text);
+  if (parsed && typeof parsed === 'object') {
+    text = String(
+      parsed.immediateScript
+        || parsed.immediate_script
+        || parsed.sellerScript
+        || parsed.script
+        || parsed.returnToBusiness
+        || parsed.return_to_business
+        || parsed.nextQuestion
+        || parsed.next_question
+        || '',
+    ).trim();
+  }
+  text = text
+    .replace(/```(?:json)?/gi, '')
+    .replace(/```/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text || looksLikeStrategistMetaText(text)) return '';
+  return text;
+}
+
 function normalizeStrategistResponse(raw = {}, fallbackText = '') {
   const source = raw && typeof raw === 'object' ? raw : {};
   const pick = (...keys) => {
@@ -9089,13 +9122,14 @@ function normalizeStrategistResponse(raw = {}, fallbackText = '') {
     }
     return '';
   };
-  const immediateScript = pick('immediateScript', 'immediate_script', 'script', 'sellerScript');
+  const immediateScript = normalizeAvaSpokenScript(pick('immediateScript', 'immediate_script', 'script', 'sellerScript'));
+  const fallbackScript = normalizeAvaSpokenScript(fallbackText);
   const strategy = pick('strategy', 'plan', 'operatorRead');
   const rule = pick('rule', 'memoryRule', 'memory_to_store', 'memoryToStore');
   const nextQuestion = pick('nextQuestion', 'next_question', 'question');
   const returnToBusiness = pick('returnToBusiness', 'return_to_business', 'transition');
   return {
-    immediateScript: immediateScript || fallbackText.slice(0, 900),
+    immediateScript: immediateScript || fallbackScript || 'I hear you. Let me slow this down so I can understand the property situation before I recommend anything. What matters most right now: speed, certainty, or price?',
     strategy: strategy || 'Acknowledge, ask one precise question, protect MAO, and move the seller back to a clear next step.',
     risk: pick('risk', 'riskNote') || 'Do not overpromise, exceed MAO, or pretend to have authority that was not approved.',
     rule: rule || 'When Ava is uncertain, slow down, ask one clarifying question, then route the decision through PBK approval gates.',
@@ -9233,18 +9267,30 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       };
     }
     const message = payload?.choices?.[0]?.message || {};
-    const answer = String(message.content || message.reasoning_content || '').trim();
+    const answer = String(message.content || '').trim();
+    const reasoning = String(message.reasoning_content || '').trim();
     await recordTokenUsage('deepseek', model, payload?.usage || {}, {
       source: params.source || 'deepseek-strategist',
       callId: params.callId || params.call_id || '',
       leadId: params.leadId || params.lead_id || '',
       responseId: payload?.id || '',
     });
+    if (!answer && reasoning) {
+      return {
+        ok: false,
+        result: 'provider_reasoning_only',
+        provider: { ...meta, model },
+        error: 'DeepSeek returned reasoning content without a speakable JSON response.',
+        reasoning,
+        usage: payload?.usage || null,
+        responseId: payload?.id || '',
+      };
+    }
     return {
       ok: true,
       result: 'live',
       answer,
-      reasoning: String(message.reasoning_content || '').trim(),
+      reasoning,
       provider: { ...meta, model },
       usage: payload?.usage || null,
       responseId: payload?.id || '',
@@ -28808,7 +28854,8 @@ function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
 }
 
 function normalizeAvaVoiceReplyText(text = '', fallback = '') {
-  const clean = String(text || fallback || '')
+  const candidate = normalizeAvaSpokenScript(text) || normalizeAvaSpokenScript(fallback);
+  const clean = String(candidate || '')
     .replace(/\bnew inbound caller\b/gi, 'there')
     .replace(/\bI routed this to [^.?!]+[.?!]\s*/gi, '')
     .replace(/\s+/g, ' ')
@@ -29522,6 +29569,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     address: '',
     telnyxAiAssistantStarted: false,
     lastAvaReplyAt: 0,
+    lastAvaReplyTranscript: '',
     startedAt: isoNow(),
   };
 
@@ -29698,9 +29746,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED) return;
     if (session.telnyxAiAssistantStarted && !PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE) return;
     if (!session.callId || !(item.isFinal || item.speechFinal)) return;
+    const transcriptForReply = String(item.transcript || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!transcriptForReply || transcriptForReply === session.lastAvaReplyTranscript) return;
     const now = Date.now();
     if (now - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_REPLY_MIN_MS) return;
     session.lastAvaReplyAt = now;
+    session.lastAvaReplyTranscript = transcriptForReply;
     const contextCall = getCallById(session.callId);
     const reply = await buildTelnyxLiveAvaReply({
       session,
@@ -29722,6 +29773,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (contextCall) {
       upsertCall(state, {
         ...contextCall,
+        transcript: [
+          ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
+          {
+            speaker: 'Ava',
+            text: spoken,
+            transcript: spoken,
+            isFinal: true,
+            speechFinal: true,
+            capturedAt: isoNow(),
+            source: 'pbk-live-reply',
+          },
+        ].slice(-50),
         nextMove: spoken,
         updatedAt: isoNow(),
       });

@@ -435,6 +435,21 @@ const checks = [
       && /Ava outbound greeting/.test(bridge),
   },
   {
+    name: 'Ava live Telnyx replies never speak strategist meta-commentary',
+    ok: /function\s+looksLikeStrategistMetaText/.test(bridge)
+      && /function\s+normalizeAvaSpokenScript/.test(bridge)
+      && /normalizeAvaSpokenScript\(text\)\s*\|\|\s*normalizeAvaSpokenScript\(fallback\)/.test(bridge)
+      && /provider_reasoning_only/.test(bridge)
+      && !/message\.content\s*\|\|\s*message\.reasoning_content/.test(bridge),
+  },
+  {
+    name: 'Ava live Telnyx replies are written back as conversation turns',
+    ok: /lastAvaReplyTranscript/.test(bridge)
+      && /speaker:\s*'Ava'/.test(bridge)
+      && /source:\s*'pbk-live-reply'/.test(bridge)
+      && /transcriptForReply === session\.lastAvaReplyTranscript/.test(bridge),
+  },
+  {
     name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',
     ok: /startTelnyxMediaStream/.test(bridge)
       && /\/actions\/streaming_start/.test(bridge)

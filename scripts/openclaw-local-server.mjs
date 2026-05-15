@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-14-ava-conversation-guard';
+const BUILD_REVISION = '2026-05-15-elevenlabs-phone-media';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -216,6 +216,13 @@ const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process
 const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED || 'true').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
 const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
+const PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || 'true').trim());
+const TELNYX_BIDIRECTIONAL_MEDIA_MODE = String(process.env.PBK_TELNYX_BIDIRECTIONAL_MEDIA_MODE || 'mp3').trim().toLowerCase();
+const TELNYX_ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_TELNYX_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
+const TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS = Math.max(
+  1000,
+  Math.min(10000, Number(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS || 1100)),
+);
 const HUMAN_AGENT_PHONE = normalizePhone(process.env.PBK_HUMAN_AGENT_PHONE || process.env.HUMAN_AGENT_PHONE || '');
 const UNDERWRITING_AGENT_PHONE = normalizePhone(process.env.PBK_UNDERWRITING_AGENT_PHONE || process.env.UNDERWRITING_AGENT_PHONE || HUMAN_AGENT_PHONE || '');
 const INBOUND_QUALIFY_BEFORE_TRANSFER = /^(1|true|yes)$/i.test(String(process.env.PBK_INBOUND_QUALIFY_BEFORE_TRANSFER || '').trim());
@@ -14663,6 +14670,11 @@ async function speakTelnyxCall(callControlId = '', text = '') {
   });
 }
 
+function getTelnyxBidirectionalMediaParams() {
+  if (!PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || TELNYX_BIDIRECTIONAL_MEDIA_MODE !== 'mp3') return {};
+  return { stream_bidirectional_mode: 'mp3' };
+}
+
 async function transferTelnyxCall(callControlId = '', to = '') {
   const target = normalizePhone(to);
   if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
@@ -14712,6 +14724,7 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
     stream_url: streamUrl,
     stream_track: params.streamTrack || DEEPGRAM_STREAM_TRACK || 'inbound_track',
     stream_codec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
+    ...getTelnyxBidirectionalMediaParams(),
     ...(TELNYX_MEDIA_STREAM_TOKEN ? { stream_auth_token: TELNYX_MEDIA_STREAM_TOKEN } : {}),
     client_state: encodeClientState({
       source: 'pbk-inbound',
@@ -14720,6 +14733,7 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
       leadId: params.leadId || '',
       telnyxAiAssistantStarted: Boolean(TELNYX_AI_ASSISTANT_ID && TELNYX_AI_ASSISTANT_ACTION_ENABLED),
       streamCodec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
+      streamBidirectionalMode: getTelnyxBidirectionalMediaParams().stream_bidirectional_mode || '',
       startedAt: isoNow(),
     }),
   });
@@ -15061,7 +15075,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       });
       actions.push({
         action: 'speak',
-        result: await speakTelnyxCall(
+        result: await speakAvaPhoneReplyByCallId(
           callControlId,
           lead.found
             ? `Hi ${lead.leadName || 'there'}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?`
@@ -25609,6 +25623,7 @@ const toolHandlers = {
           address: context.address,
           phone,
           actor: params.actor || 'ava-acquisition-v3',
+          streamBidirectionalMode: getTelnyxBidirectionalMediaParams().stream_bidirectional_mode || '',
         }),
       };
 
@@ -25631,6 +25646,7 @@ const toolHandlers = {
         requestPayload.stream_url = deepgramStreamUrl;
         requestPayload.stream_track = params.streamTrack || DEEPGRAM_STREAM_TRACK;
         requestPayload.stream_codec = params.streamCodec || DEEPGRAM_STREAM_CODEC;
+        Object.assign(requestPayload, getTelnyxBidirectionalMediaParams());
         if (TELNYX_MEDIA_STREAM_TOKEN) requestPayload.stream_auth_token = TELNYX_MEDIA_STREAM_TOKEN;
       }
 
@@ -27392,10 +27408,10 @@ async function handleEvent(eventType, payload = {}) {
     if (shouldPlayOutboundGreeting) {
       const greeting = String(payload.greeting || payload.outboundGreeting || '').trim()
         || 'Hi, this is Ava with Probono Key Realty. Thanks for picking up. I am here about the property. If you can hear me, tell me the property address and what you are hoping to do next.';
-      outboundGreetingResult = await speakTelnyxCall(call.telnyxCallControlId, greeting);
+      outboundGreetingResult = await speakAvaPhoneReplyByCallId(call.telnyxCallControlId, greeting);
       call.outboundAvaGreetingSpoken = Boolean(outboundGreetingResult.ok);
       call.outboundAvaGreetingAt = isoNow();
-      call.outboundAvaGreetingError = outboundGreetingResult.ok ? '' : outboundGreetingResult.error || 'Telnyx speak failed.';
+      call.outboundAvaGreetingError = outboundGreetingResult.ok ? '' : outboundGreetingResult.error || 'Ava phone audio failed.';
       upsertCall(state, call);
       addActivity(
         state,
@@ -27404,7 +27420,7 @@ async function handleEvent(eventType, payload = {}) {
           category: 'CALL',
           status: outboundGreetingResult.ok ? 'served' : 'warning',
           text: outboundGreetingResult.ok
-            ? `Ava outbound greeting played for ${call.leadName}.`
+            ? `Ava outbound greeting played for ${call.leadName} via ${outboundGreetingResult.provider || 'phone audio'}.`
             : `Ava outbound greeting failed for ${call.leadName}: ${call.outboundAvaGreetingError}`,
           target: call.address || call.phone,
         }),
@@ -27828,6 +27844,126 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
   return {
     ...request,
     response,
+  };
+}
+
+async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
+  const cleanText = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 900);
+  const socket = session?.telnyxMediaSocket;
+  if (!PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED) {
+    return { ok: false, skipped: true, result: 'disabled', provider: 'ElevenLabs', error: 'ElevenLabs phone media replies are disabled.' };
+  }
+  if (TELNYX_BIDIRECTIONAL_MEDIA_MODE !== 'mp3') {
+    return { ok: false, skipped: true, result: 'unsupported_mode', provider: 'ElevenLabs', error: `Unsupported Telnyx bidirectional media mode: ${TELNYX_BIDIRECTIONAL_MEDIA_MODE || 'unset'}.` };
+  }
+  if (!ELEVENLABS_TTS_ENABLED || !ELEVENLABS_API_KEY) {
+    return { ok: false, skipped: true, result: 'provider_missing', provider: 'ElevenLabs', error: 'ElevenLabs TTS is not configured.' };
+  }
+  if (!cleanText) {
+    return { ok: false, skipped: true, result: 'empty_text', provider: 'ElevenLabs', error: 'No text was provided for TTS.' };
+  }
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return { ok: false, skipped: true, result: 'media_socket_unavailable', provider: 'ElevenLabs', error: 'Telnyx media socket is not open.' };
+  }
+  if (!session.streamId) {
+    return { ok: false, skipped: true, result: 'stream_id_missing', provider: 'ElevenLabs', error: 'Telnyx stream_id is not available yet.' };
+  }
+
+  const now = Date.now();
+  const cooldownRemaining = TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS - (now - Number(session.lastMediaReplyAt || 0));
+  if (cooldownRemaining > 0) await sleep(cooldownRemaining);
+
+  const tts = await fetchElevenLabsTts({
+    outputFormat: TELNYX_ELEVENLABS_OUTPUT_FORMAT,
+    stability: Number(process.env.PBK_TELNYX_ELEVENLABS_STABILITY || ELEVENLABS_STABILITY),
+    similarityBoost: Number(process.env.PBK_TELNYX_ELEVENLABS_SIMILARITY_BOOST || ELEVENLABS_SIMILARITY_BOOST),
+    speed: Number(process.env.PBK_TELNYX_ELEVENLABS_SPEED || ELEVENLABS_SPEED),
+  }, cleanText);
+
+  if (!tts.response.ok) {
+    const errorText = await tts.response.text().catch(() => '');
+    recordElevenLabsValidation({
+      ok: false,
+      status: tts.response.status,
+      voiceId: tts.voiceId,
+      error: errorText || 'ElevenLabs phone media TTS request failed.',
+    });
+    return {
+      ok: false,
+      result: 'provider_error',
+      provider: 'ElevenLabs',
+      status: tts.response.status,
+      voiceId: tts.voiceId,
+      error: errorText.slice(0, 500) || 'ElevenLabs phone media TTS request failed.',
+    };
+  }
+
+  const audioBuffer = Buffer.from(await tts.response.arrayBuffer());
+  if (!audioBuffer.length) {
+    return { ok: false, result: 'empty_audio', provider: 'ElevenLabs', voiceId: tts.voiceId, error: 'ElevenLabs returned an empty audio payload.' };
+  }
+
+  const mediaMessage = {
+    event: 'media',
+    stream_id: session.streamId,
+    media: {
+      payload: audioBuffer.toString('base64'),
+    },
+  };
+  socket.send(JSON.stringify(mediaMessage));
+  session.lastMediaReplyAt = Date.now();
+  recordElevenLabsValidation({ ok: true, status: 200, voiceId: tts.voiceId });
+  return {
+    ok: true,
+    result: 'elevenlabs_telnyx_media',
+    provider: 'ElevenLabs',
+    bytes: audioBuffer.length,
+    voiceId: tts.voiceId,
+    modelId: tts.modelId,
+    outputFormat: tts.outputFormat,
+  };
+}
+
+async function sendAvaPhoneReplyAudio(session = {}, text = '') {
+  let mediaResult = null;
+  try {
+    mediaResult = await sendElevenLabsTtsToTelnyxMediaStream(session, text);
+    if (mediaResult.ok) return mediaResult;
+  } catch (error) {
+    mediaResult = {
+      ok: false,
+      result: 'elevenlabs_telnyx_media_exception',
+      provider: 'ElevenLabs',
+      error: error?.message || 'ElevenLabs phone media reply failed.',
+    };
+  }
+
+  const fallback = await speakTelnyxCall(session.callId, text);
+  return {
+    ...fallback,
+    provider: fallback.ok ? 'Telnyx' : fallback.provider || 'Telnyx',
+    result: fallback.ok ? 'telnyx_speak_fallback' : fallback.result || 'telnyx_speak_failed',
+    fallbackFrom: 'elevenlabs_telnyx_media',
+    elevenLabsMedia: mediaResult,
+  };
+}
+
+async function speakAvaPhoneReplyByCallId(callControlId = '', text = '') {
+  const session = telnyxMediaSessionsByCallId.get(callControlId);
+  if (session) return sendAvaPhoneReplyAudio(session, text);
+  const fallback = await speakTelnyxCall(callControlId, text);
+  return {
+    ...fallback,
+    provider: fallback.ok ? 'Telnyx' : fallback.provider || 'Telnyx',
+    result: fallback.ok ? 'telnyx_speak_no_media_session' : fallback.result || 'telnyx_speak_failed',
+    fallbackFrom: 'elevenlabs_telnyx_media',
+    elevenLabsMedia: {
+      ok: false,
+      skipped: true,
+      result: 'media_session_not_ready',
+      provider: 'ElevenLabs',
+      error: 'No active Telnyx media session was available for this call yet.',
+    },
   };
 }
 
@@ -28782,6 +28918,7 @@ function normalizeDeepgramLiveTranscript(data = {}) {
 }
 
 const browserVoiceSessions = new Map();
+const telnyxMediaSessionsByCallId = new Map();
 
 function pruneBrowserVoiceSessions() {
   const now = Date.now();
@@ -29567,9 +29704,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     leadId: '',
     leadName: '',
     address: '',
+    telnyxMediaSocket: socket,
     telnyxAiAssistantStarted: false,
     lastAvaReplyAt: 0,
     lastAvaReplyTranscript: '',
+    lastMediaReplyAt: 0,
+    mediaPlaybackReady: false,
+    mediaPlaybackMode: '',
     startedAt: isoNow(),
   };
 
@@ -29609,6 +29750,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const finalize = async (reason = 'closed') => {
     if (finalized) return;
     finalized = true;
+    if (session.callId) telnyxMediaSessionsByCallId.delete(session.callId);
     if (deepgramConnection && deepgramReady) {
       const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
       const didFinalize = sendDeepgramControl(deepgramConnection, { type: 'Finalize' });
@@ -29760,13 +29902,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     const spoken = String(reply.text || '').trim();
     if (!spoken) return;
-    const speakResult = await speakTelnyxCall(session.callId, spoken);
+    const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
     addActivity(state, makeActivity({
       actor: 'Ava',
       category: 'CALL',
       status: speakResult.ok ? 'served' : 'warning',
       text: speakResult.ok
-        ? `Ava replied live on Telnyx: ${spoken.slice(0, 120)}`
+        ? `Ava replied live on Telnyx via ${speakResult.provider || 'phone audio'}: ${spoken.slice(0, 120)}`
         : `Ava live Telnyx reply failed: ${speakResult.error || 'unknown error'}`,
       target: session.callId || session.streamId || session.id,
     }));
@@ -29883,6 +30025,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         || session.callId;
       session.leadId = clientState.leadId || session.leadId;
       session.telnyxAiAssistantStarted = Boolean(clientState.telnyxAiAssistantStarted || session.telnyxAiAssistantStarted);
+      session.mediaPlaybackMode = clientState.streamBidirectionalMode || event.start?.stream_bidirectional_mode || event.start?.streamBidirectionalMode || session.mediaPlaybackMode || '';
+      session.mediaPlaybackReady = PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED
+        && TELNYX_BIDIRECTIONAL_MEDIA_MODE === 'mp3'
+        && socket.readyState === WebSocket.OPEN;
+      if (session.callId) telnyxMediaSessionsByCallId.set(session.callId, session);
       const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
       addActivity(
         state,
@@ -29890,7 +30037,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           actor: 'Telnyx Media',
           category: 'CALL',
           status: 'started',
-          text: `Telnyx media stream started for ${session.callId || session.streamId || session.id} (${mediaFormat.encoding || 'unknown'} ${mediaFormat.sample_rate || mediaFormat.sampleRate || 'unknown'}Hz).`,
+          text: `Telnyx media stream started for ${session.callId || session.streamId || session.id} (${mediaFormat.encoding || 'unknown'} ${mediaFormat.sample_rate || mediaFormat.sampleRate || 'unknown'}Hz, playback ${session.mediaPlaybackReady ? 'ElevenLabs-ready' : 'Telnyx-fallback'}).`,
           target: session.callId || session.streamId || session.id,
         }),
       );

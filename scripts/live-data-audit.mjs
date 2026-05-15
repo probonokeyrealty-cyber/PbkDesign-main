@@ -431,7 +431,7 @@ const checks = [
   {
     name: 'Outbound Telnyx answered calls get an Ava greeting instead of silent dead air',
     ok: /outboundAvaGreetingSpoken/.test(bridge)
-      && /speakTelnyxCall\(call\.telnyxCallControlId/.test(bridge)
+      && /speakAvaPhoneReplyByCallId\(call\.telnyxCallControlId/.test(bridge)
       && /Ava outbound greeting/.test(bridge),
   },
   {
@@ -448,6 +448,14 @@ const checks = [
       && /speaker:\s*'Ava'/.test(bridge)
       && /source:\s*'pbk-live-reply'/.test(bridge)
       && /transcriptForReply === session\.lastAvaReplyTranscript/.test(bridge),
+  },
+  {
+    name: 'Ava phone replies can use ElevenLabs over Telnyx bidirectional media',
+    ok: /PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED/.test(bridge)
+      && /stream_bidirectional_mode:\s*'mp3'/.test(bridge)
+      && /sendElevenLabsTtsToTelnyxMediaStream/.test(bridge)
+      && /event:\s*'media'/.test(bridge)
+      && /X-PBK-TTS-Provider/.test(bridge),
   },
   {
     name: 'Inbound Telnyx calls answer, speak, stream to Deepgram, and clean the live UI safely',

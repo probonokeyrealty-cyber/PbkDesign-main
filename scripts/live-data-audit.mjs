@@ -453,6 +453,7 @@ const checks = [
     name: 'Ava phone replies can use ElevenLabs over Telnyx bidirectional media',
     ok: /PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED/.test(bridge)
       && /stream_bidirectional_mode:\s*'mp3'/.test(bridge)
+      && /stream_establish_before_call_originate/.test(bridge)
       && /sendElevenLabsTtsToTelnyxMediaStream/.test(bridge)
       && /event:\s*'media'/.test(bridge)
       && /X-PBK-TTS-Provider/.test(bridge),

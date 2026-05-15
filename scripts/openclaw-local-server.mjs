@@ -223,6 +223,9 @@ const TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS = Math.max(
   1000,
   Math.min(10000, Number(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS || 1100)),
 );
+const TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE = !/^(0|false|no|off)$/i.test(String(
+  process.env.PBK_TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE || (PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED ? 'true' : 'false'),
+).trim());
 const HUMAN_AGENT_PHONE = normalizePhone(process.env.PBK_HUMAN_AGENT_PHONE || process.env.HUMAN_AGENT_PHONE || '');
 const UNDERWRITING_AGENT_PHONE = normalizePhone(process.env.PBK_UNDERWRITING_AGENT_PHONE || process.env.UNDERWRITING_AGENT_PHONE || HUMAN_AGENT_PHONE || '');
 const INBOUND_QUALIFY_BEFORE_TRANSFER = /^(1|true|yes)$/i.test(String(process.env.PBK_INBOUND_QUALIFY_BEFORE_TRANSFER || '').trim());
@@ -25647,6 +25650,7 @@ const toolHandlers = {
         requestPayload.stream_track = params.streamTrack || DEEPGRAM_STREAM_TRACK;
         requestPayload.stream_codec = params.streamCodec || DEEPGRAM_STREAM_CODEC;
         Object.assign(requestPayload, getTelnyxBidirectionalMediaParams());
+        if (TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE) requestPayload.stream_establish_before_call_originate = true;
         if (TELNYX_MEDIA_STREAM_TOKEN) requestPayload.stream_auth_token = TELNYX_MEDIA_STREAM_TOKEN;
       }
 

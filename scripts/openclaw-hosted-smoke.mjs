@@ -60,6 +60,7 @@ async function main() {
   assert(health?.providers && typeof health.providers === 'object', 'Hosted /health did not expose providers block.');
   assert(health?.components?.bridge?.status === 'up', 'Hosted /health did not expose command-center health components.');
   assert(health?.components?.postgres?.status === 'up', `Hosted /health expected postgres component up, got ${health?.components?.postgres?.status || 'missing'}.`);
+  assert(health?.components?.agentOrchestration?.status === 'up', `Hosted /health expected agent orchestration up, got ${health?.components?.agentOrchestration?.status || 'missing'}.`);
   assert(Number(health?.componentSummary?.total || 0) >= 10, 'Hosted /health component summary is incomplete.');
 
   const unauthorizedState = await request('/state');
@@ -70,6 +71,15 @@ async function main() {
   });
   assert(stateResponse.ok, `Authenticated /state returned ${stateResponse.status}.`);
   assert(Array.isArray(state?.approvals), 'Authenticated /state did not return approvals array.');
+
+  const { response: agentOrchestrationResponse, parsed: agentOrchestration } = await requestJson('/api/agents/orchestration', {
+    headers: authHeaders(),
+  });
+  assert(agentOrchestrationResponse.ok, `Hosted agent orchestration endpoint returned ${agentOrchestrationResponse.status}.`);
+  assert(agentOrchestration?.ok === true, 'Hosted agent orchestration endpoint did not report ok.');
+  assert(agentOrchestration?.orchestration?.supervisor?.id === 'ava', 'Hosted agent orchestration did not report Ava as supervisor.');
+  assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'rex'), 'Hosted agent orchestration did not include Rex.');
+  assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'hermes'), 'Hosted agent orchestration did not include Hermes.');
 
   const { response: invokeResponse, parsed: invoke } = await requestJson('/invoke', {
     method: 'POST',
@@ -216,6 +226,8 @@ async function main() {
           })
         ),
         hosted: health.runtime.hosted,
+        agentOrchestration: agentOrchestration?.orchestration?.result || '',
+        agentWorkers: (agentOrchestration?.orchestration?.workers || []).map((agent) => agent.id),
         approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
         pdfBytes: pdfBuffer.length,
         leadReplaySafe,

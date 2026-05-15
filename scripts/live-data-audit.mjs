@@ -133,6 +133,24 @@ const checks = [
       && /DeepSeek strategist/.test(bridge),
   },
   {
+    name: 'Ava command router force-runs required tools for high-confidence intents',
+    ok: /TOOL_FIRST_INTENT_TO_TOOL/.test(bridge)
+      && /detectToolFirstIntent/.test(bridge)
+      && /executeToolFirstIntent/.test(bridge)
+      && /tool_first_required/.test(bridge)
+      && /search_leads/.test(bridge)
+      && /analyze_deal/.test(bridge)
+      && /prepare_contract/.test(bridge)
+      && /pbk_recall_memory/.test(bridge),
+  },
+  {
+    name: 'PBK tool usage is persisted for monitoring and missed-tool learning',
+    ok: /CREATE TABLE IF NOT EXISTS public\.pbk_tool_usage/.test(bridge)
+      && /recordPbkToolUsage/.test(bridge)
+      && /tool_missed/.test(bridge)
+      && /pbk_tool_usage_tool_idx/.test(bridge),
+  },
+  {
     name: 'Approval board is compact and Ava voice diagnostics are visible',
     ok: /qcard-summary/.test(index)
       && /qcard-meta/.test(index)

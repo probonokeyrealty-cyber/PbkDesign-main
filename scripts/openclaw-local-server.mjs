@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-15-elevenlabs-phone-media';
+const BUILD_REVISION = '2026-05-15-tool-first-router';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -4088,6 +4088,21 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.pbk_tool_usage (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT 'Ava',
+      tool_name TEXT NOT NULL,
+      intent TEXT NOT NULL DEFAULT '',
+      success BOOLEAN,
+      latency_ms INT,
+      error_message TEXT NOT NULL DEFAULT '',
+      context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS public.pbk_learning_requests (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -4387,6 +4402,17 @@ async function ensurePgSchema() {
 
     CREATE INDEX IF NOT EXISTS pbk_knowledge_metadata_idx
       ON public.pbk_knowledge USING gin (metadata);
+
+    CREATE INDEX IF NOT EXISTS pbk_tool_usage_tool_idx
+      ON public.pbk_tool_usage (tenant_id, tool_name, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_tool_usage_lead_idx
+      ON public.pbk_tool_usage (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_tool_usage_context_idx
+      ON public.pbk_tool_usage USING gin (context);
+
+    ALTER TABLE public.pbk_tool_usage ENABLE ROW LEVEL SECURITY;
 
     CREATE INDEX IF NOT EXISTS pbk_learning_requests_lookup_idx
       ON public.pbk_learning_requests (tenant_id, status, created_at DESC);
@@ -6060,8 +6086,55 @@ async function loadState() {
   }
 }
 
-function recordToolUse(toolName) {
+async function recordPbkToolUsage(params = {}) {
+  const toolName = String(params.toolName || params.tool_name || '').trim();
+  if (!toolName) return { ok: false, reason: 'missing_tool_name' };
+  const context = findLeadContext(params);
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_tool_usage (
+        id, tenant_id, lead_id, call_id, agent_name, tool_name, intent,
+        success, latency_ms, error_message, context, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
+      [
+        params.id || `pbk-tool-usage-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(params.context || {})}`))}`,
+        normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
+        String(params.leadId || params.lead_id || context.leadId || '').trim(),
+        String(params.callId || params.call_id || '').trim(),
+        normalizeAgentName(params.agentName || params.agent_name || params.agent || params.requestedBy || 'Ava'),
+        toolName,
+        String(params.intent || '').trim(),
+        params.success === undefined ? null : Boolean(params.success),
+        params.latencyMs === undefined && params.latency_ms === undefined ? null : Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0))),
+        String(params.errorMessage || params.error_message || '').slice(0, 500),
+        JSON.stringify({
+          ...(params.context && typeof params.context === 'object' ? params.context : {}),
+          source: params.source || 'pbk-bridge',
+          routedTo: params.routedTo || '',
+        }),
+        params.createdAt || params.created_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK tool usage persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+function recordToolUse(toolName, context = {}) {
   state.status.toolUsage[toolName] = toNumber(state.status.toolUsage[toolName], 0) + 1;
+  void recordPbkToolUsage({
+    toolName,
+    success: undefined,
+    context: {
+      ...context,
+      event: 'tool_invoked',
+    },
+  });
 }
 
 function addActivity(stateRef, entry) {
@@ -6477,6 +6550,53 @@ function findLeadImportByLookup(value = '') {
   }) || null;
 }
 
+function searchLeadImports(params = {}) {
+  const query = String(params.query || params.search || params.q || params.text || '').trim().toLowerCase();
+  const status = String(params.status || '').trim().toLowerCase();
+  const minScore = params.minScore ?? params.min_score;
+  const minScoreNumber = minScore === undefined || minScore === '' ? null : toNumber(minScore, 0);
+  const limit = Math.max(1, Math.min(100, toNumber(params.limit, 25)));
+  const tokens = query
+    .replace(/[^a-z0-9+\s@.-]+/g, ' ')
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
+  const leads = (state.leadImports || []).filter((lead) => {
+    const leadStatus = String(lead.status || lead.stage || lead.pipelineStatus || '').toLowerCase();
+    const score = toNumber(lead.motivationScore ?? lead.score ?? lead.leadScore ?? lead.aiScore, 0);
+    const haystack = [
+      lead.id,
+      lead.leadId,
+      lead.importId,
+      lead.seller?.name,
+      lead.leadName,
+      lead.name,
+      lead.seller?.phone,
+      lead.phone,
+      lead.seller?.email,
+      lead.email,
+      lead.property?.address,
+      lead.address,
+      lead.propertyAddress,
+      lead.property_address,
+      lead.status,
+      lead.stage,
+      lead.tags,
+    ].flat().filter(Boolean).join(' ').toLowerCase();
+    const queryMatch = !tokens.length || tokens.every((token) => haystack.includes(token));
+    const statusMatch = !status || leadStatus === status || leadStatus.includes(status);
+    const scoreMatch = minScoreNumber === null || score >= minScoreNumber;
+    return queryMatch && statusMatch && scoreMatch;
+  });
+  return {
+    ok: true,
+    result: 'live',
+    query,
+    count: leads.length,
+    leads: sortNewest(leads).slice(0, limit),
+  };
+}
+
 function leadMatchesIdentifiers(lead = {}, identifiers = {}) {
   const leadId = String(identifiers.leadId || identifiers.id || '').trim();
   const email = String(identifiers.email || '').trim().toLowerCase();
@@ -6765,6 +6885,233 @@ function extractCommandContext(command = '') {
     ...(address ? { address } : {}),
     ...(phone ? { phone } : {}),
   };
+}
+
+const TOOL_FIRST_MIN_CONFIDENCE = Math.max(0.5, Math.min(0.99, Number(process.env.PBK_TOOL_FIRST_MIN_CONFIDENCE || 0.8)));
+const TOOL_FIRST_REVIEW_CONFIDENCE = Math.max(0.3, Math.min(TOOL_FIRST_MIN_CONFIDENCE, Number(process.env.PBK_TOOL_FIRST_REVIEW_CONFIDENCE || 0.65)));
+const TOOL_FIRST_INTENT_TO_TOOL = {
+  lead_search: 'search_leads',
+  deal_analysis: 'analyze_deal',
+  contract_prep: 'prepare_contract',
+  outbound_call: 'telnyx_call',
+  memory_recall: 'pbk_recall_memory',
+  memory_store: 'remember_personal_fact',
+  market_research: 'web_search_plus',
+};
+
+function extractToolFirstAddress(command = '', context = {}, params = {}) {
+  const explicit = String(params.address || params.propertyAddress || params.property_address || '').trim();
+  if (explicit) return explicit;
+  const contextAddress = String(context.address || '').trim();
+  if (contextAddress && !/^unknown property$/i.test(contextAddress)) return contextAddress;
+  const raw = String(command || '').trim();
+  const patterns = [
+    /\b(?:analyze|analysis|mao|arv|offer|comps?|numbers?)\s+(?:for|on|at)?\s*(\d{1,6}\s+[^?.,\n]+?)(?:\s+(?:please|now|today|asap|and|then)\b|[?.!]|$)/i,
+    /\b(?:property|address)\s+(?:is|at|for)?\s*(\d{1,6}\s+[^?.,\n]+?)(?:\s+(?:please|now|today|asap|and|then)\b|[?.!]|$)/i,
+    /\b(\d{1,6}\s+[A-Za-z0-9 .'-]+(?:lane|ln|street|st|drive|dr|court|ct|avenue|ave|road|rd|circle|cir|boulevard|blvd|place|pl|way)\b[^?.,\n]*)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match?.[1]) return match[1].trim().replace(/[.?!]+$/, '');
+  }
+  return '';
+}
+
+function detectToolFirstIntent(command = '', params = {}, context = {}) {
+  const text = String(command || '').trim();
+  const lower = text.toLowerCase();
+  if (!text) return null;
+  const address = extractToolFirstAddress(text, context, params);
+  const hasLeadContext = Boolean(context.leadId || context.leadName || context.address || context.phone);
+  const rules = [
+    {
+      intent: 'lead_search',
+      confidence: 0.94,
+      test: /\b(find|search|lookup|look up|pull|show)\b.*\b(leads?|seller|homeowner|prospects?)\b/i,
+    },
+    {
+      intent: 'deal_analysis',
+      confidence: 0.95,
+      test: /\b(mao|arv|analy[sz]e|analysis|run numbers|offer number|repair estimate|profit)\b/i,
+    },
+    {
+      intent: 'contract_prep',
+      confidence: 0.92,
+      test: /\b(prepare|draft|create|write|build)\b.*\b(contract|agreement|purchase agreement|docusign|docu sign)\b/i,
+    },
+    {
+      intent: 'outbound_call',
+      confidence: 0.91,
+      test: /\b(call|dial|phone)\b.*\b(lead|seller|homeowner|prospect|them|number|phone)\b/i,
+    },
+    {
+      intent: 'memory_recall',
+      confidence: 0.9,
+      test: /\b(what did|what has|remember|recall|past|previous|last time|notes?)\b.*\b(said|say|discuss|conversation|call|seller|lead)\b/i,
+    },
+    {
+      intent: 'memory_store',
+      confidence: 0.91,
+      test: /\b(remember|note|save|store)\b.*\b(that|seller|lead|he|she|they|family|child|pet|callback|preference)\b/i,
+    },
+    {
+      intent: 'market_research',
+      confidence: 0.88,
+      test: /\b(market trend|current market|rates?|inventory|days on market|comps in|zip|neighborhood trend|research)\b/i,
+    },
+  ];
+  const matched = rules.find((rule) => rule.test.test(text));
+  if (!matched) return null;
+  const toolName = TOOL_FIRST_INTENT_TO_TOOL[matched.intent];
+  return {
+    ...matched,
+    toolName,
+    required: matched.confidence >= TOOL_FIRST_MIN_CONFIDENCE,
+    review: matched.confidence >= TOOL_FIRST_REVIEW_CONFIDENCE,
+    address,
+    hasLeadContext,
+  };
+}
+
+function buildToolFirstArgs(detected = {}, command = '', params = {}, context = {}) {
+  const common = {
+    ...params,
+    leadId: params.leadId || context.leadId,
+    leadName: params.leadName || context.leadName,
+    address: params.address || detected.address || context.address,
+    phone: params.phone || context.phone,
+    email: params.email || context.email,
+    source: params.source || 'tool-first-router',
+  };
+  if (detected.intent === 'lead_search') return { query: params.query || detected.address || command, limit: params.limit || 10, source: 'tool-first-router' };
+  if (detected.intent === 'deal_analysis') return { ...common, deal: params.deal || {} };
+  if (detected.intent === 'contract_prep') return { ...common, notes: params.notes || command, amount: params.amount || params.offerPrice };
+  if (detected.intent === 'outbound_call') return { ...common, script: params.script || command, deepgramSentiment: params.deepgramSentiment ?? true };
+  if (detected.intent === 'memory_recall') return { ...common, query: params.query || command, limit: params.limit || 3 };
+  if (detected.intent === 'memory_store') return { ...common, factType: params.factType || params.fact_type || 'seller_note', factValue: params.factValue || params.fact_value || command };
+  if (detected.intent === 'market_research') return { query: params.query || command, requestedBy: params.actor || params.requestedBy || 'Rex' };
+  return common;
+}
+
+function buildToolFirstAnswer(detected = {}, toolResult = {}, command = '') {
+  const toolName = detected.toolName || 'tool';
+  if (detected.intent === 'deal_analysis' && toolResult) {
+    return `I ran the numbers first. ARV is ${currency(toolResult.arv)}, MAO is ${currency(toolResult.mao)}, and target offer is ${currency(toolResult.targetOffer)}. Want me to prep the next step from this analysis?`;
+  }
+  if (detected.intent === 'lead_search') {
+    const count = Number(toolResult.count ?? toolResult.leads?.length ?? 0);
+    const first = toolResult.leads?.[0];
+    return count
+      ? `I searched live leads and found ${count}. The top match is ${first?.seller?.name || first?.leadName || first?.name || 'a seller'} at ${first?.property?.address || first?.address || 'the saved property'}.`
+      : 'I searched live leads and did not find a match yet. Want me to create a new lead from what you have?';
+  }
+  if (detected.intent === 'contract_prep') {
+    return toolResult.ok
+      ? `I prepared the contract packet as a draft and kept it inside the PBK approval flow. Review it before anything goes to the seller.`
+      : `I tried to prepare the contract, but the bridge returned: ${toolResult.error || toolResult.message || 'contract prep unavailable'}.`;
+  }
+  if (detected.intent === 'outbound_call') {
+    return toolResult.result === 'queued_for_approval'
+      ? 'I routed the call through approval first, so Ava will not dial until you approve it.'
+      : `I routed the call request through ${toolName}.`;
+  }
+  if (detected.intent === 'memory_recall') {
+    const count = Number(toolResult.memories?.length || toolResult.results?.length || 0);
+    return count ? `I checked memory and found ${count} relevant note${count === 1 ? '' : 's'}.` : 'I checked memory and did not find a matching note yet.';
+  }
+  if (detected.intent === 'memory_store') return toolResult.ok ? 'I saved that to Ava’s memory.' : `I tried to save that memory, but got: ${toolResult.error || 'memory unavailable'}.`;
+  if (detected.intent === 'market_research') return toolResult.answer || toolResult.summary || `I pulled current research for: ${command}`;
+  return `I used ${toolName} before answering.`;
+}
+
+async function recordToolMissedFeedback({ command = '', detected = {}, context = {}, reason = '' } = {}) {
+  if (!command || !detected?.toolName) return null;
+  return recordPbkFeedbackRecord({
+    leadId: context.leadId || '',
+    callId: '',
+    agentName: 'Ava',
+    agentAction: 'tool_first_router_review',
+    humanDecision: 'tool_missed',
+    transcriptSnippet: command,
+    outcomeLabel: reason || 'tool_first_below_required_confidence',
+    metadata: {
+      expected_tool: detected.toolName,
+      intent: detected.intent,
+      confidence: detected.confidence,
+      tool_missed: true,
+      leadName: context.leadName,
+      address: context.address,
+    },
+  });
+}
+
+async function executeToolFirstIntent(detected = {}, command = '', params = {}, context = {}) {
+  const toolName = detected.toolName;
+  const handler = toolHandlers[toolName];
+  if (!handler) {
+    await recordToolMissedFeedback({ command, detected, context, reason: 'tool_handler_missing' });
+    return null;
+  }
+  const args = buildToolFirstArgs(detected, command, params, context);
+  const start = Date.now();
+  let response = null;
+  let success = false;
+  let errorMessage = '';
+  try {
+    const guardedTools = new Set(['telnyx_call', 'telnyx_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract']);
+    response = guardedTools.has(toolName)
+      ? await invokeToolWithOperatingGuard(toolName, args)
+      : await handler(args);
+    success = response?.ok !== false;
+    return {
+      ok: true,
+      routedTo: toolName,
+      toolFirst: {
+        result: 'tool_first_required',
+        intent: detected.intent,
+        confidence: detected.confidence,
+        toolName,
+        args,
+      },
+      response,
+      answer: buildToolFirstAnswer(detected, response, command),
+    };
+  } catch (error) {
+    errorMessage = error?.message || String(error);
+    response = { ok: false, error: errorMessage };
+    return {
+      ok: false,
+      routedTo: toolName,
+      toolFirst: {
+        result: 'tool_first_required',
+        intent: detected.intent,
+        confidence: detected.confidence,
+        toolName,
+        args,
+      },
+      response,
+      answer: `I tried to use ${toolName} first, but it failed: ${errorMessage}`,
+    };
+  } finally {
+    await recordPbkToolUsage({
+      toolName,
+      intent: detected.intent,
+      leadId: context.leadId,
+      callId: params.callId || params.call_id || '',
+      agentName: params.agentName || params.actor || 'Ava',
+      success,
+      latencyMs: Date.now() - start,
+      errorMessage,
+      context: {
+        command,
+        args: redactApprovalParamPreview(args),
+        tool_first_required: true,
+        confidence: detected.confidence,
+      },
+      source: 'tool-first-router',
+      routedTo: toolName,
+    });
+  }
 }
 
 function buildAnalyzerSummary(params = {}) {
@@ -19239,6 +19586,32 @@ async function queryPgRows(sql = '', params = []) {
   }
 }
 
+async function getPbkToolUsageSummary(params = {}) {
+  const days = Math.max(1, Math.min(90, Number(params.days || params.rangeDays || 7)));
+  const result = await queryPgRows(
+    `SELECT
+       tool_name,
+       COUNT(*)::int AS calls,
+       COUNT(*) FILTER (WHERE success IS TRUE)::int AS successes,
+       COUNT(*) FILTER (WHERE success IS FALSE)::int AS failures,
+       ROUND(AVG(latency_ms) FILTER (WHERE latency_ms IS NOT NULL))::int AS avg_latency_ms,
+       MAX(created_at) AS last_invoked_at
+     FROM public.pbk_tool_usage
+     WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+     GROUP BY tool_name
+     ORDER BY calls DESC, tool_name ASC
+     LIMIT 100`,
+    [days],
+  );
+  return {
+    ok: result.ok,
+    result: result.ok ? 'live' : result.reason,
+    days,
+    tools: result.rows,
+    error: result.error || '',
+  };
+}
+
 function withinDays(value = '', days = 7) {
   const ts = Date.parse(value || '');
   if (!Number.isFinite(ts)) return false;
@@ -22778,6 +23151,36 @@ function setAnalyzerResultCache(params = {}, result = {}) {
 }
 
 const toolHandlers = {
+  async search_leads(params = {}) {
+    recordToolUse('search_leads');
+    return searchLeadImports(params);
+  },
+
+  async analyze_deal(params = {}) {
+    recordToolUse('analyze_deal');
+    return toolHandlers.analyzeDeal(params);
+  },
+
+  async prepare_contract(params = {}) {
+    recordToolUse('prepare_contract');
+    return toolHandlers.prepareContract(params);
+  },
+
+  async pbk_recall_memory(params = {}) {
+    recordToolUse('pbk_recall_memory');
+    return toolHandlers.recallPbkMemory(params);
+  },
+
+  async remember_personal_fact(params = {}) {
+    recordToolUse('remember_personal_fact');
+    return toolHandlers.rememberPersonalFact(params);
+  },
+
+  async web_search_plus(params = {}) {
+    recordToolUse('web_search_plus');
+    return toolHandlers.openAiWebSearch(params);
+  },
+
   async addPbkMemory(params = {}) {
     recordToolUse('addPbkMemory');
     const result = await addPbkMemoryRecord(params);
@@ -26751,6 +27154,7 @@ const toolHandlers = {
     const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(command);
     const avaJarvisCommand = detectAvaJarvisCommand(command);
     const avaMasterclassCommand = looksLikeAvaMasterclassCommand(command);
+    const toolFirstDetected = detectToolFirstIntent(command, params, context);
 
     if (avaJarvisCommand) {
       routedTo = 'ava_pbk_jarvis_mode';
@@ -26758,6 +27162,15 @@ const toolHandlers = {
     } else if (looksLikeAgentDoctrineCommand(command) || avaMasterclassCommand) {
       routedTo = 'agent_brain';
       response = buildAvaDoctrineCommandResult(command, context);
+    } else if (
+      toolFirstDetected?.required
+      && !(looksLikeAdminIntent(command) && !looksLikeDealExecutionIntent(command))
+    ) {
+      const toolFirstResult = await executeToolFirstIntent(toolFirstDetected, command, params, context);
+      if (toolFirstResult) {
+        routedTo = `tool_first:${toolFirstResult.routedTo}`;
+        response = toolFirstResult;
+      }
     } else if (isPropertyDataIntent) {
       routedTo = 'scrape_property';
       response = await toolHandlers.scrape_property({
@@ -26856,6 +27269,15 @@ const toolHandlers = {
       response = await toolHandlers.updateCRM({
         message: `Ava logged command: ${command || 'No command text provided.'}`,
         target: context.address || context.leadName,
+      });
+    }
+
+    if (!String(routedTo).startsWith('tool_first:') && toolFirstDetected?.review) {
+      await recordToolMissedFeedback({
+        command,
+        detected: toolFirstDetected,
+        context,
+        reason: 'tool_first_review_after_fallback',
       });
     }
 
@@ -32223,6 +32645,14 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/admin/tool-usage') {
+      const result = await getPbkToolUsageSummary({
+        days: url.searchParams.get('days') || 7,
+      });
+      json(response, result.ok ? 200 : 503, result);
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/admin/persistence') {
       const result = await toolHandlers.getAdminPersistenceStatus();
       json(response, 200, {
@@ -32292,7 +32722,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage'];
       if (!pool) {
         json(response, 200, {
           ok: false,

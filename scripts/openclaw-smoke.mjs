@@ -145,6 +145,44 @@ async function main() {
       },
       body: JSON.stringify(approvalDecisionPayload),
     }).then((response) => response.json());
+    const queuedProviderCall = await fetch(`${BASE_URL}/api/calls`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadId: 'smoke-provider-action-lead',
+        leadName: 'Smoke Provider Action Seller',
+        address: '909 Provider Action Ave, Columbus OH',
+        phone: '+1 (614) 555-0123',
+        script: 'Smoke provider-action approval should replay telnyx_call after approval.',
+        actor: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const providerActionApprovalId = queuedProviderCall?.approval?.approval?.id
+      || queuedProviderCall?.approval?.id;
+    assert(
+      queuedProviderCall?.result === 'queued_for_approval' && providerActionApprovalId,
+      'Provider-action call did not queue behind approval mode.',
+    );
+    const providerActionApproval = await fetch(`${BASE_URL}/api/approvals/${encodeURIComponent(providerActionApprovalId)}/approve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        actor: 'smoke-test',
+        actedAt: '2026-04-26T18:01:00.000Z',
+        notes: 'Smoke provider-action replay approval.',
+      }),
+    }).then((response) => response.json());
+    assert(
+      providerActionApproval?.providerActionResult?.ok === true
+        && providerActionApproval?.providerActionResult?.call?.phone === '+16145550123',
+      'Approved provider-action telnyx_call did not replay into a call record.',
+    );
     const invoke = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',
       headers: {

@@ -18751,6 +18751,19 @@ const OPERATING_MODE_GATED_TOOLS = new Set([
   'admin_update_env_var',
 ]);
 
+const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set([
+  'sendColdEmail',
+  'telnyx_call',
+  'telnyx_sms',
+  'send_verification_sms',
+  'sendDocuSign',
+  'sendContract',
+  'prepare_and_send_contract',
+  'sendSellerDocs',
+  'pbk_call_operator',
+  'skipTrace',
+]);
+
 const DIRECT_ENV_UPDATE_ALLOWLIST = new Set([
   'PBK_DEEPSEEK_API_KEY',
   'DEEPSEEK_API_KEY',
@@ -18802,6 +18815,24 @@ function redactApprovalParamPreview(value, depth = 0) {
     }
   }
   return redacted;
+}
+
+function buildProviderActionReplayParams(params = {}) {
+  return redactApprovalParamPreview(params || {});
+}
+
+function summarizeProviderActionResult(result = {}) {
+  if (!result || typeof result !== 'object') return { ok: Boolean(result), result };
+  return {
+    ok: result.ok !== false,
+    result: result.result || result.outcome || '',
+    error: result.error || '',
+    callId: result.call?.id || result.callId || '',
+    callStatus: result.call?.status || result.status || '',
+    callProvider: result.call?.provider || result.provider || '',
+    telnyxLive: Boolean(result.telnyx?.live),
+    telnyxStatus: result.telnyx?.status || null,
+  };
 }
 
 function getRuntimeOperatingMode() {
@@ -18878,11 +18909,20 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   const approval = await toolHandlers.createApproval({
     type: 'provider-action',
     leadName: params.leadName || params.name || params.sellerName || label,
+    leadId: params.leadId || params.id || '',
     address: params.address || params.propertyAddress || params.target || '',
     phone: params.phone || params.to || '',
     email: params.email || '',
+    provider: params.provider || 'system',
+    approvalAction: toolName,
     notes: approvalNotes,
     source: 'operating-mode-guard',
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      kind: 'provider_action',
+      requestedTool: toolName,
+      executionParams: buildProviderActionReplayParams(params || {}),
+    },
   });
   return {
     ok: true,
@@ -25601,6 +25641,10 @@ const toolHandlers = {
       leadId: params.leadId || randomUUID(),
       leadName: params.leadName || params.name || 'Unknown seller',
       address: params.address || 'Unknown property',
+      phone: params.phone || '',
+      email: params.email || '',
+      provider: params.provider || '',
+      source: params.source || '',
       offerPrice: toNumber(params.offerPrice, 0),
       mao: toNumber(params.mao, 0),
       contractId: params.contractId || '',
@@ -28007,6 +28051,7 @@ async function handleEvent(eventType, payload = {}) {
     let campaignResult = null;
     let promptResult = null;
     let rexDecisionResult = null;
+    let providerActionResult = null;
     if (approval.type === 'contract' && approval.contractId) {
       const contract = state.contracts.find((item) => item.id === approval.contractId);
       if (contract) {
@@ -28080,6 +28125,48 @@ async function handleEvent(eventType, payload = {}) {
       rexDecisionResult = await handleRexDecisionApproval(approval, { actor: incomingActor });
     }
 
+    if (
+      approval.status === 'approved'
+      && String(approval.type || '').toLowerCase() === 'provider-action'
+    ) {
+      approval.metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+      const toolName = String(
+        approval.approvalAction
+          || approval.metadata.requestedTool
+          || approval.metadata.toolName
+          || '',
+      ).trim();
+      const alreadyAttempted = Boolean(approval.metadata.providerActionAttemptedAt);
+      if (alreadyAttempted) {
+        providerActionResult = {
+          ok: true,
+          replayed: true,
+          skipped: true,
+          result: 'provider_action_already_attempted',
+          summary: approval.metadata.providerActionResult || null,
+        };
+      } else if (!APPROVAL_REPLAYABLE_PROVIDER_TOOLS.has(toolName) || typeof toolHandlers[toolName] !== 'function') {
+        providerActionResult = {
+          ok: false,
+          result: 'provider_action_not_replayable',
+          error: `Provider action ${toolName || '(missing)'} is not allowlisted for approval replay.`,
+        };
+        approval.metadata.providerActionAttemptedAt = isoNow();
+        approval.metadata.providerActionResult = summarizeProviderActionResult(providerActionResult);
+      } else {
+        const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object'
+          ? approval.metadata.executionParams
+          : {};
+        providerActionResult = await toolHandlers[toolName]({
+          ...executionParams,
+          approvalId: approval.id,
+          actor: incomingActor || executionParams.actor || 'PBK Approval',
+        });
+        approval.metadata.providerActionAttemptedAt = isoNow();
+        approval.metadata.providerActionResult = summarizeProviderActionResult(providerActionResult);
+      }
+    }
+
     addActivity(
       state,
       makeActivity({
@@ -28100,6 +28187,7 @@ async function handleEvent(eventType, payload = {}) {
       campaignResult,
       promptResult,
       rexDecisionResult,
+      providerActionResult,
     };
   }
 

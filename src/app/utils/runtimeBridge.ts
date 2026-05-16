@@ -19,6 +19,8 @@ export type RuntimeSnapshot = {
   messages?: Array<Record<string, unknown>>;
   contracts?: Array<Record<string, unknown>>;
   documentDeliveries?: Array<Record<string, unknown>>;
+  callQaScores?: Array<Record<string, unknown>>;
+  skillOutcomes?: Array<Record<string, unknown>>;
   adminTasks?: Array<Record<string, unknown>>;
   adminAudit?: Array<Record<string, unknown>>;
 };
@@ -272,6 +274,86 @@ export async function queryBrainRequest(query: string) {
 
 export async function launchBrowserResearchRequest(body: Record<string, unknown>) {
   return invokeRuntimeTool<Record<string, unknown>>('launchBrowserResearch', body);
+}
+
+export async function retrieveClosingIntelligenceRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/brain/retrieve',
+    body,
+  });
+}
+
+export async function getAvaConversationIntelligenceRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/ava/conversation-intelligence',
+    body,
+  });
+}
+
+export async function getProsodyAdviceRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/voice/prosody',
+    body,
+  });
+}
+
+export async function scoreCallQualityRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/calls/qa-score',
+    body,
+  });
+}
+
+export async function recordSkillOutcomeRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/skills/outcomes',
+    body,
+  });
+}
+
+export async function runRexSkillAutopilotRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/rex/skill-autopilot',
+    body,
+  });
+}
+
+export async function requestHumanHandoffRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/handoff/human',
+    body,
+  });
+}
+
+export async function retrieveSimilarDealsRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/deals/similar',
+    body,
+  });
+}
+
+export async function recallConversationMemoryRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/v1/memory/conversation',
+    body,
+  });
+}
+
+export async function webSearchRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/brain/web-search',
+    body,
+  });
 }
 
 export async function sendSellerDocsRequest(body: Record<string, unknown>) {

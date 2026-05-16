@@ -39,6 +39,10 @@ services:
         value: "true"
       - key: PBK_OPENAI_WEB_SEARCH_MODEL
         value: gpt-4o-mini
+      # Tavily live web search for Ava/Rex. Keep the real value in Render's
+      # protected environment UI; never commit it to this blueprint.
+      - key: PBK_TAVILY_API_KEY
+        sync: false
 
       # DeepSeek strategist lane for Ava/Rex coaching. This is advisory:
       # provider writes, offer increases, contracts, calls, and SMS remain

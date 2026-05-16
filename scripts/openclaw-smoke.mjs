@@ -210,6 +210,147 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const closingIntelligence = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'retrieveClosingIntelligence',
+        params: {
+          query: 'Seller says your cash offer is too low and they may just list with an agent. What should Ava say next?',
+          selectedPath: 'cash',
+          seller_type: 'seller',
+          stage: 'objection_handling',
+          source: 'smoke-test',
+        },
+      }),
+    }).then((response) => response.json());
+    const closingBrainRetrieve = await fetch(`${BASE_URL}/api/v1/brain/retrieve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'Seller is worried this is a scam and asks how to verify PBK before signing.',
+        selectedPath: 'cash',
+        seller_type: 'seller',
+        stage: 'objection_handling',
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const avaConversationIntelligence = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'Seller sounds frustrated and says your number is too low. They want to talk to their wife before signing.',
+        selectedPath: 'cash',
+        sentiment: 0.28,
+        leadId: 'smoke-lead-1',
+        leadName: 'Smoke Test Seller',
+        address: '808 Smoke Test Ave, Columbus OH',
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const prosodyAdvice = await fetch(`${BASE_URL}/api/v1/voice/prosody`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        text: 'I am angry and this feels like a scam.',
+        sentiment: 0.22,
+      }),
+    }).then((response) => response.json());
+    const callQaScore = await fetch(`${BASE_URL}/api/v1/calls/qa-score`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        callId: 'smoke-call-qa-1',
+        leadId: 'smoke-lead-1',
+        transcript: 'Ava: I hear you on the number. What would make this worth saying yes today? Seller: Send me the agreement and call me tomorrow.',
+        createRexDecision: false,
+      }),
+    }).then((response) => response.json());
+    const skillOutcome = await fetch(`${BASE_URL}/api/v1/skills/outcomes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        skillName: 'value_based_negotiation',
+        version: 'smoke-v1',
+        leadId: 'smoke-lead-1',
+        callId: 'smoke-call-qa-1',
+        sentimentBefore: 0.35,
+        sentimentAfter: 0.55,
+        outcomeLabel: 'appointment set',
+        minUses: 99,
+      }),
+    }).then((response) => response.json());
+    const similarDeals = await fetch(`${BASE_URL}/api/v1/deals/similar`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'cash offer Columbus Ohio repair risk',
+        selectedPath: 'cash',
+        address: '808 Smoke Test Ave, Columbus OH',
+      }),
+    }).then((response) => response.json());
+    const conversationMemory = await fetch(`${BASE_URL}/api/v1/memory/conversation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadId: 'smoke-lead-1',
+        query: 'wife decision maker price objection',
+      }),
+    }).then((response) => response.json());
+    const humanHandoff = await fetch(`${BASE_URL}/api/v1/handoff/human`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadId: 'smoke-lead-1',
+        reason: 'Smoke test seller asked for a human.',
+        transcript: 'Can I talk to a real person?',
+        transfer: false,
+      }),
+    }).then((response) => response.json());
+    const directSlackNotify = await fetch(`${BASE_URL}/api/slack/notify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        text: 'PBK smoke Slack notification route test.',
+        channel: '#deals',
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const filteredApprovals = await fetch(`${BASE_URL}/api/approvals?status=pending&limit=5`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
     const brainIngest = await fetch(`${BASE_URL}/brain/ingest`, {
       method: 'POST',
       headers: {
@@ -581,6 +722,31 @@ async function main() {
     assert(avaCommand?.ok === true, 'Ava runAgentCommand smoke did not succeed.');
     assert(avaCommand?.result?.routedTo === 'agent_brain', `Ava masterclass command routed to ${avaCommand?.result?.routedTo || 'missing'} instead of agent_brain.`);
     assert(/due[- ]on[- ]sale|attorney|loan/i.test(String(avaCommand?.result?.response?.answer || avaCommand?.result?.response?.verbiage || '')), 'Ava masterclass command did not return subject-to guardrail language.');
+    assert(closingIntelligence?.ok === true, 'Closing intelligence invoke did not succeed.');
+    assert(closingIntelligence?.result?.result === 'closing_intelligence', 'Closing intelligence invoke did not return the closing_intelligence result.');
+    assert(/repair|closing risk|holding|certainty|listing|net/i.test(String(closingIntelligence?.result?.nextBestPhrase || '')), 'Closing intelligence did not return a seller-facing next best phrase.');
+    assert(Array.isArray(closingIntelligence?.result?.doNotSay) && closingIntelligence.result.doNotSay.length > 0, 'Closing intelligence did not return guardrails.');
+    assert(closingBrainRetrieve?.ok === true && closingBrainRetrieve?.result === 'closing_intelligence', 'Brain retrieve endpoint did not return closing intelligence.');
+    assert(/verify|proof|comfortable|company/i.test(String(closingBrainRetrieve?.nextBestPhrase || closingBrainRetrieve?.advice?.nextBestPhrase || '')), 'Brain retrieve endpoint did not return verification-aware closing language.');
+    assert(avaConversationIntelligence?.ok === true && avaConversationIntelligence?.result === 'ava_conversation_intelligence', 'Ava conversation intelligence endpoint did not succeed.');
+    assert(avaConversationIntelligence?.reaction?.trigger === 'de_escalate', 'Ava conversation intelligence did not react to low sentiment with de-escalation.');
+    assert(avaConversationIntelligence?.prosody?.profile === 'de_escalation', 'Ava conversation intelligence did not return de-escalation prosody.');
+    assert(avaConversationIntelligence?.promptFrame?.role?.includes('top 1%'), 'Ava conversation intelligence did not include seven-figure prompt framing.');
+    assert(prosodyAdvice?.ok === true && prosodyAdvice?.prosody?.speed < 0.9, 'Prosody advice did not slow down for angry sentiment.');
+    assert(callQaScore?.ok === true && Number(callQaScore?.score?.score || 0) > 0, 'Call QA score endpoint did not score the transcript.');
+    assert(Array.isArray(callQaScore?.state?.callQaScores), 'Call QA score endpoint did not return state with call QA rows.');
+    assert(skillOutcome?.ok === true && skillOutcome?.summary?.total >= 1, 'Skill outcome endpoint did not record measured skill usage.');
+    assert(Array.isArray(skillOutcome?.state?.skillOutcomes), 'Skill outcome endpoint did not return state with skill outcomes.');
+    assert(similarDeals?.ok === true && Array.isArray(similarDeals?.deals), 'Similar deals endpoint did not return a deals array.');
+    assert(conversationMemory?.ok === true && Array.isArray(conversationMemory?.memories), 'Conversation memory endpoint did not return memories array.');
+    assert(humanHandoff?.ok === true && ['handoff_queued', 'live_transfer'].includes(String(humanHandoff?.result || '')), 'Human handoff endpoint did not queue or transfer cleanly.');
+    assert(directSlackNotify?.ok === true, 'Direct Slack notify endpoint did not return a handled bridge response.');
+    assert(['live', 'provider_missing'].includes(String(directSlackNotify?.result || '')), 'Direct Slack notify endpoint did not return live/provider_missing result.');
+    assert(Array.isArray(directSlackNotify?.state?.activity), 'Direct Slack notify endpoint did not return updated runtime state.');
+    assert(filteredApprovals?.ok === true, 'Filtered approvals endpoint did not succeed.');
+    assert(Array.isArray(filteredApprovals?.approvals), 'Filtered approvals endpoint did not return approvals array.');
+    assert(filteredApprovals.approvals.every((approval) => String(approval.status || '').toLowerCase() === 'pending'), 'Filtered approvals endpoint returned non-pending approvals.');
+    assert(filteredApprovals?.state?.approvals, 'Filtered approvals endpoint did not return runtime state for the approval board.');
     assert(brainIngest?.ok === true, 'Brain ingest endpoint did not succeed.');
     assert(Array.isArray(brainQuery?.brainDocs), 'Brain query endpoint did not return brainDocs.');
     assert(rexDecisions?.ok === true && Array.isArray(rexDecisions?.decisions), 'Rex decisions endpoint did not return decisions.');
@@ -635,6 +801,10 @@ async function main() {
       activity: Array.isArray(state?.activity) ? state.activity.length : 0,
       contractTemplates: Array.isArray(contractTemplates?.templates) ? contractTemplates.templates.length : 0,
       avaRoutedTo: avaCommand?.result?.routedTo || '',
+      avaConversationTrigger: avaConversationIntelligence?.reaction?.trigger || '',
+      avaProsodyProfile: avaConversationIntelligence?.prosody?.profile || '',
+      callQaScore: Number(callQaScore?.score?.score || 0),
+      skillOutcomeCount: Number(skillOutcome?.summary?.total || 0),
       rexDecisions: Array.isArray(rexDecisions?.decisions) ? rexDecisions.decisions.length : 0,
       agentOrchestration: agentOrchestration?.orchestration?.result || '',
       agentOrchestrationTasks: Array.isArray(agentOrchestrationSmoke?.tasks) ? agentOrchestrationSmoke.tasks.length : 0,

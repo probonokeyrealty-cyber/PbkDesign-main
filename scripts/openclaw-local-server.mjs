@@ -175,6 +175,8 @@ hydrateWindowsUserEnv([
   'PBK_DEEPSEEK_MODEL',
   'PBK_DEEPSEEK_FALLBACK_MODEL',
   'PBK_STRATEGIST_PROVIDER',
+  'PBK_TAVILY_API_KEY',
+  'TAVILY_API_KEY',
   'PBK_HERMES_ENABLED',
   'PBK_HERMES_GATEWAY_URL',
   'PBK_HERMES_API_KEY',
@@ -269,6 +271,8 @@ const OPENAI_API_KEY = String(process.env.PBK_OPENAI_API_KEY || process.env.OPEN
 const OPENAI_BASE_URL = String(process.env.PBK_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com').trim().replace(/\/+$/g, '');
 const OPENAI_WEB_SEARCH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_OPENAI_WEB_SEARCH_ENABLED || 'true').trim());
 const OPENAI_WEB_SEARCH_MODEL = String(process.env.PBK_OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_WEB_SEARCH_MODEL || 'gpt-4o-mini').trim();
+const TAVILY_API_KEY = String(process.env.PBK_TAVILY_API_KEY || process.env.TAVILY_API_KEY || '').trim();
+const TAVILY_SEARCH_URL = String(process.env.PBK_TAVILY_SEARCH_URL || 'https://api.tavily.com/search').trim();
 const DEEPSEEK_API_KEY = String(process.env.PBK_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY || '').trim();
 const DEEPSEEK_BASE_URL = String(process.env.PBK_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').trim().replace(/\/+$/g, '');
 const DEEPSEEK_MODEL = String(process.env.PBK_DEEPSEEK_MODEL || 'deepseek-v4-pro').trim();
@@ -549,6 +553,18 @@ const TOOL_NAMES = [
   'classifyParticipant',
   'getParticipantProfile',
   'getBrainEmailContext',
+  'pbk_retrieve_closing_intelligence',
+  'retrieveClosingIntelligence',
+  'pbk_ava_conversation_intelligence',
+  'getAvaConversationIntelligence',
+  'getProsodyAdvice',
+  'retrieveSimilarDeals',
+  'recallConversationMemory',
+  'scoreCallQuality',
+  'recordSkillOutcome',
+  'runRexSkillAutopilot',
+  'humanHandoff',
+  'webSearch',
   'getReplyTemplates',
   'getAdminPersistenceStatus',
   'getDocuSignProviderStatus',
@@ -754,6 +770,8 @@ const LIMITS = {
   avaOutcomeReports: 120,
   avaImprovementSuggestions: 240,
   knowledgeVerifications: 240,
+  callQaScores: 240,
+  skillOutcomes: 1200,
   avaStories: 160,
   agentVersions: 240,
   inboundCallRoutes: 180,
@@ -4020,6 +4038,8 @@ function buildDefaultState() {
     avaOutcomeReports: [],
     avaImprovementSuggestions: [],
     knowledgeVerifications: [],
+    callQaScores: [],
+    skillOutcomes: [],
     avaStories: buildDefaultAvaStories(),
     inboundCallRoutes: [],
     promptPatchApplications: [],
@@ -4505,6 +4525,68 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.pbk_call_qa_scores (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT 'Ava',
+      score NUMERIC NOT NULL DEFAULT 0,
+      grade TEXT NOT NULL DEFAULT '',
+      breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      weaknesses JSONB NOT NULL DEFAULT '[]'::jsonb,
+      next_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      transcript_snippet TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_call_qa_scores
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_name TEXT NOT NULL DEFAULT 'Ava',
+      ADD COLUMN IF NOT EXISTS score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS grade TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS weaknesses JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS next_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS transcript_snippet TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_skill_outcomes (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      skill_name TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      agent_name TEXT NOT NULL DEFAULT 'Ava',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      success BOOLEAN,
+      sentiment_before NUMERIC,
+      sentiment_after NUMERIC,
+      deal_closed BOOLEAN NOT NULL DEFAULT FALSE,
+      outcome_label TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_skill_outcomes
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS skill_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS version TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_name TEXT NOT NULL DEFAULT 'Ava',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS success BOOLEAN,
+      ADD COLUMN IF NOT EXISTS sentiment_before NUMERIC,
+      ADD COLUMN IF NOT EXISTS sentiment_after NUMERIC,
+      ADD COLUMN IF NOT EXISTS deal_closed BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS outcome_label TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.rex_decisions (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL DEFAULT 'rex-strategist',
@@ -4671,6 +4753,15 @@ async function ensurePgSchema() {
 
     CREATE INDEX IF NOT EXISTS pbk_knowledge_verifications_lookup_idx
       ON public.pbk_knowledge_verifications (tenant_id, verdict, risk_level, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_call_qa_scores_lookup_idx
+      ON public.pbk_call_qa_scores (tenant_id, lead_id, call_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_skill_outcomes_lookup_idx
+      ON public.pbk_skill_outcomes (tenant_id, skill_name, version, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_skill_outcomes_success_idx
+      ON public.pbk_skill_outcomes (tenant_id, skill_name, success, created_at DESC);
 
     CREATE INDEX IF NOT EXISTS rex_decisions_created_idx
       ON public.rex_decisions (created_at DESC);
@@ -6094,6 +6185,8 @@ function limitStateArrays(nextState) {
   nextState.avaOutcomeReports = sortNewest(nextState.avaOutcomeReports || []).slice(0, LIMITS.avaOutcomeReports);
   nextState.avaImprovementSuggestions = sortNewest(nextState.avaImprovementSuggestions || []).slice(0, LIMITS.avaImprovementSuggestions);
   nextState.knowledgeVerifications = sortNewest(nextState.knowledgeVerifications || []).slice(0, LIMITS.knowledgeVerifications);
+  nextState.callQaScores = sortNewest(nextState.callQaScores || []).slice(0, LIMITS.callQaScores);
+  nextState.skillOutcomes = sortNewest(nextState.skillOutcomes || []).slice(0, LIMITS.skillOutcomes);
   nextState.avaStories = sortNewest(nextState.avaStories || []).slice(0, LIMITS.avaStories);
   nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
@@ -6150,6 +6243,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.avaImprovementSuggestions = (nextState.avaImprovementSuggestions || []).length;
   nextState.status.openAvaImprovementSuggestions = (nextState.avaImprovementSuggestions || []).filter((item) => ['open', 'proposed', 'testing'].includes(String(item.status || '').toLowerCase())).length;
   nextState.status.knowledgeVerifications = (nextState.knowledgeVerifications || []).length;
+  nextState.status.callQaScores = (nextState.callQaScores || []).length;
+  nextState.status.skillOutcomes = (nextState.skillOutcomes || []).length;
   nextState.status.avaStories = (nextState.avaStories || []).length;
   nextState.status.agentVersions = (nextState.agentVersions || []).length;
   nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
@@ -6182,6 +6277,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.lastOutcomeReportAt = getItemTimestamp((nextState.avaOutcomeReports || [])[0] || {}) || nextState.status.lastOutcomeReportAt || null;
   nextState.status.lastImprovementSuggestionAt = getItemTimestamp((nextState.avaImprovementSuggestions || [])[0] || {}) || nextState.status.lastImprovementSuggestionAt || null;
   nextState.status.lastKnowledgeVerificationAt = getItemTimestamp((nextState.knowledgeVerifications || [])[0] || {}) || nextState.status.lastKnowledgeVerificationAt || null;
+  nextState.status.lastCallQaScoreAt = getItemTimestamp((nextState.callQaScores || [])[0] || {}) || nextState.status.lastCallQaScoreAt || null;
+  nextState.status.lastSkillOutcomeAt = getItemTimestamp((nextState.skillOutcomes || [])[0] || {}) || nextState.status.lastSkillOutcomeAt || null;
   nextState.status.lastInboundRouteAt = getItemTimestamp((nextState.inboundCallRoutes || [])[0] || {}) || nextState.status.lastInboundRouteAt || null;
   nextState.status.lastBrainBlogPostAt = getItemTimestamp((nextState.brainBlogPosts || [])[0] || {}) || null;
   nextState.status.lastMarketIntelAt = getItemTimestamp((nextState.marketIntel || [])[0] || {}) || null;
@@ -6258,6 +6355,8 @@ function hydrateState(raw = {}) {
     avaOutcomeReports: trimArray(raw.avaOutcomeReports || defaults.avaOutcomeReports, LIMITS.avaOutcomeReports),
     avaImprovementSuggestions: trimArray(raw.avaImprovementSuggestions || defaults.avaImprovementSuggestions, LIMITS.avaImprovementSuggestions),
     knowledgeVerifications: trimArray(raw.knowledgeVerifications || defaults.knowledgeVerifications, LIMITS.knowledgeVerifications),
+    callQaScores: trimArray(raw.callQaScores || defaults.callQaScores, LIMITS.callQaScores),
+    skillOutcomes: trimArray(raw.skillOutcomes || defaults.skillOutcomes, LIMITS.skillOutcomes),
     avaStories: trimArray(raw.avaStories || defaults.avaStories, LIMITS.avaStories),
     inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
@@ -8205,6 +8304,1082 @@ function buildAvaDoctrineCommandResult(command = '', context = {}) {
     knowledgeFacts: masterclassMatches,
     command,
   };
+}
+
+function normalizeClosingContext(params = {}) {
+  const context = params.context && typeof params.context === 'object' ? params.context : {};
+  const deal = params.deal && typeof params.deal === 'object'
+    ? params.deal
+    : context.deal && typeof context.deal === 'object'
+      ? context.deal
+      : {};
+  const conversation = params.conversation && typeof params.conversation === 'object'
+    ? params.conversation
+    : context.conversation && typeof context.conversation === 'object'
+      ? context.conversation
+      : {};
+  const query = String(
+    params.query
+      || params.q
+      || params.prompt
+      || params.text
+      || params.command
+      || params.lastUserUtterance
+      || conversation.lastUserUtterance
+      || '',
+  ).trim();
+  const selectedPath = String(
+    params.selectedPath
+      || params.selected_path
+      || params.path
+      || deal.selectedPath
+      || deal.selected_path
+      || deal.path
+      || context.selectedPath
+      || context.selected_path
+      || '',
+  ).trim().toLowerCase();
+  const sellerType = String(
+    params.sellerType
+      || params.seller_type
+      || params.audience
+      || context.sellerType
+      || context.seller_type
+      || (selectedPath === 'rbp' ? 'seller' : ''),
+  ).trim().toLowerCase() || 'seller';
+  const stage = String(
+    params.stage
+      || params.conversationStage
+      || params.conversation_stage
+      || conversation.stage
+      || '',
+  ).trim().toLowerCase() || 'objection_handling';
+  const sentiment = params.sentiment ?? params.sentimentScore ?? params.sentiment_score ?? conversation.sentiment ?? context.sentiment ?? null;
+
+  return {
+    query,
+    selectedPath,
+    seller_type: sellerType,
+    sellerType,
+    stage,
+    sentiment: sentiment === null || sentiment === undefined || sentiment === '' ? null : Math.max(0, Math.min(1, toNumber(sentiment, 0.5))),
+    address: String(params.address || deal.address || context.address || '').trim(),
+    leadName: String(params.leadName || params.lead_name || deal.leadName || context.leadName || '').trim(),
+    agentName: String(params.agentName || params.agent || context.agentName || 'Ava').trim(),
+  };
+}
+
+function classifyClosingObjection(query = '', context = {}) {
+  const text = `${query} ${context.stage || ''} ${context.selectedPath || ''}`.toLowerCase();
+  if (/\b(due[-\s]?on[-\s]?sale|loan called|lender call|subject[-\s]?to|subto|mortgage takeover|still in my name)\b/i.test(text)) return 'due_on_sale';
+  if (/\b(sc[a@]m|fake|trust|proof|legit|real company|how do i know|verify|can you close)\b/i.test(text)) return 'trust_verification';
+  if (/\b(think about|not sure|maybe|sleep on it|talk it over|circle back|follow up later)\b/i.test(text)) return 'needs_to_think';
+  if (/\b(wife|husband|spouse|partner|brother|sister|mom|dad|child|kids|co[-\s]?owner|attorney|lawyer|decision maker|signer)\b/i.test(text)) return 'decision_maker';
+  if (/\b(higher offer|another offer|better offer|someone else|other buyer|competing offer)\b/i.test(text)) return 'competing_offer';
+  if (/\b(list|listing|realtor|agent|mls|open market|get more on market)\b/i.test(text)) return 'list_with_agent';
+  if (/\b(price|number|offer|too low|lowball|more money|need more|worth more|counter)\b/i.test(text)) return 'price_too_low';
+  if (/\b(fast|soon|asap|quick|today|this week|cash now|need cash|urgent)\b/i.test(text)) return 'timeline_urgency';
+  return 'general_discovery';
+}
+
+function getClosingObjectionPlaybook(objectionType = 'general_discovery', context = {}) {
+  const path = String(context.selectedPath || '').toLowerCase();
+  const playbooks = {
+    price_too_low: {
+      skill: 'value_based_negotiation',
+      technique: 'net-proceeds reframe',
+      nextBestPhrase: 'I hear you. It sounds like you were hoping for a higher number. Let me slow down and show you what is shaping this: repairs, closing risk, holding time, and the certainty of no changes after closing.',
+      closeQuestion: 'If the math is clear and the close is clean, what number would make this feel worth moving forward today?',
+      tone: 'calm, consultative, not defensive',
+      pacing: 'slow down before the number and pause after the reframe',
+      doNotSay: ['Do not call it a lowball.', 'Do not raise price without a trade like faster close, no inspection, or signed today.', 'Do not invent comps or repair costs.'],
+    },
+    needs_to_think: {
+      skill: 'calibrated_question_close',
+      technique: 'isolate the real concern',
+      nextBestPhrase: 'That makes sense. Usually when someone says they need to think, it is one of three things: the price, the timing, or trusting the process. Which one is the real thing for you?',
+      closeQuestion: 'What would need to be true for you to feel comfortable taking the next step today?',
+      tone: 'patient and direct',
+      pacing: 'warm pause after listing the three concerns',
+      doNotSay: ['Do not pressure or shame the seller.', 'Do not ask yes/no questions that let the stall continue.', 'Do not send a contract until authority and comfort are clear.'],
+    },
+    list_with_agent: {
+      skill: 'market_option_reframe',
+      technique: 'cash backstop versus listing uncertainty',
+      nextBestPhrase: 'Listing can absolutely be a valid option. The tradeoff is time, showings, repairs, commissions, and the risk of price reductions. My lane is different: a clean backstop number with certainty, so you can compare the net instead of just the headline price.',
+      closeQuestion: 'Would it help if I showed you the estimated net from listing versus the clean cash option side by side?',
+      tone: 'respectful, agent-safe, no bypass energy',
+      pacing: 'steady and collaborative',
+      doNotSay: ['Do not bash agents.', 'Do not claim listing cannot work.', 'Do not use RBP/novation language with an agent-facing path unless approved by PBK rules.'],
+    },
+    competing_offer: {
+      skill: 'competing_offer_diagnosis',
+      technique: 'verify certainty without badmouthing',
+      nextBestPhrase: 'That is good if it is real and closes. The only thing I would want you to verify is whether it is cash or financed, whether earnest money is already at title, and whether they can close without renegotiating after inspection.',
+      closeQuestion: 'Would you be open to keeping my offer as a clean backup so you are protected if that one changes?',
+      tone: 'confident and non-jealous',
+      pacing: 'matter-of-fact, no urgency spike',
+      doNotSay: ['Do not badmouth the other buyer.', 'Do not match an unverified offer.', 'Do not imply PBK can close above MAO.'],
+    },
+    trust_verification: {
+      skill: 'trust_verification',
+      technique: 'proof without defensiveness',
+      nextBestPhrase: 'That is a fair question. You should verify anyone you work with. I can walk you through who we are, what happens before anything is signed, and what proof we can provide without asking you for money or sensitive information upfront.',
+      closeQuestion: 'What would make you feel comfortable enough to continue the conversation: company info, proof of funds, title process, or a written summary?',
+      tone: 'transparent and grounded',
+      pacing: 'slow, reassuring, no sales pressure',
+      doNotSay: ['Do not pretend to be human.', 'Do not ask for sensitive personal information upfront.', 'Do not get defensive about scam concerns.'],
+    },
+    decision_maker: {
+      skill: 'decision_maker_alignment',
+      technique: 'invite authority into the room',
+      nextBestPhrase: 'I respect that. For something this important, it usually works better if the decision-makers hear the same information at the same time. I do not want you carrying the whole conversation back alone.',
+      closeQuestion: 'Who else needs to be comfortable with this, and can we bring them into a quick three-way call?',
+      tone: 'protective and collaborative',
+      pacing: 'gentle authority',
+      doNotSay: ['Do not treat the decision-maker as an obstacle.', 'Do not accept a verbal yes if required signers are missing.', 'Do not bypass a spouse, co-owner, attorney, or agent.'],
+    },
+    due_on_sale: {
+      skill: 'subject_to_compliance_guardrail',
+      technique: 'risk disclosure plus attorney review',
+      nextBestPhrase: 'Good question. With subject-to or mortgage takeover, the loan can stay in the seller name until payoff, and there is a due-on-sale risk. I cannot guarantee lender behavior, so we explain the risk plainly and recommend attorney review before anyone signs.',
+      closeQuestion: 'Would it help if I sent the plain-English structure summary so your agent or attorney can review it?',
+      tone: 'plain, careful, legally safe',
+      pacing: 'slow and precise',
+      doNotSay: ['Do not say there is no risk.', 'Do not give legal advice.', 'Do not guarantee the lender will not call the loan.'],
+    },
+    timeline_urgency: {
+      skill: 'urgency_to_next_step',
+      technique: 'speed/certainty tradeoff',
+      nextBestPhrase: 'If speed is the priority, the cleanest path is usually the one with the fewest moving parts: as-is, no repairs, title handles the paperwork, and we keep the number inside what underwriting can actually approve.',
+      closeQuestion: 'If I can get this approved at a clean number today, are you ready to move to paperwork?',
+      tone: 'decisive and calm',
+      pacing: 'brisk but not rushed',
+      doNotSay: ['Do not exploit distress.', 'Do not promise a closing date until title and approvals confirm it.', 'Do not skip DNC/TCPA or approval gates.'],
+    },
+    general_discovery: {
+      skill: 'four_layer_pain_probe',
+      technique: 'diagnose before prescribing',
+      nextBestPhrase: 'Before I talk numbers, let me understand the situation correctly. What is the biggest thing you need solved with this property: speed, price, repairs, debt, or just getting it off your plate?',
+      closeQuestion: 'If we solve that one thing, what would change for you in the next 30 to 90 days?',
+      tone: 'curious and steady',
+      pacing: 'one question at a time',
+      doNotSay: ['Do not present an offer before BANT+ is complete.', 'Do not guess facts the analyzer or PBK tools can retrieve.', 'Do not blend deal-path scripts.'],
+    },
+  };
+  const selected = playbooks[objectionType] || playbooks.general_discovery;
+  const pathGuardrails = [];
+  if (path === 'rbp') pathGuardrails.push('RBP/novation is seller-only; do not use it as an agent-facing pitch.');
+  if (path === 'mt' || path === 'mortgage_takeover' || path === 'subject_to') pathGuardrails.push('Mortgage takeover language must disclose due-on-sale risk and stay agent-friendly.');
+  if (path === 'cf' || path === 'creative_finance') pathGuardrails.push('Creative finance must explain seller upside, safeguards, and tradeoffs without forcing it on cash-needed sellers.');
+  if (path === 'land') pathGuardrails.push('Land conversations must qualify utilities, access, zoning, acreage, and builder math before price.');
+  return {
+    ...selected,
+    doNotSay: [...selected.doNotSay, ...pathGuardrails],
+  };
+}
+
+async function retrieveClosingKnowledge(params = {}) {
+  const context = normalizeClosingContext(params);
+  const objectionType = params.objectionType || params.objection_type || classifyClosingObjection(context.query, context);
+  const searchQuery = [
+    context.query,
+    objectionType.replace(/_/g, ' '),
+    context.selectedPath,
+    context.seller_type,
+    context.stage,
+    'seven figure closer Ava PBK sales masterclass objection close',
+  ].filter(Boolean).join(' ');
+  const knowledge = await queryPbkKnowledgeRecords({
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    query: searchQuery,
+    limit: params.limit || 6,
+  });
+  const brain = answerBrainQuery(state, searchQuery);
+  const brainMatches = Array.isArray(brain?.matches) ? brain.matches.slice(0, 3) : [];
+  return {
+    context: {
+      ...context,
+      objectionType,
+      searchQuery,
+    },
+    knowledgeFacts: Array.isArray(knowledge?.facts) ? knowledge.facts.slice(0, 6) : [],
+    brainMatches,
+    citations: [
+      ...(Array.isArray(knowledge?.facts) ? knowledge.facts.slice(0, 4).map((fact) => `${fact.subject || 'PBK Knowledge'} - ${String(fact.predicate || '').replace(/_/g, ' ')}`) : []),
+      ...(Array.isArray(brain?.citations) ? brain.citations.slice(0, 2) : []),
+    ].filter(Boolean),
+  };
+}
+
+async function buildClosingIntelligenceAdvice(params = {}) {
+  const retrieval = await retrieveClosingKnowledge(params);
+  const context = retrieval.context;
+  const playbook = getClosingObjectionPlaybook(context.objectionType, context);
+  const reaction = buildRealTimeConversationReaction({ ...params, ...context, objectionType: context.objectionType });
+  const [memoryContext, similarDealProof] = await Promise.all([
+    recallConversationMemoryForDeal({ ...params, ...context, limit: 4 }),
+    retrieveSimilarDealProof({ ...params, ...context, limit: 2 }),
+  ]);
+  const factSupport = retrieval.knowledgeFacts
+    .slice(0, 3)
+    .map((fact) => ({
+      id: fact.id,
+      predicate: fact.predicate,
+      summary: fact.object,
+      confidence: fact.confidence,
+      tags: fact.metadata?.tags || fact.tags || [],
+    }));
+  const promptFrame = buildSevenFigurePromptFrame({
+    ...params,
+    ...context,
+    objectionType: context.objectionType,
+    playbook,
+    reaction,
+    memoryContext,
+    similarDealProof,
+    factSupport,
+  });
+  const advice = {
+    skill: playbook.skill,
+    technique: playbook.technique,
+    stage: context.stage,
+    objectionType: context.objectionType,
+    selectedPath: context.selectedPath || 'unknown',
+    seller_type: context.seller_type,
+    nextBestPhrase: playbook.nextBestPhrase,
+    closeQuestion: playbook.closeQuestion,
+    tone: playbook.tone,
+    pacing: playbook.pacing,
+    doNotSay: playbook.doNotSay,
+    support: factSupport,
+    promptFrame,
+    reaction,
+    prosody: reaction.prosody,
+    memories: memoryContext.memories,
+    similarDeals: similarDealProof.deals,
+    socialProofPhrase: similarDealProof.sellerSafePhrase,
+    noveltyRecovery: reaction.noveltyRecovery,
+    confidence: Math.max(0.62, Math.min(0.98, 0.72 + Math.min(0.18, retrieval.knowledgeFacts.length * 0.03))),
+  };
+  const synthesized = params.synthesize === true || params.deepSeek === true
+    ? await synthesizeClosingAnswerWithDeepSeek({ ...params, context, playbook, advice, memoryContext, similarDealProof, factSupport })
+    : null;
+  if (synthesized?.ok && synthesized.answer) {
+    advice.deepSeekAnswer = synthesized.answer;
+    advice.nextBestPhrase = normalizeAvaSpokenScript(synthesized.answer) || advice.nextBestPhrase;
+    advice.provider = synthesized.provider;
+  }
+  return {
+    ok: true,
+    result: 'closing_intelligence',
+    source: 'pbk_knowledge',
+    query: context.query,
+    selectedPath: advice.selectedPath,
+    seller_type: advice.seller_type,
+    stage: context.stage,
+    objectionType: context.objectionType,
+    nextBestPhrase: advice.nextBestPhrase,
+    closeQuestion: advice.closeQuestion,
+    doNotSay: advice.doNotSay,
+    confidence: advice.confidence,
+    advice,
+    promptFrame,
+    reaction,
+    prosody: reaction.prosody,
+    memories: memoryContext.memories,
+    similarDeals: similarDealProof.deals,
+    socialProofPhrase: similarDealProof.sellerSafePhrase,
+    noveltyRecovery: reaction.noveltyRecovery,
+    synthesizedAnswer: synthesized?.answer || '',
+    knowledgeFacts: retrieval.knowledgeFacts,
+    brainMatches: retrieval.brainMatches,
+    citations: retrieval.citations.length ? retrieval.citations : ['Ava wholesale conversation masterclass', 'PBK knowledge graph'],
+  };
+}
+
+function buildAvaProsodyProfile(params = {}) {
+  const text = String(params.text || params.transcript || params.query || params.lastUserUtterance || '').toLowerCase();
+  const detected = params.intent && typeof params.intent === 'object' ? params.intent : classifyPbkIntent(text);
+  const rawSentiment = params.sentiment ?? params.sentimentScore ?? params.sentiment_score ?? params.pbkScore ?? params.score;
+  const sentiment = rawSentiment === null || rawSentiment === undefined || rawSentiment === ''
+    ? estimatePbkLiveSentiment(text).pbkScore ?? 0.55
+    : Math.max(0, Math.min(1, toNumber(rawSentiment, 0.55)));
+  const emotion = String(params.emotion || params.sentimentLabel || detected.communicationProfile?.emotionalState || inferSellerEmotion({ ...params, text })).toLowerCase();
+  let profile = 'steady_consultative';
+  let speed = 0.98;
+  let stability = 0.48;
+  let similarityBoost = 0.78;
+  let pauseMs = 650;
+  let pitchGuidance = 'neutral';
+  let delivery = 'calm, clear, medium pace';
+
+  if (sentiment < 0.35 || /angry|frustrated|defensive|distrust/.test(emotion)) {
+    profile = 'de_escalation';
+    speed = 0.84;
+    stability = 0.62;
+    similarityBoost = 0.82;
+    pauseMs = 1100;
+    pitchGuidance = 'slightly lower';
+    delivery = 'slow down, lower the tone, label the concern, and pause before the next question';
+  } else if (sentiment < 0.55 || /hesitant|guarded|unsure/.test(emotion)) {
+    profile = 'trust_builder';
+    speed = 0.92;
+    stability = 0.56;
+    similarityBoost = 0.8;
+    pauseMs = 850;
+    pitchGuidance = 'warm-neutral';
+    delivery = 'warm, patient, one question at a time';
+  } else if (sentiment > 0.72 || detected.intent === 'ready_to_close') {
+    profile = 'closing_momentum';
+    speed = 1.04;
+    stability = 0.44;
+    similarityBoost = 0.77;
+    pauseMs = 450;
+    pitchGuidance = 'slightly brighter';
+    delivery = 'confident and concise; move to one clear next step';
+  } else if (/grieving|overwhelmed/.test(emotion)) {
+    profile = 'grief_safe';
+    speed = 0.86;
+    stability = 0.68;
+    similarityBoost = 0.82;
+    pauseMs = 1250;
+    pitchGuidance = 'soft and lower';
+    delivery = 'very slow, dignified, no humor, reduce the burden';
+  }
+
+  return {
+    profile,
+    sentiment,
+    emotion,
+    speed,
+    stability,
+    similarityBoost,
+    similarity_boost: similarityBoost,
+    pauseMs,
+    pitchGuidance,
+    delivery,
+    voiceSettings: {
+      stability,
+      similarity_boost: similarityBoost,
+      speed,
+      use_speaker_boost: true,
+    },
+  };
+}
+
+function buildRealTimeConversationReaction(params = {}) {
+  const query = String(params.query || params.text || params.transcript || params.lastUserUtterance || '').trim();
+  const detected = classifyPbkIntent(query);
+  const objectionType = params.objectionType || classifyClosingObjection(query, params);
+  const prosody = buildAvaProsodyProfile({ ...params, text: query, intent: detected });
+  const sentiment = prosody.sentiment;
+  let trigger = 'continue';
+  let skillToLoad = getClosingObjectionPlaybook(objectionType, params).skill;
+  let nextTactic = 'Ask one calibrated question and keep the seller in the frame.';
+  let immediatePhrase = '';
+
+  if (detected.intent === 'not_interested' || /\b(stop calling|do not call|take me off|remove me)\b/i.test(query)) {
+    trigger = 'compliance_exit';
+    skillToLoad = 'dnc_boundary';
+    nextTactic = 'Stop persuasion, apologize, confirm opt-out, and mark DNC.';
+    immediatePhrase = 'I understand. I will stop outreach and make sure this number is marked do-not-call.';
+  } else if (sentiment < 0.35 || /angry|frustrated|distrustful/.test(prosody.emotion)) {
+    trigger = 'de_escalate';
+    skillToLoad = 'de_escalation';
+    nextTactic = 'Label the emotion, slow the pace, and ask what would make the seller comfortable.';
+    immediatePhrase = 'I hear that this is frustrating. Let me slow down and make sure I understand what matters most to you right now.';
+  } else if (detected.intent === 'ready_to_close' || (sentiment > 0.72 && /\b(send|sign|move forward|sounds good|let's do it)\b/i.test(query))) {
+    trigger = 'close';
+    skillToLoad = 'rule_of_three_close';
+    nextTactic = 'Confirm price, timeline, and decision authority before paperwork.';
+    immediatePhrase = 'That sounds like we may have a path. Before I prepare anything, let me confirm the price, timeline, and who needs to sign.';
+  } else if (objectionType === 'general_discovery' && query && !/\b(address|property|timeline|condition|price|offer|agent|cash|mortgage|repair|close|sign|trust|scam)\b/i.test(query)) {
+    trigger = 'novel_objection';
+    skillToLoad = 'confession_with_bridge';
+    nextTactic = 'Do not bluff. Bridge to a clarifying question and retrieve deeper knowledge.';
+    immediatePhrase = 'That is a fair question. Let me make sure I answer the right thing instead of guessing.';
+  }
+
+  const noveltyRecovery = trigger === 'novel_objection'
+    ? {
+        pattern: 'confession_with_bridge',
+        phrase: `${immediatePhrase} Are you mainly concerned about the money, the timeline, or the risk?`,
+        followUp: 'If the answer needs legal, tax, title, or lender-specific review, offer a written summary and human follow-up.',
+      }
+    : null;
+
+  return {
+    ok: true,
+    trigger,
+    intent: detected.intent,
+    confidence: detected.confidence,
+    objectionType,
+    skillToLoad,
+    nextTactic,
+    immediatePhrase,
+    prosody,
+    noveltyRecovery,
+    shouldHandoff: prosody.sentiment < 0.25 || detected.communicationProfile?.safety?.offerHumanTransfer === true,
+    shouldStopContact: detected.communicationProfile?.safety?.stopIfRequested === true || trigger === 'compliance_exit',
+  };
+}
+
+function buildSevenFigurePromptFrame(params = {}) {
+  const memories = Array.isArray(params.memoryContext?.memories) ? params.memoryContext.memories : [];
+  const similarDeals = Array.isArray(params.similarDealProof?.deals) ? params.similarDealProof.deals : [];
+  const support = Array.isArray(params.factSupport) ? params.factSupport : [];
+  return {
+    role: 'Ava is a top 1% approval-gated real estate acquisitions closer: calm authority, tactical empathy, no desperation, no fake certainty.',
+    internalChecklist: [
+      'What is the seller really afraid of or trying to protect?',
+      'Which frame keeps PBK as the calm expert instead of a desperate buyer?',
+      'What missing BANT+ fact must be discovered before numbers or paperwork?',
+      'Which proof point is safe to use: analyzer math, similar PBK deal, memory, or retrieved knowledge?',
+      'What is the one next step: clarify, de-escalate, verify, close, hand off, or stop contact?',
+    ],
+    stageInstruction: {
+      discovery: 'Diagnose before prescribing. Ask one open question and uncover impact.',
+      objection_handling: 'Acknowledge first, reframe second, ask a calibrated question third.',
+      negotiation: 'Trade concessions; never raise price without speed, certainty, inspection, or signature tradeoff.',
+      closing: 'Confirm the rule of three: price, timeline, authority. Then prepare approval-gated paperwork.',
+    }[String(params.stage || '').toLowerCase()] || 'Keep the response short, useful, and grounded in PBK facts.',
+    usableContext: {
+      objectionType: params.objectionType || '',
+      selectedPath: params.selectedPath || params.selected_path || '',
+      memoryCount: memories.length,
+      similarDealCount: similarDeals.length,
+      supportCount: support.length,
+      socialProofPhrase: params.similarDealProof?.sellerSafePhrase || '',
+    },
+    spokenRules: [
+      'Never list the hidden checklist out loud.',
+      'Never invent comps, legal advice, lender behavior, or closed-deal proof.',
+      'If confidence is low, ask one clarifying question instead of filling dead air.',
+      'If the seller is angry, slow down and de-escalate before selling.',
+    ],
+  };
+}
+
+function normalizeDealCandidateText(candidate = {}) {
+  const metadata = candidate.metadata && typeof candidate.metadata === 'object' ? candidate.metadata : {};
+  return [
+    candidate.address,
+    candidate.propertyAddress,
+    candidate.leadName,
+    candidate.selectedPath,
+    candidate.path,
+    candidate.contractType,
+    candidate.status,
+    candidate.city,
+    candidate.state,
+    candidate.condition,
+    candidate.arv,
+    candidate.mao,
+    candidate.price,
+    candidate.amount,
+    metadata.address,
+    metadata.selectedPath,
+    metadata.condition,
+  ].filter(Boolean).join(' ');
+}
+
+function collectSimilarDealCandidates() {
+  const candidates = [];
+  for (const contract of state.contracts || []) {
+    candidates.push({
+      id: contract.id || `contract-${candidates.length}`,
+      source: 'contracts',
+      leadId: contract.leadId || '',
+      leadName: contract.leadName || contract.sellerName || '',
+      address: contract.address || contract.propertyAddress || '',
+      selectedPath: contract.selectedPath || contract.path || contract.contractType || '',
+      status: contract.status || '',
+      amount: contract.amount || contract.price || contract.offerPrice || 0,
+      closed: /\b(completed|signed|closed|executed)\b/i.test(String(contract.status || '')),
+      daysToClose: contract.daysToClose || contract.metadata?.daysToClose || '',
+      createdAt: contract.createdAt || contract.updatedAt || '',
+      metadata: contract.metadata || {},
+    });
+  }
+  for (const run of state.analyzerRuns || []) {
+    candidates.push({
+      id: run.id || `analyzer-${candidates.length}`,
+      source: 'analyzerRuns',
+      leadId: run.leadId || '',
+      leadName: run.leadName || '',
+      address: run.address || run.propertyAddress || '',
+      selectedPath: run.selectedPath || run.path || run.result?.selectedPath || '',
+      status: run.status || 'analyzed',
+      amount: run.offerPrice || run.price || run.result?.offerPrice || run.result?.mao || 0,
+      arv: run.arv || run.result?.arv || 0,
+      mao: run.mao || run.result?.mao || 0,
+      repairs: run.repairs || run.result?.repairs || 0,
+      closed: false,
+      createdAt: run.createdAt || run.updatedAt || '',
+      metadata: run.metadata || {},
+    });
+  }
+  for (const memory of state.pbkMemories || []) {
+    if (!/\b(closed|signed|accepted|similar|deal recap|seller win)\b/i.test(String(memory.content || ''))) continue;
+    candidates.push({
+      id: memory.id || `memory-${candidates.length}`,
+      source: 'pbkMemories',
+      leadId: memory.leadId || '',
+      leadName: memory.metadata?.leadName || '',
+      address: memory.metadata?.address || '',
+      selectedPath: memory.metadata?.selectedPath || memory.metadata?.path || '',
+      status: memory.metadata?.status || 'memory',
+      amount: memory.metadata?.amount || memory.metadata?.offerPrice || 0,
+      closed: /\b(closed|signed|accepted)\b/i.test(String(memory.content || '')),
+      createdAt: memory.createdAt || '',
+      summary: memory.content,
+      metadata: memory.metadata || {},
+    });
+  }
+  return candidates;
+}
+
+async function retrieveSimilarDealProof(params = {}) {
+  const context = findLeadContext(params);
+  const query = [
+    params.query,
+    params.address || context.address,
+    params.selectedPath || params.path || params.selected_path,
+    params.condition,
+    params.arv,
+    params.repairs,
+  ].filter(Boolean).join(' ');
+  const limit = Math.max(1, Math.min(5, Number(params.limit || 2)));
+  const candidates = collectSimilarDealCandidates()
+    .map((candidate) => {
+      const text = normalizeDealCandidateText(candidate);
+      const pathMatch = String(candidate.selectedPath || '').toLowerCase() && String(query || '').toLowerCase().includes(String(candidate.selectedPath || '').toLowerCase());
+      const score = scorePbkTextMatch(query || context.address || candidate.address, `${text} ${candidate.summary || ''}`, candidate.metadata)
+        + (candidate.closed ? 0.35 : 0)
+        + (pathMatch ? 0.18 : 0);
+      return { ...candidate, score };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
+    .slice(0, limit);
+  const sellerSafePhrase = candidates.length
+    ? candidates[0].closed
+      ? `We have closed a similar ${candidates[0].selectedPath || 'deal'} file before, so I can compare this against a real PBK process instead of guessing.`
+      : `I can compare this against similar PBK analyzer files, but I will not call it a closed comp unless it is actually closed.`
+    : '';
+  return {
+    ok: true,
+    result: 'similar_deals',
+    query,
+    deals: candidates.map((candidate) => ({
+      id: candidate.id,
+      source: candidate.source,
+      address: candidate.address,
+      selectedPath: candidate.selectedPath,
+      status: candidate.status,
+      amount: candidate.amount,
+      closed: candidate.closed,
+      score: Number(candidate.score.toFixed(3)),
+      sellerSafeSummary: candidate.closed
+        ? `Similar closed ${candidate.selectedPath || 'deal'}${candidate.amount ? ` around ${formatReadableCurrency(candidate.amount)}` : ''}.`
+        : `Similar PBK file (${candidate.status || candidate.source}) for context only.`,
+    })),
+    sellerSafePhrase,
+  };
+}
+
+async function recallConversationMemoryForDeal(params = {}) {
+  const context = findLeadContext(params);
+  const query = String(params.query || params.transcript || params.text || context.address || context.leadName || '').trim();
+  const memory = await recallPbkMemoryRecords({
+    ...params,
+    leadId: params.leadId || context.leadId,
+    query,
+    limit: params.limit || 5,
+    includeGlobal: params.includeGlobal === true,
+  });
+  return {
+    ok: true,
+    result: 'conversation_memory',
+    memories: (memory.memories || []).map((item) => ({
+      id: item.id,
+      leadId: item.leadId,
+      memoryType: item.memoryType,
+      content: item.content,
+      importance: item.importance,
+      source: item.source,
+      createdAt: item.createdAt,
+      recallScore: item.recallScore,
+    })),
+    count: memory.count || 0,
+  };
+}
+
+async function runTavilySearch(query = '', params = {}) {
+  const cleanQuery = String(query || '').trim();
+  if (!cleanQuery) return { ok: false, result: 'invalid_request', answer: 'Search query is required.', citations: [] };
+  if (!TAVILY_API_KEY) {
+    return { ok: false, result: 'provider_missing', answer: 'Tavily search is not configured. Add PBK_TAVILY_API_KEY.', citations: [] };
+  }
+  try {
+    const response = await fetch(TAVILY_SEARCH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${TAVILY_API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: cleanQuery,
+        search_depth: params.searchDepth || params.search_depth || 'basic',
+        max_results: Math.max(1, Math.min(5, Number(params.maxResults || params.max_results || 3))),
+        include_answer: true,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return { ok: false, result: 'provider_error', answer: payload?.error || `Tavily returned ${response.status}`, citations: [], payload };
+    }
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    return {
+      ok: true,
+      result: 'live',
+      provider: 'Tavily',
+      query: cleanQuery,
+      answer: payload?.answer || results.map((item) => item.content || item.snippet || '').filter(Boolean).join('\n').slice(0, 1200),
+      citations: results.map((item) => item.url).filter(Boolean).slice(0, 5),
+      results,
+    };
+  } catch (error) {
+    return { ok: false, result: 'provider_error', answer: error?.message || 'Tavily search failed.', citations: [] };
+  }
+}
+
+async function runLiveWebSearch(query = '', params = {}) {
+  const tavily = await runTavilySearch(query, params);
+  if (tavily.ok) return tavily;
+  const openAi = await runOpenAiWebSearch(query, params);
+  return {
+    ...openAi,
+    fallbackChain: [
+      { provider: 'tavily', ok: tavily.ok, result: tavily.result, error: tavily.answer || tavily.error || '' },
+      { provider: 'openai', ok: openAi.ok, result: openAi.result, error: openAi.answer || openAi.error || '' },
+    ],
+  };
+}
+
+function buildCallQaScore(params = {}) {
+  const transcript = String(params.transcript || params.text || params.body || '').trim();
+  const lower = transcript.toLowerCase();
+  const hasPainProbe = /\b(why|what made|how long|what happens|if nothing changes|personally|90 days|behind you|timeline|condition)\b/i.test(lower);
+  const hasObjection = /\b(too low|think about|higher offer|scam|trust|list|agent|wife|husband|attorney|lawyer)\b/i.test(lower);
+  const handledObjection = hasObjection && /\b(i hear|that makes sense|fair question|help me understand|what would need|let me show|net|certainty)\b/i.test(lower);
+  const offerPresented = /\b(offer|number|price|cash|as-is|close|mao|arv|net)\b/i.test(lower);
+  const nextStep = /\b(send|schedule|contract|agreement|docusign|follow up|call back|three-way|paperwork|next step)\b/i.test(lower);
+  const tone = buildHumanCommunicationProfile(transcript, classifyPbkIntent(transcript));
+  const toneMatched = !tone.safety.avoidJokes || !/\b(lol|haha|joke|funny)\b/i.test(lower);
+  const breakdown = {
+    painProbe: hasPainProbe ? 20 : 8,
+    objectionHandling: hasObjection ? (handledObjection ? 25 : 10) : 18,
+    offerPresentation: offerPresented ? 20 : 7,
+    nextStep: nextStep ? 20 : 6,
+    toneRapport: toneMatched ? 15 : 5,
+  };
+  const total = Object.values(breakdown).reduce((sum, value) => sum + value, 0);
+  const weaknesses = [];
+  if (!hasPainProbe) weaknesses.push('Pain probe was shallow; Ava needs at least one impact or personal consequence question.');
+  if (hasObjection && !handledObjection) weaknesses.push('Main objection appeared but was not acknowledged and reframed clearly.');
+  if (!offerPresented) weaknesses.push('Offer/value proposition was not presented clearly.');
+  if (!nextStep) weaknesses.push('Call lacked a concrete next step.');
+  if (!toneMatched) weaknesses.push('Tone mismatch risk; sensitive seller context needs slower delivery and no humor.');
+  return {
+    total,
+    grade: total >= 85 ? 'A' : total >= 72 ? 'B' : total >= 60 ? 'C' : 'needs_coaching',
+    breakdown,
+    weaknesses,
+    nextActions: weaknesses.length
+      ? weaknesses.map((weakness) => `Coach: ${weakness}`)
+      : ['Keep collecting outcomes; this call passed the QA gate.'],
+  };
+}
+
+async function persistCallQaScoreToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_call_qa_scores (
+      id, tenant_id, lead_id, call_id, agent_name, score, grade,
+      breakdown, weaknesses, next_actions, transcript_snippet, metadata, created_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13)
+    ON CONFLICT (id) DO NOTHING`,
+    [
+      record.id,
+      record.tenantId,
+      record.leadId,
+      record.callId,
+      record.agentName,
+      record.score,
+      record.grade,
+      JSON.stringify(record.breakdown || {}),
+      JSON.stringify(record.weaknesses || []),
+      JSON.stringify(record.nextActions || []),
+      record.transcriptSnippet || '',
+      JSON.stringify(record.metadata || {}),
+      record.createdAt,
+    ],
+  );
+  return result.ok;
+}
+
+async function scoreCallQualityRecord(params = {}) {
+  const context = findLeadContext(params);
+  const transcript = String(params.transcript || params.text || params.body || '').trim();
+  const score = buildCallQaScore({ ...params, transcript });
+  const record = {
+    id: params.id || `call-qa-${slugify(params.callId || context.leadId || randomUUID())}-${Date.now()}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    leadId: String(params.leadId || context.leadId || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    agentName: normalizeAgentName(params.agentName || params.agent || 'Ava'),
+    score: score.total,
+    grade: score.grade,
+    breakdown: score.breakdown,
+    weaknesses: score.weaknesses,
+    nextActions: score.nextActions,
+    transcriptSnippet: transcript.slice(0, 2000),
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      address: context.address,
+      leadName: context.leadName,
+    },
+    createdAt: params.createdAt || isoNow(),
+  };
+  if (!Array.isArray(state.callQaScores)) state.callQaScores = [];
+  upsertById(state, 'callQaScores', record);
+  const postgres = await persistCallQaScoreToPg(record);
+  if (record.score < 60 && params.createRexDecision !== false) {
+    await createRexDecision({
+      tool: 'ab_test_skill',
+      params: {
+        sourceAgentId: 'ava',
+        skill: 'call_qa_repair',
+        sample: 'next 10 similar calls',
+        weaknesses: record.weaknesses,
+      },
+      rationale: `Call QA scored ${record.score}/100. Rex should improve the weak conversation pattern before more autonomy.`,
+      actor: 'Ava QA Scorer',
+      source: 'call-qa',
+      requestApproval: true,
+    }, { requestApproval: true, actor: 'Ava QA Scorer', source: 'call-qa' });
+  }
+  addActivity(state, makeActivity({
+    actor: 'Ava QA Scorer',
+    category: 'BRAIN',
+    status: record.score >= 60 ? 'success' : 'warning',
+    text: `Call QA scored ${record.score}/100 (${record.grade}).`,
+    target: context.leadName || context.address || record.callId || 'seller call',
+  }));
+  await persistState(state);
+  return { ok: true, result: 'call_qa_scored', score: record, storage: { localState: true, postgres } };
+}
+
+async function persistSkillOutcomeToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_skill_outcomes (
+      id, tenant_id, skill_name, version, agent_name, lead_id, call_id,
+      success, sentiment_before, sentiment_after, deal_closed, outcome_label, metadata, created_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)
+    ON CONFLICT (id) DO NOTHING`,
+    [
+      record.id,
+      record.tenantId,
+      record.skillName,
+      record.version,
+      record.agentName,
+      record.leadId,
+      record.callId,
+      record.success,
+      record.sentimentBefore,
+      record.sentimentAfter,
+      record.dealClosed,
+      record.outcomeLabel,
+      JSON.stringify(record.metadata || {}),
+      record.createdAt,
+    ],
+  );
+  return result.ok;
+}
+
+function summarizeSkillOutcomes(skillName = '', version = '') {
+  const normalizedSkill = String(skillName || '').trim().toLowerCase();
+  const normalizedVersion = String(version || '').trim().toLowerCase();
+  const outcomes = (state.skillOutcomes || []).filter((item) => {
+    if (String(item.skillName || '').trim().toLowerCase() !== normalizedSkill) return false;
+    if (normalizedVersion && String(item.version || '').trim().toLowerCase() !== normalizedVersion) return false;
+    return true;
+  });
+  const measured = outcomes.filter((item) => typeof item.success === 'boolean');
+  const wins = measured.filter((item) => item.success).length;
+  const total = measured.length;
+  const successRate = total ? wins / total : 0;
+  const confidence = Math.max(0.35, Math.min(0.99, 0.42 + total * 0.035 + Math.abs(successRate - 0.5) * 0.2));
+  return {
+    skillName,
+    version,
+    total,
+    wins,
+    losses: total - wins,
+    successRate,
+    confidence,
+    status: total < 3 ? 'collecting_data' : successRate >= 0.8 ? 'winning' : successRate < 0.35 ? 'failing' : 'mixed',
+  };
+}
+
+async function runRexSkillAutopilotRecord(params = {}) {
+  const skillName = String(params.skillName || params.skill || '').trim();
+  const version = String(params.version || '').trim();
+  if (!skillName) return { ok: false, result: 'invalid_request', error: 'skillName is required.' };
+  const summary = summarizeSkillOutcomes(skillName, version);
+  const minUses = Math.max(3, Math.min(100, Number(params.minUses || params.min_uses || 30)));
+  const promoteConfidence = Math.max(0.5, Math.min(0.99, Number(params.promoteConfidence || params.promote_confidence || 0.95)));
+  const promoteRate = Math.max(0.5, Math.min(1, Number(params.promoteSuccessRate || params.promote_success_rate || 0.8)));
+  const actions = [];
+
+  if (summary.total >= minUses && summary.successRate >= promoteRate && summary.confidence >= promoteConfidence) {
+    const promotion = await applyAgentSkillAction('promote_skill', {
+      sourceAgentId: params.agentId || params.agent || 'ava',
+      skillName,
+    }, { actor: params.actor || 'Rex Skill Autopilot' });
+    actions.push({ type: 'auto_promote_skill', ok: promotion.ok, result: promotion.result, promotion });
+  } else if (summary.total >= minUses && summary.successRate < 0.35) {
+    const decision = await createRexDecision({
+      tool: 'ab_test_skill',
+      params: {
+        sourceAgentId: params.agentId || params.agent || 'ava',
+        skill: skillName,
+        sample: 'next 20 matching calls',
+      },
+      rationale: `${skillName} is underperforming at ${Math.round(summary.successRate * 100)}% after ${summary.total} measured outcomes. Rex should replace or A/B test it.`,
+      actor: params.actor || 'Rex Skill Autopilot',
+      source: 'skill-outcome-loop',
+      requestApproval: true,
+    }, { requestApproval: true, actor: params.actor || 'Rex Skill Autopilot', source: 'skill-outcome-loop' });
+    actions.push({ type: 'queue_rex_ab_test', ok: decision.ok, decision });
+  }
+
+  return {
+    ok: true,
+    result: actions.length ? 'skill_loop_actioned' : 'skill_loop_observed',
+    summary,
+    thresholds: { minUses, promoteConfidence, promoteRate },
+    actions,
+  };
+}
+
+async function recordSkillOutcomeRecord(params = {}) {
+  const context = findLeadContext(params);
+  const skillName = String(params.skillName || params.skill || params.skill_name || '').trim();
+  if (!skillName) return { ok: false, result: 'invalid_request', error: 'skillName is required.' };
+  const sentimentBefore = params.sentimentBefore ?? params.sentiment_before ?? params.startSentiment ?? null;
+  const sentimentAfter = params.sentimentAfter ?? params.sentiment_after ?? params.endSentiment ?? params.sentiment ?? null;
+  const outcomeLabel = String(params.outcomeLabel || params.outcome_label || params.outcome || '').trim();
+  const explicitSuccess = typeof params.success === 'boolean' ? params.success : null;
+  const success = explicitSuccess ?? (
+    params.dealClosed === true
+      || /\b(won|closed|signed|accepted|appointment|verbal yes|positive|contract sent)\b/i.test(outcomeLabel)
+      || (Number.isFinite(Number(sentimentBefore)) && Number.isFinite(Number(sentimentAfter)) && Number(sentimentAfter) - Number(sentimentBefore) >= 0.12)
+        ? true
+        : /\b(lost|rejected|dnc|angry|negative|walked|hung up)\b/i.test(outcomeLabel)
+          ? false
+          : null
+  );
+  const record = {
+    id: params.id || `skill-outcome-${slugify(skillName)}-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    skillName,
+    version: String(params.version || params.variant || params.variantId || '').trim(),
+    agentName: normalizeAgentName(params.agentName || params.agent || 'Ava'),
+    leadId: String(params.leadId || context.leadId || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    success,
+    sentimentBefore: sentimentBefore === null || sentimentBefore === undefined || sentimentBefore === '' ? null : Number(sentimentBefore),
+    sentimentAfter: sentimentAfter === null || sentimentAfter === undefined || sentimentAfter === '' ? null : Number(sentimentAfter),
+    dealClosed: Boolean(params.dealClosed || params.deal_closed),
+    outcomeLabel,
+    metadata: {
+      ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+      address: context.address,
+      leadName: context.leadName,
+      transcriptSnippet: String(params.transcript || params.text || '').slice(0, 1000),
+    },
+    createdAt: params.createdAt || isoNow(),
+  };
+  if (!Array.isArray(state.skillOutcomes)) state.skillOutcomes = [];
+  upsertById(state, 'skillOutcomes', record);
+  const postgres = await persistSkillOutcomeToPg(record);
+  let scriptTest = null;
+  if (params.testId && record.version) {
+    scriptTest = await scriptTestRecord({
+      action: 'record_outcome',
+      testId: params.testId,
+      variantId: record.version,
+      success: record.success,
+      outcomeLabel: record.outcomeLabel,
+      leadId: record.leadId,
+      callId: record.callId,
+      metadata: { linkedSkillOutcomeId: record.id },
+    });
+  }
+  const autopilot = params.autopilot === false
+    ? null
+    : await runRexSkillAutopilotRecord({ ...params, skillName, version: record.version, agent: record.agentName });
+  addActivity(state, makeActivity({
+    actor: record.agentName,
+    category: 'BRAIN',
+    status: record.success === false ? 'warning' : 'success',
+    text: `Recorded skill outcome for ${skillName}: ${record.success === true ? 'success' : record.success === false ? 'miss' : 'observed'}.`,
+    target: context.leadName || context.address || record.callId || skillName,
+  }));
+  await persistState(state);
+  return { ok: true, result: 'skill_outcome_recorded', outcome: record, summary: summarizeSkillOutcomes(skillName, record.version), autopilot, scriptTest, storage: { localState: true, postgres } };
+}
+
+async function requestHumanHandoffRecord(params = {}) {
+  const context = findLeadContext(params);
+  const reason = String(params.reason || params.notes || 'Ava requested human handoff.').trim();
+  const transcript = String(params.transcript || params.text || '').trim();
+  const callControlId = String(params.callControlId || params.call_control_id || params.telnyxCallControlId || params.callId || '').trim();
+  const targetPhone = normalizePhone(params.to || params.targetPhone || HUMAN_AGENT_PHONE || '');
+  const task = await recordAgentHandoffTask({
+    fromAgent: normalizeAgentName(params.agentName || params.agent || 'Ava'),
+    toAgent: params.toAgent || 'Human Operator',
+    taskType: 'human_handoff',
+    status: callControlId && targetPhone ? 'ready' : 'queued',
+    summary: `Human handoff requested: ${reason}`,
+    correlationId: callControlId || params.callId || context.leadId || '',
+    providerWrites: callControlId && targetPhone ? 'requested' : 'blocked',
+    metadata: {
+      reason,
+      transcriptSnippet: transcript.slice(-700),
+      leadId: context.leadId,
+      leadName: context.leadName,
+      address: context.address,
+      callControlId,
+      targetPhone,
+    },
+  });
+  let transfer = { ok: false, skipped: true, result: 'not_attempted', error: 'No active Telnyx call_control_id and human phone were provided.' };
+  if (callControlId && targetPhone && params.transfer !== false) {
+    const speak = await speakAvaPhoneReplyByCallId(callControlId, 'I want to make sure you get the best help. Let me bring in my manager for you now.');
+    transfer = await transferTelnyxCall(callControlId, targetPhone);
+    transfer.preTransferSpeak = speak;
+  }
+  const slack = await toolHandlers.slackNotify({
+    channel: params.channel || SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID || '',
+    text: `Human handoff requested for ${context.leadName || context.address || callControlId || 'seller call'}: ${reason}${transcript ? `\nLast words: ${transcript.slice(-300)}` : ''}`,
+    source: 'human-handoff',
+  });
+  addActivity(state, makeActivity({
+    actor: params.agentName || 'Ava',
+    category: 'CALL',
+    status: transfer.ok ? 'transferred' : 'queued',
+    text: `Human handoff requested: ${reason}`,
+    target: context.leadName || context.address || callControlId || 'seller call',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: transfer.ok ? 'live_transfer' : 'handoff_queued',
+    task,
+    transfer,
+    slack,
+    phrase: 'I want to make sure you get the best help. Let me bring in my manager - one moment.',
+  };
+}
+
+async function synthesizeClosingAnswerWithDeepSeek({ context = {}, playbook = {}, advice = {}, memoryContext = {}, similarDealProof = {}, factSupport = [] } = {}) {
+  if (!getDeepSeekProviderMeta().ready) return { ok: false, result: 'provider_missing' };
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'You are Ava, PBK approval-gated acquisitions closer.',
+        'Respond like a top 1% seller-call operator: acknowledge, reframe, ask one calibrated question.',
+        'Use only provided PBK facts. Do not invent legal, lender, tax, or closed-deal proof.',
+        'Return one speakable response, 35-85 words, no markdown.',
+      ].join(' '),
+    },
+    {
+      role: 'user',
+      content: [
+        `Seller said: ${context.query || ''}`,
+        `Stage: ${context.stage || ''}`,
+        `Path: ${context.selectedPath || ''}`,
+        `Objection: ${context.objectionType || ''}`,
+        `Base phrase: ${playbook.nextBestPhrase || advice.nextBestPhrase || ''}`,
+        `Close question: ${playbook.closeQuestion || advice.closeQuestion || ''}`,
+        `Memories: ${(memoryContext.memories || []).map((item) => item.content).slice(0, 3).join(' | ') || 'none'}`,
+        `Similar deal proof: ${similarDealProof.sellerSafePhrase || 'none'}`,
+        `Knowledge: ${(factSupport || []).map((item) => item.summary).slice(0, 3).join(' | ') || 'none'}`,
+      ].join('\n'),
+    },
+  ];
+  const result = await runDeepSeekChatCompletion(messages, {
+    source: 'ava-closing-intelligence',
+    responseFormat: 'text',
+    temperature: 0.35,
+    maxTokens: 220,
+  });
+  return result.ok ? { ok: true, answer: result.answer, provider: result.provider } : result;
+}
+
+async function buildAvaConversationIntelligence(params = {}) {
+  const context = findLeadContext(params);
+  const query = String(params.query || params.text || params.transcript || params.lastUserUtterance || '').trim();
+  const reaction = buildRealTimeConversationReaction({ ...params, ...context, query });
+  const [closing, similarDeals, memories] = await Promise.all([
+    buildClosingIntelligenceAdvice({ ...params, query, context, objectionType: reaction.objectionType, synthesize: params.synthesize === true }),
+    retrieveSimilarDealProof({ ...params, ...context, query }),
+    recallConversationMemoryForDeal({ ...params, ...context, query }),
+  ]);
+  const needsWeb = looksLikeOpenAiWebSearchIntent(query) || params.liveSearch === true || params.webSearch === true;
+  const web = needsWeb ? await runLiveWebSearch(query, { fallback: true }) : null;
+  const qa = params.scoreCall === true || params.score_call === true
+    ? await scoreCallQualityRecord({ ...params, transcript: params.transcript || query, createRexDecision: params.createRexDecision })
+    : null;
+  const responseText = reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '';
+  return {
+    ok: true,
+    result: 'ava_conversation_intelligence',
+    answer: responseText,
+    nextBestPhrase: responseText,
+    closeQuestion: closing.closeQuestion || closing.advice?.closeQuestion || '',
+    selectedPath: closing.selectedPath || params.selectedPath || '',
+    objectionType: reaction.objectionType,
+    reaction,
+    prosody: reaction.prosody,
+    closing,
+    similarDeals,
+    memories,
+    web,
+    qa,
+    promptFrame: closing.promptFrame || closing.advice?.promptFrame,
+    actionPolicy: {
+      providerWrites: 'approval_gated',
+      shouldHandoff: reaction.shouldHandoff,
+      shouldStopContact: reaction.shouldStopContact,
+      confidenceFloor: reaction.trigger === 'novel_objection' ? 'ask_clarifying_question' : 'respond_with_retrieved_playbook',
+    },
+  };
+}
+
+function looksLikeClosingIntelligenceCommand(command = '', params = {}) {
+  if (params.forceClosingIntelligence || params.closingIntelligence || params.useClosingIntelligence) return true;
+  const normalized = String(command || '').toLowerCase();
+  if (!normalized) return false;
+  const hasSalesFrame = /\b(what should ava say|how should ava respond|handle this|handle objection|rebuttal|closing intelligence|close this|seller says|seller said|objection|sales masterclass|call script|talk track|next best phrase)\b/i.test(normalized);
+  const hasObjection = /\b(too low|need more|think about|not sure|listing|agent|higher offer|trust|scam|fake|proof|decision maker|spouse|attorney|due[-\s]?on[-\s]?sale|subject[-\s]?to|cash now|close fast)\b/i.test(normalized);
+  return hasSalesFrame || (/\b(seller|agent|lead|prospect|owner)\b/i.test(normalized) && hasObjection);
 }
 
 function detectAvaJarvisCommand(command = '') {
@@ -17084,22 +18259,28 @@ async function syncTransitionToStreak(payload = {}) {
 function getSlackProviderMeta() {
   const missing = [];
   const interactiveMissing = [];
-  if (!SLACK_WEBHOOK_URL && !SLACK_BOT_TOKEN) missing.push('PBK_SLACK_WEBHOOK_URL or PBK_SLACK_BOT_TOKEN');
-  if (SLACK_BOT_TOKEN && !SLACK_APPROVAL_CHANNEL_ID) missing.push('PBK_SLACK_APPROVAL_CHANNEL_ID');
+  const notifyReady = Boolean(SLACK_WEBHOOK_URL || (SLACK_BOT_TOKEN && (SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID)));
+  const approvalPostReady = Boolean(SLACK_WEBHOOK_URL || (SLACK_BOT_TOKEN && SLACK_APPROVAL_CHANNEL_ID));
+  if (!notifyReady) missing.push('PBK_SLACK_WEBHOOK_URL or PBK_SLACK_BOT_TOKEN plus PBK_SLACK_UPDATES_CHANNEL_ID/PBK_SLACK_APPROVAL_CHANNEL_ID');
   if (!SLACK_BOT_TOKEN) interactiveMissing.push('PBK_SLACK_BOT_TOKEN');
   if (!SLACK_APPROVAL_CHANNEL_ID) interactiveMissing.push('PBK_SLACK_APPROVAL_CHANNEL_ID');
   if (!SLACK_SIGNING_SECRET) interactiveMissing.push('PBK_SLACK_SIGNING_SECRET');
-  if (SLACK_BOT_TOKEN && !SLACK_SIGNING_SECRET) missing.push('PBK_SLACK_SIGNING_SECRET');
   return {
     configured: Boolean(SLACK_WEBHOOK_URL || SLACK_BOT_TOKEN),
-    ready: missing.length === 0,
+    ready: notifyReady,
+    notifyReady,
+    approvalPostReady,
     webhookReady: Boolean(SLACK_WEBHOOK_URL),
+    botPostReady: Boolean(SLACK_BOT_TOKEN && (SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID)),
     interactiveReady: interactiveMissing.length === 0,
     signingSecretConfigured: Boolean(SLACK_SIGNING_SECRET),
     approvalChannelId: SLACK_APPROVAL_CHANNEL_ID || '',
     updatesChannelId: SLACK_UPDATES_CHANNEL_ID || '',
     interactiveMissing,
     missing,
+    note: interactiveMissing.length
+      ? 'Outbound Slack notifications can still post when notifyReady is true; interactive buttons need the interactiveMissing values.'
+      : 'Slack outbound notifications and interactive approvals are configured.',
   };
 }
 
@@ -18765,6 +19946,8 @@ const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set([
 ]);
 
 const DIRECT_ENV_UPDATE_ALLOWLIST = new Set([
+  'PBK_TAVILY_API_KEY',
+  'TAVILY_API_KEY',
   'PBK_DEEPSEEK_API_KEY',
   'DEEPSEEK_API_KEY',
   'PBK_DEEPSEEK_BASE_URL',
@@ -23713,6 +24896,95 @@ const toolHandlers = {
     return toolHandlers.openAiWebSearch(params);
   },
 
+  async webSearch(params = {}) {
+    recordToolUse('webSearch');
+    const query = params.query || params.q || params.prompt || params.text || '';
+    return runLiveWebSearch(query, params);
+  },
+
+  async pbk_retrieve_closing_intelligence(params = {}) {
+    recordToolUse('pbk_retrieve_closing_intelligence');
+    const result = await buildClosingIntelligenceAdvice(params);
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.agentName || params.agent || 'Ava',
+        category: 'BRAIN',
+        status: 'served',
+        text: `Retrieved closing intelligence for ${result.objectionType.replace(/_/g, ' ')}.`,
+        target: params.address || params.leadName || result.selectedPath || 'seller conversation',
+      }),
+    );
+    await persistState(state);
+    return result;
+  },
+
+  async retrieveClosingIntelligence(params = {}) {
+    recordToolUse('retrieveClosingIntelligence');
+    return toolHandlers.pbk_retrieve_closing_intelligence(params);
+  },
+
+  async pbk_ava_conversation_intelligence(params = {}) {
+    recordToolUse('pbk_ava_conversation_intelligence');
+    const result = await buildAvaConversationIntelligence(params);
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.agentName || params.agent || 'Ava',
+        category: 'BRAIN',
+        status: 'served',
+        text: `Ava conversation intelligence served ${result.objectionType || 'live seller'} context.`,
+        target: params.address || params.leadName || result.selectedPath || 'seller conversation',
+      }),
+    );
+    await persistState(state);
+    return result;
+  },
+
+  async getAvaConversationIntelligence(params = {}) {
+    recordToolUse('getAvaConversationIntelligence');
+    return toolHandlers.pbk_ava_conversation_intelligence(params);
+  },
+
+  async getProsodyAdvice(params = {}) {
+    recordToolUse('getProsodyAdvice');
+    return {
+      ok: true,
+      result: 'prosody_advice',
+      prosody: buildAvaProsodyProfile(params),
+    };
+  },
+
+  async retrieveSimilarDeals(params = {}) {
+    recordToolUse('retrieveSimilarDeals');
+    return retrieveSimilarDealProof(params);
+  },
+
+  async recallConversationMemory(params = {}) {
+    recordToolUse('recallConversationMemory');
+    return recallConversationMemoryForDeal(params);
+  },
+
+  async scoreCallQuality(params = {}) {
+    recordToolUse('scoreCallQuality');
+    return scoreCallQualityRecord(params);
+  },
+
+  async recordSkillOutcome(params = {}) {
+    recordToolUse('recordSkillOutcome');
+    return recordSkillOutcomeRecord(params);
+  },
+
+  async runRexSkillAutopilot(params = {}) {
+    recordToolUse('runRexSkillAutopilot');
+    return runRexSkillAutopilotRecord(params);
+  },
+
+  async humanHandoff(params = {}) {
+    recordToolUse('humanHandoff');
+    return requestHumanHandoffRecord(params);
+  },
+
   async createRexDecision(params = {}) {
     recordToolUse('createRexDecision');
     return createRexDecision({
@@ -25700,7 +26972,7 @@ const toolHandlers = {
       );
       await persistState(state);
     }
-    return { approval, fanout, slack };
+    return { ok: true, result: 'queued_for_approval', approval, fanout, slack };
   },
 
   async createApprovalTask(params = {}) {
@@ -27301,19 +28573,30 @@ const toolHandlers = {
     recordToolUse('slackNotify');
     const slackMeta = getSlackProviderMeta();
     const text = params.text || params.message || 'Slack notification sent from PBK bridge.';
+    const channel = String(params.channel || params.slackChannel || params.slack_channel || SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID || '').trim();
 
     let live = false;
-    let providerStatus = 'sent';
+    let providerStatus = 'provider_missing';
     let providerError = '';
+    let delivery = { ok: false, skipped: true, result: 'provider_missing', error: 'Slack is not configured.' };
 
-    if (slackMeta.ready) {
+    if (SLACK_BOT_TOKEN && channel) {
+      const slackPayload = params.payload || {};
+      delivery = await fireSlackApi('chat.postMessage', {
+        channel,
+        text,
+        ...(params.blocks ? { blocks: params.blocks } : {}),
+        ...(slackPayload && typeof slackPayload === 'object' ? slackPayload : {}),
+      });
+      live = Boolean(delivery.ok);
+      providerStatus = live ? 'sent' : 'warning';
+      providerError = live ? '' : (delivery.error || `Slack bot post failed (${delivery.status || '?'})`);
+    } else if (SLACK_WEBHOOK_URL) {
       const slackPayload = params.payload || (params.blocks ? { text, blocks: params.blocks } : { text });
-      const response = await fireSlackWebhook(slackPayload);
-      live = response.ok;
-      if (!response.ok) {
-        providerStatus = 'warning';
-        providerError = response.error || `Slack webhook failed (${response.status || '?'})`;
-      }
+      delivery = await fireSlackWebhook(slackPayload);
+      live = Boolean(delivery.ok);
+      providerStatus = live ? 'sent' : 'warning';
+      providerError = live ? '' : (delivery.error || `Slack webhook failed (${delivery.status || '?'})`);
     } else {
       providerStatus = 'pending';
     }
@@ -27325,19 +28608,26 @@ const toolHandlers = {
         category: 'NOTIFY',
         status: providerStatus,
         text: live ? text : `${text}${providerError ? ` (${providerError})` : ' (Slack webhook not configured)'}`,
-        target: params.channel || '#deals',
+        target: channel || params.channel || '#deals',
       }),
     );
     await persistState(state);
     return {
-      ok: live,
-      channel: params.channel || '#deals',
+      ok: true,
+      result: live ? 'live' : 'provider_missing',
+      live,
+      channel: channel || params.channel || '#deals',
       sentAt: isoNow(),
       slack: {
         live,
         configured: slackMeta.configured,
+        notifyReady: slackMeta.notifyReady,
+        botPostReady: slackMeta.botPostReady,
+        webhookReady: slackMeta.webhookReady,
+        delivery: SLACK_BOT_TOKEN && channel ? 'bot' : SLACK_WEBHOOK_URL ? 'webhook' : 'none',
         error: providerError || undefined,
       },
+      delivery,
     };
   },
 
@@ -27707,11 +28997,23 @@ const toolHandlers = {
     const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(command);
     const avaJarvisCommand = detectAvaJarvisCommand(command);
     const avaMasterclassCommand = looksLikeAvaMasterclassCommand(command);
+    const closingIntelligenceCommand = looksLikeClosingIntelligenceCommand(command, params);
     const toolFirstDetected = detectToolFirstIntent(command, params, context);
 
     if (avaJarvisCommand) {
       routedTo = 'ava_pbk_jarvis_mode';
       response = await applyAvaJarvisCommand(avaJarvisCommand, context, params);
+    } else if (closingIntelligenceCommand) {
+      routedTo = 'closing_intelligence';
+      response = await toolHandlers.retrieveClosingIntelligence({
+        ...params,
+        query: command,
+        context: {
+          ...context,
+          ...(params.context && typeof params.context === 'object' ? params.context : {}),
+        },
+        source: params.source || 'agent-console',
+      });
     } else if (looksLikeAgentDoctrineCommand(command) || avaMasterclassCommand) {
       routedTo = 'agent_brain';
       response = buildAvaDoctrineCommandResult(command, context);
@@ -28748,6 +30050,8 @@ function buildStateSnapshot() {
     avaOutcomeReports: state.avaOutcomeReports || [],
     avaImprovementSuggestions: state.avaImprovementSuggestions || [],
     knowledgeVerifications: state.knowledgeVerifications || [],
+    callQaScores: state.callQaScores || [],
+    skillOutcomes: state.skillOutcomes || [],
     avaStories: state.avaStories || buildDefaultAvaStories(),
     inboundCallRoutes: state.inboundCallRoutes || [],
     leadScoringWeights: getLeadScoringWeights(),
@@ -28820,13 +30124,20 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
   const voiceId = String(body.voiceId || body.voice_id || ELEVENLABS_VOICE_ID).trim();
   const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
   const outputFormat = String(body.outputFormat || body.output_format || ELEVENLABS_OUTPUT_FORMAT).trim();
+  const prosody = body.autoProsody === false
+    ? null
+    : buildAvaProsodyProfile({
+      ...body,
+      text,
+      sentiment: body.sentiment ?? body.sentimentScore ?? body.sentiment_score,
+    });
   const payload = {
     text: String(text || '').slice(0, 1800),
     model_id: modelId,
     voice_settings: {
-      stability: Number(body.stability ?? ELEVENLABS_STABILITY),
-      similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? ELEVENLABS_SIMILARITY_BOOST),
-      speed: Number(body.speed ?? ELEVENLABS_SPEED),
+      stability: Number(body.stability ?? prosody?.stability ?? ELEVENLABS_STABILITY),
+      similarity_boost: Number(body.similarityBoost ?? body.similarity_boost ?? prosody?.similarityBoost ?? ELEVENLABS_SIMILARITY_BOOST),
+      speed: Number(body.speed ?? prosody?.speed ?? ELEVENLABS_SPEED),
       use_speaker_boost: Boolean(body.useSpeakerBoost ?? body.use_speaker_boost ?? true),
     },
   };
@@ -28839,6 +30150,7 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
     outputFormat,
     url: url.toString(),
     payload,
+    prosody,
   };
 }
 
@@ -28900,9 +30212,11 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
 
   const tts = await fetchElevenLabsTts({
     outputFormat: TELNYX_ELEVENLABS_OUTPUT_FORMAT,
-    stability: Number(process.env.PBK_TELNYX_ELEVENLABS_STABILITY || ELEVENLABS_STABILITY),
-    similarityBoost: Number(process.env.PBK_TELNYX_ELEVENLABS_SIMILARITY_BOOST || ELEVENLABS_SIMILARITY_BOOST),
-    speed: Number(process.env.PBK_TELNYX_ELEVENLABS_SPEED || ELEVENLABS_SPEED),
+    ...(process.env.PBK_TELNYX_ELEVENLABS_STABILITY ? { stability: Number(process.env.PBK_TELNYX_ELEVENLABS_STABILITY) } : {}),
+    ...(process.env.PBK_TELNYX_ELEVENLABS_SIMILARITY_BOOST ? { similarityBoost: Number(process.env.PBK_TELNYX_ELEVENLABS_SIMILARITY_BOOST) } : {}),
+    ...(process.env.PBK_TELNYX_ELEVENLABS_SPEED ? { speed: Number(process.env.PBK_TELNYX_ELEVENLABS_SPEED) } : {}),
+    sentiment: session.sentiment?.pbkScore ?? session.sentiment?.score ?? null,
+    emotion: session.sentiment?.label || '',
   }, cleanText);
 
   if (!tts.response.ok) {
@@ -30754,6 +32068,23 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   } catch {
     pipeline = null;
   }
+  let conversation = null;
+  try {
+    conversation = await buildAvaConversationIntelligence({
+      tenantId: 'pbk',
+      leadId,
+      leadName,
+      address,
+      query: transcript,
+      transcript,
+      sentiment: session.sentiment?.pbkScore ?? contextCall?.sentiment ?? null,
+      selectedPath: contextCall?.selectedPath || contextCall?.path || '',
+      source: 'telnyx-live-call',
+      synthesize: false,
+    });
+  } catch {
+    conversation = null;
+  }
   try {
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
@@ -30770,6 +32101,8 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
         'captured-live-telnyx-speech',
         `call:${session.callId || 'unknown'}`,
         `intent:${pipeline?.intent?.intent || 'unknown'}`,
+        `reaction:${conversation?.reaction?.trigger || 'none'}`,
+        `objection:${conversation?.objectionType || 'unknown'}`,
       ],
       confidence: 0.82,
       temperature: 0.68,
@@ -30780,19 +32113,22 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
         source: 'telnyx-live-call',
         callId: session.callId || '',
         streamId: session.streamId || '',
+        conversationIntelligence: conversation,
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
-    const fallback = buildBrowserVoiceReply(pipeline, transcript);
+    const fallback = conversation?.nextBestPhrase || buildBrowserVoiceReply(pipeline, transcript);
     return {
       text: normalizeAvaVoiceReplyText(script, fallback),
       pipeline,
+      conversation,
       strategist,
     };
   } catch (error) {
     return {
-      text: normalizeAvaVoiceReplyText('', 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
+      text: normalizeAvaVoiceReplyText(conversation?.nextBestPhrase || '', 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
       pipeline,
+      conversation,
       strategist: {
         ok: false,
         result: 'telnyx_live_reply_fallback',
@@ -31721,6 +33057,26 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/skills/outcomes', '/api/v1/skills/outcomes'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.recordSkillOutcome(body);
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/rex/skill-autopilot', '/api/v1/rex/skill-autopilot'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.runRexSkillAutopilot(body);
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/fleet/outcomes') {
       json(response, 200, await buildFleetOutcomes());
       return;
@@ -32062,6 +33418,19 @@ const server = createServer(async (request, response) => {
         text: result.text || (result.ok ? 'PBK command routed.' : 'PBK command failed.'),
         ok: result.ok,
         result: result.result,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/slack/notify', '/api/v1/slack/notify', '/slack/notify'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.slackNotify({
+        ...body,
+        source: body.source || 'slack-notify-api',
+      });
+      json(response, 200, {
+        ...result,
+        state: buildStateSnapshot(),
       });
       return;
     }
@@ -32656,6 +34025,38 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/brain/retrieve', '/api/brain/retrieve', '/api/v1/brain/retrieve'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.retrieveClosingIntelligence({
+        ...body,
+        query: body.query || body.q || body.prompt || body.text || '',
+        source: body.source || 'brain-retrieve-api',
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/conversation-intelligence', '/api/v1/ava/conversation-intelligence'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.getAvaConversationIntelligence({
+        ...body,
+        query: body.query || body.q || body.prompt || body.text || body.transcript || '',
+        source: body.source || 'ava-conversation-intelligence-api',
+      });
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/prosody', '/api/v1/voice/prosody'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.getProsodyAdvice(body);
+      json(response, 200, result);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/operator/summary', '/api/readable-summary'])) {
       const result = await toolHandlers.getReadableSummary({
         limit: url.searchParams.get('limit') || 10,
@@ -32678,11 +34079,45 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/web-search', '/api/openai/web-search'])) {
       const body = await readBody(request);
-      const result = await toolHandlers.openAiWebSearch({
+      const result = await toolHandlers.webSearch({
         ...body,
         requestedBy: body.requestedBy || 'api',
       });
       json(response, result.ok === false ? 503 : 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/calls/qa-score', '/api/v1/calls/qa-score'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.scoreCallQuality(body);
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/handoff/human', '/api/v1/handoff/human'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.humanHandoff(body);
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/deals/similar', '/api/v1/deals/similar'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.retrieveSimilarDeals(body);
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/memory/conversation', '/api/v1/memory/conversation'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.recallConversationMemory(body);
+      json(response, 200, result);
       return;
     }
 
@@ -33604,9 +35039,22 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/approvals') {
+      const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
+      const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 60)));
+      const filteredApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : [])
+        .filter((approval) => !statusFilter || String(approval.status || '').toLowerCase() === statusFilter)
+        .slice(0, limit);
+      const pendingAdminTasks = sortNewest(Array.isArray(state.adminTasks) ? state.adminTasks : [])
+        .filter((task) => String(task.status || '').toLowerCase() === 'pending')
+        .slice(0, limit);
       json(response, 200, {
         ok: true,
-        approvals: state.approvals,
+        result: 'live',
+        status: statusFilter || 'all',
+        count: filteredApprovals.length,
+        approvals: filteredApprovals,
+        adminTasks: pendingAdminTasks,
+        state: buildStateSnapshot(),
       });
       return;
     }

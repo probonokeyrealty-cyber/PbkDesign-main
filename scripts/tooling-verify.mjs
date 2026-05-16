@@ -58,6 +58,7 @@ async function pickToolingPort(preferredPort) {
     probe.listen(0, '127.0.0.1');
   });
 }
+
 async function runNodeScript(scriptPath, args = []) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [scriptPath, ...args], {
@@ -148,7 +149,17 @@ async function main() {
     assert(Array.isArray(researchJobs?.jobs), 'Browser research job seed is missing jobs.');
     assert(Array.isArray(scenario?.leads), 'Meta-agent scenario is missing leads.');
     assert(registry?.mcpServers?.['pbk-openclaw'], 'MCP registry is missing pbk-openclaw.');
+    assert(registry?.mcpServers?.tavily, 'MCP registry is missing optional tavily live-search MCP.');
+    assert(
+      /__SET_TAVILY_API_KEY__/.test(String(registry.mcpServers.tavily?.url || '')),
+      'Tavily MCP registry entry must use a placeholder API key, not a committed secret.',
+    );
     assert(registry?.mcpServers?.browseros, 'MCP registry is missing browseros.');
+    assert(registry?.mcpServers?.['human-mcp'], 'MCP registry is missing optional human-mcp.');
+    assert(
+      /human-mcp\.cmd/.test(String(registry.mcpServers['human-mcp']?.command || '')),
+      'human-mcp registry entry should use the installed Windows shim.',
+    );
 
     console.log(JSON.stringify({
       ok: true,

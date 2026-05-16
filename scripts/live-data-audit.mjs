@@ -16,6 +16,7 @@ const analyzerDocsPath = resolve(root, 'docs/analyzer-postmessage-api.md');
 const agentDealContextPath = resolve(root, 'src/app/utils/agentDealContext.ts');
 const scriptPanelPath = resolve(root, 'src/app/components/ScriptPanel.tsx');
 const runtimeBridgePath = resolve(root, 'src/app/utils/runtimeBridge.ts');
+const renderConfigPath = resolve(root, 'render.yaml');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
@@ -29,6 +30,7 @@ const analyzerDocs = existsSync(analyzerDocsPath) ? readFileSync(analyzerDocsPat
 const agentDealContext = existsSync(agentDealContextPath) ? readFileSync(agentDealContextPath, 'utf8') : '';
 const scriptPanel = existsSync(scriptPanelPath) ? readFileSync(scriptPanelPath, 'utf8') : '';
 const runtimeBridge = existsSync(runtimeBridgePath) ? readFileSync(runtimeBridgePath, 'utf8') : '';
+const renderConfig = existsSync(renderConfigPath) ? readFileSync(renderConfigPath, 'utf8') : '';
 const defaultAgentFleetBlock = bridge.match(/function buildDefaultAgentFleet\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
 const checks = [
@@ -183,6 +185,19 @@ const checks = [
     ok: /valuePayload\s*=\s*JSON\.parse/.test(bridge)
       && /pbk_send_slack_reply/.test(bridge)
       && /chat\.postMessage/.test(bridge),
+  },
+  {
+    name: 'Slack notifications and approval board have live bridge APIs',
+    ok: /\/api\/slack\/notify/.test(bridge)
+      && /\/api\/v1\/slack\/notify/.test(bridge)
+      && /SLACK_BOT_TOKEN && channel/.test(bridge)
+      && /notifyReady/.test(bridge)
+      && /approvalPostReady/.test(bridge)
+      && /url\.searchParams\.get\('status'\)/.test(bridge)
+      && /filteredApprovals/.test(bridge)
+      && /state:\s*buildStateSnapshot\(\)/.test(bridge)
+      && /Slack ping request complete/.test(index)
+      && /getRealRuntimeApprovals/.test(index),
   },
   {
     name: 'OpenAI and DeepSeek token usage is tracked',
@@ -450,6 +465,71 @@ const checks = [
       && /Ava has none/.test(avaMasterclass)
       && /Complete Missing Pieces Suite/.test(avaMasterclass)
       && /Streaming TTS/.test(avaMasterclass),
+  },
+  {
+    name: 'Ava can retrieve closing intelligence from PBK knowledge during live objections',
+    ok: /function buildClosingIntelligenceAdvice/.test(bridge)
+      && /function retrieveClosingKnowledge/.test(bridge)
+      && /pbk_retrieve_closing_intelligence/.test(bridge)
+      && /retrieveClosingIntelligence/.test(bridge)
+      && /\/api\/v1\/brain\/retrieve/.test(bridge)
+      && /closing_intelligence/.test(bridge)
+      && /selectedPath/.test(bridge)
+      && /seller_type/.test(bridge)
+      && /nextBestPhrase/.test(bridge)
+      && /doNotSay/.test(bridge)
+      && /confidence:\s*advice\.confidence/.test(bridge),
+  },
+  {
+    name: 'Ava 9-level conversation intelligence composes RAG, memory, prosody, similar deals, QA, and handoff',
+    ok: /function buildAvaConversationIntelligence/.test(bridge)
+      && /function buildAvaProsodyProfile/.test(bridge)
+      && /function buildRealTimeConversationReaction/.test(bridge)
+      && /function retrieveSimilarDealProof/.test(bridge)
+      && /function recallConversationMemoryForDeal/.test(bridge)
+      && /function scoreCallQualityRecord/.test(bridge)
+      && /function recordSkillOutcomeRecord/.test(bridge)
+      && /function runRexSkillAutopilotRecord/.test(bridge)
+      && /function requestHumanHandoffRecord/.test(bridge)
+      && /\/api\/v1\/ava\/conversation-intelligence/.test(bridge)
+      && /\/api\/v1\/voice\/prosody/.test(bridge)
+      && /\/api\/v1\/calls\/qa-score/.test(bridge)
+      && /\/api\/v1\/handoff\/human/.test(bridge)
+      && /\/api\/v1\/deals\/similar/.test(bridge)
+      && /\/api\/v1\/memory\/conversation/.test(bridge)
+      && /\/api\/v1\/skills\/outcomes/.test(bridge)
+      && /PBK_TAVILY_API_KEY/.test(bridge)
+      && /DIRECT_ENV_UPDATE_ALLOWLIST[\s\S]*PBK_TAVILY_API_KEY/.test(bridge)
+      && /synthesizeClosingAnswerWithDeepSeek/.test(bridge),
+  },
+  {
+    name: 'Render blueprint keeps Tavily as a protected live-search secret',
+    ok: /key:\s*PBK_TAVILY_API_KEY/.test(renderConfig)
+      && /key:\s*PBK_TAVILY_API_KEY\s*\n\s*sync:\s*false/.test(renderConfig)
+      && !/tvly-[A-Za-z0-9_-]+/.test(renderConfig),
+  },
+  {
+    name: 'React runtime bridge exposes Ava 9-level intelligence endpoints',
+    ok: /retrieveClosingIntelligenceRequest/.test(runtimeBridge)
+      && /\/api\/v1\/brain\/retrieve/.test(runtimeBridge)
+      && /getAvaConversationIntelligenceRequest/.test(runtimeBridge)
+      && /\/api\/v1\/ava\/conversation-intelligence/.test(runtimeBridge)
+      && /getProsodyAdviceRequest/.test(runtimeBridge)
+      && /\/api\/v1\/voice\/prosody/.test(runtimeBridge)
+      && /scoreCallQualityRequest/.test(runtimeBridge)
+      && /\/api\/v1\/calls\/qa-score/.test(runtimeBridge)
+      && /recordSkillOutcomeRequest/.test(runtimeBridge)
+      && /\/api\/v1\/skills\/outcomes/.test(runtimeBridge)
+      && /runRexSkillAutopilotRequest/.test(runtimeBridge)
+      && /\/api\/v1\/rex\/skill-autopilot/.test(runtimeBridge)
+      && /requestHumanHandoffRequest/.test(runtimeBridge)
+      && /\/api\/v1\/handoff\/human/.test(runtimeBridge)
+      && /retrieveSimilarDealsRequest/.test(runtimeBridge)
+      && /\/api\/v1\/deals\/similar/.test(runtimeBridge)
+      && /recallConversationMemoryRequest/.test(runtimeBridge)
+      && /\/api\/v1\/memory\/conversation/.test(runtimeBridge)
+      && /webSearchRequest/.test(runtimeBridge)
+      && /\/api\/brain\/web-search/.test(runtimeBridge),
   },
   {
     name: 'Browser voice sends WebM container audio to Deepgram and falls back when no words arrive',

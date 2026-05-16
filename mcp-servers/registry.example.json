@@ -17,9 +17,27 @@
         "@upstash/context7-mcp"
       ]
     },
+    "tavily": {
+      "type": "http",
+      "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=__SET_TAVILY_API_KEY__",
+      "note": "Optional live web-search MCP for Ava/Rex. Prefer PBK_TAVILY_API_KEY in the hosted bridge env for /api/brain/web-search; never commit a real Tavily key here."
+    },
     "browseros": {
       "url": "http://127.0.0.1:9000/mcp",
       "note": "Optional browser-native research layer for Rex. Keep surfaced inside the Brain and Settings tooling cards."
+    },
+    "human-mcp": {
+      "command": "C:\\Users\\Dell\\AppData\\Roaming\\npm\\human-mcp.cmd",
+      "args": [],
+      "env": {
+        "TRANSPORT_TYPE": "stdio",
+        "LOG_LEVEL": "info",
+        "MCP_TIMEOUT": "30000",
+        "VISION_PROVIDER": "gemini",
+        "SPEECH_PROVIDER": "elevenlabs",
+        "IMAGE_PROVIDER": "gemini"
+      },
+      "note": "Optional multimodal layer for Ava/Rex. Requires at least one provider key in the OpenClaw parent environment. Do not hardcode secrets here."
     },
     "n8n-mcp": {
       "type": "http",

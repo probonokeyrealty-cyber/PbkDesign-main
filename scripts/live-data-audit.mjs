@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +10,12 @@ const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
 const agentsPath = resolve(root, 'AGENTS.md');
 const avaMasterclassPath = resolve(root, 'knowledge/ava-wholesale-conversation-masterclass.md');
+const analyzerHtmlPath = resolve(root, 'analyzer.html');
+const analyzerTypesPath = resolve(root, 'src/app/types/pbk-analyzer.d.ts');
+const analyzerDocsPath = resolve(root, 'docs/analyzer-postmessage-api.md');
+const agentDealContextPath = resolve(root, 'src/app/utils/agentDealContext.ts');
+const scriptPanelPath = resolve(root, 'src/app/components/ScriptPanel.tsx');
+const runtimeBridgePath = resolve(root, 'src/app/utils/runtimeBridge.ts');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
@@ -17,6 +23,12 @@ const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
 const agents = readFileSync(agentsPath, 'utf8');
 const avaMasterclass = readFileSync(avaMasterclassPath, 'utf8');
+const analyzerHtml = readFileSync(analyzerHtmlPath, 'utf8');
+const analyzerTypes = existsSync(analyzerTypesPath) ? readFileSync(analyzerTypesPath, 'utf8') : '';
+const analyzerDocs = existsSync(analyzerDocsPath) ? readFileSync(analyzerDocsPath, 'utf8') : '';
+const agentDealContext = existsSync(agentDealContextPath) ? readFileSync(agentDealContextPath, 'utf8') : '';
+const scriptPanel = existsSync(scriptPanelPath) ? readFileSync(scriptPanelPath, 'utf8') : '';
+const runtimeBridge = existsSync(runtimeBridgePath) ? readFileSync(runtimeBridgePath, 'utf8') : '';
 const defaultAgentFleetBlock = bridge.match(/function buildDefaultAgentFleet\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
 const checks = [
@@ -68,6 +80,61 @@ const checks = [
       && /syncAnalyzerDealPathToLead/.test(index)
       && /data-analyzer-action="load-lead"/.test(index)
       && /selected_path/.test(index),
+  },
+  {
+    name: 'Analyzer storage is namespaced, retained, normalized, and exportable',
+    ok:
+      /ANALYZER_STORAGE_NAMESPACE/.test(index)
+      && /getAnalyzerStorageKey/.test(index)
+      && /ANALYZER_RETENTION_DAYS/.test(index)
+      && /pruneAnalyzerStorage/.test(index)
+      && /writeAnalyzerSecureStorage/.test(index)
+      && /readAnalyzerSecureStorage/.test(index)
+      && /ANALYZER_SAVED_DEALS_KEY/.test(index)
+      && /ANALYZER_COMPS_CACHE_KEY/.test(index)
+      && /ANALYZER_PRESETS_KEY/.test(index)
+      && /ANALYZER_UNDO_KEY/.test(index)
+      && /normalizeRepairEstimate/.test(index)
+      && /exportAnalyzerLocalState/.test(index),
+  },
+  {
+    name: 'Analyzer iframe/state API is subdirectory-safe, lazy, documented, and bidirectional',
+    ok:
+      !/src="\/src\/main\.tsx"/.test(analyzerHtml)
+      && /src="\.\/src\/main\.tsx"/.test(analyzerHtml)
+      && /src="\.\/analyzer\.html\?embedded=1"/.test(index)
+      && /loading="lazy"/.test(index)
+      && /pbk:analyzer:state-request/.test(index)
+      && /pbk:analyzer:shell-state/.test(index)
+      && /ANALYZER_POSTMESSAGE_API/.test(index)
+      && /interface PBKAnalyzerBridgeApi/.test(analyzerTypes)
+      && /postMessage API/.test(analyzerDocs),
+  },
+  {
+    name: 'Bridge analyzer/PDF controls are idempotent, versioned, and rate-limited',
+    ok:
+      /PDF_IDEMPOTENCY_CACHE/.test(bridge)
+      && /buildPdfIdempotencyKey/.test(bridge)
+      && /X-PBK-PDF-Idempotency-Key/.test(bridge)
+      && /checkAnalyzeDealRateLimit/.test(bridge)
+      && /validateMortgageTakeoverInputs/.test(bridge)
+      && /\/api\/v1\/analyzeDeal/.test(bridge)
+      && /\/api\/v1\/documents\/pdf/.test(bridge)
+      && /\/api\/webhooks\/external-events/.test(bridge)
+      && /PBK_API_DEPRECATION_POLICY/.test(bridge),
+  },
+  {
+    name: 'Analyzer scripts and deal context remain agent-readable for Ava/Rex/Max',
+    ok:
+      /export function buildAgentDealContext/.test(agentDealContext)
+      && /allPathScripts/.test(agentDealContext)
+      && /activeScriptBundle/.test(agentDealContext)
+      && /analyzerNumbers/.test(agentDealContext)
+      && /agentDealContext/.test(runtimeBridge)
+      && /onPushScriptToAgent/.test(scriptPanel)
+      && /Push to Ava/.test(scriptPanel)
+      && /getAgentDealContext/.test(index)
+      && /getAgentDealContext/.test(analyzerTypes),
   },
   {
     name: 'Lead delete button and bridge DELETE route are wired',

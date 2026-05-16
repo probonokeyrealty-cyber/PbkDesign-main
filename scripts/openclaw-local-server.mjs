@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createServer, globalAgent as httpGlobalAgent } from 'node:http';
 import { globalAgent as httpsGlobalAgent } from 'node:https';
-import { createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
+import { createHash, createHmac, createPrivateKey, createPublicKey, createSign as __dsCreateSign, randomUUID, timingSafeEqual, verify as verifySignature } from 'node:crypto';
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -487,6 +487,19 @@ const PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS = Math.max(
   Number(process.env.PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS || 15 * 60_000),
 );
 const publicAvaChatBuckets = new Map();
+const ANALYZE_DEAL_RATE_LIMIT_MAX = Math.max(3, Number(process.env.PBK_ANALYZE_DEAL_RATE_LIMIT_MAX || 30));
+const ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS = Math.max(
+  10_000,
+  Number(process.env.PBK_ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS || 60_000),
+);
+const analyzeDealRateBuckets = new Map();
+const EXTERNAL_WEBHOOK_SECRET = String(process.env.PBK_EXTERNAL_WEBHOOK_SECRET || '').trim();
+const PBK_API_DEPRECATION_POLICY = Object.freeze({
+  current: 'v1',
+  legacyAliasesSupported: true,
+  removeLegacyAfter: '2026-08-15',
+  note: 'New integrations should use /api/v1/* routes; legacy /api/* aliases remain until the removal date.',
+});
 
 // Endpoints that stay open even when PBK_BRIDGE_API_KEY is set, so external
 // healthchecks (Render, uptime monitors) can still reach the bridge.
@@ -511,6 +524,8 @@ const PUBLIC_PATHS = new Set([
   '/api/webhooks/slack/commands',
   '/api/webhooks/slack/slash',
   '/api/webhooks/docusign',
+  '/api/webhooks/external-events',
+  '/api/v1/webhooks/external-events',
   // Public website Ava is intentionally limited to FAQ/research answers and
   // lead capture. It never invokes provider-write or admin tools.
   '/api/public/ava-chat',
@@ -1922,6 +1937,32 @@ function safeCompareString(left = '', right = '') {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function verifyExternalWebhookRequest(request) {
+  const bearer = String(request.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const providedSecret = String(
+    request.headers?.['x-pbk-webhook-secret']
+      || request.headers?.['x-webhook-secret']
+      || request.headers?.['x-pbk-signature']
+      || '',
+  ).trim();
+
+  if (BRIDGE_API_KEY && bearer && safeCompareString(bearer, BRIDGE_API_KEY)) {
+    return { ok: true, method: 'bridge-bearer' };
+  }
+  if (EXTERNAL_WEBHOOK_SECRET && providedSecret && safeCompareString(providedSecret, EXTERNAL_WEBHOOK_SECRET)) {
+    return { ok: true, method: 'webhook-secret' };
+  }
+  if (!IS_HOSTED && !BRIDGE_API_KEY && !EXTERNAL_WEBHOOK_SECRET) {
+    return { ok: true, method: 'local-dev-open' };
+  }
+  return {
+    ok: false,
+    error: EXTERNAL_WEBHOOK_SECRET || BRIDGE_API_KEY
+      ? 'External webhook authentication failed.'
+      : 'Set PBK_EXTERNAL_WEBHOOK_SECRET or PBK_BRIDGE_API_KEY before enabling external webhooks.',
+  };
+}
+
 function isTeamPasscodeValid(passcode = '') {
   const candidate = String(passcode || '').trim();
   return Boolean(TEAM_PASSCODE && candidate && safeCompareString(candidate, TEAM_PASSCODE));
@@ -2369,6 +2410,63 @@ async function generatePdfDocument(payload = {}) {
       await browser.close();
     }
   }
+}
+
+const PDF_IDEMPOTENCY_TTL_MS = Math.max(60_000, Number(process.env.PBK_PDF_IDEMPOTENCY_TTL_MS || 15 * 60_000));
+const PDF_IDEMPOTENCY_CACHE = new Map();
+
+function stableJsonStringify(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJsonStringify(item)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function buildPdfIdempotencyKey(body = {}, request = null) {
+  const provided = String(
+    request?.headers?.['idempotency-key']
+      || request?.headers?.['x-idempotency-key']
+      || body.idempotencyKey
+      || body.idempotency_key
+      || '',
+  ).trim();
+  if (provided) return provided.replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 120);
+  return createHash('sha256').update(stableJsonStringify(body)).digest('hex');
+}
+
+function prunePdfIdempotencyCache(now = Date.now()) {
+  for (const [key, entry] of PDF_IDEMPOTENCY_CACHE.entries()) {
+    if (!entry || entry.expiresAt <= now) PDF_IDEMPOTENCY_CACHE.delete(key);
+  }
+}
+
+async function getOrCreateIdempotentPdfDocument(body = {}, request = null) {
+  const key = buildPdfIdempotencyKey(body, request);
+  const now = Date.now();
+  prunePdfIdempotencyCache(now);
+  const cached = PDF_IDEMPOTENCY_CACHE.get(key);
+  if (cached) {
+    return {
+      key,
+      cache: 'hit',
+      pdf: Buffer.from(cached.pdf),
+    };
+  }
+  const pdf = await generatePdfDocument(body);
+  PDF_IDEMPOTENCY_CACHE.set(key, {
+    pdf: Buffer.from(pdf),
+    createdAt: now,
+    expiresAt: now + PDF_IDEMPOTENCY_TTL_MS,
+  });
+  return {
+    key,
+    cache: 'miss',
+    pdf,
+  };
 }
 
 function getItemTimestamp(item = {}) {
@@ -24071,6 +24169,10 @@ const toolHandlers = {
 
   async analyzeDeal(params = {}) {
     recordToolUse('analyzeDeal');
+    const mtValidation = validateMortgageTakeoverInputs(params);
+    if (!mtValidation.ok) {
+      return mtValidation;
+    }
     if (shouldEnforceBantForAnalyze(params)) {
       const leadImport = findLatestLeadImport(params);
       const bant = normalizeBantInfo(params.bant || {}, params, leadImport?.bant || {}, leadImport?.callContext?.bant || {});
@@ -28586,7 +28688,7 @@ function json(response, statusCode, payload) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
     Vary: 'Accept-Encoding',
   };
   if (response.pbkAcceptsGzip && body.length >= 2048) {
@@ -28611,7 +28713,7 @@ function sendText(response, statusCode, body, contentType = 'text/plain; charset
     'Content-Type': contentType,
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
   });
   response.end(body);
 }
@@ -28620,7 +28722,7 @@ function sendBinary(response, statusCode, body, headers = {}) {
   response.writeHead(statusCode, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
     ...headers,
   });
   response.end(body);
@@ -28825,7 +28927,7 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
   response.writeHead(200, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
     'Content-Type': 'audio/mpeg',
     'Cache-Control': 'no-store',
     'Transfer-Encoding': 'chunked',
@@ -28942,6 +29044,75 @@ function checkPublicAvaChatRateLimit(request) {
     remaining: Math.max(0, PUBLIC_AVA_CHAT_RATE_LIMIT_MAX - current.count),
     resetAt: current.resetAt,
   };
+}
+
+function checkAnalyzeDealRateLimit(request) {
+  const key = `${getRequestClientIp(request)}:${String(request.headers?.authorization || 'anonymous').slice(0, 36)}`;
+  const now = Date.now();
+  const current = analyzeDealRateBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    const bucket = { count: 1, resetAt: now + ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS };
+    analyzeDealRateBuckets.set(key, bucket);
+    return { ok: true, remaining: ANALYZE_DEAL_RATE_LIMIT_MAX - 1, resetAt: bucket.resetAt };
+  }
+  current.count += 1;
+  if (current.count > ANALYZE_DEAL_RATE_LIMIT_MAX) {
+    return {
+      ok: false,
+      remaining: 0,
+      resetAt: current.resetAt,
+      retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+    };
+  }
+  return {
+    ok: true,
+    remaining: Math.max(0, ANALYZE_DEAL_RATE_LIMIT_MAX - current.count),
+    resetAt: current.resetAt,
+  };
+}
+
+function isMortgageTakeoverPath(params = {}) {
+  const pathValue = String(
+    params.selectedPath
+      || params.selected_path
+      || params.path
+      || params.dealPath
+      || params.strategy
+      || params.type
+      || '',
+  ).toLowerCase();
+  return /\b(mt|mortgage[_\s-]?takeover|subject[_\s-]?to|subto|sub-to)\b/.test(pathValue);
+}
+
+function validateMortgageTakeoverInputs(params = {}) {
+  if (!isMortgageTakeoverPath(params)) return { ok: true };
+  const purchasePrice = Number(
+    params.purchasePrice
+      ?? params.agreedPrice
+      ?? params.targetOffer
+      ?? params.offer
+      ?? params.price
+      ?? params.purchase_price
+      ?? 0,
+  );
+  const mortgageBalance = Number(
+    params.mortgageBalance
+      ?? params.loanBalance
+      ?? params.existingMortgageBalance
+      ?? params.balance
+      ?? params.mortgage_balance
+      ?? 0,
+  );
+  if (purchasePrice > 0 && mortgageBalance > 0 && mortgageBalance >= purchasePrice) {
+    return {
+      ok: false,
+      error: 'Mortgage Takeover path requires mortgage balance to be lower than purchase price before analysis.',
+      code: 'mortgage_balance_gte_purchase_price',
+      purchasePrice,
+      mortgageBalance,
+    };
+  }
+  return { ok: true, purchasePrice, mortgageBalance };
 }
 
 function sanitizePublicAvaChatText(value = '') {
@@ -31004,7 +31175,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
       'Access-Control-Max-Age': '86400',
     });
     response.end();
@@ -32636,24 +32807,39 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'POST' && pathname === '/api/documents/pdf') {
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/documents/pdf', '/api/v1/documents/pdf'])) {
       const body = await readBody(request);
-      const pdf = await generatePdfDocument(body);
-      const filename = `${safeFilename(body.documentTitle || body.documentType || 'PBK_Master_Deal_Package')}_${new Date()
-        .toISOString()
-        .replace(/[-:T.Z]/g, '')
-        .slice(0, 14)}.pdf`;
+      const pdfResult = await getOrCreateIdempotentPdfDocument(body, request);
+      const pdf = pdfResult.pdf;
+      const filename = `${safeFilename(body.documentTitle || body.documentType || 'PBK_Master_Deal_Package')}_${pdfResult.key.slice(0, 12)}.pdf`;
 
       sendBinary(response, 200, pdf, {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${filename}"`,
         'Cache-Control': 'no-store',
+        'X-PBK-PDF-Idempotency-Key': pdfResult.key,
+        'X-PBK-PDF-Cache': pdfResult.cache,
       });
       return;
     }
 
-    if (request.method === 'POST' && pathname === '/api/analyzeDeal') {
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/analyzeDeal', '/api/v1/analyzeDeal'])) {
+      const rateLimit = checkAnalyzeDealRateLimit(request);
+      if (!rateLimit.ok) {
+        response.setHeader('Retry-After', String(rateLimit.retryAfterSeconds || 60));
+        json(response, 429, {
+          ok: false,
+          error: 'Analyze Deal rate limit exceeded. Please wait briefly before running another analysis.',
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        });
+        return;
+      }
       const body = await readBody(request);
+      const mtValidation = validateMortgageTakeoverInputs(body);
+      if (!mtValidation.ok) {
+        json(response, 400, mtValidation);
+        return;
+      }
       const result = await toolHandlers.analyzeDeal(body);
       json(response, result.ok === false ? 400 : 200, {
         ok: result.ok !== false,
@@ -34819,6 +35005,32 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/webhooks/external-events', '/api/v1/webhooks/external-events'])) {
+      const auth = verifyExternalWebhookRequest(request);
+      if (!auth.ok) {
+        json(response, 401, {
+          ok: false,
+          error: auth.error,
+        });
+        return;
+      }
+      const body = await readBody(request);
+      const eventType = String(body.eventType || body.event_type || body.event || body.type || 'external-event').trim();
+      const result = await handleEvent(eventType, {
+        ...(body.payload && typeof body.payload === 'object' ? body.payload : body),
+        _source: body._source || body.source || 'external-webhook',
+        externalWebhookAuth: auth.method,
+      });
+      json(response, result.ok === false ? 400 : 202, {
+        ok: result.ok !== false,
+        accepted: result.ok !== false,
+        eventType,
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/webhooks/booking') {
       const body = await readBody(request);
       const result = await handleEvent('booking-confirmed', body);
@@ -35109,7 +35321,9 @@ const server = createServer(async (request, response) => {
         'GET /api/lead-transitions',
         'POST /api/participants/classify',
         'POST /api/documents/pdf',
+        'POST /api/v1/documents/pdf',
         'POST /api/analyzeDeal',
+        'POST /api/v1/analyzeDeal',
         'POST /api/cold-email/send',
         'POST /api/replies/handle',
         'POST /api/crm/streak/bootstrap',
@@ -35162,6 +35376,8 @@ const server = createServer(async (request, response) => {
         'GET /api/leads/:id/last-call',
         'GET/POST /api/leads/import',
         'POST /api/webhooks/booking',
+        'POST /api/webhooks/external-events',
+        'POST /api/v1/webhooks/external-events',
         'POST /api/webhooks/instantly',
         'POST /api/webhooks/email',
         'POST /api/webhooks/telnyx',

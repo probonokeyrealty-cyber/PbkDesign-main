@@ -1,4 +1,5 @@
 import { DealData } from '../types';
+import { ANALYZER_ACTIVITY_KEY, ANALYZER_SAVED_DEALS_KEY, readAnalyzerStorage, writeAnalyzerStorage } from './analyzerStorage';
 
 export interface SavedDealRecord {
   id: string;
@@ -17,8 +18,8 @@ export interface DealActivityRecord {
   type: 'note' | 'call' | 'email' | 'meeting' | 'pdf';
 }
 
-const SAVED_DEALS_KEY = 'pbk-saved-deals';
-const DEAL_ACTIVITY_KEY = 'pbk-notes';
+const SAVED_DEALS_KEY = ANALYZER_SAVED_DEALS_KEY;
+const DEAL_ACTIVITY_KEY = ANALYZER_ACTIVITY_KEY;
 
 function stableHash(value: string) {
   let hash = 0;
@@ -37,8 +38,15 @@ export function getDealStorageId(deal: Partial<DealData>) {
 
 export function readSavedDeals(): SavedDealRecord[] {
   try {
-    const raw = localStorage.getItem(SAVED_DEALS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const next = readAnalyzerStorage<SavedDealRecord[]>(SAVED_DEALS_KEY, []);
+    if (next.length) return next;
+    const raw = localStorage.getItem('pbk-saved-deals');
+    const legacy = raw ? JSON.parse(raw) : [];
+    if (legacy.length) {
+      writeSavedDeals(legacy);
+      localStorage.removeItem('pbk-saved-deals');
+    }
+    return legacy;
   } catch (error) {
     console.error('Failed to read saved deals', error);
     return [];
@@ -46,7 +54,7 @@ export function readSavedDeals(): SavedDealRecord[] {
 }
 
 export function writeSavedDeals(deals: SavedDealRecord[]) {
-  localStorage.setItem(SAVED_DEALS_KEY, JSON.stringify(deals));
+  writeAnalyzerStorage(SAVED_DEALS_KEY, deals);
 }
 
 export function upsertSavedDeal(deal: DealData, status: SavedDealRecord['status'] = 'active') {
@@ -77,8 +85,7 @@ export function isDealSaved(deal: Partial<DealData>) {
 
 function readDealActivity(): DealActivityRecord[] {
   try {
-    const raw = localStorage.getItem(DEAL_ACTIVITY_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return readAnalyzerStorage<DealActivityRecord[]>(DEAL_ACTIVITY_KEY, []);
   } catch (error) {
     console.error('Failed to read deal activity', error);
     return [];
@@ -100,7 +107,7 @@ export function appendSavedDealActivity(
     ...activity,
   };
   const next = [record, ...readDealActivity()];
-  localStorage.setItem(DEAL_ACTIVITY_KEY, JSON.stringify(next));
+  writeAnalyzerStorage(DEAL_ACTIVITY_KEY, next);
   window.dispatchEvent(new CustomEvent('pbk:deal-activity', { detail: record }));
   return record;
 }

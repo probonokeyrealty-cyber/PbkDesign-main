@@ -14221,7 +14221,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }, result);
     PBK.state.analyzer = { deal, activeTab: 'analyzer', analyzeStatus: 'Local analyzer complete' };
     try {
-      localStorage.setItem(ANALYZER_STORAGE_KEY, JSON.stringify(deal));
+      pushAnalyzerUndoState(deal);
+      cacheAnalyzerCompsForAddress(deal);
+      writeAnalyzerSecureStorage(ANALYZER_STORAGE_KEY, deal);
     } catch (error) {
       console.warn('Could not persist analyzer snapshot', error);
     }
@@ -14252,9 +14254,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     'dashboard.heroSubtitle': 'No live activity yet - connect PBK Brain to begin.'
   };
 
-  const OPENCLAW_STORAGE_KEY = 'pbk-openclaw-config';
-  const TEAM_SESSION_STORAGE_KEY = 'pbk-team-session';
-  const ANALYZER_STORAGE_KEY = 'pbk-deal-data';
+  const PBK_STORAGE_ENV = (() => {
+    const host = String(window.location.hostname || 'local').toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') return 'local';
+    if (host.includes('pbkcommandcenter') || host.includes('netlify.app')) return 'prod';
+    return host.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'local';
+  })();
+  const getAnalyzerStorageKey = (name) => `pbk:${PBK_STORAGE_ENV}:analyzer:${name}`;
+  const OPENCLAW_STORAGE_KEY = `pbk:${PBK_STORAGE_ENV}:openclaw-config`;
+  const TEAM_SESSION_STORAGE_KEY = `pbk:${PBK_STORAGE_ENV}:team-session`;
+  const ANALYZER_STORAGE_NAMESPACE = `pbk:${PBK_STORAGE_ENV}:analyzer`;
+  const ANALYZER_STORAGE_KEY = getAnalyzerStorageKey('current-deal');
+  const ANALYZER_SAVED_DEALS_KEY = getAnalyzerStorageKey('saved-deals');
+  const ANALYZER_ACTIVITY_KEY = getAnalyzerStorageKey('activity');
+  const ANALYZER_COMPS_CACHE_KEY = getAnalyzerStorageKey('comps-cache');
+  const ANALYZER_PRESETS_KEY = getAnalyzerStorageKey('underwriting-presets');
+  const ANALYZER_UNDO_KEY = getAnalyzerStorageKey('undo-stack');
+  const ANALYZER_REDO_KEY = getAnalyzerStorageKey('redo-stack');
+  const ANALYZER_LEGACY_STORAGE_KEYS = ['pbk-deal-data', 'pbk-saved-deals', 'pbk-notes'];
+  const ANALYZER_RETENTION_DAYS = 30;
   const BRANDING_STORAGE_KEY = 'pbk-branding';
   const PBK_UI_SETTINGS_KEY = 'pbk-ui-settings';
 
@@ -14265,6 +14283,200 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return fallback;
     }
   }
+
+  function encodeAnalyzerStoragePayload(payload) {
+    const envelope = {
+      version: 2,
+      namespace: ANALYZER_STORAGE_NAMESPACE,
+      savedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + ANALYZER_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+      payload
+    };
+    return btoa(unescape(encodeURIComponent(JSON.stringify(envelope))));
+  }
+
+  function decodeAnalyzerStoragePayload(raw, fallback = null) {
+    if (!raw) return fallback;
+    const decoded = (() => {
+      try {
+        return decodeURIComponent(escape(atob(raw)));
+      } catch (error) {
+        return raw;
+      }
+    })();
+    const parsed = parseJSONSafe(decoded, fallback);
+    if (!parsed || typeof parsed !== 'object') return parsed ?? fallback;
+    if (parsed.expiresAt && Date.parse(parsed.expiresAt) < Date.now()) return fallback;
+    return Object.prototype.hasOwnProperty.call(parsed, 'payload') ? parsed.payload : parsed;
+  }
+
+  function sanitizeAnalyzerDealForPersistentStorage(deal = {}) {
+    if (!deal || typeof deal !== 'object') return deal;
+    const clone = parseJSONSafe(JSON.stringify(deal), {});
+    if (clone.repairs && typeof clone.repairs === 'object') {
+      clone.repairs = {
+        condition: clone.repairs.condition || clone.condition || '',
+        redacted: true
+      };
+    }
+    delete clone.repairsMid;
+    return clone;
+  }
+
+  function sanitizeAnalyzerPayloadForLocalStorage(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    if (Array.isArray(payload)) {
+      return payload.map((item) => {
+        if (item?.dealData) return { ...item, dealData: sanitizeAnalyzerDealForPersistentStorage(item.dealData) };
+        return sanitizeAnalyzerDealForPersistentStorage(item);
+      });
+    }
+    if (payload.deal) {
+      return { ...payload, deal: sanitizeAnalyzerDealForPersistentStorage(payload.deal) };
+    }
+    return sanitizeAnalyzerDealForPersistentStorage(payload);
+  }
+
+  function writeAnalyzerSecureStorage(key, payload) {
+    const encoded = encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload));
+    localStorage.setItem(key, encoded);
+    try {
+      sessionStorage.setItem(`${key}:session`, encodeAnalyzerStoragePayload(payload));
+    } catch (error) {
+      // Session mirroring is a privacy improvement, not a hard dependency.
+    }
+  }
+
+  function readAnalyzerSecureStorage(key, fallback = null) {
+    let raw = null;
+    try {
+      raw = sessionStorage.getItem(`${key}:session`);
+    } catch (error) {
+      raw = null;
+    }
+    raw = raw || localStorage.getItem(key);
+    return decodeAnalyzerStoragePayload(raw, fallback);
+  }
+
+  function removeAnalyzerSecureStorage(key) {
+    localStorage.removeItem(key);
+    try {
+      sessionStorage.removeItem(`${key}:session`);
+    } catch (error) {
+      // Ignore unavailable sessionStorage.
+    }
+  }
+
+  function pruneAnalyzerStorage() {
+    const now = Date.now();
+    const legacy = new Set(ANALYZER_LEGACY_STORAGE_KEYS);
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (!key) continue;
+      if (legacy.has(key)) continue;
+      if (!key.startsWith(`${ANALYZER_STORAGE_NAMESPACE}:`)) continue;
+      const raw = localStorage.getItem(key);
+      const decoded = (() => {
+        try {
+          return decodeURIComponent(escape(atob(raw || '')));
+        } catch (error) {
+          return raw;
+        }
+      })();
+      const parsed = parseJSONSafe(decoded, null);
+      if (parsed?.expiresAt && Date.parse(parsed.expiresAt) < now) {
+        localStorage.removeItem(key);
+      }
+    }
+  }
+
+  function migrateLegacyAnalyzerStorage() {
+    const legacyDeal = parseJSONSafe(localStorage.getItem('pbk-deal-data'), null);
+    if (legacyDeal && !localStorage.getItem(ANALYZER_STORAGE_KEY)) {
+      writeAnalyzerSecureStorage(ANALYZER_STORAGE_KEY, legacyDeal);
+    }
+    const legacySavedDeals = parseJSONSafe(localStorage.getItem('pbk-saved-deals'), null);
+    if (legacySavedDeals && !localStorage.getItem(ANALYZER_SAVED_DEALS_KEY)) {
+      writeAnalyzerSecureStorage(ANALYZER_SAVED_DEALS_KEY, legacySavedDeals);
+    }
+    const legacyNotes = parseJSONSafe(localStorage.getItem('pbk-notes'), null);
+    if (legacyNotes && !localStorage.getItem(ANALYZER_ACTIVITY_KEY)) {
+      writeAnalyzerSecureStorage(ANALYZER_ACTIVITY_KEY, legacyNotes);
+    }
+    ANALYZER_LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+  }
+
+  function normalizeRepairEstimate(repairs = {}) {
+    if (typeof repairs === 'number') {
+      return { low: repairs, mid: repairs, high: repairs };
+    }
+    const source = repairs && typeof repairs === 'object' ? repairs : {};
+    const mid = num(source.mid ?? source.repairsMid ?? source.estimate ?? 0);
+    return {
+      ...source,
+      low: num(source.low ?? mid),
+      mid,
+      high: num(source.high ?? mid)
+    };
+  }
+
+  function getAnalyzerStorageList(key) {
+    const value = readAnalyzerSecureStorage(key, []);
+    return Array.isArray(value) ? value : [];
+  }
+
+  function setAnalyzerStorageList(key, value = []) {
+    writeAnalyzerSecureStorage(key, Array.isArray(value) ? value.slice(0, 40) : []);
+  }
+
+  function pushAnalyzerUndoState(deal = {}) {
+    if (!deal || !deal.address) return;
+    const undo = getAnalyzerStorageList(ANALYZER_UNDO_KEY);
+    const previous = getStoredAnalyzerDeal();
+    if (!previous || JSON.stringify(previous) === JSON.stringify(deal)) return;
+    setAnalyzerStorageList(ANALYZER_UNDO_KEY, [previous, ...undo].slice(0, 20));
+    setAnalyzerStorageList(ANALYZER_REDO_KEY, []);
+  }
+
+  function cacheAnalyzerCompsForAddress(deal = {}) {
+    const address = String(deal.address || '').trim().toLowerCase();
+    if (!address || !deal.comps) return;
+    const cache = readAnalyzerSecureStorage(ANALYZER_COMPS_CACHE_KEY, {});
+    writeAnalyzerSecureStorage(ANALYZER_COMPS_CACHE_KEY, {
+      ...(cache && typeof cache === 'object' ? cache : {}),
+      [address]: {
+        comps: deal.comps,
+        cachedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+      }
+    });
+  }
+
+  function getAnalyzerCachedComps(address = '') {
+    const key = String(address || '').trim().toLowerCase();
+    const cache = readAnalyzerSecureStorage(ANALYZER_COMPS_CACHE_KEY, {});
+    const entry = key && cache && typeof cache === 'object' ? cache[key] : null;
+    if (!entry || (entry.expiresAt && Date.parse(entry.expiresAt) < Date.now())) return null;
+    return entry.comps || null;
+  }
+
+  function exportAnalyzerLocalState() {
+    return {
+      exportedAt: new Date().toISOString(),
+      environment: PBK_STORAGE_ENV,
+      namespace: ANALYZER_STORAGE_NAMESPACE,
+      currentDeal: getStoredAnalyzerDeal(),
+      savedDeals: readAnalyzerSecureStorage(ANALYZER_SAVED_DEALS_KEY, []),
+      activity: readAnalyzerSecureStorage(ANALYZER_ACTIVITY_KEY, []),
+      compsCache: readAnalyzerSecureStorage(ANALYZER_COMPS_CACHE_KEY, {}),
+      underwritingPresets: readAnalyzerSecureStorage(ANALYZER_PRESETS_KEY, []),
+      undoStack: readAnalyzerSecureStorage(ANALYZER_UNDO_KEY, []),
+      redoStack: readAnalyzerSecureStorage(ANALYZER_REDO_KEY, [])
+    };
+  }
+
+  pruneAnalyzerStorage();
+  migrateLegacyAnalyzerStorage();
 
   function getTimeOfDayLabel(date = new Date()) {
     const hour = date.getHours();
@@ -26894,13 +27106,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function getStoredAnalyzerDeal() {
-    return parseJSONSafe(localStorage.getItem(ANALYZER_STORAGE_KEY), null);
+    return readAnalyzerSecureStorage(ANALYZER_STORAGE_KEY, null);
   }
 
   function normalizeAnalyzerRuntimeDeal(deal = {}, result = null) {
-    const repairsMid = num(deal.repairs?.mid ?? deal.repairsMid ?? deal.repairs ?? result?.repairs ?? 0);
+    const normalizedRepairs = normalizeRepairEstimate(deal.repairs ?? {
+      mid: deal.repairsMid ?? result?.repairs ?? 0
+    });
     const mao = num(deal.mao60 ?? deal.mao ?? result?.walkAway ?? result?.maoCash70 ?? 0);
     const offer = num(deal.offer ?? deal.agreedPrice ?? result?.anchor ?? result?.targetOffer ?? mao);
+    const cachedComps = !deal.comps && deal.address ? getAnalyzerCachedComps(deal.address) : null;
     const fee = num(deal.fee ?? deal.assignmentFee ?? result?.assignmentFee ?? 10000);
     return {
       ...deal,
@@ -26914,10 +27129,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       offer,
       agreedPrice: num(deal.agreedPrice ?? offer),
       fee,
-      repairs: {
-        ...(typeof deal.repairs === 'object' && deal.repairs ? deal.repairs : {}),
-        mid: repairsMid
-      },
+      repairs: normalizedRepairs,
+      comps: deal.comps || cachedComps || deal.comps,
       timeline: deal.timeline || 'as soon as title clears',
       updatedAt: deal.updatedAt || new Date().toISOString()
     };
@@ -26947,7 +27160,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     };
     PBK.state.analyzer = next;
     try {
-      localStorage.setItem(ANALYZER_STORAGE_KEY, JSON.stringify(deal));
+      pushAnalyzerUndoState(deal);
+      cacheAnalyzerCompsForAddress(deal);
+      writeAnalyzerSecureStorage(ANALYZER_STORAGE_KEY, deal);
     } catch (error) {
       console.warn('Could not persist analyzer snapshot', error);
     }
@@ -26964,7 +27179,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const payload = { deal: {}, activeTab: 'analyzer', analyzeStatus: 'Analyzer cleared' };
     PBK.state.analyzer = payload;
     try {
-      localStorage.removeItem(ANALYZER_STORAGE_KEY);
+      removeAnalyzerSecureStorage(ANALYZER_STORAGE_KEY);
     } catch (error) {
       console.warn('Could not clear analyzer storage', error);
     }
@@ -26987,6 +27202,42 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderContractsExperience();
     setAnalyzerRuntimeMeta('Analyzer cleared. Start a new deal when ready.');
     toast({ type: 'info', title: 'Analyzer cleared', desc: 'Start a fresh deal when ready.' });
+  }
+
+  function restoreAnalyzerHistory(direction = 'undo') {
+    const sourceKey = direction === 'redo' ? ANALYZER_REDO_KEY : ANALYZER_UNDO_KEY;
+    const targetKey = direction === 'redo' ? ANALYZER_UNDO_KEY : ANALYZER_REDO_KEY;
+    const source = getAnalyzerStorageList(sourceKey);
+    const nextDeal = source.shift();
+    if (!nextDeal) {
+      toast({
+        type: 'info',
+        title: direction === 'redo' ? 'Nothing to redo' : 'Nothing to undo',
+        desc: 'Analyzer history is empty for this browser session.'
+      });
+      return null;
+    }
+    const current = getStoredAnalyzerDeal();
+    if (current) setAnalyzerStorageList(targetKey, [current, ...getAnalyzerStorageList(targetKey)].slice(0, 20));
+    setAnalyzerStorageList(sourceKey, source);
+    const payload = {
+      deal: normalizeAnalyzerRuntimeDeal(nextDeal),
+      activeTab: 'analyzer',
+      analyzeStatus: direction === 'redo' ? 'Analyzer redo restored' : 'Analyzer undo restored'
+    };
+    PBK.state.analyzer = payload;
+    writeAnalyzerSecureStorage(ANALYZER_STORAGE_KEY, payload.deal);
+    PBK.events.emit('analyzer:state', payload);
+    syncAnalyzerFrame(false);
+    renderDashboardFounderOps();
+    renderAnalyzerFounderOps();
+    renderContractsExperience();
+    toast({
+      type: 'success',
+      title: direction === 'redo' ? 'Analyzer redone' : 'Analyzer reverted',
+      desc: payload.deal.address ? `${payload.deal.address} restored.` : 'Previous analyzer state restored.'
+    });
+    return payload;
   }
 
   async function saveAnalyzerSnapshotToLead(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
@@ -27152,6 +27403,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function sendAnalyzerSnapshotToAgent(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
     const next = persistAnalyzerRuntimeSnapshot(snapshot);
     const deal = next?.deal || {};
+    const agentDealContext = getAnalyzerAgentDealContext(next);
     if (!deal.address) {
       toast({
         type: 'warning',
@@ -27164,12 +27416,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return invokeRuntimeTool('updateCRM', {
       target: deal.address,
       leadId: deal.leadId || deal.address,
-      message: `Analyzer snapshot ready for Ava: ${deal.address} - ARV ${fmt(deal.arv)} - MAO ${fmt(deal.mao60)} - target ${fmt(deal.offer)} - path ${deal.selectedPath || 'cash'}.`,
-      deal
+      message: `Analyzer snapshot ready for Ava: ${deal.address} - ARV ${fmt(deal.arv)} - MAO ${fmt(deal.mao60)} - target ${fmt(deal.offer)} - path ${deal.selectedPath || 'cash'} - script ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab}.`,
+      deal,
+      agentDealContext
     }, {
       actionLabel: 'Ava analyzer handoff',
       successTitle: 'Analyzer sent to Ava',
-      successDesc: 'Ava can now use the latest ARV, MAO, offer, repair, and path numbers.',
+      successDesc: 'Ava can now use the latest ARV, MAO, offer, repair, path, and call-script context.',
       errorTitle: 'Could not send analyzer snapshot'
     });
   }
@@ -27194,13 +27447,62 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
+  function getAnalyzerAgentDealContext(snapshot = getCurrentAnalyzerRuntimeSnapshot()) {
+    try {
+      const frameContext = getAnalyzerFrameApi()?.getAgentDealContext?.();
+      if (frameContext && typeof frameContext === 'object') return frameContext;
+    } catch (error) {
+      console.warn('Analyzer frame agent context unavailable; using shell fallback.', error);
+    }
+
+    const deal = normalizeAnalyzerRuntimeDeal(snapshot?.deal || {});
+    const activePath = DEAL_PATH_LABELS[deal.selectedPath] ? deal.selectedPath : 'cash';
+    const scriptSelectPath = document.getElementById('analyzerScriptPath')?.value;
+    const scriptPath = PBK_ANALYZER_SCRIPT_LIBRARY[scriptSelectPath] ? scriptSelectPath : activePath;
+    const scriptVariant = getAnalyzerScriptVariant(scriptPath);
+    const pathSet = PBK_ANALYZER_SCRIPT_LIBRARY[scriptPath] || PBK_ANALYZER_SCRIPT_LIBRARY.cash;
+    const activeScriptBundle = pathSet[scriptVariant] || pathSet.owner || pathSet.agent || PBK_ANALYZER_SCRIPT_LIBRARY.cash.owner;
+    const activeScriptTab = ['opening', 'acquisition', 'closing', 'objections'].includes(analyzerScriptTab) ? analyzerScriptTab : 'opening';
+
+    return {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      requestedBy: 'PBKAnalyzerShell',
+      activePath,
+      scriptPath,
+      scriptVariant,
+      activeScriptTab,
+      dealSnapshot: {
+        ...deal,
+        selectedPath: activePath
+      },
+      analyzerNumbers: {
+        arv: num(deal.arv || 0),
+        maoCash: num(deal.mao60 || deal.mao || 0),
+        maoRBP: num(deal.maoRBP || 0),
+        offer: num(deal.offer || 0),
+        agreedPrice: num(deal.agreedPrice || deal.offer || 0),
+        assignmentFee: num(deal.fee || deal.assignmentFee || 0),
+        repairsMid: num(deal.repairs?.mid || deal.repairsMid || 0)
+      },
+      activeScript: activeScriptBundle?.[activeScriptTab] || activeScriptBundle?.opening || '',
+      activeScriptBundle,
+      allPathScripts: PBK_ANALYZER_SCRIPT_LIBRARY,
+      callNotes: {
+        timeline: deal.timeline || '',
+        motivation: deal.motivation || '',
+        sellerNotes: deal.sellerNotes || deal.notes || ''
+      }
+    };
+  }
+
   function ensureBackgroundAnalyzerFrame() {
     let frame = getBackgroundAnalyzerFrame();
     if (frame) return frame;
 
     frame = document.createElement('iframe');
     frame.id = 'pbkAnalyzerBridgeFrame';
-    frame.src = '/analyzer.html?embedded=1&bridge=background';
+    frame.src = './analyzer.html?embedded=1&bridge=background';
     frame.loading = 'lazy';
     frame.tabIndex = -1;
     frame.setAttribute('aria-hidden', 'true');
@@ -28484,6 +28786,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <div class="analyzer-head-actions">
             <button class="btn btn-ghost" type="button" data-analyzer-action="sync">Sync latest deal</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="undo">Undo</button>
+            <button class="btn btn-ghost" type="button" data-analyzer-action="redo">Redo</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="load-lead">Load Lead</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="save-lead">Save Deal</button>
             <button class="btn btn-ghost" type="button" data-analyzer-action="clear-analyzer">Clear Analyzer</button>
@@ -28526,7 +28830,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <iframe
             id="pbkAnalyzerFrame"
             title="PBK React Analyzer"
-            src="/analyzer.html?embedded=1"
+            src="./analyzer.html?embedded=1"
             loading="lazy"
           ></iframe>
         </div>
@@ -28545,8 +28849,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         }
       }
 
+      if (action === 'undo' || action === 'redo') {
+        restoreAnalyzerHistory(action);
+      }
+
       if (action === 'open') {
-        window.open('/analyzer.html', '_blank', 'noopener');
+        window.open('./analyzer.html', '_blank', 'noopener');
       }
 
       if (action === 'save-lead') {
@@ -28595,20 +28903,58 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     setAnalyzerRuntimeMeta('Loading the embedded React analyzer...');
   }
 
+  const ANALYZER_POSTMESSAGE_API = Object.freeze({
+    ready: 'pbk:analyzer:ready',
+    state: 'pbk:analyzer:state',
+    setState: 'pbk:analyzer:set-state',
+    stateRequest: 'pbk:analyzer:state-request',
+    shellState: 'pbk:analyzer:shell-state'
+  });
+
+  function postAnalyzerShellState(targetWindow = null) {
+    const payload = buildAnalyzerSyncPayload();
+    const message = { type: ANALYZER_POSTMESSAGE_API.shellState, payload };
+    const recipients = targetWindow
+      ? [targetWindow]
+      : [getVisibleAnalyzerFrame()?.contentWindow, getBackgroundAnalyzerFrame()?.contentWindow].filter(Boolean);
+    recipients.forEach((recipient) => {
+      try {
+        recipient.postMessage(message, window.location.origin);
+      } catch (error) {
+        console.warn('Could not post analyzer shell state', error);
+      }
+    });
+    return payload;
+  }
+
   window.addEventListener('message', (event) => {
     if (event.origin !== window.location.origin || !event.data || typeof event.data !== 'object') {
       return;
     }
 
-    if (event.data.type === 'pbk:analyzer:ready') {
+    if (event.data.type === ANALYZER_POSTMESSAGE_API.ready) {
       setAnalyzerRuntimeMeta('Embedded analyzer is ready. Syncing saved deal state now—');
       syncAnalyzerFrame(false);
+      postAnalyzerShellState(event.source);
     }
 
-    if (event.data.type === 'pbk:analyzer:state') {
+    if (event.data.type === ANALYZER_POSTMESSAGE_API.state) {
       reflectAnalyzerSnapshot(event.data.payload);
     }
+
+    if (event.data.type === ANALYZER_POSTMESSAGE_API.stateRequest) {
+      postAnalyzerShellState(event.source);
+    }
   });
+
+  window.PBKAnalyzerShell = {
+    getStorageKey: getAnalyzerStorageKey,
+    exportAnalyzerLocalState,
+    pruneAnalyzerStorage,
+    getCurrentSnapshot: getCurrentAnalyzerRuntimeSnapshot,
+    getAgentDealContext: getAnalyzerAgentDealContext,
+    sync: syncAnalyzerFrame
+  };
 
   const baseShowPage = window.showPage || showPage;
   showPage = function(name) {

@@ -21,6 +21,8 @@ import {
   openMasterPackageWindow,
 } from './utils/pbk';
 import { sendDealToAgent, sendSellerDocsRequest, syncDealAnalysis } from './utils/runtimeBridge';
+import { ANALYZER_CURRENT_DEAL_KEY, clearAnalyzerDeal, readAnalyzerDeal, writeAnalyzerDeal } from './utils/analyzerStorage';
+import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
 
 const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
@@ -243,13 +245,12 @@ export default function App() {
 
   // Load saved data from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('pbk-deal-data');
-    if (saved) {
+    const saved = readAnalyzerDeal(initialDealData);
+    if (saved !== initialDealData) {
       try {
-        const parsed = JSON.parse(saved);
         const mergedDeal: DealData = {
           ...initialDealData,
-          ...parsed,
+          ...saved,
         };
 
         mergedDeal.selectedPath = normalizeSelectedPath({
@@ -285,7 +286,7 @@ export default function App() {
 
   // Save data to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('pbk-deal-data', JSON.stringify(activeDeal));
+    writeAnalyzerDeal(activeDeal);
   }, [activeDeal]);
 
   useEffect(() => {
@@ -308,17 +309,17 @@ export default function App() {
       }
 
       const { type, payload } = event.data;
-      if (type === 'pbk:analyzer:set-state') {
+      if (type === 'pbk:analyzer:set-state' || type === 'pbk:analyzer:shell-state') {
         applyBridgeState(payload || {});
       }
     };
 
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== 'pbk-deal-data' || !event.newValue) return;
+      if (event.key !== ANALYZER_CURRENT_DEAL_KEY || !event.newValue) return;
 
       try {
         applyBridgeState({
-          deal: JSON.parse(event.newValue),
+          deal: readAnalyzerDeal(initialDealData),
         });
       } catch (error) {
         console.error('Failed to hydrate analyzer bridge state', error);
@@ -329,6 +330,15 @@ export default function App() {
       window.parent.postMessage(
         {
           type: 'pbk:analyzer:ready',
+          payload: {
+            activeTab,
+          },
+        },
+        origin,
+      );
+      window.parent.postMessage(
+        {
+          type: 'pbk:analyzer:state-request',
           payload: {
             activeTab,
           },
@@ -535,17 +545,32 @@ export default function App() {
     }
   };
 
+  const handlePushScriptToAgent = async (agentDealContext: AgentDealContext) => {
+    try {
+      await sendDealToAgent(activeDeal, { agentDealContext });
+      setAnalyzeStatus(
+        `${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script pushed to Ava with analyzer numbers.`,
+      );
+    } catch (error) {
+      setAnalyzeStatus(
+        error instanceof Error
+          ? `Could not push this script to Ava: ${error.message}`
+          : 'Could not push this script to Ava.',
+      );
+    }
+  };
+
   const handleReset = () => {
     if (confirm('Are you sure you want to reset all deal data? This cannot be undone.')) {
       setDeal(initialDealData);
-      localStorage.removeItem('pbk-deal-data');
+      clearAnalyzerDeal();
     }
   };
 
   const handleClearAnalyzer = () => {
     if (confirm('Clear the current analyzer deal? CRM saved deals and notes will stay intact.')) {
       setDeal(initialDealData);
-      localStorage.removeItem('pbk-deal-data');
+      clearAnalyzerDeal();
       setAnalyzeStatus('Analyzer cleared. Start a new deal when ready.');
       setActiveTab('analyzer');
     }
@@ -554,7 +579,7 @@ export default function App() {
   const handleSaveDeal = async () => {
     try {
       const saved = upsertSavedDeal(activeDeal);
-      localStorage.setItem('pbk-deal-data', JSON.stringify(activeDeal));
+      writeAnalyzerDeal(activeDeal);
       window.dispatchEvent(new CustomEvent('pbk:deal-saved', { detail: saved }));
       appendSavedDealActivity(activeDeal, {
         type: 'note',
@@ -584,7 +609,7 @@ export default function App() {
   const handleLoadSavedDeal = (savedDeal: DealData) => {
     const merged = buildMergedDealState(initialDealData, savedDeal);
     setDeal(merged);
-    localStorage.setItem('pbk-deal-data', JSON.stringify(merged));
+    writeAnalyzerDeal(merged);
     setAnalyzeStatus(`${merged.address || 'Saved deal'} loaded into the analyzer.`);
     setActiveTab('analyzer');
   };
@@ -779,6 +804,10 @@ export default function App() {
       }),
       getBranding: () => branding,
       getSelectedPath: () => activeSelectedPath,
+      getAgentDealContext: () => buildAgentDealContext(activeDeal, {
+        activePath: activeSelectedPath,
+        requestedBy: 'PBKAnalyzer global',
+      }),
       getPdfReadiness: (incomingDeal?: Partial<DealData>) =>
         getPdfReadiness(buildMergedDealState(activeDeal, incomingDeal || {})),
       getDocumentSet: (
@@ -929,6 +958,7 @@ export default function App() {
                 onDealChange={handleDealChange}
                 selectedPath={activeSelectedPath}
                 onSelectPath={setSelectedPath}
+                onPushScriptToAgent={handlePushScriptToAgent}
               />
             )}
             {activeTab === 'documents' && (

@@ -5,6 +5,7 @@ import { LiveDealTrackerPanel } from './LiveDealTrackerPanel';
 import { ScriptPanel } from './ScriptPanel';
 import { InvestorYield } from './InvestorYield';
 import { getLiveInputPath, getPathLabel, getPathOptions } from '../utils/pbk';
+import type { AgentDealContext } from '../utils/agentDealContext';
 
 type ScriptVariant = 'owner' | 'agent';
 
@@ -13,6 +14,7 @@ interface CallModeTabProps {
   onDealChange: (updates: Partial<DealData>) => void;
   selectedPath: PBKPath;
   onSelectPath: (path: PBKPath) => void;
+  onPushScriptToAgent?: (context: AgentDealContext) => void | Promise<void>;
 }
 
 function getForcedVariant(path: PBKPath): ScriptVariant | null {
@@ -32,6 +34,7 @@ export function CallModeTab({
   onDealChange,
   selectedPath: activePath,
   onSelectPath,
+  onPushScriptToAgent,
 }: CallModeTabProps) {
   const [callNotes, setCallNotes] = useState('');
   const [scriptVariant, setScriptVariant] = useState<ScriptVariant>(
@@ -117,6 +120,7 @@ export function CallModeTab({
         scriptVariant={scriptVariant}
         forcedVariant={forcedVariant}
         onScriptVariantChange={setScriptVariant}
+        onPushScriptToAgent={onPushScriptToAgent}
       />
 
       {isCoCPath(activePath) ? (

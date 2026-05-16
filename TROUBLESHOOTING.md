@@ -2,6 +2,9 @@
 
 Use this guide when PBK is live but one feature is not behaving correctly.
 
+For the current launch bug inventory, see `BUG_TRACKER.md`.
+For local Ollama/nanobot fallback notes, see `OLLAMA_NOTES.md`.
+
 ## First Check
 
 Run:
@@ -58,6 +61,28 @@ Fix:
 Impact:
 
 - Skip trace and BatchData-powered enrichment remain unavailable until configured.
+
+## OpenClaw Gateway Diagnostics
+
+Symptom:
+
+- Hosted health shows the OpenClaw brain gateway as `standby`.
+
+Meaning:
+
+- This is expected when hosted Render is in heartbeat-only mode and no fresh local heartbeat has arrived.
+- Hosted Render should not direct-dial a local loopback OpenClaw gateway.
+
+Fix:
+
+- Run `npm.cmd run openclaw:heartbeat:once` from the local machine when you want the hosted bridge to see a fresh local gateway.
+- Do not set a loopback `OPENCLAW_GATEWAY_URL` in Render.
+- Keep direct gateway URLs empty in hosted production unless a real reachable tunnel is intentionally configured.
+
+Expected result:
+
+- `npm.cmd run test:live-data-audit` continues to pass the heartbeat-only checks.
+- `/api/gateway/status` reports `heartbeat_only`, `outbound_heartbeat`, or a fresh heartbeat without `ECONNREFUSED` noise.
 
 ## ElevenLabs Not Speaking
 

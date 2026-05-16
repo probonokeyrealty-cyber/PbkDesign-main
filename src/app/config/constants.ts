@@ -4,6 +4,7 @@
  */
 
 import { RepairItem } from '../types';
+import { ANALYZER_CURRENT_DEAL_KEY } from '../utils/analyzerStorage';
 
 /**
  * Repair estimation items with low/mid/high cost ranges
@@ -229,6 +230,6 @@ export const APP_CONFIG = {
   defaultBuilderPrice: 30000, // Per ¼ acre
   defaultLotSize: '0.25', // acres
   autoSaveInterval: 5000, // 5 seconds
-  localStorageKey: 'pbk-deal-data',
+  localStorageKey: ANALYZER_CURRENT_DEAL_KEY,
   darkModeKey: 'pbk-dark-mode',
 };

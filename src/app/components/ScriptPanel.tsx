@@ -4,6 +4,7 @@ import { DealData, PBKPath } from '../types';
 import { buildPbkPathScripts, PbkLegacyScriptPath } from '../templates/pbkPathScripts';
 import { sanitizeLegacyCopy } from '../utils/formatting';
 import { downloadTextFile } from '../utils/fileExport';
+import { buildAgentDealContext, type AgentDealContext, type AgentScriptTab } from '../utils/agentDealContext';
 
 type ScriptVariant = 'owner' | 'agent';
 type ScriptTab = 'opening' | 'acquisition' | 'objections';
@@ -14,6 +15,7 @@ interface ScriptPanelProps {
   scriptVariant: ScriptVariant;
   forcedVariant: ScriptVariant | null;
   onScriptVariantChange: (variant: ScriptVariant) => void;
+  onPushScriptToAgent?: (context: AgentDealContext) => void | Promise<void>;
 }
 
 const TAB_LABELS: Record<ScriptTab, string> = {
@@ -57,6 +59,7 @@ export function ScriptPanel({
   scriptVariant,
   forcedVariant,
   onScriptVariantChange,
+  onPushScriptToAgent,
 }: ScriptPanelProps) {
   const [activeTab, setActiveTab] = useState<ScriptTab>('opening');
   const [openObjectionIndex, setOpenObjectionIndex] = useState(0);
@@ -97,6 +100,17 @@ export function ScriptPanel({
 
   const downloadScript = () => {
     downloadTextFile(safeBody, `${scriptPath}_${activeTab}_${scriptVariant}.txt`);
+  };
+
+  const pushScriptToAgent = async () => {
+    await onPushScriptToAgent?.(
+      buildAgentDealContext(deal, {
+        activePath,
+        scriptVariant,
+        activeScriptTab: activeTab as AgentScriptTab,
+        requestedBy: 'Call Mode Script Panel',
+      }),
+    );
   };
 
   return (
@@ -191,6 +205,15 @@ export function ScriptPanel({
               <Download size={13} />
               Download
             </button>
+            {onPushScriptToAgent ? (
+              <button
+                type="button"
+                onClick={pushScriptToAgent}
+                className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3.5 py-2 text-[11px] font-semibold text-orange-700 transition hover:bg-orange-100 dark:border-orange-800/70 dark:bg-orange-900/20 dark:text-orange-200 dark:hover:bg-orange-900/30 sm:flex-none"
+              >
+                Push to Ava
+              </button>
+            ) : null}
           </div>
         </div>
 

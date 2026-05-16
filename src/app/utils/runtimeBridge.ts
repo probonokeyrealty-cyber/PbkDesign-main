@@ -1,4 +1,5 @@
 import { DealData } from '../types';
+import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
 
 type RuntimeConfig = {
   endpoint?: string;
@@ -347,11 +348,15 @@ export async function syncDealAnalysis(deal: DealData) {
   return invokeRuntimeTool<Record<string, unknown>>('analyzeDeal', buildAnalyzePayload(deal));
 }
 
-export async function sendDealToAgent(deal: DealData) {
+export async function sendDealToAgent(deal: DealData, options: { agentDealContext?: AgentDealContext } = {}) {
+  const agentDealContext = options.agentDealContext || buildAgentDealContext(deal, {
+    requestedBy: 'Analyzer runtime bridge',
+  });
   return invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
     target: deal.address || deal.sellerName || 'deal',
     leadId: deal.address || deal.sellerPhone || deal.sellerEmail || 'manual-deal',
-    message: `Analyzer synced ${deal.address || 'deal'} to the runtime for ${deal.selectedPath || 'cash'} follow-up.`,
+    message: `Analyzer synced ${deal.address || 'deal'} to the runtime for ${deal.selectedPath || 'cash'} follow-up. Agent context includes ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script.`,
     deal,
+    agentDealContext,
   });
 }

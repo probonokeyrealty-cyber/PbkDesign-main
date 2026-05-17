@@ -8955,6 +8955,266 @@ async function runTavilySearch(query = '', params = {}) {
   }
 }
 
+const WEB_SEARCH_SPIKE_KEYWORD_NEURONS = [
+  ['urgent', 30],
+  ['delay', 31],
+  ['risk', 32],
+  ['foreclosure', 33],
+  ['probate', 34],
+  ['inheritance', 35],
+  ['tax', 36],
+  ['interest rate', 37],
+  ['mortgage', 38],
+  ['comps', 39],
+  ['market', 40],
+  ['price', 41],
+  ['cash', 42],
+  ['creative finance', 43],
+  ['seller finance', 44],
+  ['subject to', 45],
+  ['repair', 46],
+  ['closing', 47],
+  ['contract', 48],
+  ['approval', 49],
+  ['compliance', 50],
+  ['dnc', 51],
+  ['script', 52],
+  ['objection', 53],
+  ['agent', 54],
+  ['listing', 55],
+  ['tenant', 56],
+  ['vacant', 57],
+  ['deadline', 58],
+  ['opportunity', 59],
+];
+
+const WEB_SEARCH_SPIKE_SPECIAL_NEURONS = {
+  live: 245,
+  fallback: 246,
+  tavily: 247,
+  openai: 248,
+  deepseek: 249,
+  negativeSentiment: 250,
+  positiveSentiment: 251,
+  confidence: 252,
+  uncertainty: 253,
+};
+
+function clampUnit(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function escapeRegExp(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function compactPreview(value = '', maxLength = 180) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+}
+
+function buildWebSearchSpikeText(result = {}) {
+  const parts = [result.answer, result.summary, result.text];
+  if (Array.isArray(result.results)) {
+    for (const item of result.results.slice(0, 5)) {
+      parts.push(item?.title, item?.content, item?.snippet, item?.raw_content);
+    }
+  }
+  if (result.fallback?.answer) parts.push(result.fallback.answer);
+  return parts.filter(Boolean).join('\n').replace(/\s+/g, ' ').trim();
+}
+
+function countKeywordOccurrences(text = '', keyword = '') {
+  const cleanKeyword = String(keyword || '').trim();
+  if (!cleanKeyword) return 0;
+  const pattern = cleanKeyword.includes(' ')
+    ? escapeRegExp(cleanKeyword).replace(/\s+/g, '\\s+')
+    : `\\b${escapeRegExp(cleanKeyword)}\\b`;
+  const matches = String(text || '').match(new RegExp(pattern, 'gi'));
+  return matches ? matches.length : 0;
+}
+
+function estimateWebSearchSentiment(text = '') {
+  const lower = String(text || '').toLowerCase();
+  const positive = ['opportunity', 'success', 'approved', 'growth', 'closed', 'benefit', 'strong', 'improved', 'safe'];
+  const negative = ['risk', 'urgent', 'delay', 'foreclosure', 'breach', 'failed', 'error', 'scam', 'lawsuit', 'problem'];
+  const positiveHits = positive.reduce((sum, word) => sum + countKeywordOccurrences(lower, word), 0);
+  const negativeHits = negative.reduce((sum, word) => sum + countKeywordOccurrences(lower, word), 0);
+  if (!positiveHits && !negativeHits) return 0;
+  return Math.max(-1, Math.min(1, (positiveHits - negativeHits) / Math.max(1, positiveHits + negativeHits)));
+}
+
+function getWebSearchProviderKey(result = {}) {
+  const raw = [
+    result.provider?.name,
+    result.provider?.provider,
+    result.provider?.mode,
+    result.provider?.model,
+    typeof result.provider === 'string' ? result.provider : '',
+    result.result,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (/tavily/.test(raw)) return 'tavily';
+  if (/openai|gpt|responses-web-search|web_search/.test(raw)) return 'openai';
+  if (/deepseek|deepseek_brain/.test(raw)) return 'deepseek';
+  if (/brain/.test(raw)) return 'pbk_brain';
+  return 'unknown';
+}
+
+function buildSearchResultToSpikes(result = {}, params = {}) {
+  const text = buildWebSearchSpikeText(result);
+  const lower = text.toLowerCase();
+  const features = WEB_SEARCH_SPIKE_KEYWORD_NEURONS
+    .map(([keyword, neuronId]) => ({
+      keyword,
+      neuronId,
+      count: countKeywordOccurrences(lower, keyword),
+    }))
+    .filter((feature) => feature.count > 0)
+    .sort((left, right) => right.count - left.count || left.neuronId - right.neuronId)
+    .slice(0, Math.max(3, Math.min(12, Number(params.maxSpikeFeatures || 10))));
+  const maxCount = Math.max(1, ...features.map((feature) => feature.count));
+  const neuronIds = [];
+  const strengths = [];
+  const addSpike = (neuronId, strength) => {
+    if (!Number.isFinite(Number(neuronId))) return;
+    neuronIds.push(Number(neuronId));
+    strengths.push(Number(clampUnit(strength).toFixed(3)));
+  };
+  for (const feature of features) {
+    feature.strength = Number((0.25 + 0.75 * (feature.count / maxCount)).toFixed(3));
+    addSpike(feature.neuronId, feature.strength);
+  }
+
+  const providerKey = getWebSearchProviderKey(result);
+  if (result.live) addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.live, 0.85);
+  if (!result.live) addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.fallback, 0.75);
+  if (providerKey === 'tavily') addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.tavily, 0.9);
+  if (providerKey === 'openai') addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.openai, 0.75);
+  if (providerKey === 'deepseek') addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.deepseek, 0.8);
+
+  const sentiment = estimateWebSearchSentiment(text);
+  if (sentiment < -0.2) addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.negativeSentiment, Math.abs(sentiment));
+  if (sentiment > 0.2) addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.positiveSentiment, sentiment);
+  addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.confidence, result.ok === false ? 0.25 : result.live ? 0.9 : 0.55);
+  if (!result.live || /uncertain|verify|fallback|not configured|could not/i.test(String(result.answer || ''))) {
+    addSpike(WEB_SEARCH_SPIKE_SPECIAL_NEURONS.uncertainty, result.live ? 0.35 : 0.75);
+  }
+
+  return {
+    version: 'pbk-web-search-spikes-v1',
+    source: 'web-search',
+    provider: providerKey,
+    live: Boolean(result.live),
+    targetAgents: Array.isArray(params.targetAgents) && params.targetAgents.length ? params.targetAgents : ['ava', 'rex'],
+    neuronIds,
+    strengths,
+    features: features.map(({ keyword, neuronId, count, strength }) => ({ keyword, neuronId, count, strength })),
+    sentiment: Number(sentiment.toFixed(3)),
+    textPreview: compactPreview(text, 180),
+  };
+}
+
+function buildWebSearchSpikeInjection(result = {}, params = {}) {
+  return buildSearchResultToSpikes(result, params);
+}
+
+function buildWebSearchSymbolicFacts(query = '', result = {}, spikeInjection = {}) {
+  const timestamp = isoNow();
+  return [
+    {
+      name: 'webSearch.queryPreview',
+      value: compactPreview(query, 120),
+      confidence: 1,
+      source: '/api/brain/web-search',
+      timestamp,
+    },
+    {
+      name: 'webSearch.provider',
+      value: getWebSearchProviderKey(result),
+      confidence: 1,
+      source: '/api/brain/web-search',
+      timestamp,
+    },
+    {
+      name: 'webSearch.hasLiveData',
+      value: Boolean(result.live),
+      confidence: 1,
+      source: '/api/brain/web-search',
+      timestamp,
+    },
+    {
+      name: 'webSearch.answerPreview',
+      value: compactPreview(result.answer || '', 240),
+      confidence: result.ok === false ? 0.3 : result.live ? 0.9 : 0.6,
+      source: '/api/brain/web-search',
+      timestamp,
+    },
+    {
+      name: 'webSearch.citations',
+      value: Array.isArray(result.citations) ? result.citations.slice(0, 5) : [],
+      confidence: Array.isArray(result.citations) && result.citations.length ? 0.8 : 0.4,
+      source: '/api/brain/web-search',
+      timestamp,
+    },
+    {
+      name: 'webSearch.spikeFeatureCount',
+      value: Array.isArray(spikeInjection.features) ? spikeInjection.features.length : 0,
+      confidence: 0.8,
+      source: '/api/brain/web-search',
+      timestamp,
+    },
+  ];
+}
+
+function didOpenAiQuotaFail(result = {}) {
+  const text = [
+    result.result,
+    result.answer,
+    result.error,
+    result.provider?.error,
+    result.provider?.message,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return /\b(quota|rate limit|insufficient_quota|billing|429)\b/.test(text);
+}
+
+function logWebSearchProviderTelemetry(query = '', result = {}, startedAt = Date.now()) {
+  const fallbackChain = Array.isArray(result.fallbackChain) ? result.fallbackChain : [];
+  const openAiFallback = fallbackChain.find((item) => String(item.provider || '').toLowerCase() === 'openai') || {};
+  const logEntry = {
+    event: 'pbk_web_search_provider',
+    timestamp: isoNow(),
+    endpoint: '/api/brain/web-search',
+    provider: getWebSearchProviderKey(result),
+    result: result.result || 'unknown',
+    live: Boolean(result.live),
+    ok: result.ok !== false,
+    tavilySecretPresent: Boolean(TAVILY_API_KEY),
+    openaiQuotaError: didOpenAiQuotaFail(openAiFallback) || didOpenAiQuotaFail(result),
+    latencyMs: Math.max(0, Date.now() - startedAt),
+    queryPreview: compactPreview(query, 80),
+    fallbackChain: fallbackChain.map((item) => ({
+      provider: item.provider,
+      ok: Boolean(item.ok),
+      result: item.result || 'unknown',
+    })),
+  };
+  console.log(JSON.stringify(logEntry));
+}
+
+function decorateWebSearchForAgentCognition(query = '', params = {}, result = {}, startedAt = Date.now()) {
+  const spikeInjection = params.includeSpikes === false ? null : buildWebSearchSpikeInjection(result, params);
+  const decorated = {
+    ...result,
+    snnSpikeInjection: spikeInjection,
+    symbolicFacts: params.includeSymbolicFacts === false ? [] : buildWebSearchSymbolicFacts(query, result, spikeInjection || {}),
+  };
+  logWebSearchProviderTelemetry(query, decorated, startedAt);
+  return decorated;
+}
+
 async function runDeepSeekWebSearchFallback(query = '', params = {}, context = {}) {
   const cleanQuery = String(query || '').trim();
   const brainFallback = context.fallback || answerBrainQuery(state, cleanQuery);
@@ -9039,17 +9299,19 @@ async function runDeepSeekWebSearchFallback(query = '', params = {}, context = {
 }
 
 async function runLiveWebSearch(query = '', params = {}) {
+  const startedAt = Date.now();
   const tavily = await runTavilySearch(query, params);
-  if (tavily.ok) return tavily;
+  if (tavily.ok) return decorateWebSearchForAgentCognition(query, params, { ...tavily, live: true }, startedAt);
   const openAi = await runOpenAiWebSearch(query, params);
   if (openAi.ok) {
-    return {
+    return decorateWebSearchForAgentCognition(query, params, {
       ...openAi,
+      live: true,
       fallbackChain: [
         { provider: 'tavily', ok: tavily.ok, result: tavily.result, error: tavily.answer || tavily.error || '' },
         { provider: 'openai', ok: openAi.ok, result: openAi.result, error: openAi.answer || openAi.error || '' },
       ],
-    };
+    }, startedAt);
   }
   const providerErrors = [
     { provider: 'tavily', ok: tavily.ok, result: tavily.result, error: tavily.answer || tavily.error || '' },
@@ -9059,13 +9321,13 @@ async function runLiveWebSearch(query = '', params = {}) {
     fallback: openAi.fallback,
     providerErrors,
   });
-  return {
+  return decorateWebSearchForAgentCognition(query, params, {
     ...(deepSeek.ok ? deepSeek : openAi),
     fallbackChain: [
       ...providerErrors,
       { provider: 'deepseek', ok: deepSeek.ok, result: deepSeek.result, error: deepSeek.answer || deepSeek.error || '' },
     ],
-  };
+  }, startedAt);
 }
 
 function buildCallQaScore(params = {}) {

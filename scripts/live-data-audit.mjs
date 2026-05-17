@@ -510,7 +510,14 @@ const checks = [
       && /DeepSeek is the LLM\. Tavily is only the live-search retriever\./.test(bridge)
       && /result:\s*'deepseek_brain_fallback'/.test(bridge)
       && /function runLiveWebSearch/.test(bridge)
-      && /runDeepSeekWebSearchFallback\(query,\s*params/.test(bridge),
+      && /runDeepSeekWebSearchFallback\(query,\s*params/.test(bridge)
+      && /function buildWebSearchSpikeInjection/.test(bridge)
+      && /snnSpikeInjection/.test(bridge)
+      && /symbolicFacts/.test(bridge)
+      && /event:\s*'pbk_web_search_provider'/.test(bridge)
+      && /tavilySecretPresent/.test(bridge)
+      && /openaiQuotaError/.test(bridge)
+      && /queryPreview/.test(bridge),
   },
   {
     name: 'Render blueprint keeps Tavily as a protected live-search secret',

@@ -9057,8 +9057,8 @@ function getWebSearchProviderKey(result = {}) {
     result.result,
   ].filter(Boolean).join(' ').toLowerCase();
   if (/tavily/.test(raw)) return 'tavily';
-  if (/openai|gpt|responses-web-search|web_search/.test(raw)) return 'openai';
   if (/deepseek|deepseek_brain/.test(raw)) return 'deepseek';
+  if (/openai|gpt|responses-web-search|web_search/.test(raw)) return 'openai';
   if (/brain/.test(raw)) return 'pbk_brain';
   return 'unknown';
 }

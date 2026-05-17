@@ -16,7 +16,13 @@ const analyzerDocsPath = resolve(root, 'docs/analyzer-postmessage-api.md');
 const agentDealContextPath = resolve(root, 'src/app/utils/agentDealContext.ts');
 const scriptPanelPath = resolve(root, 'src/app/components/ScriptPanel.tsx');
 const runtimeBridgePath = resolve(root, 'src/app/utils/runtimeBridge.ts');
+const commandCenterPath = resolve(root, 'src/app/routes/CommandCenter.tsx');
 const renderConfigPath = resolve(root, 'render.yaml');
+const snnCorePath = resolve(root, 'src/app/agents/snn/lifCore.mjs');
+const snnWorkerPath = resolve(root, 'src/app/agents/snn/agentBrain.worker.js');
+const snnBridgePath = resolve(root, 'src/app/utils/snnWorkerBridge.ts');
+const emotionOnnxExporterPath = resolve(root, 'scripts/train_emotion_world_model_onnx.py');
+const emotionRequirementsPath = resolve(root, 'requirements-emotion-world-model.txt');
 const index = readFileSync(indexPath, 'utf8');
 const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
@@ -30,7 +36,29 @@ const analyzerDocs = existsSync(analyzerDocsPath) ? readFileSync(analyzerDocsPat
 const agentDealContext = existsSync(agentDealContextPath) ? readFileSync(agentDealContextPath, 'utf8') : '';
 const scriptPanel = existsSync(scriptPanelPath) ? readFileSync(scriptPanelPath, 'utf8') : '';
 const runtimeBridge = existsSync(runtimeBridgePath) ? readFileSync(runtimeBridgePath, 'utf8') : '';
+const commandCenter = existsSync(commandCenterPath) ? readFileSync(commandCenterPath, 'utf8') : '';
 const renderConfig = existsSync(renderConfigPath) ? readFileSync(renderConfigPath, 'utf8') : '';
+const snnCore = existsSync(snnCorePath) ? readFileSync(snnCorePath, 'utf8') : '';
+const snnWorker = existsSync(snnWorkerPath) ? readFileSync(snnWorkerPath, 'utf8') : '';
+const snnBridge = existsSync(snnBridgePath) ? readFileSync(snnBridgePath, 'utf8') : '';
+const agentDecisionSmoke = readFileSync(resolve(root, 'scripts/agent-decision-smoke.mjs'), 'utf8');
+const emotionPipelineSmoke = existsSync(resolve(root, 'scripts/emotion-pipeline-smoke.mjs'))
+  ? readFileSync(resolve(root, 'scripts/emotion-pipeline-smoke.mjs'), 'utf8')
+  : '';
+const emotionWorldModelSmoke = existsSync(resolve(root, 'scripts/emotion-world-model-smoke.mjs'))
+  ? readFileSync(resolve(root, 'scripts/emotion-world-model-smoke.mjs'), 'utf8')
+  : '';
+const emotionWorldModelTrainingSmoke = existsSync(resolve(root, 'scripts/emotion-world-model-training-smoke.mjs'))
+  ? readFileSync(resolve(root, 'scripts/emotion-world-model-training-smoke.mjs'), 'utf8')
+  : '';
+const emotionWorldModelTrainer = existsSync(resolve(root, 'scripts/train-emotion-world-model.mjs'))
+  ? readFileSync(resolve(root, 'scripts/train-emotion-world-model.mjs'), 'utf8')
+  : '';
+const emotionWorldModelServer = existsSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'))
+  ? readFileSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'), 'utf8')
+  : '';
+const emotionOnnxExporter = existsSync(emotionOnnxExporterPath) ? readFileSync(emotionOnnxExporterPath, 'utf8') : '';
+const emotionRequirements = existsSync(emotionRequirementsPath) ? readFileSync(emotionRequirementsPath, 'utf8') : '';
 const defaultAgentFleetBlock = bridge.match(/function buildDefaultAgentFleet\(\) \{[\s\S]*?\n\}/)?.[0] || '';
 
 const checks = [
@@ -518,6 +546,110 @@ const checks = [
       && /tavilySecretPresent/.test(bridge)
       && /openaiQuotaError/.test(bridge)
       && /queryPreview/.test(bridge),
+  },
+  {
+    name: 'Command Center displays web-search cognition fallback status',
+    ok: /function getWebSearchProviderStatus/.test(bridge)
+      && /\/api\/brain\/web-search\/status/.test(bridge)
+      && /tavilySecretPresent/.test(bridge)
+      && /pbk-web-search-spikes-v1/.test(bridge)
+      && /fetchWebSearchStatusRequest/.test(runtimeBridge)
+      && /Web Search Cognition/.test(commandCenter)
+      && /Probe Status/.test(commandCenter)
+      && /fetchWebSearchStatusRequest/.test(commandCenter),
+  },
+  {
+    name: 'SNN worker consumes web-search spike injections',
+    ok: /function createLifNetwork/.test(snnCore)
+      && /function applySpikeInjection/.test(snnCore)
+      && /function stepLifNetwork/.test(snnCore)
+      && /message\.type === 'inject_spikes'/.test(snnWorker)
+      && /spikes_injected/.test(snnWorker)
+      && /createPbkSnnWorker/.test(snnBridge)
+      && /injectSearchCognition/.test(snnBridge)
+      && /createPbkSnnWorker/.test(runtimeBridge)
+      && /injectSearchCognition/.test(runtimeBridge)
+      && /snnAdapter/.test(runtimeBridge)
+      && /pbk-web-search-spikes-v1/.test(snnBridge),
+  },
+  {
+    name: 'X-factor replay buffer records agent decisions for world-model training',
+    ok: /CREATE TABLE IF NOT EXISTS public\.pbk_agent_decisions/.test(bridge)
+      && /function summarizeAgentDecisionBuffer/.test(bridge)
+      && /async function recordAgentDecisionRecord/.test(bridge)
+      && /\/api\/agent-decisions/.test(bridge)
+      && /status\.worldModel/.test(bridge)
+      && /agent_decision_replay_buffer_ready/.test(agentDecisionSmoke)
+      && /test:x-factor/.test(pkg)
+      && /test:x-factor/.test(pkg.match(/"test:founder":[^\n]+/)?.[0] || ''),
+  },
+  {
+    name: 'Emotional intelligence pipeline records call emotion, memory, and predicted transitions',
+    ok: /CREATE TABLE IF NOT EXISTS public\.pbk_call_emotions/.test(bridge)
+      && /CREATE TABLE IF NOT EXISTS public\.pbk_emotional_memory/.test(bridge)
+      && /CREATE TABLE IF NOT EXISTS public\.pbk_emotional_policy_experiments/.test(bridge)
+      && /CREATE TABLE IF NOT EXISTS public\.pbk_emotional_policy_outcomes/.test(bridge)
+      && /emotion_state JSONB/.test(bridge)
+      && /async function recordCallEmotionRecord/.test(bridge)
+      && /function buildEmotionalMemoryPromptContext/.test(bridge)
+      && /emotional_memory_prompt_context/.test(bridge)
+      && /emotionalMemoryPresent/.test(bridge)
+      && /De-escalate before offer/.test(bridge)
+      && /function predictEmotionTransition/.test(bridge)
+      && /async function createEmotionalPolicyExperimentRecord/.test(bridge)
+      && /async function assignEmotionalPolicyVariantRecord/.test(bridge)
+      && /async function recordEmotionalPolicyOutcomeRecord/.test(bridge)
+      && /PBK_EMOTION_WORLD_MODEL_ENDPOINT/.test(bridge)
+      && /async function runEmotionWorldModelProvider/.test(bridge)
+      && /modelProvider:\s*'external_world_model'/.test(bridge)
+      && /modelProvider:\s*'heuristic_fallback'/.test(bridge)
+      && /\/api\/emotions\/call/.test(bridge)
+      && /\/api\/emotion\/predict/.test(bridge)
+      && /\/api\/emotion\/policies\/experiments/.test(bridge)
+      && /\/api\/emotion\/policies\/assign/.test(bridge)
+      && /\/api\/emotion\/policies\/outcome/.test(bridge)
+      && /\/api\/leads\/:id\/emotional-state/.test(bridge)
+      && /status\.emotionalIntelligence/.test(bridge)
+      && /worldModelConfigured/.test(bridge)
+      && /dominantEmotion/.test(bridge)
+      && /emotion_pipeline_ready/.test(emotionPipelineSmoke)
+      && /promptEmotion/.test(emotionPipelineSmoke)
+      && /emotionalPolicyVariant/.test(emotionPipelineSmoke)
+      && /emotional_policy_experiment_created/.test(emotionPipelineSmoke)
+      && /emotional_policy_outcome_recorded/.test(emotionPipelineSmoke)
+      && /Ava prompt frame did not include dominant emotional memory/.test(emotionPipelineSmoke)
+      && /\/api\/emotions\/call/.test(emotionPipelineSmoke)
+      && /\/api\/emotion\/predict/.test(emotionPipelineSmoke)
+      && /\/api\/leads\/smoke-emotion-lead\/emotional-state/.test(emotionPipelineSmoke)
+      && /emotion_world_model_provider_ready/.test(emotionWorldModelSmoke)
+      && /PBK_EMOTION_WORLD_MODEL_ENDPOINT/.test(emotionWorldModelSmoke)
+      && /mock-emotional-onnx-v0/.test(emotionWorldModelSmoke)
+      && /emotion_world_model_training_pipeline_ready/.test(emotionWorldModelTrainingSmoke)
+      && /emotion_world_model_training_ready/.test(emotionWorldModelTrainer)
+      && /pbk-emotional-transition-regressor-v1/.test(emotionWorldModelTrainer)
+      && /--export-onnx/.test(emotionWorldModelTrainingSmoke)
+      && /blocked_missing_dependencies/.test(emotionWorldModelTrainingSmoke)
+      && /emotion-world-model-dataset\.jsonl/.test(emotionWorldModelTrainer)
+      && /PYTHONIOENCODING:\s*'utf-8'/.test(emotionWorldModelTrainer)
+      && /PYTHONUTF8:\s*'1'/.test(emotionWorldModelTrainer)
+      && /train_emotion_world_model_onnx\.py/.test(emotionWorldModelTrainer)
+      && /torch\.onnx\.export/.test(emotionOnnxExporter)
+      && /numpy/.test(emotionRequirements)
+      && /torch/.test(emotionRequirements)
+      && /onnx/.test(emotionRequirements)
+      && /onnxscript/.test(emotionRequirements)
+      && /onnxruntime/.test(emotionRequirements)
+      && /emotion_world_model_server_ready/.test(emotionWorldModelServer)
+      && /onnxruntime-node/.test(emotionWorldModelServer)
+      && /sanitizeOnnxRunner/.test(emotionWorldModelServer)
+      && /runner:\s*'onnxruntime-node'/.test(emotionWorldModelServer)
+      && /runner:\s*'json_baseline_fallback'/.test(emotionWorldModelServer)
+      && /\/predict/.test(emotionWorldModelServer)
+      && /emotion-world-model:train/.test(pkg)
+      && /emotion-world-model:export-onnx/.test(pkg)
+      && /emotion-world-model:serve/.test(pkg)
+      && /test:emotion/.test(pkg)
+      && /test:emotion/.test(pkg.match(/"test:founder":[^\n]+/)?.[0] || ''),
   },
   {
     name: 'Render blueprint keeps Tavily as a protected live-search secret',

@@ -1,5 +1,10 @@
 import { DealData } from '../types';
 import { buildAgentDealContext, type AgentDealContext } from './agentDealContext';
+import {
+  createPbkSnnWorker,
+  injectSearchCognition,
+  type SearchCognitionResult,
+} from './snnWorkerBridge';
 
 type RuntimeConfig = {
   endpoint?: string;
@@ -7,6 +12,8 @@ type RuntimeConfig = {
 };
 
 const DEFAULT_HOSTED_BRIDGE_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com';
+let avaSnnWorker: Worker | null = null;
+let rexSnnWorker: Worker | null = null;
 
 export type RuntimeSnapshot = {
   status?: Record<string, unknown>;
@@ -124,6 +131,29 @@ export function getRuntimeConfig(): RuntimeConfig {
   return {
     endpoint: DEFAULT_HOSTED_BRIDGE_ENDPOINT || window.location.origin,
     apiKey: '',
+  };
+}
+
+function getWebSearchSnnWorkers() {
+  if (typeof Worker === 'undefined') return [];
+  if (!avaSnnWorker) avaSnnWorker = createPbkSnnWorker('ava', { role: 'acquisitions' });
+  if (!rexSnnWorker) rexSnnWorker = createPbkSnnWorker('rex', { role: 'research' });
+  return [avaSnnWorker, rexSnnWorker].filter(Boolean) as Worker[];
+}
+
+function injectWebSearchCognition(result: SearchCognitionResult) {
+  if (!result?.snnSpikeInjection) {
+    return { injected: false, reason: 'no_snn_spike_injection', agents: [] };
+  }
+  const workers = getWebSearchSnnWorkers();
+  let injectedCount = 0;
+  for (const worker of workers) {
+    if (injectSearchCognition(worker, result)) injectedCount += 1;
+  }
+  return {
+    injected: injectedCount > 0,
+    injectedCount,
+    agents: workers.map((worker) => (worker as Worker & { pbkAgentId?: string }).pbkAgentId || 'unknown'),
   };
 }
 
@@ -349,10 +379,20 @@ export async function recallConversationMemoryRequest(body: Record<string, unkno
 }
 
 export async function webSearchRequest(body: Record<string, unknown>) {
-  return bridgeRequest<Record<string, unknown>>({
+  const result = await bridgeRequest<Record<string, unknown> & SearchCognitionResult>({
     method: 'POST',
     path: '/api/brain/web-search',
     body,
+  });
+  return {
+    ...result,
+    snnAdapter: injectWebSearchCognition(result),
+  };
+}
+
+export async function fetchWebSearchStatusRequest() {
+  return bridgeRequest<Record<string, unknown>>({
+    path: '/api/brain/web-search/status',
   });
 }
 

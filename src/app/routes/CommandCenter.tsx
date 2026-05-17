@@ -5,6 +5,7 @@ import type { LiveCallState, TranscriptLine } from '../components/shell/LiveCall
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   controlRuntimeCall,
+  fetchWebSearchStatusRequest,
   updateAdminTaskDecision,
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
@@ -103,6 +104,13 @@ export function CommandCenter() {
   const leadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
   const activity = Array.isArray(snapshot?.activity) ? snapshot.activity.slice(0, 8) : [];
   const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
+  const runtimeProviders = ((snapshot?.status?.providers || {}) as Record<string, Record<string, unknown>>);
+  const webSearchStatus = runtimeProviders.webSearch || {};
+  const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
+  const webSearchLiveReady = Boolean(webSearchStatus.liveReady);
+  const webSearchFallbackProvider = String(webSearchStatus.fallbackProvider || 'pbk_brain').replace(/_/g, ' ');
+  const webSearchPrimaryProvider = String(webSearchStatus.primaryProvider || (webSearchLiveReady ? 'tavily' : webSearchFallbackProvider)).replace(/_/g, ' ');
+  const webSearchMissing = Array.isArray(webSearchStatus.missing) ? webSearchStatus.missing.map(String).filter(Boolean) : [];
   const activeCall = mapRuntimeCall(
     calls.find((call) => ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(String(call.status || '').toLowerCase()))
       || calls[0],
@@ -135,6 +143,25 @@ export function CommandCenter() {
       setActionStatus(successMessage);
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Runtime action failed.');
+    } finally {
+      setPendingAction('');
+    }
+  };
+
+  const runWebSearchProbe = async () => {
+    setPendingAction('web-search:probe');
+    setActionStatus('');
+    try {
+      const result = await fetchWebSearchStatusRequest();
+      const status = (result.status || {}) as Record<string, unknown>;
+      const neuralOutput = (status.neuralOutput || {}) as Record<string, unknown>;
+      const provider = String(status.primaryProvider || webSearchPrimaryProvider).replace(/_/g, ' ');
+      const liveLabel = status.liveReady ? 'live Tavily' : 'fallback';
+      const spikeVersion = String(neuralOutput.spikeVersion || 'pbk-web-search-spikes-v1');
+      setActionStatus(`Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`);
+      await refresh().catch(() => null);
+    } catch (nextError) {
+      setActionStatus(nextError instanceof Error ? nextError.message : 'Web-search status probe failed.');
     } finally {
       setPendingAction('');
     }
@@ -279,6 +306,67 @@ export function CommandCenter() {
                   No admin approvals are needed.
                 </div>
               )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-100">Web Search Cognition</h2>
+                <p className="text-xs text-slate-500">Live data status for Ava/Rex spikes, facts, and fallback telemetry.</p>
+              </div>
+              <span
+                className={[
+                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
+                  webSearchLiveReady
+                    ? 'bg-emerald-500/10 text-emerald-300'
+                    : 'bg-amber-500/10 text-amber-300',
+                ].join(' ')}
+              >
+                <span
+                  aria-hidden="true"
+                  className={[
+                    'h-1.5 w-1.5 rounded-full',
+                    webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
+                  ].join(' ')}
+                />
+                {webSearchLiveReady ? 'Tavily live' : 'Fallback active'}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Provider Path</div>
+                <div className="mt-1 text-sm font-semibold capitalize text-slate-100">{webSearchPrimaryProvider}</div>
+                <div className="mt-1 text-xs text-slate-500">{String(webSearchStatus.mode || 'waiting for bridge status')}</div>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Neural Contract</div>
+                <div className="mt-1 text-sm font-semibold text-slate-100">{String(webSearchNeuralOutput.spikeVersion || 'pbk-web-search-spikes-v1')}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {webSearchNeuralOutput.exposesSymbolicFacts === false ? 'Spikes only' : 'Spikes + symbolic facts'}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
+              {String(webSearchStatus.note || 'Waiting for the bridge to report web-search cognition status.')}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] text-slate-500">
+                Log event: <span className="text-slate-300">{String(webSearchStatus.logEvent || 'pbk_web_search_provider')}</span>
+                {!webSearchLiveReady && (
+                  <span> / Missing: {webSearchMissing.join(', ') || 'PBK_TAVILY_API_KEY'}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={pendingAction === 'web-search:probe'}
+                onClick={() => {
+                  void runWebSearchProbe();
+                }}
+                className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
+              >
+                Probe Status
+              </button>
             </div>
           </section>
 

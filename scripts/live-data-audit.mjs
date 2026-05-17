@@ -503,6 +503,16 @@ const checks = [
       && /synthesizeClosingAnswerWithDeepSeek/.test(bridge),
   },
   {
+    name: 'Live web search keeps DeepSeek as fallback LLM when Tavily/OpenAI are unavailable',
+    ok: /function runTavilySearch/.test(bridge)
+      && /function runDeepSeekWebSearchFallback/.test(bridge)
+      && /source:\s*'rex-web-search-deepseek-fallback'/.test(bridge)
+      && /DeepSeek is the LLM\. Tavily is only the live-search retriever\./.test(bridge)
+      && /result:\s*'deepseek_brain_fallback'/.test(bridge)
+      && /function runLiveWebSearch/.test(bridge)
+      && /runDeepSeekWebSearchFallback\(query,\s*params/.test(bridge),
+  },
+  {
     name: 'Render blueprint keeps Tavily as a protected live-search secret',
     ok: /key:\s*PBK_TAVILY_API_KEY/.test(renderConfig)
       && /key:\s*PBK_TAVILY_API_KEY\s*\n\s*sync:\s*false/.test(renderConfig)

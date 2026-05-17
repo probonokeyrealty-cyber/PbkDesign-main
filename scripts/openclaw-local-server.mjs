@@ -8955,15 +8955,115 @@ async function runTavilySearch(query = '', params = {}) {
   }
 }
 
+async function runDeepSeekWebSearchFallback(query = '', params = {}, context = {}) {
+  const cleanQuery = String(query || '').trim();
+  const brainFallback = context.fallback || answerBrainQuery(state, cleanQuery);
+  const providerErrors = Array.isArray(context.providerErrors) ? context.providerErrors : [];
+  const deepSeekMeta = getDeepSeekProviderMeta();
+  if (!deepSeekMeta.ready) {
+    return {
+      ok: false,
+      result: 'deepseek_missing_with_brain_fallback',
+      live: false,
+      query: cleanQuery,
+      answer: `DeepSeek fallback is not configured. ${deepSeekMeta.missing.join(', ') || 'Add PBK_DEEPSEEK_API_KEY.'}\n\nFallback from PBK Brain: ${brainFallback?.answer || 'No local brain match yet.'}`,
+      citations: brainFallback?.citations || ['PBK Brain fallback'],
+      fallback: {
+        source: 'PBK Brain',
+        ...brainFallback,
+      },
+      provider: deepSeekMeta,
+      providerErrors,
+    };
+  }
+
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'You are Rex, PBK research strategist.',
+        'DeepSeek is the LLM. Tavily is only the live-search retriever.',
+        'The live web retriever may be unavailable. If so, do not pretend the answer is current.',
+        'Use the PBK Brain fallback below, state the live-data limitation in one sentence, and turn the stored knowledge into a practical PBK operator answer.',
+        'Keep the response concise, plain English, and action-oriented.',
+      ].join(' '),
+    },
+    {
+      role: 'user',
+      content: [
+        `Question: ${cleanQuery}`,
+        `Provider status: ${providerErrors.map((item) => `${item.provider}: ${item.result || 'unknown'} ${item.error || ''}`).join(' | ') || 'none'}`,
+        `PBK Brain fallback answer: ${brainFallback?.answer || 'No stored match.'}`,
+        `PBK citations: ${(brainFallback?.citations || []).join(', ') || 'none'}`,
+      ].join('\n'),
+    },
+  ];
+  const result = await runDeepSeekChatCompletion(messages, {
+    source: 'rex-web-search-deepseek-fallback',
+    responseFormat: 'text',
+    temperature: 0.25,
+    maxTokens: 450,
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      result: 'deepseek_error_with_brain_fallback',
+      live: false,
+      query: cleanQuery,
+      answer: `DeepSeek fallback could not complete: ${result.error || 'unknown provider error'}\n\nFallback from PBK Brain: ${brainFallback?.answer || 'No local brain match yet.'}`,
+      citations: brainFallback?.citations || ['PBK Brain fallback'],
+      fallback: {
+        source: 'PBK Brain',
+        ...brainFallback,
+      },
+      provider: result.provider || deepSeekMeta,
+      providerErrors,
+    };
+  }
+
+  return {
+    ok: true,
+    result: 'deepseek_brain_fallback',
+    live: false,
+    query: cleanQuery,
+    answer: result.answer || brainFallback?.answer || 'No local brain match yet.',
+    citations: brainFallback?.citations || ['PBK Brain fallback'],
+    fallback: {
+      source: 'PBK Brain',
+      ...brainFallback,
+    },
+    provider: result.provider || deepSeekMeta,
+    providerErrors,
+    usage: result.usage || null,
+  };
+}
+
 async function runLiveWebSearch(query = '', params = {}) {
   const tavily = await runTavilySearch(query, params);
   if (tavily.ok) return tavily;
   const openAi = await runOpenAiWebSearch(query, params);
+  if (openAi.ok) {
+    return {
+      ...openAi,
+      fallbackChain: [
+        { provider: 'tavily', ok: tavily.ok, result: tavily.result, error: tavily.answer || tavily.error || '' },
+        { provider: 'openai', ok: openAi.ok, result: openAi.result, error: openAi.answer || openAi.error || '' },
+      ],
+    };
+  }
+  const providerErrors = [
+    { provider: 'tavily', ok: tavily.ok, result: tavily.result, error: tavily.answer || tavily.error || '' },
+    { provider: 'openai', ok: openAi.ok, result: openAi.result, error: openAi.answer || openAi.error || '' },
+  ];
+  const deepSeek = await runDeepSeekWebSearchFallback(query, params, {
+    fallback: openAi.fallback,
+    providerErrors,
+  });
   return {
-    ...openAi,
+    ...(deepSeek.ok ? deepSeek : openAi),
     fallbackChain: [
-      { provider: 'tavily', ok: tavily.ok, result: tavily.result, error: tavily.answer || tavily.error || '' },
-      { provider: 'openai', ok: openAi.ok, result: openAi.result, error: openAi.answer || openAi.error || '' },
+      ...providerErrors,
+      { provider: 'deepseek', ok: deepSeek.ok, result: deepSeek.result, error: deepSeek.answer || deepSeek.error || '' },
     ],
   };
 }

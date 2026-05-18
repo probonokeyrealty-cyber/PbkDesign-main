@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const index = readFileSync(resolve(root, 'index.html'), 'utf8');
 const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 'utf8');
+const netlifyConfig = readFileSync(resolve(root, 'netlify.toml'), 'utf8');
+const publicAvaFunction = readFileSync(resolve(root, 'netlify/functions/public-ava-chat.ts'), 'utf8');
+const documentsPdfFunction = readFileSync(resolve(root, 'netlify/functions/documents-pdf.ts'), 'utf8');
 const pkgPath = resolve(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
@@ -110,6 +113,33 @@ if (missingArchitectureRoutes.length) {
   fail.push({
     name: 'Documented production control routes must exist on the bridge',
     details: missingArchitectureRoutes,
+  });
+}
+
+const requiredNetlifyFunctionRoutes = [
+  {
+    label: '/api/public/ava-chat -> public-ava-chat function',
+    path: '/api/public/ava-chat',
+    functionSource: publicAvaFunction,
+    functionName: 'public-ava-chat',
+  },
+  {
+    label: '/api/documents/pdf -> documents-pdf function',
+    path: '/api/documents/pdf',
+    functionSource: documentsPdfFunction,
+    functionName: 'documents-pdf',
+  },
+];
+const missingNetlifyFunctionRoutes = requiredNetlifyFunctionRoutes.filter(({ path, functionSource, functionName }) => {
+  const functionDeclaresPath = /export\s+const\s+handler/.test(functionSource);
+  const redirectFrom = new RegExp(`from\\s*=\\s*["']${path.replace(/\//g, '\\/')}["']`).test(netlifyConfig);
+  const redirectTo = new RegExp(`to\\s*=\\s*["']\\/\\.netlify\\/functions\\/${functionName}["']`).test(netlifyConfig);
+  return !functionDeclaresPath || !redirectFrom || !redirectTo;
+}).map(({ label }) => label);
+if (missingNetlifyFunctionRoutes.length) {
+  fail.push({
+    name: 'Netlify same-origin API paths must route to deployed functions',
+    details: missingNetlifyFunctionRoutes,
   });
 }
 
@@ -319,6 +349,11 @@ const report = {
       name: 'Frontend API requests map to bridge routes',
       ok: missingRoutes.length === 0,
       count: requestedPaths.length,
+    },
+    {
+      name: 'Netlify same-origin API paths route to functions',
+      ok: missingNetlifyFunctionRoutes.length === 0,
+      count: requiredNetlifyFunctionRoutes.length,
     },
     {
       name: 'Page navigation targets exist',

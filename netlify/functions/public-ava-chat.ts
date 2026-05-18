@@ -1,4 +1,4 @@
-import type { Config, Context } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
 
 const BRIDGE_URL = String(
   process.env.PBK_BRIDGE_URL
@@ -12,38 +12,41 @@ const PUBLIC_AVA_CHAT_KEY = String(
     || '',
 ).trim();
 
-function json(payload: unknown, status = 200, headers: Record<string, string> = {}) {
-  return Response.json(payload, {
-    status,
+const corsHeaders = {
+  'Cache-Control': 'no-store',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Public-Ava-Key, X-Public-Key',
+  'Access-Control-Allow-Methods': 'POST,OPTIONS',
+};
+
+function json(payload: unknown, statusCode = 200, headers: Record<string, string> = {}) {
+  return {
+    statusCode,
     headers: {
-      'Cache-Control': 'no-store',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Public-Ava-Key, X-Public-Key',
-      'Access-Control-Allow-Methods': 'POST,OPTIONS',
+      'Content-Type': 'application/json',
+      ...corsHeaders,
       ...headers,
     },
-  });
+    body: JSON.stringify(payload),
+  };
 }
 
-export default async (req: Request, _context: Context) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Public-Ava-Key, X-Public-Key',
-        'Access-Control-Allow-Methods': 'POST,OPTIONS',
-      },
-    });
+export const handler: Handler = async (event) => {
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 204,
+      headers: corsHeaders,
+      body: '',
+    };
   }
 
-  if (req.method !== 'POST') {
+  if (event.httpMethod !== 'POST') {
     return json({ ok: false, error: 'Method not allowed' }, 405);
   }
 
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    body = JSON.parse(event.body || '{}');
   } catch {
     return json({ ok: false, error: 'Invalid JSON body' }, 400);
   }
@@ -79,9 +82,4 @@ export default async (req: Request, _context: Context) => {
       502,
     );
   }
-};
-
-export const config: Config = {
-  path: '/api/public/ava-chat',
-  method: ['POST', 'OPTIONS'],
 };

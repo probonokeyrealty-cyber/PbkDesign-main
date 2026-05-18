@@ -8,6 +8,7 @@ const bridgePath = resolve(root, 'scripts/openclaw-local-server.mjs');
 const heartbeatManagerPath = resolve(root, 'scripts/pbk-openclaw-heartbeat.ps1');
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
+const productionCheckPath = resolve(root, 'scripts/production-pristine-check.mjs');
 const agentsPath = resolve(root, 'AGENTS.md');
 const avaMasterclassPath = resolve(root, 'knowledge/ava-wholesale-conversation-masterclass.md');
 const analyzerHtmlPath = resolve(root, 'analyzer.html');
@@ -18,6 +19,9 @@ const scriptPanelPath = resolve(root, 'src/app/components/ScriptPanel.tsx');
 const runtimeBridgePath = resolve(root, 'src/app/utils/runtimeBridge.ts');
 const commandCenterPath = resolve(root, 'src/app/routes/CommandCenter.tsx');
 const renderConfigPath = resolve(root, 'render.yaml');
+const netlifyConfigPath = resolve(root, 'netlify.toml');
+const netlifyPublicAvaFunctionPath = resolve(root, 'netlify/functions/public-ava-chat.ts');
+const netlifyDocumentsPdfFunctionPath = resolve(root, 'netlify/functions/documents-pdf.ts');
 const snnCorePath = resolve(root, 'src/app/agents/snn/lifCore.mjs');
 const snnWorkerPath = resolve(root, 'src/app/agents/snn/agentBrain.worker.js');
 const snnBridgePath = resolve(root, 'src/app/utils/snnWorkerBridge.ts');
@@ -28,6 +32,7 @@ const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
+const productionCheck = readFileSync(productionCheckPath, 'utf8');
 const agents = readFileSync(agentsPath, 'utf8');
 const avaMasterclass = readFileSync(avaMasterclassPath, 'utf8');
 const analyzerHtml = readFileSync(analyzerHtmlPath, 'utf8');
@@ -38,6 +43,9 @@ const scriptPanel = existsSync(scriptPanelPath) ? readFileSync(scriptPanelPath, 
 const runtimeBridge = existsSync(runtimeBridgePath) ? readFileSync(runtimeBridgePath, 'utf8') : '';
 const commandCenter = existsSync(commandCenterPath) ? readFileSync(commandCenterPath, 'utf8') : '';
 const renderConfig = existsSync(renderConfigPath) ? readFileSync(renderConfigPath, 'utf8') : '';
+const netlifyConfig = existsSync(netlifyConfigPath) ? readFileSync(netlifyConfigPath, 'utf8') : '';
+const netlifyPublicAvaFunction = existsSync(netlifyPublicAvaFunctionPath) ? readFileSync(netlifyPublicAvaFunctionPath, 'utf8') : '';
+const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath) ? readFileSync(netlifyDocumentsPdfFunctionPath, 'utf8') : '';
 const snnCore = existsSync(snnCorePath) ? readFileSync(snnCorePath, 'utf8') : '';
 const snnWorker = existsSync(snnWorkerPath) ? readFileSync(snnWorkerPath, 'utf8') : '';
 const snnBridge = existsSync(snnBridgePath) ? readFileSync(snnBridgePath, 'utf8') : '';
@@ -378,7 +386,16 @@ const checks = [
     ok: /TOAST_LIMIT\s*=\s*3/.test(index)
       && /data-toast-id/.test(index)
       && /findToastById/.test(index)
-      && /removeToastNode/.test(index),
+      && /removeToastNode/.test(index)
+      && /TOAST_LOW_SIGNAL_TITLES/.test(index)
+      && /shouldSuppressToast/.test(index)
+      && /pbk-toast-muted/.test(index),
+  },
+  {
+    name: 'Optional BatchData is not shown as a live production blocker',
+    ok: /BatchData optional\/off/.test(index)
+      && /Optional\/off this production run/.test(index)
+      && /PBK_OPTIONAL_PROVIDER_GAPS\s*\|\|\s*'batchdata'/.test(productionCheck),
   },
   {
     name: 'UX responsiveness controls are wired for voice, mobile inbox, loading, and offline states',
@@ -880,7 +897,17 @@ const checks = [
   },
   {
     name: 'Public Ava chat proxy and widget are present',
-    ok: /api\/public\/ava-chat/.test(bridge) && /pbk-ava-public-chat/.test(widget),
+    ok: /api\/public\/ava-chat/.test(bridge)
+      && /pbk-ava-public-chat/.test(widget)
+      && /export\s+const\s+handler/.test(netlifyPublicAvaFunction)
+      && /from\s*=\s*"\/api\/public\/ava-chat"/.test(netlifyConfig)
+      && /to\s*=\s*"\/\.netlify\/functions\/public-ava-chat"/.test(netlifyConfig),
+  },
+  {
+    name: 'Netlify document PDF function is explicitly routed',
+    ok: /export\s+const\s+handler/.test(netlifyDocumentsPdfFunction)
+      && /from\s*=\s*"\/api\/documents\/pdf"/.test(netlifyConfig)
+      && /to\s*=\s*"\/\.netlify\/functions\/documents-pdf"/.test(netlifyConfig),
   },
   {
     name: 'TOTP enrollment flow is safe before enforcement',
@@ -920,7 +947,7 @@ const report = {
     'One answered Telnyx -> Deepgram phone call with speech created durable transcript and sentiment rows',
   ],
   remainingOperatorProof: [
-    'Authenticator enrollment verification before setting PBK_TOTP_REQUIRED=true',
+    'TOTP is intentionally optional; verify enrollment only before enabling PBK_TOTP_REQUIRED=true',
     'Marketing-site snippet placement if that site is a separate repository',
   ],
 };

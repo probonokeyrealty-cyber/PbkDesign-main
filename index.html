@@ -3075,7 +3075,7 @@
       <p>Auto-deduplicates on address + phone — geocodes — scores — flags DNC matches — enriches with public records</p>
     </div>
     <button type="button" class="btn btn-ghost">Browse files</button>
-    <button type="button" class="btn btn-primary">Import from BatchData</button>
+    <button type="button" class="btn btn-secondary" disabled title="BatchData is optional/off for this production run. Use CSV import or manual lead entry.">BatchData optional/off</button>
   </div>
 
   <div class="leads-toolbar">
@@ -6293,12 +6293,12 @@
           <div class="int-name">BatchData</div>
           <div class="int-role">SKIP-TRACE — DATA ENRICHMENT</div>
         </div>
-        <span class="int-state on">Active</span>
+        <span class="int-state off">Optional/off</span>
       </div>
-      <div class="int-desc">Skip-traces addresses into phone numbers, enriches with equity, motivation signals, and probate/absentee flags.</div>
+      <div class="int-desc">Optional skip-trace enrichment is disabled for this production run. Use CSV imports, manual lead entry, or enable the provider later.</div>
       <div class="int-meta">
-        <div><div class="l">Traces — MTD</div><div class="v">3,412</div></div>
-        <div><div class="l">Hit rate</div><div class="v">78%</div></div>
+        <div><div class="l">Traces — MTD</div><div class="v">0</div></div>
+        <div><div class="l">Hit rate</div><div class="v">Off</div></div>
       </div>
       <div class="int-actions">
         <button type="button" class="btn btn-ghost">Usage</button>
@@ -9468,9 +9468,9 @@
             <span style="font-family: var(--font-mono); color: var(--text-tertiary); font-size: 11px;">renews May 12</span>
           </div>
           <div class="role-row" style="grid-template-columns: 1fr 140px 100px 120px;">
-            <div style="grid-column: 1;"><div class="who">BatchData</div><div class="email">3,412 traces MTD</div></div>
+            <div style="grid-column: 1;"><div class="who">BatchData</div><div class="email">Optional/off this production run</div></div>
             <span class="role-chip">Usage</span>
-            <span class="role-chip">$102.36</span>
+            <span class="role-chip">$0.00</span>
             <span style="font-family: var(--font-mono); color: var(--text-tertiary); font-size: 11px;">MTD</span>
           </div>
           <div class="role-row" style="grid-template-columns: 1fr 140px 100px 120px;">
@@ -12567,6 +12567,34 @@
     error: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
     info: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
   };
+  const TOAST_LOW_SIGNAL_TITLES = [
+    /^Path switched$/i,
+    /^Call script path updated$/i,
+    /^Call script audience updated$/i,
+    /^Lead filter preview active$/i,
+    /^Path performance selected$/i,
+    /^Path table sorted$/i,
+    /^Founder Approval Board opened$/i,
+    /^Rex revise prompt staged$/i,
+    /^Timeline filtered$/i,
+    /^Playback paused$/i,
+    /^Activity refreshed$/i,
+    /^Opened Brain$/i,
+    /^Opened Activity Log$/i,
+    /^No deep link on this row$/i,
+    /^Setting saved$/i
+  ];
+  const TOAST_IMPORTANT_PATTERN = /\b(approval|approved|declined|reject|failed|error|warning|call|sms|email|contract|docusign|lead saved|delete|deleted|export ready|recording|live|queued|offline|online|connected|bridge|provider|sent|sync|unavailable)\b/i;
+  function shouldSuppressToast({ toastType, title = '', desc = '', undo = null, ms = 5000, priority = 'normal', quiet = false }) {
+    if (quiet) return true;
+    if (priority === 'high' || undo || ms === 0) return false;
+    if (toastType === 'error' || toastType === 'warning') return false;
+    const text = `${title} ${desc}`.trim();
+    if (!text) return false;
+    if (TOAST_IMPORTANT_PATTERN.test(text)) return false;
+    if (priority === 'low') return true;
+    return TOAST_LOW_SIGNAL_TITLES.some((pattern) => pattern.test(String(title || '').trim()));
+  }
   function removeToastNode(node) {
     if (!node || !node.isConnected) return;
     const timer = toastTimers.get(node);
@@ -12578,9 +12606,13 @@
     return Array.from(toastStack?.querySelectorAll('[data-toast-id]') || [])
       .find((node) => node.dataset.toastId === id) || null;
   }
-  function toast({ type = 'success', title = '', desc = '', undo = null, ms = 5000, id = '', key = '' }) {
+  function toast({ type = 'success', title = '', desc = '', undo = null, ms = 5000, id = '', key = '', priority = 'normal', quiet = false }) {
     if (!toastStack) return null;
     const toastType = toastIcons[type] ? type : 'info';
+    if (shouldSuppressToast({ toastType, title, desc, undo, ms, priority, quiet })) {
+      console.debug('[pbk-toast-muted]', { type: toastType, title, priority });
+      return null;
+    }
     const toastId = String(id || key || `${toastType}:${title}:${String(desc).slice(0, 90)}`).trim();
     let t = toastId ? findToastById(toastId) : null;
     if (!t) {
@@ -15153,7 +15185,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     if (!providers) {
       if (summaryEl) summaryEl.textContent = 'Waiting on health';
-      if (noteEl) noteEl.textContent = 'Telnyx, DocuSign, BatchData, and Slack readiness appears here after the next health check.';
+      if (noteEl) noteEl.textContent = 'Telnyx, DocuSign, and Slack readiness appears here after the next health check. Optional enrichment stays quiet unless enabled.';
       if (listEl) {
         listEl.querySelectorAll('.settings-providers-row').forEach((row) => {
           row.dataset.state = '';
@@ -15167,7 +15199,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const providerLabels = {
       telnyx: 'Telnyx',
       docusign: 'DocuSign',
-      batchdata: 'BatchData (optional)',
+      batchdata: 'BatchData (optional/off)',
       slack: 'Slack'
     };
 
@@ -15252,7 +15284,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = hint ? `${prefix} · ${hint}` : prefix;
         }
       } else if (isOptional) {
-        label = hint ? `Optional setup - ${hint}` : 'Optional setup';
+        state = 'missing';
+        label = 'Optional/off';
       } else {
         label = hint ? `Not configured · ${hint}` : 'Not configured';
       }
@@ -15284,9 +15317,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       const optionalMissing = order.some((key) => optionalProviders.has(key) && providers?.[key] && !providers[key].ready);
       if (notLive.length === 0 && optionalMissing) {
-        noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers can be added later in Render.';
+        noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers are intentionally off unless the team enables them.';
       } else if (notLive.length === 0) {
-        noteEl.textContent = 'Bridge health reports all core and optional provider APIs live.';
+        noteEl.textContent = 'Bridge health reports all core provider APIs live.';
       } else {
         noteEl.textContent = `Bridge health reports ${coreLiveCount} of ${coreTotal} core providers live. Missing requirements are listed per provider (Render env vars).`;
       }
@@ -20667,11 +20700,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return desc || fallback || 'Live action completed through the bridge.';
   }
 
-  function toastOutcome({ outcome = 'live', title = 'Action complete', desc = '', response = null, fallback = '' }) {
+  function toastOutcome({ outcome = 'live', title = 'Action complete', desc = '', response = null, fallback = '', priority = '' }) {
     toast({
       type: outcomeToastType(outcome),
       title: `${title} · ${outcomeLabel(outcome)}`,
-      desc: buildOutcomeDesc(outcome, desc, response, fallback)
+      desc: buildOutcomeDesc(outcome, desc, response, fallback),
+      priority: priority || (outcome === 'local_view_only' ? 'low' : 'normal')
     });
   }
 
@@ -29321,7 +29355,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       streak: 'Streak',
       crmSync: 'CRM Sync',
       docusign: 'DocuSign',
-      batchdata: 'BatchData (optional)',
+      batchdata: 'BatchData (optional/off)',
       slack: 'Slack',
       render: 'Render'
     };
@@ -29457,7 +29491,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = hint ? `${prefix} · ${hint}` : prefix;
         }
       } else if (isOptional) {
-        label = hint ? `Optional setup - ${hint}` : 'Optional setup';
+        state = 'missing';
+        label = 'Optional/off';
       } else {
         label = meta.note || (hint ? `Not configured - ${hint}` : 'Not configured');
       }
@@ -29481,9 +29516,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (noteEl) {
       const optionalMissing = order.some((key) => optionalProviders.has(key) && runtimeProviders?.[key] && !runtimeProviders[key].ready);
       if (coreLiveCount === coreVisibleTotal && optionalMissing) {
-        noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers can be added later in Render.';
+        noteEl.textContent = 'Bridge health reports all core provider APIs live. Optional enrichment providers are intentionally off unless the team enables them.';
       } else if (coreLiveCount === coreVisibleTotal) {
-        noteEl.textContent = 'Bridge health reports all core and optional provider APIs live.';
+        noteEl.textContent = 'Bridge health reports all core provider APIs live.';
       } else {
         noteEl.textContent = `Bridge health reports ${coreLiveCount} of ${coreVisibleTotal} core providers live. Missing requirements are listed per provider (Render env vars).`;
       }

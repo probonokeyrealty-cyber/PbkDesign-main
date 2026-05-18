@@ -4,6 +4,13 @@ const BASE_URL = String(process.env.PBK_HOSTED_BRIDGE_URL || process.env.PBK_BRI
 const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 const STRICT = process.argv.includes('--strict');
 const JSON_ONLY = process.argv.includes('--json') || STRICT;
+const OPTIONAL_PROVIDER_GAPS = new Set(
+  String(process.env.PBK_OPTIONAL_PROVIDER_GAPS || 'batchdata')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean),
+);
+const CHECK_TOTP_GAP = /^(1|true|yes)$/i.test(String(process.env.PBK_CHECK_TOTP_GAP || '').trim());
 
 function makeIssue(id, severity, title, evidence, action) {
   return { id, severity, title, evidence, action };
@@ -140,6 +147,7 @@ function classifyIssues({ health, state, agents, manual, team, security, experim
   const providerSummary = summarizeProviders(health);
   for (const [name, meta] of Object.entries(providerSummary)) {
     if (meta.ready) continue;
+    if (OPTIONAL_PROVIDER_GAPS.has(name.toLowerCase())) continue;
     const severity = name === 'batchdata' ? 'medium' : 'high';
     issues.push(makeIssue(
       `provider_${name}_not_ready`,
@@ -217,7 +225,7 @@ function classifyIssues({ health, state, agents, manual, team, security, experim
   }
 
   const securityMeta = security?.security || {};
-  if (securityMeta.totpConfigured && !securityMeta.totpEnrolled) {
+  if ((CHECK_TOTP_GAP || securityMeta.totpRequired) && securityMeta.totpConfigured && !securityMeta.totpEnrolled) {
     issues.push(makeIssue(
       'totp_not_enrolled',
       'medium',
@@ -284,6 +292,15 @@ async function main() {
   const experiments = experimentsResult.parsed || {};
   const emotionPredict = emotionPredictResult.parsed || {};
   const pendingWork = collectPendingWork(state);
+  const providerSummary = summarizeProviders(health);
+  const optionalIgnored = Object.entries(providerSummary)
+    .filter(([name, meta]) => !meta.ready && OPTIONAL_PROVIDER_GAPS.has(name.toLowerCase()))
+    .map(([name, meta]) => ({
+      provider: name,
+      status: meta.status,
+      missing: meta.missing,
+      note: 'Optional provider ignored for production readiness. Set PBK_OPTIONAL_PROVIDER_GAPS without this provider to enforce it.',
+    }));
   const issues = classifyIssues({
     health,
     state,
@@ -305,7 +322,7 @@ async function main() {
       status: health.status,
       revision: health.revision,
       stateBackend: health.features?.stateBackend,
-      providerSummary: summarizeProviders(health),
+      providerSummary,
     },
     production: {
       pendingWorkCount: pendingWork.length,
@@ -333,6 +350,7 @@ async function main() {
         model: emotionPredict.model || null,
         fallbackReason: emotionPredict.fallbackReason || null,
       },
+      optionalIgnored,
     },
     issues,
   };
@@ -347,6 +365,7 @@ async function main() {
       webSearchMode: report.production.webSearchMode,
       agentDebug: report.production.agentDebug,
       manualActions: report.production.manualControl?.manualActions?.length || 0,
+      optionalIgnored: report.production.optionalIgnored,
       issues: report.issues.map((issue) => ({
         severity: issue.severity,
         id: issue.id,

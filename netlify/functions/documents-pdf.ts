@@ -1,4 +1,4 @@
-import type { Config, Context } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
 import chromium from '@sparticuz/chromium';
 import puppeteer, { Browser } from 'puppeteer-core';
 import { existsSync } from 'node:fs';
@@ -39,6 +39,82 @@ function safeFilename(value: string) {
 
 function timestamp() {
   return new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+}
+
+function pdfEscape(value: string) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+}
+
+function wrapPdfText(value: string, width = 88) {
+  const words = String(value || '').replace(/\r/g, '').split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > width && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : ['No document content available.'];
+}
+
+function buildSimplePdf(payload: DocumentRequest) {
+  const title = payload.documentTitle || payload.documentType || 'PBK Document';
+  const company = payload.companyName || 'Probono Key Realty';
+  const address = payload.propertyAddress || 'No property loaded';
+  const pathLabel = payload.selectedPathLabel || 'Selected Path';
+  const bodyLines = wrapPdfText(payload.content || 'No document content available.');
+  const lines = [
+    { size: 18, text: title },
+    { size: 10, text: company },
+    { size: 10, text: `${pathLabel} | ${address} | ${new Date().toLocaleDateString('en-US')}` },
+    { size: 10, text: '' },
+    ...bodyLines.slice(0, 48).map((text) => ({ size: 10, text })),
+  ];
+
+  const commands = ['BT', '72 760 Td'];
+  let previousSize = 0;
+  lines.forEach((line, index) => {
+    if (line.size !== previousSize) {
+      commands.push(`/F1 ${line.size} Tf`);
+      previousSize = line.size;
+    }
+    if (index > 0) commands.push(`0 -${line.size + 6} Td`);
+    commands.push(`(${pdfEscape(line.text)}) Tj`);
+  });
+  commands.push('ET');
+
+  const stream = commands.join('\n');
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n',
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, 'ascii')} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(pdf, 'ascii'));
+    pdf += object;
+  }
+  const xrefOffset = Buffer.byteLength(pdf, 'ascii');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf, 'ascii');
 }
 
 function getLocalChromePath() {
@@ -163,10 +239,10 @@ function renderDocumentHtml(payload: DocumentRequest) {
 </html>`;
 }
 
-function buildMasterPackageUrl(req: Request, payload: DocumentRequest) {
+function buildMasterPackageUrl(requestUrl: string, payload: DocumentRequest) {
   if (!payload.masterPackageQuery) return '';
 
-  const url = new URL('/PBK_Master_Deal_Package.html', req.url);
+  const url = new URL('/PBK_Master_Deal_Package.html', requestUrl || 'https://pbkcommandcenter.netlify.app');
   url.search = payload.masterPackageQuery.startsWith('?') ? payload.masterPackageQuery : `?${payload.masterPackageQuery}`;
   url.searchParams.set('pbk_preview', '1');
   url.searchParams.delete('pbk_print');
@@ -174,13 +250,13 @@ function buildMasterPackageUrl(req: Request, payload: DocumentRequest) {
   return url.toString();
 }
 
-async function generatePdf(payload: DocumentRequest, req: Request) {
+async function generatePdf(payload: DocumentRequest, requestUrl: string) {
   let browser: Browser | undefined;
 
   try {
     browser = await launchBrowserWithRetry();
     const page = await browser.newPage();
-    const masterPackageUrl = buildMasterPackageUrl(req, payload);
+    const masterPackageUrl = buildMasterPackageUrl(requestUrl, payload);
 
     if (masterPackageUrl) {
       await page.goto(masterPackageUrl, { waitUntil: 'networkidle0', timeout: 45000 });
@@ -231,36 +307,49 @@ function enqueuePdf<T>(job: () => Promise<T>) {
   });
 }
 
-export default async (req: Request, _context: Context) => {
-  if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
+export const handler: Handler = async (event) => {
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' },
+      body: 'Method not allowed',
+    };
   }
 
   try {
-    const payload = (await req.json()) as DocumentRequest;
-    const pdf = await enqueuePdf(() => generatePdf(payload, req));
+    const payload = JSON.parse(event.body || '{}') as DocumentRequest;
+    const requestUrl = event.rawUrl || `https://${event.headers.host || 'pbkcommandcenter.netlify.app'}${event.path || '/api/documents/pdf'}`;
+    let pdf: Buffer | Uint8Array;
+    let fallbackRenderer = false;
+    try {
+      pdf = await enqueuePdf(() => generatePdf(payload, requestUrl));
+    } catch (error) {
+      fallbackRenderer = true;
+      console.warn('PBK Documents PDF chromium renderer unavailable; using simple PDF fallback', error);
+      pdf = buildSimplePdf(payload);
+    }
     const filename = `${safeFilename(payload.masterPackageQuery ? 'PBK_Master_Deal_Package' : payload.documentTitle || payload.documentType || 'PBK_Document')}_${timestamp()}.pdf`;
 
-    return new Response(pdf, {
+    return {
+      statusCode: 200,
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${filename}"`,
         'Cache-Control': 'no-store',
+        ...(fallbackRenderer ? { 'X-PBK-PDF-Renderer': 'simple-fallback' } : {}),
       },
-    });
+      body: Buffer.from(pdf).toString('base64'),
+      isBase64Encoded: true,
+    };
   } catch (error) {
     console.error('PBK Documents PDF generation failed', error);
-    return Response.json(
-      {
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      body: JSON.stringify({
         error: 'PDF generation failed',
         message: error instanceof Error ? error.message : 'Unknown PDF generation error',
-      },
-      { status: 500 },
-    );
+      }),
+    };
   }
-};
-
-export const config: Config = {
-  path: '/api/documents/pdf',
-  method: ['POST'],
 };

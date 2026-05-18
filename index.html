@@ -16915,11 +16915,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function renderApprovalBridgeKeyRequired(container, countNode) {
-    if (countNode) countNode.textContent = '- 0';
+    if (countNode) countNode.textContent = '- Locked';
     document.querySelectorAll('[data-approval-filter]').forEach((button) => {
       const label = button.dataset.approvalLabel || button.textContent.replace(/\s+\d+$/, '').trim();
       button.dataset.approvalLabel = label;
-      button.textContent = `${label} 0`;
+      button.textContent = `${label} Locked`;
       button.classList.toggle('active', (button.dataset.approvalFilter || 'all') === (PBK.state.approvalFilter || 'all'));
     });
     container.innerHTML = `
@@ -19813,13 +19813,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const approvalFeed = document.querySelector('[data-openclaw-feed="approvals"]');
     if (approvalFeed && !hasApprovals) {
-      approvalFeed.innerHTML = Array.from({ length: 3 }).map(() => `
+      const config = getOpenClawConfig();
+      if (openClawNeedsBridgeApiKey(config, '/state')) {
+        renderApprovalBridgeKeyRequired(approvalFeed, document.querySelector('[data-openclaw-count="approvals"]'));
+      } else {
+        approvalFeed.innerHTML = Array.from({ length: 3 }).map(() => `
         <div class="runtime-skeleton-card" data-runtime-loading="approvals">
           <span class="skeleton short"></span>
           <span class="skeleton line"></span>
           <span class="skeleton medium"></span>
         </div>
-      `).join('');
+        `).join('');
+      }
     }
 
     const contractPipeline = document.querySelector('.page[data-page="contracts"] .contract-pipeline');

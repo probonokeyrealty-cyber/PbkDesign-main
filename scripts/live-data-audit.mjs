@@ -655,6 +655,28 @@ const checks = [
       && /test:emotion/.test(pkg.match(/"test:founder":[^\n]+/)?.[0] || ''),
   },
   {
+    name: 'Founder Approval Board shows locked state instead of fake zero approvals when bridge key is missing',
+    ok: /function renderApprovalBridgeKeyRequired/.test(index)
+      && /textContent = '- Locked'/.test(index)
+      && /textContent = `\$\{label\} Locked`/.test(index)
+      && /function renderRuntimeLoadingState/.test(index)
+      && /openClawNeedsBridgeApiKey\(config, '\/state'\)[\s\S]*renderApprovalBridgeKeyRequired/.test(index),
+  },
+  {
+    name: 'Ava and Rex production debugging exposes status, thought stream, call replay, and manual-control contracts',
+    ok: /function buildAgentStatusBundle/.test(bridge)
+      && /function buildAgentThoughtStream/.test(bridge)
+      && /function buildCallReplayBundle/.test(bridge)
+      && /function buildManualControlStatus/.test(bridge)
+      && /\/api\/agents\/status/.test(bridge)
+      && /\/api\/debug\/agent-thoughts/.test(bridge)
+      && /\/api\/calls\/:id\/replay/.test(bridge)
+      && /\/api\/manual\/status/.test(bridge)
+      && /Human-initiated work stays available/.test(bridge)
+      && /ai_initiated_calls/.test(bridge)
+      && /contract_sends/.test(bridge),
+  },
+  {
     name: 'Render blueprint keeps Tavily as a protected live-search secret',
     ok: /key:\s*PBK_TAVILY_API_KEY/.test(renderConfig)
       && /key:\s*PBK_TAVILY_API_KEY\s*\n\s*sync:\s*false/.test(renderConfig)

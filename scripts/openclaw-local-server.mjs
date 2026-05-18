@@ -23042,6 +23042,224 @@ async function buildAgentHistory(limit = 50) {
   };
 }
 
+function normalizeAgentDebugId(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized.includes('ava')) return 'ava';
+  if (normalized.includes('rex')) return 'rex';
+  if (normalized.includes('hermes')) return 'hermes';
+  if (normalized.includes('max')) return 'max';
+  if (normalized.includes('nora')) return 'nora';
+  if (normalized.includes('zed')) return 'zed';
+  return normalized.replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function agentDebugMatches(item = {}, agentId = '') {
+  const normalized = normalizeAgentDebugId(agentId);
+  if (!normalized) return true;
+  return [
+    item.agentId,
+    item.agent_id,
+    item.agent,
+    item.agentName,
+    item.agent_name,
+    item.actor,
+    item.proposedBy,
+    item.proposed_by,
+    item.requestedBy,
+    item.requested_by,
+    item.targetAgentId,
+    item.target_agent_id,
+    item.targetId,
+    item.target_id,
+    item.provider,
+  ].some((value) => normalizeAgentDebugId(value) === normalized);
+}
+
+function buildAgentThoughtRecord(source, item = {}) {
+  const metadata = plainObject(item.metadata || item.context || item.params || item.payload);
+  const agentId = normalizeAgentDebugId(
+    item.agentId
+      || item.agent_id
+      || item.agent
+      || item.agentName
+      || item.agent_name
+      || item.proposedBy
+      || item.proposed_by
+      || item.actor
+      || metadata.agentId
+      || metadata.agent,
+  ) || (String(source || '').includes('rex') ? 'rex' : 'ava');
+  const action = item.actionType || item.action_type || item.action || item.tool || item.type || item.category || source;
+  const status = item.status || item.outcome?.status || item.result?.status || item.result || '';
+  const summary = item.summary
+    || item.rationale
+    || item.text
+    || item.message
+    || item.outcome?.summary
+    || item.context?.summary
+    || `${agentId || 'agent'} ${String(action || 'decision').replace(/_/g, ' ')}`;
+  return {
+    id: item.id || `${source}-${slugify(`${agentId}-${action}`)}-${getItemTimestamp(item) || Date.now()}`,
+    source,
+    agentId,
+    agentName: normalizeAgentName(item.agentName || item.agent_name || item.agent || agentId || 'Agent'),
+    thoughtType: String(action || source).replace(/_/g, '-'),
+    status,
+    summary,
+    timestamp: getItemTimestamp(item) || isoNow(),
+    leadId: item.leadId || item.lead_id || item.context?.leadId || '',
+    callId: item.callId || item.call_id || item.context?.callId || '',
+    confidence: item.confidence ?? item.metadata?.confidence ?? null,
+    emotionState: item.emotionState || item.emotion_state || item.emotion || null,
+    outcome: item.outcome || item.result || null,
+    metadata,
+  };
+}
+
+function buildAgentThoughtStream({ agentId = '', limit = 50 } = {}) {
+  const safeLimit = Math.max(1, Math.min(200, Number(limit || 50)));
+  const entries = [
+    ...(state.agentDecisions || []).map((item) => buildAgentThoughtRecord('agent_decision', item)),
+    ...(state.rexDecisions || []).map((item) => buildAgentThoughtRecord('rex_decision', item)),
+    ...(state.agentTasks || []).map((item) => buildAgentThoughtRecord('agent_task', item)),
+    ...(state.avaImprovementSuggestions || []).map((item) => buildAgentThoughtRecord('ava_improvement_suggestion', item)),
+    ...(state.avaOutcomeReports || []).map((item) => buildAgentThoughtRecord('ava_outcome_report', item)),
+    ...(state.callEmotions || []).map((item) => buildAgentThoughtRecord('call_emotion', {
+      ...item,
+      agentId: item.agentId || 'ava',
+      actionType: 'emotion_observed',
+      summary: `Observed ${item.dominantEmotion || item.sentiment || 'emotion'} during call ${item.callId || item.call_id || ''}`.trim(),
+    })),
+    ...(state.activity || [])
+      .filter((item) => /ava|rex|agent|skill|call|emotion|approval/i.test(`${item.actor || ''} ${item.category || ''} ${item.text || ''}`))
+      .map((item) => buildAgentThoughtRecord('activity', item)),
+  ]
+    .filter((item) => agentDebugMatches(item, agentId))
+    .sort((left, right) => String(right.timestamp || '').localeCompare(String(left.timestamp || '')))
+    .slice(0, safeLimit);
+  return {
+    ok: true,
+    result: 'agent_thought_stream',
+    generatedAt: isoNow(),
+    filter: normalizeAgentDebugId(agentId) || 'all',
+    count: entries.length,
+    thoughts: entries,
+  };
+}
+
+function buildAgentStatusBundle() {
+  updateDerivedStatus(state);
+  const today = isoNow().slice(0, 10);
+  const decisions = state.agentDecisions || [];
+  const rexDecisions = state.rexDecisions || [];
+  const calls = state.calls || [];
+  const callEmotions = state.callEmotions || [];
+  const agents = (state.agents || buildDefaultAgentFleet()).map((agent) => {
+    const agentId = normalizeAgentDebugId(agent.id || agent.name);
+    const agentDecisions = decisions.filter((item) => agentDebugMatches(item, agentId));
+    const agentRexDecisions = rexDecisions.filter((item) => agentDebugMatches(item, agentId));
+    const activeCalls = calls.filter((call) => isActiveLiveCall(call) && (!call.agentId || agentDebugMatches(call, agentId)));
+    const recentEmotion = sortNewest(callEmotions.filter((item) => agentDebugMatches({ ...item, agentId: item.agentId || 'ava' }, agentId)))[0] || null;
+    return {
+      agentId,
+      name: agent.name || agentId,
+      role: agent.role || '',
+      status: agent.status || (activeCalls.length ? 'on_call' : 'idle'),
+      activity: agent.activity || '',
+      lastSeen: agent.lastSeen || getItemTimestamp(agentDecisions[0] || {}) || null,
+      activeCalls: activeCalls.length,
+      callsToday: calls.filter((call) => String(getItemTimestamp(call) || '').slice(0, 10) === today && (!call.agentId || agentDebugMatches(call, agentId))).length,
+      decisions: agentDecisions.length,
+      rexProposals: agentRexDecisions.length,
+      pendingTasks: (state.agentTasks || []).filter((task) => agentDebugMatches(task, agentId) && /pending|queued|running/i.test(task.status || '')).length,
+      skillOutcomes: (state.skillOutcomes || []).filter((skill) => agentDebugMatches(skill, agentId)).length,
+      emotionModel: state.status?.emotionalIntelligence?.worldModelProvider || (EMOTION_WORLD_MODEL_ENDPOINT ? 'external_world_model' : 'heuristic_fallback'),
+      recentEmotion,
+      safety: agent.safety || {},
+    };
+  });
+  return {
+    ok: true,
+    result: 'agent_status',
+    generatedAt: isoNow(),
+    mode: getRuntimeOperatingMode(),
+    worldModel: state.status?.worldModel || summarizeAgentDecisionBuffer(decisions),
+    emotionalIntelligence: state.status?.emotionalIntelligence || {},
+    agents,
+    manualControl: buildManualControlStatus(),
+  };
+}
+
+function buildManualControlStatus() {
+  return {
+    ok: true,
+    mode: getRuntimeOperatingMode(),
+    operatingModes: ['manual', 'approval', 'autopilot'],
+    principle: 'Human-initiated work stays available; AI-initiated provider writes stay approval-gated unless autopilot is explicitly enabled.',
+    teamAccess: {
+      configured: Boolean(TEAM_PASSCODE),
+      permissions: getTeamPermissions(),
+      sessionTtlMs: TEAM_SESSION_TTL_MS,
+    },
+    manualActions: [
+      'view_leads',
+      'edit_leads',
+      'run_analyzer',
+      'draft_offer',
+      'manual_call_control',
+      'manual_sms_composer',
+      'manual_email_draft',
+      'manual_contract_draft',
+      'export_data',
+    ],
+    approvalRequiredFor: [
+      'ai_initiated_calls',
+      'ai_initiated_sms_or_email_campaigns',
+      'contract_sends',
+      'provider_writes',
+      'guardrail_changes',
+      'data_deletion',
+      'kill_switch_changes',
+    ],
+    notAiOnly: true,
+  };
+}
+
+function buildCallReplayBundle(callId = '', limit = 200) {
+  const id = String(callId || '').trim();
+  const safeLimit = Math.max(1, Math.min(500, Number(limit || 200)));
+  const call = (state.calls || []).find((item) => {
+    const values = [item.id, item.callId, item.telnyxCallControlId, item.telnyxCallSessionId].map((value) => String(value || '').trim());
+    return values.includes(id);
+  }) || null;
+  const byCall = (item = {}) => [item.callId, item.call_id, item.id, item.telnyxCallControlId, item.telnyxCallSessionId]
+    .map((value) => String(value || '').trim())
+    .includes(id);
+  const timeline = [
+    ...(state.messages || []).filter(byCall).map((item) => ({ type: 'message', timestamp: getItemTimestamp(item), item })),
+    ...(state.callEmotions || []).filter(byCall).map((item) => ({ type: 'emotion', timestamp: getItemTimestamp(item), item })),
+    ...(state.agentDecisions || []).filter(byCall).map((item) => ({ type: 'agent_decision', timestamp: getItemTimestamp(item), item })),
+    ...(state.callQaScores || []).filter(byCall).map((item) => ({ type: 'qa_score', timestamp: getItemTimestamp(item), item })),
+    ...(state.activity || []).filter(byCall).map((item) => ({ type: 'activity', timestamp: getItemTimestamp(item), item })),
+  ]
+    .sort((left, right) => String(left.timestamp || '').localeCompare(String(right.timestamp || '')))
+    .slice(0, safeLimit);
+  return {
+    ok: Boolean(call || timeline.length),
+    result: call || timeline.length ? 'call_replay' : 'call_not_found',
+    callId: id,
+    call,
+    timeline,
+    summary: {
+      events: timeline.length,
+      emotions: timeline.filter((event) => event.type === 'emotion').length,
+      agentDecisions: timeline.filter((event) => event.type === 'agent_decision').length,
+      qaScores: timeline.filter((event) => event.type === 'qa_score').length,
+    },
+  };
+}
+
 function normalizeSkillOutcome(row = {}) {
   const uses = Number(row.uses || 0);
   const wins = Number(row.wins || 0);
@@ -34633,6 +34851,29 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/status', '/api/v1/agents/status'])) {
+      json(response, 200, buildAgentStatusBundle());
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/manual/status', '/api/v1/manual/status'])) {
+      json(response, 200, {
+        ok: true,
+        result: 'manual_control_status',
+        generatedAt: isoNow(),
+        manualControl: buildManualControlStatus(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/agent-thoughts', '/api/v1/debug/agent-thoughts'])) {
+      json(response, 200, buildAgentThoughtStream({
+        agentId: url.searchParams.get('agent') || url.searchParams.get('agentId') || '',
+        limit: url.searchParams.get('limit') || 50,
+      }));
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agent-decisions', '/api/v1/agent-decisions'])) {
       const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit') || 100)));
       const agentId = String(url.searchParams.get('agentId') || url.searchParams.get('agent') || '').trim().toLowerCase();
@@ -36890,6 +37131,16 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    const callReplayMatch = matchPath(pathname, '/api/calls/:id/replay') || matchPath(pathname, '/api/v1/calls/:id/replay');
+    if (callReplayMatch && request.method === 'GET') {
+      const result = buildCallReplayBundle(
+        decodeURIComponent(callReplayMatch.groups.id || ''),
+        url.searchParams.get('limit') || 200,
+      );
+      json(response, result.ok ? 200 : 404, result);
       return;
     }
 

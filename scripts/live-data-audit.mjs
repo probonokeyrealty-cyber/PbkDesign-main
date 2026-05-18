@@ -57,6 +57,9 @@ const emotionWorldModelTrainer = existsSync(resolve(root, 'scripts/train-emotion
 const emotionWorldModelServer = existsSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'))
   ? readFileSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'), 'utf8')
   : '';
+const productionPristineCheck = existsSync(resolve(root, 'scripts/production-pristine-check.mjs'))
+  ? readFileSync(resolve(root, 'scripts/production-pristine-check.mjs'), 'utf8')
+  : '';
 const emotionOnnxExporter = existsSync(emotionOnnxExporterPath) ? readFileSync(emotionOnnxExporterPath, 'utf8') : '';
 const emotionRequirements = existsSync(emotionRequirementsPath) ? readFileSync(emotionRequirementsPath, 'utf8') : '';
 const defaultAgentFleetBlock = bridge.match(/function buildDefaultAgentFleet\(\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -675,6 +678,21 @@ const checks = [
       && /Human-initiated work stays available/.test(bridge)
       && /ai_initiated_calls/.test(bridge)
       && /contract_sends/.test(bridge),
+  },
+  {
+    name: 'Production pristine debugging script names remaining ops gaps without mutating live state',
+    ok: /production-pristine-check\.mjs/.test(pkg)
+      && /debug:production/.test(pkg)
+      && /\/api\/agents\/status/.test(productionPristineCheck)
+      && /\/api\/manual\/status/.test(productionPristineCheck)
+      && /\/api\/debug\/agent-thoughts/.test(productionPristineCheck) === false
+      && /\/api\/emotion\/predict/.test(productionPristineCheck)
+      && /pending_approvals_not_cleared/.test(productionPristineCheck)
+      && /openclaw_gateway_not_live/.test(productionPristineCheck)
+      && /emotion_transition_samples_low/.test(productionPristineCheck)
+      && /onnx_world_model_inactive/.test(productionPristineCheck)
+      && /manual_control_contract_missing/.test(productionPristineCheck)
+      && /Do not bulk-close without founder\/business decision/.test(productionPristineCheck),
   },
   {
     name: 'Render blueprint keeps Tavily as a protected live-search secret',

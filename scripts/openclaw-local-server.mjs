@@ -7610,6 +7610,26 @@ function detectToolFirstIntent(command = '', params = {}, context = {}) {
   };
 }
 
+function stripNegatedActionInstructions(command = '') {
+  let text = String(command || '');
+  const negatedAction = /\b(?:do not|don't|dont|never|without approval,?\s*do not|please do not)\b[^.?!\n;]*(?:\bcall\b|\bdial\b|\btext\b|\bsms\b|\bemail\b|\bcampaign\b|\bcontract\b|\bagreement\b|\bdocusign\b|\bdocu sign\b|\bschedule\b|\bbook\b|\bapprove\b|\bdelete\b|\bkill switch\b)[^.?!\n;]*/gi;
+  text = text.replace(negatedAction, ' ');
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function looksLikeAvaTextResponseCommand(command = '', params = {}) {
+  if (params.responseOnly === true || params.answerOnly === true || params.conversationOnly === true) return true;
+  const raw = String(command || '').trim();
+  if (!raw) return false;
+  const intentText = stripNegatedActionInstructions(raw);
+  const normalized = intentText.toLowerCase();
+  const asksForWords = /\b(what should ava say|how should ava respond|respond to|reply to|answer this|give me (?:a |an |one )?.*response|write (?:a |an )?.*response|draft (?:a |an )?.*response|say to|talk track|next best phrase|seller says|seller said|objection|rebuttal|one sentence.*response|production smoke response)\b/i.test(normalized);
+  if (!asksForWords) return false;
+  const explicitProviderWrite = /\b(send|call|dial|text|sms|email|campaign|contract|docusign|docu sign|schedule|book|approve|delete)\b/i.test(normalized)
+    && !/\b(what should|how should|respond|reply|answer|say|talk track|next best phrase)\b/i.test(normalized);
+  return !explicitProviderWrite;
+}
+
 function buildToolFirstArgs(detected = {}, command = '', params = {}, context = {}) {
   const common = {
     ...params,
@@ -30690,7 +30710,6 @@ const toolHandlers = {
       ...parsedContext,
       ...params,
     });
-    const lower = command.toLowerCase();
 
     addActivity(
       state,
@@ -30707,11 +30726,14 @@ const toolHandlers = {
     let response = null;
     const urlMatch = command.match(/https?:\/\/[^\s)]+/i);
     const zipMatch = command.match(/\b\d{5}(?:-\d{4})?\b/);
-    const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(command);
+    const intentCommand = stripNegatedActionInstructions(command) || command;
+    const lower = intentCommand.toLowerCase();
+    const isPropertyDataIntent = /\b(homeharvest|scrapling|scrape property|property data|fetch comps|pull comps|import leads|pull listings|listing data)\b/i.test(intentCommand);
     const avaJarvisCommand = detectAvaJarvisCommand(command);
-    const avaMasterclassCommand = looksLikeAvaMasterclassCommand(command);
+    const avaMasterclassCommand = looksLikeAvaMasterclassCommand(intentCommand);
     const closingIntelligenceCommand = looksLikeClosingIntelligenceCommand(command, params);
-    const toolFirstDetected = detectToolFirstIntent(command, params, context);
+    const responseOnlyCommand = looksLikeAvaTextResponseCommand(command, params);
+    const toolFirstDetected = detectToolFirstIntent(intentCommand, params, context);
 
     if (avaJarvisCommand) {
       routedTo = 'ava_pbk_jarvis_mode';
@@ -30730,6 +30752,18 @@ const toolHandlers = {
     } else if (looksLikeAgentDoctrineCommand(command) || avaMasterclassCommand) {
       routedTo = 'agent_brain';
       response = buildAvaDoctrineCommandResult(command, context);
+    } else if (responseOnlyCommand) {
+      routedTo = 'ava_conversation_intelligence';
+      response = await toolHandlers.getAvaConversationIntelligence({
+        ...params,
+        query: command,
+        text: command,
+        context: {
+          ...context,
+          ...(params.context && typeof params.context === 'object' ? params.context : {}),
+        },
+        source: params.source || 'agent-console-response-only',
+      });
     } else if (
       toolFirstDetected?.required
       && !(looksLikeAdminIntent(command) && !looksLikeDealExecutionIntent(command))

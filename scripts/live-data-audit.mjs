@@ -57,6 +57,9 @@ const emotionWorldModelTrainer = existsSync(resolve(root, 'scripts/train-emotion
 const emotionWorldModelServer = existsSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'))
   ? readFileSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'), 'utf8')
   : '';
+const openclawSmoke = existsSync(resolve(root, 'scripts/openclaw-smoke.mjs'))
+  ? readFileSync(resolve(root, 'scripts/openclaw-smoke.mjs'), 'utf8')
+  : '';
 const productionPristineCheck = existsSync(resolve(root, 'scripts/production-pristine-check.mjs'))
   ? readFileSync(resolve(root, 'scripts/production-pristine-check.mjs'), 'utf8')
   : '';
@@ -678,6 +681,19 @@ const checks = [
       && /Human-initiated work stays available/.test(bridge)
       && /ai_initiated_calls/.test(bridge)
       && /contract_sends/.test(bridge),
+  },
+  {
+    name: 'Ava typed responses do not route negated safety instructions into provider writes',
+    ok: /function stripNegatedActionInstructions/.test(bridge)
+      && /function looksLikeAvaTextResponseCommand/.test(bridge)
+      && /responseOnlyCommand/.test(bridge)
+      && /routedTo = 'ava_conversation_intelligence'/.test(bridge)
+      && /detectToolFirstIntent\(intentCommand/.test(bridge)
+      && /const lower = intentCommand\.toLowerCase/.test(bridge)
+      && /result\.answer[\s\S]*result\.nextBestPhrase[\s\S]*toolResponse\.message/.test(index)
+      && /avaResponseOnlyCommand/.test(openclawSmoke)
+      && /Do not call, text, email, or create contracts/.test(openclawSmoke)
+      && /ava_conversation_intelligence/.test(openclawSmoke),
   },
   {
     name: 'Production pristine debugging script names remaining ops gaps without mutating live state',

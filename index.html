@@ -30488,8 +30488,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const toolResponse = result.response || {};
       return toolResponse.answer
         || toolResponse.reply
-        || toolResponse.message
         || result.answer
+        || result.nextBestPhrase
+        || toolResponse.message
         || result.message
         || (result.routedTo ? `Routed to ${String(result.routedTo).replace(/_/g, ' ')} under PBK guardrails.` : '');
     };

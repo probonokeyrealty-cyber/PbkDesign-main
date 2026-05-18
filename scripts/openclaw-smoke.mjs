@@ -210,6 +210,20 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const avaResponseOnlyCommand = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'runAgentCommand',
+        params: {
+          command: 'Ava, give me a one sentence production smoke response. Do not call, text, email, or create contracts.',
+          source: 'smoke-test',
+        },
+      }),
+    }).then((response) => response.json());
     const closingIntelligence = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',
       headers: {
@@ -722,6 +736,15 @@ async function main() {
     assert(avaCommand?.ok === true, 'Ava runAgentCommand smoke did not succeed.');
     assert(avaCommand?.result?.routedTo === 'agent_brain', `Ava masterclass command routed to ${avaCommand?.result?.routedTo || 'missing'} instead of agent_brain.`);
     assert(/due[- ]on[- ]sale|attorney|loan/i.test(String(avaCommand?.result?.response?.answer || avaCommand?.result?.response?.verbiage || '')), 'Ava masterclass command did not return subject-to guardrail language.');
+    assert(avaResponseOnlyCommand?.ok === true, 'Ava response-only command did not succeed.');
+    assert(
+      avaResponseOnlyCommand?.result?.routedTo === 'ava_conversation_intelligence',
+      `Ava response-only command routed to ${avaResponseOnlyCommand?.result?.routedTo || 'missing'} instead of ava_conversation_intelligence.`,
+    );
+    assert(
+      avaResponseOnlyCommand?.result?.response?.result === 'ava_conversation_intelligence',
+      'Ava response-only command did not return conversation intelligence.',
+    );
     assert(closingIntelligence?.ok === true, 'Closing intelligence invoke did not succeed.');
     assert(closingIntelligence?.result?.result === 'closing_intelligence', 'Closing intelligence invoke did not return the closing_intelligence result.');
     assert(/repair|closing risk|holding|certainty|listing|net/i.test(String(closingIntelligence?.result?.nextBestPhrase || '')), 'Closing intelligence did not return a seller-facing next best phrase.');
@@ -801,6 +824,7 @@ async function main() {
       activity: Array.isArray(state?.activity) ? state.activity.length : 0,
       contractTemplates: Array.isArray(contractTemplates?.templates) ? contractTemplates.templates.length : 0,
       avaRoutedTo: avaCommand?.result?.routedTo || '',
+      avaResponseOnlyRoutedTo: avaResponseOnlyCommand?.result?.routedTo || '',
       avaConversationTrigger: avaConversationIntelligence?.reaction?.trigger || '',
       avaProsodyProfile: avaConversationIntelligence?.prosody?.profile || '',
       callQaScore: Number(callQaScore?.score?.score || 0),

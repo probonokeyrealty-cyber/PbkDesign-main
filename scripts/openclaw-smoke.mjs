@@ -745,6 +745,10 @@ async function main() {
       avaResponseOnlyCommand?.result?.response?.result === 'ava_conversation_intelligence',
       'Ava response-only command did not return conversation intelligence.',
     );
+    assert(
+      !/\b(do-not-call|do not call list|stop outreach|marked do-not-call)\b/i.test(String(avaResponseOnlyCommand?.result?.response?.answer || '')),
+      'Ava response-only command treated routing guardrails as seller-facing DNC intent.',
+    );
     assert(closingIntelligence?.ok === true, 'Closing intelligence invoke did not succeed.');
     assert(closingIntelligence?.result?.result === 'closing_intelligence', 'Closing intelligence invoke did not return the closing_intelligence result.');
     assert(/repair|closing risk|holding|certainty|listing|net/i.test(String(closingIntelligence?.result?.nextBestPhrase || '')), 'Closing intelligence did not return a seller-facing next best phrase.');

@@ -30754,13 +30754,15 @@ const toolHandlers = {
       response = buildAvaDoctrineCommandResult(command, context);
     } else if (responseOnlyCommand) {
       routedTo = 'ava_conversation_intelligence';
+      const responseQuery = intentCommand || command;
       response = await toolHandlers.getAvaConversationIntelligence({
         ...params,
-        query: command,
-        text: command,
+        query: responseQuery,
+        text: responseQuery,
         context: {
           ...context,
           ...(params.context && typeof params.context === 'object' ? params.context : {}),
+          originalCommand: command,
         },
         source: params.source || 'agent-console-response-only',
       });

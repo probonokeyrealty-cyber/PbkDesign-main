@@ -15710,19 +15710,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       reflectOpenClawUI(testing);
       try {
         const result = await probeOpenClaw(testing);
+        const runtimeMeta = result.runtimeMeta;
+        const authBlocked = openClawNeedsBridgeApiKey({ ...testing, runtimeMeta }, '/state');
         const connected = saveOpenClawConfig({
           ...testing,
-          status: 'connected',
-          lastMessage: `Connected via ${result.url.replace(testing.endpoint, '') || '/'}`,
+          status: authBlocked ? 'saved' : 'connected',
+          lastMessage: authBlocked
+            ? 'Bridge health ok - add the API key to enable live state sync.'
+            : `Connected via ${result.url.replace(testing.endpoint, '') || '/'}`,
           lastCheckedAt: Date.now(),
-          runtimeMeta: result.runtimeMeta
+          runtimeMeta
         });
         reflectOpenClawUI(connected);
         PBK.events.emit('openclaw:status', connected);
         toast({
-          type: 'success',
-          title: 'PBK Brain connected',
-          desc: 'Command Center can now reach the Brain bridge.'
+          type: authBlocked ? 'warning' : 'success',
+          title: authBlocked ? 'PBK Bridge key required' : 'PBK Brain connected',
+          desc: authBlocked
+            ? 'Health is live, but private approvals and state need the bridge API key saved in Settings.'
+            : 'Command Center can now reach the Brain bridge.'
         });
         return result;
       } catch (error) {
@@ -16625,6 +16631,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function pathRequiresBridgeApiKey(path = '', method = 'GET') {
     const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`.toLowerCase();
     const protectedPrefixes = [
+      '/state',
+      '/api/state',
+      '/events',
+      '/api/events',
+      '/invoke',
+      '/api/invoke',
+      '/api/auth/team',
+      '/api/approvals',
+      '/api/' + 'admin',
+      '/api/leads',
+      '/api/campaigns',
+      '/api/contracts',
+      '/api/messages',
+      '/api/recordings',
+      '/api/' + 'brain',
       '/api/settings',
       '/api/lead-scoring/weights',
       '/api/analytics'
@@ -16636,11 +16657,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     ));
   }
 
+  function isHostedOpenClawEndpoint(endpoint = DEFAULT_OPENCLAW_ENDPOINT) {
+    const normalized = normalizeOpenClawEndpoint(endpoint || '');
+    if (!normalized) return false;
+    try {
+      return new URL(normalized).hostname === 'pbk-openclaw-bridge.onrender.com';
+    } catch {
+      return normalized.includes('pbk-openclaw-bridge.onrender.com');
+    }
+  }
+
+  function openClawNeedsBridgeApiKey(config = getOpenClawConfig(), path = '', method = 'GET') {
+    if (isLocalOpenClawProxyEndpoint(config?.endpoint)) return false;
+    if (String(config?.apiKey || '').trim()) return false;
+    return Boolean(config?.runtimeMeta?.authRequired)
+      || (isHostedOpenClawEndpoint(config?.endpoint) && pathRequiresBridgeApiKey(path, method));
+  }
+
   function assertOpenClawAuthReady(config = getOpenClawConfig(), path = '', method = 'GET') {
-    const authRequired = Boolean(config?.runtimeMeta?.authRequired) || pathRequiresBridgeApiKey(path, method);
-    const hasApiKey = Boolean(String(config?.apiKey || '').trim());
-    if (isLocalOpenClawProxyEndpoint(config?.endpoint)) return;
-    if (!authRequired || hasApiKey) return;
+    if (!openClawNeedsBridgeApiKey(config, path, method)) return;
     const error = new Error('Bridge API key required - add it in Settings to enable this live control.');
     error.code = 'PBK_BRIDGE_AUTH_REQUIRED';
     error.result = 'provider_missing';
@@ -16650,7 +16685,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function fetchOpenClawState(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
-    assertOpenClawAuthReady(config);
+    assertOpenClawAuthReady(config, '/state');
 
     const attempts = [
       `${base}/state`,
@@ -16875,12 +16910,44 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return /(lead|qualification|qualify|bant)/.test(normalized);
   }
 
+  function normalizeRuntimeStatus(value = '') {
+    return String(value || '').toLowerCase().replace(/-/g, '_');
+  }
+
+  function renderApprovalBridgeKeyRequired(container, countNode) {
+    if (countNode) countNode.textContent = '- 0';
+    document.querySelectorAll('[data-approval-filter]').forEach((button) => {
+      const label = button.dataset.approvalLabel || button.textContent.replace(/\s+\d+$/, '').trim();
+      button.dataset.approvalLabel = label;
+      button.textContent = `${label} 0`;
+      button.classList.toggle('active', (button.dataset.approvalFilter || 'all') === (PBK.state.approvalFilter || 'all'));
+    });
+    container.innerHTML = `
+      <div class="qcard qcard-empty" style="border-left-color: var(--amber);">
+        <div class="qcard-head">
+          <span class="qcard-type">PBK Bridge key required</span>
+          <span class="qcard-time">protected</span>
+        </div>
+        <div class="qcard-body">
+          Render and Supabase are live, but pending approvals are private state. Save the PBK Bridge API key in Settings to load the Founder Approval Board and act on pending offers, contracts, and campaign launches.
+        </div>
+        <div class="qcard-actions">
+          <button type="button" class="btn btn-primary" onclick="showPage('settings')">Open Settings</button>
+        </div>
+      </div>
+    `;
+  }
+
   function renderApprovalQueue(snapshot) {
     const container = document.querySelector('[data-openclaw-feed="approvals"]');
     const countNode = document.querySelector('[data-openclaw-count="approvals"]');
     if (!container) return;
 
     const config = getOpenClawConfig();
+    if (openClawNeedsBridgeApiKey(config, '/state')) {
+      renderApprovalBridgeKeyRequired(container, countNode);
+      return;
+    }
     const lastSyncCopy = config.runtimeMeta?.lastSyncAt
       ? formatRelativeTime(config.runtimeMeta.lastSyncAt)
       : 'never';
@@ -16897,7 +16964,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       `;
 
     const activeFilter = PBK.state.approvalFilter || 'all';
-    const pendingApprovals = getRealRuntimeApprovals(snapshot).filter((item) => item.status === 'pending');
+    const pendingApprovals = getRealRuntimeApprovals(snapshot).filter((item) => normalizeRuntimeStatus(item.status) === 'pending');
     const approvals = pendingApprovals
       .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
       .slice(0, 6);
@@ -19828,16 +19895,34 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function syncOpenClawState({ silent = false } = {}) {
     const config = getOpenClawConfig();
-    const [snapshot, health, gatewayStatus] = await Promise.all([
-      fetchOpenClawState(config),
+    const [health, gatewayStatus] = await Promise.all([
       probeOpenClaw(config).catch(() => null),
       fetchOpenClawGatewayStatus(config).catch(() => null)
     ]);
+    const syncConfig = health?.runtimeMeta
+      ? sanitizeOpenClawConfig({ ...config, runtimeMeta: health.runtimeMeta })
+      : config;
+    if (openClawNeedsBridgeApiKey(syncConfig, '/state')) {
+      PBK.state.openclawGatewayStatus = gatewayStatus;
+      const blocked = saveOpenClawConfig({
+        ...syncConfig,
+        status: 'saved',
+        lastCheckedAt: Date.now(),
+        lastMessage: 'Bridge health ok - add the API key to enable live approvals and state sync.'
+      });
+      reflectOpenClawUI(blocked);
+      renderOpenClawState(PBK.state.openclawRuntime || {});
+      const error = new Error('Bridge API key required - add it in Settings to enable live approvals and state sync.');
+      error.code = 'PBK_BRIDGE_AUTH_REQUIRED';
+      error.result = 'provider_missing';
+      throw error;
+    }
+    const snapshot = await fetchOpenClawState(syncConfig);
     openClawPollFailures = 0;
     PBK.state.openclawGatewayStatus = gatewayStatus;
     renderOpenClawState(snapshot);
     const connected = saveOpenClawConfig({
-      ...config,
+      ...syncConfig,
       status: 'connected',
       lastCheckedAt: Date.now(),
       lastMessage: `Live sync ok — updated ${formatRuntimeTime(snapshot?.status?.lastUpdatedAt)}`,
@@ -20059,6 +20144,21 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function setOpenClawReconnecting(error) {
+    renderRuntimeLoadingState(false);
+    if (error?.code === 'PBK_BRIDGE_AUTH_REQUIRED') {
+      const current = getOpenClawConfig();
+      const next = saveOpenClawConfig({
+        ...current,
+        status: 'saved',
+        lastMessage: error.message || 'Bridge API key required - add it in Settings to enable live controls.',
+        lastCheckedAt: current.lastCheckedAt || Date.now()
+      });
+      reflectOpenClawUI(next);
+      renderApprovalQueue(PBK.state.openclawRuntime || {});
+      PBK.events.emit('openclaw:status', next);
+      return;
+    }
+
     const current = getOpenClawConfig();
     const lastGoodAt = getOpenClawLastGoodAt(current);
     const hasFreshSnapshot = lastGoodAt > 0 && Date.now() - lastGoodAt < OPENCLAW_STALE_GRACE_MS;
@@ -20078,6 +20178,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       lastCheckedAt: current.lastCheckedAt || lastGoodAt || Date.now()
     });
     reflectOpenClawUI(next);
+    renderApprovalQueue(PBK.state.openclawRuntime || {});
     if (shouldMarkDown) PBK.events.emit('openclaw:status', next);
     console.warn('OpenClaw runtime sync retrying', error);
   }
@@ -29402,6 +29503,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!container) return;
 
     const config = getOpenClawConfig();
+    if (openClawNeedsBridgeApiKey(config, '/state')) {
+      renderApprovalBridgeKeyRequired(container, countNode);
+      return;
+    }
     const lastSyncCopy = config.runtimeMeta?.lastSyncAt ? formatRelativeTime(config.runtimeMeta.lastSyncAt) : 'never';
     const staleNotice = config.status === 'connected'
       ? ''
@@ -29416,8 +29521,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       `;
 
     const activeFilter = PBK.state.approvalFilter || 'all';
-    const pendingApprovals = Array.isArray(snapshot?.approvals) ? snapshot.approvals.filter((item) => item.status === 'pending') : [];
-    const pendingAdminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks.filter((item) => item.status === 'pending') : [];
+    const pendingApprovals = getRealRuntimeApprovals(snapshot).filter((item) => normalizeRuntimeStatus(item.status) === 'pending');
+    const pendingAdminTasks = Array.isArray(snapshot?.adminTasks)
+      ? snapshot.adminTasks.filter((item) => normalizeRuntimeStatus(item.status) === 'pending')
+      : [];
     const approvals = pendingApprovals
       .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
       .slice(0, 5);

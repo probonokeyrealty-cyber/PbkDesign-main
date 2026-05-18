@@ -52,6 +52,16 @@ export default defineConfig({
 
   server: {
     proxy: {
+      '/health': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        headers: devBridgeProxyHeaders,
+      },
+      '/status': {
+        target: devBridgeTarget,
+        changeOrigin: true,
+        headers: devBridgeProxyHeaders,
+      },
       '/api': {
         target: devBridgeTarget,
         changeOrigin: true,

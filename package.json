@@ -149,7 +149,7 @@
     "@vitejs/plugin-react": "4.7.0",
     "openclaw-cli": "^0.7.2",
     "tailwindcss": "4.1.12",
-    "vite": "6.3.5"
+    "vite": "^6.4.2"
   },
   "peerDependencies": {
     "react": "18.3.1",
@@ -163,9 +163,13 @@
       "optional": true
     }
   },
+  "overrides": {
+    "basic-ftp": "6.0.1",
+    "ip-address": "10.2.0"
+  },
   "pnpm": {
     "overrides": {
-      "vite": "6.3.5"
+      "vite": "6.4.2"
     }
   }
 }

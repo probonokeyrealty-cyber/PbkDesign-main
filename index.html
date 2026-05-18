@@ -9679,8 +9679,8 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 L4 7 L4 17 L12 22 L20 17 L20 7 Z"/><path d="M12 2 L12 22"/><path d="M4 7 L20 17"/><path d="M20 7 L4 17"/></svg>
               </div>
               <div>
-                <div class="plugin-name">OpenClaw <span class="plugin-tag">Plugin — Brain</span></div>
-                <div class="plugin-desc">Local reasoning + Codex tool-runner. Powers the dashboard's live activity, deal analyzer, and call transcripts. Configure later — Paradise works without it.</div>
+                <div class="plugin-name">OpenClaw <span class="plugin-tag">Optional Local Brain</span></div>
+                <div class="plugin-desc">Optional desktop reasoning + Codex tool-runner for local files, terminal actions, and advanced diagnostics. Core dashboard data, analyzer sync, calls, transcripts, and approvals run through the hosted PBK Bridge. Configure later — Paradise works without it.</div>
               </div>
             </div>
             <div class="plugin-status">
@@ -15346,7 +15346,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const statusCopy = {
       'not-configured': {
         label: 'Not configured',
-        note: 'Paradise is running standalone. Add your local OpenClaw endpoint when you are ready.'
+        note: 'Hosted PBK Bridge is active. Add a local OpenClaw endpoint only when you need desktop, file, or terminal actions.'
       },
       saved: {
         label: 'Saved locally',
@@ -15358,7 +15358,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       },
       connected: {
         label: 'Connected',
-        note: config.lastMessage || 'OpenClaw is live. Analyzer, calls, and activity can now sync at runtime.'
+        note: config.lastMessage || 'OpenClaw is live for local desktop, file, and terminal actions. Hosted PBK Bridge remains the source of truth for core app data.'
       },
       error: {
         label: 'Needs attention',

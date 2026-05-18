@@ -5,12 +5,13 @@ const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 const STRICT = process.argv.includes('--strict');
 const JSON_ONLY = process.argv.includes('--json') || STRICT;
 const OPTIONAL_PROVIDER_GAPS = new Set(
-  String(process.env.PBK_OPTIONAL_PROVIDER_GAPS || 'batchdata')
+  String(process.env.PBK_OPTIONAL_PROVIDER_GAPS || 'batchdata,openclawgateway')
     .split(',')
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean),
 );
 const CHECK_TOTP_GAP = /^(1|true|yes)$/i.test(String(process.env.PBK_CHECK_TOTP_GAP || '').trim());
+const CHECK_OPENCLAW_GATEWAY_GAP = /^(1|true|yes)$/i.test(String(process.env.PBK_CHECK_OPENCLAW_GATEWAY_GAP || '').trim());
 
 function makeIssue(id, severity, title, evidence, action) {
   return { id, severity, title, evidence, action };
@@ -173,13 +174,13 @@ function classifyIssues({ health, state, agents, manual, team, security, experim
 
   const openclawGateway = state?.status?.providers?.openclawGateway || health?.providers?.openclawGateway || {};
   const gatewayStatus = normalizeStatus(openclawGateway.status || openclawGateway.state || '');
-  if (!['ready', 'up', 'connected', 'live'].includes(gatewayStatus)) {
+  if (CHECK_OPENCLAW_GATEWAY_GAP && !['ready', 'up', 'connected', 'live'].includes(gatewayStatus)) {
     issues.push(makeIssue(
       'openclaw_gateway_not_live',
       'medium',
-      'OpenClaw local gateway is not continuously connected.',
+      'Optional OpenClaw local desktop gateway is not continuously connected.',
       `status=${openclawGateway.status || openclawGateway.state || 'unknown'}`,
-      'Run npm run openclaw:heartbeat:status, then install/start the heartbeat service if needed.',
+      'Run npm run openclaw:heartbeat:status, then install/start the heartbeat service only if local desktop/file/terminal automation is required.',
     ));
   }
 

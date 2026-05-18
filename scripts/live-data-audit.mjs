@@ -395,7 +395,7 @@ const checks = [
     name: 'Optional BatchData is not shown as a live production blocker',
     ok: /BatchData optional\/off/.test(index)
       && /Optional\/off this production run/.test(index)
-      && /PBK_OPTIONAL_PROVIDER_GAPS\s*\|\|\s*'batchdata'/.test(productionCheck),
+      && /PBK_OPTIONAL_PROVIDER_GAPS\s*\|\|\s*'batchdata,openclawgateway'/.test(productionCheck),
   },
   {
     name: 'UX responsiveness controls are wired for voice, mobile inbox, loading, and offline states',
@@ -722,6 +722,8 @@ const checks = [
       && /\/api\/emotion\/predict/.test(productionPristineCheck)
       && /pending_approvals_not_cleared/.test(productionPristineCheck)
       && /openclaw_gateway_not_live/.test(productionPristineCheck)
+      && /PBK_CHECK_OPENCLAW_GATEWAY_GAP/.test(productionPristineCheck)
+      && /local desktop\/file\/terminal automation is required/.test(productionPristineCheck)
       && /emotion_transition_samples_low/.test(productionPristineCheck)
       && /onnx_world_model_inactive/.test(productionPristineCheck)
       && /manual_control_contract_missing/.test(productionPristineCheck)

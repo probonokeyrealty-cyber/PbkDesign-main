@@ -32427,15 +32427,16 @@ async function handlePublicAvaChatRequest(request) {
     });
   }
 
+  const processQuestion = looksLikePublicProcessQuestion(text);
   const brain = lead.hasLeadSignal
     ? null
     : answerBrainQuery(state, text);
   const matched = Boolean(brain?.matches?.length) && isPublicAvaBrainAnswerSafe(brain?.answer);
   const answer = matched
     ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.`
-    : lead.hasLeadSignal
+    : lead.hasLeadSignal && (!processQuestion || lead.hasContact || lead.address)
       ? buildPublicAvaLeadAnswer(lead, leadCapture)
-      : looksLikePublicProcessQuestion(text)
+      : processQuestion
         ? buildPublicAvaProcessAnswer()
         : buildPublicAvaFallbackAnswer(lead);
 

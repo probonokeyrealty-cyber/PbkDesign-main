@@ -85,6 +85,21 @@ async function main() {
       !/\b(Summary:|Mentor:|Rex here|PBK Research Technique|production debug smoke)\b/i.test(publicAvaLeadChat?.answer || ''),
       'Public Ava chat leaked internal brain/research wording into a visitor response.',
     );
+    const publicAvaProcessChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: 'What is PBK and how does the cash offer process work?',
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    assert(publicAvaProcessChat?.ok === true, 'Public Ava chat did not accept a process question.');
+    assert(
+      /\b(cash offers?|creative finance|approval-gated|read-only)\b/i.test(publicAvaProcessChat?.answer || ''),
+      'Public Ava chat did not give a useful visitor-safe process answer.',
+    );
     const quotas = await fetch(`${BASE_URL}/api/quotas`, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,

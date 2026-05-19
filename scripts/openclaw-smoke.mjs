@@ -68,6 +68,23 @@ async function main() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const publicAvaLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        eventId: 'smoke-public-ava-lead-chat-1',
+        message: 'I want to sell my house at 808 Smoke Test Ave. Please call me at 614-555-0199.',
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    assert(publicAvaLeadChat?.ok === true, 'Public Ava chat did not accept a seller lead message.');
+    assert(publicAvaLeadChat?.leadCaptured === true, 'Public Ava chat did not capture a seller lead signal.');
+    assert(
+      !/\b(Summary:|Mentor:|Rex here|PBK Research Technique|production debug smoke)\b/i.test(publicAvaLeadChat?.answer || ''),
+      'Public Ava chat leaked internal brain/research wording into a visitor response.',
+    );
     const quotas = await fetch(`${BASE_URL}/api/quotas`, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,

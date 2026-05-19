@@ -32330,6 +32330,31 @@ function buildPublicAvaFallbackAnswer(lead = {}) {
   return 'I can answer questions about PBK, cash offers, creative finance, land, and our process. If you want a callback, share the property address and best contact info, and I will save it for the team to review.';
 }
 
+function buildPublicAvaLeadAnswer(lead = {}, leadCapture = null) {
+  if (lead.hasLeadSignal && lead.hasContact) {
+    const target = lead.address ? ` for ${lead.address}` : '';
+    const savedCopy = leadCapture?.ok
+      ? 'I saved that request for the PBK team to review.'
+      : 'I have enough information to route this for PBK team review.';
+    return `${savedCopy} The next step is a human-reviewed callback${target}; this public chat will not start calls, texts, emails, or contracts without approval.`;
+  }
+  return buildPublicAvaFallbackAnswer(lead);
+}
+
+function looksLikePublicProcessQuestion(text = '') {
+  return /\b(what\s+is\s+pbk|how\s+(does|do)\s+(this|it|you|pbk)|process|cash\s+offer|creative\s+finance|subject[-\s]?to|seller\s+finance|land|closing|contract|timeline|fees?|commission|assignment)\b/i.test(String(text || ''));
+}
+
+function buildPublicAvaProcessAnswer() {
+  return 'PBK helps sellers review practical exit paths such as cash offers, creative finance, land deals, and follow-up plans. Share the property address and best contact info when you want the team to review a real deal; public chat stays read-only and approval-gated.';
+}
+
+function isPublicAvaBrainAnswerSafe(answer = '') {
+  const text = String(answer || '');
+  return Boolean(text.trim())
+    && !/\b(Rex here|Mentor:|PBK Research Technique|sales_knowledge|production debug smoke|debug smoke|internal|agent_log|system_notification)\b/i.test(text);
+}
+
 async function handlePublicAvaChatRequest(request) {
   if (!PUBLIC_AVA_CHAT_ENABLED) {
     return {
@@ -32402,11 +32427,17 @@ async function handlePublicAvaChatRequest(request) {
     });
   }
 
-  const brain = answerBrainQuery(state, text);
-  const matched = Boolean(brain?.matches?.length);
+  const brain = lead.hasLeadSignal
+    ? null
+    : answerBrainQuery(state, text);
+  const matched = Boolean(brain?.matches?.length) && isPublicAvaBrainAnswerSafe(brain?.answer);
   const answer = matched
     ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.`
-    : buildPublicAvaFallbackAnswer(lead);
+    : lead.hasLeadSignal
+      ? buildPublicAvaLeadAnswer(lead, leadCapture)
+      : looksLikePublicProcessQuestion(text)
+        ? buildPublicAvaProcessAnswer()
+        : buildPublicAvaFallbackAnswer(lead);
 
   addActivity(
     state,

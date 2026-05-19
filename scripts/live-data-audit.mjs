@@ -914,6 +914,13 @@ const checks = [
       && /to\s*=\s*"\/\.netlify\/functions\/public-ava-chat"/.test(netlifyConfig),
   },
   {
+    name: 'Public Ava chat keeps seller-facing replies separate from internal brain summaries',
+    ok: /function\s+buildPublicAvaLeadAnswer/.test(bridge)
+      && /function\s+isPublicAvaBrainAnswerSafe/.test(bridge)
+      && /lead\.hasLeadSignal\s*\?\s*null\s*:\s*answerBrainQuery/.test(bridge)
+      && /Rex here\|Mentor:\|PBK Research Technique/.test(bridge),
+  },
+  {
     name: 'Netlify document PDF function is explicitly routed',
     ok: /export\s+const\s+handler/.test(netlifyDocumentsPdfFunction)
       && /from\s*=\s*"\/api\/documents\/pdf"/.test(netlifyConfig)

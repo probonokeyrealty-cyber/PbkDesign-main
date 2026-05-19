@@ -41,6 +41,19 @@ function timestamp() {
   return new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
 }
 
+function getHeader(event: Parameters<Handler>[0], name: string) {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(event.headers || {})) {
+    if (key.toLowerCase() === wanted) return String(value || '').trim();
+  }
+  return '';
+}
+
+function getRequestId(event: Parameters<Handler>[0]) {
+  return getHeader(event, 'x-request-id')
+    || `pbk-documents-pdf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function pdfEscape(value: string) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -308,10 +321,12 @@ function enqueuePdf<T>(job: () => Promise<T>) {
 }
 
 export const handler: Handler = async (event) => {
+  const requestId = getRequestId(event);
+
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' },
+      headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store', 'X-Request-ID': requestId },
       body: 'Method not allowed',
     };
   }
@@ -336,6 +351,7 @@ export const handler: Handler = async (event) => {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${filename}"`,
         'Cache-Control': 'no-store',
+        'X-Request-ID': requestId,
         ...(fallbackRenderer ? { 'X-PBK-PDF-Renderer': 'simple-fallback' } : {}),
       },
       body: Buffer.from(pdf).toString('base64'),
@@ -345,10 +361,11 @@ export const handler: Handler = async (event) => {
     console.error('PBK Documents PDF generation failed', error);
     return {
       statusCode: 500,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Request-ID': requestId },
       body: JSON.stringify({
         error: 'PDF generation failed',
         message: error instanceof Error ? error.message : 'Unknown PDF generation error',
+        requestId,
       }),
     };
   }

@@ -17,6 +17,7 @@ const CORS_HEADERS = {
     'X-PBK-Webhook-Secret',
     'X-Webhook-Secret',
     'X-PBK-Signature',
+    'X-Request-ID',
   ].join(', '),
   'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
   'Access-Control-Max-Age': '86400',
@@ -32,6 +33,7 @@ const FORWARDED_REQUEST_HEADERS = new Set([
   'x-pbk-webhook-secret',
   'x-webhook-secret',
   'x-pbk-signature',
+  'x-request-id',
 ]);
 
 const FORWARDED_RESPONSE_HEADERS = new Set([
@@ -42,15 +44,17 @@ const FORWARDED_RESPONSE_HEADERS = new Set([
   'last-modified',
   'x-pbk-bridge',
   'x-pbk-pdf-renderer',
+  'x-request-id',
 ]);
 
-function json(payload: unknown, statusCode = 200) {
+function json(payload: unknown, statusCode = 200, extraHeaders: Record<string, string> = {}) {
   return {
     statusCode,
     headers: {
       ...CORS_HEADERS,
       'Cache-Control': 'no-store',
       'Content-Type': 'application/json',
+      ...extraHeaders,
     },
     body: JSON.stringify(payload),
   };
@@ -80,7 +84,20 @@ function appendQueryParams(url: URL, event: Parameters<Handler>[0]) {
   }
 }
 
-function buildRequestHeaders(event: Parameters<Handler>[0]) {
+function getHeader(event: Parameters<Handler>[0], name: string) {
+  const wanted = name.toLowerCase();
+  for (const [key, value] of Object.entries(event.headers || {})) {
+    if (key.toLowerCase() === wanted) return String(value || '').trim();
+  }
+  return '';
+}
+
+function getRequestId(event: Parameters<Handler>[0]) {
+  return getHeader(event, 'x-request-id')
+    || `pbk-netlify-proxy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function buildRequestHeaders(event: Parameters<Handler>[0], requestId: string) {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(event.headers || {})) {
     const lower = name.toLowerCase();
@@ -88,6 +105,7 @@ function buildRequestHeaders(event: Parameters<Handler>[0]) {
     headers[name] = value;
   }
   headers['X-PBK-Netlify-Proxy'] = 'pbk-bridge-proxy';
+  headers['X-Request-ID'] = requestId;
   return headers;
 }
 
@@ -96,10 +114,15 @@ function isTextResponse(contentType = '') {
 }
 
 export const handler: Handler = async (event) => {
+  const requestId = getRequestId(event);
+
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 204,
-      headers: CORS_HEADERS,
+      headers: {
+        ...CORS_HEADERS,
+        'X-Request-ID': requestId,
+      },
       body: '',
     };
   }
@@ -116,7 +139,7 @@ export const handler: Handler = async (event) => {
   try {
     const response = await fetch(targetUrl, {
       method: event.httpMethod,
-      headers: buildRequestHeaders(event),
+      headers: buildRequestHeaders(event, requestId),
       body,
     });
 
@@ -125,6 +148,7 @@ export const handler: Handler = async (event) => {
       'Cache-Control': response.headers.get('cache-control') || 'no-store',
       'X-PBK-Bridge-Proxy': 'netlify',
     };
+    responseHeaders['X-Request-ID'] = response.headers.get('x-request-id') || requestId;
     for (const [name, value] of response.headers.entries()) {
       if (FORWARDED_RESPONSE_HEADERS.has(name.toLowerCase())) responseHeaders[name] = value;
     }
@@ -145,8 +169,10 @@ export const handler: Handler = async (event) => {
         error: 'PBK bridge proxy could not reach the hosted bridge.',
         message: error instanceof Error ? error.message : 'Unknown bridge proxy error',
         target: targetPath,
+        requestId,
       },
       502,
+      { 'X-Request-ID': requestId },
     );
   }
 };

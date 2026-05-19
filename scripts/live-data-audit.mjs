@@ -921,6 +921,29 @@ const checks = [
       && /Rex here\|Mentor:\|PBK Research Technique/.test(bridge),
   },
   {
+    name: 'Netlify public Ava chat is rate-limited before forwarding to the bridge',
+    ok: /PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_MAX/.test(netlifyPublicAvaFunction)
+      && /PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_WINDOW_MS/.test(netlifyPublicAvaFunction)
+      && /Rate limit exceeded/.test(netlifyPublicAvaFunction)
+      && /Retry-After/.test(netlifyPublicAvaFunction)
+      && /X-RateLimit-Remaining/.test(netlifyPublicAvaFunction),
+  },
+  {
+    name: 'Netlify operational proxy propagates request IDs for cross-layer debugging',
+    ok: /X-Request-ID/.test(netlifyBridgeProxyFunction)
+      && /getRequestId/.test(netlifyBridgeProxyFunction)
+      && /headers\['X-Request-ID'\]\s*=/.test(netlifyBridgeProxyFunction)
+      && /responseHeaders\['X-Request-ID'\]\s*=/.test(netlifyBridgeProxyFunction),
+  },
+  {
+    name: 'Hosted settings include a safe clear-key action for stale bridge sessions',
+    ok: /data-plugin-action="clear-key"/.test(index)
+      && /action === 'clear-key'/.test(index)
+      && /stopOpenClawRealtime\(\)/.test(index)
+      && /stopOpenClawPolling\(\)/.test(index)
+      && /Bridge key cleared/.test(index),
+  },
+  {
     name: 'Netlify document PDF function is explicitly routed',
     ok: /export\s+const\s+handler/.test(netlifyDocumentsPdfFunction)
       && /from\s*=\s*"\/api\/documents\/pdf"/.test(netlifyConfig)

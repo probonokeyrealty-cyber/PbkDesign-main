@@ -9703,6 +9703,7 @@
 
             <div class="plugin-actions">
               <button type="button" class="btn btn-ghost" data-plugin-action="test" disabled>Test connection</button>
+              <button type="button" class="btn btn-ghost" data-plugin-action="clear-key">Clear saved key</button>
               <button type="button" class="btn btn-ghost" data-plugin-action="save-later">Save for later</button>
               <button type="button" class="btn btn-primary" data-plugin-action="connect">Connect PBK Brain</button>
             </div>
@@ -15718,6 +15719,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const current = getOpenClawConfig();
       const nextEndpoint = normalizeOpenClawEndpoint(config.endpoint || current.endpoint);
       const endpointChanged = nextEndpoint !== current.endpoint;
+      const apiKeyChanged = Object.prototype.hasOwnProperty.call(config, 'apiKey')
+        && String(config.apiKey || '').trim() !== String(current.apiKey || '').trim();
       const next = saveOpenClawConfig({
         ...config,
         status: nextEndpoint ? 'saved' : 'not-configured',
@@ -15730,6 +15733,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       reflectOpenClawUI(next);
       PBK.events.emit('openclaw:status', next);
       renderOpenClawState(PBK.state.openclawRuntime || {});
+      if (endpointChanged || apiKeyChanged) {
+        stopOpenClawRealtime();
+        if (!next.apiKey) stopOpenClawPolling();
+      }
       if (nextEndpoint && next.apiKey && typeof runOpenClawPoll === 'function') {
         window.setTimeout(() => {
           runOpenClawPoll({ silent: true }).catch(() => {});
@@ -27232,6 +27239,26 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           desc: saved.apiKey
             ? 'Private key saved. PBK is syncing live bridge state now and demo records stay hidden.'
             : 'PBK will remember this endpoint on this machine.'
+        });
+      }
+
+      if (action === 'clear-key') {
+        const current = getOpenClawConfig();
+        const saved = PBK.openclaw.saveConfig({
+          ...current,
+          apiKey: '',
+          status: current.endpoint ? 'saved' : 'not-configured',
+          lastMessage: 'Bridge key cleared from this browser. Paste the current key again to unlock private data.'
+        });
+        clearTeamSession();
+        stopOpenClawRealtime();
+        stopOpenClawPolling();
+        renderOpenClawState({});
+        reflectOpenClawUI(saved);
+        toast({
+          type: 'info',
+          title: 'Bridge key cleared',
+          desc: 'This browser will stay in locked/read-only mode until you reconnect PBK Brain.'
         });
       }
 

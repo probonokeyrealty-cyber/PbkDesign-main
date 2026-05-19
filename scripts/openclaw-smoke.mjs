@@ -392,7 +392,7 @@ async function main() {
         source: 'smoke-test',
       }),
     }).then((response) => response.json());
-    const filteredApprovals = await fetch(`${BASE_URL}/api/approvals?status=pending&limit=5`, {
+    const filteredApprovals = await fetch(`${BASE_URL}/api/approvals?status=pending&limit=5&includeState=1`, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,
       },
@@ -805,6 +805,7 @@ async function main() {
     assert(filteredApprovals?.ok === true, 'Filtered approvals endpoint did not succeed.');
     assert(Array.isArray(filteredApprovals?.approvals), 'Filtered approvals endpoint did not return approvals array.');
     assert(filteredApprovals.approvals.every((approval) => String(approval.status || '').toLowerCase() === 'pending'), 'Filtered approvals endpoint returned non-pending approvals.');
+    assert(filteredApprovals?.stateIncluded === true, 'Filtered approvals endpoint did not honor includeState=1.');
     assert(filteredApprovals?.state?.approvals, 'Filtered approvals endpoint did not return runtime state for the approval board.');
     assert(brainIngest?.ok === true, 'Brain ingest endpoint did not succeed.');
     assert(Array.isArray(brainQuery?.brainDocs), 'Brain query endpoint did not return brainDocs.');

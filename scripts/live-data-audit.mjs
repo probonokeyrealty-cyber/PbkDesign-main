@@ -239,12 +239,18 @@ const checks = [
       && /approvalPostReady/.test(bridge)
       && /url\.searchParams\.get\('status'\)/.test(bridge)
       && /filteredApprovals/.test(bridge)
-      && /state:\s*buildStateSnapshot\(\)/.test(bridge)
+      && /stateIncluded:\s*includeState/.test(bridge)
       && /Slack ping request complete/.test(index)
       && /getRealRuntimeApprovals/.test(index)
       && /openClawNeedsBridgeApiKey/.test(index)
       && /PBK Bridge key required/.test(index)
       && /assertOpenClawAuthReady\(config,\s*'\/state'\)/.test(index),
+  },
+  {
+    name: 'Approval list fetch stays compact unless state is explicitly requested',
+    ok: /const includeState = \['1', 'true', 'yes'\]\.includes/.test(bridge)
+      && /stateIncluded:\s*includeState/.test(bridge)
+      && /\.\.\.\(includeState \? \{ state: buildStateSnapshot\(\) \} : \{\}\)/.test(bridge),
   },
   {
     name: 'OpenAI and DeepSeek token usage is tracked',

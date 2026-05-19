@@ -36967,6 +36967,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && pathname === '/api/approvals') {
       const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 60)));
+      const includeState = ['1', 'true', 'yes'].includes(String(url.searchParams.get('includeState') || '').trim().toLowerCase());
       const filteredApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : [])
         .filter((approval) => !statusFilter || String(approval.status || '').toLowerCase() === statusFilter)
         .slice(0, limit);
@@ -36980,7 +36981,8 @@ const server = createServer(async (request, response) => {
         count: filteredApprovals.length,
         approvals: filteredApprovals,
         adminTasks: pendingAdminTasks,
-        state: buildStateSnapshot(),
+        stateIncluded: includeState,
+        ...(includeState ? { state: buildStateSnapshot() } : {}),
       });
       return;
     }

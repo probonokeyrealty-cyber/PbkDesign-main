@@ -15091,11 +15091,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
-  function saveOpenClawConfig(partial = {}) {
-    const next = sanitizeOpenClawConfig({
-      ...getOpenClawConfig(),
+  function saveOpenClawConfig(partial = {}, options = {}) {
+    const current = getOpenClawConfig();
+    const nextInput = {
+      ...current,
       ...partial
-    });
+    };
+    if (!options.allowEmptyApiKey && current.apiKey && partial.apiKey === '') {
+      nextInput.apiKey = current.apiKey;
+    }
+    const next = sanitizeOpenClawConfig(nextInput);
     localStorage.setItem(OPENCLAW_STORAGE_KEY, JSON.stringify(next));
     return next;
   }
@@ -15721,7 +15726,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           : '',
         lastCheckedAt: endpointChanged ? 0 : current.lastCheckedAt,
         runtimeMeta: endpointChanged ? {} : current.runtimeMeta
-      });
+      }, { allowEmptyApiKey: Object.prototype.hasOwnProperty.call(config, 'apiKey') });
       reflectOpenClawUI(next);
       PBK.events.emit('openclaw:status', next);
       renderOpenClawState(PBK.state.openclawRuntime || {});
@@ -15744,7 +15749,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         status: 'testing',
         lastMessage: 'Checking PBK Brain health...',
         lastCheckedAt: Date.now()
-      });
+      }, { allowEmptyApiKey: Object.prototype.hasOwnProperty.call(config, 'apiKey') });
       reflectOpenClawUI(testing);
       try {
         const result = await probeOpenClaw(testing);

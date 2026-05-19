@@ -688,6 +688,12 @@ const checks = [
       && /openClawNeedsBridgeApiKey\(config, '\/state'\)[\s\S]*renderApprovalBridgeKeyRequired/.test(index),
   },
   {
+    name: 'Background bridge health sync cannot erase a saved API key',
+    ok: /function saveOpenClawConfig\(partial = \{\}, options = \{\}\)/.test(index)
+      && /!options\.allowEmptyApiKey && current\.apiKey && partial\.apiKey === ''/.test(index)
+      && /allowEmptyApiKey: Object\.prototype\.hasOwnProperty\.call\(config, 'apiKey'\)/.test(index),
+  },
+  {
     name: 'Ava and Rex production debugging exposes status, thought stream, call replay, and manual-control contracts',
     ok: /function buildAgentStatusBundle/.test(bridge)
       && /function buildAgentThoughtStream/.test(bridge)

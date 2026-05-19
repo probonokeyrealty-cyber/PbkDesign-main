@@ -22,6 +22,7 @@ const renderConfigPath = resolve(root, 'render.yaml');
 const netlifyConfigPath = resolve(root, 'netlify.toml');
 const netlifyPublicAvaFunctionPath = resolve(root, 'netlify/functions/public-ava-chat.ts');
 const netlifyDocumentsPdfFunctionPath = resolve(root, 'netlify/functions/documents-pdf.ts');
+const netlifyBridgeProxyFunctionPath = resolve(root, 'netlify/functions/pbk-bridge-proxy.ts');
 const snnCorePath = resolve(root, 'src/app/agents/snn/lifCore.mjs');
 const snnWorkerPath = resolve(root, 'src/app/agents/snn/agentBrain.worker.js');
 const snnBridgePath = resolve(root, 'src/app/utils/snnWorkerBridge.ts');
@@ -46,6 +47,7 @@ const renderConfig = existsSync(renderConfigPath) ? readFileSync(renderConfigPat
 const netlifyConfig = existsSync(netlifyConfigPath) ? readFileSync(netlifyConfigPath, 'utf8') : '';
 const netlifyPublicAvaFunction = existsSync(netlifyPublicAvaFunctionPath) ? readFileSync(netlifyPublicAvaFunctionPath, 'utf8') : '';
 const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath) ? readFileSync(netlifyDocumentsPdfFunctionPath, 'utf8') : '';
+const netlifyBridgeProxyFunction = existsSync(netlifyBridgeProxyFunctionPath) ? readFileSync(netlifyBridgeProxyFunctionPath, 'utf8') : '';
 const snnCore = existsSync(snnCorePath) ? readFileSync(snnCorePath, 'utf8') : '';
 const snnWorker = existsSync(snnWorkerPath) ? readFileSync(snnWorkerPath, 'utf8') : '';
 const snnBridge = existsSync(snnBridgePath) ? readFileSync(snnBridgePath, 'utf8') : '';
@@ -910,6 +912,21 @@ const checks = [
     ok: /export\s+const\s+handler/.test(netlifyDocumentsPdfFunction)
       && /from\s*=\s*"\/api\/documents\/pdf"/.test(netlifyConfig)
       && /to\s*=\s*"\/\.netlify\/functions\/documents-pdf"/.test(netlifyConfig),
+  },
+  {
+    name: 'Netlify hosted app proxies operational bridge routes through same-origin functions',
+    ok: /export\s+const\s+handler/.test(netlifyBridgeProxyFunction)
+      && /PBK_BRIDGE_URL/.test(netlifyBridgeProxyFunction)
+      && /authorization/.test(netlifyBridgeProxyFunction)
+      && /X-PBK-Team-Token/.test(netlifyBridgeProxyFunction)
+      && /isBase64Encoded/.test(netlifyBridgeProxyFunction)
+      && /from\s*=\s*"\/state"/.test(netlifyConfig)
+      && /from\s*=\s*"\/invoke"/.test(netlifyConfig)
+      && /from\s*=\s*"\/api\/\*"/.test(netlifyConfig)
+      && /from\s*=\s*"\/brain\/\*"/.test(netlifyConfig)
+      && /to\s*=\s*"\/\.netlify\/functions\/pbk-bridge-proxy\?path=/.test(netlifyConfig)
+      && /host\.includes\('pbkcommandcenter'\) \|\| host\.endsWith\('\.netlify\.app'\)/.test(index)
+      && /PBK hosted bridge proxy is preconfigured through Netlify/.test(index),
   },
   {
     name: 'TOTP enrollment flow is safe before enforcement',

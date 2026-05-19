@@ -8,6 +8,7 @@ const bridge = readFileSync(resolve(root, 'scripts/openclaw-local-server.mjs'), 
 const netlifyConfig = readFileSync(resolve(root, 'netlify.toml'), 'utf8');
 const publicAvaFunction = readFileSync(resolve(root, 'netlify/functions/public-ava-chat.ts'), 'utf8');
 const documentsPdfFunction = readFileSync(resolve(root, 'netlify/functions/documents-pdf.ts'), 'utf8');
+const bridgeProxyFunction = readFileSync(resolve(root, 'netlify/functions/pbk-bridge-proxy.ts'), 'utf8');
 const pkgPath = resolve(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
@@ -140,6 +141,46 @@ if (missingNetlifyFunctionRoutes.length) {
   fail.push({
     name: 'Netlify same-origin API paths must route to deployed functions',
     details: missingNetlifyFunctionRoutes,
+  });
+}
+
+const requiredBridgeProxyRoutes = [
+  '/health',
+  '/status',
+  '/state',
+  '/events',
+  '/invoke',
+  '/metrics',
+  '/brain/*',
+  '/api/*',
+];
+const missingBridgeProxyRoutes = requiredBridgeProxyRoutes.filter((path) => {
+  const escaped = path.replace(/\*/g, '\\*').replace(/\//g, '\\/');
+  const redirectFrom = new RegExp(`from\\s*=\\s*["']${escaped}["']`).test(netlifyConfig);
+  const redirectTo = /to\s*=\s*["']\/\.netlify\/functions\/pbk-bridge-proxy\?path=/.test(netlifyConfig);
+  return !redirectFrom || !redirectTo;
+});
+const bridgeProxyUnsafe = !/export\s+const\s+handler/.test(bridgeProxyFunction)
+  || !/authorization/.test(bridgeProxyFunction)
+  || !/X-PBK-Team-Token/i.test(bridgeProxyFunction)
+  || !/PBK_BRIDGE_URL/.test(bridgeProxyFunction)
+  || !/isBase64Encoded/.test(bridgeProxyFunction);
+if (missingBridgeProxyRoutes.length || bridgeProxyUnsafe) {
+  fail.push({
+    name: 'Netlify hosted bridge proxy must cover operational routes and forward auth safely',
+    details: [
+      ...missingBridgeProxyRoutes,
+      ...(bridgeProxyUnsafe ? ['pbk-bridge-proxy.ts missing handler/auth/team/binary forwarding contract'] : []),
+    ],
+  });
+}
+
+if (!/host\.includes\('pbkcommandcenter'\) \|\| host\.endsWith\('\.netlify\.app'\)/.test(index)
+  || !/PBK hosted bridge proxy is preconfigured through Netlify/.test(index)
+  || !/currentHost\.includes\('pbkcommandcenter'\) \|\| currentHost\.endsWith\('\.netlify\.app'\)/.test(index)) {
+  fail.push({
+    name: 'Netlify production shell must default to the same-origin hosted bridge proxy',
+    details: ['index.html must default Netlify hosts to window.location.origin and still require the bridge key for protected routes.'],
   });
 }
 

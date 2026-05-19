@@ -14978,6 +14978,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (host === '127.0.0.1' || host === 'localhost') {
       return window.location.origin;
     }
+    if (host.includes('pbkcommandcenter') || host.endsWith('.netlify.app')) {
+      return window.location.origin;
+    }
     return hostedEndpoint;
   }
 
@@ -15078,7 +15081,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       lastMessage: DEFAULT_OPENCLAW_ENDPOINT
         ? (localPreview
             ? 'PBK local preview bridge is preconfigured through the Vite proxy.'
-            : 'PBK public bridge is preconfigured.')
+            : (DEFAULT_OPENCLAW_ENDPOINT === normalizeOpenClawEndpoint(window.location.origin)
+                ? 'PBK hosted bridge proxy is preconfigured through Netlify.'
+                : 'PBK public bridge is preconfigured.'))
         : '',
       lastCheckedAt: 0,
       runtimeMeta: {},
@@ -16694,9 +16699,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const normalized = normalizeOpenClawEndpoint(endpoint || '');
     if (!normalized) return false;
     try {
-      return new URL(normalized).hostname === 'pbk-openclaw-bridge.onrender.com';
+      const url = new URL(normalized);
+      const host = url.hostname;
+      const currentHost = window.location.hostname;
+      return host === 'pbk-openclaw-bridge.onrender.com'
+        || (normalized === normalizeOpenClawEndpoint(window.location.origin)
+          && (currentHost.includes('pbkcommandcenter') || currentHost.endsWith('.netlify.app')));
     } catch {
-      return normalized.includes('pbk-openclaw-bridge.onrender.com');
+      return normalized.includes('pbk-openclaw-bridge.onrender.com')
+        || normalized === normalizeOpenClawEndpoint(window.location.origin);
     }
   }
 

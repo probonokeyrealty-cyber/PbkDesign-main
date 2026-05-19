@@ -18,3 +18,51 @@ from = "/api/documents/pdf"
 to = "/.netlify/functions/documents-pdf"
 status = 200
 force = true
+
+[[redirects]]
+from = "/health"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/health"
+status = 200
+force = true
+
+[[redirects]]
+from = "/status"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/status"
+status = 200
+force = true
+
+[[redirects]]
+from = "/state"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/state"
+status = 200
+force = true
+
+[[redirects]]
+from = "/events"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/events"
+status = 200
+force = true
+
+[[redirects]]
+from = "/invoke"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/invoke"
+status = 200
+force = true
+
+[[redirects]]
+from = "/metrics"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/metrics"
+status = 200
+force = true
+
+[[redirects]]
+from = "/brain/*"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/brain/:splat"
+status = 200
+force = true
+
+[[redirects]]
+from = "/api/*"
+to = "/.netlify/functions/pbk-bridge-proxy?path=/api/:splat"
+status = 200
+force = true

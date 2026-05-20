@@ -29347,6 +29347,33 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     throw lastError || new Error('OpenClaw gateway status endpoint did not respond.');
   }
 
+  async function fetchOpenClawSlackHealth(config = getOpenClawConfig()) {
+    const base = normalizeOpenClawEndpoint(config.endpoint);
+    if (!base) throw new Error('OpenClaw is not configured yet.');
+
+    const candidates = [
+      `${base}/api/slack/health?force=1`,
+      `${base}/api/v1/slack/health?force=1`
+    ];
+
+    let lastError = null;
+    for (const url of candidates) {
+      try {
+        const response = await fetchWithTimeout(url, {
+          headers: buildOpenClawHeaders(config)
+        }, 5000);
+        const type = response.headers.get('content-type') || '';
+        const body = type.includes('json') ? await response.json() : await response.text();
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        return body?.slack || body || null;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Slack health endpoint did not respond.');
+  }
+
   function ensureProviderRow(listEl, key, label) {
     if (!listEl) return null;
     let row = listEl.querySelector(`.settings-providers-row[data-provider="${key}"]`);
@@ -29559,6 +29586,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           label = 'Live - deploy control ready';
         } else if (key === 'openclawGateway') {
           label = meta.latencyMs ? `Live - gateway ${Math.round(meta.latencyMs)}ms` : 'Live - gateway connected';
+        } else if (key === 'slack') {
+          if (meta.notifyReady && meta.interactiveReady === false) {
+            state = 'warning';
+            label = meta.botAuthError
+              ? 'Outbound live - rotate bot token for buttons'
+              : 'Outbound live - interactive setup incomplete';
+          } else if (meta.notifyReady) {
+            label = meta.botAuthKnown
+              ? 'Live - alerts + interactive ready'
+              : 'Live - alerts ready, bot auth pending';
+          }
         }
       } else if (isHeartbeatOnlyGateway) {
         state = 'warning';
@@ -29905,16 +29943,20 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return PBK.state.openclawRuntime || {};
     }
 
-    const [snapshot, quotas, tooling, gatewayStatus] = await Promise.all([
+    const [snapshot, quotas, tooling, gatewayStatus, slackHealth] = await Promise.all([
       fetchOpenClawState(config),
       fetchOpenClawQuotas(config).catch(() => null),
       fetchOpenClawToolingStatus(config).catch(() => null),
-      fetchOpenClawGatewayStatus(config).catch(() => null)
+      fetchOpenClawGatewayStatus(config).catch(() => null),
+      fetchOpenClawSlackHealth(config).catch(() => null)
     ]);
     openClawPollFailures = 0;
     PBK.state.openclawQuotas = quotas;
     PBK.state.openclawTooling = tooling;
     PBK.state.openclawGatewayStatus = gatewayStatus;
+    if (slackHealth && snapshot?.status?.providers) {
+      snapshot.status.providers.slack = slackHealth;
+    }
     renderOpenClawState(snapshot);
     const connected = saveOpenClawConfig({
       ...config,

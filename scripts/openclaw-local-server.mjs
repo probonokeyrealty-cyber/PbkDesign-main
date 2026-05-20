@@ -349,6 +349,14 @@ const SLACK_UPDATES_CHANNEL_ID = String(
     || '',
 ).trim();
 const SLACK_SIGNING_SECRET = String(process.env.PBK_SLACK_SIGNING_SECRET || process.env.SLACK_SIGNING_SECRET || '').trim();
+let __slackBotValidation = {
+  checkedAt: '',
+  ok: SLACK_BOT_TOKEN ? null : false,
+  error: SLACK_BOT_TOKEN ? '' : 'PBK_SLACK_BOT_TOKEN is not set.',
+  status: 0,
+  team: '',
+  user: '',
+};
 const RESEND_API_KEY = String(process.env.PBK_RESEND_API_KEY || process.env.RESEND_API_KEY || '').trim();
 const MAIN_BUSINESS_EMAIL = String(process.env.PBK_MAIN_BUSINESS_EMAIL || process.env.MAIN_BUSINESS_EMAIL || 'jordan@pbk.capital').trim();
 const COLD_CAMPAIGN_EMAIL = String(process.env.PBK_COLD_CAMPAIGN_EMAIL || process.env.COLD_CAMPAIGN_EMAIL || 'offers@pbkoutreach.local').trim();
@@ -19727,25 +19735,36 @@ function getSlackProviderMeta() {
   const interactiveMissing = [];
   const notifyReady = Boolean(SLACK_WEBHOOK_URL || (SLACK_BOT_TOKEN && (SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID)));
   const approvalPostReady = Boolean(SLACK_WEBHOOK_URL || (SLACK_BOT_TOKEN && SLACK_APPROVAL_CHANNEL_ID));
+  const botAuthKnown = __slackBotValidation.ok !== null;
+  const botAuthLive = __slackBotValidation.ok === true;
+  const botAuthError = __slackBotValidation.ok === false ? __slackBotValidation.error || 'Slack bot auth failed.' : '';
   if (!notifyReady) missing.push('PBK_SLACK_WEBHOOK_URL or PBK_SLACK_BOT_TOKEN plus PBK_SLACK_UPDATES_CHANNEL_ID/PBK_SLACK_APPROVAL_CHANNEL_ID');
   if (!SLACK_BOT_TOKEN) interactiveMissing.push('PBK_SLACK_BOT_TOKEN');
   if (!SLACK_APPROVAL_CHANNEL_ID) interactiveMissing.push('PBK_SLACK_APPROVAL_CHANNEL_ID');
   if (!SLACK_SIGNING_SECRET) interactiveMissing.push('PBK_SLACK_SIGNING_SECRET');
+  if (SLACK_BOT_TOKEN && botAuthError) interactiveMissing.push(`PBK_SLACK_BOT_TOKEN (${botAuthError})`);
+  const interactiveReady = interactiveMissing.length === 0 && (!botAuthKnown || botAuthLive);
   return {
     configured: Boolean(SLACK_WEBHOOK_URL || SLACK_BOT_TOKEN),
     ready: notifyReady,
     notifyReady,
     approvalPostReady,
     webhookReady: Boolean(SLACK_WEBHOOK_URL),
-    botPostReady: Boolean(SLACK_BOT_TOKEN && (SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID)),
-    interactiveReady: interactiveMissing.length === 0,
+    botPostReady: Boolean(SLACK_BOT_TOKEN && (SLACK_UPDATES_CHANNEL_ID || SLACK_APPROVAL_CHANNEL_ID) && __slackBotValidation.ok !== false),
+    botAuthKnown,
+    botAuthLive,
+    botAuthError,
+    botAuthCheckedAt: __slackBotValidation.checkedAt || '',
+    interactiveReady,
     signingSecretConfigured: Boolean(SLACK_SIGNING_SECRET),
     approvalChannelId: SLACK_APPROVAL_CHANNEL_ID || '',
     updatesChannelId: SLACK_UPDATES_CHANNEL_ID || '',
     interactiveMissing,
     missing,
-    note: interactiveMissing.length
-      ? 'Outbound Slack notifications can still post when notifyReady is true; interactive buttons need the interactiveMissing values.'
+    note: botAuthError
+      ? 'Outbound Slack notifications can still post by webhook fallback; rotate PBK_SLACK_BOT_TOKEN for interactive buttons and threaded replies.'
+      : interactiveMissing.length
+        ? 'Outbound Slack notifications can still post when notifyReady is true; interactive buttons need the interactiveMissing values.'
       : 'Slack outbound notifications and interactive approvals are configured.',
   };
 }
@@ -25825,6 +25844,34 @@ function compactSlackText(value = '', fallback = '') {
   return String(value || fallback || '').replace(/\s+/g, ' ').trim().slice(0, 2900);
 }
 
+function recordSlackBotValidation(result = {}, method = '') {
+  if (!SLACK_BOT_TOKEN) {
+    __slackBotValidation = {
+      checkedAt: isoNow(),
+      ok: false,
+      error: 'PBK_SLACK_BOT_TOKEN is not set.',
+      status: 0,
+      team: '',
+      user: '',
+    };
+    return __slackBotValidation;
+  }
+
+  const error = String(result.error || result.body?.error || '').trim();
+  const authFailure = /^(invalid_auth|not_authed|token_revoked|account_inactive|missing_scope)$/i.test(error);
+  if (!result.ok && !authFailure && method !== 'auth.test') return __slackBotValidation;
+
+  __slackBotValidation = {
+    checkedAt: isoNow(),
+    ok: Boolean(result.ok),
+    error: result.ok ? '' : (error || 'Slack bot auth failed.'),
+    status: Number(result.status || 0),
+    team: String(result.body?.team || result.body?.team_id || '').trim(),
+    user: String(result.body?.user || result.body?.user_id || '').trim(),
+  };
+  return __slackBotValidation;
+}
+
 async function fireSlackApi(method = '', payload = {}) {
   if (!SLACK_BOT_TOKEN) {
     return { ok: false, skipped: true, result: 'provider_missing', error: 'PBK_SLACK_BOT_TOKEN is not set.' };
@@ -25845,15 +25892,43 @@ async function fireSlackApi(method = '', payload = {}) {
     } catch {
       body = { raw: responseText };
     }
-    return {
+    const result = {
       ok: response.ok && body?.ok !== false,
       status: response.status,
       body,
       error: response.ok && body?.ok !== false ? '' : (body?.error || `Slack API returned ${response.status}`),
     };
+    recordSlackBotValidation(result, method);
+    return result;
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Slack API request failed.' };
   }
+}
+
+async function checkSlackBotAuth({ force = false } = {}) {
+  const checkedAt = __slackBotValidation.checkedAt ? new Date(__slackBotValidation.checkedAt).getTime() : 0;
+  const fresh = checkedAt && Date.now() - checkedAt < 5 * 60 * 1000;
+  if (!force && fresh) return __slackBotValidation;
+  if (!SLACK_BOT_TOKEN) return recordSlackBotValidation({ ok: false, error: 'PBK_SLACK_BOT_TOKEN is not set.' }, 'auth.test');
+  const result = await fireSlackApi('auth.test', {});
+  return recordSlackBotValidation(result, 'auth.test');
+}
+
+async function buildSlackHealthSnapshot({ force = false } = {}) {
+  const botAuth = await checkSlackBotAuth({ force });
+  return {
+    ok: true,
+    result: 'live',
+    slack: getSlackProviderMeta(),
+    botAuth: {
+      checkedAt: botAuth.checkedAt || '',
+      ok: botAuth.ok === true,
+      error: botAuth.error || '',
+      status: botAuth.status || 0,
+      team: botAuth.team || '',
+      user: botAuth.user || '',
+    },
+  };
 }
 
 function buildSlackApprovalBlocks(approval = {}) {
@@ -35374,6 +35449,14 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/slack/health', '/api/v1/slack/health'])) {
+      const result = await buildSlackHealthSnapshot({
+        force: url.searchParams.get('force') === '1',
+      });
+      json(response, 200, result);
       return;
     }
 

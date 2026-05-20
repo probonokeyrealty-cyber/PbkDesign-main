@@ -270,6 +270,9 @@ const checks = [
       && /SLACK_BOT_TOKEN && channel/.test(bridge)
       && /bot_to_webhook_fallback/.test(bridge)
       && /fallbackFrom:\s*'bot'/.test(bridge)
+      && /\/api\/slack\/health/.test(bridge)
+      && /auth\.test/.test(bridge)
+      && /botAuthError/.test(bridge)
       && /notifyReady/.test(bridge)
       && /approvalPostReady/.test(bridge)
       && /url\.searchParams\.get\('status'\)/.test(bridge)
@@ -277,6 +280,8 @@ const checks = [
       && /stateIncluded:\s*includeState/.test(bridge)
       && /Slack ping request complete/.test(index)
       && /getRealRuntimeApprovals/.test(index)
+      && /fetchOpenClawSlackHealth/.test(index)
+      && /Outbound live - rotate bot token for buttons/.test(index)
       && /openClawNeedsBridgeApiKey/.test(index)
       && /PBK Bridge key required/.test(index)
       && /assertOpenClawAuthReady\(config,\s*'\/state'\)/.test(index),

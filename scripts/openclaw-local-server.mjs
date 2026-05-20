@@ -244,10 +244,10 @@ const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROW
 const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
 const BROWSER_VOICE_DEEPGRAM_MODEL = normalizeBrowserVoiceDeepgramModel(
-  process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || process.env.DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2-meeting',
+  process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || process.env.DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2',
 );
 const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = normalizeBrowserVoiceDeepgramModel(
-  process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || process.env.DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2-meeting',
+  process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || process.env.DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2',
 );
 const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.env.PBK_BROWSER_VOICE_AUTO_REPLY_MS || 1250)));
 const BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS = Math.max(1200, Math.min(7000, Number(process.env.PBK_BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS || 2600)));
@@ -30324,6 +30324,30 @@ const toolHandlers = {
       live = Boolean(delivery.ok);
       providerStatus = live ? 'sent' : 'warning';
       providerError = live ? '' : (delivery.error || `Slack bot post failed (${delivery.status || '?'})`);
+      if (!live && SLACK_WEBHOOK_URL) {
+        const webhookPayload = params.payload || (params.blocks ? { text, blocks: params.blocks } : { text });
+        const webhookDelivery = await fireSlackWebhook(webhookPayload);
+        if (webhookDelivery.ok) {
+          delivery = {
+            ...webhookDelivery,
+            fallbackFrom: 'bot',
+            botError: providerError,
+          };
+          live = true;
+          providerStatus = 'sent';
+          providerError = '';
+        } else {
+          delivery = {
+            ...webhookDelivery,
+            fallbackFrom: 'bot',
+            botError: providerError,
+          };
+          providerError = [
+            providerError,
+            webhookDelivery.error || `Slack webhook failed (${webhookDelivery.status || '?'})`,
+          ].filter(Boolean).join('; ');
+        }
+      }
     } else if (SLACK_WEBHOOK_URL) {
       const slackPayload = params.payload || (params.blocks ? { text, blocks: params.blocks } : { text });
       delivery = await fireSlackWebhook(slackPayload);
@@ -30357,7 +30381,7 @@ const toolHandlers = {
         notifyReady: slackMeta.notifyReady,
         botPostReady: slackMeta.botPostReady,
         webhookReady: slackMeta.webhookReady,
-        delivery: SLACK_BOT_TOKEN && channel ? 'bot' : SLACK_WEBHOOK_URL ? 'webhook' : 'none',
+        delivery: delivery.fallbackFrom === 'bot' ? 'bot_to_webhook_fallback' : SLACK_BOT_TOKEN && channel ? 'bot' : SLACK_WEBHOOK_URL ? 'webhook' : 'none',
         error: providerError || undefined,
       },
       delivery,
@@ -33200,7 +33224,7 @@ function normalizeAvaVoiceReplyText(text = '', fallback = '') {
   return `${clean} Let me ask one clean question so I do not guess wrong: what matters most right now, speed, certainty, or price?`;
 }
 
-function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2-meeting') {
+function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2') {
   const raw = String(value || '').trim();
   if (!raw) return fallback;
   const model = raw
@@ -33211,7 +33235,7 @@ function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2-meeti
   if (!model) return fallback;
   if (/^nova[-_]?v?1$/i.test(model) || model === 'nova-v1') return fallback;
   if (model === 'flux-v2') return 'flux-general-en';
-  if (model === 'nova-2-general') return 'nova-2-meeting';
+  if (model === 'nova-2-general' || model === 'nova-2-meeting') return 'nova-2';
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(model)) return fallback;
   return model;
 }

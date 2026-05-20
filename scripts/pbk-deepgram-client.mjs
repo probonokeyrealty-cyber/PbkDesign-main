@@ -22,7 +22,7 @@ function numberEnv(env, key, fallback = 0) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function normalizeBrowserLiveModel(value = '', fallback = 'nova-2-meeting') {
+function normalizeBrowserLiveModel(value = '', fallback = 'nova-2') {
   const raw = String(value || '').trim();
   if (!raw) return fallback;
   const model = raw
@@ -33,7 +33,7 @@ function normalizeBrowserLiveModel(value = '', fallback = 'nova-2-meeting') {
   if (!model) return fallback;
   if (/^nova[-_]?v?1$/i.test(model) || model === 'nova-v1') return fallback;
   if (model === 'flux-v2') return 'flux-general-en';
-  if (model === 'nova-2-general') return 'nova-2-meeting';
+  if (model === 'nova-2-general' || model === 'nova-2-meeting') return 'nova-2';
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(model)) return fallback;
   return model;
 }
@@ -47,7 +47,7 @@ export function getDeepgramConfig(env = process.env) {
     model: envValue(env, ['PBK_DEEPGRAM_MODEL', 'DEEPGRAM_MODEL']) || 'nova-2',
     liveModel: envValue(env, ['PBK_DEEPGRAM_LIVE_MODEL', 'DEEPGRAM_LIVE_MODEL']) || 'nova-2-meeting',
     browserLiveModel: normalizeBrowserLiveModel(
-      envValue(env, ['PBK_DEEPGRAM_BROWSER_LIVE_MODEL', 'DEEPGRAM_BROWSER_LIVE_MODEL']) || 'nova-2-meeting',
+      envValue(env, ['PBK_DEEPGRAM_BROWSER_LIVE_MODEL', 'DEEPGRAM_BROWSER_LIVE_MODEL']) || 'nova-2',
     ),
     language: envValue(env, ['PBK_DEEPGRAM_LANGUAGE', 'DEEPGRAM_LANGUAGE']) || 'en',
     telnyxEncoding: envValue(env, ['PBK_DEEPGRAM_TELNYX_ENCODING', 'DEEPGRAM_TELNYX_ENCODING']) || 'mulaw',

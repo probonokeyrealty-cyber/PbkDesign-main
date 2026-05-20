@@ -33253,7 +33253,7 @@ function buildBrowserVoiceDeepgramOptions(model = BROWSER_VOICE_DEEPGRAM_MODEL) 
     containerizedAudio: true,
     channels: 1,
     interimResults: true,
-    utteranceEndMs: 900,
+    utteranceEndMs: 1000,
   };
 }
 

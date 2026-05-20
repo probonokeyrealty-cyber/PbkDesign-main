@@ -820,6 +820,7 @@ const checks = [
       && /BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL/.test(bridge)
       && /normalizeBrowserVoiceDeepgramModel/.test(bridge)
       && /nova-2/.test(bridge)
+      && /utteranceEndMs:\s*1000/.test(bridge)
       && /model\s*===\s*'nova-2-general'\s*\|\|\s*model\s*===\s*'nova-2-meeting'\)\s*return\s*'nova-2'/.test(bridge)
       && /deepgram:\$\{normalizedModel\}/.test(bridge)
       && !/deepgram-nova-v1/.test(bridge)

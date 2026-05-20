@@ -49,6 +49,8 @@ const netlifyPublicAvaFunction = existsSync(netlifyPublicAvaFunctionPath) ? read
 const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath) ? readFileSync(netlifyDocumentsPdfFunctionPath, 'utf8') : '';
 const netlifyBridgeProxyFunction = existsSync(netlifyBridgeProxyFunctionPath) ? readFileSync(netlifyBridgeProxyFunctionPath, 'utf8') : '';
 const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
+const netlifyBrainCleanIndex = netlifyConfig.lastIndexOf('from = "/brain"');
+const netlifyBrainProxyIndex = netlifyConfig.lastIndexOf('from = "/brain/*"');
 const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
 const netlifySpaFallbackBlock = netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
 const netlifySpaFallbackOrdered = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock)
@@ -56,6 +58,10 @@ const netlifySpaFallbackOrdered = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlo
   && /status\s*=\s*200/.test(netlifySpaFallbackBlock)
   && netlifyApiProxyIndex >= 0
   && netlifySpaFallbackIndex > netlifyApiProxyIndex;
+const netlifyBrainCleanRouteOrdered = netlifyBrainCleanIndex >= 0
+  && netlifyBrainProxyIndex >= 0
+  && netlifyBrainCleanIndex < netlifyBrainProxyIndex
+  && /from\s*=\s*"\/brain"[\s\S]*?to\s*=\s*"\/index\.html"[\s\S]*?status\s*=\s*200/.test(netlifyConfig.slice(netlifyBrainCleanIndex, netlifyBrainProxyIndex));
 const cleanPathRouterWired = /const\s+cleanPagePathAliases\s*=/.test(index)
   && /['"]\/settings['"]\s*:\s*['"]settings['"]/.test(index)
   && /['"]\/deals\/analyzer['"]\s*:\s*['"]analyzer['"]/.test(index)
@@ -988,7 +994,7 @@ const checks = [
   },
   {
     name: 'Netlify hosted app preserves direct clean links without stealing API rewrites',
-    ok: netlifySpaFallbackOrdered,
+    ok: netlifySpaFallbackOrdered && netlifyBrainCleanRouteOrdered,
   },
   {
     name: 'Direct Netlify clean links open the intended Command Center page',

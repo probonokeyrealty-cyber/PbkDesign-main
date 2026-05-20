@@ -130,18 +130,27 @@ if (missingRoutes.length) {
 }
 
 const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
+const netlifyBrainCleanIndex = netlifyConfig.lastIndexOf('from = "/brain"');
+const netlifyBrainProxyIndex = netlifyConfig.lastIndexOf('from = "/brain/*"');
 const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
 const netlifySpaFallbackBlock = netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
 const netlifySpaFallbackConfigured = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock)
   && /to\s*=\s*"\/index\.html"/.test(netlifySpaFallbackBlock)
   && /status\s*=\s*200/.test(netlifySpaFallbackBlock);
+const netlifyBrainCleanRouteOrdered = netlifyBrainCleanIndex >= 0
+  && netlifyBrainProxyIndex >= 0
+  && netlifyBrainCleanIndex < netlifyBrainProxyIndex
+  && /from\s*=\s*"\/brain"[\s\S]*?to\s*=\s*"\/index\.html"[\s\S]*?status\s*=\s*200/.test(netlifyConfig.slice(netlifyBrainCleanIndex, netlifyBrainProxyIndex));
 const netlifySpaFallbackOrdered = netlifySpaFallbackConfigured
   && netlifyApiProxyIndex >= 0
   && netlifySpaFallbackIndex > netlifyApiProxyIndex;
-if (!netlifySpaFallbackOrdered) {
+if (!netlifySpaFallbackOrdered || !netlifyBrainCleanRouteOrdered) {
   fail.push({
     name: 'Netlify SPA fallback must protect direct Command Center links after API rewrites',
-    details: ['netlify.toml needs from="/*" -> /index.html after /api/* so shared clean URLs render the app without stealing API calls.'],
+    details: [
+      ...(!netlifySpaFallbackOrdered ? ['netlify.toml needs from="/*" -> /index.html after /api/* so shared clean URLs render the app without stealing API calls.'] : []),
+      ...(!netlifyBrainCleanRouteOrdered ? ['netlify.toml needs exact from="/brain" -> /index.html before /brain/* proxy so the Brain page is not treated as a protected API call.'] : []),
+    ],
   });
 }
 
@@ -474,8 +483,8 @@ const report = {
     },
     {
       name: 'Netlify direct app links fall back to the SPA shell',
-      ok: netlifySpaFallbackOrdered,
-      count: netlifySpaFallbackConfigured ? 1 : 0,
+      ok: netlifySpaFallbackOrdered && netlifyBrainCleanRouteOrdered,
+      count: [netlifySpaFallbackConfigured, netlifyBrainCleanRouteOrdered].filter(Boolean).length,
     },
     {
       name: 'Page navigation targets exist',

@@ -48,6 +48,14 @@ const netlifyConfig = existsSync(netlifyConfigPath) ? readFileSync(netlifyConfig
 const netlifyPublicAvaFunction = existsSync(netlifyPublicAvaFunctionPath) ? readFileSync(netlifyPublicAvaFunctionPath, 'utf8') : '';
 const netlifyDocumentsPdfFunction = existsSync(netlifyDocumentsPdfFunctionPath) ? readFileSync(netlifyDocumentsPdfFunctionPath, 'utf8') : '';
 const netlifyBridgeProxyFunction = existsSync(netlifyBridgeProxyFunctionPath) ? readFileSync(netlifyBridgeProxyFunctionPath, 'utf8') : '';
+const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
+const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
+const netlifySpaFallbackBlock = netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
+const netlifySpaFallbackOrdered = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock)
+  && /to\s*=\s*"\/index\.html"/.test(netlifySpaFallbackBlock)
+  && /status\s*=\s*200/.test(netlifySpaFallbackBlock)
+  && netlifyApiProxyIndex >= 0
+  && netlifySpaFallbackIndex > netlifyApiProxyIndex;
 const snnCore = existsSync(snnCorePath) ? readFileSync(snnCorePath, 'utf8') : '';
 const snnWorker = existsSync(snnWorkerPath) ? readFileSync(snnWorkerPath, 'utf8') : '';
 const snnBridge = existsSync(snnBridgePath) ? readFileSync(snnBridgePath, 'utf8') : '';
@@ -969,6 +977,10 @@ const checks = [
       && /to\s*=\s*"\/\.netlify\/functions\/pbk-bridge-proxy\?path=/.test(netlifyConfig)
       && /host\.includes\('pbkcommandcenter'\) \|\| host\.endsWith\('\.netlify\.app'\)/.test(index)
       && /PBK hosted bridge proxy is preconfigured through Netlify/.test(index),
+  },
+  {
+    name: 'Netlify hosted app preserves direct clean links without stealing API rewrites',
+    ok: netlifySpaFallbackOrdered,
   },
   {
     name: 'TOTP enrollment flow is safe before enforcement',

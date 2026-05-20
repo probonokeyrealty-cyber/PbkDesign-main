@@ -97,6 +97,22 @@ if (missingRoutes.length) {
   });
 }
 
+const netlifyApiProxyIndex = netlifyConfig.lastIndexOf('from = "/api/*"');
+const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
+const netlifySpaFallbackBlock = netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
+const netlifySpaFallbackConfigured = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock)
+  && /to\s*=\s*"\/index\.html"/.test(netlifySpaFallbackBlock)
+  && /status\s*=\s*200/.test(netlifySpaFallbackBlock);
+const netlifySpaFallbackOrdered = netlifySpaFallbackConfigured
+  && netlifyApiProxyIndex >= 0
+  && netlifySpaFallbackIndex > netlifyApiProxyIndex;
+if (!netlifySpaFallbackOrdered) {
+  fail.push({
+    name: 'Netlify SPA fallback must protect direct Command Center links after API rewrites',
+    details: ['netlify.toml needs from="/*" -> /index.html after /api/* so shared clean URLs render the app without stealing API calls.'],
+  });
+}
+
 const requiredArchitectureRoutes = [
   { label: '/api/analyzeDeal', path: '/api/analyzeDeal' },
   { label: '/api/approvals/:id/approve', path: '/api/approvals/approval-smoke/approve' },
@@ -395,6 +411,11 @@ const report = {
       name: 'Netlify same-origin API paths route to functions',
       ok: missingNetlifyFunctionRoutes.length === 0,
       count: requiredNetlifyFunctionRoutes.length,
+    },
+    {
+      name: 'Netlify direct app links fall back to the SPA shell',
+      ok: netlifySpaFallbackOrdered,
+      count: netlifySpaFallbackConfigured ? 1 : 0,
     },
     {
       name: 'Page navigation targets exist',

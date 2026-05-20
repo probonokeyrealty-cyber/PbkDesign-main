@@ -56,6 +56,14 @@ const netlifySpaFallbackOrdered = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlo
   && /status\s*=\s*200/.test(netlifySpaFallbackBlock)
   && netlifyApiProxyIndex >= 0
   && netlifySpaFallbackIndex > netlifyApiProxyIndex;
+const cleanPathRouterWired = /const\s+cleanPagePathAliases\s*=/.test(index)
+  && /['"]\/settings['"]\s*:\s*['"]settings['"]/.test(index)
+  && /['"]\/deals\/analyzer['"]\s*:\s*['"]analyzer['"]/.test(index)
+  && /['"]\/leads['"]\s*:\s*['"]leads['"]/.test(index)
+  && /['"]\/contracts['"]\s*:\s*['"]contracts['"]/.test(index)
+  && /['"]\/brain['"]\s*:\s*['"]brain['"]/.test(index)
+  && /function\s+getInitialPageFromLocation/.test(index)
+  && /const\s+initialPage\s*=\s*getInitialPageFromLocation\(\)/.test(index);
 const snnCore = existsSync(snnCorePath) ? readFileSync(snnCorePath, 'utf8') : '';
 const snnWorker = existsSync(snnWorkerPath) ? readFileSync(snnWorkerPath, 'utf8') : '';
 const snnBridge = existsSync(snnBridgePath) ? readFileSync(snnBridgePath, 'utf8') : '';
@@ -981,6 +989,10 @@ const checks = [
   {
     name: 'Netlify hosted app preserves direct clean links without stealing API rewrites',
     ok: netlifySpaFallbackOrdered,
+  },
+  {
+    name: 'Direct Netlify clean links open the intended Command Center page',
+    ok: cleanPathRouterWired,
   },
   {
     name: 'TOTP enrollment flow is safe before enforcement',

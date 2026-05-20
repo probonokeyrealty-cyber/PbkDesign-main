@@ -69,6 +69,37 @@ function routeToRegex(route = '') {
   return new RegExp(`^${escaped}(?:[/?#]|$)`);
 }
 
+const cleanAppPaths = new Set([
+  '/',
+  '/dashboard',
+  '/command-center',
+  '/inbox',
+  '/leads',
+  '/pipeline',
+  '/deals',
+  '/deals/analyzer',
+  '/analyzer',
+  '/agents',
+  '/agent',
+  '/agent-console',
+  '/fleet',
+  '/calls',
+  '/live-calls',
+  '/contracts',
+  '/automations',
+  '/analytics',
+  '/campaigns',
+  '/campaign-detail',
+  '/brain',
+  '/research',
+  '/memory',
+  '/integrations',
+  '/settings',
+  '/lead-detail',
+  '/activity-log',
+  '/recordings',
+]);
+
 function extractRequestedPaths() {
   const paths = new Set();
   const literalPathRegex = /['"`]((?:\/api|\/brain|\/events|\/invoke|\/state|\/metrics)[^'"`\s)]*)['"`]/g;
@@ -83,6 +114,7 @@ function extractRequestedPaths() {
   return unique([...paths])
     .filter((path) => !path.includes('${'))
     .filter((path) => !path.includes('function'))
+    .filter((path) => !cleanAppPaths.has(path))
     .filter((path) => !path.endsWith('/'));
 }
 
@@ -217,6 +249,34 @@ if (missingShowPageTargets.length) {
   fail.push({
     name: 'Every showPage target must have a page container',
     details: missingShowPageTargets,
+  });
+}
+
+const requiredCleanPathAliases = [
+  { path: '/settings', page: 'settings' },
+  { path: '/leads', page: 'leads' },
+  { path: '/deals/analyzer', page: 'analyzer' },
+  { path: '/contracts', page: 'contracts' },
+  { path: '/campaigns', page: 'campaigns' },
+  { path: '/brain', page: 'brain' },
+  { path: '/calls', page: 'calls' },
+  { path: '/integrations', page: 'integrations' },
+];
+const missingCleanPathAliases = requiredCleanPathAliases.filter(({ path, page }) => {
+  const escapedPath = path.replace(/\//g, '\\/');
+  return !new RegExp(`['"]${escapedPath}['"]\\s*:\\s*['"]${page}['"]`).test(index);
+}).map(({ path, page }) => `${path} -> ${page}`);
+const cleanPathRouterMissing = !/const\s+cleanPagePathAliases\s*=/.test(index)
+  || !/function\s+getInitialPageFromLocation/.test(index)
+  || !/cleanPagePathAliases\[normalizeAppPath\(\)\]/.test(index)
+  || !/const\s+initialPage\s*=\s*getInitialPageFromLocation\(\)/.test(index);
+if (missingCleanPathAliases.length || cleanPathRouterMissing) {
+  fail.push({
+    name: 'Direct Netlify clean paths must open the matching Command Center page',
+    details: [
+      ...missingCleanPathAliases,
+      ...(cleanPathRouterMissing ? ['index.html missing clean path startup router contract'] : []),
+    ],
   });
 }
 
@@ -421,6 +481,11 @@ const report = {
       name: 'Page navigation targets exist',
       ok: missingPages.length === 0 && missingShowPageTargets.length === 0,
       count: navPages.length,
+    },
+    {
+      name: 'Direct Netlify clean paths open matching pages',
+      ok: missingCleanPathAliases.length === 0 && !cleanPathRouterMissing,
+      count: requiredCleanPathAliases.length,
     },
     {
       name: 'Buttons are accessible',

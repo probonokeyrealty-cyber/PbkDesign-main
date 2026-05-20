@@ -12413,6 +12413,52 @@
     recordings: 'Call Recordings'
   };
 
+  const cleanPagePathAliases = Object.freeze({
+    '/': 'dashboard',
+    '/dashboard': 'dashboard',
+    '/command-center': 'dashboard',
+    '/inbox': 'inbox',
+    '/leads': 'leads',
+    '/pipeline': 'leads',
+    '/deals': 'analyzer',
+    '/deals/analyzer': 'analyzer',
+    '/analyzer': 'analyzer',
+    '/agents': 'agent',
+    '/agent': 'agent',
+    '/agent-console': 'agent',
+    '/fleet': 'fleet',
+    '/calls': 'calls',
+    '/live-calls': 'calls',
+    '/contracts': 'contracts',
+    '/automations': 'automations',
+    '/analytics': 'analytics',
+    '/campaigns': 'campaigns',
+    '/campaign-detail': 'campaign-detail',
+    '/brain': 'brain',
+    '/research': 'brain',
+    '/memory': 'memory',
+    '/integrations': 'integrations',
+    '/settings': 'settings',
+    '/lead-detail': 'lead-detail',
+    '/activity-log': 'activity-log',
+    '/recordings': 'recordings'
+  });
+
+  function normalizeAppPath(pathname = window.location.pathname) {
+    const cleanPath = `/${String(pathname || '/')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+      .toLowerCase()}`;
+    return cleanPath === '/index.html' ? '/' : cleanPath;
+  }
+
+  function getInitialPageFromLocation() {
+    const hashPage = window.location.hash.replace(/^#/, '');
+    if (hashPage && pageLabels[hashPage]) return hashPage;
+    const pathPage = cleanPagePathAliases[normalizeAppPath()];
+    return pageLabels[pathPage] ? pathPage : 'dashboard';
+  }
+
   function syncMobileViewportLocks() {
     const topbar = document.querySelector('.topbar')?.getBoundingClientRect().height || 56;
     const mobileNav = document.getElementById('mobileNav');
@@ -29144,7 +29190,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     baseShowPage(name);
     if (pageLabels[name]) {
       const nextHash = name === 'dashboard' ? '' : `#${name}`;
-      if (window.location.hash !== nextHash) {
+      const currentPathPage = cleanPagePathAliases[normalizeAppPath()];
+      const cleanPathAlreadyNamesPage = currentPathPage === name && !window.location.hash;
+      if (!cleanPathAlreadyNamesPage && window.location.hash !== nextHash) {
         history.replaceState(null, '', `${window.location.pathname}${nextHash}`);
       }
     }
@@ -30717,9 +30765,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (pageLabels[nextPage]) showPage(nextPage);
   });
 
-  const initialHash = window.location.hash.replace(/^#/, '');
-  if (initialHash && pageLabels[initialHash]) {
-    showPage(initialHash);
+  const initialPage = getInitialPageFromLocation();
+  if (initialPage && pageLabels[initialPage]) {
+    showPage(initialPage);
   } else {
     syncAnalyzerFrame(false);
   }

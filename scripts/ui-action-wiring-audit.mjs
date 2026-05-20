@@ -11,6 +11,7 @@ const documentsPdfFunction = readFileSync(resolve(root, 'netlify/functions/docum
 const bridgeProxyFunction = readFileSync(resolve(root, 'netlify/functions/pbk-bridge-proxy.ts'), 'utf8');
 const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
 const openclawDockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
+const dockerignore = readFileSync(resolve(root, '.dockerignore'), 'utf8');
 const pkgPath = resolve(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
@@ -278,13 +279,18 @@ const renderFallbackServerMissing = !/COMMAND_CENTER_APP_PATHS/.test(bridge)
 const renderFallbackDockerMissing = !/COPY\s+index\.html\s+\.\/index\.html/.test(openclawDockerfile)
   || !/COPY\s+analyzer\.html\s+\.\/analyzer\.html/.test(openclawDockerfile)
   || !/COPY\s+public\s+\.\/public/.test(openclawDockerfile);
-if (renderFallbackPublicPathsMissing.length || renderFallbackServerMissing || renderFallbackDockerMissing) {
+const renderFallbackDockerignoreMissing = !/^!index\.html$/m.test(dockerignore)
+  || !/^!analyzer\.html$/m.test(dockerignore)
+  || !/^!public$/m.test(dockerignore)
+  || !/^!public\/\*\*$/m.test(dockerignore);
+if (renderFallbackPublicPathsMissing.length || renderFallbackServerMissing || renderFallbackDockerMissing || renderFallbackDockerignoreMissing) {
   fail.push({
     name: 'Render-hosted Command Center fallback must survive Netlify site outages',
     details: [
       ...renderFallbackPublicPathsMissing.map((publicPath) => `Bridge public path missing for ${publicPath}.`),
       ...(renderFallbackServerMissing ? ['openclaw-local-server.mjs must serve index.html/static public assets on clean app routes without changing /health.'] : []),
       ...(renderFallbackDockerMissing ? ['Dockerfile.openclaw must copy index.html, analyzer.html, and public/ into the hosted bridge image.'] : []),
+      ...(renderFallbackDockerignoreMissing ? ['.dockerignore must explicitly unignore index.html, analyzer.html, and public/** for the Render fallback image.'] : []),
     ],
   });
 }

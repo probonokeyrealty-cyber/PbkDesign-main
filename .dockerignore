@@ -42,6 +42,10 @@ n8n-lite
 !wholesale.agent.md
 !contracts
 !contracts/**
+!index.html
+!analyzer.html
+!public
+!public/**
 
 # Tests, examples, scripts that aren't the bridge
 scripts/parity-check.mjs

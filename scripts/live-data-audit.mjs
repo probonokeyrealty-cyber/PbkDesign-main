@@ -773,6 +773,10 @@ const checks = [
       && /\/api\/agents\/status/.test(productionPristineCheck)
       && /\/api\/manual\/status/.test(productionPristineCheck)
       && /\/api\/debug\/agent-thoughts/.test(productionPristineCheck) === false
+      && /\/api\/slack\/health\?force=1/.test(productionPristineCheck)
+      && /slack_interactive_bot_auth_invalid/.test(productionPristineCheck)
+      && /PBK_SLACK_BOT_TOKEN/.test(productionPristineCheck)
+      && /slackHealth/.test(productionPristineCheck)
       && /\/api\/emotion\/predict/.test(productionPristineCheck)
       && /pending_approvals_not_cleared/.test(productionPristineCheck)
       && /openclaw_gateway_not_live/.test(productionPristineCheck)

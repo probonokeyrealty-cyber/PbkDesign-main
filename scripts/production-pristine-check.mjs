@@ -115,7 +115,7 @@ function collectPendingWork(state = {}) {
   ].sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')));
 }
 
-function classifyIssues({ health, state, agents, manual, team, security, experiments, emotionPredict }) {
+function classifyIssues({ health, state, agents, manual, team, security, experiments, emotionPredict, slackHealth }) {
   const issues = [];
   if (!API_KEY) {
     issues.push(makeIssue(
@@ -158,6 +158,21 @@ function classifyIssues({ health, state, agents, manual, team, security, experim
       name === 'batchdata'
         ? 'Add PBK_BATCHDATA_API_KEY if skip-trace should be live; otherwise track as optional.'
         : `Fix ${name} provider configuration in Render env, then redeploy/restart.`,
+    ));
+  }
+
+  if (slackHealth?.slack?.notifyReady && slackHealth.slack.interactiveReady === false) {
+    issues.push(makeIssue(
+      'slack_interactive_bot_auth_invalid',
+      'medium',
+      'Slack alerts deliver, but interactive Slack buttons/thread replies are not ready.',
+      {
+        notifyReady: slackHealth.slack.notifyReady,
+        webhookReady: slackHealth.slack.webhookReady,
+        botAuthOk: slackHealth.botAuth?.ok,
+        botAuthError: slackHealth.botAuth?.error || slackHealth.slack.botAuthError || 'unknown',
+      },
+      'Rotate/update PBK_SLACK_BOT_TOKEN in Render, then rerun npm run debug:production and /api/slack/health.',
     ));
   }
 
@@ -274,6 +289,7 @@ async function main() {
   const teamResult = await requestJson('/api/auth/team/status');
   const securityResult = await requestJson('/api/security/totp/status');
   const experimentsResult = await requestJson('/api/emotion/policies/experiments');
+  const slackHealthResult = await requestJson('/api/slack/health?force=1');
   const emotionPredictResult = await requestJson('/api/emotion/predict', {
     method: 'POST',
     body: {
@@ -291,6 +307,7 @@ async function main() {
   const team = teamResult.parsed || {};
   const security = securityResult.parsed || {};
   const experiments = experimentsResult.parsed || {};
+  const slackHealth = slackHealthResult.parsed || {};
   const emotionPredict = emotionPredictResult.parsed || {};
   const pendingWork = collectPendingWork(state);
   const providerSummary = summarizeProviders(health);
@@ -311,6 +328,7 @@ async function main() {
     security,
     experiments,
     emotionPredict,
+    slackHealth,
   });
   const severityRank = { critical: 4, high: 3, medium: 2, low: 1 };
   issues.sort((left, right) => (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0));
@@ -346,6 +364,7 @@ async function main() {
         experiments: Array.isArray(experiments.experiments) ? experiments.experiments.length : 0,
         outcomes: Array.isArray(experiments.outcomes) ? experiments.outcomes.length : 0,
       },
+      slack: slackHealth.slack || null,
       emotionPredict: {
         modelProvider: emotionPredict.modelProvider || null,
         model: emotionPredict.model || null,

@@ -76,6 +76,9 @@ RUN python3 -m venv /app/.venv \
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
+COPY index.html ./index.html
+COPY analyzer.html ./analyzer.html
+COPY public ./public
 COPY contracts ./contracts
 COPY wholesale.agent.md ./wholesale.agent.md
 

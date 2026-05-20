@@ -10,6 +10,7 @@ const publicAvaFunction = readFileSync(resolve(root, 'netlify/functions/public-a
 const documentsPdfFunction = readFileSync(resolve(root, 'netlify/functions/documents-pdf.ts'), 'utf8');
 const bridgeProxyFunction = readFileSync(resolve(root, 'netlify/functions/pbk-bridge-proxy.ts'), 'utf8');
 const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
+const openclawDockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
 const pkgPath = resolve(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
@@ -254,6 +255,37 @@ if (runtimeBridgeFallbackMissing) {
   fail.push({
     name: 'React runtime bridge must share production config and Netlify exhaustion fallback',
     details: ['runtimeBridge.ts must read the namespaced Command Center config and retry direct Render when same-origin Netlify functions are exhausted.'],
+  });
+}
+
+const renderAppFallbackPaths = [
+  '/app',
+  '/dashboard',
+  '/settings',
+  '/leads',
+  '/contracts',
+  '/campaigns',
+  '/brain',
+  '/approvals',
+];
+const renderFallbackPublicPathsMissing = renderAppFallbackPaths
+  .filter((publicPath) => !new RegExp(`['"]${publicPath.replace(/\//g, '\\/')}['"]`).test(bridge));
+const renderFallbackServerMissing = !/COMMAND_CENTER_APP_PATHS/.test(bridge)
+  || !/maybeServeRenderCommandCenter/.test(bridge)
+  || !/sendPublicStaticFile/.test(bridge)
+  || !/path\.join\(ROOT_DIR,\s*['"]index\.html['"]\)/.test(bridge)
+  || !/path\.join\(ROOT_DIR,\s*['"]public['"],\s*['"]ava-chat-widget\.js['"]\)/.test(bridge);
+const renderFallbackDockerMissing = !/COPY\s+index\.html\s+\.\/index\.html/.test(openclawDockerfile)
+  || !/COPY\s+analyzer\.html\s+\.\/analyzer\.html/.test(openclawDockerfile)
+  || !/COPY\s+public\s+\.\/public/.test(openclawDockerfile);
+if (renderFallbackPublicPathsMissing.length || renderFallbackServerMissing || renderFallbackDockerMissing) {
+  fail.push({
+    name: 'Render-hosted Command Center fallback must survive Netlify site outages',
+    details: [
+      ...renderFallbackPublicPathsMissing.map((publicPath) => `Bridge public path missing for ${publicPath}.`),
+      ...(renderFallbackServerMissing ? ['openclaw-local-server.mjs must serve index.html/static public assets on clean app routes without changing /health.'] : []),
+      ...(renderFallbackDockerMissing ? ['Dockerfile.openclaw must copy index.html, analyzer.html, and public/ into the hosted bridge image.'] : []),
+    ],
   });
 }
 

@@ -534,6 +534,43 @@ const PUBLIC_PATHS = new Set([
   '/status',
   '/api/health',
   '/api/status',
+  // Render-hosted Command Center fallback. Netlify is still the preferred
+  // shell, but these public static routes keep the app usable during Netlify
+  // quota/outage windows without opening any protected API routes.
+  '/app',
+  '/command-center',
+  '/dashboard',
+  '/settings',
+  '/inbox',
+  '/leads',
+  '/pipeline',
+  '/deals',
+  '/deals/analyzer',
+  '/analyzer',
+  '/agents',
+  '/agent',
+  '/agent-console',
+  '/fleet',
+  '/calls',
+  '/live-calls',
+  '/contracts',
+  '/automations',
+  '/analytics',
+  '/campaigns',
+  '/campaign-detail',
+  '/brain',
+  '/research',
+  '/memory',
+  '/integrations',
+  '/lead-detail',
+  '/activity-log',
+  '/recordings',
+  '/approvals',
+  '/approval',
+  '/analyzer.html',
+  '/PBK_Master_Deal_Package.html',
+  '/ava-chat-widget.js',
+  '/pbk-brain-query.html',
   // Provider webhooks cannot attach the PBK bridge bearer token. Keep these
   // open while each handler validates and maps only the expected payload shape.
   '/api/webhooks/telnyx',
@@ -31976,6 +32013,95 @@ function sendBinary(response, statusCode, body, headers = {}) {
   response.end(body);
 }
 
+const COMMAND_CENTER_APP_PATHS = new Set([
+  '/app',
+  '/command-center',
+  '/dashboard',
+  '/settings',
+  '/inbox',
+  '/leads',
+  '/pipeline',
+  '/deals',
+  '/deals/analyzer',
+  '/analyzer',
+  '/agents',
+  '/agent',
+  '/agent-console',
+  '/fleet',
+  '/calls',
+  '/live-calls',
+  '/contracts',
+  '/automations',
+  '/analytics',
+  '/campaigns',
+  '/campaign-detail',
+  '/brain',
+  '/research',
+  '/memory',
+  '/integrations',
+  '/lead-detail',
+  '/activity-log',
+  '/recordings',
+  '/approvals',
+  '/approval',
+]);
+
+const RENDER_PUBLIC_STATIC_FILES = new Map([
+  ['/analyzer.html', { filePath: path.join(ROOT_DIR, 'analyzer.html'), contentType: 'text/html; charset=utf-8' }],
+  ['/PBK_Master_Deal_Package.html', { filePath: path.join(ROOT_DIR, 'public', 'PBK_Master_Deal_Package.html'), contentType: 'text/html; charset=utf-8' }],
+  ['/ava-chat-widget.js', { filePath: path.join(ROOT_DIR, 'public', 'ava-chat-widget.js'), contentType: 'application/javascript; charset=utf-8' }],
+  ['/pbk-brain-query.html', { filePath: path.join(ROOT_DIR, 'public', 'pbk-brain-query.html'), contentType: 'text/html; charset=utf-8' }],
+]);
+
+function sendPublicStaticFile(response, filePath, contentType) {
+  if (!existsSync(filePath)) {
+    json(response, 404, {
+      ok: false,
+      error: 'static_asset_missing',
+      path: path.relative(ROOT_DIR, filePath).replace(/\\/g, '/'),
+    });
+    return;
+  }
+  const body = readFileSync(filePath);
+  const headers = {
+    'Content-Type': contentType,
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
+    'Cache-Control': 'public, max-age=60',
+    Vary: 'Accept-Encoding',
+  };
+  if (response.pbkAcceptsGzip && body.length >= 2048) {
+    const compressed = gzipSync(body);
+    response.writeHead(200, {
+      ...headers,
+      'Content-Encoding': 'gzip',
+      'Content-Length': String(compressed.length),
+    });
+    response.end(compressed);
+    return;
+  }
+  response.writeHead(200, {
+    ...headers,
+    'Content-Length': String(body.length),
+  });
+  response.end(body);
+}
+
+function maybeServeRenderCommandCenter(request, response, pathname) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return false;
+  if (COMMAND_CENTER_APP_PATHS.has(pathname)) {
+    sendPublicStaticFile(response, path.join(ROOT_DIR, 'index.html'), 'text/html; charset=utf-8');
+    return true;
+  }
+  const staticAsset = RENDER_PUBLIC_STATIC_FILES.get(pathname);
+  if (staticAsset) {
+    sendPublicStaticFile(response, staticAsset.filePath, staticAsset.contentType);
+    return true;
+  }
+  return false;
+}
+
 function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}) {
   const voiceId = String(body.voiceId || body.voice_id || ELEVENLABS_VOICE_ID).trim();
   const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
@@ -34514,6 +34640,8 @@ const server = createServer(async (request, response) => {
   if (enforceTotp(request, response, pathname)) return;
 
   try {
+    if (maybeServeRenderCommandCenter(request, response, pathname)) return;
+
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();
       const commandCenterHealth = buildCommandCenterHealthSnapshot(runtimeMeta);

@@ -101,6 +101,17 @@ const defaultAgentFleetBlock = bridge.match(/function buildDefaultAgentFleet\(\)
 
 const checks = [
   {
+    name: 'Brain page uses operator-friendly language for core research actions',
+    ok: /PBK Brain - research, scripts, memory, and market notes/.test(index)
+      && /This is PBK's shared memory/.test(index)
+      && />Update Brain</.test(index)
+      && />Research Web</.test(index)
+      && />Export Notes</.test(index)
+      && />Connection Help</.test(index)
+      && />\+ Add Source</.test(index)
+      && /Ask Rex about leads, scripts, deals, market notes, or the next best move/.test(index),
+  },
+  {
     name: 'Lead table renders live bridge leads',
     ok: /function\s+renderRuntimeLeads/.test(index) && /getRuntimeLeads\(snapshot\)/.test(index),
   },
@@ -806,7 +817,8 @@ const checks = [
       && /listenVersion:\s*isDeepgramFluxModel\(normalizedModel\)\s*\?\s*'v2'\s*:\s*'v1'/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL/.test(bridge)
       && /normalizeBrowserVoiceDeepgramModel/.test(bridge)
-      && /nova-2-general/.test(bridge)
+      && /nova-2-meeting/.test(bridge)
+      && /model\s*===\s*'nova-2-general'\)\s*return\s*'nova-2-meeting'/.test(bridge)
       && /deepgram:\$\{normalizedModel\}/.test(bridge)
       && !/deepgram-nova-v1/.test(bridge)
       && /manualWebSocket:\s*true/.test(bridge)

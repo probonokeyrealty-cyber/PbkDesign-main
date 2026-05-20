@@ -244,10 +244,10 @@ const BROWSER_VOICE_SESSION_TTL_MS = Math.max(60000, Number(process.env.PBK_BROW
 const BROWSER_VOICE_ENCODING = String(process.env.PBK_BROWSER_VOICE_ENCODING || 'opus').trim();
 const BROWSER_VOICE_SAMPLE_RATE = Math.max(8000, Number(process.env.PBK_BROWSER_VOICE_SAMPLE_RATE || 48000));
 const BROWSER_VOICE_DEEPGRAM_MODEL = normalizeBrowserVoiceDeepgramModel(
-  process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || process.env.DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2-general',
+  process.env.PBK_DEEPGRAM_BROWSER_LIVE_MODEL || process.env.DEEPGRAM_BROWSER_LIVE_MODEL || 'nova-2-meeting',
 );
 const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = normalizeBrowserVoiceDeepgramModel(
-  process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || process.env.DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2-general',
+  process.env.PBK_DEEPGRAM_BROWSER_FALLBACK_MODEL || process.env.DEEPGRAM_BROWSER_FALLBACK_MODEL || 'nova-2-meeting',
 );
 const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.env.PBK_BROWSER_VOICE_AUTO_REPLY_MS || 1250)));
 const BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS = Math.max(1200, Math.min(7000, Number(process.env.PBK_BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS || 2600)));
@@ -33200,7 +33200,7 @@ function normalizeAvaVoiceReplyText(text = '', fallback = '') {
   return `${clean} Let me ask one clean question so I do not guess wrong: what matters most right now, speed, certainty, or price?`;
 }
 
-function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2-general') {
+function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2-meeting') {
   const raw = String(value || '').trim();
   if (!raw) return fallback;
   const model = raw
@@ -33211,6 +33211,7 @@ function normalizeBrowserVoiceDeepgramModel(value = '', fallback = 'nova-2-gener
   if (!model) return fallback;
   if (/^nova[-_]?v?1$/i.test(model) || model === 'nova-v1') return fallback;
   if (model === 'flux-v2') return 'flux-general-en';
+  if (model === 'nova-2-general') return 'nova-2-meeting';
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(model)) return fallback;
   return model;
 }

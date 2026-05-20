@@ -84,6 +84,33 @@ function buildLocalBridgeFallback() {
   };
 }
 
+function getStorageEnvironment() {
+  if (typeof window === 'undefined') return 'local';
+  const host = String(window.location.hostname || 'local').toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1') return 'local';
+  if (host.includes('pbkcommandcenter') || host.endsWith('.netlify.app')) return 'prod';
+  return host.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'local';
+}
+
+function readRuntimeConfigFromStorage(): RuntimeConfig | null {
+  if (typeof window === 'undefined') return null;
+  const keys = [
+    `pbk:${getStorageEnvironment()}:openclaw-config`,
+    'pbk-openclaw-config',
+  ];
+  for (const key of keys) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed?.endpoint) return parsed;
+    } catch {
+      // ignore localStorage parsing failure
+    }
+  }
+  return null;
+}
+
 function getEnvRuntimeConfig(): RuntimeConfig | null {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
   const endpoint =
@@ -106,20 +133,13 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   if (fromHost?.endpoint) return fromHost;
 
-  try {
-    const raw = window.localStorage.getItem('pbk-openclaw-config');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed?.endpoint) {
-        const localFallback = buildLocalBridgeFallback();
-        if (localFallback && !parsed.apiKey && String(parsed.endpoint) !== String(localFallback.endpoint)) {
-          return localFallback;
-        }
-        return parsed;
-      }
+  const stored = readRuntimeConfigFromStorage();
+  if (stored?.endpoint) {
+    const localFallback = buildLocalBridgeFallback();
+    if (localFallback && !stored.apiKey && String(stored.endpoint) !== String(localFallback.endpoint)) {
+      return localFallback;
     }
-  } catch {
-    // ignore localStorage parsing failure
+    return stored;
   }
 
   const localFallback = buildLocalBridgeFallback();
@@ -200,12 +220,18 @@ export async function bridgeRequest<T = unknown>({
 }: BridgeRequestOptions): Promise<T> {
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
   const canKeepalive = method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
-  const response = await fetch(buildUrl(path), {
+  const requestUrl = buildUrl(path);
+  const init = {
     method,
     headers: buildHeaders(body !== undefined && method !== 'GET'),
     body: serializedBody,
     keepalive: keepalive ?? canKeepalive,
-  });
+  };
+  let response = await fetch(requestUrl, init);
+  if (await shouldRetryRuntimeViaHosted(response, requestUrl)) {
+    const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
+    if (fallbackUrl) response = await fetch(fallbackUrl, init);
+  }
 
   const text = await response.text();
   let parsed: unknown = text;
@@ -224,6 +250,30 @@ export async function bridgeRequest<T = unknown>({
   }
 
   return parsed as T;
+}
+
+function isNetlifyHostedRuntimeShell() {
+  if (typeof window === 'undefined') return false;
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host.includes('pbkcommandcenter') || host.endsWith('.netlify.app');
+}
+
+function buildHostedRuntimeFallbackUrl(url = '') {
+  if (!isNetlifyHostedRuntimeShell()) return '';
+  try {
+    const current = new URL(url, window.location.href);
+    if (current.origin !== window.location.origin) return '';
+    return new URL(`${current.pathname}${current.search}`, `${DEFAULT_HOSTED_BRIDGE_ENDPOINT}/`).toString();
+  } catch {
+    return '';
+  }
+}
+
+async function shouldRetryRuntimeViaHosted(response: Response, url = '') {
+  if (!buildHostedRuntimeFallbackUrl(url)) return false;
+  if (response.status !== 503) return false;
+  const text = await response.clone().text().catch(() => '');
+  return /usage_exceeded/i.test(text) || /Usage exceeded/i.test(text);
 }
 
 export async function invokeRuntimeTool<T = unknown>(toolName: string, params: Record<string, unknown> = {}) {

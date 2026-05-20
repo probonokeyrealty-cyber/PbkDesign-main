@@ -15019,8 +15019,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return String(endpoint).trim().replace(/\/+$/, '');
   }
 
+  const HOSTED_OPENCLAW_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com';
+
   function buildDefaultOpenClawEndpoint() {
-    const hostedEndpoint = 'https://pbk-openclaw-bridge.onrender.com';
     const host = window.location.hostname;
     if (host === '127.0.0.1' || host === 'localhost') {
       return window.location.origin;
@@ -15028,7 +15029,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (host.includes('pbkcommandcenter') || host.endsWith('.netlify.app')) {
       return window.location.origin;
     }
-    return hostedEndpoint;
+    return HOSTED_OPENCLAW_ENDPOINT;
   }
 
   const DEFAULT_OPENCLAW_ENDPOINT = normalizeOpenClawEndpoint(buildDefaultOpenClawEndpoint());
@@ -15650,18 +15651,52 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function fetchWithTimeout(url, init = {}, timeout = 6000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
+    const requestUrl = String(url || '');
+    const runFetch = (targetUrl) => fetch(targetUrl, {
+      ...init,
+      keepalive: init.keepalive ?? (
+        !['GET', 'HEAD'].includes(String(init.method || 'GET').toUpperCase())
+        && (!init.body || (typeof init.body === 'string' && init.body.length < 60000))
+      ),
+      signal: controller.signal
+    });
     try {
-      return await fetch(url, {
-        ...init,
-        keepalive: init.keepalive ?? (
-          !['GET', 'HEAD'].includes(String(init.method || 'GET').toUpperCase())
-          && (!init.body || (typeof init.body === 'string' && init.body.length < 60000))
-        ),
-        signal: controller.signal
-      });
+      const response = await runFetch(requestUrl);
+      if (await shouldRetryOpenClawViaHosted(response, requestUrl)) {
+        const fallbackUrl = buildHostedOpenClawFallbackUrl(requestUrl);
+        if (fallbackUrl) return await runFetch(fallbackUrl);
+      }
+      return response;
+    } catch (error) {
+      const fallbackUrl = buildHostedOpenClawFallbackUrl(requestUrl);
+      if (fallbackUrl) return await runFetch(fallbackUrl);
+      throw error;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  function isNetlifyHostedShell() {
+    const host = String(window.location.hostname || '').toLowerCase();
+    return host.includes('pbkcommandcenter') || host.endsWith('.netlify.app');
+  }
+
+  function buildHostedOpenClawFallbackUrl(url = '') {
+    if (!isNetlifyHostedShell()) return '';
+    try {
+      const current = new URL(url, window.location.href);
+      if (current.origin !== window.location.origin) return '';
+      return new URL(`${current.pathname}${current.search}`, `${HOSTED_OPENCLAW_ENDPOINT}/`).toString();
+    } catch {
+      return '';
+    }
+  }
+
+  async function shouldRetryOpenClawViaHosted(response, url = '') {
+    if (!response || !buildHostedOpenClawFallbackUrl(url)) return false;
+    if (response.status !== 503) return false;
+    const text = await response.clone().text().catch(() => '');
+    return /usage_exceeded/i.test(text) || /Usage exceeded/i.test(text);
   }
 
   async function probeOpenClaw(config) {

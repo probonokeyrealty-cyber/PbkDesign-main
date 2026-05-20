@@ -9,6 +9,7 @@ const netlifyConfig = readFileSync(resolve(root, 'netlify.toml'), 'utf8');
 const publicAvaFunction = readFileSync(resolve(root, 'netlify/functions/public-ava-chat.ts'), 'utf8');
 const documentsPdfFunction = readFileSync(resolve(root, 'netlify/functions/documents-pdf.ts'), 'utf8');
 const bridgeProxyFunction = readFileSync(resolve(root, 'netlify/functions/pbk-bridge-proxy.ts'), 'utf8');
+const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
 const pkgPath = resolve(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
@@ -234,10 +235,25 @@ if (missingBridgeProxyRoutes.length || bridgeProxyUnsafe) {
 
 if (!/host\.includes\('pbkcommandcenter'\) \|\| host\.endsWith\('\.netlify\.app'\)/.test(index)
   || !/PBK hosted bridge proxy is preconfigured through Netlify/.test(index)
-  || !/currentHost\.includes\('pbkcommandcenter'\) \|\| currentHost\.endsWith\('\.netlify\.app'\)/.test(index)) {
+  || !/currentHost\.includes\('pbkcommandcenter'\) \|\| currentHost\.endsWith\('\.netlify\.app'\)/.test(index)
+  || !/HOSTED_OPENCLAW_ENDPOINT/.test(index)
+  || !/shouldRetryOpenClawViaHosted/.test(index)
+  || !/buildHostedOpenClawFallbackUrl/.test(index)
+  || !/usage_exceeded/i.test(index)) {
   fail.push({
-    name: 'Netlify production shell must default to the same-origin hosted bridge proxy',
-    details: ['index.html must default Netlify hosts to window.location.origin and still require the bridge key for protected routes.'],
+    name: 'Netlify production shell must survive hosted function exhaustion',
+    details: ['index.html must default Netlify hosts to window.location.origin, keep bridge-key auth, and retry direct Render when Netlify returns usage_exceeded.'],
+  });
+}
+
+const runtimeBridgeFallbackMissing = !/pbk:\$\{getStorageEnvironment\(\)\}:openclaw-config/.test(runtimeBridge)
+  || !/shouldRetryRuntimeViaHosted/.test(runtimeBridge)
+  || !/buildHostedRuntimeFallbackUrl/.test(runtimeBridge)
+  || !/usage_exceeded/i.test(runtimeBridge);
+if (runtimeBridgeFallbackMissing) {
+  fail.push({
+    name: 'React runtime bridge must share production config and Netlify exhaustion fallback',
+    details: ['runtimeBridge.ts must read the namespaced Command Center config and retry direct Render when same-origin Netlify functions are exhausted.'],
   });
 }
 
@@ -480,6 +496,11 @@ const report = {
       name: 'Netlify same-origin API paths route to functions',
       ok: missingNetlifyFunctionRoutes.length === 0,
       count: requiredNetlifyFunctionRoutes.length,
+    },
+    {
+      name: 'Netlify function exhaustion falls back to direct Render',
+      ok: !runtimeBridgeFallbackMissing,
+      count: 2,
     },
     {
       name: 'Netlify direct app links fall back to the SPA shell',

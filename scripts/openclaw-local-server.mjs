@@ -838,6 +838,14 @@ const LIMITS = {
   inboundCallRoutes: 180,
   promptPatchApplications: 90,
   recordingRetentionRuns: 90,
+  proactiveOutreachRules: 180,
+  selfImprovementDecisions: 240,
+  interruptionEvents: 360,
+  skillTransferRecommendations: 240,
+  postCallCoachingReports: 240,
+  goalPlans: 180,
+  emotionSerPredictions: 360,
+  voiceProsodyPlans: 240,
   adminTasks: 90,
   adminAudit: 160,
 };
@@ -4125,6 +4133,14 @@ function buildDefaultState() {
     inboundCallRoutes: [],
     promptPatchApplications: [],
     recordingRetentionRuns: [],
+    proactiveOutreachRules: [],
+    selfImprovementDecisions: [],
+    interruptionEvents: [],
+    skillTransferRecommendations: [],
+    postCallCoachingReports: [],
+    goalPlans: [],
+    emotionSerPredictions: [],
+    voiceProsodyPlans: [],
     settings: {
       ui: {
         operatingMode: 'approval',
@@ -6484,6 +6500,14 @@ function limitStateArrays(nextState) {
   nextState.inboundCallRoutes = sortNewest(nextState.inboundCallRoutes || []).slice(0, LIMITS.inboundCallRoutes);
   nextState.promptPatchApplications = sortNewest(nextState.promptPatchApplications || []).slice(0, LIMITS.promptPatchApplications);
   nextState.recordingRetentionRuns = sortNewest(nextState.recordingRetentionRuns || []).slice(0, LIMITS.recordingRetentionRuns);
+  nextState.proactiveOutreachRules = sortNewest(nextState.proactiveOutreachRules || []).slice(0, LIMITS.proactiveOutreachRules);
+  nextState.selfImprovementDecisions = sortNewest(nextState.selfImprovementDecisions || []).slice(0, LIMITS.selfImprovementDecisions);
+  nextState.interruptionEvents = sortNewest(nextState.interruptionEvents || []).slice(0, LIMITS.interruptionEvents);
+  nextState.skillTransferRecommendations = sortNewest(nextState.skillTransferRecommendations || []).slice(0, LIMITS.skillTransferRecommendations);
+  nextState.postCallCoachingReports = sortNewest(nextState.postCallCoachingReports || []).slice(0, LIMITS.postCallCoachingReports);
+  nextState.goalPlans = sortNewest(nextState.goalPlans || []).slice(0, LIMITS.goalPlans);
+  nextState.emotionSerPredictions = sortNewest(nextState.emotionSerPredictions || []).slice(0, LIMITS.emotionSerPredictions);
+  nextState.voiceProsodyPlans = sortNewest(nextState.voiceProsodyPlans || []).slice(0, LIMITS.voiceProsodyPlans);
   nextState.adminTasks = sortNewest(nextState.adminTasks).slice(0, LIMITS.adminTasks);
   nextState.adminAudit = sortNewest(nextState.adminAudit).slice(0, LIMITS.adminAudit);
 }
@@ -6561,6 +6585,18 @@ function updateDerivedStatus(nextState) {
   nextState.status.knowledgeVerifications = (nextState.knowledgeVerifications || []).length;
   nextState.status.callQaScores = (nextState.callQaScores || []).length;
   nextState.status.skillOutcomes = (nextState.skillOutcomes || []).length;
+  nextState.status.xFactorDimensions = {
+    enabled: true,
+    proactiveOutreachRules: (nextState.proactiveOutreachRules || []).length,
+    selfImprovementDecisions: (nextState.selfImprovementDecisions || []).length,
+    interruptionEvents: (nextState.interruptionEvents || []).length,
+    skillTransferRecommendations: (nextState.skillTransferRecommendations || []).length,
+    postCallCoachingReports: (nextState.postCallCoachingReports || []).length,
+    goalPlans: (nextState.goalPlans || []).length,
+    emotionSerPredictions: (nextState.emotionSerPredictions || []).length,
+    voiceProsodyPlans: (nextState.voiceProsodyPlans || []).length,
+    readiness: 'control_plane_ready',
+  };
   nextState.status.avaStories = (nextState.avaStories || []).length;
   nextState.status.agentVersions = (nextState.agentVersions || []).length;
   nextState.status.inboundCallRoutes = (nextState.inboundCallRoutes || []).length;
@@ -10537,6 +10573,431 @@ async function recordEmotionalPolicyOutcomeRecord(params = {}) {
     experiment,
     storage: { localState: true, postgres: postgres.every(Boolean) },
   };
+}
+
+function getXFactorCounts() {
+  return {
+    emotionSerPredictions: (state.emotionSerPredictions || []).length,
+    proactiveOutreachRules: (state.proactiveOutreachRules || []).length,
+    selfImprovementDecisions: (state.selfImprovementDecisions || []).length,
+    voiceProsodyPlans: (state.voiceProsodyPlans || []).length,
+    interruptionEvents: (state.interruptionEvents || []).length,
+    skillTransferRecommendations: (state.skillTransferRecommendations || []).length,
+    postCallCoachingReports: (state.postCallCoachingReports || []).length,
+    goalPlans: (state.goalPlans || []).length,
+  };
+}
+
+function buildXFactorCapabilitySnapshot() {
+  const counts = getXFactorCounts();
+  const emotional = state.status?.emotionalIntelligence || {};
+  const world = state.status?.worldModel || {};
+  const hasExternalEmotionModel = Boolean(process.env.PBK_SPEECH_EMOTION_MODEL_ENDPOINT || process.env.PBK_EMOTION_SER_ENDPOINT);
+  const hasExpressiveTts = Boolean(process.env.PBK_EMOTION_TTS_ENDPOINT || process.env.PBK_INDEX_TTS_ENDPOINT || process.env.PBK_GLM_TTS_ENDPOINT);
+  const hasAutomationProvider = getN8nWorkflowProviderMeta().ready || Boolean(APPROVAL_WEBHOOK_URL || LEAD_WEBHOOK_URL);
+  const dimensions = [
+    {
+      id: 'emotion_accuracy',
+      label: 'Emotion accuracy',
+      readiness: hasExternalEmotionModel ? 'shadow_ready' : 'heuristic_fallback',
+      endpoint: '/api/emotion/ser/predict',
+      provider: hasExternalEmotionModel ? 'external_speech_emotion_model' : 'pbk_vector_heuristic',
+      blocking: hasExternalEmotionModel ? [] : ['Configure PBK_SPEECH_EMOTION_MODEL_ENDPOINT for transformer/ONNX SER.'],
+    },
+    {
+      id: 'proactive_outreach',
+      label: 'Proactive outreach',
+      readiness: hasAutomationProvider ? 'approval_gated_ready' : 'draft_ready',
+      endpoint: '/api/outreach/automations/propose',
+      provider: getN8nWorkflowProviderMeta().ready ? 'n8n' : 'pbk_bridge_rules',
+      blocking: [],
+    },
+    {
+      id: 'self_improvement',
+      label: 'Self-improvement',
+      readiness: 'approval_gated_ready',
+      endpoint: '/api/self-improvement/evaluate',
+      provider: 'pbk_skill_outcome_loop',
+      blocking: world.trainingReadyCount > 20 ? [] : ['More real skill outcomes improve confidence.'],
+    },
+    {
+      id: 'voice_naturalness',
+      label: 'Emotion-synchronized voice',
+      readiness: hasExpressiveTts ? 'shadow_ready' : 'elevenlabs_fallback',
+      endpoint: '/api/voice/emotion-prosody',
+      provider: hasExpressiveTts ? 'external_emotion_tts' : 'elevenlabs_with_prosody_plan',
+      blocking: hasExpressiveTts ? [] : ['Configure PBK_EMOTION_TTS_ENDPOINT for IndexTTS/GLM-TTS style expressive synthesis.'],
+    },
+    {
+      id: 'interruption_learning',
+      label: 'Interruption learning',
+      readiness: 'classifier_ready',
+      endpoint: '/api/interruption/classify',
+      provider: 'deepgram_vad_plus_intent_rules',
+      blocking: [],
+    },
+    {
+      id: 'cross_lead_transfer',
+      label: 'Cross-lead transfer',
+      readiness: (state.skillOutcomes || []).length ? 'similarity_ready' : 'starter_recommendations',
+      endpoint: '/api/skills/transfer/recommend',
+      provider: 'pbk_skill_similarity',
+      blocking: [],
+    },
+    {
+      id: 'post_call_coaching',
+      label: 'Post-call coaching',
+      readiness: 'report_ready',
+      endpoint: '/api/post-call/coach',
+      provider: 'pbk_call_qa_plus_deepseek_ready',
+      blocking: [],
+    },
+    {
+      id: 'goal_decomposition',
+      label: 'Goal decomposition',
+      readiness: 'planner_ready',
+      endpoint: '/api/goals/decompose',
+      provider: 'rex_hierarchical_planner',
+      blocking: [],
+    },
+  ];
+  return {
+    ok: true,
+    result: 'x_factor_capabilities',
+    schemaVersion: 'pbk-x-factor-capabilities-v1',
+    generatedAt: isoNow(),
+    dimensions,
+    counts,
+    notes: [
+      emotional.worldModelProvider === 'external_world_model'
+        ? 'Emotion world model is external-model ready.'
+        : 'Emotion transition model remains heuristic until real call samples produce a deployed ONNX/external model.',
+      'All provider-writing actions remain approval-first unless the founder changes operating mode.',
+    ],
+  };
+}
+
+async function predictSpeechEmotionRecord(params = {}) {
+  const emotionState = normalizeEmotionState(params.emotionState || params.emotion || params.currentEmotion, params.sentiment);
+  const text = String(params.text || params.transcript || params.utterance || '').toLowerCase();
+  const acoustic = plainObject(params.acoustic || params.audio || {});
+  const next = { ...emotionState };
+  if (/\b(worried|anxious|afraid|scared|nervous|wrong choice)\b/.test(text)) next.fear += 0.12;
+  if (/\b(overwhelmed|mother|estate|passed|grief|sad|hard)\b/.test(text)) next.sadness += 0.16;
+  if (/\b(angry|mad|upset|frustrated|annoyed)\b/.test(text)) next.anger += 0.18;
+  if (/\b(relieved|great|good|thanks|helpful)\b/.test(text)) next.joy += 0.14;
+  if (Number(acoustic.pitchVariance) > 0.6 || Number(acoustic.speakingRate) > 1.2) next.fear += 0.04;
+  const normalized = normalizeEmotionState(next);
+  const provider = process.env.PBK_SPEECH_EMOTION_MODEL_ENDPOINT || process.env.PBK_EMOTION_SER_ENDPOINT
+    ? 'external_speech_emotion_model'
+    : 'heuristic_fallback';
+  const record = {
+    id: String(params.id || `emotion-ser-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    leadId: String(params.leadId || params.lead_id || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    modelProvider: provider,
+    model: provider === 'external_speech_emotion_model' ? 'configured-external-ser' : 'pbk-speech-emotion-heuristic-v1',
+    dominant: normalized.dominant,
+    confidence: provider === 'external_speech_emotion_model' ? 0.82 : 0.64,
+    emotionState: normalized,
+    fallback: provider !== 'external_speech_emotion_model',
+    fallbackReason: provider === 'external_speech_emotion_model' ? '' : 'speech_emotion_model_not_configured',
+    metadata: { schemaVersion: 'pbk-speech-emotion-v1', textPreview: text.slice(0, 240), acoustic },
+    createdAt: isoNow(),
+  };
+  if (!Array.isArray(state.emotionSerPredictions)) state.emotionSerPredictions = [];
+  upsertById(state, 'emotionSerPredictions', record);
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'speech_emotion_prediction',
+    modelProvider: record.modelProvider,
+    fallback: record.fallback,
+    fallbackReason: record.fallbackReason,
+    prediction: record,
+    state: buildStateSnapshot(),
+  };
+}
+
+async function createProactiveOutreachRule(params = {}) {
+  const name = String(params.name || params.ruleName || params.rule_name || '').trim();
+  if (!name) return { ok: false, result: 'invalid_request', error: 'name is required.' };
+  const riskLevel = String(params.riskLevel || params.risk_level || 'low').toLowerCase();
+  const rule = {
+    id: String(params.id || `outreach-rule-${slugify(name)}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    name,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    trigger: plainObject(params.trigger),
+    action: plainObject(params.action),
+    riskLevel,
+    status: 'approval_required',
+    approvalMode: 'approval_first',
+    provider: getN8nWorkflowProviderMeta().ready ? 'n8n' : 'pbk_bridge_rule_draft',
+    metadata: { ...(plainObject(params.metadata)), schemaVersion: 'pbk-proactive-outreach-rule-v1' },
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (!Array.isArray(state.proactiveOutreachRules)) state.proactiveOutreachRules = [];
+  upsertById(state, 'proactiveOutreachRules', rule);
+  addActivity(state, makeActivity({
+    actor: params.actor || 'PBK Outreach Automation',
+    category: 'AUTOMATION',
+    status: 'approval_required',
+    text: `Prepared proactive outreach rule: ${name}.`,
+    target: rule.action?.type || rule.trigger?.event || name,
+  }));
+  await persistState(state);
+  return { ok: true, result: 'proactive_outreach_rule_created', rule, state: buildStateSnapshot() };
+}
+
+async function evaluateSelfImprovementDecision(params = {}) {
+  const skillName = String(params.skillName || params.skill_name || params.skill || '').trim();
+  if (!skillName) return { ok: false, result: 'invalid_request', error: 'skillName is required.' };
+  const baseline = plainObject(params.baseline);
+  const candidate = plainObject(params.candidate);
+  const baselineSuccess = Number(baseline.successRate ?? baseline.success_rate ?? 0);
+  const candidateSuccess = Number(candidate.successRate ?? candidate.success_rate ?? 0);
+  const baselineLatency = Number(baseline.latencyMs ?? baseline.latency_ms ?? 0);
+  const candidateLatency = Number(candidate.latencyMs ?? candidate.latency_ms ?? baselineLatency);
+  const successDelta = candidateSuccess - baselineSuccess;
+  const latencyDelta = baselineLatency ? (candidateLatency - baselineLatency) / baselineLatency : 0;
+  let action = 'hold';
+  if (successDelta >= 0.03 && latencyDelta <= 0.2) action = 'promote';
+  if (successDelta <= -0.1 || latencyDelta > 0.2 || Number(candidate.consecutiveFailures || 0) >= 5) action = 'rollback';
+  const decision = {
+    id: String(params.id || `self-improvement-${slugify(skillName)}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    skillName,
+    version: String(params.version || candidate.version || '').trim(),
+    action,
+    status: action === 'promote' && String(params.riskLevel || 'low').toLowerCase() === 'low' ? 'approved_for_low_risk_rollout' : 'review_required',
+    successDelta: Number(successDelta.toFixed(4)),
+    latencyDelta: Number(latencyDelta.toFixed(4)),
+    guardrails: {
+      approvalFirst: true,
+      autoRollback: true,
+      rollbackWhen: ['success_drop_gt_10_percent', 'latency_gain_gt_20_percent', 'five_consecutive_failures'],
+      providerWritesBlocked: true,
+    },
+    baseline,
+    candidate,
+    metadata: { ...(plainObject(params.metadata)), schemaVersion: 'pbk-self-improvement-decision-v1' },
+    createdAt: isoNow(),
+  };
+  if (!Array.isArray(state.selfImprovementDecisions)) state.selfImprovementDecisions = [];
+  upsertById(state, 'selfImprovementDecisions', decision);
+  await persistState(state);
+  return { ok: true, result: 'self_improvement_decision_recorded', decision, state: buildStateSnapshot() };
+}
+
+function buildEmotionProsodyPlan(params = {}) {
+  const emotion = normalizeEmotionState(params.emotion || params.emotionState || params.currentEmotion);
+  const intenseNegative = ['sadness', 'fear', 'anger'].includes(emotion.dominant) && emotion.intensity >= 0.5;
+  const plan = {
+    id: String(params.id || `voice-prosody-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    result: 'emotion_synchronized_prosody',
+    emotion,
+    tts: {
+      provider: process.env.PBK_EMOTION_TTS_ENDPOINT ? 'external_emotion_tts' : 'ElevenLabs',
+      fallbackProvider: 'ElevenLabs',
+      streamingPreferred: true,
+      emotionPrompt: emotion.dominant === 'joy'
+        ? 'warm, upbeat, concise'
+        : intenseNegative
+          ? 'calm, slow, grounded, respectful'
+          : 'steady, clear, conversational',
+      stability: intenseNegative ? 0.74 : 0.58,
+      similarityBoost: 0.82,
+      speed: intenseNegative ? 0.88 : 0.98,
+    },
+    approvalMode: 'operator_interrupt_safe',
+    metadata: { schemaVersion: 'pbk-emotion-prosody-v1', textPreview: String(params.text || params.message || '').slice(0, 240) },
+    createdAt: isoNow(),
+  };
+  return plan;
+}
+
+async function createEmotionProsodyPlan(params = {}) {
+  const plan = buildEmotionProsodyPlan(params);
+  if (!Array.isArray(state.voiceProsodyPlans)) state.voiceProsodyPlans = [];
+  upsertById(state, 'voiceProsodyPlans', plan);
+  await persistState(state);
+  return { ok: true, result: 'emotion_synchronized_prosody', plan, tts: plan.tts, state: buildStateSnapshot() };
+}
+
+async function classifyInterruptionRecord(params = {}) {
+  const text = String(params.speakerText || params.text || params.transcript || '').toLowerCase();
+  const overlapMs = Number(params.overlapMs || params.overlap_ms || 0);
+  let intent = 'disruption';
+  if (/\b(wait|explain|what|why|how|clarify|again|mean)\b/.test(text)) intent = 'clarification';
+  else if (/\b(yes|yeah|okay|right|that works|sure)\b/.test(text)) intent = 'agreement';
+  else if (/\b(help|can you|need|please)\b/.test(text)) intent = 'assistance';
+  const strategy = intent === 'clarification'
+    ? 'yield_and_answer'
+    : intent === 'agreement'
+      ? 'acknowledge_and_continue'
+      : intent === 'assistance'
+        ? 'yield_and_help'
+        : overlapMs > 1200 ? 'pause_and_reset' : 'brief_acknowledgment';
+  const record = {
+    id: String(params.id || `interruption-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    callId: String(params.callId || params.call_id || '').trim(),
+    leadId: String(params.leadId || params.lead_id || '').trim(),
+    overlapMs,
+    agentWasSpeaking: params.agentWasSpeaking !== false && params.agent_was_speaking !== false,
+    classification: { intent, confidence: intent === 'disruption' ? 0.58 : 0.74 },
+    handling: { strategy, snnSignal: `interruption_${intent}`, shouldYield: /^yield|pause/.test(strategy) },
+    metadata: { schemaVersion: 'pbk-interruption-intent-v1', textPreview: text.slice(0, 240) },
+    createdAt: isoNow(),
+  };
+  if (!Array.isArray(state.interruptionEvents)) state.interruptionEvents = [];
+  upsertById(state, 'interruptionEvents', record);
+  await persistState(state);
+  return { ok: true, result: 'interruption_intent_classified', ...record, state: buildStateSnapshot() };
+}
+
+function buildStarterSkillRecommendations(lead = {}, topK = 3) {
+  const haystack = `${lead.leadType || ''} ${lead.type || ''} ${lead.motivation || ''} ${lead.tags || ''}`.toLowerCase();
+  const starters = [
+    {
+      skillName: 'probate_grief_deescalation',
+      reason: 'Use when estate, probate, grief, or overwhelm appears.',
+      confidence: /\b(probate|estate|mother|father|grief|overwhelm)\b/.test(haystack) ? 0.82 : 0.52,
+      applyMode: 'suggest_only',
+    },
+    {
+      skillName: 'repair_anchor_reframe',
+      reason: 'Use when repair burden or condition uncertainty is the primary objection.',
+      confidence: /\b(repair|roof|condition|vacant|damage)\b/.test(haystack) ? 0.78 : 0.48,
+      applyMode: 'suggest_only',
+    },
+    {
+      skillName: 'timeline_calibration',
+      reason: 'Use when seller needs a simple next step without pressure.',
+      confidence: /\b(timeline|soon|fast|quick|delay)\b/.test(haystack) ? 0.74 : 0.56,
+      applyMode: 'suggest_only',
+    },
+  ];
+  return starters.sort((left, right) => right.confidence - left.confidence).slice(0, Math.max(1, Math.min(10, Number(topK || 3))));
+}
+
+async function recommendCrossLeadSkillTransfer(params = {}) {
+  const lead = plainObject(params.lead || params.leadContext || params.context);
+  const topK = Math.max(1, Math.min(10, Number(params.topK || params.top_k || 3)));
+  const outcomeBacked = (state.skillOutcomes || [])
+    .filter((item) => item.success === true)
+    .slice(0, 30)
+    .map((item) => ({
+      skillName: item.skillName,
+      reason: `Positive outcome: ${item.outcomeLabel || 'seller response improved'}.`,
+      confidence: Math.max(0.55, Math.min(0.92, 0.62 + Number(item.reward || 0.1))),
+      applyMode: 'suggest_only',
+    }));
+  const recommendations = [...outcomeBacked, ...buildStarterSkillRecommendations(lead, topK)]
+    .filter((item, index, array) => array.findIndex((other) => other.skillName === item.skillName) === index)
+    .sort((left, right) => right.confidence - left.confidence)
+    .slice(0, topK);
+  const record = {
+    id: String(params.id || `skill-transfer-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    lead,
+    recommendations,
+    metadata: { schemaVersion: 'pbk-cross-lead-skill-transfer-v1', vectorProvider: 'pgvector_or_state_fallback' },
+    createdAt: isoNow(),
+  };
+  if (!Array.isArray(state.skillTransferRecommendations)) state.skillTransferRecommendations = [];
+  upsertById(state, 'skillTransferRecommendations', record);
+  await persistState(state);
+  return { ok: true, result: 'cross_lead_skill_recommendations', recommendations, record, state: buildStateSnapshot() };
+}
+
+function normalizeTranscriptTurns(transcript) {
+  if (Array.isArray(transcript)) {
+    return transcript.map((turn) => ({
+      speaker: String(turn.speaker || turn.role || '').trim().toLowerCase() || 'unknown',
+      text: String(turn.text || turn.content || turn.transcript || '').trim(),
+    })).filter((turn) => turn.text);
+  }
+  return String(transcript || '').split(/\n+/).map((line) => {
+    const match = line.match(/^\s*([^:]{1,24}):\s*(.+)$/);
+    return { speaker: match ? match[1].toLowerCase() : 'unknown', text: match ? match[2].trim() : line.trim() };
+  }).filter((turn) => turn.text);
+}
+
+async function createPostCallCoachingReport(params = {}) {
+  const turns = normalizeTranscriptTurns(params.transcript || params.turns || params.text);
+  if (!turns.length) return { ok: false, result: 'invalid_request', error: 'transcript is required.' };
+  const joined = turns.map((turn) => `${turn.speaker}: ${turn.text}`).join('\n');
+  const empathyHits = turns.filter((turn) => turn.speaker !== 'seller' && /\b(hear|understand|slow|sorry|sounds like|clear|easier)\b/i.test(turn.text));
+  const questionHits = turns.filter((turn) => /\?/.test(turn.text));
+  const nextStepHits = turns.filter((turn) => /\b(tomorrow|next|call|schedule|send|contract|follow up)\b/i.test(turn.text));
+  const scores = {
+    empathy: Math.min(100, 55 + empathyHits.length * 18),
+    discovery: Math.min(100, 50 + questionHits.length * 12),
+    nextStep: Math.min(100, 52 + nextStepHits.length * 16),
+    compliance: /\b(guarantee|pressure|must sign now)\b/i.test(joined) ? 55 : 86,
+  };
+  const overall = Math.round(averageNumeric(Object.values(scores)) || 0);
+  const report = {
+    id: String(params.id || `post-call-coach-${slugify(params.callId || params.leadId || 'call')}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    callId: String(params.callId || params.call_id || '').trim(),
+    leadId: String(params.leadId || params.lead_id || '').trim(),
+    agentId: String(params.agentId || params.agent_id || 'ava').trim(),
+    scores,
+    overall,
+    grade: overall >= 85 ? 'A' : overall >= 72 ? 'B' : overall >= 60 ? 'C' : 'needs_coaching',
+    evidenceQuotes: turns.slice(0, 5).map((turn) => ({ speaker: turn.speaker, text: turn.text.slice(0, 260) })),
+    strengths: empathyHits.length ? ['Acknowledged seller emotion before pushing next step.'] : ['Kept the conversation moving.'],
+    coaching: scores.discovery < 70 ? ['Ask one more calibrated discovery question before moving to terms.'] : ['Keep discovery concise and confirm the next step.'],
+    nextActions: params.outcome?.callbackScheduled
+      ? ['Send callback reminder and prepare the empathy-first opening.']
+      : ['Schedule a low-pressure follow-up and summarize the seller concern.'],
+    metadata: { schemaVersion: 'pbk-post-call-coach-v1', turnCount: turns.length },
+    createdAt: isoNow(),
+  };
+  if (!Array.isArray(state.postCallCoachingReports)) state.postCallCoachingReports = [];
+  upsertById(state, 'postCallCoachingReports', report);
+  await scoreCallQualityRecord({ ...params, transcript: joined, createRexDecision: false });
+  await persistState(state);
+  return { ok: true, result: 'post_call_coaching_report_created', report, state: buildStateSnapshot() };
+}
+
+async function decomposeGoalPlan(params = {}) {
+  const goal = String(params.goal || params.objective || params.text || '').trim();
+  if (!goal) return { ok: false, result: 'invalid_request', error: 'goal is required.' };
+  const id = String(params.id || `goal-plan-${slugify(goal).slice(0, 48)}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim();
+  const owner = String(params.owner || 'rex').trim().toLowerCase();
+  const strategic = [
+    { id: `${id}-s1`, title: goal, owner, horizon: 'weeks', successMetric: params.successMetric || 'measurable business lift' },
+  ];
+  const tactical = [
+    { id: `${id}-t1`, parentId: strategic[0].id, title: 'Segment the target leads and define the baseline metric.', owner: 'rex', horizon: 'hours' },
+    { id: `${id}-t2`, parentId: strategic[0].id, title: 'Launch one approval-gated outreach or call experiment.', owner: 'ava', horizon: 'hours' },
+    { id: `${id}-t3`, parentId: strategic[0].id, title: 'Review outcomes and replan if the lift is not visible.', owner: 'rex', horizon: 'hours' },
+  ];
+  const operational = [
+    { id: `${id}-o1`, parentId: tactical[0].id, title: 'Pull matching leads from the live pipeline.', tool: 'lead_search', approvalRequired: false },
+    { id: `${id}-o2`, parentId: tactical[1].id, title: 'Prepare scripts/messages for founder approval.', tool: 'campaign_or_call_draft', approvalRequired: true },
+    { id: `${id}-o3`, parentId: tactical[2].id, title: 'Record outcomes into agent_decisions and skill outcomes.', tool: 'agent_decisions', approvalRequired: false },
+  ];
+  const plan = {
+    id,
+    goal,
+    owner,
+    approvalMode: 'approval_first',
+    riskTolerance: String(params.riskTolerance || params.risk_tolerance || 'low').trim().toLowerCase(),
+    levels: { strategic, tactical, operational },
+    status: 'draft',
+    replanning: { enabled: true, trigger: 'metric_regression_or_blocked_task' },
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (!Array.isArray(state.goalPlans)) state.goalPlans = [];
+  upsertById(state, 'goalPlans', plan);
+  await persistState(state);
+  return { ok: true, result: 'goal_plan_created', plan, state: buildStateSnapshot() };
 }
 
 async function scoreCallQualityRecord(params = {}) {
@@ -35071,6 +35532,18 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/intelligence/capabilities', '/api/v1/intelligence/capabilities'])) {
+      json(response, 200, buildXFactorCapabilitySnapshot());
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/emotion/ser/predict', '/api/v1/emotion/ser/predict'])) {
+      const body = await readBody(request);
+      const result = await predictSpeechEmotionRecord(body);
+      json(response, 200, result);
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/emotions/call', '/api/v1/emotions/call'])) {
       const body = await readBody(request);
       const result = await recordCallEmotionRecord(body);
@@ -35194,6 +35667,55 @@ const server = createServer(async (request, response) => {
         ...result,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/outreach/automations/propose', '/api/v1/outreach/automations/propose'])) {
+      const body = await readBody(request);
+      const result = await createProactiveOutreachRule(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/self-improvement/evaluate', '/api/v1/self-improvement/evaluate'])) {
+      const body = await readBody(request);
+      const result = await evaluateSelfImprovementDecision(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/emotion-prosody', '/api/v1/voice/emotion-prosody'])) {
+      const body = await readBody(request);
+      const result = await createEmotionProsodyPlan(body);
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/interruption/classify', '/api/v1/interruption/classify'])) {
+      const body = await readBody(request);
+      const result = await classifyInterruptionRecord(body);
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/skills/transfer/recommend', '/api/v1/skills/transfer/recommend'])) {
+      const body = await readBody(request);
+      const result = await recommendCrossLeadSkillTransfer(body);
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/post-call/coach', '/api/v1/post-call/coach'])) {
+      const body = await readBody(request);
+      const result = await createPostCallCoachingReport(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/goals/decompose', '/api/v1/goals/decompose'])) {
+      const body = await readBody(request);
+      const result = await decomposeGoalPlan(body);
+      json(response, result.ok ? 200 : 400, result);
       return;
     }
 
@@ -38990,6 +39512,15 @@ const server = createServer(async (request, response) => {
         'GET /api/memory/analytics',
         'GET /api/memory/stats',
         'GET /api/agent/history',
+        'GET /api/intelligence/capabilities',
+        'POST /api/emotion/ser/predict',
+        'POST /api/outreach/automations/propose',
+        'POST /api/self-improvement/evaluate',
+        'POST /api/voice/emotion-prosody',
+        'POST /api/interruption/classify',
+        'POST /api/skills/transfer/recommend',
+        'POST /api/post-call/coach',
+        'POST /api/goals/decompose',
         'GET/POST /api/agent-decisions',
         'POST /api/emotions/call',
         'POST /api/emotion/predict',

@@ -89,6 +89,9 @@ const emotionWorldModelTrainer = existsSync(resolve(root, 'scripts/train-emotion
 const emotionWorldModelServer = existsSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'))
   ? readFileSync(resolve(root, 'scripts/serve-emotion-world-model.mjs'), 'utf8')
   : '';
+const xFactorDimensionsSmoke = existsSync(resolve(root, 'scripts/x-factor-dimensions-smoke.mjs'))
+  ? readFileSync(resolve(root, 'scripts/x-factor-dimensions-smoke.mjs'), 'utf8')
+  : '';
 const openclawSmoke = existsSync(resolve(root, 'scripts/openclaw-smoke.mjs'))
   ? readFileSync(resolve(root, 'scripts/openclaw-smoke.mjs'), 'utf8')
   : '';
@@ -724,6 +727,40 @@ const checks = [
       && /emotion-world-model:serve/.test(pkg)
       && /test:emotion/.test(pkg)
       && /test:emotion/.test(pkg.match(/"test:founder":[^\n]+/)?.[0] || ''),
+  },
+  {
+    name: 'Eight X-factor dimensions expose production-safe control-plane endpoints',
+    ok: /function buildXFactorCapabilitySnapshot/.test(bridge)
+      && /function predictSpeechEmotionRecord/.test(bridge)
+      && /function createProactiveOutreachRule/.test(bridge)
+      && /function evaluateSelfImprovementDecision/.test(bridge)
+      && /function createEmotionProsodyPlan/.test(bridge)
+      && /function classifyInterruptionRecord/.test(bridge)
+      && /function recommendCrossLeadSkillTransfer/.test(bridge)
+      && /function createPostCallCoachingReport/.test(bridge)
+      && /function decomposeGoalPlan/.test(bridge)
+      && /\/api\/intelligence\/capabilities/.test(bridge)
+      && /\/api\/emotion\/ser\/predict/.test(bridge)
+      && /\/api\/outreach\/automations\/propose/.test(bridge)
+      && /\/api\/self-improvement\/evaluate/.test(bridge)
+      && /\/api\/voice\/emotion-prosody/.test(bridge)
+      && /\/api\/interruption\/classify/.test(bridge)
+      && /\/api\/skills\/transfer\/recommend/.test(bridge)
+      && /\/api\/post-call\/coach/.test(bridge)
+      && /\/api\/goals\/decompose/.test(bridge)
+      && /approval_first/.test(bridge)
+      && /providerWritesBlocked/.test(bridge)
+      && /x_factor_dimensions_ready/.test(xFactorDimensionsSmoke)
+      && /speech_emotion_prediction/.test(xFactorDimensionsSmoke)
+      && /proactive_outreach_rule_created/.test(xFactorDimensionsSmoke)
+      && /self_improvement_decision_recorded/.test(xFactorDimensionsSmoke)
+      && /emotion_synchronized_prosody/.test(xFactorDimensionsSmoke)
+      && /interruption_intent_classified/.test(xFactorDimensionsSmoke)
+      && /cross_lead_skill_recommendations/.test(xFactorDimensionsSmoke)
+      && /post_call_coaching_report_created/.test(xFactorDimensionsSmoke)
+      && /goal_plan_created/.test(xFactorDimensionsSmoke)
+      && /test:x-dimensions/.test(pkg)
+      && /test:x-dimensions/.test(pkg.match(/"test:founder":[^\n]+/)?.[0] || ''),
   },
   {
     name: 'Founder Approval Board shows locked state instead of fake zero approvals when bridge key is missing',

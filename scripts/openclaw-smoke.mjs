@@ -724,6 +724,25 @@ async function main() {
         text: 'I am interested and ready for a call.',
       }),
     }).then((response) => response.json());
+    const telnyxSmsInboundWebhook = await fetch(`${BASE_URL}/webhooks/telnyx/inbound`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        data: {
+          event_type: 'message.received',
+          payload: {
+            id: 'msg-smoke-telnyx-inbound-sms',
+            record_type: 'message',
+            type: 'SMS',
+            from: { phone_number: '+16145550199' },
+            to: [{ phone_number: '+16145550100' }],
+            text: 'Smoke SMS should not be routed as an inbound call.',
+          },
+        },
+      }),
+    }).then((response) => response.json());
     const pdfResponse = await fetch(`${BASE_URL}/api/documents/pdf`, {
       method: 'POST',
       headers: {
@@ -845,6 +864,8 @@ async function main() {
     assert(canonicalContractVoid?.ok === true && String(canonicalContractVoid?.contract?.status || '').includes('void'), 'Canonical contract void endpoint did not void the contract.');
     assert(instantlyWebhook?.ok === true, 'Instantly webhook endpoint did not succeed.');
     assert(emailWebhook?.ok === true, 'Email webhook endpoint did not succeed.');
+    assert(telnyxSmsInboundWebhook?.mappedEvent === 'sms-inbound', 'Telnyx SMS sent to inbound webhook was not mapped as SMS.');
+    assert(telnyxSmsInboundWebhook?.webhookType === 'message', 'Telnyx SMS sent to inbound webhook was misclassified as call control.');
     assert(pdfResponse.ok, `PDF endpoint returned ${pdfResponse.status}.`);
     assert((pdfResponse.headers.get('content-type') || '').includes('application/pdf'), 'PDF endpoint did not return application/pdf.');
     assert(pdfBuffer.subarray(0, 4).toString('utf8') === '%PDF', 'PDF endpoint did not return a valid PDF signature.');

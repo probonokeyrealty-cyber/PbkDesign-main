@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-15-agent-orchestration-probes';
+const BUILD_REVISION = '2026-05-21-telnyx-inbound-media-hardening';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -145,6 +145,7 @@ hydrateWindowsUserEnv([
   'PBK_HUMAN_AGENT_PHONE',
   'PBK_UNDERWRITING_AGENT_PHONE',
   'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER',
+  'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED',
   'PBK_INBOUND_AFTER_HOURS_START',
   'PBK_INBOUND_AFTER_HOURS_END',
   'PBK_INBOUND_TIMEZONE',
@@ -216,6 +217,7 @@ const TELNYX_DEEPGRAM_FINALIZE_GRACE_MS = Math.max(
   250,
   Number(process.env.PBK_TELNYX_DEEPGRAM_FINALIZE_GRACE_MS || process.env.TELNYX_DEEPGRAM_FINALIZE_GRACE_MS || 1400),
 );
+const TELNYX_DEEPGRAM_KEEPALIVE_MS = Math.max(3000, Math.min(9000, Number(process.env.PBK_TELNYX_DEEPGRAM_KEEPALIVE_MS || 4000)));
 const TELNYX_AI_ASSISTANT_ID = String(process.env.PBK_TELNYX_AI_ASSISTANT_ID || process.env.TELNYX_AI_ASSISTANT_ID || '').trim();
 const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED || 'true').trim());
@@ -234,6 +236,7 @@ const TELNYX_STREAM_ESTABLISH_BEFORE_ORIGINATE = !/^(0|false|no|off)$/i.test(Str
 const HUMAN_AGENT_PHONE = normalizePhone(process.env.PBK_HUMAN_AGENT_PHONE || process.env.HUMAN_AGENT_PHONE || '');
 const UNDERWRITING_AGENT_PHONE = normalizePhone(process.env.PBK_UNDERWRITING_AGENT_PHONE || process.env.UNDERWRITING_AGENT_PHONE || HUMAN_AGENT_PHONE || '');
 const INBOUND_QUALIFY_BEFORE_TRANSFER = /^(1|true|yes)$/i.test(String(process.env.PBK_INBOUND_QUALIFY_BEFORE_TRANSFER || '').trim());
+const INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED || '').trim());
 const INBOUND_AFTER_HOURS_START = Math.max(0, Math.min(23, Number(process.env.PBK_INBOUND_AFTER_HOURS_START || 18)));
 const INBOUND_AFTER_HOURS_END = Math.max(0, Math.min(23, Number(process.env.PBK_INBOUND_AFTER_HOURS_END || 8)));
 const INBOUND_TIMEZONE = String(process.env.PBK_INBOUND_TIMEZONE || 'America/New_York').trim();
@@ -18587,6 +18590,34 @@ function isTelnyxInboundCallWebhook(body = {}) {
   return Boolean(parsed.from && parsed.to && parsed.eventType.includes('initiated') && normalizePhone(parsed.to) === normalizePhone(TELNYX_FROM_NUMBER));
 }
 
+function isTelnyxMessageWebhook(body = {}) {
+  const parsed = parseTelnyxCallPayload(body);
+  const recordType = String(parsed.payload.record_type || parsed.payload.type || '').toLowerCase();
+  return parsed.eventType.includes('message') || recordType === 'message' || recordType === 'sms';
+}
+
+function isPlaceholderInboundLeadName(name = '') {
+  const normalized = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, ' ');
+  if (!normalized) return true;
+  return [
+    'inbound caller',
+    'unknown caller',
+    'unknown seller',
+    'returning seller',
+    'new caller',
+    'caller',
+  ].includes(normalized);
+}
+
+function getSpokenLeadName(name = '') {
+  const trimmed = String(name || '').replace(/\s+/g, ' ').trim();
+  return isPlaceholderInboundLeadName(trimmed) ? '' : trimmed;
+}
+
 async function findInboundLeadContext(phone = '') {
   const normalizedPhone = normalizePhone(phone);
   const localLead = (state.leadImports || []).find((lead) => {
@@ -18598,7 +18629,7 @@ async function findInboundLeadContext(phone = '') {
       found: true,
       source: 'bridge-state',
       leadId: localLead.leadId || localLead.id || '',
-      leadName: localLead.seller?.name || localLead.name || 'Returning seller',
+      leadName: getSpokenLeadName(localLead.seller?.name || localLead.name || ''),
       address: localLead.property?.address || localLead.address || '',
       phone: normalizedPhone,
       email: localLead.seller?.email || localLead.email || '',
@@ -18626,7 +18657,7 @@ async function findInboundLeadContext(phone = '') {
       found: true,
       source: 'supabase-leads',
       leadId: row.id || '',
-      leadName: row.name || row.full_name || row.lead_name || 'Returning seller',
+      leadName: getSpokenLeadName(row.name || row.full_name || row.lead_name || ''),
       address: row.address || row.property_address || '',
       phone: normalizedPhone,
       email: row.email || '',
@@ -18662,6 +18693,7 @@ function getAvaActiveMemorySummary(limit = 5) {
 }
 
 function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from = '', to = '' } = {}) {
+  const spokenLeadName = getSpokenLeadName(lead.leadName);
   const bant = normalizeBantInfo(lead.bant || {}, lead.raw?.bant || {}, lead.raw || {});
   const missingBant = getMissingBantFields(bant);
   const callContext = lead.callContext || lead.raw?.call_context || lead.raw?.callContext || {};
@@ -18675,7 +18707,7 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
     sentiment: lead.motivationScore >= 8 ? 'urgent' : 'neutral',
     transcriptStart: lead.status || '',
   }, {
-    leadName: lead.leadName,
+    leadName: spokenLeadName,
     address: lead.address,
     phone: lead.phone || from,
   });
@@ -18689,7 +18721,7 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
     '## Inbound Call Mode - Probono Key Realty',
     'You are Ava, the acquisition specialist for Probono Key Realty. Sound warm, confident, tactful, and human. Never pretend to be a licensed attorney, never pressure, and transfer immediately when the caller asks for a human.',
     lead.found
-      ? `Caller context: ${lead.leadName || 'Returning seller'}${lead.address ? ` at ${lead.address}` : ''}. Status: ${lead.status || 'unknown'}. Motivation score: ${lead.motivationScore || 0}.`
+      ? `Caller context: ${spokenLeadName || 'returning caller'}${lead.address ? ` at ${lead.address}` : ''}. Status: ${lead.status || 'unknown'}. Motivation score: ${lead.motivationScore || 0}.`
       : `Caller context: new caller from ${from || 'unknown number'} calling ${to || 'PBK'}. Start by asking for the property address and situation.`,
     `BANT+ status: ${missingBant.length ? `missing ${missingBant.join(', ')}` : 'complete'}. Never present seller-facing numbers until all five pillars are complete.`,
     Object.keys(bant).length ? `Known BANT+: ${JSON.stringify(bant)}` : '',
@@ -18747,7 +18779,9 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   const parsed = parseTelnyxCallPayload(body);
   const callControlId = parsed.callControlId || body.call_control_id || body.callControlId || '';
   const lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
-  const afterHours = options.forceAfterHours === true || (options.forceAfterHours !== false && isInboundAfterHours());
+  const spokenLeadName = getSpokenLeadName(lead.leadName);
+  const afterHours = options.forceAfterHours === true
+    || (INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED && options.forceAfterHours !== false && isInboundAfterHours());
   let route = 'ava_qualify';
   let reason = lead.found ? 'Returning caller routed to Ava qualification.' : 'New caller routed to Ava qualification.';
   if (afterHours) {
@@ -18783,7 +18817,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       leadId: lead.leadId,
       status: 'callback_requested',
       source: 'inbound-call',
-      seller: { name: 'Inbound caller', phone: parsed.from, email: '' },
+      seller: { name: '', phone: parsed.from, email: '' },
       property: { address: '' },
       motivationScore: 0,
       createdAt: isoNow(),
@@ -18794,7 +18828,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   const callRecord = createCallRecord({
     id: callControlId || undefined,
     leadId: lead.leadId,
-    leadName: lead.leadName,
+    leadName: spokenLeadName,
     address: lead.address,
     phone: parsed.from,
     from: parsed.to,
@@ -18823,6 +18857,15 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       });
       actions.push({ action: 'transfer', result: await transferTelnyxCall(callControlId, target) });
     } else if (route === 'after_hours_voicemail') {
+      actions.push({
+        action: 'streaming_start',
+        result: await startTelnyxMediaStream(callControlId, {
+          route,
+          leadId: lead.leadId,
+          streamTrack: DEEPGRAM_STREAM_TRACK,
+          streamCodec: DEEPGRAM_STREAM_CODEC,
+        }),
+      });
       actions.push({ action: 'speak', result: await speakTelnyxCall(callControlId, 'You have reached Probono Key Realty after hours. Please leave your name, number, property address, and what you need help with. We will call you back first thing next business day.') });
       actions.push({ action: 'record', result: await recordTelnyxCall(callControlId) });
     } else {
@@ -18839,8 +18882,8 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
         action: 'speak',
         result: await speakAvaPhoneReplyByCallId(
           callControlId,
-          lead.found
-            ? `Hi ${lead.leadName || 'there'}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?`
+          lead.found && spokenLeadName
+            ? `Hi ${spokenLeadName}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?`
             : 'Hi, this is Ava with Probono Key Realty. Thanks for calling. What property can I help you with today?',
         ),
       });
@@ -18851,7 +18894,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   const liveAction = actions.some((item) => item.result?.ok);
   const missingProvider = actions.some((item) => item.result?.skipped || item.result?.result === 'provider_missing');
   const streamingAction = actions.find((item) => item.action === 'streaming_start');
-  const streamRequired = route === 'ava_qualify' && Boolean(callControlId);
+  const streamRequired = ['ava_qualify', 'after_hours_voicemail'].includes(route) && Boolean(callControlId);
   const streamFailed = streamRequired && (!streamingAction || !streamingAction.result?.ok);
   const result = streamFailed
     ? 'provider_missing'
@@ -18871,7 +18914,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     actor: 'Ava',
     category: 'INBOUND',
     status: result === 'live' ? 'live' : result === 'provider_missing' ? 'warning' : 'queued',
-    text: `${route.replace(/_/g, ' ')} for ${lead.leadName || parsed.from || 'inbound caller'}: ${reason}`,
+    text: `${route.replace(/_/g, ' ')} for ${spokenLeadName || parsed.from || 'inbound caller'}: ${reason}`,
     target: lead.address || parsed.from || callControlId || 'inbound call',
   }));
   addAdminAudit(state, {
@@ -18879,7 +18922,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     actor: options.actor || 'Telnyx inbound webhook',
     action: 'route_inbound_call',
     status: result,
-    target: lead.leadName || parsed.from || '',
+    target: spokenLeadName || parsed.from || '',
     details: reason,
     metadata: { route, callControlId, from: parsed.from, to: parsed.to },
     createdAt: isoNow(),
@@ -18889,7 +18932,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       channel: route === 'after_hours_voicemail' ? '#voicemails' : '#alerts',
       text: route === 'after_hours_voicemail'
         ? `After-hours voicemail flow started for ${parsed.from || 'unknown caller'}.`
-        : `Inbound call routed to ${route === 'transfer_underwriting' ? 'underwriting' : 'Jordan'}: ${lead.leadName || parsed.from || 'caller'}${lead.motivationScore ? ` - score ${lead.motivationScore}` : ''}.`,
+        : `Inbound call routed to ${route === 'transfer_underwriting' ? 'underwriting' : 'Jordan'}: ${spokenLeadName || parsed.from || 'caller'}${lead.motivationScore ? ` - score ${lead.motivationScore}` : ''}.`,
     });
   }
   await persistState(state);
@@ -34683,7 +34726,7 @@ async function handleBrowserVoiceSocket(socket, request) {
 
 async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
   const leadId = contextCall?.leadId || session.leadId || '';
-  const leadName = contextCall?.leadName || session.leadName || 'caller';
+  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || 'caller';
   const address = contextCall?.address || session.address || '';
   let pipeline = null;
   try {
@@ -34819,6 +34862,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const earlyTelnyxMessages = [];
   const pendingTelnyxMediaFrames = [];
   let liveTelnyxMessageHandler = null;
+  let deepgramKeepAliveTimer = null;
 
   socket.on('message', (raw) => {
     if (liveTelnyxMessageHandler) {
@@ -34831,6 +34875,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const finalize = async (reason = 'closed') => {
     if (finalized) return;
     finalized = true;
+    if (deepgramKeepAliveTimer) {
+      clearInterval(deepgramKeepAliveTimer);
+      deepgramKeepAliveTimer = null;
+    }
     if (session.callId) telnyxMediaSessionsByCallId.delete(session.callId);
     if (deepgramConnection && deepgramReady) {
       const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
@@ -34963,6 +35011,30 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       }),
     );
     await persistState(state);
+  };
+
+  const startTelnyxDeepgramKeepAliveTimer = () => {
+    if (deepgramKeepAliveTimer) clearInterval(deepgramKeepAliveTimer);
+    deepgramKeepAliveTimer = setInterval(() => {
+      if (finalized || !deepgramConnection || !deepgramReady) {
+        if (deepgramKeepAliveTimer) {
+          clearInterval(deepgramKeepAliveTimer);
+          deepgramKeepAliveTimer = null;
+        }
+        return;
+      }
+      const sent = sendDeepgramControl(deepgramConnection, { type: 'KeepAlive' });
+      if (!sent) {
+        addActivity(state, makeActivity({
+          actor: 'Deepgram',
+          category: 'CALL',
+          status: 'warning',
+          text: `Deepgram KeepAlive could not be sent for Telnyx media ${session.callId || session.streamId || session.id}.`,
+          target: session.callId || session.streamId || session.id,
+        }));
+        void persistState(state);
+      }
+    }, TELNYX_DEEPGRAM_KEEPALIVE_MS);
   };
 
   const maybeSpeakTelnyxAvaReply = async (item) => {
@@ -35194,6 +35266,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         text: `Deepgram live stream connected for Telnyx media ${session.callId || session.streamId || session.id}.`,
         target: session.callId || session.streamId || session.id,
       }));
+      startTelnyxDeepgramKeepAliveTimer();
       flushPendingTelnyxMediaFrames();
       await persistState(state);
     } catch (error) {
@@ -36114,6 +36187,24 @@ const server = createServer(async (request, response) => {
         return;
       }
       const body = telnyxRequest ? telnyxRequest.payload : await readBody(request);
+      if (telnyxWebhookPath && !isTelnyxInboundCallWebhook(body)) {
+        const mapped = mapTelnyxWebhook(body);
+        const campaignWebhook = recordCampaignWebhookFromPayload('Telnyx', {
+          ...body,
+          ...(mapped.payload || {}),
+        }, mapped.eventType);
+        const result = await handleEvent(mapped.eventType, mapped.payload);
+        const statusCode = result.ok === false ? 404 : 200;
+        json(response, statusCode, {
+          ok: true,
+          mappedEvent: mapped.eventType,
+          webhookType: isTelnyxMessageWebhook(body) ? 'message' : 'non-call',
+          campaignWebhook,
+          result,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const result = await handleAvaInboundRoute(body, {
         actor: pathname.includes('webhooks') ? 'Telnyx inbound webhook' : body.actor || 'PBK Command Center',
         forceAfterHours: body.forceAfterHours,

@@ -944,11 +944,39 @@ const checks = [
       && /Telnyx media stream started for/.test(bridge),
   },
   {
+    name: 'Telnyx inbound webhook keeps SMS away from call-control routing',
+    ok: /function\s+isTelnyxMessageWebhook/.test(bridge)
+      && /telnyxWebhookPath && !isTelnyxInboundCallWebhook\(body\)/.test(bridge)
+      && /mappedEvent:\s*mapped\.eventType/.test(bridge)
+      && /webhookType:\s*isTelnyxMessageWebhook\(body\)\s*\?\s*'message'\s*:\s*'non-call'/.test(bridge),
+  },
+  {
+    name: 'Inbound Ava calls do not speak placeholder caller names',
+    ok: /function\s+isPlaceholderInboundLeadName/.test(bridge)
+      && /function\s+getSpokenLeadName/.test(bridge)
+      && /lead\.found && spokenLeadName/.test(bridge)
+      && /seller:\s*\{\s*name:\s*''/.test(bridge),
+  },
+  {
+    name: 'After-hours voicemail is opt-in and still streams caller audio when enabled',
+    ok: /PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED/.test(bridge)
+      && /INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED && options\.forceAfterHours !== false/.test(bridge)
+      && /route === 'after_hours_voicemail'[\s\S]*action:\s*'streaming_start'/.test(bridge)
+      && /streamRequired = \['ava_qualify', 'after_hours_voicemail'\]/.test(bridge),
+  },
+  {
     name: 'Telnyx Deepgram live socket uses phone-safe model and captures 400 bodies',
     ok: /PBK_DEEPGRAM_TELNYX_LIVE_MODEL/.test(bridge)
       && /model:\s*getTelnyxDeepgramLiveModel\(\)/.test(bridge)
       && /utteranceEndMs:\s*1000/.test(bridge)
       && /Unexpected server response: \$\{response\.statusCode\}\$\{body/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
+  },
+  {
+    name: 'Telnyx Deepgram live socket sends KeepAlive during caller pauses',
+    ok: /TELNYX_DEEPGRAM_KEEPALIVE_MS/.test(bridge)
+      && /startTelnyxDeepgramKeepAliveTimer/.test(bridge)
+      && /type:\s*'KeepAlive'/.test(bridge)
+      && /Deepgram KeepAlive could not be sent for Telnyx media/.test(bridge),
   },
   {
     name: 'Telnyx Deepgram live socket flushes buffered audio before closing',

@@ -261,8 +261,12 @@ const checks = [
       && /pbk_knowledge/.test(bridge),
   },
   {
-    name: 'Slack approval buttons accept Block Kit JSON payloads and Ava thread replies',
+    name: 'Slack approval buttons ACK fast, parse Block Kit values, and Ava thread replies',
     ok: /valuePayload\s*=\s*JSON\.parse/.test(bridge)
+      && /selected_option/.test(bridge)
+      && /view\?\.private_metadata/.test(bridge)
+      && /slack_interaction_ack_queued/.test(bridge)
+      && /void handleSlackApprovalInteraction/.test(bridge)
       && /pbk_send_slack_reply/.test(bridge)
       && /chat\.postMessage/.test(bridge),
   },
@@ -341,11 +345,16 @@ const checks = [
       && /type:\s*'diagnostic'/.test(bridge),
   },
   {
-    name: 'Approval BANT review only appears for lead or qualification approval types',
+    name: 'Approval BANT context stays informational and hidden from non-lead approval types',
     ok: /function\s+shouldShowApprovalBantCheck/.test(index)
       && /contract\|docusign\|doc\|outbound\|campaign\|call\|sms\|email\|admin\|schema\|settings/.test(index)
       && /lead\|qualification\|qualify\|bant/.test(index)
-      && /const bantReviewButton = shouldShowApprovalBantCheck/.test(index),
+      && /const bantInfo = shouldShowApprovalBantCheck/.test(index)
+      && /BANT\+ is optional context/.test(index)
+      && !/PBK decision check/.test(index)
+      && !/Wrong path/.test(index)
+      && !/Bad timing/.test(index)
+      && !/Wrong doc path/.test(index),
   },
   {
     name: 'Campaign detail can add and remove leads through bridge actions',
@@ -861,6 +870,12 @@ const checks = [
       && /buildBrowserVoiceDeepgramOptions/.test(bridge)
       && /rotateBrowserVoiceToFallback/.test(bridge)
       && /recentAudioChunks/.test(bridge)
+      && /BROWSER_VOICE_DEEPGRAM_KEEPALIVE_MS/.test(bridge)
+      && /type:\s*'KeepAlive'/.test(bridge)
+      && /type:\s*'Finalize'/.test(bridge)
+      && /type:\s*'CloseStream'/.test(bridge)
+      && /buildBrowserVoiceReplayChunks/.test(bridge)
+      && /firstAudioChunk/.test(bridge)
       && /containerizedAudio:\s*true/.test(bridge)
       && /listenVersion:\s*isDeepgramFluxModel\(normalizedModel\)\s*\?\s*'v2'\s*:\s*'v1'/.test(bridge)
       && /BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL/.test(bridge)

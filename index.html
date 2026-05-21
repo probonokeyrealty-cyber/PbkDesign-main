@@ -17027,16 +17027,29 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     `).join('');
   }
 
-  function getApprovalVisionMeta(type = '') {
-    const normalized = String(type || 'offer').toLowerCase();
+  function getApprovalVisionMeta(type = '', approval = {}) {
+    const normalized = [
+      type || 'offer',
+      approval.approvalAction,
+      approval.action,
+      approval.metadata?.requestedAction,
+      approval.metadata?.action,
+      approval.metadata?.kind,
+    ].filter(Boolean).join(' ').toLowerCase();
     if (normalized.includes('contract') || normalized.includes('docusign') || normalized.includes('doc')) {
-      return { filter: 'contract', label: 'Contract Packet', primary: 'Approve contract', secondary: 'Edit packet', accent: 'var(--ion)' };
+      return { filter: 'contract', label: 'Contract Packet', primary: 'Approve & send', secondary: 'Edit packet', accent: 'var(--ion)' };
     }
     if (normalized.includes('outbound') || normalized.includes('campaign') || normalized.includes('call') || normalized.includes('sms') || normalized.includes('email')) {
-      return { filter: 'outbound', label: 'Outreach Launch', primary: 'Approve launch', secondary: 'Hold', accent: 'var(--magenta)' };
+      if (/cancel|stop|pause/.test(normalized)) {
+        return { filter: 'outbound', label: 'Campaign Cancel', primary: 'Approve cancel', secondary: 'Keep campaign', accent: 'var(--magenta)' };
+      }
+      if (/add[_ -]?leads?|lead[_ -]?add/.test(normalized)) {
+        return { filter: 'outbound', label: 'Add Leads', primary: 'Approve add leads', secondary: 'Review leads', accent: 'var(--magenta)' };
+      }
+      return { filter: 'outbound', label: 'Campaign / Outreach', primary: 'Approve campaign', secondary: 'Hold', accent: 'var(--magenta)' };
     }
     if (normalized.includes('admin') || normalized.includes('schema') || normalized.includes('settings')) {
-      return { filter: 'admin', label: 'Admin Change', primary: 'Approve safely', secondary: 'Review', accent: 'var(--amber)' };
+      return { filter: 'admin', label: 'Admin Change', primary: 'Approve safely', secondary: 'Hold', accent: 'var(--amber)' };
     }
     return { filter: 'offer', label: 'Seller Offer', primary: 'Approve offer', secondary: 'Revise first', accent: 'var(--amber)' };
   }
@@ -17103,14 +17116,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const activeFilter = PBK.state.approvalFilter || 'all';
     const pendingApprovals = getRealRuntimeApprovals(snapshot).filter((item) => normalizeRuntimeStatus(item.status) === 'pending');
     const approvals = pendingApprovals
-      .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
+      .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type, item).filter === activeFilter)
       .slice(0, 6);
 
     document.querySelectorAll('[data-approval-filter]').forEach((button) => {
       const filter = button.dataset.approvalFilter || 'all';
       const count = filter === 'all'
         ? pendingApprovals.length
-        : pendingApprovals.filter((item) => getApprovalVisionMeta(item.type).filter === filter).length;
+        : pendingApprovals.filter((item) => getApprovalVisionMeta(item.type, item).filter === filter).length;
       const label = button.dataset.approvalLabel || button.textContent.replace(/\s+\d+$/, '').trim();
       button.dataset.approvalLabel = label;
       button.textContent = `${label} ${count}`;
@@ -17149,13 +17162,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     container.innerHTML = `${staleNotice}${approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
-      const meta = getApprovalVisionMeta(type);
+      const meta = getApprovalVisionMeta(type, approval);
       const primaryLabel = meta.primary;
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
       const summary = formatApprovalSummary(approval);
-      const bantReviewButton = shouldShowApprovalBantCheck(type, approval)
-        ? '<button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
+      const bantInfo = shouldShowApprovalBantCheck(type, approval)
+        ? '<div class="qcard-review"><span class="qcard-review-label">BANT+ is optional context for this lead. It helps the team review budget, authority, need, timeline, and equity, but it never blocks approval.</span></div>'
         : '';
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
@@ -17175,13 +17188,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               ${detailParts.length ? detailParts.map((part) => `<span>${part}</span>`).join('') : '<span>No offer price</span>'}
             </div>
           </div>
-          <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
-            <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
-            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
-            ${bantReviewButton}
-            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
-            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
-          </div>
+          ${bantInfo}
           <div class="qcard-actions">
             <button type="button" class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
             <button type="button" class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
@@ -20562,7 +20569,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval sent to PBK Brain' : reviewReason ? 'PBK decision check sent' : 'Decision sent to PBK Brain',
+        title: action === 'approved' ? 'Approval sent to PBK Brain' : reviewReason ? 'Review note sent' : 'Decision sent to PBK Brain',
         desc: reviewReason
           ? 'Marked for correction before any provider action runs.'
           : 'PBK Brain and the n8n callback flow were updated.'
@@ -29730,7 +29737,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ? snapshot.adminTasks.filter((item) => normalizeRuntimeStatus(item.status) === 'pending')
       : [];
     const approvals = pendingApprovals
-      .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type).filter === activeFilter)
+      .filter((item) => activeFilter === 'all' || getApprovalVisionMeta(item.type, item).filter === activeFilter)
       .slice(0, 5);
     const adminTasks = activeFilter === 'all' ? pendingAdminTasks.slice(0, 4) : [];
     const totalQueued = pendingApprovals.length + pendingAdminTasks.length;
@@ -29739,7 +29746,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const filter = button.dataset.approvalFilter || 'all';
       const count = filter === 'all'
         ? totalQueued
-        : pendingApprovals.filter((item) => getApprovalVisionMeta(item.type).filter === filter).length;
+        : pendingApprovals.filter((item) => getApprovalVisionMeta(item.type, item).filter === filter).length;
       const label = button.dataset.approvalLabel || button.textContent.replace(/\s+\d+$/, '').trim();
       button.dataset.approvalLabel = label;
       button.textContent = `${label} ${count}`;
@@ -29778,13 +29785,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const approvalCards = approvals.map((approval) => {
       const type = String(approval.type || 'offer').toLowerCase();
-      const meta = getApprovalVisionMeta(type);
+      const meta = getApprovalVisionMeta(type, approval);
       const primaryLabel = meta.primary;
       const secondaryLabel = meta.secondary;
       const accent = meta.accent;
       const summary = formatApprovalSummary(approval);
-      const bantReviewButton = shouldShowApprovalBantCheck(type, approval)
-        ? '<button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: missing BANT+ before action" data-review-reason="missing_bant">Missing BANT+</button>'
+      const bantInfo = shouldShowApprovalBantCheck(type, approval)
+        ? '<div class="qcard-review"><span class="qcard-review-label">BANT+ is optional context for this lead. It helps the team review budget, authority, need, timeline, and equity, but it never blocks approval.</span></div>'
         : '';
       const detailParts = [
         approval.address ? escapeHtml(approval.address) : '',
@@ -29803,13 +29810,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               ${detailParts.length ? detailParts.map((part) => `<span>${part}</span>`).join('') : '<span>No offer price</span>'}
             </div>
           </div>
-          <div class="qcard-review qcard-actions" aria-label="PBK approval quality checks">
-            <span class="qcard-review-label">PBK decision check - flag before approving if Ava/Rex missed something</span>
-            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong path selected" data-review-reason="wrong_path">Wrong path</button>
-            ${bantReviewButton}
-            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: bad follow-up timing" data-review-reason="bad_followup_timing">Bad timing</button>
-            <button type="button" class="btn btn-ghost" data-approval-action="needs_revision" data-approval-note="PBK decision check: wrong contract/document path" data-review-reason="wrong_doc_path">Wrong doc path</button>
-          </div>
+          ${bantInfo}
           <div class="qcard-actions">
             <button type="button" class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
             <button type="button" class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>

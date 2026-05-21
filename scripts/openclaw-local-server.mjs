@@ -252,6 +252,7 @@ const BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL = normalizeBrowserVoiceDeepgramModel
 const BROWSER_VOICE_AUTO_REPLY_MS = Math.max(500, Math.min(5000, Number(process.env.PBK_BROWSER_VOICE_AUTO_REPLY_MS || 1250)));
 const BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS = Math.max(1200, Math.min(7000, Number(process.env.PBK_BROWSER_VOICE_NO_TRANSCRIPT_FALLBACK_MS || 2600)));
 const BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT = Math.max(4, Math.min(80, Number(process.env.PBK_BROWSER_VOICE_RECENT_AUDIO_CHUNK_LIMIT || 32)));
+const BROWSER_VOICE_DEEPGRAM_KEEPALIVE_MS = Math.max(3000, Math.min(9000, Number(process.env.PBK_BROWSER_VOICE_DEEPGRAM_KEEPALIVE_MS || 4000)));
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
@@ -26429,12 +26430,86 @@ async function buildSlackHealthSnapshot({ force = false } = {}) {
   };
 }
 
+function approvalNeedsLeadQualificationContext(approval = {}) {
+  const text = [
+    approval.type,
+    approval.approvalAction,
+    approval.metadata?.kind,
+    approval.metadata?.requestedAction,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (/(contract|docusign|doc|outbound|campaign|call|sms|email|admin|schema|settings|deploy|provider)/.test(text)) return false;
+  return /(offer|lead|qualification|qualify|bant|negotiation)/.test(text);
+}
+
+function getSlackApprovalActionCopy(approval = {}) {
+  const text = [
+    approval.type,
+    approval.approvalAction,
+    approval.metadata?.kind,
+    approval.metadata?.requestedAction,
+    approval.metadata?.action,
+  ].filter(Boolean).join(' ').toLowerCase();
+  let copy = {
+    approve: 'Approve',
+    reject: 'Decline',
+    review: 'Review',
+    context: `Approval ID \`${approval.id || 'pending'}\` - PBK executes only after founder approval.`,
+  };
+  if (/(campaign|outbound|sms|email|call)/.test(text)) {
+    if (/cancel|stop|pause/.test(text)) {
+      copy = {
+        approve: 'Approve Cancel',
+        reject: 'Keep Campaign',
+        review: 'View Campaign',
+        context: `Approval ID \`${approval.id || 'pending'}\` - campaign changes stay paused until approved.`,
+      };
+    } else if (/add[_ -]?leads?|lead[_ -]?add/.test(text)) {
+      copy = {
+        approve: 'Approve Add Leads',
+        reject: 'Decline Add',
+        review: 'Review Leads',
+        context: `Approval ID \`${approval.id || 'pending'}\` - lead movement waits for approval.`,
+      };
+    } else {
+      copy = {
+        approve: 'Approve Campaign',
+        reject: 'Hold Campaign',
+        review: 'Review Campaign',
+        context: `Approval ID \`${approval.id || 'pending'}\` - outreach provider writes stay gated until approved.`,
+      };
+    }
+  } else if (/(contract|docusign|doc)/.test(text)) {
+    copy = {
+      approve: 'Approve & Send',
+      reject: 'Do Not Send',
+      review: 'Revise Packet',
+      context: `Approval ID \`${approval.id || 'pending'}\` - documents are not sent until approved.`,
+    };
+  } else if (/(admin|schema|settings|deploy|provider)/.test(text)) {
+    copy = {
+      approve: 'Approve Safely',
+      reject: 'Hold',
+      review: 'Review Change',
+      context: `Approval ID \`${approval.id || 'pending'}\` - protected admin changes stay gated until approved.`,
+    };
+  } else if (approvalNeedsLeadQualificationContext(approval)) {
+    copy = {
+      approve: 'Approve Offer',
+      reject: 'Decline Offer',
+      review: 'Revise Offer',
+      context: `Approval ID \`${approval.id || 'pending'}\` - BANT+ is operator context only; approval still follows PBK guardrails.`,
+    };
+  }
+  return copy;
+}
+
 function buildSlackApprovalBlocks(approval = {}) {
   const approvalType = compactSlackText(approval.type || 'approval', 'approval');
   const actionLabel = compactSlackText(approval.approvalAction || approval.metadata?.requestedAction || 'approval_required');
   const amount = toNumber(approval.offerPrice, 0) ? currency(approval.offerPrice) : 'n/a';
   const isNegotiation = approval.type === 'negotiation' || approval.metadata?.kind === 'negotiation';
   const campaignName = approval.metadata?.campaignName || approval.metadata?.campaignId || '';
+  const actionCopy = getSlackApprovalActionCopy(approval);
   const summary = [
     `*Seller:* ${compactSlackText(approval.leadName, 'Unknown seller')}`,
     `*Property:* ${compactSlackText(approval.address, 'Unknown property')}`,
@@ -26525,12 +26600,12 @@ function buildSlackApprovalBlocks(approval = {}) {
     {
       type: 'context',
       elements: [
-        {
-          type: 'mrkdwn',
-          text: `Approval ID \`${approval.id || 'pending'}\` - approve only when path, BANT+, follow-up timing, and docs are clean. PBK executes only after approval.`,
-        },
-      ],
-    },
+          {
+            type: 'mrkdwn',
+            text: actionCopy.context,
+          },
+        ],
+      },
     {
       type: 'actions',
       block_id: `pbk_approval_${String(approval.id || '').slice(0, 40) || 'pending'}`,
@@ -26538,21 +26613,21 @@ function buildSlackApprovalBlocks(approval = {}) {
         {
           type: 'button',
           action_id: 'pbk_approval_approve',
-          text: { type: 'plain_text', text: 'Approve', emoji: false },
+          text: { type: 'plain_text', text: actionCopy.approve, emoji: false },
           style: 'primary',
           value: approval.id || '',
         },
         {
           type: 'button',
           action_id: 'pbk_approval_reject',
-          text: { type: 'plain_text', text: 'Decline', emoji: false },
+          text: { type: 'plain_text', text: actionCopy.reject, emoji: false },
           style: 'danger',
           value: approval.id || '',
         },
         {
           type: 'button',
           action_id: 'pbk_approval_modify',
-          text: { type: 'plain_text', text: 'Needs Review', emoji: false },
+          text: { type: 'plain_text', text: actionCopy.review, emoji: false },
           value: approval.id || '',
         },
       ],
@@ -33344,20 +33419,32 @@ async function readSlackSlashCommandRequest(request) {
 async function handleSlackApprovalInteraction(payload = {}) {
   const action = Array.isArray(payload.actions) ? payload.actions[0] : null;
   const actionId = String(action?.action_id || '').trim();
-  const valueText = String(action?.value || '').trim();
+  const valueCandidates = [
+    action?.value,
+    action?.selected_option?.value,
+    Array.isArray(action?.selected_options) ? action.selected_options[0]?.value : '',
+    payload.private_metadata,
+    payload.view?.private_metadata,
+    payload.message?.metadata?.event_payload?.approvalId,
+  ].filter((value) => value !== undefined && value !== null && String(value).trim());
+  const valueText = String(valueCandidates[0] || '').trim();
   let valuePayload = {};
-  if (valueText.startsWith('{')) {
+  for (const candidate of valueCandidates) {
+    const text = String(candidate || '').trim();
+    if (!text.startsWith('{')) continue;
     try {
-      valuePayload = JSON.parse(valueText);
+      valuePayload = JSON.parse(text);
+      break;
     } catch {
-      valuePayload = {};
+      // Slack values can be plain IDs; keep scanning candidates.
     }
   }
   const approvalId = String(
     valuePayload.approvalId
       || valuePayload.id
-      || (valueText.startsWith('{') ? '' : valueText)
+      || valueCandidates.find((candidate) => !String(candidate || '').trim().startsWith('{'))
       || payload.private_metadata
+      || payload.view?.private_metadata
       || payload.message?.metadata?.event_payload?.approvalId
       || '',
   ).trim();
@@ -33392,7 +33479,9 @@ async function handleSlackApprovalInteraction(payload = {}) {
         ...(approval.metadata || {}),
         launchReview: {
           reason: 'slack_needs_review',
-          notes: 'Check path, BANT+, follow-up timing, and document path before approving.',
+          notes: approvalNeedsLeadQualificationContext(approval)
+            ? 'Review seller context, offer path, and any known BANT+ details before approving.'
+            : 'Review the action details before approving.',
           actor,
           actedAt: approval.actedAt,
         },
@@ -33924,6 +34013,17 @@ function getBrowserVoiceDeepgramLabel(model = '', fallback = false) {
   return `deepgram:${normalizedModel}${fallback ? ':fallback' : ''}`;
 }
 
+function buildBrowserVoiceReplayChunks(firstAudioChunk = null, recentAudioChunks = []) {
+  const chunks = [];
+  if (firstAudioChunk?.length) chunks.push(Buffer.from(firstAudioChunk));
+  for (const chunk of recentAudioChunks || []) {
+    if (!chunk?.length) continue;
+    if (chunks.length && Buffer.compare(chunks[0], chunk) === 0) continue;
+    chunks.push(Buffer.from(chunk));
+  }
+  return chunks;
+}
+
 async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript = '', session = {} } = {}) {
   const fallback = buildBrowserVoiceReply(pipeline, transcript);
   try {
@@ -34046,6 +34146,8 @@ async function handleBrowserVoiceSocket(socket, request) {
   let noTranscriptFallbackTimer = null;
   let browserFallbackActive = false;
   let deepgramProviderLabel = '';
+  let deepgramKeepAliveTimer = null;
+  let firstAudioChunk = null;
   const earlyBrowserMessages = [];
   const recentAudioChunks = [];
   let liveBrowserMessageHandler = null;
@@ -34072,6 +34174,33 @@ async function handleBrowserVoiceSocket(socket, request) {
     }
   };
 
+  const clearDeepgramKeepAliveTimer = () => {
+    if (deepgramKeepAliveTimer) {
+      clearInterval(deepgramKeepAliveTimer);
+      deepgramKeepAliveTimer = null;
+    }
+  };
+
+  const startDeepgramKeepAliveTimer = (connection, label = 'Deepgram') => {
+    clearDeepgramKeepAliveTimer();
+    deepgramKeepAliveTimer = setInterval(() => {
+      if (finalized || !connection) {
+        clearDeepgramKeepAliveTimer();
+        return;
+      }
+      const sent = sendDeepgramControl(connection, { type: 'KeepAlive' });
+      if (!sent) {
+        sendBrowserVoiceStatus(socket, session, {
+          state: 'warning',
+          ws: 'open',
+          deepgram: 'keepalive-missed',
+          provider: label,
+          message: 'PBK could not send Deepgram KeepAlive. If speech pauses too long, retry the voice turn.',
+        });
+      }
+    }, BROWSER_VOICE_DEEPGRAM_KEEPALIVE_MS);
+  };
+
   const scheduleAutoReply = (reason = 'speech-final') => {
     clearAutoReplyTimer();
     autoReplyTimer = setTimeout(() => {
@@ -34084,6 +34213,14 @@ async function handleBrowserVoiceSocket(socket, request) {
     finalized = true;
     clearAutoReplyTimer();
     clearNoTranscriptFallbackTimer();
+    clearDeepgramKeepAliveTimer();
+    if (deepgramConnection) {
+      const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
+      const didFinalize = sendDeepgramControl(deepgramConnection, { type: 'Finalize' });
+      if (didFinalize) await sleep(halfGraceMs);
+      const didCloseStream = sendDeepgramControl(deepgramConnection, { type: 'CloseStream' });
+      if (didFinalize || didCloseStream) await sleep(didCloseStream ? TELNYX_DEEPGRAM_FINALIZE_GRACE_MS : halfGraceMs);
+    }
     try {
       deepgramConnection?.close?.();
     } catch {
@@ -34253,8 +34390,26 @@ async function handleBrowserVoiceSocket(socket, request) {
         error: error?.message || 'Deepgram stream error.',
       });
     });
+    connection.on('close', (event = {}) => {
+      if (finalized) return;
+      const code = event?.code || '';
+      const reason = event?.reason || '';
+      session.deepgramEventCount += 1;
+      session.lastDeepgramEvent = code ? `close_${code}` : 'close';
+      sendBrowserVoiceStatus(socket, session, {
+        state: session.frameCount ? 'warning' : 'live',
+        ws: session.frameCount ? 'receiving' : 'open',
+        deepgram: 'closed',
+        provider: label,
+        message: `Deepgram ${label} closed${code ? ` (${code})` : ''}${reason ? `: ${String(reason).slice(0, 120)}` : ''}.`,
+      });
+      if (session.frameCount > 0 && session.transcript.length === 0 && !browserFallbackActive) {
+        void rotateBrowserVoiceToFallback(`deepgram-close-${code || 'unknown'}`);
+      }
+    });
     connection.connect();
     await connection.waitForOpen();
+    startDeepgramKeepAliveTimer(connection, label);
     return connection;
   };
 
@@ -34351,19 +34506,21 @@ async function handleBrowserVoiceSocket(socket, request) {
       reason,
     });
     try {
+      clearDeepgramKeepAliveTimer();
       deepgramConnection?.close?.();
       deepgramConnection = await openDeepgramBrowserVoiceConnection(
         buildBrowserVoiceDeepgramOptions(BROWSER_VOICE_DEEPGRAM_FALLBACK_MODEL),
         fallbackLabel,
       );
       attachDeepgramBrowserVoiceHandlers(deepgramConnection, fallbackLabel);
-      for (const chunk of recentAudioChunks) sendDeepgramAudio(deepgramConnection, chunk);
+      const replayChunks = buildBrowserVoiceReplayChunks(firstAudioChunk, recentAudioChunks);
+      for (const chunk of replayChunks) sendDeepgramAudio(deepgramConnection, chunk);
       sendBrowserVoiceStatus(socket, session, {
         state: 'live',
         ws: 'receiving',
         deepgram: 'fallback',
         provider: fallbackLabel,
-        message: 'Nova fallback is listening now. Keep speaking naturally.',
+        message: `Nova fallback is listening now. PBK replayed ${replayChunks.length} chunk${replayChunks.length === 1 ? '' : 's'} including the first WebM header when available. Keep speaking naturally.`,
       });
       return true;
     } catch (error) {
@@ -34436,6 +34593,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       session.audioBytes += raw.length;
       if (!session.firstAudioAt) session.firstAudioAt = isoNow();
       session.lastAudioAt = isoNow();
+      if (!firstAudioChunk) firstAudioChunk = Buffer.from(raw);
       if (session.frameCount === 1 || session.frameCount % 10 === 0) {
         console.log('[pbk-local-openclaw] Browser voice audio received:', {
           sessionId: session.id,
@@ -34468,6 +34626,7 @@ async function handleBrowserVoiceSocket(socket, request) {
       session.audioBytes += frame.length;
       if (!session.firstAudioAt) session.firstAudioAt = isoNow();
       session.lastAudioAt = isoNow();
+      if (!firstAudioChunk) firstAudioChunk = Buffer.from(frame);
       if (session.frameCount === 1 || session.frameCount % 10 === 0) {
         console.log('[pbk-local-openclaw] Browser voice audio received:', {
           sessionId: session.id,
@@ -36054,13 +36213,23 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      const result = await handleSlackApprovalInteraction(slackRequest.payload || {});
-      json(response, result.status || (result.ok ? 200 : 400), {
+      const slackPayload = slackRequest.payload || {};
+      void handleSlackApprovalInteraction(slackPayload)
+        .then((result) => {
+          console.log('[pbk-local-openclaw] Slack interaction processed:', {
+            ok: result.ok,
+            status: result.status,
+            text: result.text,
+          });
+        })
+        .catch((error) => {
+          console.warn('[pbk-local-openclaw] Slack interaction background failure:', error?.message || error);
+        });
+      json(response, 200, {
         response_type: 'ephemeral',
-        text: result.text || (result.ok ? 'PBK approval updated.' : 'PBK approval failed.'),
-        ok: result.ok,
-        result: result.result,
-        update: result.update,
+        text: 'PBK received that approval action and is updating the board now.',
+        ok: true,
+        result: 'slack_interaction_ack_queued',
       });
       return;
     }

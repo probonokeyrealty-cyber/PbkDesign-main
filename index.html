@@ -15694,9 +15694,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function shouldRetryOpenClawViaHosted(response, url = '') {
     if (!response || !buildHostedOpenClawFallbackUrl(url)) return false;
-    if (response.status !== 503) return false;
+    if (![404, 405, 500, 502, 503, 504].includes(Number(response.status))) return false;
     const text = await response.clone().text().catch(() => '');
-    return /usage_exceeded/i.test(text) || /Usage exceeded/i.test(text);
+    return response.status >= 500
+      || /usage_exceeded|Usage exceeded|Function not found|Page not found|Not Found|Method Not Allowed/i.test(text);
   }
 
   async function probeOpenClaw(config) {
@@ -20551,17 +20552,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     button.disabled = true;
     try {
-      const teamSession = await ensureTeamAccess(action === 'approved' ? 'this approval' : 'this decision');
+      const teamSession = getTeamSession();
       await requestOpenClawApi(`/api/approvals/${encodeURIComponent(approvalId)}`, {
         method: 'PUT',
         body: {
           status: action,
-          actor: 'PBK team dashboard',
+          actor: teamSession?.role === 'team' ? 'PBK team dashboard' : 'PBK founder dashboard',
           actedAt: new Date().toISOString(),
           notes: decisionNotes,
           reviewReason,
           falsePositiveTag: reviewReason,
-          teamAuthRequired: true,
           teamToken: teamSession?.token || getTeamSessionToken()
         },
         timeout: 9000
@@ -29848,22 +29848,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   };
 
   async function updateAdminTaskDecision(taskId, status) {
-    const config = getOpenClawConfig();
-    const base = normalizeOpenClawEndpoint(config.endpoint);
-    if (!base) throw new Error('OpenClaw is not configured yet.');
-
-    const response = await fetchWithTimeout(`${base}/api/admin/tasks/${encodeURIComponent(taskId)}`, {
+    return requestOpenClawApi(`/api/admin/tasks/${encodeURIComponent(taskId)}`, {
       method: 'PUT',
-      headers: buildOpenClawHeaders(config, true),
-      body: JSON.stringify({
+      body: {
         status,
         actor: 'PBK dashboard',
         note: `Dashboard marked task ${status}.`
-      })
-    }, 12000);
-
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return response.json();
+      },
+      timeout: 12000
+    });
   }
 
   async function handleAdminTaskAction(button, card) {

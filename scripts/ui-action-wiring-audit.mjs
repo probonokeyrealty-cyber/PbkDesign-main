@@ -241,10 +241,38 @@ if (!/host\.includes\('pbkcommandcenter'\) \|\| host\.endsWith\('\.netlify\.app'
   || !/HOSTED_OPENCLAW_ENDPOINT/.test(index)
   || !/shouldRetryOpenClawViaHosted/.test(index)
   || !/buildHostedOpenClawFallbackUrl/.test(index)
-  || !/usage_exceeded/i.test(index)) {
+  || !/usage_exceeded/i.test(index)
+  || !/\[404,\s*405,\s*500,\s*502,\s*503,\s*504\]/.test(index)) {
   fail.push({
     name: 'Netlify production shell must survive hosted function exhaustion',
-    details: ['index.html must default Netlify hosts to window.location.origin, keep bridge-key auth, and retry direct Render when Netlify returns usage_exceeded.'],
+    details: ['index.html must default Netlify hosts to window.location.origin, keep bridge-key auth, and retry direct Render when Netlify returns usage_exceeded or proxy route/function failures.'],
+  });
+}
+
+const approvalActionStart = index.indexOf('async function handleApprovalAction');
+const approvalActionEnd = index.indexOf('function getPageNode', approvalActionStart);
+const approvalActionBody = approvalActionStart >= 0 && approvalActionEnd > approvalActionStart
+  ? index.slice(approvalActionStart, approvalActionEnd)
+  : '';
+if (!approvalActionBody
+  || /teamAuthRequired\s*:\s*true/.test(approvalActionBody)
+  || /await\s+ensureTeamAccess/.test(approvalActionBody)
+  || !/actor:\s*teamSession\?\.role === 'team' \? 'PBK team dashboard' : 'PBK founder dashboard'/.test(approvalActionBody)) {
+  fail.push({
+    name: 'Founder Approval Board clicks must use saved bridge-key authority without forcing team-only restrictions',
+    details: ['handleApprovalAction should not set teamAuthRequired=true or require a team passcode before every founder approval click.'],
+  });
+}
+
+const adminTaskDecisionStart = index.indexOf('async function updateAdminTaskDecision');
+const adminTaskDecisionEnd = index.indexOf('async function handleAdminTaskAction', adminTaskDecisionStart);
+const adminTaskDecisionBody = adminTaskDecisionStart >= 0 && adminTaskDecisionEnd > adminTaskDecisionStart
+  ? index.slice(adminTaskDecisionStart, adminTaskDecisionEnd)
+  : '';
+if (!adminTaskDecisionBody || !/requestOpenClawApi\(`\/api\/admin\/tasks/.test(adminTaskDecisionBody)) {
+  fail.push({
+    name: 'Founder admin task clicks must use the resilient bridge request helper',
+    details: ['updateAdminTaskDecision should use requestOpenClawApi so Netlify proxy failures fall back to the hosted Render bridge and JSON errors surface clearly.'],
   });
 }
 

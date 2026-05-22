@@ -17,6 +17,9 @@ const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 
 const fail = [];
 const warn = [];
+const staticMarkup = index
+  .replace(/<script[\s\S]*?<\/script>/gi, '')
+  .replace(/<style[\s\S]*?<\/style>/gi, '');
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))].sort();
@@ -29,6 +32,43 @@ function stripTags(html = '') {
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+const mysteryIconPatterns = [
+  {
+    label: 'question-mark icon prefix',
+    regex: />\s*\?\s+(?:Agent|Best|Slack|Recommended|Use|Unknown|Waterfall|AI|Risk|Smart|Trigger|Action|Condition|Inspector|Topics|Bookmarks|A\+|Research|Revenue|Recent|Market|Today|Because|Property|Motivation|Compliance|Sentiment|Deal|Ava|Step|Quick|Navigate|Leads)\b/g,
+  },
+  {
+    label: 'question-mark arrow or trend marker',
+    regex: /(?:Sort:\s*Score|Score|Verbal yes|CSV drop|Ava hears yes|Request approval|Reporting|Call recap|Sentiment|Apr\s+\d+)\s\?/g,
+  },
+  {
+    label: 'broken keyboard glyph',
+    regex: /<kbd>\?K|<span class="kb">\?K|<kbd>\?\?|<kbd>\?<\/kbd>/g,
+  },
+  {
+    label: 'dynamic reading why prefix',
+    regex: /\? \$\{escapeHtml\(item\.why/g,
+    scanAll: true,
+  },
+  {
+    label: 'typing cursor question mark',
+    regex: /content:\s*'\?'/g,
+    scanAll: true,
+  },
+];
+
+const mysteryIconMatches = mysteryIconPatterns.flatMap(({ label, regex, scanAll = false }) => {
+  const source = scanAll ? index : staticMarkup;
+  const matches = [...source.matchAll(regex)].slice(0, 8);
+  return matches.map((match) => `${label}: ${match[0].slice(0, 120)}`);
+});
+if (mysteryIconMatches.length) {
+  fail.push({
+    name: 'Command Center visible copy must not render mystery question-mark icons',
+    details: mysteryIconMatches,
+  });
 }
 
 function parseAttrs(attrText = '') {

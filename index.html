@@ -1063,7 +1063,7 @@
       <div class="topbar-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input placeholder="Search leads, addresses, calls, contracts—"/>
-        <kbd>?K</kbd>
+        <kbd>Ctrl K</kbd>
       </div>
       <div class="topbar-right">
         <div class="mode-picker" id="modePicker">
@@ -1075,29 +1075,29 @@
           </div>
 
           <div class="mode-popover" id="modePopover">
-            <h5>? Agent operating mode</h5>
+            <h5>Agent operating mode</h5>
 
             <div class="mp-option" data-mode="autopilot">
               <div class="mp-title"><span class="mp-dot"></span>Autopilot</div>
               <div class="mp-desc">Ava calls, texts, analyzes, and sends contracts on her own. She still respects guardrails (MAO, DNC, hours) but doesn't wait on you.</div>
-              <div class="mp-sub">? Best once you trust her voice &amp; scripts — audit log keeps everything</div>
+              <div class="mp-sub">Best once you trust her voice and scripts - the audit log keeps everything.</div>
             </div>
 
             <div class="mp-option selected" data-mode="approval">
               <div class="mp-title"><span class="mp-dot"></span>Approval — via Slack or Telegram</div>
               <div class="mp-desc">Ava does the work but pings you before any offer, contract, or outbound batch. Approve/decline with one tap in chat.</div>
               <div class="mp-channel-row">
-                <div class="mp-chan on">? Slack #deals</div>
+                <div class="mp-chan on">Slack #deals</div>
                 <div class="mp-chan">Telegram</div>
                 <div class="mp-chan">Email</div>
               </div>
-              <div class="mp-sub">? Recommended default — keeps you in the loop without slowing things down</div>
+              <div class="mp-sub">Recommended default - keeps you in the loop without slowing things down.</div>
             </div>
 
             <div class="mp-option" data-mode="manual">
               <div class="mp-title"><span class="mp-dot"></span>Manual — AI off</div>
               <div class="mp-desc">Ava pauses all outbound. No new calls, no new SMS, no new contracts. You run the board by hand.</div>
-              <div class="mp-sub">? Use during legal reviews, holidays, or when training new scripts</div>
+              <div class="mp-sub">Use during legal reviews, holidays, or when training new scripts.</div>
             </div>
           </div>
         </div>
@@ -1399,7 +1399,7 @@
 [data-page="dashboard"] .turn-text { color: var(--text-primary); }
 [data-page="dashboard"] .turn.ai .turn-text { color: var(--text-secondary); }
 [data-page="dashboard"] .turn.live::after {
-    content: '?'; color: var(--sky); animation: blink 1s infinite;
+    content: '|'; color: var(--sky); animation: blink 1s infinite;
     margin-left: 2px;
   }
 @keyframes blink { 50% { opacity: 0; } }
@@ -2252,7 +2252,7 @@
       <div style="display: flex; gap: var(--s-2);">
         <button type="button" class="chip-btn">Import CSV</button>
         <button type="button" class="chip-btn">Filter</button>
-        <button type="button" class="chip-btn active">Sort: Score ?</button>
+        <button type="button" class="chip-btn active">Sort: Score descending</button>
       </div>
     </div>
 
@@ -2866,10 +2866,10 @@
         <div class="call-recap">
           <div class="call-recap-head">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-            Call recap — Apr 18 — 15:02 ? 15:11 — 8:42 duration
+            Call recap - Apr 18 - 15:02 to 15:11 - 8:42 duration
           </div>
           <div class="call-recap-stats">
-            <div><div class="s-label">Sentiment</div><div class="s-val">0.68 ?</div></div>
+            <div><div class="s-label">Sentiment</div><div class="s-val">0.68 rising</div></div>
             <div><div class="s-label">Talk ratio</div><div class="s-val">38% — 62%</div></div>
             <div><div class="s-label">Objections</div><div class="s-val">2 raised</div></div>
             <div><div class="s-label">Outcome</div><div class="s-val" style="color:var(--sky)">Callback set</div></div>
@@ -3102,7 +3102,7 @@
         <thead>
           <tr>
             <th style="width: 36px"><div class="checkbox"></div></th>
-            <th class="sorted sortable">Score ?</th>
+            <th class="sorted sortable">Score descending</th>
             <th>Seller</th>
             <th>Property</th>
             <th>Phone</th>
@@ -3158,7 +3158,7 @@
           <tr class="row">
             <td><div class="checkbox"></div></td>
             <td><div class="score"><span>82</span><span class="score-bar"><span class="score-fill" style="width:82%"></span></span></div></td>
-            <td><div class="lead-name-cell"><strong>Marcus Delaney</strong><span class="lead-type-badges"><span class="lead-type-badge unknown">? Unknown</span><span class="lead-type-badge property">Single family</span></span></div></td>
+            <td><div class="lead-name-cell"><strong>Marcus Delaney</strong><span class="lead-type-badges"><span class="lead-type-badge unknown">Unknown</span><span class="lead-type-badge property">Single family</span></span></div></td>
             <td>14 Maple Ct, Akron OH</td>
             <td class="mono">+1 330-555-0812</td>
             <td class="mono">$178k / $124.6k</td>
@@ -3298,7 +3298,7 @@
 
        OPENCLAW HOOKUP
        ---------------
-       Once OpenClaw is connected (Settings ? API Keys), the analyzer
+       Once OpenClaw is connected (Settings > API Keys), the analyzer
        can call Codex tools via:
            window.PBK?.openclaw?.invoke('analyzeDeal', { address, ... })
        The plugin card already advertises `analyzeDeal` as one of
@@ -3690,7 +3690,7 @@
       </div>
 
       <div class="waterfall">
-        <div class="waterfall-title">? Waterfall — where the money goes</div>
+        <div class="waterfall-title">Waterfall - where the money goes</div>
 
         <div class="wf-row arv">
           <span class="label">ARV</span>
@@ -3795,19 +3795,19 @@
       </div>
 
       <div class="scripts-teaser" hidden>
-        <div class="label">? AI Negotiation Script — preview</div>
+        <div class="label">AI Negotiation Script - preview</div>
         <div class="script-preview">
           <strong>OPEN:</strong> Hi Diane, pulled comps on Cherry Ln — I can close in 14 days, cash, you don't lift a finger.<br><br>
           <strong>ANCHOR:</strong> Based on repairs — roof and furnace being what they are — number that makes sense for us is around $78,000.<br><br>
           <strong>STEP 1:</strong> If pushback, reveal $84k ("I can stretch a bit if we keep the quick close").<br><br>
           <strong>STEP 2:</strong> If still pushing, $91,500 firm ("that's my ceiling — past that I'm losing money on this one").<br><br>
-          <strong>CLOSE:</strong> Verbal yes ? DocuSign instantly.
+          <strong>CLOSE:</strong> Verbal yes -> DocuSign instantly.
         </div>
         <button type="button" class="btn btn-primary" style="width: 100%; justify-content: center;">Push script to Ava</button>
       </div>
 
       <div class="strategy-card" style="border-color: var(--amber-glow); background: var(--amber-glow);">
-        <h4 style="color: var(--amber);">? Risk Flags</h4>
+        <h4 style="color: var(--amber);">Risk Flags</h4>
         <div class="note">
           — Comp #5 sold at $116/sf — drag on ARV<br>
           — Probate — verify executor authority before contract<br>
@@ -4122,10 +4122,10 @@
         <div class="think-stream">
           <div class="think-line"><span class="think-ts">10:34:02</span><span class="think-body"><span class="tag memory">memory</span>Loaded 3 prior conversations with <strong>Diane Kowalski</strong> — last sentiment 0.68 — flagged "probate" and "quick close"</span></div>
           <div class="think-line"><span class="think-ts">10:34:03</span><span class="think-body"><span class="tag tool">tool</span>calling <code>analyzeDeal</code>("202 Cherry Ln, Columbus OH")</span></div>
-          <div class="think-line"><span class="think-ts">10:34:04</span><span class="think-body"><span class="tag tool">tool</span>? ARV $185k — repairs $38k (mid) — MAO <strong>$91,500</strong> — 5 comps</span></div>
+          <div class="think-line"><span class="think-ts">10:34:04</span><span class="think-body"><span class="tag tool">tool</span>ARV $185k - repairs $38k (mid) - MAO <strong>$91,500</strong> - 5 comps</span></div>
           <div class="think-line"><span class="think-ts">10:34:04</span><span class="think-body"><span class="tag tool">tool</span>calling <code>checkDNC</code>("+16145550142")</span></div>
-          <div class="think-line"><span class="think-ts">10:34:04</span><span class="think-body"><span class="tag tool">tool</span>? not on DNC — consent on file Apr 18 — safe to dial</span></div>
-          <div class="think-line"><span class="think-ts">10:34:05</span><span class="think-body"><span class="tag decision">decision</span>Deal qualifies — strategy: <strong>grief-aware open</strong> ? repair anchor ? $78k first offer — step ceiling $91,500</span></div>
+          <div class="think-line"><span class="think-ts">10:34:04</span><span class="think-body"><span class="tag tool">tool</span>Not on DNC - consent on file Apr 18 - safe to dial</span></div>
+          <div class="think-line"><span class="think-ts">10:34:05</span><span class="think-body"><span class="tag decision">decision</span>Deal qualifies - strategy: <strong>grief-aware open</strong> -> repair anchor -> $78k first offer - step ceiling $91,500</span></div>
           <div class="think-line"><span class="think-ts">10:34:06</span><span class="think-body"><span class="tag tool">tool</span>calling <code>telnyx_call</code>(+16145550142) — assistant_id=ava-acquisition-v3</span></div>
           <div class="think-line"><span class="think-ts">10:34:12</span><span class="think-body"><span class="tag done">done</span>Call connected — seller answered on second ring</span></div>
           <div class="think-line"><span class="think-ts">10:34:48</span><span class="think-body"><span class="tag memory">memory</span>New context captured: probate, bad roof, furnace out — sentiment climbing to <strong>0.72</strong></span></div>
@@ -4514,7 +4514,7 @@
     .lc-turn .s { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sky); font-weight: 700; margin-right: 6px; }
     .lc-turn.seller .s { color: var(--ion); }
     .lc-turn .t { color: var(--text-secondary); }
-    .lc-turn.current .t::after { content: '?'; color: var(--sky); animation: blink 1s infinite; margin-left: 2px; }
+    .lc-turn.current .t::after { content: '|'; color: var(--sky); animation: blink 1s infinite; margin-left: 2px; }
 
     .lc-meters {
       padding: var(--s-3) var(--s-4); border-top: 1px solid var(--border-dim);
@@ -4626,7 +4626,7 @@
         <div class="lc-turn current"><span class="s">AI</span><span class="t">Let me pull up what makes sense on our end given the repairs</span></div>
       </div>
       <div class="lc-meters">
-        <div class="lc-meter"><div class="l">Sentiment</div><div class="v good">0.72 ?</div></div>
+        <div class="lc-meter"><div class="l">Sentiment</div><div class="v good">0.72 rising</div></div>
         <div class="lc-meter"><div class="l">Talk ratio</div><div class="v">42% — 58%</div></div>
         <div class="lc-meter"><div class="l">Yell risk</div><div class="v good">0.04</div></div>
       </div>
@@ -4659,7 +4659,7 @@
         <div class="lc-turn current"><span class="s">AI</span><span class="t">That's the difference. What if we landed at $138,000 cash, 14-day close</span></div>
       </div>
       <div class="lc-meters">
-        <div class="lc-meter"><div class="l">Sentiment</div><div class="v">0.55 ?</div></div>
+        <div class="lc-meter"><div class="l">Sentiment</div><div class="v">0.55 steady</div></div>
         <div class="lc-meter"><div class="l">Talk ratio</div><div class="v">51% — 49%</div></div>
         <div class="lc-meter"><div class="l">Yell risk</div><div class="v good">0.08</div></div>
       </div>
@@ -5262,7 +5262,7 @@
       </div>
 
       <div class="clause-variations">
-        <h4>? Smart Clauses — auto-selected by analyzer</h4>
+        <h4>Smart Clauses - auto-selected by analyzer</h4>
         <div class="cv-item active">
           <span class="cv-name">7-day inspection</span>
           <span class="cv-note">default — repairs flagged</span>
@@ -5452,37 +5452,37 @@
       <div class="wf-list">
         <div class="wf-item active">
           <div class="wf-name">New-lead intake — Akron</div>
-          <div class="wf-desc">CSV drop ? skip-trace ? score ? queue Ava</div>
+          <div class="wf-desc">CSV drop -> skip-trace -> score -> queue Ava</div>
           <div class="wf-stats"><span class="on">● active</span><span style="color: var(--text-tertiary);">—</span><span>342 runs today</span></div>
         </div>
         <div class="wf-item">
           <div class="wf-name">Hot lead — instant call</div>
-          <div class="wf-desc">Score &gt;85 & probate ? Ava dials in &lt; 60s</div>
+          <div class="wf-desc">Score &gt;85 & probate -> Ava dials in &lt; 60s</div>
           <div class="wf-stats"><span class="on">● active</span><span style="color: var(--text-tertiary);">—</span><span>18 runs today</span></div>
         </div>
         <div class="wf-item">
           <div class="wf-name">Stuck contract — follow-up</div>
-          <div class="wf-desc">36h no view ? SMS nudge ? call attempt</div>
+          <div class="wf-desc">36h no view -> SMS nudge -> call attempt</div>
           <div class="wf-stats"><span class="on">● active</span><span style="color: var(--text-tertiary);">—</span><span>3 runs today</span></div>
         </div>
         <div class="wf-item">
-          <div class="wf-name">Verbal-yes ? DocuSign</div>
-          <div class="wf-desc">Ava hears yes ? pull template ? user approves ? send</div>
+          <div class="wf-name">Verbal yes -> DocuSign</div>
+          <div class="wf-desc">Ava hears yes -> pull template -> user approves -> send</div>
           <div class="wf-stats"><span class="on">● active</span><span style="color: var(--text-tertiary);">—</span><span>12 runs today</span></div>
         </div>
         <div class="wf-item">
-          <div class="wf-name">Yelling ? apologize + DNC</div>
-          <div class="wf-desc">Voice spike detected ? script apology ? add to DNC</div>
+          <div class="wf-name">Yelling -> apologize + DNC</div>
+          <div class="wf-desc">Voice spike detected -> script apology -> add to DNC</div>
           <div class="wf-stats"><span class="on">● active</span><span style="color: var(--text-tertiary);">—</span><span>2 runs today</span></div>
         </div>
         <div class="wf-item">
-          <div class="wf-name">Signed contract ? Slack ping</div>
-          <div class="wf-desc">DocuSign webhook "complete" ? #deals channel</div>
+          <div class="wf-name">Signed contract -> Slack ping</div>
+          <div class="wf-desc">DocuSign webhook "complete" -> #deals channel</div>
           <div class="wf-stats"><span class="off">○ paused</span></div>
         </div>
         <div class="wf-item">
           <div class="wf-name">Daily recap — 6pm</div>
-          <div class="wf-desc">Roll up all calls, contracts, DNCs ? email summary</div>
+          <div class="wf-desc">Roll up all calls, contracts, DNCs -> email summary</div>
           <div class="wf-stats"><span class="on">● active</span></div>
         </div>
         <div class="wf-item">
@@ -5505,7 +5505,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           </div>
           <div class="node-body">
-            <div class="node-type">? Trigger</div>
+            <div class="node-type">Trigger</div>
             <div class="node-title">When CSV uploaded to Leads</div>
             <div class="node-desc">listens to Supabase <code>leads_import</code> event</div>
           </div>
@@ -5518,7 +5518,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           </div>
           <div class="node-body">
-            <div class="node-type">? Action — BatchData</div>
+            <div class="node-type">Action - BatchData</div>
             <div class="node-title">Skip-trace phone numbers</div>
             <div class="node-desc">enriches rows — de-duplicates — flags landlines</div>
           </div>
@@ -5531,7 +5531,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
           </div>
           <div class="node-body">
-            <div class="node-type">? Action — Analyzer</div>
+            <div class="node-type">Action - Analyzer</div>
             <div class="node-title">Run ARV / MAO on each row</div>
             <div class="node-desc">calls <code>analyzeDeal()</code> — writes MAO, repair estimate</div>
           </div>
@@ -5544,7 +5544,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
           </div>
           <div class="node-body">
-            <div class="node-type">? Condition</div>
+            <div class="node-type">Condition</div>
             <div class="node-title">If score = 75 AND equity &gt; 50%</div>
             <div class="node-desc">branches to "hot queue" else "warm nurture"</div>
           </div>
@@ -5557,8 +5557,8 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
           </div>
           <div class="node-body">
-            <div class="node-type">? Action — Ava (Mastra)</div>
-            <div class="node-title">Request approval ? call with consent</div>
+            <div class="node-type">Action - Ava (Mastra)</div>
+            <div class="node-title">Request approval -> call with consent</div>
             <div class="node-desc">queues in Approval Panel — waits for Jordan's OK — then Telnyx dial</div>
           </div>
         </div>
@@ -5570,7 +5570,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v-2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2M4 12h16M4 12l-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-2-2"/></svg>
           </div>
           <div class="node-body">
-            <div class="node-type">? Action — Slack</div>
+            <div class="node-type">Action - Slack</div>
             <div class="node-title">Post summary to #deals</div>
             <div class="node-desc">count imported — top 5 hot leads — link to dashboard</div>
           </div>
@@ -5581,7 +5581,7 @@
     </div>
 
     <aside class="auto-inspector">
-      <h4>? Inspector — Step 1 (Trigger)</h4>
+      <h4>Inspector - Step 1 (Trigger)</h4>
 
       <div class="insp-field">
         <label>Trigger type</label>
@@ -5807,7 +5807,7 @@
 
   <div class="page-head">
     <div class="page-head-left">
-      <div class="ph-tag">Reporting — Apr 1 ? Apr 22 — updated just now</div>
+      <div class="ph-tag">Reporting - Apr 1 to Apr 22 - updated just now</div>
       <h2>The <em>numbers</em>.</h2>
       <p>Deal flow, AI performance, and cost per lead — all from one source of truth. Drill down to any call, lead, or contract in two clicks.</p>
     </div>
@@ -5878,7 +5878,7 @@
     <div class="chart-panel">
       <h4><span>📊 Deals closed — daily</span><span class="tf">April 2026</span></h4>
       <div class="chart-big">23 <em>— $1.86M volume — +22%</em></div>
-      <div class="delta">? 22% vs March</div>
+    <div class="delta">Up 22% vs March</div>
       <div class="bar-chart">
         <div class="bar low" style="height: 12%" data-label="1"></div>
         <div class="bar low" style="height: 8%" data-label=""></div>
@@ -5909,7 +5909,7 @@
     <div class="chart-panel">
       <h4><span>💸 AI cost — per closed deal</span></h4>
       <div class="chart-big">$14.22 <em>— -38%</em></div>
-      <div class="delta">? from $22.80 in March</div>
+    <div class="delta">Down from $22.80 in March</div>
       <div class="bar-chart">
         <div class="bar" style="height: 92%"></div>
         <div class="bar" style="height: 84%"></div>
@@ -5987,7 +5987,7 @@
         <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
       </div>
       <div style="margin-top: var(--s-3); padding: var(--s-3); background: var(--sky-glow); border-radius: var(--radius); font-family: var(--font-mono); font-size: 11px; color: var(--sky);">
-        ? Peak: <strong>11am—1pm</strong> and <strong>5pm—7pm</strong> — 32% higher connect rate
+        Peak: <strong>11am-1pm</strong> and <strong>5pm-7pm</strong> - 32% higher connect rate
       </div>
     </div>
     <div class="chart-panel an-full path-performance">
@@ -6390,7 +6390,7 @@
     <!-- VERCEL -->
     <div class="int-card connected">
       <div class="int-head">
-        <div class="int-logo lg-vercel">?</div>
+        <div class="int-logo lg-vercel">V</div>
         <div class="int-info">
           <div class="int-name">Vercel</div>
           <div class="int-role">HOSTING — EDGE FUNCTIONS</div>
@@ -6993,7 +6993,7 @@
     <!-- ========== LEFT ========== -->
     <aside class="brain-left">
       <div class="brain-topics">
-        <div class="bt-head">? Topics</div>
+        <div class="bt-head">Topics</div>
         <div class="topic-row active"><span>Wholesaling</span><span class="ct">82</span></div>
         <div class="topic-row"><span>Creative Finance</span><span class="ct">47</span></div>
         <div class="topic-row"><span>Cash Deals</span><span class="ct">34</span></div>
@@ -7016,7 +7016,7 @@
       </div>
 
       <div class="brain-bookmarks">
-        <div class="bt-head">? Bookmarks — 12</div>
+        <div class="bt-head">Bookmarks - 12</div>
         <div class="bm-item">
           <div class="t">The 5 Best Seller Financing Pitches That Actually Close</div>
           <div class="s">BiggerPockets — 8m read — saved 2d</div>
@@ -7040,7 +7040,7 @@
     <div class="brain-main">
 
       <div class="brain-hero">
-        <div class="br-tag" data-brain-meta="hero-tag">? A+ Acquisition Manager — Status</div>
+        <div class="br-tag" data-brain-meta="hero-tag">A+ Acquisition Manager - Status</div>
         <h2 data-brain-meta="hero-title">Ava read <em>47 new sources</em> this week.</h2>
         <p data-brain-meta="hero-copy">3 new FCC rulings on telemarketing consent — a peer-reviewed paper on motivated seller psychology — 12 local Ohio court docs on probate timelines. Her scripts auto-updated where relevant.</p>
         <div class="brain-ops-strip" data-brain-ops>
@@ -7118,7 +7118,7 @@
       <!-- RESEARCH LIBRARY -->
       <div>
         <div class="brain-panel-title">
-          <h4>? Research <em>library</em></h4>
+          <h4>Research <em>library</em></h4>
           <span class="sub" data-brain-meta="library-subtitle">Wholesaling — 82 items — sorted by recency</span>
         </div>
 
@@ -7184,7 +7184,7 @@
       <!-- REVENUE AGENT STACK -->
       <div>
         <div class="brain-panel-title">
-          <h4>? Revenue <em>agents</em></h4>
+          <h4>Revenue <em>agents</em></h4>
           <span class="sub" data-brain-meta="revenue-agents-subtitle">approval-gated production lanes</span>
         </div>
         <div class="revenue-agent-grid" data-revenue-agent-stack>
@@ -7199,7 +7199,7 @@
       <!-- RECENT INSIGHTS FEED -->
       <div>
         <div class="brain-panel-title">
-          <h4>? Recent <em>insights</em></h4>
+          <h4>Recent <em>insights</em></h4>
           <span class="sub" data-brain-meta="insights-subtitle">AI-generated summaries — filterable</span>
         </div>
 
@@ -7316,7 +7316,7 @@
 
       <div>
         <div class="brain-panel-title" style="padding: 0 var(--s-2);">
-          <h4 style="font-size: 16px;">? Market <em>pulse</em></h4>
+          <h4 style="font-size: 16px;">Market <em>pulse</em></h4>
           <span class="sub">live — Ohio</span>
         </div>
         <div class="market-pulse" data-brain-market-pulse>
@@ -7345,22 +7345,22 @@
 
       <div class="suggested" data-brain-reading>
         <div class="brain-panel-title" style="margin-bottom: var(--s-3);">
-          <h4 style="font-size: 16px;">? Today's <em>reading</em></h4>
+          <h4 style="font-size: 16px;">Today's <em>reading</em></h4>
         </div>
         <div class="sg-item">
-          <div class="why">? Because active calls may include personal context</div>
+          <div class="why">Why: active calls may include personal context</div>
           <div class="t">"Handling grief-bereaved sellers without feeling predatory" — 4 min</div>
         </div>
         <div class="sg-item">
-          <div class="why">? Because you have 3 probate leads queued</div>
+          <div class="why">Why: you have 3 probate leads queued</div>
           <div class="t">Ohio probate executor authority — 2026 checklist — 8 min</div>
         </div>
         <div class="sg-item">
-          <div class="why">? Because your MAO rule is 70%</div>
+          <div class="why">Why: your MAO rule is 70%</div>
           <div class="t">The ARV-minus-repairs fallacy in thin-comp markets — 12 min</div>
         </div>
         <div class="sg-item">
-          <div class="why">? Because HVAC costs shifted</div>
+          <div class="why">Why: HVAC costs shifted</div>
           <div class="t">Updating your repair ballpark by quarter — 5 min</div>
         </div>
       </div>
@@ -7876,7 +7876,7 @@
         <div class="rec-avatar">D</div>
         <div style="flex: 1;">
           <div class="who">Diane Kowalski</div>
-          <div class="meta">Apr 22 — 3:02pm ? 3:11pm — 8:42 — 202 Cherry Ln</div>
+          <div class="meta">Apr 22 - 3:02pm to 3:11pm - 8:42 - 202 Cherry Ln</div>
         </div>
         <button type="button" class="chip-btn">Send to lead</button>
         <button type="button" class="chip-btn">Download</button>
@@ -10279,7 +10279,7 @@
 
     <aside class="ld-side">
       <div class="ld-card">
-        <h4>? Property</h4>
+        <h4>Property</h4>
         <div class="ld-field"><span class="l">Parcel</span><span class="v">010-082-0022</span></div>
         <div class="ld-field"><span class="l">Beds — Baths</span><span class="v">3 — 2</span></div>
         <div class="ld-field"><span class="l">Sq ft</span><span class="v">1,520</span></div>
@@ -10289,7 +10289,7 @@
       </div>
 
       <div class="ld-card">
-        <h4>? Motivation Signals</h4>
+        <h4>Motivation Signals</h4>
         <div class="ld-field"><span class="l">Probate</span><span class="v" style="color: var(--magenta);">yes</span></div>
         <div class="ld-field"><span class="l">Equity</span><span class="v" style="color: var(--lime);">100%</span></div>
         <div class="ld-field"><span class="l">Vacancy</span><span class="v">confirmed</span></div>
@@ -10299,7 +10299,7 @@
       </div>
 
       <div class="ld-card">
-        <h4>? Compliance</h4>
+        <h4>Compliance</h4>
         <div class="ld-field"><span class="l">DNC status</span><span class="v" style="color: var(--sky);">Clear</span></div>
         <div class="ld-field"><span class="l">TCPA consent</span><span class="v" style="color: var(--sky);">Apr 18 — SMS opt-in</span></div>
         <div class="ld-field"><span class="l">Litigator match</span><span class="v">No match</span></div>
@@ -11329,13 +11329,13 @@
     </div>
     <div class="fc-side">
       <div class="panel" style="padding: var(--s-5);">
-        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: var(--s-3);">? Sentiment</div>
-        <div style="font-family: var(--font-mono); font-size: 28px; color: var(--sky); margin-bottom: var(--s-2);">0.72 ?</div>
+        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: var(--s-3);">Sentiment</div>
+        <div style="font-family: var(--font-mono); font-size: 28px; color: var(--sky); margin-bottom: var(--s-2);">0.72 rising</div>
         <div style="height: 4px; background: var(--bg-void); border-radius: 2px; overflow: hidden; margin-bottom: var(--s-2);"><div style="height: 100%; width: 72%; background: linear-gradient(90deg, var(--crimson), var(--amber), var(--sky));"></div></div>
         <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); letter-spacing: 0.06em;">RECEPTIVE — trending up</div>
       </div>
       <div class="panel" style="padding: var(--s-5);">
-        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: var(--s-3);">? Deal Math (live)</div>
+        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: var(--s-3);">Deal Math (live)</div>
         <div style="display: flex; flex-direction: column; gap: 8px; font-family: var(--font-mono); font-size: 13px;">
           <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-tertiary);">ARV</span><strong>$185,000</strong></div>
           <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-tertiary);">Repairs</span><strong>$38,000</strong></div>
@@ -11345,7 +11345,7 @@
         </div>
       </div>
       <div class="panel" style="padding: var(--s-5); background: var(--sky-glow); border-color: var(--sky-dim);">
-        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sky); font-weight: 700; margin-bottom: var(--s-2);">? Ava's next move</div>
+        <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sky); font-weight: 700; margin-bottom: var(--s-2);">Ava's next move</div>
         <div style="font-family: var(--font-mono); font-size: 12px; line-height: 1.6;">Lead with empathy on the loss. After rapport, float $78k anchor. Mention repair burden to justify the number.</div>
       </div>
     </div>
@@ -11570,7 +11570,7 @@
 
 <div class="tour-backdrop" id="tourBackdrop"></div>
 <div class="tour-card" id="tourCard">
-  <div class="tour-step" id="tourStepLabel">? Step 1 of 5 — Quick tour</div>
+  <div class="tour-step" id="tourStepLabel">Step 1 of 5 - Quick tour</div>
   <h3 id="tourTitle">Welcome to <em>PBK Wholesale Paradise</em></h3>
   <p id="tourBody">Your AI acquisition team runs from this command center. <strong>Ava</strong> calls and negotiates — <strong>Rex</strong> reads research — you approve the big moves. Let me show you around — takes 30 seconds.</p>
   <div class="tour-actions">
@@ -11583,7 +11583,7 @@
     </div>
     <div class="tour-buttons">
       <button type="button" class="tour-skip" id="tourSkip">Skip tour</button>
-      <button type="button" class="btn btn-primary" id="tourNext">Next ?</button>
+      <button type="button" class="btn btn-primary" id="tourNext">Next</button>
     </div>
   </div>
 </div>
@@ -11616,12 +11616,12 @@
     <div class="um-item" data-cmd="open-palette">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>Command palette</span>
-      <span class="kb">?K</span>
+      <span class="kb">Ctrl K</span>
     </div>
     <div class="um-item" data-cmd="shortcuts">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="9" x2="6" y2="9"/><line x1="10" y1="9" x2="10" y2="9"/><line x1="14" y1="9" x2="14" y2="9"/><line x1="18" y1="9" x2="18" y2="9"/><line x1="6" y1="13" x2="6" y2="13"/><line x1="10" y1="13" x2="14" y2="13"/><line x1="18" y1="13" x2="18" y2="13"/></svg>
       <span>Keyboard shortcuts</span>
-      <span class="kb">?</span>
+      <span class="kb">Enter</span>
     </div>
     <div class="um-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -11706,7 +11706,7 @@
       <span class="np-time">2d</span>
     </div>
   </div>
-  <div class="np-footer"><a>View all activity ?</a></div>
+  <div class="np-footer"><a>View all activity</a></div>
 </div>
 
 <!-- command palette -->
@@ -11719,7 +11719,7 @@
   </div>
   <div class="cp-results" id="cpResults">
     <div class="cp-group">
-      <div class="cp-group-label">? Quick actions</div>
+      <div class="cp-group-label">Quick actions</div>
       <div class="cp-item focused" data-action="run-analyzer" data-keywords="analyze deal mao arv">
         <div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
         <span class="cp-label">Run deal analyzer</span>
@@ -11757,7 +11757,7 @@
     </div>
 
     <div class="cp-group">
-      <div class="cp-group-label">? Navigate</div>
+      <div class="cp-group-label">Navigate</div>
       <div class="cp-item" data-nav="dashboard" data-keywords="dashboard command center home"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></div><span class="cp-label">Command Center</span><span class="cp-sub">G D</span></div>
       <div class="cp-item" data-nav="inbox" data-keywords="inbox messages sms email"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/></svg></div><span class="cp-label">Unified Inbox</span><span class="cp-sub">G I</span></div>
       <div class="cp-item" data-nav="leads" data-keywords="leads pipeline crm"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><span class="cp-label">Leads Pipeline</span><span class="cp-sub">G L</span></div>
@@ -11778,7 +11778,7 @@
     </div>
 
     <div class="cp-group">
-      <div class="cp-group-label">? Leads</div>
+      <div class="cp-group-label">Leads</div>
       <div class="cp-item" data-nav="lead-detail" data-keywords="diane kowalski cherry probate"><div class="cp-icon">D</div><span class="cp-label">Diane Kowalski</span><span class="cp-sub">202 Cherry Ln — live</span></div>
       <div class="cp-item" data-nav="lead-detail" data-keywords="robert chen birch"><div class="cp-icon">R</div><span class="cp-label">Robert Chen</span><span class="cp-sub">55 Birch Rd — awaiting OK</span></div>
       <div class="cp-item" data-nav="lead-detail" data-keywords="sarah jones oak"><div class="cp-icon">S</div><span class="cp-label">Sarah Jones</span><span class="cp-sub">456 Oak Ave — signed</span></div>
@@ -11786,8 +11786,8 @@
     </div>
   </div>
   <div class="cp-footer">
-    <span class="k"><kbd>??</kbd> navigate</span>
-    <span class="k"><kbd>?</kbd> select</span>
+    <span class="k"><kbd>Arrows</kbd> navigate</span>
+    <span class="k"><kbd>Enter</kbd> select</span>
     <span class="k"><kbd>esc</kbd> close</span>
     <span class="k" style="margin-left:auto;">262 items indexed</span>
   </div>
@@ -12713,7 +12713,7 @@
   const LEAD_TYPE_OPTIONS = [
     { label: 'Home Owner', value: 'homeowner', icon: '&#127968;' },
     { label: 'Real Estate Agent', value: 'agent', icon: '&#129309;' },
-    { label: 'Unknown', value: 'unknown', icon: '?' }
+    { label: 'Unknown', value: 'unknown', icon: 'UNK' }
   ];
   const PROP_TYPE_OPTIONS = [
     { label: 'Single Family', value: 'single-family', icon: '&#127969;' },
@@ -17520,11 +17520,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const readingItems = Array.isArray(snapshot?.status?.suggestedReading) ? snapshot.status.suggestedReading : [];
       reading.innerHTML = `
         <div class="brain-panel-title" style="margin-bottom: var(--s-3);">
-          <h4 style="font-size: 16px;">? Today's <em>reading</em></h4>
+          <h4 style="font-size: 16px;">Today's <em>reading</em></h4>
         </div>
         ${readingItems.length ? readingItems.map((item) => `
           <div class="sg-item">
-            <div class="why">? ${escapeHtml(item.why || 'Because PBK is live')}</div>
+            <div class="why">Why: ${escapeHtml(item.why || 'PBK is live')}</div>
             <div class="t">${escapeHtml(item.title || 'New research recommendation')}</div>
           </div>
         `).join('') : `

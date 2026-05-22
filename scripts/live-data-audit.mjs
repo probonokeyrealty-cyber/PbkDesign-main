@@ -300,6 +300,13 @@ const checks = [
       && /\.\.\.\(includeState \? \{ state: buildStateSnapshot\(\) \} : \{\}\)/.test(bridge),
   },
   {
+    name: 'Live calls and messages endpoints honor pagination to keep external dashboards responsive',
+    ok: /pathname === '\/api\/calls'[\s\S]*?const limit = Math\.max\(1, Math\.min\(200, Number\(url\.searchParams\.get\('limit'\)/.test(bridge)
+      && /calls: allCalls\.slice\(offset, offset \+ limit\)/.test(bridge)
+      && /pathname === '\/api\/messages'[\s\S]*?const limit = Math\.max\(1, Math\.min\(200, Number\(url\.searchParams\.get\('limit'\)/.test(bridge)
+      && /messages: allMessages\.slice\(offset, offset \+ limit\)/.test(bridge),
+  },
+  {
     name: 'OpenAI and DeepSeek token usage is tracked',
     ok: /pbk_token_usage/.test(bridge)
       && /recordTokenUsage\('openai'/.test(bridge)

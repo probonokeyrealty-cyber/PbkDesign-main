@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-22-telnyx-deepgram-linear16-fallback';
+const BUILD_REVISION = '2026-05-22-telnyx-deepgram-linear16-fallback-paged-activity';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -38458,9 +38458,16 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/calls') {
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 80)));
+      const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
       json(response, 200, {
         ok: true,
-        calls: state.calls,
+        result: 'live',
+        count: allCalls.length,
+        limit,
+        offset,
+        calls: allCalls.slice(offset, offset + limit),
       });
       return;
     }
@@ -38548,9 +38555,16 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && pathname === '/api/messages') {
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 80)));
+      const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
+      const allMessages = sortNewest(Array.isArray(state.messages) ? state.messages : []);
       json(response, 200, {
         ok: true,
-        messages: state.messages,
+        result: 'live',
+        count: allMessages.length,
+        limit,
+        offset,
+        messages: allMessages.slice(offset, offset + limit),
       });
       return;
     }

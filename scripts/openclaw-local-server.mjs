@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-22-telnyx-voice-routing-diagnostics';
+const BUILD_REVISION = '2026-05-22-telnyx-call-control-webhook-diagnostics';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -18305,6 +18305,12 @@ async function listTelnyxPhoneNumbers(params = {}) {
   return fireTelnyxRequest('GET', '/phone_numbers', undefined, { query });
 }
 
+async function getTelnyxCallControlApplication(applicationId = '') {
+  const id = String(applicationId || '').trim();
+  if (!id) return { ok: false, skipped: true, error: 'Missing Telnyx Call Control application id.' };
+  return fireTelnyxRequest('GET', `/call_control_applications/${encodeURIComponent(id)}`);
+}
+
 function normalizeTelnyxNumberRecord(record = {}) {
   const phoneNumber = record.phone_number || record.phoneNumber || record.number || '';
   const connectionId = String(record.connection_id || record.connectionId || '').trim();
@@ -18372,10 +18378,24 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
   const defaultNumber = normalizePhone(numberResult.defaultNumber || getEffectiveTelnyxFromNumber());
   const defaultNumberRecord = numbers.find((number) => normalizePhone(number.phoneNumber || number.phone_number) === defaultNumber) || null;
   const expectedWebhookUrl = getTelnyxWebhookUrl();
+  const expectedWebhookUrls = [
+    expectedWebhookUrl,
+    PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL.replace(/\/+$/, '')}/api/webhooks/telnyx/inbound` : '',
+  ].filter(Boolean);
   const expectedMediaStreamUrl = getTelnyxDeepgramStreamUrl();
   const defaultConnectionId = String(defaultNumberRecord?.connectionId || '').trim();
   const configuredConnectionId = String(TELNYX_CONNECTION_ID || '').trim();
   const connectionMatchesBridge = Boolean(defaultConnectionId && configuredConnectionId && defaultConnectionId === configuredConnectionId);
+  const applicationResult = configuredConnectionId ? await getTelnyxCallControlApplication(configuredConnectionId) : { ok: false, skipped: true };
+  const application = applicationResult.ok
+    ? (applicationResult.body?.data || applicationResult.body || {})
+    : null;
+  const applicationWebhookUrl = String(application?.webhook_event_url || application?.webhookEventUrl || '').trim();
+  const normalizedApplicationWebhookUrl = applicationWebhookUrl.replace(/\/+$/, '');
+  const webhookMatchesBridge = Boolean(
+    normalizedApplicationWebhookUrl
+      && expectedWebhookUrls.some((item) => item.replace(/\/+$/, '') === normalizedApplicationWebhookUrl),
+  );
   const issues = [];
 
   if (!numberResult.ok) issues.push(numberResult.error || numberResult.verbiage || 'Telnyx numbers could not be loaded.');
@@ -18388,6 +18408,15 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
   }
   if (!expectedWebhookUrl) issues.push('PBK_TELNYX_WEBHOOK_URL or PBK_PUBLIC_BASE_URL is not configured.');
   if (!expectedMediaStreamUrl) issues.push('PBK_PUBLIC_BASE_URL or PBK_BRIDGE_PUBLIC_URL is required for media streaming.');
+  if (configuredConnectionId && !applicationResult.ok) {
+    issues.push(`Telnyx Call Control application ${configuredConnectionId} could not be read: ${applicationResult.error || applicationResult.status || 'unknown error'}.`);
+  }
+  if (applicationResult.ok && !applicationWebhookUrl) {
+    issues.push(`Telnyx Call Control application ${configuredConnectionId} did not return webhook_event_url.`);
+  }
+  if (applicationWebhookUrl && !webhookMatchesBridge) {
+    issues.push(`Telnyx Call Control application webhook_event_url is ${applicationWebhookUrl}, expected one of ${expectedWebhookUrls.join(' or ')}.`);
+  }
 
   return {
     ok: issues.length === 0,
@@ -18395,16 +18424,30 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
     generatedAt: isoNow(),
     defaultNumber,
     expectedWebhookUrl,
-    expectedInboundWebhookUrls: [
-      expectedWebhookUrl,
-      PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL.replace(/\/+$/, '')}/api/webhooks/telnyx/inbound` : '',
-    ].filter(Boolean),
+    expectedInboundWebhookUrls: expectedWebhookUrls,
     expectedMediaStreamUrl: redactGatewayUrl(expectedMediaStreamUrl),
     streamTrack: DEEPGRAM_STREAM_TRACK,
     streamCodec: DEEPGRAM_STREAM_CODEC,
     bridgeConnectionId: configuredConnectionId,
     defaultNumberConnectionId: defaultConnectionId,
     connectionMatchesBridge,
+    callControlApplication: application
+      ? {
+        id: application.id || configuredConnectionId,
+        active: application.active,
+        applicationName: application.application_name || application.name || '',
+        webhookEventUrl: applicationWebhookUrl,
+        webhookEventFailoverUrl: application.webhook_event_failover_url || '',
+        webhookApiVersion: application.webhook_api_version || '',
+        webhookTimeoutSecs: application.webhook_timeout_secs ?? application.webhookTimeoutSecs ?? null,
+        webhookMatchesBridge,
+      }
+      : {
+        id: configuredConnectionId,
+        readOk: false,
+        error: applicationResult.error || '',
+        status: applicationResult.status || null,
+      },
     bridgeMessagingProfileId: TELNYX_MESSAGING_PROFILE_ID,
     defaultNumberMessagingProfileId: String(defaultNumberRecord?.messagingProfileId || '').trim(),
     messagingProfileMatchesBridge: Boolean(defaultNumberRecord?.messagingProfileMatchesBridge),

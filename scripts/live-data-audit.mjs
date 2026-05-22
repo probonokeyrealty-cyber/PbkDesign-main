@@ -945,10 +945,12 @@ const checks = [
   {
     name: 'Telnyx voice routing diagnostic compares default number to bridge Call Control connection',
     ok: /buildTelnyxVoiceRoutingDiagnostic/.test(bridge)
+      && /getTelnyxCallControlApplication/.test(bridge)
       && /\/api\/telnyx\/voice-routing/.test(bridge)
       && /connectionMatchesBridge/.test(bridge)
       && /defaultNumberConnectionId/.test(bridge)
-      && /expectedInboundWebhookUrls/.test(bridge),
+      && /expectedInboundWebhookUrls/.test(bridge)
+      && /webhookMatchesBridge/.test(bridge),
   },
   {
     name: 'Telnyx media handler buffers immediately and diagnoses Deepgram live open',

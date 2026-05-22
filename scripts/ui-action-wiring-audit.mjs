@@ -71,6 +71,13 @@ if (mysteryIconMatches.length) {
   });
 }
 
+if (/Why:\s*\$\{escapeHtml\(item\.why/.test(index) || /Why:\s+Because/i.test(staticMarkup)) {
+  fail.push({
+    name: 'Brain suggested reading should use human-friendly why labels',
+    details: ['Suggested reading should render as "Why: active calls..." instead of "Why: Because active calls...".'],
+  });
+}
+
 function parseAttrs(attrText = '') {
   const attrs = {};
   const attrRegex = /([:@\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;

@@ -17524,7 +17524,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         </div>
         ${readingItems.length ? readingItems.map((item) => `
           <div class="sg-item">
-            <div class="why">Why: ${escapeHtml(item.why || 'PBK is live')}</div>
+            <div class="why">Why: ${escapeHtml(String(item.why || 'PBK is live').replace(/^because\s+/i, ''))}</div>
             <div class="t">${escapeHtml(item.title || 'New research recommendation')}</div>
           </div>
         `).join('') : `

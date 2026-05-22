@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-21-telnyx-inbound-media-hardening';
+const BUILD_REVISION = '2026-05-22-telnyx-deepgram-phonecall-diagnostics';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -221,6 +221,7 @@ const TELNYX_DEEPGRAM_KEEPALIVE_MS = Math.max(3000, Math.min(9000, Number(proces
 const TELNYX_AI_ASSISTANT_ID = String(process.env.PBK_TELNYX_AI_ASSISTANT_ID || process.env.TELNYX_AI_ASSISTANT_ID || '').trim();
 const TELNYX_AI_ASSISTANT_ACTION_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_AI_ASSISTANT_ACTION_ENABLED || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED || 'true').trim());
+const PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
 const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
 const PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || 'true').trim());
@@ -18470,8 +18471,13 @@ function getTelnyxDeepgramLiveModel() {
   return String(
     process.env.PBK_DEEPGRAM_TELNYX_LIVE_MODEL
       || process.env.DEEPGRAM_TELNYX_LIVE_MODEL
-      || 'nova-2',
+      || 'nova-2-phonecall',
   ).trim();
+}
+
+function shouldStartTelnyxHostedAiAssistant() {
+  if (!TELNYX_AI_ASSISTANT_ID || !TELNYX_AI_ASSISTANT_ACTION_ENABLED) return false;
+  return !PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED || PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE;
 }
 
 async function startTelnyxMediaStream(callControlId = '', params = {}) {
@@ -18496,7 +18502,7 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
       callControlId,
       route: params.route || '',
       leadId: params.leadId || '',
-      telnyxAiAssistantStarted: Boolean(TELNYX_AI_ASSISTANT_ID && TELNYX_AI_ASSISTANT_ACTION_ENABLED),
+      telnyxAiAssistantStarted: shouldStartTelnyxHostedAiAssistant(),
       streamCodec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
       streamBidirectionalMode: getTelnyxBidirectionalMediaParams().stream_bidirectional_mode || '',
       startedAt: isoNow(),
@@ -18506,6 +18512,16 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
 
 async function startTelnyxAiAssistant(callControlId = '', promptOverride = '') {
   if (!callControlId) return { ok: false, skipped: true, result: 'unavailable', error: 'Missing Telnyx call_control_id.' };
+  if (PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED && !PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'bridge_ava_primary',
+      error: 'PBK bridge Ava is the primary live voice lane, so the hosted Telnyx AI Assistant was not started. Set PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE=true only if you intentionally want both.',
+      assistantId: TELNYX_AI_ASSISTANT_ID,
+      promptOverride,
+    };
+  }
   if (!TELNYX_AI_ASSISTANT_ID) {
     return {
       ok: false,
@@ -34823,6 +34839,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     callId: '',
     streamId: '',
     frameCount: 0,
+    audioBytes: 0,
+    firstFrameBytes: 0,
+    lastFrameBytes: 0,
+    firstAudioAt: '',
+    lastAudioAt: '',
+    mediaFormat: {},
+    deepgramModel: '',
+    deepgramEncoding: '',
+    deepgramSampleRate: 0,
+    deepgramEventCount: 0,
+    lastDeepgramEvent: '',
+    lastDeepgramError: '',
     transcript: [],
     sentiment: null,
     leadId: '',
@@ -34928,13 +34956,27 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       direction: 'transcription',
       provider: 'Deepgram',
       status: transcriptText ? 'transcribed' : 'no_transcript',
-      body: transcriptText || `Deepgram live stream closed (${reason}) before a final transcript was available.`,
+      body: transcriptText || `Deepgram live stream closed (${reason}) before a final transcript was available. Diagnostics: frames=${session.frameCount}, bytes=${session.audioBytes}, model=${session.deepgramModel || 'unknown'}, encoding=${session.deepgramEncoding || 'unknown'}, lastEvent=${session.lastDeepgramEvent || 'none'}.`,
       sentiment: session.sentiment?.pbkScore ?? null,
       callId: session.callId || contextCall?.id || '',
       payload: {
         source: 'telnyx-media-stream',
         streamId: session.streamId,
         frameCount: session.frameCount,
+        audioBytes: session.audioBytes,
+        firstFrameBytes: session.firstFrameBytes,
+        lastFrameBytes: session.lastFrameBytes,
+        firstAudioAt: session.firstAudioAt,
+        lastAudioAt: session.lastAudioAt,
+        mediaFormat: session.mediaFormat,
+        deepgram: {
+          model: session.deepgramModel,
+          encoding: session.deepgramEncoding,
+          sampleRate: session.deepgramSampleRate,
+          eventCount: session.deepgramEventCount,
+          lastEvent: session.lastDeepgramEvent,
+          lastError: session.lastDeepgramError,
+        },
         reason,
         startedAt: session.startedAt,
         endedAt: isoNow(),
@@ -34958,6 +35000,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           provider: 'Deepgram',
           streamId: session.streamId,
           frameCount: session.frameCount,
+          audioBytes: session.audioBytes,
           reason,
           sentiment: session.sentiment,
           transcriptFinal: finalTranscriptItems.length > 0,
@@ -34977,6 +35020,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           provider: 'Deepgram',
           streamId: session.streamId,
           callId: message.callId || session.callId || contextCall?.id || '',
+          frameCount: session.frameCount,
+          audioBytes: session.audioBytes,
           reason,
           sentiment: session.sentiment,
           intent: classification.intent,
@@ -35006,7 +35051,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         status: transcriptText ? 'transcribed' : 'warning',
         text: transcriptText
           ? `Live voice sentiment captured for ${message.leadName || session.callId || session.streamId}.`
-          : `Deepgram media stream ended without a final transcript (${reason}).`,
+          : `Deepgram media stream ended without a final transcript (${reason}; frames=${session.frameCount}, bytes=${session.audioBytes}, model=${session.deepgramModel || 'unknown'}, encoding=${session.deepgramEncoding || 'unknown'}, lastEvent=${session.lastDeepgramEvent || 'none'}).`,
         target: session.callId || session.streamId || session.id,
       }),
     );
@@ -35091,7 +35136,34 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const handleTelnyxDeepgramMessage = (data) => {
     const normalized = normalizeDeepgramLiveTranscript(data);
     const transcript = normalized.transcript;
-    if (!transcript) return;
+    if (!transcript) {
+      const eventType = String(
+        data?.type
+          || data?.event
+          || data?.message_type
+          || data?.metadata?.request_id
+          || '',
+      ).trim();
+      const errorText = String(data?.error || data?.err_msg || data?.message || '').trim();
+      if (eventType || errorText) {
+        session.deepgramEventCount += 1;
+        session.lastDeepgramEvent = eventType || (errorText ? 'error' : 'message');
+        if (errorText) session.lastDeepgramError = errorText.slice(0, 240);
+        if (errorText || /error/i.test(session.lastDeepgramEvent) || session.deepgramEventCount <= 3 || session.deepgramEventCount % 20 === 0) {
+          addActivity(state, makeActivity({
+            actor: 'Deepgram',
+            category: 'CALL',
+            status: errorText || /error/i.test(session.lastDeepgramEvent) ? 'warning' : 'listening',
+            text: `Deepgram Telnyx event ${session.lastDeepgramEvent || 'message'} without transcript yet (frames=${session.frameCount}, bytes=${session.audioBytes}${errorText ? `, error=${errorText.slice(0, 120)}` : ''}).`,
+            target: session.callId || session.streamId || session.id,
+          }));
+          void persistState(state);
+        }
+      }
+      return;
+    }
+    session.deepgramEventCount += 1;
+    session.lastDeepgramEvent = normalized.speechFinal ? 'transcript_speech_final' : normalized.isFinal ? 'transcript_final' : 'transcript_interim';
     const sentiment = normalizeDeepgramLiveSentiment(data);
     if (sentiment.pbkScore !== null) session.sentiment = sentiment;
     const item = {
@@ -35184,6 +35256,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         && socket.readyState === WebSocket.OPEN;
       if (session.callId) telnyxMediaSessionsByCallId.set(session.callId, session);
       const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
+      session.mediaFormat = mediaFormat;
       addActivity(
         state,
         makeActivity({
@@ -35201,6 +35274,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (event.event === 'media' && event.media?.payload) {
       const frame = Buffer.from(String(event.media.payload), 'base64');
       session.frameCount += 1;
+      session.audioBytes += frame.length;
+      session.lastFrameBytes = frame.length;
+      if (!session.firstFrameBytes) session.firstFrameBytes = frame.length;
+      if (!session.firstAudioAt) session.firstAudioAt = isoNow();
+      session.lastAudioAt = isoNow();
       if (session.frameCount === 1) {
         addActivity(
           state,
@@ -35208,7 +35286,19 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             actor: 'Telnyx Media',
             category: 'CALL',
             status: 'streaming',
-            text: `Telnyx media stream delivered first audio frame for ${session.callId || session.streamId || session.id}.`,
+            text: `Telnyx media stream delivered first audio frame for ${session.callId || session.streamId || session.id} (${frame.length} bytes).`,
+            target: session.callId || session.streamId || session.id,
+          }),
+        );
+        void persistState(state);
+      } else if (session.frameCount % 100 === 0) {
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Telnyx Media',
+            category: 'CALL',
+            status: 'streaming',
+            text: `Telnyx media stream is still sending caller audio (${session.frameCount} frames, ${session.audioBytes} bytes).`,
             target: session.callId || session.streamId || session.id,
           }),
         );
@@ -35231,9 +35321,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     try {
       deepgramOpenStarted = true;
       const codecOptions = buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC);
+      const telnyxLiveModel = getTelnyxDeepgramLiveModel();
+      session.deepgramModel = telnyxLiveModel;
+      session.deepgramEncoding = codecOptions.encoding;
+      session.deepgramSampleRate = codecOptions.sampleRate;
       deepgramConnection = await createDeepgramLiveConnection({
         manualWebSocket: true,
-        model: getTelnyxDeepgramLiveModel(),
+        model: telnyxLiveModel,
         encoding: codecOptions.encoding,
         sampleRate: codecOptions.sampleRate,
         channels: 1,
@@ -35243,11 +35337,28 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       deepgramConnection.on('message', handleTelnyxDeepgramMessage);
       deepgramConnection.on('error', (error) => {
         console.warn('[pbk-local-openclaw] Deepgram live stream error:', error?.message || error);
+        session.deepgramEventCount += 1;
+        session.lastDeepgramEvent = 'socket_error';
+        session.lastDeepgramError = String(error?.message || error || 'unknown error').slice(0, 240);
         addActivity(state, makeActivity({
           actor: 'Deepgram',
           category: 'CALL',
           status: 'warning',
-          text: `Deepgram live stream error for Telnyx media: ${String(error?.message || error || 'unknown error').slice(0, 180)}`,
+          text: `Deepgram live stream error for Telnyx media (${session.deepgramModel || 'unknown'} ${session.deepgramEncoding || 'unknown'} ${session.deepgramSampleRate || 'unknown'}Hz): ${String(error?.message || error || 'unknown error').slice(0, 180)}`,
+          target: session.callId || session.streamId || session.id,
+        }));
+        void persistState(state);
+      });
+      deepgramConnection.on('close', (event = {}) => {
+        if (finalized) return;
+        session.deepgramEventCount += 1;
+        session.lastDeepgramEvent = event?.code ? `socket_close_${event.code}` : 'socket_close';
+        session.lastDeepgramError = String(event?.reason || '').slice(0, 240);
+        addActivity(state, makeActivity({
+          actor: 'Deepgram',
+          category: 'CALL',
+          status: 'warning',
+          text: `Deepgram live stream closed for Telnyx media before finalization (${session.lastDeepgramEvent}${session.lastDeepgramError ? `: ${session.lastDeepgramError}` : ''}; frames=${session.frameCount}, bytes=${session.audioBytes}).`,
           target: session.callId || session.streamId || session.id,
         }));
         void persistState(state);
@@ -35263,7 +35374,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         actor: 'Deepgram',
         category: 'CALL',
         status: 'connected',
-        text: `Deepgram live stream connected for Telnyx media ${session.callId || session.streamId || session.id}.`,
+        text: `Deepgram live stream connected for Telnyx media ${session.callId || session.streamId || session.id} (${session.deepgramModel}, ${session.deepgramEncoding}, ${session.deepgramSampleRate}Hz).`,
         target: session.callId || session.streamId || session.id,
       }));
       startTelnyxDeepgramKeepAliveTimer();
@@ -36597,6 +36708,11 @@ const server = createServer(async (request, response) => {
         telnyxStreamCallsEnabled: DEEPGRAM_STREAM_CALLS_ENABLED,
         telnyxStreamTrack: DEEPGRAM_STREAM_TRACK,
         telnyxStreamCodec: DEEPGRAM_STREAM_CODEC,
+        telnyxLiveModel: getTelnyxDeepgramLiveModel(),
+        telnyxLiveOptions: buildTelnyxDeepgramLiveOptions(DEEPGRAM_STREAM_CODEC),
+        telnyxBridgeAvaReplyEnabled: PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED,
+        telnyxHostedAiAssistantAutoStart: shouldStartTelnyxHostedAiAssistant(),
+        telnyxHostedAiAssistantOverrideAllowed: PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE,
         telnyxStreamTokenConfigured: Boolean(TELNYX_MEDIA_STREAM_TOKEN),
       });
       return;

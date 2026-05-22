@@ -931,7 +931,9 @@ const checks = [
     name: 'Telnyx media WebSocket diagnostics prove connection and first audio frame',
     ok: /Telnyx media WebSocket connected to PBK bridge/.test(bridge)
       && /Telnyx media stream delivered first audio frame/.test(bridge)
-      && /session\.frameCount === 1/.test(bridge),
+      && /session\.frameCount === 1/.test(bridge)
+      && /session\.audioBytes \+= frame\.length/.test(bridge)
+      && /firstFrameBytes/.test(bridge),
   },
   {
     name: 'Telnyx media handler buffers immediately and diagnoses Deepgram live open',
@@ -967,9 +969,19 @@ const checks = [
   {
     name: 'Telnyx Deepgram live socket uses phone-safe model and captures 400 bodies',
     ok: /PBK_DEEPGRAM_TELNYX_LIVE_MODEL/.test(bridge)
-      && /model:\s*getTelnyxDeepgramLiveModel\(\)/.test(bridge)
+      && /nova-2-phonecall/.test(bridge)
+      && /const telnyxLiveModel = getTelnyxDeepgramLiveModel\(\)/.test(bridge)
+      && /model:\s*telnyxLiveModel/.test(bridge)
       && /utteranceEndMs:\s*1000/.test(bridge)
       && /Unexpected server response: \$\{response\.statusCode\}\$\{body/.test(readFileSync(resolve(root, 'scripts/pbk-deepgram-client.mjs'), 'utf8')),
+  },
+  {
+    name: 'Telnyx Deepgram no-transcript diagnostics expose bytes, model, and last event',
+    ok: /Deepgram media stream ended without a final transcript/.test(bridge)
+      && /frames=\$\{session\.frameCount\}, bytes=\$\{session\.audioBytes\}/.test(bridge)
+      && /model=\$\{session\.deepgramModel/.test(bridge)
+      && /lastEvent=\$\{session\.lastDeepgramEvent/.test(bridge)
+      && /telnyxLiveModel:\s*getTelnyxDeepgramLiveModel\(\)/.test(bridge),
   },
   {
     name: 'Telnyx Deepgram live socket sends KeepAlive during caller pauses',
@@ -1023,6 +1035,8 @@ const checks = [
       && /decodeTelnyxClientState/.test(bridge)
       && /buildTelnyxLiveAvaReply/.test(bridge)
       && /PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED/.test(bridge)
+      && /bridge_ava_primary/.test(bridge)
+      && /shouldStartTelnyxHostedAiAssistant/.test(bridge)
       && /telnyxAiAssistantStarted/.test(bridge)
       && /action:\s*'streaming_start'/.test(bridge)
       && /action:\s*'speak'/.test(bridge)

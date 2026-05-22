@@ -984,6 +984,15 @@ const checks = [
       && /telnyxLiveModel:\s*getTelnyxDeepgramLiveModel\(\)/.test(bridge),
   },
   {
+    name: 'Telnyx Deepgram STT falls back from PCMU to decoded linear16 when audio has no words',
+    ok: /function\s+decodeG711FrameToLinear16/.test(bridge)
+      && /TELNYX_DEEPGRAM_NO_TRANSCRIPT_FALLBACK_MS/.test(bridge)
+      && /rotateTelnyxDeepgramToLinear16Fallback/.test(bridge)
+      && /encoding:\s*'linear16'/.test(bridge)
+      && /replayedFrameCount/.test(bridge)
+      && /Deepgram Telnyx STT rotated to linear16 fallback/.test(bridge),
+  },
+  {
     name: 'Telnyx Deepgram live socket sends KeepAlive during caller pauses',
     ok: /TELNYX_DEEPGRAM_KEEPALIVE_MS/.test(bridge)
       && /startTelnyxDeepgramKeepAliveTimer/.test(bridge)

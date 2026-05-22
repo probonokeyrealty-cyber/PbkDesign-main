@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-22-telnyx-deepgram-linear16-fallback-paged-activity';
+const BUILD_REVISION = '2026-05-22-telnyx-voice-routing-diagnostics';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -1216,6 +1216,10 @@ function getTelnyxProviderMeta() {
     connectionIdConfigured: Boolean(TELNYX_CONNECTION_ID),
     messagingProfileConfigured: Boolean(TELNYX_MESSAGING_PROFILE_ID),
     webhookConfigured,
+    expectedWebhookUrl: TELNYX_WEBHOOK_URL,
+    mediaStreamPath: '/api/webhooks/telnyx/media',
+    streamTrack: DEEPGRAM_STREAM_TRACK,
+    streamCodec: DEEPGRAM_STREAM_CODEC,
     publicKeyConfigured,
     webhookSignatureReady: publicKeyConfigured,
     publicBaseUrlConfigured: Boolean(PUBLIC_BASE_URL),
@@ -18303,13 +18307,22 @@ async function listTelnyxPhoneNumbers(params = {}) {
 
 function normalizeTelnyxNumberRecord(record = {}) {
   const phoneNumber = record.phone_number || record.phoneNumber || record.number || '';
+  const connectionId = String(record.connection_id || record.connectionId || '').trim();
+  const messagingProfileId = String(record.messaging_profile_id || record.messagingProfileId || '').trim();
   return {
     id: record.id || phoneNumber,
     phone_number: phoneNumber,
     phoneNumber,
     label: record.name || record.label || record.customer_reference || '',
+    customerReference: record.customer_reference || record.customerReference || '',
     region: record.region_code || record.region || record.country_iso_alpha2 || '',
     status: record.status || '',
+    connectionId,
+    connection_id: connectionId,
+    connectionMatchesBridge: Boolean(connectionId && TELNYX_CONNECTION_ID && connectionId === TELNYX_CONNECTION_ID),
+    messagingProfileId,
+    messaging_profile_id: messagingProfileId,
+    messagingProfileMatchesBridge: Boolean(messagingProfileId && TELNYX_MESSAGING_PROFILE_ID && messagingProfileId === TELNYX_MESSAGING_PROFILE_ID),
   };
 }
 
@@ -18350,6 +18363,57 @@ async function getTelnyxNumberOptions() {
     verbiage: numbers.length ? 'Telnyx numbers loaded' : 'Telnyx is configured but no phone numbers were returned.',
     numbers,
     defaultNumber,
+  };
+}
+
+async function buildTelnyxVoiceRoutingDiagnostic() {
+  const numberResult = await getTelnyxNumberOptions();
+  const numbers = Array.isArray(numberResult.numbers) ? numberResult.numbers : [];
+  const defaultNumber = normalizePhone(numberResult.defaultNumber || getEffectiveTelnyxFromNumber());
+  const defaultNumberRecord = numbers.find((number) => normalizePhone(number.phoneNumber || number.phone_number) === defaultNumber) || null;
+  const expectedWebhookUrl = getTelnyxWebhookUrl();
+  const expectedMediaStreamUrl = getTelnyxDeepgramStreamUrl();
+  const defaultConnectionId = String(defaultNumberRecord?.connectionId || '').trim();
+  const configuredConnectionId = String(TELNYX_CONNECTION_ID || '').trim();
+  const connectionMatchesBridge = Boolean(defaultConnectionId && configuredConnectionId && defaultConnectionId === configuredConnectionId);
+  const issues = [];
+
+  if (!numberResult.ok) issues.push(numberResult.error || numberResult.verbiage || 'Telnyx numbers could not be loaded.');
+  if (!defaultNumber) issues.push('PBK_TELNYX_FROM_NUMBER is not configured.');
+  if (defaultNumber && !defaultNumberRecord) issues.push(`Default number ${defaultNumber} was not returned by Telnyx.`);
+  if (!configuredConnectionId) issues.push('PBK_TELNYX_CONNECTION_ID is not configured.');
+  if (defaultNumberRecord && !defaultConnectionId) issues.push(`Default number ${defaultNumber} did not return a connection_id; verify the number is assigned to a Call Control app/connection in Telnyx.`);
+  if (defaultConnectionId && configuredConnectionId && defaultConnectionId !== configuredConnectionId) {
+    issues.push(`Default number ${defaultNumber} is attached to Telnyx connection ${defaultConnectionId}, but Render is configured for ${configuredConnectionId}.`);
+  }
+  if (!expectedWebhookUrl) issues.push('PBK_TELNYX_WEBHOOK_URL or PBK_PUBLIC_BASE_URL is not configured.');
+  if (!expectedMediaStreamUrl) issues.push('PBK_PUBLIC_BASE_URL or PBK_BRIDGE_PUBLIC_URL is required for media streaming.');
+
+  return {
+    ok: issues.length === 0,
+    result: issues.length === 0 ? 'telnyx_voice_routing_ready' : 'telnyx_voice_routing_needs_attention',
+    generatedAt: isoNow(),
+    defaultNumber,
+    expectedWebhookUrl,
+    expectedInboundWebhookUrls: [
+      expectedWebhookUrl,
+      PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL.replace(/\/+$/, '')}/api/webhooks/telnyx/inbound` : '',
+    ].filter(Boolean),
+    expectedMediaStreamUrl: redactGatewayUrl(expectedMediaStreamUrl),
+    streamTrack: DEEPGRAM_STREAM_TRACK,
+    streamCodec: DEEPGRAM_STREAM_CODEC,
+    bridgeConnectionId: configuredConnectionId,
+    defaultNumberConnectionId: defaultConnectionId,
+    connectionMatchesBridge,
+    bridgeMessagingProfileId: TELNYX_MESSAGING_PROFILE_ID,
+    defaultNumberMessagingProfileId: String(defaultNumberRecord?.messagingProfileId || '').trim(),
+    messagingProfileMatchesBridge: Boolean(defaultNumberRecord?.messagingProfileMatchesBridge),
+    defaultNumberRecord,
+    numbers,
+    issues,
+    nextStep: issues.length
+      ? 'In Telnyx, assign the PBK number to the bridge Call Control connection and set the inbound webhook URL to the expected bridge URL.'
+      : 'Telnyx number and bridge connection IDs match. If calls still do not appear, inspect Telnyx webhook delivery attempts for signature or URL errors.',
   };
 }
 
@@ -37735,6 +37799,12 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/telnyx/voice-routing', '/api/telnyx/routing/voice'])) {
+      const result = await buildTelnyxVoiceRoutingDiagnostic();
+      json(response, result.ok ? 200 : 409, result);
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/instantly/senders') {
       const result = await getInstantlySenderOptions();
       json(response, 200, result);
@@ -40153,6 +40223,7 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/browser-research/jobs/:jobId',
         'POST /api/browser-research/complete',
         'GET /api/telnyx/numbers',
+        'GET /api/telnyx/voice-routing',
         'GET /api/instantly/senders',
         'GET/POST/PATCH /api/campaigns',
         'GET /api/campaigns/lead-sources',

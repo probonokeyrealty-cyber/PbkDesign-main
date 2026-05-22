@@ -943,6 +943,14 @@ const checks = [
       && /firstFrameBytes/.test(bridge),
   },
   {
+    name: 'Telnyx voice routing diagnostic compares default number to bridge Call Control connection',
+    ok: /buildTelnyxVoiceRoutingDiagnostic/.test(bridge)
+      && /\/api\/telnyx\/voice-routing/.test(bridge)
+      && /connectionMatchesBridge/.test(bridge)
+      && /defaultNumberConnectionId/.test(bridge)
+      && /expectedInboundWebhookUrls/.test(bridge),
+  },
+  {
     name: 'Telnyx media handler buffers immediately and diagnoses Deepgram live open',
     ok: /TELNYX_DEEPGRAM_OPEN_TIMEOUT_MS/.test(bridge)
       && /pendingTelnyxMediaFrames/.test(bridge)

@@ -54,6 +54,7 @@
     "monitoring:render-config": "node ./scripts/render-monitoring-config.mjs",
     "debug:production": "node ./scripts/production-pristine-check.mjs",
     "debug:production:strict": "node ./scripts/production-pristine-check.mjs --strict",
+    "debug:telnyx-live": "node ./scripts/telnyx-live-call-watch.mjs",
     "db:migrate": "node ./scripts/apply-supabase-migrations.mjs",
     "doctor:browser-use": "node ./scripts/browser-use-doctor.mjs",
     "doctor:openclaw": "openclaw-doctor status --json",

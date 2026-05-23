@@ -76,8 +76,9 @@ async function main() {
     const status = await jsonFetch('/api/intelligence/capabilities');
     assert(status.response.status === 200, `Expected intelligence capabilities 200, got ${status.response.status}: ${JSON.stringify(status.body)}`);
     assert(status.body.result === 'x_factor_capabilities', `Unexpected capability result: ${status.body.result}`);
-    assert(Array.isArray(status.body.dimensions) && status.body.dimensions.length === 8, 'Capabilities endpoint did not return all eight dimensions.');
+    assert(Array.isArray(status.body.dimensions) && status.body.dimensions.length >= 8, 'Capabilities endpoint did not return the intelligence dimensions.');
     assert(status.body.dimensions.every((item) => item.id && item.readiness && item.endpoint), 'Every dimension must expose id/readiness/endpoint.');
+    assert(status.body.dimensions.some((item) => item.id === 'emotional_learning_loop'), 'Capabilities endpoint did not expose the emotional learning loop.');
 
     const emotionAccuracy = await jsonFetch('/api/emotion/ser/predict', {
       method: 'POST',

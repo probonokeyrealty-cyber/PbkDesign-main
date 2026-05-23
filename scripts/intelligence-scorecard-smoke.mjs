@@ -59,6 +59,8 @@ const strongState = {
       worldModelConfigured: true,
       callEmotionCount: 600,
       memoryCount: 520,
+      learningInteractionCount: 620,
+      learningMemoryCount: 410,
       policyExperimentCount: 12,
       policyOutcomeCount: 240,
     },
@@ -155,6 +157,10 @@ assert(strongScorecard.agents.ava.score >= 90, `Ava should be 90+, got ${strongS
 assert(strongScorecard.agents.rex.score >= 90, `Rex should be 90+, got ${strongScorecard.agents.rex.score}.`);
 assert(strongScorecard.metrics.some((metric) => metric.id === 'ava_live_hearing_proof'), 'Ava hearing metric missing.');
 assert(strongScorecard.metrics.some((metric) => metric.id === 'rex_experiment_quality'), 'Rex experiment metric missing.');
+assert(
+  strongScorecard.metrics.find((metric) => metric.id === 'ava_closed_loop_learning')?.evidence?.emotionalLearningInteractions >= 600,
+  'Closed-loop learning metric should count emotional learning interactions.',
+);
 assert(
   strongScorecard.metrics.find((metric) => metric.id === 'ava_voice_provider_readiness')?.score === 100,
   'Voice readiness should recognize camelCase ElevenLabs provider metadata.',

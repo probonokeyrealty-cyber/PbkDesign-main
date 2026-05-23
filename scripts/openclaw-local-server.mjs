@@ -825,6 +825,8 @@ const LIMITS = {
   agentDecisions: 2000,
   callEmotions: 1200,
   emotionalMemory: 600,
+  emotionalLearningInteractions: 1200,
+  emotionalLearningMemory: 600,
   rexDecisions: 240,
   avaActiveMemories: 120,
   pbkMemories: 240,
@@ -4119,6 +4121,8 @@ function buildDefaultState() {
     agentDecisions: [],
     callEmotions: [],
     emotionalMemory: [],
+    emotionalLearningInteractions: [],
+    emotionalLearningMemory: [],
     emotionalPolicyExperiments: [],
     emotionalPolicyAssignments: [],
     emotionalPolicyOutcomes: [],
@@ -4742,6 +4746,78 @@ async function ensurePgSchema() {
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    CREATE TABLE IF NOT EXISTS public.pbk_emotional_learning_interactions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      session_id TEXT NOT NULL DEFAULT '',
+      seller_utterance TEXT NOT NULL DEFAULT '',
+      inferred_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ava_response TEXT NOT NULL DEFAULT '',
+      ava_prosody JSONB NOT NULL DEFAULT '{}'::jsonb,
+      outcome TEXT NOT NULL DEFAULT 'observed',
+      success_weight NUMERIC NOT NULL DEFAULT 0.5,
+      tags_before JSONB NOT NULL DEFAULT '[]'::jsonb,
+      tags_after JSONB NOT NULL DEFAULT '[]'::jsonb,
+      strategy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_emotional_learning_interactions
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS session_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS seller_utterance TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS inferred_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS ava_response TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS ava_prosody JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'observed',
+      ADD COLUMN IF NOT EXISTS success_weight NUMERIC NOT NULL DEFAULT 0.5,
+      ADD COLUMN IF NOT EXISTS tags_before JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS tags_after JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS strategy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_emotional_learning_memory (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      tag_signature TEXT NOT NULL DEFAULT '',
+      seller_utterance TEXT NOT NULL DEFAULT '',
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      winning_response TEXT NOT NULL DEFAULT '',
+      strategy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      outcome TEXT NOT NULL DEFAULT 'observed',
+      success_weight NUMERIC NOT NULL DEFAULT 0.5,
+      source_interaction_id TEXT NOT NULL DEFAULT '',
+      use_count INTEGER NOT NULL DEFAULT 0,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_emotional_learning_memory
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS tag_signature TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS seller_utterance TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS winning_response TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS strategy JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'observed',
+      ADD COLUMN IF NOT EXISTS success_weight NUMERIC NOT NULL DEFAULT 0.5,
+      ADD COLUMN IF NOT EXISTS source_interaction_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS use_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.pbk_emotional_policy_experiments (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5031,6 +5107,33 @@ async function ensurePgSchema() {
 
     ALTER TABLE public.pbk_emotional_memory ENABLE ROW LEVEL SECURITY;
 
+    CREATE INDEX IF NOT EXISTS pbk_emotional_learning_interactions_lookup_idx
+      ON public.pbk_emotional_learning_interactions (tenant_id, lead_id, call_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_emotional_learning_interactions_outcome_idx
+      ON public.pbk_emotional_learning_interactions (tenant_id, outcome, success_weight, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_emotional_learning_interactions_tags_idx
+      ON public.pbk_emotional_learning_interactions USING gin (inferred_tags);
+
+    ALTER TABLE public.pbk_emotional_learning_interactions ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_emotional_learning_memory_lookup_idx
+      ON public.pbk_emotional_learning_memory (tenant_id, tag_signature, success_weight DESC, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_emotional_learning_memory_tags_idx
+      ON public.pbk_emotional_learning_memory USING gin (tags);
+
+    ALTER TABLE public.pbk_emotional_learning_memory ENABLE ROW LEVEL SECURITY;
+
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_emotional_learning_interactions TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_emotional_learning_memory TO service_role;
+      END IF;
+    END $$;
+
     CREATE INDEX IF NOT EXISTS pbk_emotional_policy_experiments_lookup_idx
       ON public.pbk_emotional_policy_experiments (tenant_id, policy_name, status, created_at DESC);
 
@@ -5151,6 +5254,16 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS pbk_script_tests_set_updated_at ON public.pbk_script_tests;
     CREATE TRIGGER pbk_script_tests_set_updated_at
       BEFORE UPDATE ON public.pbk_script_tests
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_emotional_learning_interactions_set_updated_at ON public.pbk_emotional_learning_interactions;
+    CREATE TRIGGER pbk_emotional_learning_interactions_set_updated_at
+      BEFORE UPDATE ON public.pbk_emotional_learning_interactions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_emotional_learning_memory_set_updated_at ON public.pbk_emotional_learning_memory;
+    CREATE TRIGGER pbk_emotional_learning_memory_set_updated_at
+      BEFORE UPDATE ON public.pbk_emotional_learning_memory
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DROP TRIGGER IF EXISTS pbk_outcome_reports_set_updated_at ON public.pbk_outcome_reports;
@@ -6531,6 +6644,8 @@ function limitStateArrays(nextState) {
   nextState.agentDecisions = sortNewest(nextState.agentDecisions || []).slice(0, LIMITS.agentDecisions);
   nextState.callEmotions = sortNewest(nextState.callEmotions || []).slice(0, LIMITS.callEmotions);
   nextState.emotionalMemory = sortNewest(nextState.emotionalMemory || []).slice(0, LIMITS.emotionalMemory);
+  nextState.emotionalLearningInteractions = sortNewest(nextState.emotionalLearningInteractions || []).slice(0, LIMITS.emotionalLearningInteractions);
+  nextState.emotionalLearningMemory = sortNewest(nextState.emotionalLearningMemory || []).slice(0, LIMITS.emotionalLearningMemory);
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
@@ -6614,6 +6729,8 @@ function updateDerivedStatus(nextState) {
     worldModelConfigured: Boolean(EMOTION_WORLD_MODEL_ENDPOINT),
     callEmotionCount: (nextState.callEmotions || []).length,
     memoryCount: (nextState.emotionalMemory || []).length,
+    learningInteractionCount: (nextState.emotionalLearningInteractions || []).length,
+    learningMemoryCount: (nextState.emotionalLearningMemory || []).length,
     policyExperimentCount: (nextState.emotionalPolicyExperiments || []).length,
     policyOutcomeCount: (nextState.emotionalPolicyOutcomes || []).length,
     lastEmotionAt: getItemTimestamp((nextState.callEmotions || [])[0] || {}) || nextState.status.emotionalIntelligence?.lastEmotionAt || null,
@@ -6747,6 +6864,8 @@ function hydrateState(raw = {}) {
     agentDecisions: trimArray(raw.agentDecisions || defaults.agentDecisions, LIMITS.agentDecisions),
     callEmotions: trimArray(raw.callEmotions || defaults.callEmotions, LIMITS.callEmotions),
     emotionalMemory: trimArray(raw.emotionalMemory || defaults.emotionalMemory, LIMITS.emotionalMemory),
+    emotionalLearningInteractions: trimArray(raw.emotionalLearningInteractions || defaults.emotionalLearningInteractions, LIMITS.emotionalLearningInteractions),
+    emotionalLearningMemory: trimArray(raw.emotionalLearningMemory || defaults.emotionalLearningMemory, LIMITS.emotionalLearningMemory),
     agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
@@ -8945,6 +9064,11 @@ async function buildClosingIntelligenceAdvice(params = {}) {
   const playbook = getClosingObjectionPlaybook(context.objectionType, context);
   const reaction = buildRealTimeConversationReaction({ ...params, ...context, objectionType: context.objectionType });
   const emotionalMemory = buildEmotionalMemoryPromptContext({ ...params, ...context });
+  const emotionalTags = await inferEmotionalTagsRecord({
+    ...params,
+    ...context,
+    transcript: context.query || params.transcript || params.text || params.lastUserUtterance || '',
+  }, { persist: true });
   const [memoryContext, similarDealProof] = await Promise.all([
     recallConversationMemoryForDeal({ ...params, ...context, limit: 4 }),
     retrieveSimilarDealProof({ ...params, ...context, limit: 2 }),
@@ -8965,6 +9089,7 @@ async function buildClosingIntelligenceAdvice(params = {}) {
     playbook,
     reaction,
     emotionalMemory,
+    emotionalTags: emotionalTags.ok ? emotionalTags : null,
     memoryContext,
     similarDealProof,
     factSupport,
@@ -8986,6 +9111,7 @@ async function buildClosingIntelligenceAdvice(params = {}) {
     reaction,
     prosody: reaction.prosody,
     emotionalMemory,
+    emotionalTags: emotionalTags.ok ? emotionalTags : null,
     memories: memoryContext.memories,
     similarDeals: similarDealProof.deals,
     socialProofPhrase: similarDealProof.sellerSafePhrase,
@@ -9018,6 +9144,7 @@ async function buildClosingIntelligenceAdvice(params = {}) {
     reaction,
     prosody: reaction.prosody,
     emotionalMemory,
+    emotionalTags: emotionalTags.ok ? emotionalTags : null,
     memories: memoryContext.memories,
     similarDeals: similarDealProof.deals,
     socialProofPhrase: similarDealProof.sellerSafePhrase,
@@ -9161,11 +9288,12 @@ function buildSevenFigurePromptFrame(params = {}) {
   const similarDeals = Array.isArray(params.similarDealProof?.deals) ? params.similarDealProof.deals : [];
   const support = Array.isArray(params.factSupport) ? params.factSupport : [];
   const emotionalMemory = params.emotionalMemory?.ok ? params.emotionalMemory : null;
+  const emotionalTags = params.emotionalTags?.ok ? params.emotionalTags : null;
   return {
     role: 'Ava is a top 1% approval-gated real estate acquisitions closer: calm authority, tactical empathy, no desperation, no fake certainty.',
     internalChecklist: [
       'What is the seller really afraid of or trying to protect?',
-      'What emotional memory from prior turns must change the timing, tone, or offer pressure?',
+      'What emotional memory or emotional tag from prior turns must change the timing, tone, or offer pressure?',
       'Which frame keeps PBK as the calm expert instead of a desperate buyer?',
       'What missing BANT+ fact must be discovered before numbers or paperwork?',
       'Which proof point is safe to use: analyzer math, similar PBK deal, memory, or retrieved knowledge?',
@@ -9184,6 +9312,8 @@ function buildSevenFigurePromptFrame(params = {}) {
       emotionalMemoryPresent: Boolean(emotionalMemory),
       emotionalDominant: emotionalMemory?.dominantEmotion || '',
       emotionalPolicyHint: emotionalMemory?.policyHint || '',
+      emotionalTagSource: emotionalTags?.source || '',
+      emotionalPrimaryTag: emotionalTags?.strategy?.primaryTag || '',
       similarDealCount: similarDeals.length,
       supportCount: support.length,
       socialProofPhrase: params.similarDealProof?.sellerSafePhrase || '',
@@ -9199,12 +9329,21 @@ function buildSevenFigurePromptFrame(params = {}) {
       promptInstruction: emotionalMemory.promptInstruction,
       updatedAt: emotionalMemory.updatedAt,
     } : null,
+    emotionalTags: emotionalTags ? {
+      schemaVersion: emotionalTags.schemaVersion,
+      source: emotionalTags.source,
+      tags: emotionalTags.tags,
+      tagSignature: emotionalTags.tagSignature,
+      strategy: emotionalTags.strategy,
+      memory: emotionalTags.memory,
+    } : null,
     spokenRules: [
       'Never list the hidden checklist out loud.',
       'Never invent comps, legal advice, lender behavior, or closed-deal proof.',
       'If confidence is low, ask one clarifying question instead of filling dead air.',
       'If the seller is angry, slow down and de-escalate before selling.',
       emotionalMemory?.promptInstruction || '',
+      emotionalTags?.strategy?.promptInstruction || '',
     ].filter(Boolean),
   };
 }
@@ -10245,6 +10384,464 @@ async function recordCallEmotionRecord(params = {}) {
   return { ok: true, result: 'call_emotion_recorded', emotion: record, memory, storage: { localState: true, postgres } };
 }
 
+const EMOTIONAL_LEARNING_TAGS = [
+  'skeptical',
+  'trust_rising',
+  'hesitant_offer',
+  'excited',
+  'confused',
+  'urgent',
+  'calm',
+  'frustrated',
+  'ready_to_close',
+];
+
+const EMOTIONAL_LEARNING_TAG_GUIDANCE = {
+  skeptical: {
+    promptInstruction: 'Use proof and process clarity. Do not defend, overclaim, or ask for sensitive information.',
+    responseGuidance: 'Validate the concern, explain what can be verified, and offer one concrete proof/process step.',
+    prosody: { speed: 0.9, stability: 0.74, emotionPrompt: 'calm, transparent, grounded' },
+  },
+  trust_rising: {
+    promptInstruction: 'Preserve momentum. Confirm facts and move toward the next safe, approval-gated step.',
+    responseGuidance: 'Keep it short, confirm understanding, and ask for one next commitment.',
+    prosody: { speed: 1.02, stability: 0.5, emotionPrompt: 'warm, confident, concise' },
+  },
+  hesitant_offer: {
+    promptInstruction: 'Do not push paperwork. Isolate whether the hesitation is price, timing, trust, or authority.',
+    responseGuidance: 'Name the hesitation and ask which part would need to feel clearer before moving forward.',
+    prosody: { speed: 0.92, stability: 0.62, emotionPrompt: 'patient, practical, no pressure' },
+  },
+  excited: {
+    promptInstruction: 'Match positive energy lightly while staying professional and specific.',
+    responseGuidance: 'Acknowledge momentum, then confirm price/timeline/authority.',
+    prosody: { speed: 1.06, stability: 0.44, emotionPrompt: 'upbeat, warm, contained' },
+  },
+  confused: {
+    promptInstruction: 'Simplify. Explain one step at a time and avoid jargon.',
+    responseGuidance: 'Restate the process in plain language and check what part is unclear.',
+    prosody: { speed: 0.88, stability: 0.68, emotionPrompt: 'slow, clear, reassuring' },
+  },
+  urgent: {
+    promptInstruction: 'Move with calm speed. Clarify the deadline and the smallest next step.',
+    responseGuidance: 'Confirm the date/problem, explain the fast clean path, and avoid exploiting distress.',
+    prosody: { speed: 1.0, stability: 0.56, emotionPrompt: 'steady, decisive, protective' },
+  },
+  calm: {
+    promptInstruction: 'Stay conversational and continue discovery without over-selling.',
+    responseGuidance: 'Ask one useful discovery question and keep the tone natural.',
+    prosody: { speed: 0.98, stability: 0.54, emotionPrompt: 'natural, clear, relaxed' },
+  },
+  frustrated: {
+    promptInstruction: 'De-escalate first. Apologize if appropriate, reduce pressure, and offer an opt-out if contact is unwanted.',
+    responseGuidance: 'Name the frustration, slow down, and ask what would make the conversation less frustrating.',
+    prosody: { speed: 0.84, stability: 0.76, emotionPrompt: 'slow, lower, respectful' },
+  },
+  ready_to_close: {
+    promptInstruction: 'Confirm the rule of three before action: price, timeline, and authority.',
+    responseGuidance: 'Confirm details and move to the next approval-gated operational step.',
+    prosody: { speed: 1.02, stability: 0.5, emotionPrompt: 'confident, concise, grounded' },
+  },
+};
+
+function tokenizeEmotionalText(text = '') {
+  return new Set(String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 3)
+    .filter((token) => !['this', 'that', 'with', 'have', 'just', 'what', 'when', 'where', 'your', 'from', 'about', 'before'].includes(token)));
+}
+
+function emotionalTextSimilarity(left = '', right = '') {
+  const leftTokens = tokenizeEmotionalText(left);
+  const rightTokens = tokenizeEmotionalText(right);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) intersection += 1;
+  }
+  const union = new Set([...leftTokens, ...rightTokens]).size || 1;
+  return intersection / union;
+}
+
+function normalizeEmotionalLearningTags(tags = []) {
+  const records = Array.isArray(tags) ? tags : [];
+  const byTag = new Map();
+  for (const item of records) {
+    const rawTag = typeof item === 'string' ? item : item?.tag || item?.name || item?.label;
+    const tag = slugify(rawTag || '').replace(/-/g, '_');
+    if (!EMOTIONAL_LEARNING_TAGS.includes(tag)) continue;
+    const intensity = Math.max(0.05, Math.min(1, toNumber(item?.intensity ?? item?.score ?? 0.5, 0.5)));
+    const previous = byTag.get(tag);
+    if (!previous || intensity > previous.intensity) {
+      byTag.set(tag, { tag, intensity: Number(intensity.toFixed(3)) });
+    }
+  }
+  return [...byTag.values()].sort((left, right) => right.intensity - left.intensity).slice(0, 4);
+}
+
+function inferHeuristicEmotionalTags(params = {}) {
+  const text = String(params.transcript || params.sellerUtterance || params.text || '').toLowerCase();
+  const emotion = normalizeEmotionState(params.emotion || params.emotionState || params.currentEmotion, params.sentiment);
+  const candidates = [];
+  const add = (tag, intensity) => candidates.push({ tag, intensity });
+  if (/\b(sc[a@]m|trust|proof|legit|real|verify|how do i know|who are you|company|safe)\b/i.test(text)) add('skeptical', 0.82);
+  if (/\b(not sure|think about|maybe|hesitat|sleep on it|talk it over|price|offer|number|too low)\b/i.test(text)) add('hesitant_offer', 0.68);
+  if (/\b(confused|explain|understand|mean|how does|what happens|walk me through)\b/i.test(text)) add('confused', 0.66);
+  if (/\b(urgent|asap|quick|fast|today|deadline|foreclosure|behind|need this done)\b/i.test(text)) add('urgent', 0.72);
+  if (/\b(frustrated|mad|angry|annoyed|stop calling|leave me alone|upset)\b/i.test(text)) add('frustrated', 0.78);
+  if (/\b(great|awesome|excited|perfect|love it|sounds good)\b/i.test(text)) add('excited', 0.72);
+  if (/\b(ok|okay|thanks|thank you|that helps|makes sense|i get it)\b/i.test(text)) add('trust_rising', 0.68);
+  if (/\b(send|sign|move forward|let's do it|lets do it|ready|paperwork)\b/i.test(text)) add('ready_to_close', 0.78);
+  if (emotion.dominant === 'fear' && emotion.intensity >= 0.45) add('skeptical', Math.max(0.62, emotion.intensity));
+  if (emotion.dominant === 'anger' && emotion.intensity >= 0.35) add('frustrated', Math.max(0.62, emotion.intensity));
+  if (emotion.dominant === 'joy' && emotion.intensity >= 0.45) add('trust_rising', Math.max(0.58, emotion.intensity));
+  if (!candidates.length) add('calm', 0.52);
+  return normalizeEmotionalLearningTags(candidates);
+}
+
+function emotionalTagSignature(tags = []) {
+  return normalizeEmotionalLearningTags(tags)
+    .map((tag) => tag.tag)
+    .sort()
+    .join('+') || 'calm';
+}
+
+function buildEmotionalTagStrategy(tags = [], memory = null) {
+  const normalized = normalizeEmotionalLearningTags(tags);
+  const primary = normalized[0]?.tag || 'calm';
+  const guidance = EMOTIONAL_LEARNING_TAG_GUIDANCE[primary] || EMOTIONAL_LEARNING_TAG_GUIDANCE.calm;
+  return {
+    schemaVersion: 'pbk-emotional-tag-strategy-v1',
+    primaryTag: primary,
+    promptInstruction: guidance.promptInstruction,
+    responseGuidance: guidance.responseGuidance,
+    prosody: guidance.prosody,
+    winningResponse: memory?.winningResponse || memory?.winning_response || '',
+    memoryId: memory?.id || '',
+    memorySuccessWeight: Number(memory?.successWeight ?? memory?.success_weight ?? 0),
+  };
+}
+
+function findSimilarEmotionalLearningMemory(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const transcript = String(params.transcript || params.sellerUtterance || params.text || '').trim();
+  const tags = normalizeEmotionalLearningTags(params.tags || params.inferredTags || []);
+  const tagNames = new Set(tags.map((tag) => tag.tag));
+  const records = sortNewest(state.emotionalLearningMemory || [])
+    .filter((item) => normalizeTenantId(item.tenantId || item.tenant_id || 'pbk') === tenantId)
+    .filter((item) => Number(item.successWeight ?? item.success_weight ?? 0) >= 0.6);
+  let best = null;
+  for (const record of records) {
+    const recordTags = normalizeEmotionalLearningTags(record.tags || []);
+    const recordTagNames = new Set(recordTags.map((tag) => tag.tag));
+    const tagOverlap = [...tagNames].filter((tag) => recordTagNames.has(tag)).length;
+    const textScore = emotionalTextSimilarity(transcript, record.sellerUtterance || record.seller_utterance || '');
+    const score = Math.min(1, (textScore * 0.72) + (Math.min(tagOverlap, 2) * 0.18) + (Number(record.successWeight ?? record.success_weight ?? 0) * 0.1));
+    if (!best || score > best.score) best = { ...record, score };
+  }
+  return best && best.score >= 0.32 ? best : null;
+}
+
+async function persistEmotionalLearningInteractionToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_emotional_learning_interactions (
+      id, tenant_id, lead_id, call_id, session_id, seller_utterance, inferred_tags,
+      ava_response, ava_prosody, outcome, success_weight, tags_before, tags_after,
+      strategy, source, metadata, created_at, updated_at
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12::jsonb,$13::jsonb,$14::jsonb,$15,$16::jsonb,$17,$18)
+    ON CONFLICT (id) DO UPDATE SET
+      inferred_tags = EXCLUDED.inferred_tags,
+      ava_response = EXCLUDED.ava_response,
+      ava_prosody = EXCLUDED.ava_prosody,
+      outcome = EXCLUDED.outcome,
+      success_weight = EXCLUDED.success_weight,
+      tags_after = EXCLUDED.tags_after,
+      strategy = EXCLUDED.strategy,
+      metadata = EXCLUDED.metadata,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.tenantId,
+      record.leadId,
+      record.callId,
+      record.sessionId,
+      record.sellerUtterance,
+      JSON.stringify(record.inferredTags || []),
+      record.avaResponse,
+      JSON.stringify(record.avaProsody || {}),
+      record.outcome,
+      record.successWeight,
+      JSON.stringify(record.tagsBefore || []),
+      JSON.stringify(record.tagsAfter || []),
+      JSON.stringify(record.strategy || {}),
+      record.source,
+      JSON.stringify(record.metadata || {}),
+      record.createdAt,
+      record.updatedAt,
+    ],
+  );
+  return result.ok;
+}
+
+async function persistEmotionalLearningMemoryToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_emotional_learning_memory (
+      id, tenant_id, tag_signature, seller_utterance, tags, winning_response,
+      strategy, outcome, success_weight, source_interaction_id, use_count,
+      metadata, created_at, updated_at
+    )
+    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8,$9,$10,$11,$12::jsonb,$13,$14)
+    ON CONFLICT (id) DO UPDATE SET
+      tags = EXCLUDED.tags,
+      winning_response = EXCLUDED.winning_response,
+      strategy = EXCLUDED.strategy,
+      outcome = EXCLUDED.outcome,
+      success_weight = GREATEST(public.pbk_emotional_learning_memory.success_weight, EXCLUDED.success_weight),
+      use_count = GREATEST(public.pbk_emotional_learning_memory.use_count, EXCLUDED.use_count),
+      metadata = public.pbk_emotional_learning_memory.metadata || EXCLUDED.metadata,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.tenantId,
+      record.tagSignature,
+      record.sellerUtterance,
+      JSON.stringify(record.tags || []),
+      record.winningResponse,
+      JSON.stringify(record.strategy || {}),
+      record.outcome,
+      record.successWeight,
+      record.sourceInteractionId,
+      Number(record.useCount || 0),
+      JSON.stringify(record.metadata || {}),
+      record.createdAt,
+      record.updatedAt,
+    ],
+  );
+  return result.ok;
+}
+
+async function inferEmotionalTagsRecord(params = {}, options = {}) {
+  const context = findLeadContext(params);
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const transcript = String(params.transcript || params.sellerUtterance || params.text || params.query || '').trim();
+  if (!transcript) return { ok: false, result: 'invalid_request', error: 'transcript is required.' };
+  const heuristicTags = inferHeuristicEmotionalTags(params);
+  const memory = findSimilarEmotionalLearningMemory({ tenantId, transcript, tags: heuristicTags });
+  const source = memory ? 'emotional_memory' : 'heuristic';
+  const tags = memory ? normalizeEmotionalLearningTags(memory.tags || heuristicTags) : heuristicTags;
+  if (memory) {
+    memory.useCount = Number(memory.useCount || memory.use_count || 0) + 1;
+    memory.updatedAt = isoNow();
+    if (options.persist !== false) {
+      upsertById(state, 'emotionalLearningMemory', memory);
+      void persistEmotionalLearningMemoryToPg(memory);
+      await persistState(state);
+    }
+  }
+  return {
+    ok: true,
+    result: 'emotional_tags_inferred',
+    schemaVersion: 'pbk-emotional-tags-v1',
+    source,
+    tenantId,
+    leadId: String(params.leadId || params.lead_id || context.leadId || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    transcript,
+    tags,
+    tagSignature: emotionalTagSignature(tags),
+    strategy: buildEmotionalTagStrategy(tags, memory),
+    memory: memory ? {
+      id: memory.id,
+      score: Number(memory.score || 0),
+      successWeight: Number(memory.successWeight || memory.success_weight || 0),
+      winningResponse: memory.winningResponse || memory.winning_response || '',
+      sourceInteractionId: memory.sourceInteractionId || memory.source_interaction_id || '',
+    } : null,
+  };
+}
+
+function computeEmotionalLearningSuccessWeight({ outcome = '', tagsBefore = [], tagsAfter = [] } = {}) {
+  let score = 0.45;
+  if (/offer_accepted|contract_sent|appointment_set|ready_to_close|closed/i.test(outcome)) score = 1;
+  else if (/objection_handled|trust_rising|stayed_engaged|positive/i.test(outcome)) score = 0.72;
+  else if (/no_decision|observed|neutral/i.test(outcome)) score = 0.48;
+  else if (/call_ended|rejected|dnc|angry|negative/i.test(outcome)) score = 0.18;
+  const negativeTags = new Set(['skeptical', 'frustrated', 'hesitant_offer', 'confused']);
+  const positiveTags = new Set(['trust_rising', 'excited', 'ready_to_close', 'calm']);
+  const beforeNegative = normalizeEmotionalLearningTags(tagsBefore)
+    .filter((tag) => negativeTags.has(tag.tag))
+    .reduce((sum, tag) => sum + tag.intensity, 0);
+  const afterNegative = normalizeEmotionalLearningTags(tagsAfter)
+    .filter((tag) => negativeTags.has(tag.tag))
+    .reduce((sum, tag) => sum + tag.intensity, 0);
+  const afterPositive = normalizeEmotionalLearningTags(tagsAfter)
+    .filter((tag) => positiveTags.has(tag.tag))
+    .reduce((sum, tag) => sum + tag.intensity, 0);
+  if (beforeNegative > afterNegative) score += Math.min(0.18, (beforeNegative - afterNegative) * 0.08);
+  if (afterPositive > 0) score += Math.min(0.12, afterPositive * 0.06);
+  return Number(Math.max(0.05, Math.min(1, score)).toFixed(4));
+}
+
+async function recordEmotionalLearningInteractionRecord(params = {}) {
+  const context = findLeadContext(params);
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const sellerUtterance = String(params.sellerUtterance || params.seller_utterance || params.transcript || params.text || '').trim();
+  if (!sellerUtterance) return { ok: false, result: 'invalid_request', error: 'sellerUtterance is required.' };
+  const inferred = params.inferredTags || params.tags
+    ? { tags: normalizeEmotionalLearningTags(params.inferredTags || params.tags) }
+    : await inferEmotionalTagsRecord({ ...params, transcript: sellerUtterance }, { persist: false });
+  const inferredTags = normalizeEmotionalLearningTags(inferred.tags || []);
+  const tagsAfter = normalizeEmotionalLearningTags(params.tagsAfter || params.tags_after || params.afterTags || []);
+  const strategy = buildEmotionalTagStrategy(inferredTags);
+  const outcome = String(params.outcome || params.outcomeLabel || params.outcome_label || 'observed').trim();
+  const successWeight = Number.isFinite(Number(params.successWeight ?? params.success_weight))
+    ? Number(Math.max(0.05, Math.min(1, Number(params.successWeight ?? params.success_weight))).toFixed(4))
+    : computeEmotionalLearningSuccessWeight({ outcome, tagsBefore: inferredTags, tagsAfter });
+  const record = {
+    id: String(params.id || `emotional-learning-${slugify(context.leadId || params.leadId || 'lead')}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    tenantId,
+    leadId: String(params.leadId || params.lead_id || context.leadId || '').trim(),
+    callId: String(params.callId || params.call_id || '').trim(),
+    sessionId: String(params.sessionId || params.session_id || params.callId || params.call_id || '').trim(),
+    sellerUtterance: sellerUtterance.slice(0, 4000),
+    inferredTags,
+    avaResponse: String(params.avaResponse || params.ava_response || params.response || '').slice(0, 4000),
+    avaProsody: plainObject(params.avaProsody || params.ava_prosody || params.prosody),
+    outcome,
+    successWeight,
+    tagsBefore: inferredTags,
+    tagsAfter,
+    strategy,
+    source: String(params.source || 'pbk-emotional-learning-loop').trim(),
+    metadata: {
+      ...(plainObject(params.metadata)),
+      leadName: context.leadName,
+      address: context.address,
+      schemaVersion: 'pbk-emotional-learning-interaction-v1',
+    },
+    createdAt: params.createdAt || params.created_at || isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (!Array.isArray(state.emotionalLearningInteractions)) state.emotionalLearningInteractions = [];
+  upsertById(state, 'emotionalLearningInteractions', record);
+  const postgres = await persistEmotionalLearningInteractionToPg(record);
+  const agentDecision = await recordAgentDecisionRecord({
+    agentId: 'ava',
+    agentName: 'Ava',
+    actionType: 'emotional_learning_interaction',
+    leadId: record.leadId,
+    callId: record.callId,
+    source: record.source,
+    context: {
+      sellerUtterance: record.sellerUtterance,
+      emotionalTags: record.inferredTags,
+      strategy: record.strategy,
+      leadName: context.leadName,
+      address: context.address,
+    },
+    parameters: {
+      avaResponse: record.avaResponse,
+      avaProsody: record.avaProsody,
+    },
+    outcome: {
+      label: record.outcome,
+      tagsAfter: record.tagsAfter,
+      successWeight: record.successWeight,
+    },
+    emotionState: params.emotionState || params.emotion || {},
+    reward: record.successWeight,
+    metadata: {
+      emotionalLearningInteractionId: record.id,
+      schemaVersion: 'pbk-emotional-learning-agent-decision-v1',
+    },
+  });
+  addActivity(state, makeActivity({
+    actor: 'Ava Emotional Learning',
+    category: 'BRAIN',
+    status: successWeight >= 0.65 ? 'success' : 'observed',
+    text: `Logged emotional learning turn (${emotionalTagSignature(inferredTags)}) with outcome ${outcome}.`,
+    target: context.leadName || record.leadId || record.callId || 'seller conversation',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'emotional_learning_interaction_recorded',
+    interaction: record,
+    agentDecision: agentDecision.decision,
+    storage: { localState: true, postgres, agentDecision: agentDecision.storage || {} },
+    state: buildStateSnapshot(),
+  };
+}
+
+async function improveEmotionalLearningMemoryRecord(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const minWeight = Math.max(0.1, Math.min(1, toNumber(params.minWeight ?? params.min_weight, 0.65)));
+  const interactions = sortNewest(state.emotionalLearningInteractions || [])
+    .filter((item) => normalizeTenantId(item.tenantId || item.tenant_id || 'pbk') === tenantId)
+    .filter((item) => Number(item.successWeight || item.success_weight || 0) >= minWeight)
+    .filter((item) => String(item.avaResponse || item.ava_response || '').trim());
+  let promoted = 0;
+  const memories = [];
+  if (!Array.isArray(state.emotionalLearningMemory)) state.emotionalLearningMemory = [];
+  for (const interaction of interactions) {
+    const tags = normalizeEmotionalLearningTags(interaction.inferredTags || interaction.inferred_tags || []);
+    const tagSignature = emotionalTagSignature(tags);
+    const id = `emotional-memory-${slugify(tenantId)}-${slugify(tagSignature)}-${String(hashString(String(interaction.sellerUtterance || interaction.seller_utterance || ''))).slice(0, 8)}`;
+    const existing = (state.emotionalLearningMemory || []).find((item) => item.id === id);
+    const existingWeight = Number(existing?.successWeight || existing?.success_weight || 0);
+    if (existing && existingWeight > Number(interaction.successWeight || 0)) continue;
+    const memory = {
+      id,
+      tenantId,
+      tagSignature,
+      sellerUtterance: String(interaction.sellerUtterance || interaction.seller_utterance || '').slice(0, 4000),
+      tags,
+      winningResponse: String(interaction.avaResponse || interaction.ava_response || '').slice(0, 4000),
+      strategy: {
+        ...buildEmotionalTagStrategy(tags),
+        ...(plainObject(interaction.strategy)),
+      },
+      outcome: String(interaction.outcome || 'observed').trim(),
+      successWeight: Number(interaction.successWeight || interaction.success_weight || 0),
+      sourceInteractionId: interaction.id,
+      useCount: Number(existing?.useCount || existing?.use_count || 0),
+      metadata: {
+        ...(plainObject(existing?.metadata)),
+        promotedBy: 'emotional-learning-improve',
+        promotedAt: isoNow(),
+        sourceCallId: interaction.callId || '',
+        sourceLeadId: interaction.leadId || '',
+        schemaVersion: 'pbk-emotional-learning-memory-v1',
+      },
+      createdAt: existing?.createdAt || interaction.createdAt || isoNow(),
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'emotionalLearningMemory', memory);
+    await persistEmotionalLearningMemoryToPg(memory);
+    memories.push(memory);
+    promoted += 1;
+  }
+  addActivity(state, makeActivity({
+    actor: 'Rex Emotional Learning',
+    category: 'BRAIN',
+    status: promoted ? 'success' : 'observed',
+    text: promoted ? `Promoted ${promoted} emotional learning pattern${promoted === 1 ? '' : 's'} into Ava memory.` : 'No emotional learning patterns met promotion threshold.',
+    target: 'Ava emotional loop',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'emotional_memory_improved',
+    promoted,
+    minWeight,
+    memories,
+    state: buildStateSnapshot(),
+  };
+}
+
 function buildEmotionPredictionPayload(params = {}, currentEmotion = {}) {
   const context = findLeadContext(params);
   return {
@@ -10630,6 +11227,8 @@ async function recordEmotionalPolicyOutcomeRecord(params = {}) {
 function getXFactorCounts() {
   return {
     emotionSerPredictions: (state.emotionSerPredictions || []).length,
+    emotionalLearningInteractions: (state.emotionalLearningInteractions || []).length,
+    emotionalLearningMemory: (state.emotionalLearningMemory || []).length,
     proactiveOutreachRules: (state.proactiveOutreachRules || []).length,
     selfImprovementDecisions: (state.selfImprovementDecisions || []).length,
     voiceProsodyPlans: (state.voiceProsodyPlans || []).length,
@@ -10651,10 +11250,18 @@ function buildXFactorCapabilitySnapshot() {
     {
       id: 'emotion_accuracy',
       label: 'Emotion accuracy',
-      readiness: hasExternalEmotionModel ? 'shadow_ready' : 'heuristic_fallback',
+      readiness: hasExternalEmotionModel ? 'shadow_ready' : counts.emotionalLearningMemory ? 'closed_loop_heuristic' : 'heuristic_fallback',
       endpoint: '/api/emotion/ser/predict',
-      provider: hasExternalEmotionModel ? 'external_speech_emotion_model' : 'pbk_vector_heuristic',
+      provider: hasExternalEmotionModel ? 'external_speech_emotion_model' : counts.emotionalLearningMemory ? 'pbk_emotional_learning_memory' : 'pbk_vector_heuristic',
       blocking: hasExternalEmotionModel ? [] : ['Configure PBK_SPEECH_EMOTION_MODEL_ENDPOINT for transformer/ONNX SER.'],
+    },
+    {
+      id: 'emotional_learning_loop',
+      label: 'Emotional learning loop',
+      readiness: counts.emotionalLearningMemory ? 'memory_backed' : counts.emotionalLearningInteractions ? 'logging_ready' : 'endpoint_ready',
+      endpoint: '/api/emotion/infer-tags',
+      provider: 'pbk_emotional_tags_and_outcomes',
+      blocking: counts.emotionalLearningMemory ? [] : ['Log successful emotional interactions, then run /api/emotion/learning/improve.'],
     },
     {
       id: 'proactive_outreach',
@@ -32705,6 +33312,8 @@ function buildStateSnapshot() {
     agentDecisions: state.agentDecisions || [],
     callEmotions: state.callEmotions || [],
     emotionalMemory: state.emotionalMemory || [],
+    emotionalLearningInteractions: state.emotionalLearningInteractions || [],
+    emotionalLearningMemory: state.emotionalLearningMemory || [],
     emotionalPolicyExperiments: state.emotionalPolicyExperiments || [],
     emotionalPolicyAssignments: state.emotionalPolicyAssignments || [],
     emotionalPolicyOutcomes: state.emotionalPolicyOutcomes || [],
@@ -36316,6 +36925,30 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const result = await predictSpeechEmotionRecord(body);
       json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/emotion/infer-tags', '/api/v1/emotion/infer-tags'])) {
+      const body = await readBody(request);
+      const result = await inferEmotionalTagsRecord(body);
+      json(response, result.ok ? 200 : 400, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/emotion/learning/interactions', '/api/v1/emotion/learning/interactions'])) {
+      const body = await readBody(request);
+      const result = await recordEmotionalLearningInteractionRecord(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/emotion/learning/improve', '/api/v1/emotion/learning/improve'])) {
+      const body = await readBody(request);
+      const result = await improveEmotionalLearningMemoryRecord(body);
+      json(response, result.ok ? 200 : 400, result);
       return;
     }
 
@@ -40346,6 +40979,9 @@ const server = createServer(async (request, response) => {
         'GET /api/agent/history',
         'GET /api/intelligence/capabilities',
         'POST /api/emotion/ser/predict',
+        'POST /api/emotion/infer-tags',
+        'POST /api/emotion/learning/interactions',
+        'POST /api/emotion/learning/improve',
         'POST /api/outreach/automations/propose',
         'POST /api/self-improvement/evaluate',
         'POST /api/voice/emotion-prosody',
@@ -40680,6 +41316,32 @@ async function prewarmVoiceProviders() {
   }
 }
 
+function startEmotionalLearningAutoImprove() {
+  const enabled = !/^(0|false|no)$/i.test(String(process.env.PBK_EMOTIONAL_LEARNING_AUTO_IMPROVE || 'true').trim());
+  if (!enabled) return;
+  const intervalMs = Math.max(60 * 60 * 1000, Number(process.env.PBK_EMOTIONAL_LEARNING_IMPROVE_INTERVAL_MS || 24 * 60 * 60 * 1000));
+  const firstDelayMs = Math.max(60 * 1000, Number(process.env.PBK_EMOTIONAL_LEARNING_IMPROVE_FIRST_DELAY_MS || 5 * 60 * 1000));
+  const minWeight = Math.max(0.1, Math.min(1, Number(process.env.PBK_EMOTIONAL_LEARNING_PROMOTE_MIN_WEIGHT || 0.65)));
+  const run = async (reason = 'scheduled') => {
+    try {
+      const result = await improveEmotionalLearningMemoryRecord({ minWeight, source: reason });
+      if (result.promoted) {
+        console.log(`[pbk-local-openclaw] emotional learning ${reason}: promoted ${result.promoted} pattern(s)`);
+      }
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] emotional learning auto-improve skipped:', error?.message || error);
+    }
+  };
+  const firstTimer = setTimeout(() => {
+    void run('startup-delay');
+  }, firstDelayMs);
+  firstTimer.unref?.();
+  const interval = setInterval(() => {
+    void run('daily');
+  }, intervalMs);
+  interval.unref?.();
+}
+
 server.listen(PORT, HOST, () => {
   startContractTemplateWatcher();
   reloadContractTemplateLibrary('startup').catch((error) => {
@@ -40688,6 +41350,7 @@ server.listen(PORT, HOST, () => {
   prewarmVoiceProviders().catch((error) => {
     console.warn('[pbk-local-openclaw] voice provider prewarm failed:', error?.message || error);
   });
+  startEmotionalLearningAutoImprove();
   buildOpenClawGatewayStatus({ force: true, timeoutMs: Math.min(2500, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) })
     .then((status) => {
       const label = status.ready ? 'ok' : status.directProbeConfigured ? 'degraded' : 'standby';

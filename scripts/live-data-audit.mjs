@@ -745,9 +745,11 @@ const checks = [
       && /test:emotion/.test(pkg.match(/"test:founder":[^\n]+/)?.[0] || ''),
   },
   {
-    name: 'Eight X-factor dimensions expose production-safe control-plane endpoints',
+    name: 'X-factor dimensions expose production-safe control-plane endpoints',
     ok: /function buildXFactorCapabilitySnapshot/.test(bridge)
       && /function predictSpeechEmotionRecord/.test(bridge)
+      && /function inferEmotionalTagsRecord/.test(bridge)
+      && /function recordEmotionalLearningInteractionRecord/.test(bridge)
       && /function createProactiveOutreachRule/.test(bridge)
       && /function evaluateSelfImprovementDecision/.test(bridge)
       && /function createEmotionProsodyPlan/.test(bridge)
@@ -757,6 +759,8 @@ const checks = [
       && /function decomposeGoalPlan/.test(bridge)
       && /\/api\/intelligence\/capabilities/.test(bridge)
       && /\/api\/emotion\/ser\/predict/.test(bridge)
+      && /\/api\/emotion\/infer-tags/.test(bridge)
+      && /\/api\/emotion\/learning\/interactions/.test(bridge)
       && /\/api\/outreach\/automations\/propose/.test(bridge)
       && /\/api\/self-improvement\/evaluate/.test(bridge)
       && /\/api\/voice\/emotion-prosody/.test(bridge)
@@ -768,6 +772,7 @@ const checks = [
       && /providerWritesBlocked/.test(bridge)
       && /x_factor_dimensions_ready/.test(xFactorDimensionsSmoke)
       && /speech_emotion_prediction/.test(xFactorDimensionsSmoke)
+      && /emotional_learning_loop/.test(xFactorDimensionsSmoke)
       && /proactive_outreach_rule_created/.test(xFactorDimensionsSmoke)
       && /self_improvement_decision_recorded/.test(xFactorDimensionsSmoke)
       && /emotion_synchronized_prosody/.test(xFactorDimensionsSmoke)

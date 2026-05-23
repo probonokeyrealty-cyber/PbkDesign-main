@@ -208,6 +208,8 @@ function buildActions({ state, agentDecisions, emotionPolicies, messages, metric
   const actions = [];
   const decisionCount = Number(state.status?.worldModel?.decisionCount ?? agentDecisions.summary?.totalDecisions ?? 0);
   const callEmotionCount = Number(state.status?.emotionalIntelligence?.callEmotionCount || 0);
+  const emotionalLearningInteractions = Number(state.status?.emotionalIntelligence?.learningInteractionCount || 0);
+  const emotionalLearningMemory = Number(state.status?.emotionalIntelligence?.learningMemoryCount || 0);
   const policyOutcomeCount = Number(state.status?.emotionalIntelligence?.policyOutcomeCount ?? emotionPolicies.outcomes?.length ?? 0);
   const pendingWork = getPendingWork(state);
   const transcriptEvidence = getLatestTranscriptEvidence(messages);
@@ -228,6 +230,15 @@ function buildActions({ state, agentDecisions, emotionPolicies, messages, metric
       title: 'Close the emotion policy learning loop',
       evidence: { policyOutcomeCount, target: 25 },
       action: 'Start assigning emotional policy variants and recording seller outcome movement after each call.',
+    });
+  }
+  if (emotionalLearningInteractions < 25 || emotionalLearningMemory < 10) {
+    actions.push({
+      id: 'strengthen_emotional_learning_loop',
+      priority: 'high',
+      title: 'Feed Ava emotional learning outcomes',
+      evidence: { emotionalLearningInteractions, emotionalLearningMemory, target: '25 interactions and 10 promoted memories first' },
+      action: 'Log seller emotional tags, Ava response/prosody, outcome, and success weight on every call turn; promote high-weight patterns into memory.',
     });
   }
   if (pendingWork.length) {
@@ -283,6 +294,8 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
   const emotional = state.status?.emotionalIntelligence || {};
   const callEmotionCount = Number(emotional.callEmotionCount || 0);
   const memoryCount = Number(emotional.memoryCount || 0);
+  const emotionalLearningInteractions = Number(emotional.learningInteractionCount || 0);
+  const emotionalLearningMemory = Number(emotional.learningMemoryCount || 0);
   const policyOutcomeCount = Number(emotional.policyOutcomeCount ?? emotionPolicies.outcomes?.length ?? 0);
   const mode = String(state.status?.mode || state.settings?.ui?.operatingMode || 'unknown').toLowerCase();
   const killSwitchActive = state.status?.providerKillSwitch?.active === true;
@@ -310,15 +323,17 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
   const emotionScore = roundScore(
     (hasWorldModel ? 42 : 24)
     + (scoreLinear(Math.min(decisionCount, callEmotionCount), 500) * 0.28)
-    + (scoreLinear(policyOutcomeCount, 150) * 0.18)
-    + (scoreLinear(memoryCount, 500) * 0.12),
+    + (scoreLinear(policyOutcomeCount, 150) * 0.14)
+    + (scoreLinear(memoryCount, 500) * 0.1)
+    + (scoreLinear(emotionalLearningInteractions, 500) * 0.08),
   );
   const memoryScore = roundScore(
     (Number(state.status?.avaActiveMemories || 0) ? 22 : 0)
     + (scoreLinear(Number(state.status?.avaActiveMemories || 0), 75) * 0.24)
     + (scoreLinear(Number(state.status?.avaLearningSessions || 0), 200) * 0.22)
-    + (scoreLinear(decisionCount, 500) * 0.2)
-    + (scoreLinear(memoryCount, 500) * 0.12),
+    + (scoreLinear(decisionCount, 500) * 0.18)
+    + (scoreLinear(memoryCount, 500) * 0.1)
+    + (scoreLinear(emotionalLearningMemory, 300) * 0.08),
   );
   const toolScore = roundScore(
     (health.components?.agentOrchestration?.ready || health.components?.agentOrchestration?.status === 'up' ? 25 : 0)
@@ -334,11 +349,13 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
     + (health.features?.stateBackend === 'postgres' ? 20 : 8),
   );
   const closedLoopScore = roundScore(
-    (scoreLinear(trainingReadyCount, 500) * 0.28)
-    + (scoreLinear(policyOutcomeCount, 150) * 0.24)
-    + (scoreLinear(skillEvidence.uses, 100) * 0.18)
-    + (scoreLinear(Number(capabilityCounts.selfImprovementDecisions || 0), 25) * 0.16)
-    + (Number.isFinite(averageReward) ? clampScore(averageReward * 100) * 0.14 : 0),
+    (scoreLinear(trainingReadyCount, 500) * 0.24)
+    + (scoreLinear(policyOutcomeCount, 150) * 0.2)
+    + (scoreLinear(skillEvidence.uses, 100) * 0.14)
+    + (scoreLinear(Number(capabilityCounts.selfImprovementDecisions || 0), 25) * 0.12)
+    + (scoreLinear(emotionalLearningInteractions, 500) * 0.12)
+    + (scoreLinear(emotionalLearningMemory, 300) * 0.08)
+    + (Number.isFinite(averageReward) ? clampScore(averageReward * 100) * 0.1 : 0),
   );
   const voiceNaturalnessScore = roundScore(
     (scoreLinear(voiceReadyCount, 4) * 0.56)
@@ -433,7 +450,7 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
       score: emotionScore,
       weight: 13,
       target: 'External/ONNX world model with 500+ real decisions and emotion rows',
-      evidence: { hasWorldModel, decisionCount, callEmotionCount, memoryCount, policyOutcomeCount, provider: emotional.worldModelProvider || 'unknown' },
+      evidence: { hasWorldModel, decisionCount, callEmotionCount, memoryCount, emotionalLearningInteractions, emotionalLearningMemory, policyOutcomeCount, provider: emotional.worldModelProvider || 'unknown' },
       action: hasWorldModel && decisionCount >= 500 ? 'Keep validating drift.' : 'Collect real call transitions, then train/export ONNX.',
     }),
     makeMetric({
@@ -448,6 +465,7 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
         learningSessions: Number(state.status?.avaLearningSessions || 0),
         decisionCount,
         memoryCount,
+        emotionalLearningMemory,
       },
       action: memoryScore >= 90 ? 'Start periodic recall audits.' : 'Tie every live call transcript to lead memory and decision rows.',
     }),
@@ -483,7 +501,7 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
       score: closedLoopScore,
       weight: 13,
       target: 'Training-ready decisions, policy outcomes, skill outcomes, and reward trend',
-      evidence: { trainingReadyCount, policyOutcomeCount, skillOutcomeUses: skillEvidence.uses, selfImprovementDecisions: Number(capabilityCounts.selfImprovementDecisions || 0), averageReward },
+      evidence: { trainingReadyCount, policyOutcomeCount, skillOutcomeUses: skillEvidence.uses, selfImprovementDecisions: Number(capabilityCounts.selfImprovementDecisions || 0), emotionalLearningInteractions, emotionalLearningMemory, averageReward },
       action: closedLoopScore >= 90 ? 'Enable stricter auto-promotion thresholds.' : 'Record outcome/reward after every call and campaign action.',
     }),
     makeMetric({
@@ -626,6 +644,17 @@ export function buildIntelligenceScorecard(data = {}, options = {}) {
         current: policyOutcomeCount,
         firstLearning: 25,
         strongModel: 150,
+      },
+      emotionalLearningInteractions: {
+        current: emotionalLearningInteractions,
+        firstLearning: 25,
+        strongModel: 500,
+        competitiveAdvantage: 1000,
+      },
+      emotionalLearningMemories: {
+        current: emotionalLearningMemory,
+        firstLearning: 10,
+        strongModel: 300,
       },
     },
     metrics,

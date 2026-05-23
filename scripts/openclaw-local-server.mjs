@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-22-telnyx-accepted-webhook-diagnostics';
+const BUILD_REVISION = '2026-05-22-postgres-fallback-voice-bridge';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -4176,6 +4176,10 @@ function buildDefaultState() {
 }
 
 let __pgPool = null;
+let pgSchemaPersistenceWarned = false;
+let stateDbLoadWarned = false;
+let stateDbPersistWarned = false;
+
 function getPgPool() {
   if (__pgPool) return __pgPool;
   if (!DATABASE_URL) return null;
@@ -4196,8 +4200,9 @@ function getPgPool() {
 
 async function ensurePgSchema() {
   const pool = getPgPool();
-  if (!pool) return;
-  await pool.query(`
+  if (!pool) return false;
+  try {
+    await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
     CREATE OR REPLACE FUNCTION public.pbk_set_updated_at()
@@ -5228,7 +5233,15 @@ async function ensurePgSchema() {
       metadata = public.pbk_knowledge.metadata || EXCLUDED.metadata,
       updated_at = NOW();
   `);
-  await seedAvaMasterclassKnowledgeToPg(pool);
+    await seedAvaMasterclassKnowledgeToPg(pool);
+    return true;
+  } catch (error) {
+    if (!pgSchemaPersistenceWarned) {
+      console.warn('[pbk-local-openclaw] postgres schema unavailable; continuing with runtime fallback:', error?.message || error);
+      pgSchemaPersistenceWarned = true;
+    }
+    return false;
+  }
 }
 
 async function seedAvaMasterclassKnowledgeToPg(pool) {
@@ -5345,8 +5358,16 @@ async function seedMemoryAnalyticsStateToPg() {
 async function loadStateFromDb() {
   const pool = getPgPool();
   if (!pool) return null;
-  const result = await pool.query("SELECT data FROM bridge_state WHERE id = 'singleton' LIMIT 1");
-  return result.rows[0]?.data || null;
+  try {
+    const result = await pool.query("SELECT data FROM bridge_state WHERE id = 'singleton' LIMIT 1");
+    return result.rows[0]?.data || null;
+  } catch (error) {
+    if (!stateDbLoadWarned) {
+      console.warn('[pbk-local-openclaw] postgres state load unavailable; using runtime fallback:', error?.message || error);
+      stateDbLoadWarned = true;
+    }
+    return null;
+  }
 }
 
 let activityLogPersistenceWarned = false;
@@ -5458,27 +5479,46 @@ async function persistActivityLogRecords(entries = []) {
 async function persistStateToDb(nextState) {
   const pool = getPgPool();
   if (!pool) return false;
-  await pool.query(
-    `INSERT INTO bridge_state (id, data, updated_at)
-     VALUES ('singleton', $1::jsonb, NOW())
-     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-    [JSON.stringify(nextState)],
-  );
-  await persistActivityLogRecords(nextState.activity || []);
-  return true;
+  try {
+    await pool.query(
+      `INSERT INTO bridge_state (id, data, updated_at)
+       VALUES ('singleton', $1::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [JSON.stringify(nextState)],
+    );
+    await persistActivityLogRecords(nextState.activity || []);
+    return true;
+  } catch (error) {
+    if (!stateDbPersistWarned) {
+      console.warn('[pbk-local-openclaw] postgres state persist unavailable; writing runtime fallback:', error?.message || error);
+      stateDbPersistWarned = true;
+    }
+    return false;
+  }
 }
 
 async function ensureRuntimeDir() {
   await mkdir(RUNTIME_DIR, { recursive: true });
 }
 
+async function loadStateFromRuntimeFile() {
+  try {
+    const raw = await readFile(STATE_FILE, 'utf8');
+    return hydrateState(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 async function persistState(nextState) {
   nextState.status.lastUpdatedAt = isoNow();
   updateDerivedStatus(nextState);
   if (DATABASE_URL) {
-    await persistStateToDb(nextState);
-    scheduleRuntimeStateBroadcast('persist');
-    return;
+    const persisted = await persistStateToDb(nextState);
+    if (persisted) {
+      scheduleRuntimeStateBroadcast('persist');
+      return;
+    }
   }
   await ensureRuntimeDir();
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
@@ -6760,21 +6800,20 @@ async function loadState() {
   if (DATABASE_URL) {
     const dbState = await loadStateFromDb();
     if (dbState) return hydrateState(dbState);
+    const runtimeState = await loadStateFromRuntimeFile();
+    if (runtimeState) return runtimeState;
     const fresh = buildDefaultState();
     ensureImmutablePbkKnowledge(fresh);
     await persistState(fresh);
     return fresh;
   }
 
-  try {
-    const raw = await readFile(STATE_FILE, 'utf8');
-    return hydrateState(JSON.parse(raw));
-  } catch {
-    const fresh = buildDefaultState();
-    ensureImmutablePbkKnowledge(fresh);
-    await persistState(fresh);
-    return fresh;
-  }
+  const runtimeState = await loadStateFromRuntimeFile();
+  if (runtimeState) return runtimeState;
+  const fresh = buildDefaultState();
+  ensureImmutablePbkKnowledge(fresh);
+  await persistState(fresh);
+  return fresh;
 }
 
 async function recordPbkToolUsage(params = {}) {

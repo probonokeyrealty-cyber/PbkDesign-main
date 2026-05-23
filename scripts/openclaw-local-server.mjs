@@ -11239,8 +11239,385 @@ function getXFactorCounts() {
   };
 }
 
+function clampRevenueScore(value = 0) {
+  return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+}
+
+function getRevenueContactValue(lead = {}, field = 'phone') {
+  const seller = lead?.seller && typeof lead.seller === 'object' ? lead.seller : {};
+  if (field === 'phone') return normalizePhone(lead.phone || lead.sellerPhone || seller.phone || '');
+  if (field === 'email') return String(lead.email || lead.sellerEmail || seller.email || '').trim();
+  return '';
+}
+
+function countPendingFounderWork() {
+  const approvals = (state.approvals || []).filter((item) => String(item.status || '').toLowerCase() === 'pending').length;
+  const adminTasks = (state.adminTasks || []).filter((item) =>
+    ['pending', 'open', 'needs_review', 'queued'].includes(String(item.status || '').toLowerCase())).length;
+  return { approvals, adminTasks, total: approvals + adminTasks };
+}
+
+function buildRevenueEngineActions(context = {}) {
+  const actions = [];
+  const {
+    pendingWork,
+    callableLeads,
+    emailableLeads,
+    leads,
+    activeCampaigns,
+    pendingCampaigns,
+    telnyx,
+    instantly,
+    counts,
+  } = context;
+
+  if (pendingWork.total > 0) {
+    actions.push({
+      id: 'clear_approval_backlog',
+      label: 'Clear founder approval backlog',
+      type: 'founder_review',
+      owner: 'Rex',
+      assignee: 'Founder',
+      riskLevel: 'medium',
+      approvalMode: 'approval_first',
+      providerWritesBlocked: true,
+      priority: 98,
+      cta: 'Open Founder Approval Board',
+      route: '/app#approvals',
+      reason: `${pendingWork.total} approval/admin item${pendingWork.total === 1 ? '' : 's'} are slowing revenue execution.`,
+      expectedImpact: 'Unblocks contract, campaign, and provider actions already queued by Ava/Rex.',
+    });
+  }
+
+  if (callableLeads > 0) {
+    actions.push({
+      id: telnyx.voiceReady ? 'draft_call_campaign' : 'configure_telnyx_call_lane',
+      label: telnyx.voiceReady ? 'Draft Ava call campaign' : 'Configure Telnyx call lane',
+      type: telnyx.voiceReady ? 'campaign_draft' : 'provider_setup',
+      channel: 'call',
+      owner: 'Rex',
+      assignee: 'Ava',
+      riskLevel: 'low',
+      approvalMode: 'approval_first',
+      providerWritesBlocked: true,
+      priority: telnyx.voiceReady ? 92 : 76,
+      endpoint: telnyx.voiceReady ? '/api/campaigns' : '/api/telnyx/voice-routing',
+      reason: telnyx.voiceReady
+        ? `${callableLeads} callable lead${callableLeads === 1 ? '' : 's'} can be routed into an approval-gated Ava call campaign.`
+        : `${callableLeads} lead${callableLeads === 1 ? '' : 's'} have phone numbers, but Telnyx voice is not fully ready.`,
+      expectedImpact: 'Turns static leads into qualified seller conversations without bypassing approvals.',
+    });
+  }
+
+  if (emailableLeads > 0) {
+    actions.push({
+      id: instantly.ready ? 'draft_email_campaign' : 'configure_instantly_email_lane',
+      label: instantly.ready ? 'Draft email reactivation campaign' : 'Configure Instantly email lane',
+      type: instantly.ready ? 'campaign_draft' : 'provider_setup',
+      channel: 'email',
+      owner: 'Rex',
+      assignee: 'Ava',
+      riskLevel: 'low',
+      approvalMode: 'approval_first',
+      providerWritesBlocked: true,
+      priority: instantly.ready ? 86 : 70,
+      endpoint: instantly.ready ? '/api/campaigns' : '/api/instantly/senders',
+      reason: instantly.ready
+        ? `${emailableLeads} emailable lead${emailableLeads === 1 ? '' : 's'} can be warmed with a safe reactivation sequence.`
+        : `${emailableLeads} lead${emailableLeads === 1 ? '' : 's'} have emails, but Instantly is not fully ready.`,
+      expectedImpact: 'Creates top-of-funnel replies while Ava keeps calls focused on warm sellers.',
+    });
+  }
+
+  if (leads < 25) {
+    actions.push({
+      id: 'import_revenue_leads',
+      label: 'Import a fresh seller lead list',
+      type: 'lead_intake',
+      owner: 'Rex',
+      assignee: 'Founder',
+      riskLevel: 'low',
+      approvalMode: 'approval_first',
+      providerWritesBlocked: true,
+      priority: 82,
+      endpoint: '/api/leads/import',
+      reason: `Only ${leads} lead${leads === 1 ? '' : 's'} are in the runtime. A seven-figure lane needs steady lead flow.`,
+      expectedImpact: 'Feeds Ava/Rex with enough real conversations to improve conversion and emotion learning.',
+    });
+  }
+
+  if ((counts.emotionalLearningInteractions || 0) < 100 || (counts.postCallCoachingReports || 0) < 25) {
+    actions.push({
+      id: 'collect_live_call_outcomes',
+      label: 'Run live calls and collect outcomes',
+      type: 'learning_loop',
+      owner: 'Rex',
+      assignee: 'Ava',
+      riskLevel: 'low',
+      approvalMode: 'approval_first',
+      providerWritesBlocked: true,
+      priority: 74,
+      endpoint: '/api/post-call/coach',
+      reason: 'Ava/Rex need real seller outcomes to improve scripts, emotion tags, and Rex experiment quality.',
+      expectedImpact: 'Moves the system from smart assistant to outcome-trained acquisition engine.',
+    });
+  }
+
+  if (activeCampaigns + pendingCampaigns > 0) {
+    actions.push({
+      id: 'rex_optimize_campaign_scripts',
+      label: 'Let Rex optimize campaign scripts',
+      type: 'rex_experiment',
+      owner: 'Rex',
+      assignee: 'Rex',
+      riskLevel: 'low',
+      approvalMode: 'approval_first',
+      providerWritesBlocked: true,
+      priority: 68,
+      endpoint: '/api/rex/strategist/proposals',
+      reason: `${activeCampaigns + pendingCampaigns} campaign${activeCampaigns + pendingCampaigns === 1 ? '' : 's'} can be improved from reply/connect data.`,
+      expectedImpact: 'Uses Rex to improve conversion without changing provider sends automatically.',
+    });
+  }
+
+  return actions
+    .sort((left, right) => Number(right.priority || 0) - Number(left.priority || 0))
+    .slice(0, 8);
+}
+
+function buildRevenueEngineStatus(params = {}) {
+  ensureCampaignCollections();
+  const leads = Array.isArray(state.leadImports) ? state.leadImports : [];
+  const callableLeads = leads.filter((lead) => getRevenueContactValue(lead, 'phone')).length;
+  const emailableLeads = leads.filter((lead) => /@/.test(getRevenueContactValue(lead, 'email'))).length;
+  const campaigns = Array.isArray(state.campaigns) ? state.campaigns : [];
+  const activeCampaigns = campaigns.filter((campaign) => normalizeCampaignStatus(campaign.status) === 'active').length;
+  const pendingCampaigns = campaigns.filter((campaign) => ['draft', 'pending'].includes(normalizeCampaignStatus(campaign.status))).length;
+  const campaignMetrics = campaigns.reduce((summary, campaign) => {
+    const metrics = calculateCampaignMetrics(campaign);
+    summary.leads += metrics.leads || 0;
+    summary.replied += metrics.replied || 0;
+    summary.connected += metrics.connected || 0;
+    summary.dnc += metrics.dnc || 0;
+    summary.estimatedCost += metrics.estimatedCost || 0;
+    return summary;
+  }, { leads: 0, replied: 0, connected: 0, dnc: 0, estimatedCost: 0 });
+  const telnyx = getTelnyxProviderMeta();
+  const instantly = getInstantlyProviderMeta();
+  const deepSeek = getDeepSeekProviderMeta();
+  const pendingWork = countPendingFounderWork();
+  const counts = getXFactorCounts();
+  const learningSamples = (counts.emotionalLearningInteractions || 0) + (counts.postCallCoachingReports || 0) + (state.agentDecisions || []).length;
+  const providerReadiness = [
+    Boolean(telnyx.voiceReady),
+    Boolean(telnyx.messagingReady),
+    Boolean(instantly.ready),
+    Boolean(deepSeek.ready),
+  ].filter(Boolean).length / 4;
+  const leadReadiness = Math.min(1, (callableLeads + emailableLeads) / 100);
+  const campaignReadiness = Math.min(1, (activeCampaigns * 2 + pendingCampaigns) / 6);
+  const learningReadiness = Math.min(1, learningSamples / 500);
+  const backlogPenalty = Math.min(22, pendingWork.total * 0.6);
+  const readinessScore = clampRevenueScore(
+    18
+    + leadReadiness * 28
+    + providerReadiness * 24
+    + campaignReadiness * 16
+    + learningReadiness * 14
+    - backlogPenalty,
+  );
+  const sevenFigureModel = {
+    targetRevenue: 1_000_000,
+    assumedAverageAssignmentFee: 15_000,
+    dealsRequired: Math.ceil(1_000_000 / 15_000),
+    monthlyDealsRequired: Number((Math.ceil(1_000_000 / 15_000) / 12).toFixed(1)),
+    weeklyQualifiedSellerTarget: 45,
+    note: 'Revenue math is a planning model, not a guarantee. Ava/Rex must still prove conversion with real outcomes.',
+  };
+  const actions = buildRevenueEngineActions({
+    pendingWork,
+    callableLeads,
+    emailableLeads,
+    leads: leads.length,
+    activeCampaigns,
+    pendingCampaigns,
+    telnyx,
+    instantly,
+    counts,
+  });
+  const nextBestAction = actions[0] || {
+    id: 'monitor_revenue_engine',
+    label: 'Monitor Revenue Engine',
+    type: 'monitor',
+    owner: 'Rex',
+    assignee: 'Rex',
+    riskLevel: 'low',
+    approvalMode: 'approval_first',
+    providerWritesBlocked: true,
+    priority: 10,
+    reason: 'All core revenue lanes are currently stable. Keep collecting outcomes.',
+    expectedImpact: 'Maintains observability and daily scorecard discipline.',
+  };
+  const lanes = {
+    leadCapture: {
+      status: leads.length >= 25 ? 'ready' : 'needs_more_leads',
+      leads: leads.length,
+      callableLeads,
+      emailableLeads,
+    },
+    outboundCampaigns: {
+      status: activeCampaigns ? 'active' : pendingCampaigns ? 'draft_ready' : 'needs_campaign',
+      activeCampaigns,
+      pendingCampaigns,
+      metrics: {
+        ...campaignMetrics,
+        estimatedCost: Number(campaignMetrics.estimatedCost.toFixed(2)),
+      },
+    },
+    inboundQualification: {
+      status: telnyx.voiceReady ? 'ready' : 'provider_gated',
+      telnyxVoiceReady: Boolean(telnyx.voiceReady),
+      mediaStreamCodec: telnyx.streamCodec || '',
+    },
+    rexStrategy: {
+      status: (state.rexDecisions || []).length ? 'decision_loop_active' : 'proposal_ready',
+      decisions: (state.rexDecisions || []).length,
+      goalPlans: counts.goalPlans || 0,
+      experiments: counts.selfImprovementDecisions || 0,
+    },
+    safety: {
+      status: pendingWork.total ? 'founder_review_needed' : 'clear',
+      pendingApprovals: pendingWork.approvals,
+      pendingAdminTasks: pendingWork.adminTasks,
+      operatingMode: getRuntimeOperatingMode(),
+      providerWritesBlocked: true,
+    },
+  };
+  return {
+    ok: true,
+    result: 'revenue_engine_status',
+    schemaVersion: 'pbk-seven-figure-revenue-engine-v1',
+    generatedAt: isoNow(),
+    requestedBy: params.requestedBy || params.actor || '',
+    readinessScore,
+    grade: readinessScore >= 90 ? 'scale_ready' : readinessScore >= 75 ? 'near_scale_ready' : readinessScore >= 55 ? 'foundation_ready' : 'needs_data_and_pipeline',
+    approvalMode: 'approval_first',
+    providerWritesBlocked: true,
+    operatingMode: getRuntimeOperatingMode(),
+    sevenFigureModel,
+    nextBestAction,
+    actions,
+    lanes,
+    providers: {
+      telnyx: { voiceReady: Boolean(telnyx.voiceReady), messagingReady: Boolean(telnyx.messagingReady), missing: telnyx.voiceMissing || [] },
+      instantly: { ready: Boolean(instantly.ready), missing: instantly.missing || [] },
+      deepSeek: { ready: Boolean(deepSeek.ready), missing: deepSeek.missing || [] },
+    },
+    notes: [
+      'This layer coordinates existing PBK campaigns, lead intake, Rex approvals, and Ava voice paths.',
+      'It proposes founder-reviewable actions; it does not create live provider sends by itself.',
+    ],
+  };
+}
+
+async function applyRevenueEngineNextBestAction(params = {}, options = {}) {
+  const action = plainObject(params.action || params.nextBestAction || params.next_best_action);
+  const actor = options.actor || params.actor || 'Rex Revenue Engine';
+  if (!action.id) {
+    return { ok: false, result: 'invalid_request', verbiage: 'Revenue action missing', error: 'Revenue Engine action is required.' };
+  }
+  let draftResult = null;
+  if (action.type === 'campaign_draft') {
+    const channel = normalizeCampaignChannel(action.channel || 'call');
+    draftResult = await createCampaignRecord({
+      name: `Ava ${channel === 'call' ? 'seller call' : 'seller email'} campaign - ${new Date().toLocaleDateString('en-US')}`,
+      channel,
+      status: 'draft',
+      leadSource: channel === 'call' ? 'all-imports' : 'all-imports',
+      limit: 50,
+      actor,
+      notes: `Drafted by Rex Revenue Engine from action ${action.id}. Provider writes remain approval/worker gated.`,
+      sequence: {
+        cadence: channel === 'call' ? '3 attempts over 5 business days' : '5-touch reactivation over 14 days',
+        approvalMode: 'approval_first',
+      },
+    });
+  }
+  addActivity(state, makeActivity({
+    actor,
+    category: 'REVENUE_ENGINE',
+    status: draftResult?.ok ? 'drafted' : 'approved',
+    text: draftResult?.ok
+      ? `Approved Revenue Engine action and drafted campaign: ${draftResult.campaign?.name || action.label}.`
+      : `Approved Revenue Engine action: ${action.label || action.id}.`,
+    target: action.id,
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: draftResult?.ok ? 'campaign_draft_created' : 'revenue_engine_action_logged',
+    verbiage: draftResult?.ok ? 'Revenue campaign draft created' : 'Revenue action logged',
+    action,
+    campaign: draftResult?.campaign || null,
+    providerWritesBlocked: true,
+  };
+}
+
+async function proposeRevenueEngineAction(params = {}) {
+  const status = buildRevenueEngineStatus(params);
+  const requestedActionId = String(params.actionId || params.action_id || '').trim();
+  const action = status.actions.find((item) => item.id === requestedActionId) || status.nextBestAction;
+  const decisionResult = await createRexDecision({
+    source: 'rex-revenue-engine',
+    tool: 'revenue_engine_next_best_action',
+    targetType: 'revenue_engine',
+    targetId: action.id,
+    targetLabel: action.label,
+    actor: params.requestedBy || params.actor || 'Rex Revenue Engine',
+    rationale: action.reason,
+    params: {
+      action,
+      readinessScore: status.readinessScore,
+      sevenFigureModel: status.sevenFigureModel,
+      lanes: status.lanes,
+    },
+    requestApproval: true,
+  }, {
+    requestApproval: true,
+    actor: params.requestedBy || params.actor || 'Rex Revenue Engine',
+    source: 'rex-revenue-engine',
+  });
+  await recordAgentDecisionRecord({
+    agentId: 'rex',
+    agentName: 'Rex',
+    actionType: 'revenue_engine_next_best_action',
+    source: 'rex-revenue-engine',
+    context: {
+      readinessScore: status.readinessScore,
+      leadCount: status.lanes.leadCapture.leads,
+      pendingApprovals: status.lanes.safety.pendingApprovals,
+    },
+    parameters: { actionId: action.id, actionType: action.type },
+    outcome: { status: 'queued_for_founder_approval' },
+    reward: 0,
+    metadata: { providerWritesBlocked: true, approvalMode: 'approval_first' },
+  });
+  return {
+    ok: true,
+    result: 'revenue_engine_proposal_queued',
+    approvalMode: 'approval_first',
+    providerWritesBlocked: true,
+    action,
+    status,
+    decision: decisionResult.decision,
+    approval: decisionResult.approval,
+    state: buildStateSnapshot(),
+  };
+}
+
 function buildXFactorCapabilitySnapshot() {
   const counts = getXFactorCounts();
+  const revenueEngine = buildRevenueEngineStatus({ requestedBy: 'capability-snapshot' });
   const emotional = state.status?.emotionalIntelligence || {};
   const world = state.status?.worldModel || {};
   const hasExternalEmotionModel = Boolean(process.env.PBK_SPEECH_EMOTION_MODEL_ENDPOINT || process.env.PBK_EMOTION_SER_ENDPOINT);
@@ -11318,6 +11695,14 @@ function buildXFactorCapabilitySnapshot() {
       endpoint: '/api/goals/decompose',
       provider: 'rex_hierarchical_planner',
       blocking: [],
+    },
+    {
+      id: 'seven_figure_revenue_engine',
+      label: 'Seven-figure Revenue Engine',
+      readiness: revenueEngine.readinessScore >= 90 ? 'scale_ready' : revenueEngine.readinessScore >= 75 ? 'near_scale_ready' : 'approval_gated_ready',
+      endpoint: '/api/revenue/engine/status',
+      provider: 'ava_rex_campaign_revenue_engine',
+      blocking: revenueEngine.readinessScore >= 90 ? [] : [revenueEngine.nextBestAction?.reason || 'Follow the Revenue Engine next-best action.'],
     },
   ];
   return {
@@ -23495,6 +23880,7 @@ function normalizeRexTool(value = '') {
   if (['transfer_skill', 'pass_skill', 'agent_skill_transfer'].includes(raw)) return 'transfer_skill';
   if (['promote_skill', 'agent_skill_promote'].includes(raw)) return 'promote_skill';
   if (['ab_test_skill', 'a_b_test_skill', 'agent_skill_ab_test'].includes(raw)) return 'ab_test_skill';
+  if (['revenue_engine_next_best_action', 'revenue_next_best_action', 'seven_figure_revenue_action'].includes(raw)) return 'revenue_engine_next_best_action';
   return raw || 'unknown';
 }
 
@@ -23998,6 +24384,8 @@ async function applyRexDecision(decisionOrId = {}, options = {}) {
     result = await deployAgentFromRex(decision.params || {}, { actor, rationale: decision.rationale });
   } else if (['transfer_skill', 'promote_skill', 'ab_test_skill'].includes(tool)) {
     result = await applyAgentSkillAction(tool, decision.params || {}, { actor, rationale: decision.rationale });
+  } else if (tool === 'revenue_engine_next_best_action') {
+    result = await applyRevenueEngineNextBestAction(decision.params || {}, { actor, rationale: decision.rationale });
   } else {
     result = { ok: false, result: 'unavailable', verbiage: 'Rex tool unavailable', error: `Unsupported Rex tool: ${decision.tool}` };
   }
@@ -28209,6 +28597,16 @@ const toolHandlers = {
   async runRexSkillAutopilot(params = {}) {
     recordToolUse('runRexSkillAutopilot');
     return runRexSkillAutopilotRecord(params);
+  },
+
+  async getRevenueEngineStatus(params = {}) {
+    recordToolUse('getRevenueEngineStatus');
+    return buildRevenueEngineStatus(params);
+  },
+
+  async proposeRevenueEngineAction(params = {}) {
+    recordToolUse('proposeRevenueEngineAction');
+    return proposeRevenueEngineAction(params);
   },
 
   async humanHandoff(params = {}) {
@@ -33254,6 +33652,7 @@ function buildStateSnapshot() {
       stateBackend: runtimeMeta.stateBackend,
       authRequired: runtimeMeta.authRequired,
       productionReady: runtimeMeta.productionReady,
+      revenueEngine: buildRevenueEngineStatus({ requestedBy: 'state-snapshot' }),
     },
     approvals: state.approvals,
     activity: state.activity,
@@ -36918,6 +37317,18 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/intelligence/capabilities', '/api/v1/intelligence/capabilities'])) {
       json(response, 200, buildXFactorCapabilitySnapshot());
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/revenue/engine/status', '/api/v1/revenue/engine/status'])) {
+      json(response, 200, buildRevenueEngineStatus(Object.fromEntries(url.searchParams.entries())));
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/revenue/engine/propose', '/api/v1/revenue/engine/propose'])) {
+      const body = await readBody(request);
+      const result = await proposeRevenueEngineAction(body);
+      json(response, result.ok ? 200 : 400, result);
       return;
     }
 
@@ -40978,6 +41389,8 @@ const server = createServer(async (request, response) => {
         'GET /api/memory/stats',
         'GET /api/agent/history',
         'GET /api/intelligence/capabilities',
+        'GET /api/revenue/engine/status',
+        'POST /api/revenue/engine/propose',
         'POST /api/emotion/ser/predict',
         'POST /api/emotion/infer-tags',
         'POST /api/emotion/learning/interactions',

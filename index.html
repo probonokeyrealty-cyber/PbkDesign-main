@@ -17449,7 +17449,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const latestSimulation = Array.isArray(snapshot?.dealSimulations) ? snapshot.dealSimulations[0] : null;
     const latestAudit = Array.isArray(snapshot?.systemAuditReports) ? snapshot.systemAuditReports[0] : null;
     const latestMatch = Array.isArray(snapshot?.buyerMatches) ? snapshot.buyerMatches[0] : null;
+    const revenueEngine = status.revenueEngine || snapshot?.revenueEngine || null;
     const cards = [
+      {
+        key: 'revenue-engine',
+        kicker: 'Ava + Rex',
+        title: 'Seven-figure Revenue Engine',
+        metric: revenueEngine ? `${revenueEngine.readinessScore || 0}/100 ${revenueEngine.grade || 'readiness'}` : 'approval-safe',
+        note: revenueEngine?.nextBestAction?.reason
+          || 'Coordinates leads, campaigns, calls, Rex experiments, and founder approvals without duplicating provider logic.',
+        action: 'revenue-engine',
+        cta: revenueEngine?.nextBestAction?.label ? 'Queue next action' : 'Check engine'
+      },
       {
         key: 'market-intel',
         kicker: 'Market Intel',
@@ -27209,6 +27220,27 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function runRevenueAgentAction(action) {
     if (!PBK.openclaw.isConnected()) {
       toast({ type: 'warning', title: 'PBK Brain connection needed', desc: 'Connect PBK Brain before running revenue agents.' });
+      return;
+    }
+
+    if (action === 'revenue-engine') {
+      try {
+        const response = await requestOpenClawApi('/api/revenue/engine/propose', {
+          method: 'POST',
+          body: { requestedBy: 'Command Center' },
+          timeout: 12000
+        });
+        if (response?.state) renderOpenClawState(response.state);
+        else await syncOpenClawState({ silent: true });
+        toastOutcome({
+          outcome: getRuntimeOutcome(response, 'queued_for_approval'),
+          title: response?.action?.label || 'Revenue Engine action queued',
+          desc: response?.action?.reason || 'Rex queued the next-best revenue action for founder approval.',
+          response
+        });
+      } catch (error) {
+        toast({ type: 'error', title: 'Revenue Engine failed', desc: error?.message || 'The bridge could not queue the Rex revenue action.' });
+      }
       return;
     }
 

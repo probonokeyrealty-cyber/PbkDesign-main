@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-22-postgres-fallback-voice-bridge';
+const BUILD_REVISION = '2026-05-22-fast-live-ava-reply';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -226,6 +226,8 @@ const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(p
 const PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
 const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
+const TELNYX_LIVE_REPLY_STRATEGIST_MODE = String(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'background').trim().toLowerCase();
+const TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS = Math.max(0, Math.min(2500, Number(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 650)));
 const PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || 'true').trim());
 const TELNYX_BIDIRECTIONAL_MEDIA_MODE = String(process.env.PBK_TELNYX_BIDIRECTIONAL_MEDIA_MODE || 'mp3').trim().toLowerCase();
 const TELNYX_ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_TELNYX_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
@@ -34926,7 +34928,53 @@ async function handleBrowserVoiceSocket(socket, request) {
   });
 }
 
-async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
+function isTelnyxCallStillSpeakable(call = {}) {
+  if (!call || typeof call !== 'object') return true;
+  const status = String(call.status || '').trim().toLowerCase();
+  if (!status) return true;
+  return !/^(ended|completed|complete|hangup|hangup_received|stopped|failed|busy|canceled|cancelled|rejected|no_answer)$/.test(status);
+}
+
+function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contextCall = null } = {}) {
+  const raw = String(transcript || '').replace(/\s+/g, ' ').trim();
+  const lower = raw.toLowerCase();
+  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
+  const knownBant = normalizeBantInfo(contextCall?.bant || {}, contextCall?.raw?.bant || {}, contextCall?.raw || {});
+  const extractedBant = extractBantFromTranscript(raw, knownBant);
+  const missingBant = getMissingBantFields(extractedBant);
+  const opener = leadName && !/^unknown|caller$/i.test(leadName) ? `${leadName}, ` : '';
+
+  if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
+    return `${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`;
+  }
+  if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
+    return 'I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?';
+  }
+  if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(lower)) {
+    return 'That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?';
+  }
+  if (/\b(price|offer|how much|worth|lowball|cash)\b/i.test(lower)) {
+    return 'I can help with that, but I do not want to guess or throw out a sloppy number. What is the property address and current condition?';
+  }
+  if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(lower)) {
+    return 'I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?';
+  }
+  if (missingBant.includes('authority')) {
+    return `${opener}I hear you. Before I point you down the wrong path, are you the owner or the person helping make the decision on this property?`;
+  }
+  if (missingBant.includes('timeline')) {
+    return `${opener}that makes sense. To help you the right way, what timeline are you hoping for: days, a few weeks, or more flexible?`;
+  }
+  if (missingBant.includes('need')) {
+    return `${opener}I understand. What is making you consider selling now: repairs, timing, tenants, probate, payments, or just wanting a simpler option?`;
+  }
+  if (missingBant.includes('budget')) {
+    return `${opener}I can keep this clear. Is there a number you already had in mind, or should we first walk through condition and timeline?`;
+  }
+  return `${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`;
+}
+
+async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', contextCall = null } = {}) {
   const leadId = contextCall?.leadId || session.leadId || '';
   const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || 'caller';
   const address = contextCall?.address || session.address || '';
@@ -35016,6 +35064,59 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
       },
     };
   }
+}
+
+async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
+  const fallback = buildFastTelnyxLiveAvaReplyText({ session, transcript, contextCall });
+  const normalizedFallback = normalizeAvaVoiceReplyText(fallback, fallback);
+  const mode = TELNYX_LIVE_REPLY_STRATEGIST_MODE;
+
+  if (mode === 'inline') {
+    const insightPromise = buildTelnyxLiveAvaReplyInsight({ session, transcript, contextCall })
+      .catch((error) => ({
+        text: '',
+        strategist: {
+          ok: false,
+          result: 'telnyx_live_reply_insight_failed',
+          error: error?.message || 'Strategist reply unavailable.',
+        },
+      }));
+    const insight = TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS > 0
+      ? await Promise.race([
+          insightPromise,
+          sleep(TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS).then(() => null),
+        ])
+      : await insightPromise;
+    if (insight?.text) {
+      return {
+        ...insight,
+        text: normalizeAvaVoiceReplyText(insight.text, normalizedFallback),
+        replyMode: 'strategist_inline',
+      };
+    }
+    void insightPromise;
+  } else if (mode !== 'off') {
+    void buildTelnyxLiveAvaReplyInsight({ session, transcript, contextCall }).catch((error) => {
+      addActivity(state, makeActivity({
+        actor: 'Ava Strategist',
+        category: 'BRAIN',
+        status: 'warning',
+        text: `Background live-call coaching skipped: ${String(error?.message || error || 'unknown error').slice(0, 160)}`,
+        target: session.callId || session.streamId || contextCall?.id || 'telnyx-live-call',
+      }));
+      void persistState(state);
+    });
+  }
+
+  return {
+    text: normalizedFallback,
+    replyMode: 'fast_local',
+    strategist: {
+      ok: false,
+      skipped: mode === 'off',
+      result: mode === 'off' ? 'strategist_disabled' : 'strategist_background',
+    },
+  };
 }
 
 async function handleTelnyxDeepgramMediaSocket(socket, request) {
@@ -35332,6 +35433,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.lastAvaReplyAt = now;
     session.lastAvaReplyTranscript = transcriptForReply;
     const contextCall = getCallById(session.callId);
+    if (!isTelnyxCallStillSpeakable(contextCall)) return;
     const reply = await buildTelnyxLiveAvaReply({
       session,
       transcript: item.transcript,
@@ -35339,13 +35441,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     const spoken = String(reply.text || '').trim();
     if (!spoken) return;
+    const latestCall = getCallById(session.callId);
+    if (!isTelnyxCallStillSpeakable(latestCall)) return;
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
     addActivity(state, makeActivity({
       actor: 'Ava',
       category: 'CALL',
       status: speakResult.ok ? 'served' : 'warning',
       text: speakResult.ok
-        ? `Ava replied live on Telnyx via ${speakResult.provider || 'phone audio'}: ${spoken.slice(0, 120)}`
+        ? `Ava replied live on Telnyx via ${speakResult.provider || 'phone audio'} (${reply.replyMode || 'live'}): ${spoken.slice(0, 120)}`
         : `Ava live Telnyx reply failed: ${speakResult.error || 'unknown error'}`,
       target: session.callId || session.streamId || session.id,
     }));
@@ -37041,6 +37145,8 @@ const server = createServer(async (request, response) => {
         telnyxLinear16FallbackMs: TELNYX_DEEPGRAM_NO_TRANSCRIPT_FALLBACK_MS,
         telnyxRecentFrameReplayLimit: TELNYX_DEEPGRAM_RECENT_FRAME_LIMIT,
         telnyxBridgeAvaReplyEnabled: PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED,
+        telnyxLiveReplyMode: TELNYX_LIVE_REPLY_STRATEGIST_MODE,
+        telnyxLiveReplyStrategistTimeoutMs: TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS,
         telnyxHostedAiAssistantAutoStart: shouldStartTelnyxHostedAiAssistant(),
         telnyxHostedAiAssistantOverrideAllowed: PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE,
         telnyxStreamTokenConfigured: Boolean(TELNYX_MEDIA_STREAM_TOKEN),

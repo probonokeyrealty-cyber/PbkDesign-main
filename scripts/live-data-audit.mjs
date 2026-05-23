@@ -1039,6 +1039,14 @@ const checks = [
       && !/message\.content\s*\|\|\s*message\.reasoning_content/.test(bridge),
   },
   {
+    name: 'Ava live Telnyx replies use a fast local script before background strategist coaching',
+    ok: /function\s+buildFastTelnyxLiveAvaReplyText/.test(bridge)
+      && /TELNYX_LIVE_REPLY_STRATEGIST_MODE/.test(bridge)
+      && /replyMode:\s*'fast_local'/.test(bridge)
+      && /strategist_background/.test(bridge)
+      && /isTelnyxCallStillSpeakable/.test(bridge),
+  },
+  {
     name: 'Ava live Telnyx replies are written back as conversation turns',
     ok: /lastAvaReplyTranscript/.test(bridge)
       && /speaker:\s*'Ava'/.test(bridge)

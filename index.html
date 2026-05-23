@@ -237,41 +237,9 @@
     .topbar { width: 100%; min-width: 0; padding: 0 var(--s-3); gap: var(--s-2); overflow: hidden; }
     .crumb { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .topbar-search { display: none; }
-    .topbar-right { flex: 1 0 auto; gap: var(--s-2); margin-left: 0; min-width: 0; justify-content: flex-end; }
+    .topbar-right { flex: 0 0 auto; gap: var(--s-2); margin-left: 0; min-width: 0; justify-content: flex-end; }
     .topbar-right .mode-picker {
-      display: inline-flex;
-      flex: 0 1 min(64vw, 248px);
-      max-width: min(64vw, 248px);
-      min-height: 38px;
-      overflow: visible;
-      touch-action: manipulation;
-    }
-    .topbar-right .mode-picker .mode-opt {
-      flex: 1 1 auto;
-      justify-content: center;
-      min-height: 38px;
-      padding: 8px 7px;
-      gap: 4px;
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .topbar-right .mode-picker .mode-caret {
-      min-width: 34px;
-      min-height: 38px;
-      padding: 0 10px;
-      touch-action: manipulation;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .topbar-right .mode-picker .mode-popover {
-      position: fixed;
-      top: calc(env(safe-area-inset-top, 0px) + 58px);
-      left: 12px;
-      right: 12px;
-      width: auto;
-      max-width: none;
-      max-height: calc(100dvh - 96px);
-      overflow-y: auto;
-      z-index: 5000;
+      display: none;
     }
     .main { width: 100%; min-width: 0; padding-bottom: 80px; overflow-x: hidden; }
     .btn,
@@ -1197,6 +1165,83 @@
     color: var(--text-secondary); font-size: 14px;
     max-width: 520px;
   }
+[data-page="dashboard"] .mobile-mode-card {
+    display: none;
+    margin-top: var(--s-5);
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(125, 211, 252, 0.16), transparent 34%),
+      linear-gradient(135deg, rgba(10, 14, 22, 0.94), rgba(5, 7, 11, 0.72));
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+    padding: 16px;
+    gap: 14px;
+  }
+[data-page="dashboard"] .mobile-mode-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--sky);
+  }
+[data-page="dashboard"] .mobile-mode-title {
+    margin-top: 4px;
+    display: block;
+    font-family: var(--font-display);
+    font-size: 24px;
+    line-height: 1.05;
+    color: var(--text-primary);
+  }
+[data-page="dashboard"] .mobile-mode-desc {
+    margin-top: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+[data-page="dashboard"] .mobile-mode-toggle {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+[data-page="dashboard"] .mobile-mode-opt {
+    min-height: 48px;
+    border: 1px solid var(--border-dim);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.025);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: grid;
+    place-items: center;
+    gap: 3px;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+[data-page="dashboard"] .mobile-mode-opt small {
+    display: block;
+    font-size: 9px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: var(--text-ghost);
+  }
+[data-page="dashboard"] .mobile-mode-opt.active {
+    color: var(--bg-void);
+    border-color: transparent;
+    background: var(--sky);
+    box-shadow: 0 0 18px var(--sky-glow-strong);
+  }
+[data-page="dashboard"] .mobile-mode-opt.active[data-mode="approval"] {
+    background: var(--amber);
+  }
+[data-page="dashboard"] .mobile-mode-opt.active[data-mode="manual"] {
+    background: var(--text-secondary);
+  }
+[data-page="dashboard"] .mobile-mode-opt.active small {
+    color: rgba(5, 7, 11, 0.74);
+  }
 [data-page="dashboard"] .founder-ops-strip {
     margin-top: var(--s-5);
     display: grid;
@@ -1841,6 +1886,9 @@
       white-space: normal !important;
       overflow-wrap: anywhere;
     }
+    [data-page="dashboard"] .mobile-mode-card {
+      display: grid;
+    }
     [data-page="dashboard"] .founder-ops-strip {
       grid-template-columns: minmax(0, 1fr);
       width: 100%;
@@ -1926,6 +1974,18 @@
       <div class="hero-tag"><span data-bind="dashboard.heroTime">Live — — — —</span></div>
       <h1>Good <span data-bind="dashboard.timeOfDay">morning</span>, <span data-bind="user.firstName">there</span>. <em>Your agents closed <span data-bind="dashboard.overnightRevenue">$0</span> overnight.</em></h1>
       <p class="hero-sub"><span data-bind="dashboard.heroSubtitle">No live activity yet - connect PBK Brain to begin.</span></p>
+      <div class="mobile-mode-card" data-mobile-mode-card data-mode="approval" aria-label="Ava operating mode">
+        <div>
+          <span class="mobile-mode-eyebrow">Ava operating mode</span>
+          <strong class="mobile-mode-title" data-mobile-mode-title>Ava is approval-first</strong>
+          <p class="mobile-mode-desc" data-mobile-mode-desc>Ava can research, call, and prep actions, but founder approval is required before live offers, contracts, or outbound batches.</p>
+        </div>
+        <div class="mobile-mode-toggle" aria-label="Choose Ava operating mode">
+          <button type="button" class="mobile-mode-opt" data-mobile-mode-opt data-mode="autopilot" aria-pressed="false">Auto<small>guarded</small></button>
+          <button type="button" class="mobile-mode-opt active" data-mobile-mode-opt data-mode="approval" aria-pressed="true">Approval<small>safe default</small></button>
+          <button type="button" class="mobile-mode-opt" data-mobile-mode-opt data-mode="manual" aria-pressed="false">Manual<small>paused</small></button>
+        </div>
+      </div>
       <div class="founder-ops-strip" data-founder-ops="dashboard">
         <article class="founder-ops-card" data-founder-card="bridge">
           <span class="founder-ops-label">Bridge</span>
@@ -13281,6 +13341,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   const modePopover = document.getElementById('modePopover');
   const modeOpts = modePicker.querySelectorAll('.mode-opt');
   const mpOptions = modePopover.querySelectorAll('.mp-option');
+  const mobileModeCard = document.querySelector('[data-mobile-mode-card]');
+  const mobileModeOpts = document.querySelectorAll('[data-mobile-mode-opt]');
+  const mobileModeTitle = document.querySelector('[data-mobile-mode-title]');
+  const mobileModeDesc = document.querySelector('[data-mobile-mode-desc]');
   const confirmModal = document.getElementById('confirmModal');
   const modalBackdrop = document.getElementById('modalBackdrop');
 
@@ -13299,11 +13363,33 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       desc: 'All outbound stopped — running calls finish normally — you are on the board'
     }
   };
+  const mobileModeCopy = {
+    autopilot: {
+      title: 'Ava is in guarded Auto',
+      desc: 'Ava can move fast on safe work. Guardrails still block risky offers, contracts, DNC issues, and provider writes that need founder review.'
+    },
+    approval: {
+      title: 'Ava is approval-first',
+      desc: 'Ava can research, call, and prep actions, but founder approval is required before live offers, contracts, or outbound batches.'
+    },
+    manual: {
+      title: 'Ava is paused',
+      desc: 'Outbound actions stay stopped. You can still review the board, inspect leads, and restart Approval or Auto when ready.'
+    }
+  };
 
   function paintMode(mode) {
     currentMode = ['autopilot', 'approval', 'manual'].includes(mode) ? mode : 'approval';
     modeOpts.forEach(o => o.classList.toggle('active', o.dataset.mode === currentMode));
     mpOptions.forEach(o => o.classList.toggle('selected', o.dataset.mode === currentMode));
+    mobileModeOpts.forEach((o) => {
+      const active = o.dataset.mode === currentMode;
+      o.classList.toggle('active', active);
+      o.setAttribute('aria-pressed', String(active));
+    });
+    if (mobileModeCard) mobileModeCard.dataset.mode = currentMode;
+    if (mobileModeTitle) mobileModeTitle.textContent = mobileModeCopy[currentMode].title;
+    if (mobileModeDesc) mobileModeDesc.textContent = mobileModeCopy[currentMode].desc;
   }
 
   function setMode(mode, skipConfirm = false) {
@@ -13337,6 +13423,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   modeOpts.forEach(opt => {
+    bindModeControl(opt, () => setMode(opt.dataset.mode));
+  });
+  mobileModeOpts.forEach(opt => {
     bindModeControl(opt, () => setMode(opt.dataset.mode));
   });
   mpOptions.forEach(opt => {

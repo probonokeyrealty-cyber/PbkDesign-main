@@ -311,12 +311,14 @@ if (!approvalActionBody
   });
 }
 
-if (/\.topbar-right \.mode-picker\s*\{\s*display:\s*none;\s*\}/.test(index)
-  || !/\.topbar-right \.mode-picker[\s\S]*touch-action:\s*manipulation/.test(index)
+if (!/data-mobile-mode-card/.test(index)
+  || !/data-mobile-mode-opt/.test(index)
+  || !/mobileModeOpts\.forEach\(opt =>/.test(index)
+  || !/aria-pressed/.test(index)
   || !/bindModeControl\(opt,\s*\(\)\s*=>\s*setMode\(opt\.dataset\.mode\)\)/.test(index)) {
   fail.push({
     name: 'Mobile operators must be able to switch Auto, Approval, and Manual modes',
-    details: ['The mobile stylesheet must keep the mode picker visible/touch-friendly and the mode controls must be keyboard/tap accessible.'],
+    details: ['Mobile should move the mode picker into a dashboard home card, keep the top bar clear, and keep the controls keyboard/tap accessible.'],
   });
 }
 

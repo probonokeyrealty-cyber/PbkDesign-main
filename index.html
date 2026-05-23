@@ -237,8 +237,42 @@
     .topbar { width: 100%; min-width: 0; padding: 0 var(--s-3); gap: var(--s-2); overflow: hidden; }
     .crumb { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .topbar-search { display: none; }
-    .topbar-right { flex: 0 0 auto; gap: var(--s-2); margin-left: 0; min-width: 0; }
-    .topbar-right .mode-picker { display: none; }
+    .topbar-right { flex: 1 0 auto; gap: var(--s-2); margin-left: 0; min-width: 0; justify-content: flex-end; }
+    .topbar-right .mode-picker {
+      display: inline-flex;
+      flex: 0 1 min(64vw, 248px);
+      max-width: min(64vw, 248px);
+      min-height: 38px;
+      overflow: visible;
+      touch-action: manipulation;
+    }
+    .topbar-right .mode-picker .mode-opt {
+      flex: 1 1 auto;
+      justify-content: center;
+      min-height: 38px;
+      padding: 8px 7px;
+      gap: 4px;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .topbar-right .mode-picker .mode-caret {
+      min-width: 34px;
+      min-height: 38px;
+      padding: 0 10px;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .topbar-right .mode-picker .mode-popover {
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 58px);
+      left: 12px;
+      right: 12px;
+      width: auto;
+      max-width: none;
+      max-height: calc(100dvh - 96px);
+      overflow-y: auto;
+      z-index: 5000;
+    }
     .main { width: 100%; min-width: 0; padding-bottom: 80px; overflow-x: hidden; }
     .btn,
     .chip-btn,
@@ -13291,17 +13325,28 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
   }
 
+  function bindModeControl(node, handler) {
+    node.setAttribute('role', 'button');
+    node.setAttribute('tabindex', '0');
+    node.addEventListener('click', handler);
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      handler(event);
+    });
+  }
+
   modeOpts.forEach(opt => {
-    opt.addEventListener('click', () => setMode(opt.dataset.mode));
+    bindModeControl(opt, () => setMode(opt.dataset.mode));
   });
   mpOptions.forEach(opt => {
-    opt.addEventListener('click', () => {
+    bindModeControl(opt, () => {
       setMode(opt.dataset.mode);
       modePopover.classList.remove('open');
     });
   });
 
-  modeCaret.addEventListener('click', (e) => {
+  bindModeControl(modeCaret, (e) => {
     e.stopPropagation();
     modePopover.classList.toggle('open');
   });
@@ -20516,19 +20561,45 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
+  function canAttemptLiveOpenClawWrite(path, method = 'PUT') {
+    const config = getOpenClawConfig();
+    return Boolean(normalizeOpenClawEndpoint(config.endpoint))
+      && !openClawNeedsBridgeApiKey(config, path, method);
+  }
+
+  function setBoardActionButtonsDisabled(card, selector, disabled) {
+    card.querySelectorAll(selector).forEach((control) => {
+      control.disabled = disabled;
+      control.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    });
+  }
+
+  function markApprovalCardDecisionAccepted(card, action) {
+    card.dataset.approvalDecisionAccepted = action;
+    card.style.opacity = '0.62';
+    card.style.pointerEvents = 'none';
+  }
+
+  function scheduleApprovalBoardRefreshRetry() {
+    window.setTimeout(() => {
+      syncOpenClawState({ silent: true }).catch(() => {});
+    }, 1800);
+  }
+
   async function handleApprovalAction(button, card) {
     const approvalId = card.dataset.approvalId;
     const action = button.dataset.approvalAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
     const reviewReason = button.dataset.reviewReason || '';
     const decisionNotes = button.dataset.approvalNote || '';
+    const approvalPath = `/api/approvals/${encodeURIComponent(approvalId || '')}`;
 
     if (!approvalId) return;
 
-    if (!PBK.openclaw.isConnected()) {
+    if (!PBK.openclaw.isConnected() && !canAttemptLiveOpenClawWrite(approvalPath, 'PUT')) {
       const queued = queueDisconnectedAction({
         id: `approval-${approvalId}-${action}`,
         kind: 'approval',
-        path: `/api/approvals/${encodeURIComponent(approvalId)}`,
+        path: approvalPath,
         method: 'PUT',
         body: {
           status: action,
@@ -20550,10 +20621,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
 
-    button.disabled = true;
+    setBoardActionButtonsDisabled(card, '[data-approval-action]', true);
     try {
       const teamSession = getTeamSession();
-      await requestOpenClawApi(`/api/approvals/${encodeURIComponent(approvalId)}`, {
+      await requestOpenClawApi(approvalPath, {
         method: 'PUT',
         body: {
           status: action,
@@ -20566,6 +20637,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         },
         timeout: 9000
       });
+    } catch (error) {
+      setBoardActionButtonsDisabled(card, '[data-approval-action]', false);
+      toast({
+        type: 'error',
+        title: 'Approval action failed',
+        desc: error?.message || 'PBK Brain did not accept that decision.'
+      });
+      return;
+    }
+
+    markApprovalCardDecisionAccepted(card, action);
+
+    try {
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
@@ -20574,12 +20658,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           ? 'Marked for correction before any provider action runs.'
           : 'PBK Brain and the n8n callback flow were updated.'
       });
-    } catch (error) {
-      button.disabled = false;
+    } catch (refreshError) {
+      card.remove();
+      scheduleApprovalBoardRefreshRetry();
       toast({
-        type: 'error',
-        title: 'Approval action failed',
-        desc: error?.message || 'PBK Brain did not accept that decision.'
+        type: action === 'approved' ? 'success' : 'warning',
+        title: action === 'approved' ? 'Approval sent to PBK Brain' : 'Decision sent to PBK Brain',
+        desc: 'The decision was accepted. The board refresh is retrying in the background.'
       });
     }
   }
@@ -29864,11 +29949,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const action = button.dataset.adminAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
     if (!taskId) return;
 
-    if (!PBK.openclaw.isConnected()) {
+    const taskPath = `/api/admin/tasks/${encodeURIComponent(taskId)}`;
+
+    if (!PBK.openclaw.isConnected() && !canAttemptLiveOpenClawWrite(taskPath, 'PUT')) {
       const queued = queueDisconnectedAction({
         id: `admin-task-${taskId}-${action}`,
         kind: 'admin-task',
-        path: `/api/admin/tasks/${encodeURIComponent(taskId)}`,
+        path: taskPath,
         method: 'PUT',
         body: {
           status: action,
@@ -29887,21 +29974,35 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return;
     }
 
-    button.disabled = true;
+    setBoardActionButtonsDisabled(card, '[data-admin-action]', true);
     try {
       await updateAdminTaskDecision(taskId, action);
+    } catch (error) {
+      setBoardActionButtonsDisabled(card, '[data-admin-action]', false);
+      toast({
+        type: 'error',
+        title: 'Admin action failed',
+        desc: error?.message || 'PBK Brain did not accept that admin decision.'
+      });
+      return;
+    }
+
+    markApprovalCardDecisionAccepted(card, action);
+
+    try {
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved' ? 'Admin action sent to PBK Brain' : 'Admin task declined',
         desc: 'Rex and the bridge audit log were updated.'
       });
-    } catch (error) {
-      button.disabled = false;
+    } catch (refreshError) {
+      card.remove();
+      scheduleApprovalBoardRefreshRetry();
       toast({
-        type: 'error',
-        title: 'Admin action failed',
-        desc: error?.message || 'PBK Brain did not accept that admin decision.'
+        type: action === 'approved' ? 'success' : 'warning',
+        title: action === 'approved' ? 'Admin action sent to PBK Brain' : 'Admin task declined',
+        desc: 'The decision was accepted. The board refresh is retrying in the background.'
       });
     }
   }

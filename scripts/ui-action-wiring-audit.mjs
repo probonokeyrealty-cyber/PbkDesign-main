@@ -311,6 +311,25 @@ if (!approvalActionBody
   });
 }
 
+if (/\.topbar-right \.mode-picker\s*\{\s*display:\s*none;\s*\}/.test(index)
+  || !/\.topbar-right \.mode-picker[\s\S]*touch-action:\s*manipulation/.test(index)
+  || !/bindModeControl\(opt,\s*\(\)\s*=>\s*setMode\(opt\.dataset\.mode\)\)/.test(index)) {
+  fail.push({
+    name: 'Mobile operators must be able to switch Auto, Approval, and Manual modes',
+    details: ['The mobile stylesheet must keep the mode picker visible/touch-friendly and the mode controls must be keyboard/tap accessible.'],
+  });
+}
+
+if (!approvalActionBody
+  || !/canAttemptLiveOpenClawWrite\(approvalPath,\s*'PUT'\)/.test(approvalActionBody)
+  || !/markApprovalCardDecisionAccepted\(card,\s*action\)/.test(approvalActionBody)
+  || !/board refresh is retrying in the background/i.test(approvalActionBody)) {
+  fail.push({
+    name: 'Founder approval writes must not be reported failed after PBK Brain accepts them',
+    details: ['handleApprovalAction should attempt live writes when a bridge key exists and separate the decision write from the follow-up board refresh.'],
+  });
+}
+
 const adminTaskDecisionStart = index.indexOf('async function updateAdminTaskDecision');
 const adminTaskDecisionEnd = index.indexOf('async function handleAdminTaskAction', adminTaskDecisionStart);
 const adminTaskDecisionBody = adminTaskDecisionStart >= 0 && adminTaskDecisionEnd > adminTaskDecisionStart

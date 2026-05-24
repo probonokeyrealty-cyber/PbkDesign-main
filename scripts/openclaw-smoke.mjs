@@ -950,6 +950,14 @@ async function main() {
     assert(avaConversationIntelligence?.promptFrame?.role?.includes('top 1%'), 'Ava conversation intelligence did not include seven-figure prompt framing.');
     for (const testCase of avaPathDecisionCases) {
       const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};
+      const answer = String(testCase.result?.answer || testCase.result?.nextBestPhrase || '');
+      const expectedAnswerPatterns = {
+        cash: /fastest|surest|cash offer/i,
+        rbp: /Retail Buyer Program|side-by-side|45 to 60/i,
+        cf: /Creative Finance|carry|carrying|full asking/i,
+        mt: /mortgage takeover|low-rate|existing payment|highest-net/i,
+        land: /builders|builder-backed|zoning|utilities/i,
+      };
       assert(
         testCase.result?.ok === true && decision.selectedPath === testCase.expectedPath,
         `Ava path decision expected ${testCase.expectedPath} but got ${decision.selectedPath || 'missing'} for "${testCase.query}".`,
@@ -958,6 +966,10 @@ async function main() {
       assert(
         typeof decision.scriptTrigger === 'string' && decision.scriptTrigger.length > 20,
         `Ava path decision did not return a script trigger for ${testCase.expectedPath}.`,
+      );
+      assert(
+        expectedAnswerPatterns[testCase.expectedPath].test(answer),
+        `Ava answer did not close down the ${testCase.expectedPath} script path. Answer was: ${answer}`,
       );
     }
     assert(prosodyAdvice?.ok === true && prosodyAdvice?.prosody?.speed < 0.9, 'Prosody advice did not slow down for angry sentiment.');

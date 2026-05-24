@@ -14206,9 +14206,8 @@ async function buildAvaConversationIntelligence(params = {}) {
     ? await scoreCallQualityRecord({ ...params, transcript: params.transcript || query, createRexDecision: params.createRexDecision })
     : null;
   const pathDecision = architecture.pathDecision || {};
-  const pathCanGuide = !reaction.shouldStopContact && !reaction.shouldHandoff;
+  const pathCanGuide = !reaction.shouldStopContact;
   const criticalReaction = reaction.shouldStopContact
-    || reaction.shouldHandoff
     || /\b(stop calling|do not call|don't call|remove me|unsubscribe|scam|fake|legit|real company|who are you|trust)\b/i.test(query);
   const lockedPathPhrase = pathCanGuide && pathDecision.shouldClosePath && pathDecision.scriptTrigger
     ? pathDecision.scriptTrigger

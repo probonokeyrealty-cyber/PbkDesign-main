@@ -68,6 +68,11 @@ async function main() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const ttsHealth = await fetch(`${BASE_URL}/api/voice/tts/health`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
     const publicAvaLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',
       headers: {
@@ -797,6 +802,8 @@ async function main() {
     assert(health?.components?.bridge?.status === 'up', 'Bridge health did not expose command-center components.');
     assert(health?.components?.postgres?.status, 'Bridge health did not expose state backend component.');
     assert(health?.componentSummary?.total >= 10, 'Bridge health component summary is incomplete.');
+    assert(ttsHealth?.ok === true && ttsHealth?.elevenLabs?.provider === 'ElevenLabs', 'ElevenLabs TTS health endpoint did not return provider metadata.');
+    assert(ttsHealth?.elevenLabs?.tuning?.dynamicProsody === true, 'ElevenLabs TTS health did not expose dynamic prosody tuning.');
     assert(unauthorizedState.status === 401, `Expected unauthenticated /state to return 401, got ${unauthorizedState.status}.`);
     assert(Array.isArray(state?.approvals), 'Authenticated /state did not return approvals.');
     assert(quotas?.ok === true, 'Quota endpoint did not return ok: true.');

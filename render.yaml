@@ -165,9 +165,15 @@ services:
       - key: PBK_ELEVENLABS_API_KEY
         sync: false
       - key: PBK_ELEVENLABS_VOICE_ID
-        value: EXAVITQu4L4D8Xk9nI0J
+        value: 5u41aNhyCU6hXOcjPPv0
       - key: PBK_ELEVENLABS_MODEL_ID
         value: eleven_turbo_v2_5
+      - key: PBK_ELEVENLABS_STABILITY
+        value: "0.5"
+      - key: PBK_ELEVENLABS_SIMILARITY_BOOST
+        value: "0.75"
+      - key: PBK_ELEVENLABS_SPEED
+        value: "0.98"
 
       # Protected operator controls. Used for kill-switch restore/activation and
       # Ava-to-operator urgent calls. Do not commit the passcode value here.

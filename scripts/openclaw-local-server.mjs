@@ -267,12 +267,12 @@ const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https
 const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
 const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || ELEVENLABS_DEFAULT_VOICE_ID).trim();
 const ELEVENLABS_FALLBACK_VOICE_ID = String(process.env.PBK_ELEVENLABS_FALLBACK_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
-const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
+const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || process.env.ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
 const ELEVENLABS_STREAMING_TTS_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_ELEVENLABS_STREAMING_TTS_ENABLED || 'true').trim());
 const ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
-const ELEVENLABS_STABILITY = Number(process.env.PBK_ELEVENLABS_STABILITY || 0.42);
-const ELEVENLABS_SIMILARITY_BOOST = Number(process.env.PBK_ELEVENLABS_SIMILARITY_BOOST || 0.78);
-const ELEVENLABS_SPEED = Number(process.env.PBK_ELEVENLABS_SPEED || 0.98);
+const ELEVENLABS_STABILITY = Number(process.env.PBK_ELEVENLABS_STABILITY || process.env.ELEVENLABS_STABILITY || 0.5);
+const ELEVENLABS_SIMILARITY_BOOST = Number(process.env.PBK_ELEVENLABS_SIMILARITY_BOOST || process.env.ELEVENLABS_SIMILARITY_BOOST || 0.75);
+const ELEVENLABS_SPEED = Number(process.env.PBK_ELEVENLABS_SPEED || process.env.ELEVENLABS_SPEED || 0.98);
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -1305,6 +1305,12 @@ function getElevenLabsProviderMeta() {
     streamingReady: credentialReady && !validationFailed && ELEVENLABS_STREAMING_TTS_ENABLED,
     streamingEndpoint: '/api/voice/tts/stream',
     outputFormat: ELEVENLABS_OUTPUT_FORMAT,
+    tuning: {
+      stability: ELEVENLABS_STABILITY,
+      similarityBoost: ELEVENLABS_SIMILARITY_BOOST,
+      speed: ELEVENLABS_SPEED,
+      dynamicProsody: true,
+    },
     validated: __elevenLabsValidation.ok === true,
     validation: __elevenLabsValidation.ok === null ? null : { ...__elevenLabsValidation },
     warnings,
@@ -38188,6 +38194,14 @@ const server = createServer(async (request, response) => {
         browserVoice: getBrowserVoiceProviderMeta(),
         elevenLabs: getElevenLabsProviderMeta(),
         approvalGated: true,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/voice/tts/health', '/api/elevenlabs/tts/health'])) {
+      json(response, 200, {
+        ok: true,
+        elevenLabs: getElevenLabsProviderMeta(),
       });
       return;
     }

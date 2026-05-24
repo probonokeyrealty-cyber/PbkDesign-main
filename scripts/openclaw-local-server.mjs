@@ -264,7 +264,8 @@ const BROWSER_VOICE_DEEPGRAM_KEEPALIVE_MS = Math.max(3000, Math.min(9000, Number
 const ELEVENLABS_TTS_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_ELEVENLABS_TTS_ENABLED || '').trim());
 const ELEVENLABS_API_KEY = String(process.env.PBK_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_BASE_URL = String(process.env.PBK_ELEVENLABS_BASE_URL || 'https://api.elevenlabs.io').trim().replace(/\/+$/g, '');
-const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
+const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
+const ELEVENLABS_VOICE_ID = String(process.env.PBK_ELEVENLABS_VOICE_ID || ELEVENLABS_DEFAULT_VOICE_ID).trim();
 const ELEVENLABS_FALLBACK_VOICE_ID = String(process.env.PBK_ELEVENLABS_FALLBACK_VOICE_ID || '21m00Tcm4TlvDq8ikWAM').trim();
 const ELEVENLABS_MODEL_ID = String(process.env.PBK_ELEVENLABS_MODEL_ID || 'eleven_turbo_v2_5').trim();
 const ELEVENLABS_STREAMING_TTS_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_ELEVENLABS_STREAMING_TTS_ENABLED || 'true').trim());
@@ -1286,6 +1287,11 @@ function getElevenLabsProviderMeta() {
   if (!ELEVENLABS_API_KEY) missing.push('PBK_ELEVENLABS_API_KEY or ELEVENLABS_API_KEY');
   const credentialReady = ELEVENLABS_TTS_ENABLED && Boolean(ELEVENLABS_API_KEY);
   const validationFailed = __elevenLabsValidation.ok === false;
+  const usingDefaultVoice = ELEVENLABS_VOICE_ID === ELEVENLABS_DEFAULT_VOICE_ID;
+  const warnings = [];
+  if (usingDefaultVoice) {
+    warnings.push('PBK_ELEVENLABS_VOICE_ID is using the generic ElevenLabs Rachel default voice. Set PBK_ELEVENLABS_VOICE_ID to the trained Ava voice for less robotic production speech.');
+  }
   return {
     configured: ELEVENLABS_TTS_ENABLED,
     ready: credentialReady && !validationFailed,
@@ -1293,12 +1299,15 @@ function getElevenLabsProviderMeta() {
     mode: ELEVENLABS_STREAMING_TTS_ENABLED ? 'tts-http-streaming' : 'tts-http',
     model: ELEVENLABS_MODEL_ID,
     voiceId: ELEVENLABS_VOICE_ID,
+    usingDefaultVoice,
+    voiceQuality: usingDefaultVoice ? 'generic_default_voice' : 'configured_ava_voice',
     endpoint: '/api/voice/tts',
     streamingReady: credentialReady && !validationFailed && ELEVENLABS_STREAMING_TTS_ENABLED,
     streamingEndpoint: '/api/voice/tts/stream',
     outputFormat: ELEVENLABS_OUTPUT_FORMAT,
     validated: __elevenLabsValidation.ok === true,
     validation: __elevenLabsValidation.ok === null ? null : { ...__elevenLabsValidation },
+    warnings,
     missing,
   };
 }
@@ -7880,6 +7889,28 @@ function looksLikeAvaTextResponseCommand(command = '', params = {}) {
   const explicitProviderWrite = /\b(send|call|dial|text|sms|email|campaign|contract|docusign|docu sign|schedule|book|approve|delete)\b/i.test(normalized)
     && !/\b(what should|how should|respond|reply|answer|say|talk track|next best phrase)\b/i.test(normalized);
   return !explicitProviderWrite;
+}
+
+function hasExplicitCrmWriteIntent(command = '') {
+  const normalized = stripNegatedActionInstructions(command).toLowerCase();
+  if (!normalized) return false;
+  return [
+    /\b(update|sync|log|save|write|record)\b[^.?!\n;]{0,80}\b(crm|streak|lead record|pipeline)\b/i,
+    /\b(crm|streak|lead record|pipeline)\b[^.?!\n;]{0,80}\b(update|sync|log|save|write|record)\b/i,
+    /\b(save this|log this|record this)\b[^.?!\n;]{0,80}\b(crm|streak|lead)\b/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function looksLikeReadOnlyAvaCommand(command = '', params = {}) {
+  if (params.readOnly === true || params.noProviderWrites === true || params.providerWrites === false) return true;
+  const raw = String(command || '').trim();
+  if (!raw) return false;
+  const intentText = stripNegatedActionInstructions(raw) || raw;
+  const normalized = intentText.toLowerCase();
+  const explicitNoWrites = /\b(read[-\s]?only|no provider writes?|without provider writes?|do not (?:run|execute|perform|make|create|send|call|message|approve|reject|cancel)|don't (?:run|execute|perform|make|create|send|call|message|approve|reject|cancel)|never (?:run|execute|perform|make|create|send|call|message|approve|reject|cancel))\b/i.test(raw);
+  const asksForStatus = /\b(check|tell me|summari[sz]e|show|inspect|audit|debug|status|health|working|next safe action|what should|what is)\b/i.test(normalized)
+    && /\b(pbk|system|command center|ava|rex|agent|agents|providers?|voice|chat|approval|approvals?|revenue engine|intelligence)\b/i.test(normalized);
+  return explicitNoWrites || (asksForStatus && !hasExplicitCrmWriteIntent(raw));
 }
 
 function buildToolFirstArgs(detected = {}, command = '', params = {}, context = {}) {
@@ -19795,6 +19826,7 @@ function isPlaceholderInboundLeadName(name = '') {
     .replace(/[^\w\s-]/g, '')
     .replace(/\s+/g, ' ');
   if (!normalized) return true;
+  if (isInternalSpokenName(normalized)) return true;
   return [
     'inbound caller',
     'unknown caller',
@@ -19803,6 +19835,18 @@ function isPlaceholderInboundLeadName(name = '') {
     'new caller',
     'caller',
   ].includes(normalized);
+}
+
+function isInternalSpokenName(name = '') {
+  const normalized = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, ' ');
+  if (!normalized) return false;
+  if (/^(rex|ava)\s+strategist$/.test(normalized)) return true;
+  if (/^pbk\s+(production\s+)?voice\s+proof$/.test(normalized)) return true;
+  return /\b(strategist|command center|openclaw|meta agent|agent fleet|runtime operator|production voice proof)\b/.test(normalized);
 }
 
 function getSpokenLeadName(name = '') {
@@ -25735,11 +25779,21 @@ function normalizeCampaignChannel(value = 'email') {
 
 function normalizeCampaignStatus(value = 'draft') {
   const raw = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (['active', 'paused', 'pending', 'draft', 'completed', 'archived', 'provider_missing'].includes(raw)) return raw;
+  if (['active', 'paused', 'pending', 'draft', 'completed', 'archived', 'cancelled', 'provider_missing'].includes(raw)) return raw;
   if (['approval', 'approval_required', 'queued_for_approval'].includes(raw)) return 'pending';
+  if (['cancel', 'canceled', 'cancelled', 'deleted'].includes(raw)) return 'cancelled';
   if (['done', 'complete'].includes(raw)) return 'completed';
   if (['provider', 'missing_provider'].includes(raw)) return 'provider_missing';
   return 'draft';
+}
+
+function normalizeApprovalDecisionStatus(value = 'approved') {
+  const raw = String(value || 'approved').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['approve', 'approved'].includes(raw)) return 'approved';
+  if (['deny', 'decline', 'declined', 'reject', 'rejected'].includes(raw)) return 'rejected';
+  if (['needs_revision', 'needs_modification', 'modify', 'modified', 'review'].includes(raw)) return 'needs_revision';
+  if (['cancel', 'canceled', 'cancelled', 'dismiss', 'dismissed', 'void', 'voided'].includes(raw)) return 'cancelled';
+  return raw || 'approved';
 }
 
 function getCampaignProvider(channel = 'email') {
@@ -26424,6 +26478,55 @@ async function runCampaignAction(campaignId = '', payload = {}) {
   if (!action) {
     return { ok: false, result: 'unavailable', verbiage: 'Campaign action missing', error: 'No action supplied.' };
   }
+  if (['cancel', 'cancel_campaign', 'campaign_cancel', 'delete', 'campaign_delete'].includes(action)) {
+    ensureCampaignCollections();
+    const campaign = (state.campaigns || []).find((item) => item.id === campaignId);
+    if (!campaign) {
+      return { ok: false, result: 'unavailable', verbiage: 'Campaign not found', error: 'Campaign record not found.' };
+    }
+    const nextCampaign = {
+      ...campaign,
+      status: 'cancelled',
+      approvalStatus: 'cancelled',
+      pendingAction: '',
+      cancelledAt: isoNow(),
+      cancelledBy: payload.actor || payload.requestedBy || 'PBK Command Center',
+      updatedAt: isoNow(),
+    };
+    upsertById(state, 'campaigns', nextCampaign);
+    recordCampaignEvent({
+      campaignId,
+      eventType: 'cancelled',
+      channel: campaign.channel,
+      provider: campaign.provider || getCampaignProvider(campaign.channel),
+      providerStatus: 'cancelled',
+      payload: {
+        action,
+        reason: payload.reason || payload.notes || 'Campaign cancelled from Command Center.',
+        noApprovalRequired: true,
+      },
+    });
+    addActivity(
+      state,
+      makeActivity({
+        actor: nextCampaign.cancelledBy,
+        category: 'CAMPAIGN',
+        status: 'cancelled',
+        text: `Campaign "${campaign.name}" cancelled without creating a new approval task.`,
+        target: campaign.id,
+      }),
+    );
+    await persistState(state);
+    await persistCampaignRecord(nextCampaign);
+    return {
+      ok: true,
+      result: 'campaign_cancelled',
+      verbiage: 'Campaign cancelled',
+      noApprovalRequired: true,
+      campaign: nextCampaign,
+      state: buildStateSnapshot(),
+    };
+  }
   if (action === 'add_leads' || action === 'campaign_add_leads') {
     const attachResult = await attachCampaignLeadsToCampaign(campaignId, payload);
     if (!attachResult.ok) return attachResult;
@@ -26442,7 +26545,7 @@ async function runCampaignAction(campaignId = '', payload = {}) {
   if (action === 'remove_lead' || action === 'campaign_remove_lead') {
     return removeCampaignLeadFromCampaign(campaignId, payload);
   }
-  if (['start', 'start_campaign', 'pause', 'resume', 'archive', 'cancel', 'delete', 'add_leads', 'remove_lead', 'edit_template', 'campaign_pause', 'campaign_resume', 'campaign_archive', 'campaign_cancel', 'campaign_remove_lead'].includes(action)) {
+  if (['start', 'start_campaign', 'pause', 'resume', 'archive', 'add_leads', 'remove_lead', 'edit_template', 'campaign_pause', 'campaign_resume', 'campaign_archive', 'campaign_remove_lead'].includes(action)) {
     return requestCampaignApproval(campaignId, {
       ...payload,
       requestedAction: action.startsWith('campaign_') ? action : `campaign_${action}`,
@@ -32653,6 +32756,8 @@ const toolHandlers = {
     const avaMasterclassCommand = looksLikeAvaMasterclassCommand(intentCommand);
     const closingIntelligenceCommand = looksLikeClosingIntelligenceCommand(command, params);
     const responseOnlyCommand = looksLikeAvaTextResponseCommand(command, params);
+    const readOnlyAvaCommand = looksLikeReadOnlyAvaCommand(command, params);
+    const explicitCrmWriteIntent = hasExplicitCrmWriteIntent(command);
     const toolFirstDetected = detectToolFirstIntent(intentCommand, params, context);
 
     if (avaJarvisCommand) {
@@ -32686,8 +32791,25 @@ const toolHandlers = {
         },
         source: params.source || 'agent-console-response-only',
       });
+    } else if (readOnlyAvaCommand) {
+      routedTo = 'ava_conversation_intelligence';
+      const responseQuery = intentCommand || command;
+      response = await toolHandlers.getAvaConversationIntelligence({
+        ...params,
+        query: responseQuery,
+        text: responseQuery,
+        context: {
+          ...context,
+          ...(params.context && typeof params.context === 'object' ? params.context : {}),
+          originalCommand: command,
+          readOnly: true,
+          providerWritesBlocked: true,
+        },
+        source: params.source || 'agent-console-read-only',
+      });
     } else if (
       toolFirstDetected?.required
+      && !explicitCrmWriteIntent
       && !(looksLikeAdminIntent(command) && !looksLikeDealExecutionIntent(command))
     ) {
       const toolFirstResult = await executeToolFirstIntent(toolFirstDetected, command, params, context);
@@ -32789,10 +32911,25 @@ const toolHandlers = {
         mao: toNumber(params.mao, 91500),
         notes: command,
       });
-    } else {
+    } else if (explicitCrmWriteIntent) {
       response = await toolHandlers.updateCRM({
         message: `Ava logged command: ${command || 'No command text provided.'}`,
         target: context.address || context.leadName,
+      });
+    } else {
+      routedTo = 'ava_conversation_intelligence';
+      response = await toolHandlers.getAvaConversationIntelligence({
+        ...params,
+        query: intentCommand || command || 'Ava, give a helpful PBK operator response.',
+        text: intentCommand || command || 'Ava, give a helpful PBK operator response.',
+        context: {
+          ...context,
+          ...(params.context && typeof params.context === 'object' ? params.context : {}),
+          originalCommand: command,
+          readOnly: true,
+          providerWritesBlocked: true,
+        },
+        source: params.source || 'agent-console-safe-default',
       });
     }
 
@@ -35216,6 +35353,9 @@ function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
 function normalizeAvaVoiceReplyText(text = '', fallback = '') {
   const candidate = normalizeAvaSpokenScript(text) || normalizeAvaSpokenScript(fallback);
   const clean = String(candidate || '')
+    .replace(/\b(?:Rex|Ava)\s+Strategist,?\s*/gi, '')
+    .replace(/\bPBK\s+(?:Production\s+)?Voice\s+Proof,?\s*/gi, '')
+    .replace(/\b(?:PBK Command Center|OpenClaw|Meta-Agent Breeder|Agent Fleet),?\s*/gi, '')
     .replace(/\bnew inbound caller\b/gi, 'there')
     .replace(/\bI routed this to [^.?!]+[.?!]\s*/gi, '')
     .replace(/\s+/g, ' ')
@@ -35984,7 +36124,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
 
 async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', contextCall = null } = {}) {
   const leadId = contextCall?.leadId || session.leadId || '';
-  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || 'caller';
+  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '');
   const address = contextCall?.address || session.address || '';
   let pipeline = null;
   try {
@@ -38088,6 +38228,34 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/live-reply/preview', '/api/telnyx/live-reply/preview'])) {
+      const body = await readBody(request);
+      const transcript = String(body.transcript || body.text || body.message || '').trim();
+      const session = {
+        callId: body.callId || 'preview',
+        streamId: body.streamId || 'preview',
+        leadName: body.leadName || body.name || '',
+        sentiment: body.sentiment || {},
+      };
+      const contextCall = {
+        leadName: body.leadName || body.name || '',
+        address: body.address || '',
+        bant: body.bant || {},
+        raw: body.raw || {},
+      };
+      const fastText = buildFastTelnyxLiveAvaReplyText({ session, transcript, contextCall });
+      const text = normalizeAvaVoiceReplyText(fastText, fastText);
+      json(response, 200, {
+        ok: true,
+        result: 'telnyx_live_reply_preview',
+        noProviderWrites: true,
+        text,
+        replyMode: 'fast_local_preview',
+        elevenLabs: getElevenLabsProviderMeta(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/tts/stream', '/api/elevenlabs/tts/stream'])) {
       const body = await readBody(request);
       const text = String(body.text || body.message || '').trim();
@@ -39532,7 +39700,7 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const requestedStatus = body.status || body.action || task.status;
+      const requestedStatus = normalizeApprovalDecisionStatus(body.status || body.action || task.status);
       const statusBefore = task.status;
       task.status = requestedStatus;
       task.updatedAt = isoNow();
@@ -39621,8 +39789,8 @@ const server = createServer(async (request, response) => {
     const approvalDecisionMatch = matchPath(pathname, '/api/approvals/:id/:decision');
     if (approvalDecisionMatch && request.method === 'POST') {
       const decision = String(approvalDecisionMatch.groups.decision || '').trim().toLowerCase();
-      const status = decision === 'approve' ? 'approved' : decision === 'deny' ? 'rejected' : '';
-      if (!status) {
+      const status = normalizeApprovalDecisionStatus(decision);
+      if (!status || status === decision && !/^(approve|approved|deny|decline|declined|reject|rejected|needs[-_]?revision|modify|review|cancel|canceled|cancelled|dismiss|void)$/i.test(decision)) {
         json(response, 404, {
           ok: false,
           error: `Unsupported approval decision ${decision || '(missing)'}.`,
@@ -39683,7 +39851,7 @@ const server = createServer(async (request, response) => {
     if (approvalMatch && request.method === 'PUT') {
       const body = await readBody(request);
       const approval = state.approvals.find((item) => item.id === approvalMatch.groups.id);
-      const requestedStatus = body.status || body.action || 'approved';
+      const requestedStatus = normalizeApprovalDecisionStatus(body.status || body.action || 'approved');
       if (body.teamAuthRequired === true || body.requireTeamAuth === true) {
         const teamAuth = getTeamAuthMeta(request, body);
         if (!teamAuth.ok) {

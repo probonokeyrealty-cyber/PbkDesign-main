@@ -1645,6 +1645,18 @@
   }
 [data-page="dashboard"] .qcard-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 [data-page="dashboard"] .qcard-actions .btn { flex: 1; justify-content: center; padding: 6px 10px; font-size: 10px; }
+[data-page="dashboard"] .qcard-actions .qcard-cancel-btn {
+    flex: 0 0 36px;
+    min-width: 36px;
+    padding: 6px 8px;
+    border-color: rgba(251, 113, 133, 0.36);
+    color: var(--crimson);
+  }
+[data-page="dashboard"] .qcard-actions .qcard-cancel-btn:hover {
+    background: var(--crimson-glow);
+    border-color: rgba(251, 113, 133, 0.62);
+    color: var(--text-primary);
+  }
 [data-page="dashboard"] .qcard-review {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -11377,6 +11389,12 @@
     .lc-controls .btn {
       min-height: 44px;
     }
+    [data-page="dashboard"] .qcard-actions .qcard-cancel-btn {
+      flex: 0 0 48px;
+      min-width: 48px;
+      font-size: 16px;
+      line-height: 1;
+    }
   }
 </style>
 
@@ -17176,7 +17194,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
     if (normalized.includes('outbound') || normalized.includes('campaign') || normalized.includes('call') || normalized.includes('sms') || normalized.includes('email')) {
       if (/cancel|stop|pause/.test(normalized)) {
-        return { filter: 'outbound', label: 'Campaign Cancel', primary: 'Approve cancel', secondary: 'Keep campaign', accent: 'var(--magenta)' };
+        return { filter: 'outbound', label: 'Campaign Cancel', primary: 'Cancel now', secondary: 'Keep campaign', accent: 'var(--magenta)', cancelPrimary: true };
       }
       if (/add[_ -]?leads?|lead[_ -]?add/.test(normalized)) {
         return { filter: 'outbound', label: 'Add Leads', primary: 'Approve add leads', secondary: 'Review leads', accent: 'var(--magenta)' };
@@ -17325,8 +17343,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           ${bantInfo}
           <div class="qcard-actions">
-            <button type="button" class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
+            <button type="button" class="btn btn-primary" data-approval-action="${meta.cancelPrimary ? 'cancelled' : 'approved'}">${escapeHtml(primaryLabel)}</button>
             <button type="button" class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
+            <button type="button" class="btn btn-ghost qcard-cancel-btn" data-approval-action="cancelled" aria-label="Cancel queued approval" title="Cancel/remove this queued approval without running it">X</button>
           </div>
         </div>
       `;
@@ -20688,9 +20707,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function handleApprovalAction(button, card) {
     const approvalId = card.dataset.approvalId;
-    const action = button.dataset.approvalAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
+    const rawAction = button.dataset.approvalAction || (button.classList.contains('btn-primary') ? 'approved' : 'rejected');
+    const action = normalizeRuntimeStatus(rawAction) === 'canceled' ? 'cancelled' : rawAction;
     const reviewReason = button.dataset.reviewReason || '';
-    const decisionNotes = button.dataset.approvalNote || '';
+    const decisionNotes = button.dataset.approvalNote
+      || (normalizeRuntimeStatus(action) === 'cancelled'
+        ? 'Dashboard cancelled this queued approval without running provider actions.'
+        : '');
     const approvalPath = `/api/approvals/${encodeURIComponent(approvalId || '')}`;
 
     if (!approvalId) return;
@@ -20715,7 +20738,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       card.style.outline = '1px solid rgba(245, 158, 11, 0.55)';
       toast({
         type: 'warning',
-        title: 'Approval queued offline',
+        title: normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancel queued offline' : 'Approval queued offline',
         desc: 'The card stayed visible and will replay when PBK Brain reconnects.'
       });
       return;
@@ -20753,9 +20776,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval sent to PBK Brain' : reviewReason ? 'Review note sent' : 'Decision sent to PBK Brain',
+        title: action === 'approved'
+          ? 'Approval sent to PBK Brain'
+          : normalizeRuntimeStatus(action) === 'cancelled'
+            ? 'Approval cancelled'
+            : reviewReason ? 'Review note sent' : 'Decision sent to PBK Brain',
         desc: reviewReason
           ? 'Marked for correction before any provider action runs.'
+          : normalizeRuntimeStatus(action) === 'cancelled'
+            ? 'The queued task was removed without provider execution.'
           : 'PBK Brain and the n8n callback flow were updated.'
       });
     } catch (refreshError) {
@@ -20763,7 +20792,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       scheduleApprovalBoardRefreshRetry();
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Approval sent to PBK Brain' : 'Decision sent to PBK Brain',
+        title: action === 'approved'
+          ? 'Approval sent to PBK Brain'
+          : normalizeRuntimeStatus(action) === 'cancelled'
+            ? 'Approval cancelled'
+            : 'Decision sent to PBK Brain',
         desc: 'The decision was accepted. The board refresh is retrying in the background.'
       });
     }
@@ -30018,8 +30051,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           ${bantInfo}
           <div class="qcard-actions">
-            <button type="button" class="btn btn-primary" data-approval-action="approved">${escapeHtml(primaryLabel)}</button>
+            <button type="button" class="btn btn-primary" data-approval-action="${meta.cancelPrimary ? 'cancelled' : 'approved'}">${escapeHtml(primaryLabel)}</button>
             <button type="button" class="btn btn-ghost" data-approval-action="${type === 'contract' ? 'needs-revision' : 'rejected'}">${escapeHtml(secondaryLabel)}</button>
+            <button type="button" class="btn btn-ghost qcard-cancel-btn" data-approval-action="cancelled" aria-label="Cancel queued approval" title="Cancel/remove this queued approval without running it">X</button>
           </div>
         </div>
       `;
@@ -30045,6 +30079,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <div class="qcard-actions">
             <button type="button" class="btn btn-primary" data-admin-action="approved">Approve safely</button>
             <button type="button" class="btn btn-ghost" data-admin-action="rejected">Hold</button>
+            <button type="button" class="btn btn-ghost qcard-cancel-btn" data-admin-action="cancelled" aria-label="Cancel queued admin task" title="Cancel/remove this queued task without approval">X</button>
           </div>
         </div>
       `;
@@ -30054,12 +30089,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   };
 
   async function updateAdminTaskDecision(taskId, status) {
+    const normalizedStatus = normalizeRuntimeStatus(status) === 'canceled' ? 'cancelled' : status;
     return requestOpenClawApi(`/api/admin/tasks/${encodeURIComponent(taskId)}`, {
       method: 'PUT',
       body: {
-        status,
+        status: normalizedStatus,
         actor: 'PBK dashboard',
-        note: `Dashboard marked task ${status}.`
+        note: normalizedStatus === 'cancelled'
+          ? 'Dashboard cancelled this queued task without approval or provider execution.'
+          : `Dashboard marked task ${normalizedStatus}.`
       },
       timeout: 12000
     });
@@ -30079,9 +30117,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         path: taskPath,
         method: 'PUT',
         body: {
-          status: action,
+          status: normalizeRuntimeStatus(action) === 'canceled' ? 'cancelled' : action,
           actor: 'PBK dashboard',
-          note: `Dashboard queued task ${action} while offline.`,
+          note: normalizeRuntimeStatus(action) === 'cancelled' || normalizeRuntimeStatus(action) === 'canceled'
+            ? 'Dashboard queued a task cancellation while offline.'
+            : `Dashboard queued task ${action} while offline.`,
           queuedOffline: true
         }
       });
@@ -30114,7 +30154,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       await syncOpenClawState({ silent: true });
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin action sent to PBK Brain' : 'Admin task declined',
+        title: action === 'approved' ? 'Admin action sent to PBK Brain' : normalizeRuntimeStatus(action) === 'cancelled' ? 'Admin task cancelled' : 'Admin task declined',
         desc: 'Rex and the bridge audit log were updated.'
       });
     } catch (refreshError) {
@@ -30122,7 +30162,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       scheduleApprovalBoardRefreshRetry();
       toast({
         type: action === 'approved' ? 'success' : 'warning',
-        title: action === 'approved' ? 'Admin action sent to PBK Brain' : 'Admin task declined',
+        title: action === 'approved' ? 'Admin action sent to PBK Brain' : normalizeRuntimeStatus(action) === 'cancelled' ? 'Admin task cancelled' : 'Admin task declined',
         desc: 'The decision was accepted. The board refresh is retrying in the background.'
       });
     }
@@ -30262,6 +30302,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let currentVoiceAudio = null;
     let currentVoiceAudioUrl = '';
     let currentVoiceAudioStreamAbort = null;
+    let voiceFinalizeTimeout = null;
 
     const setAvaVoiceSpeaking = (speaking = false) => {
       avaVoiceSpeaking = Boolean(speaking);
@@ -30502,30 +30543,60 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     function cleanupBrowserVoiceCapture(reason = 'capture-stop', options = {}) {
       const sendStop = options.sendStop !== false;
+      const keepSocketOpen = options.keepSocketOpen === true;
       if (voiceRecorder && voiceRecorder.state !== 'inactive') {
         try { voiceRecorder.stop(); } catch {}
       }
       if (sendStop && voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
         try { voiceSocket.send(JSON.stringify({ event: 'stop', reason })); } catch {}
       }
-      if (voiceSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(voiceSocket.readyState)) {
+      if (!keepSocketOpen && voiceSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(voiceSocket.readyState)) {
         window.setTimeout(() => {
           try { voiceSocket?.close(); } catch {}
         }, 350);
       }
       voiceStream?.getTracks?.().forEach((track) => track.stop());
       voiceRecorder = null;
-      voiceSocket = null;
+      if (!keepSocketOpen) voiceSocket = null;
       voiceStream = null;
-      voiceMode = 'idle';
+      voiceMode = keepSocketOpen ? 'processing' : 'idle';
       setListening(false);
       updateVoiceCopy();
     }
 
     function stopBrowserVoice(reason = 'user-stop') {
       stopCurrentVoiceAudio();
+      if (voiceFinalizeTimeout) {
+        window.clearTimeout(voiceFinalizeTimeout);
+        voiceFinalizeTimeout = null;
+      }
       cleanupBrowserVoiceCapture(reason);
       addAvaHistory('system', 'Stop', reason === 'user-stop' || reason === 'operator-stop' ? 'Ava voice interrupted by operator.' : `Voice stopped: ${reason}.`);
+    }
+
+    function requestBrowserVoiceFinalResponse(reason = 'operator-finalize') {
+      stopCurrentVoiceAudio();
+      if (!voiceSocket || voiceSocket.readyState !== WebSocket.OPEN) {
+        stopBrowserVoice(reason);
+        return;
+      }
+      cleanupBrowserVoiceCapture(reason, { keepSocketOpen: true });
+      voiceBridgeStats.ws = 'finalizing';
+      voiceBridgeStats.deepgram = voiceBridgeStats.deepgram || 'finalizing';
+      voiceBridgeStats.last = 'waiting for Ava response';
+      renderVoiceDoctor('checking');
+      setVoiceState('checking', 'Ava is finalizing what she heard.');
+      if (status) status.textContent = 'Ava is finalizing what she heard...';
+      addAvaHistory('system', 'Voice', 'Stopped listening. Waiting for Ava response.');
+      if (voiceFinalizeTimeout) window.clearTimeout(voiceFinalizeTimeout);
+      voiceFinalizeTimeout = window.setTimeout(() => {
+        voiceFinalizeTimeout = null;
+        showAvaVoiceDiagnostic('processing', 'Ava did not return a voice response before the timeout. The transcript, if captured, remains available in the panel.');
+        try { voiceSocket?.close(); } catch {}
+        voiceSocket = null;
+        voiceMode = 'idle';
+        updateVoiceCopy();
+      }, 24000);
     }
 
     async function playAvaTts(text = '') {
@@ -30863,6 +30934,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           }
           if (data.type === 'assistant_response') {
             voiceSessionCompleted = true;
+            if (voiceFinalizeTimeout) {
+              window.clearTimeout(voiceFinalizeTimeout);
+              voiceFinalizeTimeout = null;
+            }
             if (status) status.textContent = data.text || 'Ava response staged.';
             addAvaHistory(data.ok ? 'ava' : 'error', 'Ava', data.text || 'Try again when you are ready.');
             toast({
@@ -30875,10 +30950,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             playAvaTts(data.text || '').catch(() => null);
           }
           if (data.type === 'error') {
+            if (voiceFinalizeTimeout) {
+              window.clearTimeout(voiceFinalizeTimeout);
+              voiceFinalizeTimeout = null;
+            }
             showAvaVoiceDiagnostic(data.lane || 'stt', data.error || 'Ava voice stream reported an error.');
           }
         });
         voiceSocket.addEventListener('close', () => {
+          if (voiceFinalizeTimeout) {
+            window.clearTimeout(voiceFinalizeTimeout);
+            voiceFinalizeTimeout = null;
+          }
           if (voiceSessionCompleted) {
             cleanupBrowserVoiceCapture('turn-complete', { sendStop: false });
             return;
@@ -30966,14 +31049,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
 
     stopBtn?.addEventListener('click', () => {
-      stopBrowserVoice('operator-stop');
-      if (status) status.textContent = 'Ava interrupted. Ready when you are.';
+      if (shell.classList.contains('listening') && voiceSocket?.readyState === WebSocket.OPEN) {
+        requestBrowserVoiceFinalResponse('operator-finalize');
+      } else {
+        stopBrowserVoice('operator-stop');
+        if (status) status.textContent = 'Ava interrupted. Ready when you are.';
+      }
     });
 
     micBtn?.addEventListener('click', async () => {
       setPanelOpen(true);
       if (shell.classList.contains('listening')) {
-        stopBrowserVoice('user-stop');
+        requestBrowserVoiceFinalResponse('user-finalize');
         return;
       }
       await startBrowserVoice();

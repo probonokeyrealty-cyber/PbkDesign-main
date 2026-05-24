@@ -256,6 +256,20 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const avaSafeStatusCommand = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'runAgentCommand',
+        params: {
+          command: 'Ava, check PBK system status and tell me the next safe action. Do not call, message, approve, reject, cancel, update CRM, or run any provider write.',
+          source: 'smoke-test',
+        },
+      }),
+    }).then((response) => response.json());
     const closingIntelligence = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',
       headers: {
@@ -312,6 +326,18 @@ async function main() {
       body: JSON.stringify({
         text: 'I am angry and this feels like a scam.',
         sentiment: 0.22,
+      }),
+    }).then((response) => response.json());
+    const liveReplyPreview = await fetch(`${BASE_URL}/api/voice/live-reply/preview`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        leadName: 'Rex Strategist',
+        transcript: 'Hello, can you hear me?',
+        source: 'smoke-test',
       }),
     }).then((response) => response.json());
     const callQaScore = await fetch(`${BASE_URL}/api/v1/calls/qa-score`, {
@@ -800,6 +826,15 @@ async function main() {
       !/\b(do-not-call|do not call list|stop outreach|marked do-not-call)\b/i.test(String(avaResponseOnlyCommand?.result?.response?.answer || '')),
       'Ava response-only command treated routing guardrails as seller-facing DNC intent.',
     );
+    assert(avaSafeStatusCommand?.ok === true, 'Ava safe status command did not succeed.');
+    assert(
+      avaSafeStatusCommand?.result?.routedTo === 'ava_conversation_intelligence',
+      `Ava safe status command routed to ${avaSafeStatusCommand?.result?.routedTo || 'missing'} instead of ava_conversation_intelligence.`,
+    );
+    assert(
+      avaSafeStatusCommand?.result?.response?.result === 'ava_conversation_intelligence',
+      'Ava safe status command did not return conversation intelligence.',
+    );
     assert(closingIntelligence?.ok === true, 'Closing intelligence invoke did not succeed.');
     assert(closingIntelligence?.result?.result === 'closing_intelligence', 'Closing intelligence invoke did not return the closing_intelligence result.');
     assert(/repair|closing risk|holding|certainty|listing|net/i.test(String(closingIntelligence?.result?.nextBestPhrase || '')), 'Closing intelligence did not return a seller-facing next best phrase.');
@@ -811,6 +846,8 @@ async function main() {
     assert(avaConversationIntelligence?.prosody?.profile === 'de_escalation', 'Ava conversation intelligence did not return de-escalation prosody.');
     assert(avaConversationIntelligence?.promptFrame?.role?.includes('top 1%'), 'Ava conversation intelligence did not include seven-figure prompt framing.');
     assert(prosodyAdvice?.ok === true && prosodyAdvice?.prosody?.speed < 0.9, 'Prosody advice did not slow down for angry sentiment.');
+    assert(liveReplyPreview?.ok === true && liveReplyPreview?.noProviderWrites === true, 'Live reply preview did not return a safe no-write response.');
+    assert(!/\b(Rex Strategist|Ava Strategist|PBK Production Voice Proof|PBK Command Center|OpenClaw)\b/i.test(String(liveReplyPreview?.text || '')), 'Live reply preview leaked internal agent/test identity into seller-facing speech.');
     assert(callQaScore?.ok === true && Number(callQaScore?.score?.score || 0) > 0, 'Call QA score endpoint did not score the transcript.');
     assert(Array.isArray(callQaScore?.state?.callQaScores), 'Call QA score endpoint did not return state with call QA rows.');
     assert(skillOutcome?.ok === true && skillOutcome?.summary?.total >= 1, 'Skill outcome endpoint did not record measured skill usage.');

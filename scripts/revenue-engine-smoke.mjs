@@ -54,6 +54,9 @@ async function main() {
       PBK_BRIDGE_API_KEY: API_KEY,
       PBK_OPENCLAW_STATE_DIR: path.join(ROOT_DIR, '.pbk-local', `revenue-engine-smoke-${SMOKE_ID}`),
       PBK_OPENCLAW_RESET: '1',
+      PBK_COMMAND_CENTER_CLOSED_LOOP_ENABLED: 'true',
+      PBK_AUTOPILOT_LOW_RISK: 'true',
+      PBK_REVENUE_TARGET_MONTHLY: '1000000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -98,6 +101,37 @@ async function main() {
     assert(proposed.body.decision?.status === 'queued_for_approval', 'Revenue proposal must queue founder approval.');
     assert(proposed.body.approval?.id, 'Revenue proposal must create a founder approval item.');
 
+    const callAnalysis = await jsonFetch('/api/v1/call-analysis/run', {
+      method: 'POST',
+      body: JSON.stringify({ actor: 'smoke-test', limit: 5 }),
+    });
+    assert(callAnalysis.response.status === 200, `Expected call analysis 200, got ${callAnalysis.response.status}: ${JSON.stringify(callAnalysis.body)}`);
+    assert(callAnalysis.body.providerWritesBlocked === true, 'Call analysis must not perform provider writes.');
+
+    const rexAlignment = await jsonFetch('/api/v1/rex/align-goal', {
+      method: 'POST',
+      body: JSON.stringify({ actor: 'smoke-test', targetMonthlyRevenue: 1000000 }),
+    });
+    assert(rexAlignment.response.status === 200, `Expected Rex alignment 200, got ${rexAlignment.response.status}: ${JSON.stringify(rexAlignment.body)}`);
+    assert(rexAlignment.body.providerWritesBlocked === true, 'Rex alignment must not perform provider writes.');
+    assert(rexAlignment.body.targetMonthlyRevenue === 1000000, 'Rex alignment must track the $1M/month target.');
+    assert(Array.isArray(rexAlignment.body.actions), 'Rex alignment must emit measurable revenue actions.');
+
+    const activation = await jsonFetch('/api/v1/command-center/activate', {
+      method: 'POST',
+      body: JSON.stringify({ requestedBy: 'smoke-test', runNow: false, targetMonthlyRevenue: 1000000 }),
+    });
+    assert(activation.response.status === 200, `Expected activation 200, got ${activation.response.status}: ${JSON.stringify(activation.body)}`);
+    assert(activation.body.result === 'command_center_closed_loop_activated', `Unexpected activation result: ${activation.body.result}`);
+    assert(activation.body.providerWritesBlocked === true, 'Activation must keep provider writes blocked.');
+    assert(activation.body.approvalMode === 'high_risk_approval_required', 'Activation must keep high-risk actions approval-gated.');
+
+    const closedLoopStatus = await jsonFetch('/api/v1/command-center/closed-loop/status');
+    assert(closedLoopStatus.response.status === 200, `Expected closed-loop status 200, got ${closedLoopStatus.response.status}: ${JSON.stringify(closedLoopStatus.body)}`);
+    assert(closedLoopStatus.body.enabled === true, 'Closed-loop status must be enabled after activation.');
+    assert(closedLoopStatus.body.lowRiskAutopilot === true, 'Closed-loop status must expose low-risk autopilot.');
+    assert(closedLoopStatus.body.highRiskApprovalRequired === true, 'Closed-loop status must keep high-risk actions approval-gated.');
+
     const capabilities = await jsonFetch('/api/intelligence/capabilities');
     assert(capabilities.response.status === 200, `Expected capabilities 200, got ${capabilities.response.status}`);
     assert(
@@ -122,6 +156,8 @@ async function main() {
       nextBestAction: firstStatus.body.nextBestAction.id,
       approvalId: proposed.body.approval.id,
       actionCount: firstStatus.body.actions.length,
+      closedLoopEnabled: closedLoopStatus.body.enabled,
+      revenueAlignmentActions: rexAlignment.body.actions.length,
     }, null, 2));
   } finally {
     await cleanup();

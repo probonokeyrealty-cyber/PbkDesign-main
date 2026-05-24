@@ -181,6 +181,24 @@ services:
       - key: PBK_ELEVENLABS_SSML_ENABLED
         value: "false"
 
+      # Closed-loop Command Center activation. These switches let Rex analyze
+      # Ava calls, align daily to the $1M/month target, and auto-apply only
+      # safe learning/prosody/script recommendations. Provider writes, offers,
+      # contracts, campaigns, admin actions, calls, SMS, and email stay
+      # approval-gated by the bridge guardrails unless explicitly unlocked.
+      - key: PBK_COMMAND_CENTER_CLOSED_LOOP_ENABLED
+        value: "true"
+      - key: PBK_AUTOPILOT_LOW_RISK
+        value: "true"
+      - key: PBK_REVENUE_TARGET_MONTHLY
+        value: "1000000"
+      - key: PBK_REX_GOAL_ALIGNMENT_INTERVAL_MS
+        value: "86400000"
+      - key: PBK_CALL_ANALYZER_INTERVAL_MS
+        value: "3600000"
+      - key: PBK_PROSODY_TRAIN_INTERVAL_MS
+        value: "604800000"
+
       # Protected operator controls. Used for kill-switch restore/activation and
       # Ava-to-operator urgent calls. Do not commit the passcode value here.
       # Team passcode lets staff unlock routine approval actions without admin

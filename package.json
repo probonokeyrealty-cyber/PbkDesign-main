@@ -58,6 +58,7 @@
     "debug:intelligence": "node ./scripts/intelligence-scorecard.mjs",
     "debug:intelligence:strict": "node ./scripts/intelligence-scorecard.mjs --strict",
     "debug:telnyx-live": "node ./scripts/telnyx-live-call-watch.mjs",
+    "command-center:activate": "node ./scripts/activate-command-center.mjs",
     "db:migrate": "node ./scripts/apply-supabase-migrations.mjs",
     "doctor:browser-use": "node ./scripts/browser-use-doctor.mjs",
     "doctor:openclaw": "openclaw-doctor status --json",

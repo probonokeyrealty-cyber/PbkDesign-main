@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-24-adaptive-ava-prosody-learning';
+const BUILD_REVISION = '2026-05-24-command-center-closed-loop';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -275,6 +275,14 @@ const ELEVENLABS_SIMILARITY_BOOST = Number(process.env.PBK_ELEVENLABS_SIMILARITY
 const ELEVENLABS_SPEED = Number(process.env.PBK_ELEVENLABS_SPEED || process.env.ELEVENLABS_SPEED || 0.98);
 const ELEVENLABS_AUDIO_TAGS_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ELEVENLABS_AUDIO_TAGS_ENABLED || process.env.ELEVENLABS_AUDIO_TAGS_ENABLED || '').trim());
 const ELEVENLABS_SSML_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ELEVENLABS_SSML_ENABLED || process.env.ELEVENLABS_SSML_ENABLED || '').trim());
+const COMMAND_CENTER_CLOSED_LOOP_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_COMMAND_CENTER_CLOSED_LOOP_ENABLED || '').trim());
+const COMMAND_CENTER_LOW_RISK_AUTOPILOT_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_AUTOPILOT_LOW_RISK || process.env.PBK_COMMAND_CENTER_LOW_RISK_AUTOPILOT || '').trim());
+const REVENUE_TARGET_MONTHLY = Math.max(1, Number(process.env.PBK_REVENUE_TARGET_MONTHLY || 1_000_000));
+const REVENUE_TARGET_ANNUAL = Math.max(REVENUE_TARGET_MONTHLY * 12, Number(process.env.PBK_REVENUE_TARGET_ANNUAL || REVENUE_TARGET_MONTHLY * 12));
+const COMMAND_CENTER_CLOSED_LOOP_FIRST_DELAY_MS = Math.max(60_000, Number(process.env.PBK_CLOSED_LOOP_FIRST_DELAY_MS || 5 * 60 * 1000));
+const REX_GOAL_ALIGNMENT_INTERVAL_MS = Math.max(60 * 60 * 1000, Number(process.env.PBK_REX_GOAL_ALIGNMENT_INTERVAL_MS || 24 * 60 * 60 * 1000));
+const CALL_ANALYZER_INTERVAL_MS = Math.max(30 * 60 * 1000, Number(process.env.PBK_CALL_ANALYZER_INTERVAL_MS || 60 * 60 * 1000));
+const PROSODY_TRAIN_INTERVAL_MS = Math.max(24 * 60 * 60 * 1000, Number(process.env.PBK_PROSODY_TRAIN_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000));
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -832,6 +840,9 @@ const LIMITS = {
   emotionalLearningMemory: 600,
   prosodyDecisions: 1600,
   prosodyModels: 60,
+  callAnalyses: 800,
+  revenueActions: 800,
+  commandCenterActivations: 120,
   rexDecisions: 240,
   avaActiveMemories: 120,
   pbkMemories: 240,
@@ -4151,6 +4162,9 @@ function buildDefaultState() {
     emotionalPolicyOutcomes: [],
     prosodyDecisions: [],
     prosodyModels: [],
+    callAnalyses: [],
+    revenueActions: [],
+    commandCenterActivations: [],
     agentSkillTransfers: [],
     agentSkillExperiments: [],
     agentVersions: [],
@@ -4996,6 +5010,114 @@ async function ensurePgSchema() {
     ALTER TABLE public.pbk_prosody_models
       ALTER COLUMN version TYPE BIGINT USING version::bigint;
 
+    CREATE TABLE IF NOT EXISTS public.pbk_call_analyses (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      agent_id TEXT NOT NULL DEFAULT 'ava',
+      score NUMERIC NOT NULL DEFAULT 0,
+      grade TEXT NOT NULL DEFAULT '',
+      failure_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      strengths JSONB NOT NULL DEFAULT '[]'::jsonb,
+      prosody_suggestions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      script_suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      tool_suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'analyzed',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_call_analyses
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT 'ava',
+      ADD COLUMN IF NOT EXISTS score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS grade TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS failure_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS strengths JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS prosody_suggestions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS script_suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS tool_suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'analyzed',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_revenue_actions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      action_id TEXT NOT NULL DEFAULT '',
+      action_type TEXT NOT NULL DEFAULT 'rex_alignment',
+      label TEXT NOT NULL DEFAULT '',
+      target TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending_review',
+      risk_level TEXT NOT NULL DEFAULT 'low',
+      source TEXT NOT NULL DEFAULT 'rex',
+      reason TEXT NOT NULL DEFAULT '',
+      expected_impact TEXT NOT NULL DEFAULT '',
+      recommendation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      provider_writes_blocked BOOLEAN NOT NULL DEFAULT TRUE,
+      approval_required BOOLEAN NOT NULL DEFAULT TRUE,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_revenue_actions
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS action_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS action_type TEXT NOT NULL DEFAULT 'rex_alignment',
+      ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS target TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_review',
+      ADD COLUMN IF NOT EXISTS risk_level TEXT NOT NULL DEFAULT 'low',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'rex',
+      ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS expected_impact TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS recommendation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS provider_writes_blocked BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS approval_required BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_command_center_activations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      activated_by TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      target_monthly_revenue NUMERIC NOT NULL DEFAULT 1000000,
+      target_annual_revenue NUMERIC NOT NULL DEFAULT 12000000,
+      low_risk_autopilot BOOLEAN NOT NULL DEFAULT TRUE,
+      provider_writes_blocked BOOLEAN NOT NULL DEFAULT TRUE,
+      loops JSONB NOT NULL DEFAULT '{}'::jsonb,
+      results JSONB NOT NULL DEFAULT '{}'::jsonb,
+      run_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_command_center_activations
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS activated_by TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS target_monthly_revenue NUMERIC NOT NULL DEFAULT 1000000,
+      ADD COLUMN IF NOT EXISTS target_annual_revenue NUMERIC NOT NULL DEFAULT 12000000,
+      ADD COLUMN IF NOT EXISTS low_risk_autopilot BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS provider_writes_blocked BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS loops JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS results JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS run_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.pbk_call_qa_scores (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5287,6 +5409,39 @@ async function ensurePgSchema() {
       END IF;
     END $$;
 
+    CREATE INDEX IF NOT EXISTS pbk_call_analyses_call_idx
+      ON public.pbk_call_analyses (tenant_id, call_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_call_analyses_score_idx
+      ON public.pbk_call_analyses (tenant_id, score, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_call_analyses_failure_idx
+      ON public.pbk_call_analyses USING gin (failure_tags);
+
+    CREATE INDEX IF NOT EXISTS pbk_revenue_actions_status_idx
+      ON public.pbk_revenue_actions (tenant_id, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_revenue_actions_type_idx
+      ON public.pbk_revenue_actions (tenant_id, action_type, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_command_center_activations_status_idx
+      ON public.pbk_command_center_activations (tenant_id, status, created_at DESC);
+
+    ALTER TABLE public.pbk_call_analyses ENABLE ROW LEVEL SECURITY;
+
+    ALTER TABLE public.pbk_revenue_actions ENABLE ROW LEVEL SECURITY;
+
+    ALTER TABLE public.pbk_command_center_activations ENABLE ROW LEVEL SECURITY;
+
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_call_analyses TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_revenue_actions TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_command_center_activations TO service_role;
+      END IF;
+    END $$;
+
     CREATE INDEX IF NOT EXISTS pbk_learning_requests_lookup_idx
       ON public.pbk_learning_requests (tenant_id, status, created_at DESC);
 
@@ -5417,6 +5572,21 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS pbk_prosody_models_set_updated_at ON public.pbk_prosody_models;
     CREATE TRIGGER pbk_prosody_models_set_updated_at
       BEFORE UPDATE ON public.pbk_prosody_models
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_call_analyses_set_updated_at ON public.pbk_call_analyses;
+    CREATE TRIGGER pbk_call_analyses_set_updated_at
+      BEFORE UPDATE ON public.pbk_call_analyses
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_revenue_actions_set_updated_at ON public.pbk_revenue_actions;
+    CREATE TRIGGER pbk_revenue_actions_set_updated_at
+      BEFORE UPDATE ON public.pbk_revenue_actions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_command_center_activations_set_updated_at ON public.pbk_command_center_activations;
+    CREATE TRIGGER pbk_command_center_activations_set_updated_at
+      BEFORE UPDATE ON public.pbk_command_center_activations
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DROP TRIGGER IF EXISTS pbk_outcome_reports_set_updated_at ON public.pbk_outcome_reports;
@@ -6801,6 +6971,9 @@ function limitStateArrays(nextState) {
   nextState.emotionalLearningMemory = sortNewest(nextState.emotionalLearningMemory || []).slice(0, LIMITS.emotionalLearningMemory);
   nextState.prosodyDecisions = sortNewest(nextState.prosodyDecisions || []).slice(0, LIMITS.prosodyDecisions);
   nextState.prosodyModels = sortNewest(nextState.prosodyModels || []).slice(0, LIMITS.prosodyModels);
+  nextState.callAnalyses = sortNewest(nextState.callAnalyses || []).slice(0, LIMITS.callAnalyses);
+  nextState.revenueActions = sortNewest(nextState.revenueActions || []).slice(0, LIMITS.revenueActions);
+  nextState.commandCenterActivations = sortNewest(nextState.commandCenterActivations || []).slice(0, LIMITS.commandCenterActivations);
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
@@ -7021,6 +7194,11 @@ function hydrateState(raw = {}) {
     emotionalMemory: trimArray(raw.emotionalMemory || defaults.emotionalMemory, LIMITS.emotionalMemory),
     emotionalLearningInteractions: trimArray(raw.emotionalLearningInteractions || defaults.emotionalLearningInteractions, LIMITS.emotionalLearningInteractions),
     emotionalLearningMemory: trimArray(raw.emotionalLearningMemory || defaults.emotionalLearningMemory, LIMITS.emotionalLearningMemory),
+    prosodyDecisions: trimArray(raw.prosodyDecisions || defaults.prosodyDecisions, LIMITS.prosodyDecisions),
+    prosodyModels: trimArray(raw.prosodyModels || defaults.prosodyModels, LIMITS.prosodyModels),
+    callAnalyses: trimArray(raw.callAnalyses || defaults.callAnalyses, LIMITS.callAnalyses),
+    revenueActions: trimArray(raw.revenueActions || defaults.revenueActions, LIMITS.revenueActions),
+    commandCenterActivations: trimArray(raw.commandCenterActivations || defaults.commandCenterActivations, LIMITS.commandCenterActivations),
     agentVersions: trimArray(raw.agentVersions || defaults.agentVersions, LIMITS.agentVersions),
     rexDecisions: trimArray(raw.rexDecisions || defaults.rexDecisions, LIMITS.rexDecisions),
     avaActiveMemories: trimArray(raw.avaActiveMemories || defaults.avaActiveMemories, LIMITS.avaActiveMemories),
@@ -11985,6 +12163,658 @@ async function proposeRevenueEngineAction(params = {}) {
     decision: decisionResult.decision,
     approval: decisionResult.approval,
     state: buildStateSnapshot(),
+  };
+}
+
+async function persistCallAnalysisToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_call_analyses (
+       id, tenant_id, call_id, lead_id, agent_id, score, grade, failure_tags,
+       strengths, prosody_suggestions, script_suggestions, tool_suggestions,
+       evidence, status, metadata, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15::jsonb,$16,$17)
+     ON CONFLICT (id) DO UPDATE SET
+       score = EXCLUDED.score,
+       grade = EXCLUDED.grade,
+       failure_tags = EXCLUDED.failure_tags,
+       strengths = EXCLUDED.strengths,
+       prosody_suggestions = EXCLUDED.prosody_suggestions,
+       script_suggestions = EXCLUDED.script_suggestions,
+       tool_suggestions = EXCLUDED.tool_suggestions,
+       evidence = EXCLUDED.evidence,
+       status = EXCLUDED.status,
+       metadata = EXCLUDED.metadata,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.tenantId,
+      record.callId || '',
+      record.leadId || '',
+      record.agentId || 'ava',
+      Number(record.score || 0),
+      record.grade || '',
+      JSON.stringify(record.failureTags || []),
+      JSON.stringify(record.strengths || []),
+      JSON.stringify(record.prosodySuggestions || {}),
+      JSON.stringify(record.scriptSuggestions || []),
+      JSON.stringify(record.toolSuggestions || []),
+      JSON.stringify(record.evidence || []),
+      record.status || 'analyzed',
+      JSON.stringify(record.metadata || {}),
+      record.createdAt || isoNow(),
+      record.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistRevenueActionToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_revenue_actions (
+       id, tenant_id, action_id, action_type, label, target, status, risk_level,
+       source, reason, expected_impact, recommendation, provider_writes_blocked,
+       approval_required, metadata, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16,$17)
+     ON CONFLICT (id) DO UPDATE SET
+       action_id = EXCLUDED.action_id,
+       action_type = EXCLUDED.action_type,
+       label = EXCLUDED.label,
+       target = EXCLUDED.target,
+       status = EXCLUDED.status,
+       risk_level = EXCLUDED.risk_level,
+       source = EXCLUDED.source,
+       reason = EXCLUDED.reason,
+       expected_impact = EXCLUDED.expected_impact,
+       recommendation = EXCLUDED.recommendation,
+       provider_writes_blocked = EXCLUDED.provider_writes_blocked,
+       approval_required = EXCLUDED.approval_required,
+       metadata = EXCLUDED.metadata,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.tenantId,
+      record.actionId || '',
+      record.actionType || 'rex_alignment',
+      record.label || '',
+      record.target || '',
+      record.status || 'pending_review',
+      record.riskLevel || 'low',
+      record.source || 'rex_goal_alignment',
+      record.reason || '',
+      record.expectedImpact || '',
+      JSON.stringify(record.recommendation || {}),
+      record.providerWritesBlocked !== false,
+      record.approvalRequired !== false,
+      JSON.stringify(record.metadata || {}),
+      record.createdAt || isoNow(),
+      record.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistCommandCenterActivationToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_command_center_activations (
+       id, tenant_id, activated_by, status, target_monthly_revenue, target_annual_revenue,
+       low_risk_autopilot, provider_writes_blocked, loops, results, run_summary,
+       metadata, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13,$14)
+     ON CONFLICT (id) DO UPDATE SET
+       status = EXCLUDED.status,
+       target_monthly_revenue = EXCLUDED.target_monthly_revenue,
+       target_annual_revenue = EXCLUDED.target_annual_revenue,
+       low_risk_autopilot = EXCLUDED.low_risk_autopilot,
+       provider_writes_blocked = EXCLUDED.provider_writes_blocked,
+       loops = EXCLUDED.loops,
+       results = EXCLUDED.results,
+       run_summary = EXCLUDED.run_summary,
+       metadata = EXCLUDED.metadata,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.tenantId,
+      record.activatedBy || '',
+      record.status || 'active',
+      Number(record.targetMonthlyRevenue || REVENUE_TARGET_MONTHLY),
+      Number(record.targetAnnualRevenue || REVENUE_TARGET_ANNUAL),
+      record.lowRiskAutopilot !== false,
+      record.providerWritesBlocked !== false,
+      JSON.stringify(record.loops || {}),
+      JSON.stringify(record.results || {}),
+      JSON.stringify(record.runSummary || {}),
+      JSON.stringify(record.metadata || {}),
+      record.createdAt || isoNow(),
+      record.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+function getCallTranscriptTurns(call = {}) {
+  const transcript = call.transcript || call.turns || call.messages || call.events || call.transcriptText || call.transcript_text || call.notes || '';
+  if (Array.isArray(transcript)) {
+    return normalizeTranscriptTurns(transcript.map((turn) => ({
+      speaker: turn.speaker || turn.role || turn.from || turn.actor || '',
+      text: turn.text || turn.content || turn.transcript || turn.message || '',
+    })));
+  }
+  return normalizeTranscriptTurns(transcript);
+}
+
+function detectRepeatedAvaResponses(turns = []) {
+  const avaLines = turns
+    .filter((turn) => /ava|agent|assistant|ai|system/i.test(String(turn.speaker || '')))
+    .map((turn) => String(turn.text || '').replace(/\s+/g, ' ').trim().toLowerCase())
+    .filter((text) => text.length >= 18);
+  const normalized = avaLines.map((text) => text.replace(/[^\w\s]/g, '').split(/\s+/).slice(0, 14).join(' '));
+  const seen = new Map();
+  const repeats = [];
+  normalized.forEach((line, index) => {
+    const count = (seen.get(line) || 0) + 1;
+    seen.set(line, count);
+    if (count > 1) repeats.push({ index, text: avaLines[index].slice(0, 180), count });
+  });
+  return repeats;
+}
+
+function buildCallFailureAnalysis(call = {}, params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || call.tenantId || call.tenant_id);
+  const callId = String(call.id || call.callId || call.call_id || params.callId || params.call_id || `call-${hashString(JSON.stringify(call)).slice(0, 12)}`).trim();
+  const leadId = String(call.leadId || call.lead_id || call.lead?.id || params.leadId || params.lead_id || '').trim();
+  const turns = getCallTranscriptTurns(call);
+  const joined = turns.map((turn) => `${turn.speaker || 'unknown'}: ${turn.text}`).join('\n');
+  const qa = buildCallQaScore({ transcript: joined });
+  const failureTags = new Set();
+  const scriptSuggestions = [];
+  const toolSuggestions = [];
+  const evidence = [];
+  const lower = joined.toLowerCase();
+  const avaTurns = turns.filter((turn) => /ava|agent|assistant|ai|system/i.test(String(turn.speaker || '')));
+  const sellerTurns = turns.filter((turn) => /seller|user|caller|lead|human/i.test(String(turn.speaker || '')) || !/ava|agent|assistant|ai|system/i.test(String(turn.speaker || '')));
+  const repeats = detectRepeatedAvaResponses(turns);
+  const callProsody = (state.prosodyDecisions || []).filter((item) => item.callId && item.callId === callId);
+
+  if (!turns.length) {
+    failureTags.add('no_transcript');
+    scriptSuggestions.push('Capture full transcript turns before scoring Ava intelligence.');
+  }
+  if (repeats.length) {
+    failureTags.add('repeated_script');
+    scriptSuggestions.push('Rotate to a different script variant after two similar Ava replies.');
+    evidence.push(...repeats.slice(0, 3).map((repeat) => ({ type: 'repeat', quote: repeat.text, count: repeat.count })));
+  }
+  if (sellerTurns.length >= 2 && avaTurns.filter((turn) => /\?/.test(turn.text)).length < 1) {
+    failureTags.add('no_discovery_question');
+    scriptSuggestions.push('Ask one calibrated discovery question before moving to price or next step.');
+  }
+  if (!/\b(send|schedule|contract|agreement|docusign|follow|next|call back|paperwork|appointment)\b/i.test(joined)) {
+    failureTags.add('weak_next_step');
+    scriptSuggestions.push('End with one concrete low-pressure next step.');
+  }
+  if (/\b(scam|trust|too low|angry|frustrated|not interested|worried|nervous|afraid|lawyer|attorney)\b/i.test(lower)
+    && !/\b(i hear|understand|fair|makes sense|slow down|concern|no pressure|walk through)\b/i.test(lower)) {
+    failureTags.add('seller_negative_unhandled');
+    scriptSuggestions.push('Acknowledge the seller concern before presenting proof, number, or next step.');
+  }
+  if (/\b(numbers?|offer|mao|arv|address|contract|agreement|call me|text me|email me|send it)\b/i.test(lower)
+    && !/\b(analyze|mao|arv|tool|docu|send|text|call|checking|pull up)\b/i.test(avaTurns.map((turn) => turn.text).join(' '))) {
+    failureTags.add('missed_tool_opportunity');
+    toolSuggestions.push('Invoke analyzeDeal, sendDocuSign, Telnyx SMS/call, or campaign tools when the seller asks for action.');
+  }
+  if (!callProsody.length && turns.length) {
+    failureTags.add('no_prosody_logged');
+  }
+  for (const weakness of qa.weaknesses || []) {
+    failureTags.add(slugify(weakness).slice(0, 48) || 'qa_weakness');
+  }
+
+  const hasNegativeTone = failureTags.has('seller_negative_unhandled') || /\b(scam|trust|worried|nervous|frustrated)\b/i.test(lower);
+  const prosodySuggestions = {
+    stability: hasNegativeTone ? 0.68 : 0.5,
+    speed: hasNegativeTone ? 0.9 : 0.98,
+    similarityBoost: hasNegativeTone ? 0.82 : 0.75,
+    tags: hasNegativeTone ? ['calm', 'grounded'] : ['conversational'],
+    reason: hasNegativeTone
+      ? 'Seller concern detected; keep Ava slower, calmer, and proof-oriented.'
+      : 'Keep Ava conversational and vary script/prosody to avoid repetition.',
+  };
+
+  const score = Math.max(0, Math.min(100, Number(qa.total || 0) - Math.min(16, repeats.length * 5) - (callProsody.length ? 0 : 4)));
+  const now = isoNow();
+  return {
+    id: String(params.id || `call-analysis-${slugify(callId).slice(0, 56)}`).trim(),
+    tenantId,
+    callId,
+    leadId,
+    agentId: String(call.agentId || call.agent_id || 'ava').toLowerCase(),
+    score,
+    grade: score >= 85 ? 'A' : score >= 72 ? 'B' : score >= 60 ? 'C' : 'needs_coaching',
+    failureTags: [...failureTags].filter(Boolean).slice(0, 12),
+    strengths: score >= 72 ? ['Ava kept enough structure to continue the seller path.'] : [],
+    prosodySuggestions,
+    scriptSuggestions: [...new Set(scriptSuggestions.length ? scriptSuggestions : qa.nextActions || [])].slice(0, 8),
+    toolSuggestions: [...new Set(toolSuggestions)].slice(0, 8),
+    evidence: evidence.concat(turns.slice(0, 4).map((turn) => ({ speaker: turn.speaker, quote: turn.text.slice(0, 220) }))).slice(0, 8),
+    status: 'analyzed',
+    metadata: {
+      schemaVersion: 'pbk-call-analysis-v1',
+      turnCount: turns.length,
+      repeatedResponses: repeats.length,
+      prosodyDecisionCount: callProsody.length,
+      qaBreakdown: qa.breakdown || {},
+      source: params.source || 'call-analyzer-subagent',
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function analyzeRecentAvaCalls(params = {}) {
+  const limit = Math.max(1, Math.min(80, Math.round(toNumber(params.limit || params.count, 12))));
+  const calls = sortNewest(state.calls || []).slice(0, limit);
+  const analyses = [];
+  for (const call of calls) {
+    const analysis = buildCallFailureAnalysis(call, params);
+    analyses.push(analysis);
+    if (!Array.isArray(state.callAnalyses)) state.callAnalyses = [];
+    upsertById(state, 'callAnalyses', analysis);
+    void persistCallAnalysisToPg(analysis);
+  }
+  limitStateArrays(state);
+  addActivity(state, makeActivity({
+    actor: params.actor || 'Rex Call Analyzer',
+    category: 'CALL_ANALYSIS',
+    status: analyses.length ? 'success' : 'standby',
+    text: analyses.length
+      ? `Analyzed ${analyses.length} recent Ava call${analyses.length === 1 ? '' : 's'} for failure patterns.`
+      : 'No Ava calls available yet for failure analysis.',
+    target: 'ava-call-loop',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: analyses.length ? 'call_analysis_complete' : 'no_calls_to_analyze',
+    analyzed: analyses.length,
+    analyses,
+    summary: summarizeFailureTags(analyses),
+    providerWritesBlocked: true,
+  };
+}
+
+function summarizeFailureTags(analyses = []) {
+  const tagCounts = new Map();
+  for (const analysis of analyses) {
+    for (const tag of analysis.failureTags || analysis.failure_tags || []) {
+      tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+    }
+  }
+  const topTags = [...tagCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([tag, count]) => ({ tag, count }))
+    .slice(0, 8);
+  return {
+    totalAnalyses: analyses.length,
+    averageScore: averageNumeric(analyses.map((item) => item.score)) || 0,
+    topFailureTags: topTags,
+  };
+}
+
+function getKnownRevenueLastDays(days = 7) {
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const contracts = (state.contracts || []).filter((contract) => {
+    const timestamp = getItemTimestamp(contract);
+    return timestamp >= since && /closed|funded|complete|completed|won|signed/i.test(String(contract.status || contract.stage || ''));
+  });
+  const getAmount = (item = {}) => toMoneyNumber(
+    item.assignmentFee ?? item.assignment_fee ?? item.profit ?? item.netProfit ?? item.net_profit ?? item.revenue ?? item.amount ?? item.fee,
+    0,
+  );
+  return {
+    contracts: contracts.length,
+    revenue: contracts.reduce((sum, contract) => sum + getAmount(contract), 0),
+  };
+}
+
+function makeRevenueAction(payload = {}, params = {}) {
+  const now = isoNow();
+  const riskLevel = String(payload.riskLevel || payload.risk_level || 'low').toLowerCase();
+  const providerWritesBlocked = payload.providerWritesBlocked !== false;
+  const lowRiskAutopilot = Boolean(COMMAND_CENTER_LOW_RISK_AUTOPILOT_ENABLED || getCommandCenterClosedLoopSettings().lowRiskAutopilot);
+  const approvalRequired = payload.approvalRequired ?? !(
+    lowRiskAutopilot
+    && riskLevel === 'low'
+    && providerWritesBlocked
+  );
+  const status = approvalRequired ? 'pending_review' : 'auto_applied_low_risk';
+  return {
+    id: String(payload.id || `revenue-action-${slugify(payload.actionId || payload.actionType || payload.label || 'rex')}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id),
+    actionId: String(payload.actionId || payload.action_id || payload.id || '').trim(),
+    actionType: String(payload.actionType || payload.action_type || 'rex_alignment').trim(),
+    label: String(payload.label || payload.title || payload.actionId || 'Rex alignment action').trim(),
+    target: String(payload.target || '').trim(),
+    status,
+    riskLevel,
+    source: String(payload.source || 'rex_goal_alignment').trim(),
+    reason: String(payload.reason || '').trim(),
+    expectedImpact: String(payload.expectedImpact || payload.expected_impact || '').trim(),
+    recommendation: plainObject(payload.recommendation || payload),
+    providerWritesBlocked,
+    approvalRequired,
+    metadata: {
+      schemaVersion: 'pbk-revenue-action-v1',
+      lowRiskAutopilot,
+      ...(plainObject(payload.metadata)),
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function storeRevenueActions(actions = [], params = {}) {
+  if (!Array.isArray(state.revenueActions)) state.revenueActions = [];
+  const records = actions.map((action) => makeRevenueAction(action, params));
+  for (const record of records) {
+    upsertById(state, 'revenueActions', record);
+    void persistRevenueActionToPg(record);
+  }
+  state.revenueActions = sortNewest(state.revenueActions).slice(0, LIMITS.revenueActions);
+  return records;
+}
+
+async function buildRevenueGoalAlignment(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const targetMonthlyRevenue = Math.max(1, toMoneyNumber(params.targetMonthlyRevenue ?? params.target_monthly_revenue, REVENUE_TARGET_MONTHLY));
+  const targetAnnualRevenue = Math.max(targetMonthlyRevenue * 12, toMoneyNumber(params.targetAnnualRevenue ?? params.target_annual_revenue, REVENUE_TARGET_ANNUAL));
+  const revenueStatus = buildRevenueEngineStatus({ requestedBy: params.actor || 'rex-goal-alignment' });
+  const recentAnalyses = sortNewest(state.callAnalyses || []).slice(0, 40);
+  const failureSummary = summarizeFailureTags(recentAnalyses);
+  const knownRevenue = getKnownRevenueLastDays(7);
+  const monthlyRunRate = Number((knownRevenue.revenue * 4.3).toFixed(2));
+  const gap = Math.max(0, Number((targetMonthlyRevenue - monthlyRunRate).toFixed(2)));
+  const prosody = await getProsodyAnalytics({ tenantId, days: 14 });
+  const actions = [];
+
+  if (revenueStatus.nextBestAction?.id) {
+    actions.push({
+      actionId: revenueStatus.nextBestAction.id,
+      actionType: revenueStatus.nextBestAction.type || 'revenue_engine_next_best_action',
+      label: revenueStatus.nextBestAction.label || 'Run Revenue Engine next action',
+      riskLevel: revenueStatus.nextBestAction.riskLevel || 'low',
+      target: revenueStatus.nextBestAction.route || revenueStatus.nextBestAction.endpoint || '',
+      reason: revenueStatus.nextBestAction.reason || 'Highest-priority revenue action from the current Command Center state.',
+      expectedImpact: revenueStatus.nextBestAction.expectedImpact || 'Moves Ava/Rex closer to the monthly revenue target.',
+      providerWritesBlocked: true,
+      approvalRequired: true,
+      recommendation: revenueStatus.nextBestAction,
+    });
+  }
+
+  for (const tag of failureSummary.topFailureTags.slice(0, 3)) {
+    actions.push({
+      actionId: `fix_failure_${tag.tag}`,
+      actionType: 'fix_call_failure_pattern',
+      label: `Reduce Ava failure pattern: ${tag.tag}`,
+      riskLevel: 'low',
+      target: 'ava_call_intelligence',
+      reason: `${tag.count} recent analyzed call${tag.count === 1 ? '' : 's'} showed ${tag.tag}.`,
+      expectedImpact: 'Improves Ava script selection, tool timing, and prosody on future calls.',
+      providerWritesBlocked: true,
+      approvalRequired: false,
+      recommendation: { tag: tag.tag, count: tag.count },
+    });
+  }
+
+  if ((prosody.summary?.measured || 0) < 10) {
+    actions.push({
+      actionId: 'collect_measured_prosody_outcomes',
+      actionType: 'learning_data_collection',
+      label: 'Collect measured prosody outcomes',
+      riskLevel: 'low',
+      target: 'prosody_decisions',
+      reason: 'Ava needs at least 10 measured prosody decisions before automatic voice tuning is trustworthy.',
+      expectedImpact: 'Turns voice naturalness from heuristic to outcome-backed.',
+      providerWritesBlocked: true,
+      approvalRequired: false,
+      recommendation: { measured: prosody.summary?.measured || 0, target: 10 },
+    });
+  }
+
+  if (failureSummary.totalAnalyses === 0) {
+    actions.push({
+      actionId: 'run_live_calls_for_closed_loop',
+      actionType: 'learning_data_collection',
+      label: 'Run live calls for closed-loop learning',
+      riskLevel: 'low',
+      target: 'ava_calls',
+      reason: 'Rex cannot prove where Ava is failing until real call transcripts and outcomes exist.',
+      expectedImpact: 'Creates the data needed for call analysis, emotion learning, and revenue alignment.',
+      providerWritesBlocked: true,
+      approvalRequired: true,
+      recommendation: { minimumCalls: 20, preferredCalls: 100 },
+    });
+  }
+
+  const storedActions = await storeRevenueActions(actions, { tenantId });
+  const dailyFocus = [
+    `Monthly target: $${Math.round(targetMonthlyRevenue).toLocaleString()}.`,
+    `Known monthly run-rate from closed/funded records: $${Math.round(monthlyRunRate).toLocaleString()}.`,
+    `Gap: $${Math.round(gap).toLocaleString()}.`,
+    failureSummary.topFailureTags.length
+      ? `Top Ava failure pattern today: ${failureSummary.topFailureTags[0].tag}.`
+      : 'Top Ava failure pattern today: insufficient analyzed calls.',
+    'Use every call to gather outcome labels, avoid repeated scripts, invoke tools when sellers ask for action, and move one clear next step forward.',
+  ].join(' ');
+  upsertAvaActiveMemory({
+    id: `ava-revenue-focus-${new Date().toISOString().slice(0, 10)}`,
+    memoryType: 'revenue-goal-alignment',
+    objectionTag: failureSummary.topFailureTags[0]?.tag || 'daily_revenue_goal',
+    prompt: 'Before every chat or call, retrieve today\'s Rex revenue focus.',
+    response: dailyFocus,
+    summary: dailyFocus,
+    score: gap > 0 ? 0.92 : 0.8,
+    outcome: 'daily_rex_alignment',
+    source: 'rex-goal-alignment',
+    metadata: { targetMonthlyRevenue, monthlyRunRate, gap, failureSummary },
+  });
+  addActivity(state, makeActivity({
+    actor: params.actor || 'Rex Goal Alignment',
+    category: 'REVENUE_ALIGNMENT',
+    status: gap > 0 ? 'attention' : 'success',
+    text: `Rex aligned Ava to $${Math.round(targetMonthlyRevenue).toLocaleString()}/month target; current known run-rate $${Math.round(monthlyRunRate).toLocaleString()}.`,
+    target: 'closed-loop-command-center',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'rex_goal_alignment_complete',
+    providerWritesBlocked: true,
+    approvalMode: 'approval_first_for_high_risk',
+    lowRiskAutopilot: COMMAND_CENTER_LOW_RISK_AUTOPILOT_ENABLED,
+    targetMonthlyRevenue,
+    targetAnnualRevenue,
+    monthlyRunRate,
+    gap,
+    knownRevenue,
+    revenueStatus,
+    failureSummary,
+    prosody: prosody.summary,
+    actions: storedActions,
+    dailyFocus,
+  };
+}
+
+function getCommandCenterClosedLoopSettings() {
+  const settings = ensureRuntimeSettings(state);
+  const configured = plainObject(settings.commandCenterClosedLoop);
+  const enabled = Boolean(COMMAND_CENTER_CLOSED_LOOP_ENABLED || configured.enabled);
+  return {
+    enabled,
+    lowRiskAutopilot: Boolean(COMMAND_CENTER_LOW_RISK_AUTOPILOT_ENABLED || configured.lowRiskAutopilot),
+    providerWritesBlocked: configured.providerWritesBlocked !== false,
+    targetMonthlyRevenue: toMoneyNumber(configured.targetMonthlyRevenue, REVENUE_TARGET_MONTHLY),
+    targetAnnualRevenue: toMoneyNumber(configured.targetAnnualRevenue, REVENUE_TARGET_ANNUAL),
+    loops: {
+      callAnalyzer: configured.loops?.callAnalyzer !== false,
+      rexGoalAlignment: configured.loops?.rexGoalAlignment !== false,
+      prosodyTraining: configured.loops?.prosodyTraining !== false,
+      emotionalLearning: configured.loops?.emotionalLearning !== false,
+    },
+    lastActivatedAt: configured.activatedAt || '',
+    activatedBy: configured.activatedBy || '',
+  };
+}
+
+async function activateCommandCenterClosedLoop(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const actor = String(params.actor || params.requestedBy || params.requested_by || 'PBK Command Center').trim();
+  const targetMonthlyRevenue = Math.max(1, toMoneyNumber(params.targetMonthlyRevenue ?? params.target_monthly_revenue, REVENUE_TARGET_MONTHLY));
+  const targetAnnualRevenue = Math.max(targetMonthlyRevenue * 12, toMoneyNumber(params.targetAnnualRevenue ?? params.target_annual_revenue, REVENUE_TARGET_ANNUAL));
+  const lowRiskAutopilot = params.lowRiskAutopilot !== false && params.low_risk_autopilot !== false;
+  const loops = {
+    callAnalyzer: params.callAnalyzer !== false && params.call_analyzer !== false,
+    rexGoalAlignment: params.rexGoalAlignment !== false && params.rex_goal_alignment !== false,
+    prosodyTraining: params.prosodyTraining !== false && params.prosody_training !== false,
+    emotionalLearning: params.emotionalLearning !== false && params.emotional_learning !== false,
+  };
+  const settings = ensureRuntimeSettings(state);
+  settings.commandCenterClosedLoop = {
+    enabled: true,
+    lowRiskAutopilot,
+    providerWritesBlocked: true,
+    targetMonthlyRevenue,
+    targetAnnualRevenue,
+    loops,
+    activatedAt: isoNow(),
+    activatedBy: actor,
+  };
+  settings.autopilot = {
+    ...(plainObject(settings.autopilot)),
+    lowRiskActions: lowRiskAutopilot,
+    highRiskRequiresApproval: true,
+    providerWritesBlocked: true,
+  };
+  settings.updatedAt = isoNow();
+  settings.updatedBy = actor;
+  state.status.commandCenterClosedLoop = {
+    enabled: true,
+    lowRiskAutopilot,
+    providerWritesBlocked: true,
+    targetMonthlyRevenue,
+    targetAnnualRevenue,
+    loops,
+    activatedAt: settings.commandCenterClosedLoop.activatedAt,
+  };
+
+  const results = {};
+  if (params.runNow !== false && params.run_now !== false) {
+    if (loops.callAnalyzer) results.callAnalyzer = await analyzeRecentAvaCalls({ tenantId, actor: 'Rex Call Analyzer', limit: params.callLimit || 20, source: 'activation' });
+    if (loops.emotionalLearning) results.emotionalLearning = await improveEmotionalLearningMemoryRecord({ source: 'command-center-activation' });
+    if (loops.prosodyTraining) results.prosodyTraining = await trainAndPersistProsodyModel({ tenantId, minSamples: params.minProsodySamples || 25 });
+    if (loops.rexGoalAlignment) {
+      results.rexGoalAlignment = await buildRevenueGoalAlignment({
+        tenantId,
+        actor: 'Rex Goal Alignment',
+        targetMonthlyRevenue,
+        targetAnnualRevenue,
+      });
+    }
+  }
+  const compactResults = {
+    callAnalyzer: results.callAnalyzer ? {
+      result: results.callAnalyzer.result,
+      analyzed: results.callAnalyzer.analyzed || 0,
+      summary: results.callAnalyzer.summary || {},
+    } : null,
+    emotionalLearning: results.emotionalLearning ? {
+      result: results.emotionalLearning.result,
+      promoted: results.emotionalLearning.promoted || 0,
+      minWeight: results.emotionalLearning.minWeight || null,
+    } : null,
+    prosodyTraining: results.prosodyTraining ? {
+      result: results.prosodyTraining.result,
+      modelStatus: results.prosodyTraining.model?.status || '',
+      sampleCount: results.prosodyTraining.model?.sampleCount || 0,
+      successCount: results.prosodyTraining.model?.successCount || 0,
+    } : null,
+    rexGoalAlignment: results.rexGoalAlignment ? {
+      result: results.rexGoalAlignment.result,
+      targetMonthlyRevenue: results.rexGoalAlignment.targetMonthlyRevenue,
+      monthlyRunRate: results.rexGoalAlignment.monthlyRunRate,
+      gap: results.rexGoalAlignment.gap,
+      actionCount: results.rexGoalAlignment.actions?.length || 0,
+      topFailureTags: results.rexGoalAlignment.failureSummary?.topFailureTags || [],
+    } : null,
+  };
+
+  const activation = {
+    id: `command-center-activation-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    tenantId,
+    activatedBy: actor,
+    status: 'active',
+    targetMonthlyRevenue,
+    targetAnnualRevenue,
+    lowRiskAutopilot,
+    providerWritesBlocked: true,
+    loops,
+    results: compactResults,
+    runSummary: {
+      callAnalyses: results.callAnalyzer?.analyzed || 0,
+      revenueActions: results.rexGoalAlignment?.actions?.length || 0,
+      prosodyTraining: results.prosodyTraining?.result || 'not_run',
+      emotionalLearningPromoted: results.emotionalLearning?.promoted || 0,
+    },
+    metadata: { schemaVersion: 'pbk-command-center-activation-v1', requestedRunNow: params.runNow !== false && params.run_now !== false },
+    createdAt: isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (!Array.isArray(state.commandCenterActivations)) state.commandCenterActivations = [];
+  upsertById(state, 'commandCenterActivations', activation);
+  void persistCommandCenterActivationToPg(activation);
+  addActivity(state, makeActivity({
+    actor,
+    category: 'COMMAND_CENTER',
+    status: 'active',
+    text: `Activated PBK closed-loop Command Center toward $${Math.round(targetMonthlyRevenue).toLocaleString()}/month.`,
+    target: 'ava-rex-closed-loop',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'command_center_closed_loop_activated',
+    activation,
+    providerWritesBlocked: true,
+    approvalMode: 'high_risk_approval_required',
+    state: buildStateSnapshot(),
+  };
+}
+
+async function getCommandCenterClosedLoopStatus(params = {}) {
+  const settings = getCommandCenterClosedLoopSettings();
+  const revenueStatus = buildRevenueEngineStatus({ requestedBy: params.requestedBy || 'closed-loop-status' });
+  const prosody = await getProsodyAnalytics({ tenantId: params.tenantId || params.tenant_id || 'pbk', days: params.days || 14 });
+  return {
+    ok: true,
+    result: 'command_center_closed_loop_status',
+    generatedAt: isoNow(),
+    ...settings,
+    providerWritesBlocked: true,
+    operatingMode: getRuntimeOperatingMode(),
+    highRiskApprovalRequired: true,
+    recentActivation: sortNewest(state.commandCenterActivations || [])[0] || null,
+    recentRevenueActions: sortNewest(state.revenueActions || []).slice(0, 12),
+    recentCallAnalyses: sortNewest(state.callAnalyses || []).slice(0, 12),
+    revenueEngine: revenueStatus,
+    prosody: prosody.summary,
+    gaps: [
+      ...(countPendingFounderWork().total ? [`${countPendingFounderWork().total} approval/admin items still need business review.`] : []),
+      ...(((prosody.summary?.measured || 0) < 10) ? ['Prosody model still needs measured outcomes before trusting automatic tuning.'] : []),
+      ...((state.calls || []).length ? [] : ['No recent live calls in bridge state for call-analysis sub-agents.']),
+    ],
   };
 }
 
@@ -38208,6 +39038,47 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/revenue/actions', '/api/v1/revenue/actions'])) {
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 50)));
+      const status = String(url.searchParams.get('status') || 'all').toLowerCase();
+      const actions = sortNewest(state.revenueActions || [])
+        .filter((item) => status === 'all' || String(item.status || '').toLowerCase() === status)
+        .slice(0, limit);
+      json(response, 200, {
+        ok: true,
+        result: 'revenue_actions',
+        providerWritesBlocked: true,
+        actions,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/command-center/closed-loop/status', '/api/v1/command-center/closed-loop/status'])) {
+      json(response, 200, await getCommandCenterClosedLoopStatus(Object.fromEntries(url.searchParams.entries())));
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/command-center/activate', '/api/v1/command-center/activate'])) {
+      const body = await readBody(request);
+      const result = await activateCommandCenterClosedLoop(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/call-analysis/run', '/api/v1/call-analysis/run'])) {
+      const body = await readBody(request);
+      const result = await analyzeRecentAvaCalls(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/rex/align-goal', '/api/v1/rex/align-goal'])) {
+      const body = await readBody(request);
+      const result = await buildRevenueGoalAlignment(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/emotion/ser/predict', '/api/v1/emotion/ser/predict'])) {
       const body = await readBody(request);
       const result = await predictSpeechEmotionRecord(body);
@@ -42718,6 +43589,47 @@ function startEmotionalLearningAutoImprove() {
   interval.unref?.();
 }
 
+let commandCenterClosedLoopSchedulerStarted = false;
+
+function isCommandCenterClosedLoopEnabled() {
+  return Boolean(getCommandCenterClosedLoopSettings().enabled);
+}
+
+function startCommandCenterClosedLoopScheduler() {
+  if (commandCenterClosedLoopSchedulerStarted || !isCommandCenterClosedLoopEnabled()) return;
+  commandCenterClosedLoopSchedulerStarted = true;
+  const runSafely = async (label, fn) => {
+    try {
+      const result = await fn();
+      console.log(`[pbk-local-openclaw] closed-loop ${label}: ${result?.result || 'ok'}`);
+      return result;
+    } catch (error) {
+      console.warn(`[pbk-local-openclaw] closed-loop ${label} skipped:`, error?.message || error);
+      return null;
+    }
+  };
+  const firstTimer = setTimeout(() => {
+    void runSafely('startup-call-analysis', () => analyzeRecentAvaCalls({ actor: 'Rex Call Analyzer', source: 'scheduled-startup', limit: 20 }));
+    void runSafely('startup-goal-alignment', () => buildRevenueGoalAlignment({ actor: 'Rex Goal Alignment', source: 'scheduled-startup' }));
+  }, COMMAND_CENTER_CLOSED_LOOP_FIRST_DELAY_MS);
+  firstTimer.unref?.();
+
+  const callTimer = setInterval(() => {
+    void runSafely('hourly-call-analysis', () => analyzeRecentAvaCalls({ actor: 'Rex Call Analyzer', source: 'scheduled-hourly', limit: 30 }));
+  }, CALL_ANALYZER_INTERVAL_MS);
+  callTimer.unref?.();
+
+  const rexTimer = setInterval(() => {
+    void runSafely('daily-goal-alignment', () => buildRevenueGoalAlignment({ actor: 'Rex Goal Alignment', source: 'scheduled-daily' }));
+  }, REX_GOAL_ALIGNMENT_INTERVAL_MS);
+  rexTimer.unref?.();
+
+  const prosodyTimer = setInterval(() => {
+    void runSafely('weekly-prosody-training', () => trainAndPersistProsodyModel({ minSamples: 25, source: 'scheduled-weekly' }));
+  }, PROSODY_TRAIN_INTERVAL_MS);
+  prosodyTimer.unref?.();
+}
+
 server.listen(PORT, HOST, () => {
   startContractTemplateWatcher();
   reloadContractTemplateLibrary('startup').catch((error) => {
@@ -42727,6 +43639,7 @@ server.listen(PORT, HOST, () => {
     console.warn('[pbk-local-openclaw] voice provider prewarm failed:', error?.message || error);
   });
   startEmotionalLearningAutoImprove();
+  startCommandCenterClosedLoopScheduler();
   buildOpenClawGatewayStatus({ force: true, timeoutMs: Math.min(2500, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) })
     .then((status) => {
       const label = status.ready ? 'ok' : status.directProbeConfigured ? 'degraded' : 'standby';

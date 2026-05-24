@@ -126,6 +126,23 @@ async function main() {
     assert(activation.body.providerWritesBlocked === true, 'Activation must keep provider writes blocked.');
     assert(activation.body.approvalMode === 'high_risk_approval_required', 'Activation must keep high-risk actions approval-gated.');
 
+    const avaActivation = await jsonFetch('/api/v1/ava/call-intelligence/activate', {
+      method: 'POST',
+      body: JSON.stringify({ requestedBy: 'smoke-test', runNow: false, strategistMode: 'inline' }),
+    });
+    assert(avaActivation.response.status === 200, `Expected Ava call intelligence activation 200, got ${avaActivation.response.status}: ${JSON.stringify(avaActivation.body)}`);
+    assert(avaActivation.body.result === 'ava_call_intelligence_activated', `Unexpected Ava call activation result: ${avaActivation.body.result}`);
+    assert(avaActivation.body.providerWritesBlocked === true, 'Ava call activation must not perform provider writes.');
+    assert(avaActivation.body.highRiskApprovalRequired === true, 'Ava call activation must keep high-risk actions approval-gated.');
+    assert(avaActivation.body.callSettings?.strategistMode === 'inline', 'Ava call activation must enable inline strategist intelligence.');
+
+    const avaStatus = await jsonFetch('/api/v1/ava/call-intelligence/status');
+    assert(avaStatus.response.status === 200, `Expected Ava call intelligence status 200, got ${avaStatus.response.status}: ${JSON.stringify(avaStatus.body)}`);
+    assert(avaStatus.body.result === 'ava_call_intelligence_active', `Unexpected Ava call status: ${avaStatus.body.result}`);
+    assert(avaStatus.body.agents?.ava?.status === 'active', 'Ava should be active after call-intelligence activation.');
+    assert(avaStatus.body.voice?.liveReplyMode === 'inline', 'Ava live calls should use inline call intelligence after activation.');
+    assert(avaStatus.body.safety?.activationStartsOutboundActions === false, 'Ava activation must not start outbound actions.');
+
     const closedLoopStatus = await jsonFetch('/api/v1/command-center/closed-loop/status');
     assert(closedLoopStatus.response.status === 200, `Expected closed-loop status 200, got ${closedLoopStatus.response.status}: ${JSON.stringify(closedLoopStatus.body)}`);
     assert(closedLoopStatus.body.enabled === true, 'Closed-loop status must be enabled after activation.');
@@ -157,6 +174,7 @@ async function main() {
       approvalId: proposed.body.approval.id,
       actionCount: firstStatus.body.actions.length,
       closedLoopEnabled: closedLoopStatus.body.enabled,
+      avaCallIntelligence: avaStatus.body.result,
       revenueAlignmentActions: rexAlignment.body.actions.length,
     }, null, 2));
   } finally {

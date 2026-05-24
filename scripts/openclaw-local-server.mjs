@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-24-command-center-closed-loop';
+const BUILD_REVISION = '2026-05-24-ava-call-intelligence-active';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -283,6 +283,9 @@ const COMMAND_CENTER_CLOSED_LOOP_FIRST_DELAY_MS = Math.max(60_000, Number(proces
 const REX_GOAL_ALIGNMENT_INTERVAL_MS = Math.max(60 * 60 * 1000, Number(process.env.PBK_REX_GOAL_ALIGNMENT_INTERVAL_MS || 24 * 60 * 60 * 1000));
 const CALL_ANALYZER_INTERVAL_MS = Math.max(30 * 60 * 1000, Number(process.env.PBK_CALL_ANALYZER_INTERVAL_MS || 60 * 60 * 1000));
 const PROSODY_TRAIN_INTERVAL_MS = Math.max(24 * 60 * 60 * 1000, Number(process.env.PBK_PROSODY_TRAIN_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000));
+const AVA_CALL_INTELLIGENCE_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_CALL_INTELLIGENCE_ENABLED || 'true').trim());
+const AVA_CALL_INTELLIGENCE_STRATEGIST_MODE = String(process.env.PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline').trim().toLowerCase();
+const AVA_CALL_INTELLIGENCE_TIMEOUT_MS = Math.max(350, Math.min(2500, Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || 1200)));
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -5118,6 +5121,68 @@ async function ensurePgSchema() {
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    CREATE TABLE IF NOT EXISTS public.pbk_bant_sessions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      call_id TEXT REFERENCES public.calls(id) ON DELETE SET NULL,
+      budget_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+      authority TEXT NOT NULL DEFAULT '',
+      need TEXT NOT NULL DEFAULT '',
+      timeline TEXT NOT NULL DEFAULT '',
+      urgency TEXT NOT NULL DEFAULT '',
+      bant JSONB NOT NULL DEFAULT '{}'::jsonb,
+      completed_at TIMESTAMPTZ,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_bant_sessions
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS call_id TEXT REFERENCES public.calls(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS budget_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS authority TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS need TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS timeline TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS urgency TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS bant JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_contract_followups (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      contract_id TEXT REFERENCES public.contracts(id) ON DELETE SET NULL,
+      lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      envelope_id TEXT NOT NULL DEFAULT '',
+      sent_to_seller_at TIMESTAMPTZ,
+      seller_signed_at TIMESTAMPTZ,
+      pbk_signed_at TIMESTAMPTZ,
+      reminder_sent_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[]::TIMESTAMPTZ[],
+      status TEXT NOT NULL DEFAULT 'sent_to_seller',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_contract_followups
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS contract_id TEXT REFERENCES public.contracts(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS envelope_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS sent_to_seller_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS seller_signed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS pbk_signed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ[] NOT NULL DEFAULT ARRAY[]::TIMESTAMPTZ[],
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'sent_to_seller',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.pbk_call_qa_scores (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5427,11 +5492,27 @@ async function ensurePgSchema() {
     CREATE INDEX IF NOT EXISTS pbk_command_center_activations_status_idx
       ON public.pbk_command_center_activations (tenant_id, status, created_at DESC);
 
+    CREATE INDEX IF NOT EXISTS pbk_bant_sessions_lead_idx
+      ON public.pbk_bant_sessions (tenant_id, lead_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_bant_sessions_call_idx
+      ON public.pbk_bant_sessions (tenant_id, call_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_contract_followups_contract_idx
+      ON public.pbk_contract_followups (tenant_id, contract_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_contract_followups_status_idx
+      ON public.pbk_contract_followups (tenant_id, status, created_at DESC);
+
     ALTER TABLE public.pbk_call_analyses ENABLE ROW LEVEL SECURITY;
 
     ALTER TABLE public.pbk_revenue_actions ENABLE ROW LEVEL SECURITY;
 
     ALTER TABLE public.pbk_command_center_activations ENABLE ROW LEVEL SECURITY;
+
+    ALTER TABLE public.pbk_bant_sessions ENABLE ROW LEVEL SECURITY;
+
+    ALTER TABLE public.pbk_contract_followups ENABLE ROW LEVEL SECURITY;
 
     DO $$
     BEGIN
@@ -5439,6 +5520,8 @@ async function ensurePgSchema() {
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_call_analyses TO service_role;
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_revenue_actions TO service_role;
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_command_center_activations TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_bant_sessions TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_contract_followups TO service_role;
       END IF;
     END $$;
 
@@ -5587,6 +5670,16 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS pbk_command_center_activations_set_updated_at ON public.pbk_command_center_activations;
     CREATE TRIGGER pbk_command_center_activations_set_updated_at
       BEFORE UPDATE ON public.pbk_command_center_activations
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_bant_sessions_set_updated_at ON public.pbk_bant_sessions;
+    CREATE TRIGGER pbk_bant_sessions_set_updated_at
+      BEFORE UPDATE ON public.pbk_bant_sessions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_contract_followups_set_updated_at ON public.pbk_contract_followups;
+    CREATE TRIGGER pbk_contract_followups_set_updated_at
+      BEFORE UPDATE ON public.pbk_contract_followups
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DROP TRIGGER IF EXISTS pbk_outcome_reports_set_updated_at ON public.pbk_outcome_reports;
@@ -12818,6 +12911,329 @@ async function getCommandCenterClosedLoopStatus(params = {}) {
   };
 }
 
+function getAvaCallIntelligenceSettings() {
+  const settings = ensureRuntimeSettings(state);
+  const configured = plainObject(settings.avaCallIntelligence);
+  const enabled = configured.enabled !== undefined
+    ? configured.enabled !== false
+    : AVA_CALL_INTELLIGENCE_ENABLED;
+  const strategistMode = String(configured.strategistMode || configured.strategist_mode || AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'inline')
+    .trim()
+    .toLowerCase();
+  const strategistTimeoutMs = Math.max(
+    350,
+    Math.min(2500, Number(configured.strategistTimeoutMs || configured.strategist_timeout_ms || AVA_CALL_INTELLIGENCE_TIMEOUT_MS)),
+  );
+  return {
+    enabled,
+    strategistMode,
+    strategistTimeoutMs,
+    useScripts: configured.useScripts !== false,
+    useBant: configured.useBant !== false,
+    useMemory: configured.useMemory !== false,
+    useProsody: configured.useProsody !== false,
+    useToolRouter: configured.useToolRouter !== false,
+    useRexOversight: configured.useRexOversight !== false,
+    useCallAnalyzer: configured.useCallAnalyzer !== false,
+    useRevenueGoal: configured.useRevenueGoal !== false,
+    useEmotionalLearning: configured.useEmotionalLearning !== false,
+    useSimilarDeals: configured.useSimilarDeals !== false,
+    providerWritesBlocked: configured.providerWritesBlocked !== false,
+    highRiskApprovalRequired: configured.highRiskApprovalRequired !== false,
+    activatedAt: configured.activatedAt || '',
+    activatedBy: configured.activatedBy || '',
+  };
+}
+
+function getTelnyxLiveReplyStrategistMode() {
+  const settings = getAvaCallIntelligenceSettings();
+  if (!settings.enabled) return 'off';
+  return settings.strategistMode || TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'background';
+}
+
+function getTelnyxLiveReplyStrategistTimeoutMs() {
+  const settings = getAvaCallIntelligenceSettings();
+  return settings.strategistTimeoutMs || TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS;
+}
+
+function buildAvaScriptRotationSnapshot(params = {}) {
+  ensureAgentFleetCollections();
+  const query = String(params.query || params.transcript || params.text || '').toLowerCase();
+  const ava = findAgentRecord('ava') || {};
+  const bridgeSkills = (ava.skills || [])
+    .map((skill) => ({
+      name: skill.name || '',
+      confidence: Number(skill.confidence || 0),
+      level: skill.level || '',
+      evidence: skill.evidence || '',
+      source: 'agent_fleet',
+    }))
+    .filter((skill) => skill.name)
+    .sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0));
+  const activeMemories = sortNewest(state.avaActiveMemories || [])
+    .filter((memory) => {
+      const haystack = [memory.objectionTag, memory.memoryType, memory.prompt, memory.response, memory.summary].filter(Boolean).join(' ').toLowerCase();
+      return !query || scorePbkTextMatch(query, haystack, memory.metadata) > 0 || /revenue|goal|objection|script|call/i.test(haystack);
+    })
+    .slice(0, 6)
+    .map((memory) => ({
+      tag: memory.objectionTag || memory.memoryType || 'memory',
+      phrase: memory.response || memory.summary || memory.prompt || '',
+      score: Number(memory.score || 0),
+      source: memory.source || 'ava_memory',
+    }));
+  return {
+    activeSkillCount: bridgeSkills.length || Number(ava.skillsTotal || 0),
+    selectedSkills: bridgeSkills.slice(0, 6),
+    activeMemories,
+    rotationRule: 'Do not repeat a prior Ava line. Rotate skill, memory, BANT question, or proof angle every turn.',
+  };
+}
+
+function buildAvaCallArchitectureContext(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const context = findLeadContext({
+    ...params,
+    leadId: contextCall.leadId || session.leadId || params.leadId,
+    leadName: contextCall.leadName || session.leadName || params.leadName,
+    address: contextCall.address || session.address || params.address,
+    phone: contextCall.phone || session.phone || params.phone,
+  });
+  const transcript = String(params.transcript || params.query || params.text || '').trim();
+  const knownBant = normalizeBantInfo(contextCall.bant || {}, contextCall.raw?.bant || {}, contextCall.raw || {}, params.bant || {});
+  const bant = normalizeBantInfo(knownBant, extractBantFromTranscript(transcript, knownBant));
+  const missingBant = getMissingBantFields(bant);
+  const scripts = buildAvaScriptRotationSnapshot({ ...params, query: transcript });
+  const recentAnalyses = sortNewest(state.callAnalyses || [])
+    .filter((analysis) => !context.leadId || !analysis.leadId || analysis.leadId === context.leadId)
+    .slice(0, 5)
+    .map((analysis) => ({
+      callId: analysis.callId || '',
+      score: Number(analysis.score || 0),
+      failureTags: analysis.failureTags || [],
+      scriptSuggestions: analysis.scriptSuggestions || [],
+      toolSuggestions: analysis.toolSuggestions || [],
+    }));
+  const recentRevenueActions = sortNewest(state.revenueActions || [])
+    .slice(0, 5)
+    .map((action) => ({
+      actionId: action.actionId || action.id || '',
+      label: action.label || '',
+      status: action.status || '',
+      target: action.target || '',
+      approvalRequired: action.approvalRequired !== false,
+    }));
+  const nextBantQuestion = missingBant.length
+    ? buildBantRequiredResult({ leadId: context.leadId, address: context.address }, missingBant, bant).recommendedQuestion
+    : '';
+  return {
+    schemaVersion: 'pbk-ava-call-intelligence-v1',
+    enabled: getAvaCallIntelligenceSettings().enabled,
+    lead: {
+      leadId: context.leadId,
+      leadName: context.leadName,
+      address: context.address,
+      phone: context.phone,
+    },
+    bant: {
+      known: bant,
+      missing: missingBant,
+      complete: missingBant.length === 0,
+      nextQuestion: nextBantQuestion,
+    },
+    scripts,
+    rexOversight: {
+      recentCallAnalyses: recentAnalyses,
+      recentRevenueActions,
+      dailyRevenueFocus: getAvaActiveMemorySummary(3),
+    },
+    toolRouter: {
+      safeReadTools: ['getAvaConversationIntelligence', 'retrieveClosingIntelligence', 'retrieveSimilarDeals', 'recallConversationMemory', 'scoreCallQuality', 'analyzeDeal'],
+      approvalGatedTools: ['telnyx_call', 'telnyx_sms', 'sendDocuSign', 'prepare_and_send_contract', 'launch_campaign', 'admin_provider_change'],
+      rule: 'Use read-only intelligence immediately. Queue or request approval for provider writes, offers, contracts, campaigns, admin changes, deletes, and seller-facing numbers.',
+    },
+    prosody: {
+      enabled: true,
+      provider: 'ElevenLabs',
+      modelId: ELEVENLABS_MODEL_ID,
+      voiceId: ELEVENLABS_VOICE_ID,
+      learningRows: Array.isArray(state.prosodyDecisions) ? state.prosodyDecisions.length : 0,
+      activeModel: Boolean(getActiveProsodyModel()),
+    },
+    safety: {
+      providerWritesBlocked: true,
+      highRiskApprovalRequired: true,
+      neverPresentSellerFacingNumbersUntilBantComplete: true,
+    },
+  };
+}
+
+function setAgentRuntimeActive(agentId = '', patch = {}) {
+  ensureAgentFleetCollections();
+  const agent = findAgentRecord(agentId);
+  if (!agent) return null;
+  const nextAgent = {
+    ...agent,
+    ...patch,
+    status: patch.status || 'active',
+    lastSeen: isoNow(),
+    updatedAt: isoNow(),
+    updatedBy: patch.updatedBy || 'Ava Call Intelligence Activation',
+    config: {
+      ...(agent.config || {}),
+      ...(patch.config || {}),
+      lastAction: 'activate_call_intelligence',
+    },
+  };
+  upsertById(state, 'agents', nextAgent);
+  return nextAgent;
+}
+
+async function activateAvaCallIntelligence(params = {}) {
+  const actor = String(params.actor || params.requestedBy || params.requested_by || 'PBK Command Center').trim();
+  const settings = ensureRuntimeSettings(state);
+  const callSettings = {
+    enabled: true,
+    strategistMode: String(params.strategistMode || params.strategist_mode || AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline').trim().toLowerCase(),
+    strategistTimeoutMs: Math.max(350, Math.min(2500, Number(params.strategistTimeoutMs || params.strategist_timeout_ms || AVA_CALL_INTELLIGENCE_TIMEOUT_MS))),
+    useScripts: params.useScripts !== false,
+    useBant: params.useBant !== false,
+    useMemory: params.useMemory !== false,
+    useProsody: params.useProsody !== false,
+    useToolRouter: params.useToolRouter !== false,
+    useRexOversight: params.useRexOversight !== false,
+    useCallAnalyzer: params.useCallAnalyzer !== false,
+    useRevenueGoal: params.useRevenueGoal !== false,
+    useEmotionalLearning: params.useEmotionalLearning !== false,
+    useSimilarDeals: params.useSimilarDeals !== false,
+    providerWritesBlocked: true,
+    highRiskApprovalRequired: true,
+    activatedAt: isoNow(),
+    activatedBy: actor,
+  };
+  settings.avaCallIntelligence = callSettings;
+  settings.updatedAt = isoNow();
+  settings.updatedBy = actor;
+  state.status.avaCallIntelligence = {
+    enabled: true,
+    strategistMode: callSettings.strategistMode,
+    strategistTimeoutMs: callSettings.strategistTimeoutMs,
+    providerWritesBlocked: true,
+    highRiskApprovalRequired: true,
+    activatedAt: callSettings.activatedAt,
+  };
+
+  const ava = setAgentRuntimeActive('ava', {
+    status: 'active',
+    activity: 'Call intelligence active: scripts, BANT+, memory, prosody, tool router, Rex oversight, and safety gates online.',
+    updatedBy: actor,
+    config: { avaCallIntelligence: callSettings },
+  });
+  const rex = setAgentRuntimeActive('rex', {
+    status: 'active',
+    activity: 'Daily goal alignment, call analysis, script/prosody recommendations, and $1M/month oversight active.',
+    updatedBy: actor,
+    config: { revenueGoalOversight: true, targetMonthlyRevenue: REVENUE_TARGET_MONTHLY },
+  });
+  const hermesReady = getHermesProviderMeta().ready;
+  const hermes = setAgentRuntimeActive('hermes', {
+    status: hermesReady ? 'active' : 'standby',
+    activity: hermesReady
+      ? 'Suggest-only call pattern analysis ready; provider writes blocked.'
+      : 'Suggest-only analyst lane registered; external Hermes provider not required for Ava call activation.',
+    updatedBy: actor,
+    config: { suggestOnly: true, providerWritesBlocked: true },
+  });
+
+  upsertAvaActiveMemory({
+    id: 'ava-call-intelligence-architecture-active',
+    memoryType: 'call-intelligence-activation',
+    objectionTag: 'architecture_active',
+    prompt: 'Before every live call response, use the activated PBK call intelligence bundle.',
+    response: 'Ava must use scripts, BANT+, memory, emotional/prosody guidance, similar-deal proof, tool router, and Rex revenue focus while keeping provider writes approval-gated.',
+    score: 0.98,
+    outcome: 'active',
+    source: 'ava-call-intelligence-activation',
+    metadata: { callSettings },
+  });
+
+  const results = {};
+  if (params.runNow !== false && params.run_now !== false) {
+    if (callSettings.useCallAnalyzer) results.callAnalyzer = await analyzeRecentAvaCalls({ actor: 'Rex Call Analyzer', limit: params.callLimit || 20, source: 'ava-call-intelligence-activation' });
+    if (callSettings.useRevenueGoal) results.rexGoalAlignment = await buildRevenueGoalAlignment({ actor: 'Rex Goal Alignment', targetMonthlyRevenue: params.targetMonthlyRevenue || REVENUE_TARGET_MONTHLY });
+  }
+
+  addActivity(state, makeActivity({
+    actor,
+    category: 'AVA_CALL_INTELLIGENCE',
+    status: 'active',
+    text: 'Activated Ava live-call intelligence without starting provider writes.',
+    target: 'ava-live-call-brain',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'ava_call_intelligence_activated',
+    providerWritesBlocked: true,
+    highRiskApprovalRequired: true,
+    callSettings,
+    agents: { ava, rex, hermes },
+    runSummary: {
+      callAnalyses: results.callAnalyzer?.analyzed || 0,
+      revenueActions: results.rexGoalAlignment?.actions?.length || 0,
+    },
+    status: await getAvaCallIntelligenceStatus(params),
+  };
+}
+
+async function getAvaCallIntelligenceStatus(params = {}) {
+  const settings = getAvaCallIntelligenceSettings();
+  const orchestration = buildAgentOrchestrationSnapshot();
+  const ava = orchestration.agents.find((agent) => agent.id === 'ava') || null;
+  const rex = orchestration.agents.find((agent) => agent.id === 'rex') || null;
+  const telnyx = getTelnyxProviderMeta();
+  const deepgram = getDeepgramProviderMeta(process.env);
+  const eleven = getElevenLabsProviderMeta(process.env);
+  const architecture = buildAvaCallArchitectureContext({
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    transcript: params.transcript || params.query || '',
+    leadId: params.leadId || params.lead_id || '',
+  });
+  const avaPaused = /paused|muted|human_takeover/i.test(String(ava?.status || ''));
+  const gaps = [
+    ...(!settings.enabled ? ['Ava call intelligence is disabled in runtime settings.'] : []),
+    ...(avaPaused ? [`Ava agent runtime still reports ${ava?.status}; activate call intelligence to clear the dashboard pause state.`] : []),
+    ...(!PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED ? ['Telnyx bridge Ava replies are disabled by PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED.'] : []),
+    ...(!telnyx.voiceReady ? ['Telnyx voice provider is not fully ready.'] : []),
+    ...(!deepgram.ready ? ['Deepgram live STT is not fully ready.'] : []),
+    ...(!eleven.ready ? ['ElevenLabs TTS is not fully ready.'] : []),
+    ...((architecture.prosody.learningRows || 0) < 10 ? ['Prosody learning is active but still needs measured call outcomes.'] : []),
+  ];
+  return {
+    ok: settings.enabled && !avaPaused,
+    result: settings.enabled && !avaPaused ? 'ava_call_intelligence_active' : 'ava_call_intelligence_degraded',
+    generatedAt: isoNow(),
+    settings,
+    agents: { ava, rex },
+    voice: {
+      telnyxBridgeAvaReplyEnabled: PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED,
+      liveReplyMode: getTelnyxLiveReplyStrategistMode(),
+      strategistTimeoutMs: getTelnyxLiveReplyStrategistTimeoutMs(),
+      telnyx: { ready: Boolean(telnyx.voiceReady), missing: telnyx.voiceMissing || [] },
+      deepgram: { ready: Boolean(deepgram.ready), missing: deepgram.missing || [] },
+      elevenLabs: { ready: Boolean(eleven.ready), voiceId: eleven.voiceId, model: eleven.model, warnings: eleven.warnings || [] },
+    },
+    architecture,
+    safety: {
+      providerWritesBlocked: true,
+      highRiskApprovalRequired: true,
+      activationStartsOutboundActions: false,
+    },
+    gaps,
+  };
+}
+
 function buildXFactorCapabilitySnapshot() {
   const counts = getXFactorCounts();
   const revenueEngine = buildRevenueEngineStatus({ requestedBy: 'capability-snapshot' });
@@ -13555,6 +13971,12 @@ async function buildAvaConversationIntelligence(params = {}) {
   const context = findLeadContext(params);
   const query = String(params.query || params.text || params.transcript || params.lastUserUtterance || '').trim();
   const reaction = buildRealTimeConversationReaction({ ...params, ...context, query });
+  const architecture = buildAvaCallArchitectureContext({
+    ...params,
+    ...context,
+    query,
+    transcript: params.transcript || query,
+  });
   const [closing, similarDeals, memories] = await Promise.all([
     buildClosingIntelligenceAdvice({ ...params, query, context, objectionType: reaction.objectionType, synthesize: params.synthesize === true }),
     retrieveSimilarDealProof({ ...params, ...context, query }),
@@ -13576,6 +13998,11 @@ async function buildAvaConversationIntelligence(params = {}) {
     objectionType: reaction.objectionType,
     reaction,
     prosody: reaction.prosody,
+    architecture,
+    scriptRotation: architecture.scripts,
+    bant: architecture.bant,
+    toolRouter: architecture.toolRouter,
+    rexOversight: architecture.rexOversight,
     closing,
     emotionalMemory: closing.emotionalMemory || closing.advice?.emotionalMemory || null,
     similarDeals,
@@ -21668,6 +22095,64 @@ async function updateLeadBantContextFromTranscript(candidate = {}, sessionId = '
     callContext: { ...callContext, bant: mergedBant },
     hasBant,
     localUpdated: Boolean(localLead),
+  };
+}
+
+async function recordBantSessionForLiveCall(params = {}) {
+  const session = params.session || {};
+  const call = params.call || {};
+  const transcript = String(params.transcript || '').trim();
+  const callId = String(call.id || call.callId || call.call_id || session.callId || '').trim();
+  const leadId = String(call.leadId || call.lead_id || session.leadId || '').trim();
+  if (!callId || !transcript) return { ok: false, reason: 'missing_call_or_transcript' };
+  const existingBant = normalizeBantInfo(call.bant || {}, call.raw?.bant || {}, call.raw || {});
+  const bant = normalizeBantInfo(existingBant, extractBantFromTranscript(transcript, existingBant));
+  const missing = getMissingBantFields(bant);
+  const id = `bant-session-${slugify(callId).slice(0, 72)}`;
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_bant_sessions (
+       id, tenant_id, lead_id, call_id, budget_confirmed, authority, need,
+       timeline, urgency, bant, completed_at, metadata, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12::jsonb,NOW(),NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       budget_confirmed = EXCLUDED.budget_confirmed,
+       authority = EXCLUDED.authority,
+       need = EXCLUDED.need,
+       timeline = EXCLUDED.timeline,
+       urgency = EXCLUDED.urgency,
+       bant = public.pbk_bant_sessions.bant || EXCLUDED.bant,
+       completed_at = COALESCE(public.pbk_bant_sessions.completed_at, EXCLUDED.completed_at),
+       metadata = public.pbk_bant_sessions.metadata || EXCLUDED.metadata,
+       updated_at = NOW()`,
+    [
+      id,
+      normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+      leadId || null,
+      callId || null,
+      Boolean(bant.budget),
+      bant.authority || '',
+      bant.need || '',
+      bant.timeline || '',
+      bant.urgency || '',
+      JSON.stringify(bant),
+      missing.length === 0 ? isoNow() : null,
+      JSON.stringify({
+        source: 'telnyx-live-call',
+        missingBant: missing,
+        transcriptPreview: transcript.slice(0, 500),
+      }),
+    ],
+  );
+  return {
+    ok: result.ok,
+    result: result.ok ? 'bant_session_recorded' : result.reason,
+    id,
+    callId,
+    leadId,
+    bant,
+    missingBant: missing,
+    error: result.error || '',
   };
 }
 
@@ -30218,6 +30703,16 @@ const toolHandlers = {
     return toolHandlers.pbk_ava_conversation_intelligence(params);
   },
 
+  async activateAvaCallIntelligence(params = {}) {
+    recordToolUse('activateAvaCallIntelligence');
+    return activateAvaCallIntelligence(params);
+  },
+
+  async getAvaCallIntelligenceStatus(params = {}) {
+    recordToolUse('getAvaCallIntelligenceStatus');
+    return getAvaCallIntelligenceStatus(params);
+  },
+
   async getProsodyAdvice(params = {}) {
     recordToolUse('getProsodyAdvice');
     return {
@@ -37649,6 +38144,64 @@ function isTelnyxCallStillSpeakable(call = {}) {
   return !/^(ended|completed|complete|hangup|hangup_received|stopped|failed|busy|canceled|cancelled|rejected|no_answer)$/.test(status);
 }
 
+function getReplyFingerprint(text = '') {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 16)
+    .join(' ');
+}
+
+function rememberAvaLiveReplyFingerprint(session = {}, text = '') {
+  const fingerprint = getReplyFingerprint(text);
+  if (!fingerprint) return;
+  if (!Array.isArray(session.recentAvaReplyFingerprints)) session.recentAvaReplyFingerprints = [];
+  session.recentAvaReplyFingerprints.unshift(fingerprint);
+  session.recentAvaReplyFingerprints = session.recentAvaReplyFingerprints.slice(0, 8);
+}
+
+function hasAvaRepeatedLiveReply(session = {}, text = '') {
+  const fingerprint = getReplyFingerprint(text);
+  if (!fingerprint) return false;
+  return (session.recentAvaReplyFingerprints || []).includes(fingerprint);
+}
+
+function chooseMissingBantFieldForTurn(session = {}, missing = []) {
+  const ordered = Array.isArray(missing) ? missing.filter(Boolean) : [];
+  if (!ordered.length) return '';
+  if (!Array.isArray(session.askedBantFields)) session.askedBantFields = [];
+  const previous = new Set(session.askedBantFields);
+  const next = ordered.find((field) => !previous.has(field)) || ordered[0];
+  session.askedBantFields.unshift(next);
+  session.askedBantFields = [...new Set(session.askedBantFields)].slice(0, 8);
+  return next;
+}
+
+function buildRotatedBantPhrase(field = '', opener = '') {
+  if (field === 'authority') return `${opener}before I point you down the wrong path, are you the owner or the person helping make the decision on this property?`;
+  if (field === 'timeline') return `${opener}that helps. What timeline would actually feel good for you: days, a few weeks, or more flexible?`;
+  if (field === 'need') return `${opener}I want to understand the real reason, not just check a box. What is making you consider selling now?`;
+  if (field === 'budget') return `${opener}so I can stay respectful of your time, is there a number you already had in mind, or should we first walk through condition?`;
+  if (field === 'urgency') return `${opener}what happens if this does not get handled in the next few months?`;
+  return `${opener}I do not want to loop on the same question. What matters most right now: speed, certainty, price, or simplicity?`;
+}
+
+function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
+  const cleanProposed = normalizeAvaVoiceReplyText(proposed, fallback || proposed);
+  if (!hasAvaRepeatedLiveReply(session, cleanProposed)) {
+    return { text: cleanProposed, adjusted: false };
+  }
+  const cleanFallback = normalizeAvaVoiceReplyText(fallback, fallback || cleanProposed);
+  if (cleanFallback && !hasAvaRepeatedLiveReply(session, cleanFallback)) {
+    return { text: cleanFallback, adjusted: true, reason: 'fallback_not_repeated' };
+  }
+  const pivot = 'I do not want to repeat myself here. Let me ask it a different way: what would make this feel like a safe next step for you?';
+  return { text: pivot, adjusted: true, reason: 'anti_repeat_pivot' };
+}
+
 function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contextCall = null } = {}) {
   const raw = String(transcript || '').replace(/\s+/g, ' ').trim();
   const lower = raw.toLowerCase();
@@ -37657,6 +38210,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const extractedBant = extractBantFromTranscript(raw, knownBant);
   const missingBant = getMissingBantFields(extractedBant);
   const opener = leadName && !/^unknown|caller$/i.test(leadName) ? `${leadName}, ` : '';
+  const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return `${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`;
@@ -37673,17 +38227,8 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(lower)) {
     return 'I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?';
   }
-  if (missingBant.includes('authority')) {
-    return `${opener}I hear you. Before I point you down the wrong path, are you the owner or the person helping make the decision on this property?`;
-  }
-  if (missingBant.includes('timeline')) {
-    return `${opener}that makes sense. To help you the right way, what timeline are you hoping for: days, a few weeks, or more flexible?`;
-  }
-  if (missingBant.includes('need')) {
-    return `${opener}I understand. What is making you consider selling now: repairs, timing, tenants, probate, payments, or just wanting a simpler option?`;
-  }
-  if (missingBant.includes('budget')) {
-    return `${opener}I can keep this clear. Is there a number you already had in mind, or should we first walk through condition and timeline?`;
+  if (nextMissingBant) {
+    return buildRotatedBantPhrase(nextMissingBant, opener || 'I hear you. ');
   }
   return `${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`;
 }
@@ -37727,6 +38272,16 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
   } catch {
     conversation = null;
   }
+  const architecture = buildAvaCallArchitectureContext({
+    session,
+    contextCall,
+    leadId,
+    leadName,
+    address,
+    transcript,
+    query: transcript,
+    bant: conversation?.bant?.known || {},
+  });
   try {
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
@@ -37737,6 +38292,8 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         'Live Telnyx inbound call turn for Ava.',
         'Ava must sound conversational, emotionally intelligent, and concise.',
         'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.',
+        `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`,
+        architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '',
       ].join(' '),
       transcript,
       attemptedActions: [
@@ -37745,6 +38302,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `intent:${pipeline?.intent?.intent || 'unknown'}`,
         `reaction:${conversation?.reaction?.trigger || 'none'}`,
         `objection:${conversation?.objectionType || 'unknown'}`,
+        `next_bant:${architecture.bant.missing[0] || 'complete'}`,
       ],
       confidence: 0.82,
       temperature: 0.68,
@@ -37756,6 +38314,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         callId: session.callId || '',
         streamId: session.streamId || '',
         conversationIntelligence: conversation,
+        activatedArchitecture: architecture,
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
@@ -37765,12 +38324,14 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       pipeline,
       conversation,
       strategist,
+      architecture,
     };
   } catch (error) {
     return {
       text: normalizeAvaVoiceReplyText(conversation?.nextBestPhrase || '', 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
       pipeline,
       conversation,
+      architecture,
       strategist: {
         ok: false,
         result: 'telnyx_live_reply_fallback',
@@ -37783,7 +38344,8 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
 async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
   const fallback = buildFastTelnyxLiveAvaReplyText({ session, transcript, contextCall });
   const normalizedFallback = normalizeAvaVoiceReplyText(fallback, fallback);
-  const mode = TELNYX_LIVE_REPLY_STRATEGIST_MODE;
+  const mode = getTelnyxLiveReplyStrategistMode();
+  const strategistTimeoutMs = getTelnyxLiveReplyStrategistTimeoutMs();
 
   if (mode === 'inline') {
     const insightPromise = buildTelnyxLiveAvaReplyInsight({ session, transcript, contextCall })
@@ -37795,17 +38357,20 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
           error: error?.message || 'Strategist reply unavailable.',
         },
       }));
-    const insight = TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS > 0
+    const insight = strategistTimeoutMs > 0
       ? await Promise.race([
           insightPromise,
-          sleep(TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS).then(() => null),
+          sleep(strategistTimeoutMs).then(() => null),
         ])
       : await insightPromise;
     if (insight?.text) {
+      const nonRepeating = avoidRepeatedAvaLiveReply(session, insight.text, normalizedFallback);
       return {
         ...insight,
-        text: normalizeAvaVoiceReplyText(insight.text, normalizedFallback),
+        text: nonRepeating.text,
         replyMode: 'strategist_inline',
+        strategistTimeoutMs,
+        antiRepeat: nonRepeating,
       };
     }
     void insightPromise;
@@ -37822,9 +38387,12 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
     });
   }
 
+  const nonRepeatingFallback = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
   return {
-    text: normalizedFallback,
+    text: nonRepeatingFallback.text,
     replyMode: 'fast_local',
+    architecture: buildAvaCallArchitectureContext({ session, contextCall, transcript, query: transcript }),
+    antiRepeat: nonRepeatingFallback,
     strategist: {
       ok: false,
       skipped: mode === 'off',
@@ -38157,13 +38725,26 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (!spoken) return;
     const latestCall = getCallById(session.callId);
     if (!isTelnyxCallStillSpeakable(latestCall)) return;
+    const replyStartAt = Date.now();
+    const speechFinalAt = Date.parse(item.capturedAt || '') || now;
+    const speechFinalToReplyStartMs = Math.max(0, replyStartAt - speechFinalAt);
+    if (!Array.isArray(session.replyLatencySamples)) session.replyLatencySamples = [];
+    session.replyLatencySamples.unshift({
+      transcript: String(item.transcript || '').slice(0, 160),
+      replyMode: reply.replyMode || 'live',
+      speechFinalAt: item.capturedAt || isoNow(),
+      replyStartAt: new Date(replyStartAt).toISOString(),
+      latencyMs: speechFinalToReplyStartMs,
+    });
+    session.replyLatencySamples = session.replyLatencySamples.slice(0, 12);
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    rememberAvaLiveReplyFingerprint(session, spoken);
     addActivity(state, makeActivity({
       actor: 'Ava',
       category: 'CALL',
       status: speakResult.ok ? 'served' : 'warning',
       text: speakResult.ok
-        ? `Ava replied live on Telnyx via ${speakResult.provider || 'phone audio'} (${reply.replyMode || 'live'}): ${spoken.slice(0, 120)}`
+        ? `Ava replied live on Telnyx via ${speakResult.provider || 'phone audio'} (${reply.replyMode || 'live'}, ${speechFinalToReplyStartMs}ms): ${spoken.slice(0, 120)}`
         : `Ava live Telnyx reply failed: ${speakResult.error || 'unknown error'}`,
       target: session.callId || session.streamId || session.id,
     }));
@@ -38180,9 +38761,22 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             speechFinal: true,
             capturedAt: isoNow(),
             source: 'pbk-live-reply',
+            replyMode: reply.replyMode || 'live',
+            speechFinalToReplyStartMs,
+            antiRepeat: reply.antiRepeat || null,
+            architecture: reply.architecture ? {
+              bant: reply.architecture.bant,
+              toolRouter: reply.architecture.toolRouter,
+              rexOversight: reply.architecture.rexOversight,
+            } : null,
           },
         ].slice(-50),
         nextMove: spoken,
+        avaLatency: {
+          speechFinalToReplyStartMs,
+          replyMode: reply.replyMode || 'live',
+          updatedAt: isoNow(),
+        },
         updatedAt: isoNow(),
       });
     }
@@ -38237,8 +38831,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.transcript.push(item);
     const contextCall = getCallById(session.callId);
     if (contextCall) {
+      const liveBant = normalizeBantInfo(contextCall.bant || {}, extractBantFromTranscript(transcript, contextCall.bant || {}));
       upsertCall(state, {
         ...contextCall,
+        bant: liveBant,
         transcript: [
           ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
           {
@@ -38251,6 +38847,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         nextMove: "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
         updatedAt: isoNow(),
       });
+      if (normalized.isFinal || normalized.speechFinal) {
+        void recordBantSessionForLiveCall({ session, call: contextCall, transcript }).catch((error) => {
+          console.warn('[pbk-local-openclaw] BANT live-call session logging failed:', error?.message || error);
+        });
+      }
       scheduleRuntimeStateBroadcast('telnyx-transcript');
     }
     void maybeSpeakTelnyxAvaReply(item);
@@ -39061,6 +39662,18 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && matchesPath(pathname, ['/api/command-center/activate', '/api/v1/command-center/activate'])) {
       const body = await readBody(request);
       const result = await activateCommandCenterClosedLoop(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/ava/call-intelligence/status', '/api/v1/ava/call-intelligence/status'])) {
+      json(response, 200, await getAvaCallIntelligenceStatus(Object.fromEntries(url.searchParams.entries())));
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/call-intelligence/activate', '/api/v1/ava/call-intelligence/activate'])) {
+      const body = await readBody(request);
+      const result = await activateAvaCallIntelligence(body);
       json(response, result.ok ? 200 : 400, result);
       return;
     }

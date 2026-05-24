@@ -198,6 +198,12 @@ services:
         value: "3600000"
       - key: PBK_PROSODY_TRAIN_INTERVAL_MS
         value: "604800000"
+      - key: PBK_AVA_CALL_INTELLIGENCE_ENABLED
+        value: "true"
+      - key: PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE
+        value: inline
+      - key: PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS
+        value: "1200"
 
       # Protected operator controls. Used for kill-switch restore/activation and
       # Ava-to-operator urgent calls. Do not commit the passcode value here.

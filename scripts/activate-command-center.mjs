@@ -37,7 +37,18 @@ async function main() {
       runNow: true,
     }),
   });
+  const avaCallIntelligence = await bridgeFetch('/api/v1/ava/call-intelligence/activate', {
+    method: 'POST',
+    body: JSON.stringify({
+      requestedBy: 'command-center-activation-script',
+      targetMonthlyRevenue,
+      strategistMode: process.env.PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline',
+      strategistTimeoutMs: Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || 1200),
+      runNow: true,
+    }),
+  });
   const status = await bridgeFetch('/api/v1/command-center/closed-loop/status');
+  const avaStatus = await bridgeFetch('/api/v1/ava/call-intelligence/status');
   console.log(JSON.stringify({
     ok: true,
     bridgeUrl: BRIDGE_URL,
@@ -48,6 +59,13 @@ async function main() {
       approvalMode: activate.approvalMode,
       runSummary: activate.activation?.runSummary || {},
     },
+    avaCallIntelligence: {
+      result: avaCallIntelligence.result,
+      providerWritesBlocked: avaCallIntelligence.providerWritesBlocked,
+      highRiskApprovalRequired: avaCallIntelligence.highRiskApprovalRequired,
+      strategistMode: avaCallIntelligence.callSettings?.strategistMode || '',
+      runSummary: avaCallIntelligence.runSummary || {},
+    },
     status: {
       enabled: status.enabled,
       lowRiskAutopilot: status.lowRiskAutopilot,
@@ -57,6 +75,13 @@ async function main() {
       recentRevenueActions: (status.recentRevenueActions || []).length,
       recentCallAnalyses: (status.recentCallAnalyses || []).length,
       gaps: status.gaps || [],
+    },
+    avaStatus: {
+      ok: avaStatus.ok,
+      result: avaStatus.result,
+      agentStatus: avaStatus.agents?.ava?.status || '',
+      liveReplyMode: avaStatus.voice?.liveReplyMode || '',
+      gaps: avaStatus.gaps || [],
     },
   }, null, 2));
 }

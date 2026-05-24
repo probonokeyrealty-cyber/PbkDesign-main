@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-24-ava-call-intelligence-active';
+const BUILD_REVISION = '2026-05-24-provider-fallback-chat-brain-hardening';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -8182,6 +8182,7 @@ function buildLeadMessageDraft({ context = {}, channel = 'sms', stage = 'followu
 function extractCommandContext(command = '') {
   const raw = String(command || '').trim();
   if (!raw) return {};
+  if (looksLikeAvaTtsDiagnosticCommand(raw)) return {};
 
   const phoneMatch = raw.match(/(\+?1?[\s.(+-]*\d{3}[\s).-]*\d{3}[\s.-]*\d{4})/);
   const analyzeMatch = raw.match(/\b(?:analyze|run analyzer on|mao on)\s+(.+)$/i);
@@ -8189,7 +8190,11 @@ function extractCommandContext(command = '') {
     analyzeMatch ||
     raw.match(/\bat\s+(.+?)(?:\s+(?:now|today|tomorrow|asap|please|right now)\b|$)/i) ||
     raw.match(/\bfor\s+(\d{1,5}[^,]+,\s*[A-Za-z .'-]+(?:,\s*[A-Z]{2})?)/i);
-  const nameMatch = raw.match(/\b(?:call|text|sms|message|send(?: a)?(?: contract| docusign)? to|work this lead and report back on)\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i);
+  const nameMatch =
+    raw.match(/\b(?:call|dial)\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i) ||
+    raw.match(/\b(?:text|sms|message)\s+to\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i) ||
+    raw.match(/\bsend(?: a)?(?: contract| docusign)? to\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i) ||
+    raw.match(/\bwork this lead and report back on\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i);
 
   const leadName = nameMatch?.[1]?.trim() || '';
   const address = addressMatch?.[1]?.trim().replace(/[.?!]+$/, '') || '';
@@ -8308,6 +8313,16 @@ function looksLikeAvaTextResponseCommand(command = '', params = {}) {
   return !explicitProviderWrite;
 }
 
+function looksLikeAvaTtsDiagnosticCommand(command = '', params = {}) {
+  if (params.ttsDiagnostic === true || params.voiceDiagnostic === true) return true;
+  const raw = String(command || params.command || params.text || '').trim();
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  const mentionsVoiceLayer = /\b(ava\s+)?(?:tts|text[-\s]?to[-\s]?speech|elevenlabs|voice\s+(?:output|chat|bubble|stream|audio|playback)|spoken response|audio playback|chat bubble)\b/i.test(normalized);
+  const mentionsBugOrProvider = /\b(bug|error|failed|returned|quota|token|robot|robotic|sound|sounds|creating|created|fake|lead|leads|lerad|lerads|text is ready)\b/i.test(normalized);
+  return mentionsVoiceLayer && mentionsBugOrProvider;
+}
+
 function hasExplicitCrmWriteIntent(command = '') {
   const normalized = stripNegatedActionInstructions(command).toLowerCase();
   if (!normalized) return false;
@@ -8319,6 +8334,7 @@ function hasExplicitCrmWriteIntent(command = '') {
 }
 
 function looksLikeReadOnlyAvaCommand(command = '', params = {}) {
+  if (looksLikeAvaTtsDiagnosticCommand(command, params)) return true;
   if (params.readOnly === true || params.noProviderWrites === true || params.providerWrites === false) return true;
   const raw = String(command || '').trim();
   if (!raw) return false;
@@ -13968,7 +13984,19 @@ async function synthesizeClosingAnswerWithDeepSeek({ context = {}, playbook = {}
 }
 
 async function buildAvaConversationIntelligence(params = {}) {
-  const context = findLeadContext(params);
+  const baseContext = params.suppressLeadContext === true
+    ? {
+      leadId: '',
+      leadName: 'Ava chat bubble',
+      address: '',
+      phone: '',
+      email: '',
+    }
+    : findLeadContext(params);
+  const context = {
+    ...baseContext,
+    ...(params.context && typeof params.context === 'object' ? params.context : {}),
+  };
   const query = String(params.query || params.text || params.transcript || params.lastUserUtterance || '').trim();
   const reaction = buildRealTimeConversationReaction({ ...params, ...context, query });
   const architecture = buildAvaCallArchitectureContext({
@@ -14011,7 +14039,11 @@ async function buildAvaConversationIntelligence(params = {}) {
     qa,
     promptFrame: closing.promptFrame || closing.advice?.promptFrame,
     actionPolicy: {
-      providerWrites: 'approval_gated',
+      providerWrites: params.noProviderWrites === true || params.providerWrites === false || params.readOnly === true
+        ? 'blocked'
+        : 'approval_gated',
+      providerWritesBlocked: params.noProviderWrites === true || params.providerWrites === false || params.readOnly === true,
+      readOnly: params.readOnly === true,
       shouldHandoff: reaction.shouldHandoff,
       shouldStopContact: reaction.shouldStopContact,
       confidenceFloor: reaction.trigger === 'novel_objection' ? 'ask_clarifying_question' : 'respond_with_retrieved_playbook',
@@ -33210,7 +33242,19 @@ const toolHandlers = {
     }
 
     if (isOpenAiWebSearchIntent || params.webSearch === true || params.useOpenAiSearch === true) {
-      const searchResult = await runOpenAiWebSearch(query, params);
+      const searchResult = await runLiveWebSearch(query, {
+        ...params,
+        fallback: params.fallback ?? true,
+      });
+      const providerKey = getWebSearchProviderKey(searchResult);
+      const providerLabel =
+        providerKey === 'deepseek'
+          ? 'DeepSeek fallback'
+          : providerKey === 'tavily'
+            ? 'Tavily live search'
+            : providerKey === 'openai'
+              ? 'OpenAI web search'
+              : 'PBK Brain fallback';
       addActivity(
         state,
         makeActivity({
@@ -33218,9 +33262,9 @@ const toolHandlers = {
           category: 'RESEARCH',
           status: searchResult?.ok ? 'served' : 'warning',
           text: searchResult?.ok
-            ? `Rex used OpenAI web search for current info: "${query}"`
-            : `Rex could not use OpenAI web search: ${searchResult?.answer || 'provider not ready'}`,
-          target: 'OpenAI Web Search',
+            ? `Rex used ${providerLabel} for current info: "${query}"`
+            : `Rex could not complete live web search: ${searchResult?.answer || 'providers not ready'}`,
+          target: providerLabel,
         }),
       );
       const fallback = searchResult?.ok ? null : (searchResult?.fallback || answerBrainQuery(state, query));
@@ -33232,6 +33276,9 @@ const toolHandlers = {
             ? searchResult.answer
             : `${searchResult?.answer || 'OpenAI web search is not available.'}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`),
         citations: searchResult?.ok ? searchResult.citations : (searchResult?.citations || fallback?.citations || ['PBK Brain fallback']),
+        webSearch: searchResult,
+        webSearchProvider: providerKey,
+        deepSeekFallbackActive: providerKey === 'deepseek',
         openAiWebSearch: searchResult,
         brainDocs: state.brainDocs.slice(0, 8),
         brainBlogPosts: (state.brainBlogPosts || []).slice(0, 8),
@@ -34773,11 +34820,20 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
+    const ttsDiagnosticCommand = looksLikeAvaTtsDiagnosticCommand(command, params);
     const parsedContext = extractCommandContext(command);
-    const context = findLeadContext({
-      ...parsedContext,
-      ...params,
-    });
+    const context = ttsDiagnosticCommand
+      ? {
+        leadId: '',
+        leadName: 'Ava chat bubble',
+        address: '',
+        phone: '',
+        email: '',
+      }
+      : findLeadContext({
+        ...parsedContext,
+        ...params,
+      });
 
     addActivity(
       state,
@@ -34805,7 +34861,25 @@ const toolHandlers = {
     const explicitCrmWriteIntent = hasExplicitCrmWriteIntent(command);
     const toolFirstDetected = detectToolFirstIntent(intentCommand, params, context);
 
-    if (avaJarvisCommand) {
+    if (ttsDiagnosticCommand) {
+      routedTo = 'ava_conversation_intelligence';
+      const responseQuery = intentCommand || command;
+      response = await toolHandlers.getAvaConversationIntelligence({
+        ...params,
+        suppressLeadContext: true,
+        query: responseQuery,
+        text: responseQuery,
+        context: {
+          ...context,
+          ...(params.context && typeof params.context === 'object' ? params.context : {}),
+          originalCommand: command,
+          readOnly: true,
+          providerWritesBlocked: true,
+          suppressLeadContext: true,
+        },
+        source: params.source || 'ava-chat-tts-diagnostic',
+      });
+    } else if (avaJarvisCommand) {
       routedTo = 'ava_pbk_jarvis_mode';
       response = await applyAvaJarvisCommand(avaJarvisCommand, context, params);
     } else if (closingIntelligenceCommand) {

@@ -275,6 +275,24 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const avaTtsDiagnosticCommand = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'runAgentCommand',
+        params: {
+          command: 'Ava TTS text is creating fake leads or lerads in the chat bubble. Check the voice output bug, no provider writes.',
+          source: 'ava-avatar-typed',
+          ttsDiagnostic: true,
+          skipPreEnrichment: true,
+          noProviderWrites: true,
+          providerWrites: false,
+        },
+      }),
+    }).then((response) => response.json());
     const closingIntelligence = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',
       headers: {
@@ -868,6 +886,20 @@ async function main() {
     assert(
       avaSafeStatusCommand?.result?.response?.result === 'ava_conversation_intelligence',
       'Ava safe status command did not return conversation intelligence.',
+    );
+    assert(avaTtsDiagnosticCommand?.ok === true, 'Ava TTS diagnostic command did not succeed.');
+    assert(
+      avaTtsDiagnosticCommand?.result?.routedTo === 'ava_conversation_intelligence',
+      `Ava TTS diagnostic command routed to ${avaTtsDiagnosticCommand?.result?.routedTo || 'missing'} instead of ava_conversation_intelligence.`,
+    );
+    assert(
+      avaTtsDiagnosticCommand?.result?.response?.result === 'ava_conversation_intelligence',
+      'Ava TTS diagnostic command did not return conversation intelligence.',
+    );
+    assert(
+      avaTtsDiagnosticCommand?.result?.response?.actionPolicy?.providerWritesBlocked === true
+        || /provider writes blocked|no provider writes|read[-\s]?only/i.test(JSON.stringify(avaTtsDiagnosticCommand?.result?.response || {})),
+      'Ava TTS diagnostic command did not preserve no-provider-write context.',
     );
     assert(closingIntelligence?.ok === true, 'Closing intelligence invoke did not succeed.');
     assert(closingIntelligence?.result?.result === 'closing_intelligence', 'Closing intelligence invoke did not return the closing_intelligence result.');

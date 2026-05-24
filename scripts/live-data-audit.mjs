@@ -632,6 +632,8 @@ const checks = [
       && /result:\s*'deepseek_brain_fallback'/.test(bridge)
       && /function runLiveWebSearch/.test(bridge)
       && /runDeepSeekWebSearchFallback\(query,\s*params/.test(bridge)
+      && /async getBrainState[\s\S]*runLiveWebSearch\(query/.test(bridge)
+      && /deepSeekFallbackActive/.test(bridge)
       && /function buildWebSearchSpikeInjection/.test(bridge)
       && /snnSpikeInjection/.test(bridge)
       && /symbolicFacts/.test(bridge)
@@ -639,6 +641,25 @@ const checks = [
       && /tavilySecretPresent/.test(bridge)
       && /openaiQuotaError/.test(bridge)
       && /queryPreview/.test(bridge),
+  },
+  {
+    name: 'Ava chat TTS diagnostics cannot be misparsed as lead targets or provider writes',
+    ok: /function looksLikeAvaTtsDiagnosticCommand/.test(bridge)
+      && /ttsDiagnosticCommand/.test(bridge)
+      && /suppressLeadContext/.test(bridge)
+      && /providerWritesBlocked/.test(bridge)
+      && /function looksLikeAvaTtsDiagnosticText/.test(index)
+      && /shouldPreEnrichAgentCommand/.test(index)
+      && /source:\s*'ava-chat-bubble-tts'/.test(index)
+      && /skipPreEnrichment/.test(index),
+  },
+  {
+    name: 'Approval board decisions render from write responses without blocking on full refresh',
+    ok: /let decisionResponse = null/.test(index)
+      && /decisionResponse = await requestOpenClawApi\(approvalPath/.test(index)
+      && /decisionResponse = await updateAdminTaskDecision/.test(index)
+      && /decisionResponse\?\.state[\s\S]*renderOpenClawState\(decisionResponse\.state\)/.test(index)
+      && /scheduleApprovalBoardRefreshRetry/.test(index),
   },
   {
     name: 'Command Center displays web-search cognition fallback status',

@@ -20745,9 +20745,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     setBoardActionButtonsDisabled(card, '[data-approval-action]', true);
+    let decisionResponse = null;
     try {
       const teamSession = getTeamSession();
-      await requestOpenClawApi(approvalPath, {
+      decisionResponse = await requestOpenClawApi(approvalPath, {
         method: 'PUT',
         body: {
           status: action,
@@ -20758,7 +20759,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           falsePositiveTag: reviewReason,
           teamToken: teamSession?.token || getTeamSessionToken()
         },
-        timeout: 9000
+        timeout: normalizeRuntimeStatus(action) === 'cancelled' ? 6000 : 9000
       });
     } catch (error) {
       setBoardActionButtonsDisabled(card, '[data-approval-action]', false);
@@ -20773,7 +20774,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     markApprovalCardDecisionAccepted(card, action);
 
     try {
-      await syncOpenClawState({ silent: true });
+      if (decisionResponse?.state) {
+        renderOpenClawState(decisionResponse.state);
+      } else {
+        card.remove();
+        scheduleApprovalBoardRefreshRetry();
+      }
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved'
@@ -20825,6 +20831,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function extractCommandContextFromText(command = '') {
     const raw = String(command || '').trim();
     if (!raw) return {};
+    if (looksLikeAvaTtsDiagnosticText(raw)) return {};
 
     const phoneMatch = raw.match(/(\+?1?[\s.(+-]*\d{3}[\s).-]*\d{3}[\s.-]*\d{4})/);
     const analyzeMatch = raw.match(/\b(?:analyze|run analyzer on|mao on)\s+(.+)$/i);
@@ -20832,7 +20839,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       analyzeMatch ||
       raw.match(/\bat\s+(.+?)(?:\s+(?:now|today|tomorrow|asap|please|right now)\b|$)/i) ||
       raw.match(/\bfor\s+(\d{1,5}[^,]+,\s*[A-Za-z .'-]+(?:,\s*[A-Z]{2})?)/i);
-    const nameMatch = raw.match(/\b(?:call|text|sms|message|send(?: a)?(?: contract| docusign)? to|work this lead and report back on)\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i);
+    const nameMatch =
+      raw.match(/\b(?:call|dial)\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i) ||
+      raw.match(/\b(?:text|sms|message)\s+to\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i) ||
+      raw.match(/\bsend(?: a)?(?: contract| docusign)? to\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i) ||
+      raw.match(/\bwork this lead and report back on\s+(.+?)(?:\s+at\s+|\s+for\s+|$)/i);
 
     const leadName = nameMatch?.[1]?.trim() || '';
     const address = addressMatch?.[1]?.trim().replace(/[.?!]+$/, '') || '';
@@ -20843,6 +20854,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ...(address ? { address } : {}),
       ...(phone ? { phone } : {})
     };
+  }
+
+  function looksLikeAvaTtsDiagnosticText(command = '') {
+    const normalized = String(command || '').trim().toLowerCase();
+    if (!normalized) return false;
+    const mentionsVoiceLayer = /\b(ava\s+)?(?:tts|text[-\s]?to[-\s]?speech|elevenlabs|voice\s+(?:output|chat|bubble|stream|audio|playback)|spoken response|audio playback|chat bubble)\b/i.test(normalized);
+    const mentionsBugOrProvider = /\b(bug|error|failed|returned|quota|token|robot|robotic|sound|sounds|creating|created|fake|lead|leads|lerad|lerads|text is ready)\b/i.test(normalized);
+    return mentionsVoiceLayer && mentionsBugOrProvider;
+  }
+
+  function shouldPreEnrichAgentCommand(command = '', context = {}, extra = {}) {
+    if (extra.skipPreEnrichment === true || looksLikeAvaTtsDiagnosticText(command)) return false;
+    if (context.phone || context.address) return true;
+    if (!context.leadName) return false;
+    if (extra.source === 'ava-avatar-typed' && !/\b(?:call|dial|text\s+to|sms\s+to|message\s+to|send(?: a)?(?: contract| docusign)? to|work this lead and report back on)\b/i.test(command)) {
+      return false;
+    }
+    return true;
   }
 
   function synthesizePhone(seed = '') {
@@ -21378,12 +21407,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ...extractCommandContextFromText(trimmed),
       ...extra
     };
+    const shouldPreEnrich = shouldPreEnrichAgentCommand(trimmed, commandContext, extra);
 
-    if ((commandContext.leadName || commandContext.address) && !commandContext.phone) {
+    if (shouldPreEnrich && (commandContext.leadName || commandContext.address) && !commandContext.phone) {
       commandContext.phone = synthesizePhone(`${commandContext.leadName || ''}-${commandContext.address || ''}-${trimmed}`);
     }
 
-    if (commandContext.leadName || commandContext.address) {
+    if (shouldPreEnrich && (commandContext.leadName || commandContext.address)) {
       appendThinkLine('calling skipTrace', 'tool');
       try {
         const skipTraceResponse = await PBK.openclaw.invoke('skipTrace', commandContext);
@@ -21412,7 +21442,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     try {
       response = await PBK.openclaw.invoke('runAgentCommand', {
         command: trimmed,
-        ...commandContext
+        ...commandContext,
+        ...(looksLikeAvaTtsDiagnosticText(trimmed) ? {
+          readOnly: true,
+          noProviderWrites: true,
+          providerWrites: false,
+          skipPreEnrichment: true,
+          ttsDiagnostic: true,
+          suppressLeadContext: true
+        } : {})
       });
       await applyRuntimeResponse(response);
       const agentAnswer = response?.result?.response?.answer || response?.result?.answer || response?.answer || '';
@@ -30099,7 +30137,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           ? 'Dashboard cancelled this queued task without approval or provider execution.'
           : `Dashboard marked task ${normalizedStatus}.`
       },
-      timeout: 12000
+      timeout: normalizedStatus === 'cancelled' ? 6000 : 12000
     });
   }
 
@@ -30136,8 +30174,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     setBoardActionButtonsDisabled(card, '[data-admin-action]', true);
+    let decisionResponse = null;
     try {
-      await updateAdminTaskDecision(taskId, action);
+      decisionResponse = await updateAdminTaskDecision(taskId, action);
     } catch (error) {
       setBoardActionButtonsDisabled(card, '[data-admin-action]', false);
       toast({
@@ -30151,7 +30190,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     markApprovalCardDecisionAccepted(card, action);
 
     try {
-      await syncOpenClawState({ silent: true });
+      if (decisionResponse?.state) {
+        renderOpenClawState(decisionResponse.state);
+      } else {
+        card.remove();
+        scheduleApprovalBoardRefreshRetry();
+      }
       toast({
         type: action === 'approved' ? 'success' : 'warning',
         title: action === 'approved' ? 'Admin action sent to PBK Brain' : normalizeRuntimeStatus(action) === 'cancelled' ? 'Admin task cancelled' : 'Admin task declined',
@@ -30613,7 +30657,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const response = await fetchWithTimeout(`${base}/api/voice/tts`, {
           method: 'POST',
           headers: getVoiceHeaders(true),
-          body: JSON.stringify({ text: clean }),
+          body: JSON.stringify({ text: clean, source: 'ava-chat-bubble-tts', noLeadCapture: true }),
         }, 30000);
         if (!response.ok) {
           showAvaVoiceDiagnostic('tts', `Ava text is ready, but ElevenLabs returned ${response.status}. Check the TTS key or quota.`);
@@ -30686,7 +30730,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const response = await fetch(`${base}/api/voice/tts/stream`, {
           method: 'POST',
           headers: getVoiceHeaders(true),
-          body: JSON.stringify({ text: clean }),
+          body: JSON.stringify({ text: clean, source: 'ava-chat-bubble-tts', noLeadCapture: true }),
           signal: controller.signal,
           keepalive: false,
         });
@@ -31012,6 +31056,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const response = await submitAgentCommand(command, {
           actor: 'PBK desktop voice panel',
           source: 'ava-avatar-typed',
+          ...(looksLikeAvaTtsDiagnosticText(command) ? {
+            readOnly: true,
+            noProviderWrites: true,
+            providerWrites: false,
+            skipPreEnrichment: true,
+            ttsDiagnostic: true,
+            suppressLeadContext: true
+          } : {})
         });
         const answer = response
           ? (getCommandResponseText(response) || 'I staged that under PBK approval guardrails.')

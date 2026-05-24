@@ -68,6 +68,7 @@
     "test:e2e": "node ./scripts/openclaw-e2e.mjs",
     "test:e2e:browseros": "node ./scripts/browseros-e2e.mjs",
     "test:hosted": "node ./scripts/openclaw-hosted-smoke.mjs",
+    "test:brain-outside-in": "node ./scripts/brain-outside-in-smoke.mjs",
     "test:mcp": "npm --prefix ./mcp-server run typecheck",
     "test:strategy": "node ./scripts/test-negotiation-intelligence.mjs",
     "test:snn": "node ./scripts/snn-worker-smoke.mjs",

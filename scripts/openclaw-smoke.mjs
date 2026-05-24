@@ -333,6 +333,26 @@ async function main() {
         sentiment: 0.22,
       }),
     }).then((response) => response.json());
+    const prosodyDebug = await fetch(`${BASE_URL}/api/v1/prosody/debug`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        text: 'That is great. We can move quickly today.',
+        emotion: 'joy',
+        intensity: 0.9,
+        sentiment: 0.86,
+        turnCount: 3,
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    const prosodyAnalytics = await fetch(`${BASE_URL}/api/v1/prosody/analytics?days=14`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
     const liveReplyPreview = await fetch(`${BASE_URL}/api/voice/live-reply/preview`, {
       method: 'POST',
       headers: {
@@ -804,6 +824,13 @@ async function main() {
     assert(health?.componentSummary?.total >= 10, 'Bridge health component summary is incomplete.');
     assert(ttsHealth?.ok === true && ttsHealth?.elevenLabs?.provider === 'ElevenLabs', 'ElevenLabs TTS health endpoint did not return provider metadata.');
     assert(ttsHealth?.elevenLabs?.tuning?.dynamicProsody === true, 'ElevenLabs TTS health did not expose dynamic prosody tuning.');
+    assert(ttsHealth?.elevenLabs?.tuning?.prosodyLearning === true, 'ElevenLabs TTS health did not expose prosody learning.');
+    assert(prosodyDebug?.ok === true && prosodyDebug?.result === 'prosody_debug', 'Prosody debug endpoint did not return a debug result.');
+    assert(Array.isArray(prosodyDebug?.prosody?.tags) && prosodyDebug.prosody.tags.length > 0, 'Prosody debug did not plan dynamic emotional tags.');
+    if (prosodyDebug?.elevenLabs?.audioTagsEnabled === false) {
+      assert(prosodyDebug?.textControls?.appliedTags === false, 'Prosody debug unexpectedly applied audio tags to the low-latency model.');
+    }
+    assert(prosodyAnalytics?.ok === true && prosodyAnalytics?.summary && typeof prosodyAnalytics.summary.total === 'number', 'Prosody analytics endpoint did not return a summary.');
     assert(unauthorizedState.status === 401, `Expected unauthenticated /state to return 401, got ${unauthorizedState.status}.`);
     assert(Array.isArray(state?.approvals), 'Authenticated /state did not return approvals.');
     assert(quotas?.ok === true, 'Quota endpoint did not return ok: true.');

@@ -174,6 +174,12 @@ services:
         value: "0.75"
       - key: PBK_ELEVENLABS_SPEED
         value: "0.98"
+      # Keep these off for the low-latency turbo phone model unless you move
+      # Ava to an ElevenLabs model that explicitly supports audio tags/SSML.
+      - key: PBK_ELEVENLABS_AUDIO_TAGS_ENABLED
+        value: "false"
+      - key: PBK_ELEVENLABS_SSML_ENABLED
+        value: "false"
 
       # Protected operator controls. Used for kill-switch restore/activation and
       # Ava-to-operator urgent calls. Do not commit the passcode value here.

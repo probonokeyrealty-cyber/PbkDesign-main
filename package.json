@@ -26,6 +26,7 @@
     "emotion-world-model:train": "node ./scripts/train-emotion-world-model.mjs",
     "emotion-world-model:export-onnx": "node ./scripts/train-emotion-world-model.mjs --export-onnx",
     "emotion-world-model:serve": "node ./scripts/serve-emotion-world-model.mjs",
+    "prosody:train": "node ./scripts/train-prosody-model.mjs",
     "campaigns:worker": "node ./scripts/campaign-worker.mjs",
     "campaigns:worker:dry-run": "set PBK_CAMPAIGN_WORKER_DRY_RUN=true&& node ./scripts/campaign-worker.mjs",
     "ava:memory:worker": "node ./scripts/ava-memory-worker.mjs",

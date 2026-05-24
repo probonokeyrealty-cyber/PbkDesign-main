@@ -273,6 +273,8 @@ const ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_ELEVENLABS_OUTPUT_FORMAT
 const ELEVENLABS_STABILITY = Number(process.env.PBK_ELEVENLABS_STABILITY || process.env.ELEVENLABS_STABILITY || 0.5);
 const ELEVENLABS_SIMILARITY_BOOST = Number(process.env.PBK_ELEVENLABS_SIMILARITY_BOOST || process.env.ELEVENLABS_SIMILARITY_BOOST || 0.75);
 const ELEVENLABS_SPEED = Number(process.env.PBK_ELEVENLABS_SPEED || process.env.ELEVENLABS_SPEED || 0.98);
+const ELEVENLABS_AUDIO_TAGS_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ELEVENLABS_AUDIO_TAGS_ENABLED || process.env.ELEVENLABS_AUDIO_TAGS_ENABLED || '').trim());
+const ELEVENLABS_SSML_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ELEVENLABS_SSML_ENABLED || process.env.ELEVENLABS_SSML_ENABLED || '').trim());
 let __elevenLabsValidation = {
   checkedAt: '',
   ok: null,
@@ -828,6 +830,8 @@ const LIMITS = {
   emotionalMemory: 600,
   emotionalLearningInteractions: 1200,
   emotionalLearningMemory: 600,
+  prosodyDecisions: 1600,
+  prosodyModels: 60,
   rexDecisions: 240,
   avaActiveMemories: 120,
   pbkMemories: 240,
@@ -1310,6 +1314,10 @@ function getElevenLabsProviderMeta() {
       similarityBoost: ELEVENLABS_SIMILARITY_BOOST,
       speed: ELEVENLABS_SPEED,
       dynamicProsody: true,
+      dynamicAudioTags: ELEVENLABS_AUDIO_TAGS_ENABLED,
+      ssmlEnabled: ELEVENLABS_SSML_ENABLED,
+      prosodyLearning: true,
+      activeProsodyModel: getActiveProsodyModel()?.id || null,
     },
     validated: __elevenLabsValidation.ok === true,
     validation: __elevenLabsValidation.ok === null ? null : { ...__elevenLabsValidation },
@@ -4141,6 +4149,8 @@ function buildDefaultState() {
     emotionalPolicyExperiments: [],
     emotionalPolicyAssignments: [],
     emotionalPolicyOutcomes: [],
+    prosodyDecisions: [],
+    prosodyModels: [],
     agentSkillTransfers: [],
     agentSkillExperiments: [],
     agentVersions: [],
@@ -4895,6 +4905,97 @@ async function ensurePgSchema() {
       ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    CREATE TABLE IF NOT EXISTS public.pbk_prosody_decisions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      utterance_id TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      text_preview TEXT NOT NULL DEFAULT '',
+      emotion TEXT NOT NULL DEFAULT 'neutral',
+      intensity NUMERIC NOT NULL DEFAULT 0.5,
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      seller_sentiment NUMERIC,
+      last_objection_seconds_ago NUMERIC,
+      stability_chosen NUMERIC NOT NULL DEFAULT 0.5,
+      speed_chosen NUMERIC NOT NULL DEFAULT 0.98,
+      similarity_boost_chosen NUMERIC NOT NULL DEFAULT 0.75,
+      tags_chosen JSONB NOT NULL DEFAULT '[]'::jsonb,
+      text_controls JSONB NOT NULL DEFAULT '{}'::jsonb,
+      model_id TEXT NOT NULL DEFAULT '',
+      voice_id TEXT NOT NULL DEFAULT '',
+      outcome_success BOOLEAN,
+      outcome_label TEXT NOT NULL DEFAULT 'pending',
+      reward NUMERIC,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_prosody_decisions
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS call_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS lead_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS utterance_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      ADD COLUMN IF NOT EXISTS text_preview TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS emotion TEXT NOT NULL DEFAULT 'neutral',
+      ADD COLUMN IF NOT EXISTS intensity NUMERIC NOT NULL DEFAULT 0.5,
+      ADD COLUMN IF NOT EXISTS turn_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS seller_sentiment NUMERIC,
+      ADD COLUMN IF NOT EXISTS last_objection_seconds_ago NUMERIC,
+      ADD COLUMN IF NOT EXISTS stability_chosen NUMERIC NOT NULL DEFAULT 0.5,
+      ADD COLUMN IF NOT EXISTS speed_chosen NUMERIC NOT NULL DEFAULT 0.98,
+      ADD COLUMN IF NOT EXISTS similarity_boost_chosen NUMERIC NOT NULL DEFAULT 0.75,
+      ADD COLUMN IF NOT EXISTS tags_chosen JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS text_controls JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS voice_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS outcome_success BOOLEAN,
+      ADD COLUMN IF NOT EXISTS outcome_label TEXT NOT NULL DEFAULT 'pending',
+      ADD COLUMN IF NOT EXISTS reward NUMERIC,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.pbk_prosody_models (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      version BIGINT NOT NULL DEFAULT 1,
+      model_type TEXT NOT NULL DEFAULT 'rule_success_average',
+      model_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      onnx_url TEXT NOT NULL DEFAULT '',
+      sample_count INTEGER NOT NULL DEFAULT 0,
+      success_count INTEGER NOT NULL DEFAULT 0,
+      accuracy NUMERIC,
+      active BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'trained',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_prosody_models
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS model_type TEXT NOT NULL DEFAULT 'rule_success_average',
+      ADD COLUMN IF NOT EXISTS model_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS onnx_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS sample_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS success_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS accuracy NUMERIC,
+      ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'trained',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    ALTER TABLE public.pbk_prosody_models
+      ALTER COLUMN version TYPE BIGINT USING version::bigint;
+
     CREATE TABLE IF NOT EXISTS public.pbk_call_qa_scores (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5159,6 +5260,33 @@ async function ensurePgSchema() {
 
     ALTER TABLE public.pbk_emotional_policy_outcomes ENABLE ROW LEVEL SECURITY;
 
+    CREATE INDEX IF NOT EXISTS pbk_prosody_decisions_call_idx
+      ON public.pbk_prosody_decisions (tenant_id, call_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_prosody_decisions_outcome_idx
+      ON public.pbk_prosody_decisions (tenant_id, outcome_success, outcome_label, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_prosody_decisions_emotion_idx
+      ON public.pbk_prosody_decisions (tenant_id, emotion, intensity, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_prosody_decisions_tags_idx
+      ON public.pbk_prosody_decisions USING gin (tags_chosen);
+
+    CREATE INDEX IF NOT EXISTS pbk_prosody_models_active_idx
+      ON public.pbk_prosody_models (tenant_id, active, trained_at DESC);
+
+    ALTER TABLE public.pbk_prosody_decisions ENABLE ROW LEVEL SECURITY;
+
+    ALTER TABLE public.pbk_prosody_models ENABLE ROW LEVEL SECURITY;
+
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_prosody_decisions TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_prosody_models TO service_role;
+      END IF;
+    END $$;
+
     CREATE INDEX IF NOT EXISTS pbk_learning_requests_lookup_idx
       ON public.pbk_learning_requests (tenant_id, status, created_at DESC);
 
@@ -5279,6 +5407,16 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS pbk_emotional_learning_memory_set_updated_at ON public.pbk_emotional_learning_memory;
     CREATE TRIGGER pbk_emotional_learning_memory_set_updated_at
       BEFORE UPDATE ON public.pbk_emotional_learning_memory
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_prosody_decisions_set_updated_at ON public.pbk_prosody_decisions;
+    CREATE TRIGGER pbk_prosody_decisions_set_updated_at
+      BEFORE UPDATE ON public.pbk_prosody_decisions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS pbk_prosody_models_set_updated_at ON public.pbk_prosody_models;
+    CREATE TRIGGER pbk_prosody_models_set_updated_at
+      BEFORE UPDATE ON public.pbk_prosody_models
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DROP TRIGGER IF EXISTS pbk_outcome_reports_set_updated_at ON public.pbk_outcome_reports;
@@ -6661,6 +6799,8 @@ function limitStateArrays(nextState) {
   nextState.emotionalMemory = sortNewest(nextState.emotionalMemory || []).slice(0, LIMITS.emotionalMemory);
   nextState.emotionalLearningInteractions = sortNewest(nextState.emotionalLearningInteractions || []).slice(0, LIMITS.emotionalLearningInteractions);
   nextState.emotionalLearningMemory = sortNewest(nextState.emotionalLearningMemory || []).slice(0, LIMITS.emotionalLearningMemory);
+  nextState.prosodyDecisions = sortNewest(nextState.prosodyDecisions || []).slice(0, LIMITS.prosodyDecisions);
+  nextState.prosodyModels = sortNewest(nextState.prosodyModels || []).slice(0, LIMITS.prosodyModels);
   nextState.agentVersions = sortNewest(nextState.agentVersions || []).slice(0, LIMITS.agentVersions);
   nextState.rexDecisions = sortNewest(nextState.rexDecisions || []).slice(0, LIMITS.rexDecisions);
   nextState.avaActiveMemories = sortNewest(nextState.avaActiveMemories || []).slice(0, LIMITS.avaActiveMemories);
@@ -9243,10 +9383,29 @@ function buildAvaProsodyProfile(params = {}) {
     delivery = 'very slow, dignified, no humor, reduce the burden';
   }
 
+  const turnCount = Math.max(0, Math.round(toNumber(params.turnCount ?? params.turn_count ?? params.conversationTurnCount, 0)));
+  const intensity = clampProsodyNumber(params.intensity ?? params.emotionIntensity ?? (/angry|frustrated|grieving|overwhelmed|urgent|excited/.test(emotion) ? 0.72 : 0.5), 0, 1, 0.5);
+  const tags = deriveDynamicProsodyTags({
+    text,
+    emotion,
+    intensity,
+    profile,
+    turnCount,
+    sentiment,
+    lastObjectionSecondsAgo: params.lastObjectionSecondsAgo ?? params.last_objection_seconds_ago,
+  });
+  const learned = suggestProsodyFromActiveModel({ emotion, profile, sentiment, intensity, stability, speed, similarityBoost });
+  if (learned?.applied) {
+    stability = learned.stability;
+    speed = learned.speed;
+    similarityBoost = learned.similarityBoost;
+  }
+
   return {
     profile,
     sentiment,
     emotion,
+    intensity,
     speed,
     stability,
     similarityBoost,
@@ -9254,12 +9413,189 @@ function buildAvaProsodyProfile(params = {}) {
     pauseMs,
     pitchGuidance,
     delivery,
+    tags,
+    audioTags: {
+      enabled: ELEVENLABS_AUDIO_TAGS_ENABLED,
+      planned: tags,
+      reason: ELEVENLABS_AUDIO_TAGS_ENABLED ? 'enabled_by_environment' : 'disabled_for_low_latency_model_safety',
+    },
+    ssml: {
+      enabled: ELEVENLABS_SSML_ENABLED,
+      reason: ELEVENLABS_SSML_ENABLED ? 'enabled_by_environment' : 'disabled_for_provider_compatibility',
+    },
+    learningModel: learned,
     voiceSettings: {
       stability,
       similarity_boost: similarityBoost,
       speed,
       use_speaker_boost: true,
     },
+  };
+}
+
+function clampProsodyNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function normalizeProsodyTag(value = '') {
+  return String(value || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/[^a-z0-9_-]+/g, '_');
+}
+
+function deriveDynamicProsodyTags(params = {}) {
+  const text = String(params.text || '').toLowerCase();
+  const emotion = String(params.emotion || params.profile || '').toLowerCase();
+  const profile = String(params.profile || '').toLowerCase();
+  const intensity = clampProsodyNumber(params.intensity, 0, 1, 0.5);
+  const sentiment = clampProsodyNumber(params.sentiment, 0, 1, 0.55);
+  const turnCount = Math.max(0, Math.round(toNumber(params.turnCount ?? params.turn_count, 0)));
+  const lastObjectionSecondsAgo = Number(params.lastObjectionSecondsAgo ?? params.last_objection_seconds_ago ?? 999);
+  const tags = new Set();
+
+  if ((/joy|happy|excited/.test(emotion) || profile === 'closing_momentum' || sentiment > 0.76) && intensity >= 0.65) {
+    tags.add('excited');
+    if (intensity >= 0.78 && turnCount <= 12) tags.add('laughs');
+  }
+  if (/sad|grief|overwhelmed/.test(emotion) || profile === 'grief_safe' || /\b(worried|scared|overwhelmed|lost my|passed away)\b/.test(text)) {
+    tags.add('softly');
+    if (intensity >= 0.55) tags.add('sighs');
+  }
+  if (/fear|anxious|worried/.test(emotion) || /\b(scared|nervous|not sure|trust|scam)\b/.test(text)) {
+    tags.add('softly');
+    if (intensity >= 0.72) tags.add('whispers');
+  }
+  if (/angry|frustrated|defensive|distrust/.test(emotion) || profile === 'de_escalation' || lastObjectionSecondsAgo < 15) {
+    tags.add('softly');
+    tags.delete('laughs');
+    tags.delete('excited');
+  }
+  if (/\b(today|quickly|now|urgent|asap|deadline)\b/.test(text) && sentiment >= 0.45) {
+    tags.add('focused');
+    if (sentiment > 0.65) tags.add('excited');
+  }
+
+  return Array.from(tags).map(normalizeProsodyTag).filter(Boolean).slice(0, 4);
+}
+
+function supportsElevenLabsAudioTags(modelId = '') {
+  if (ELEVENLABS_AUDIO_TAGS_ENABLED) return true;
+  return /\bv3\b|eleven_v3|eleven-?v3/i.test(String(modelId || ''));
+}
+
+function escapeSsmlText(value = '') {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function injectDynamicProsodyTags(text = '', tags = [], options = {}) {
+  const modelId = String(options.modelId || '').trim();
+  const normalized = [...new Set((Array.isArray(tags) ? tags : []).map(normalizeProsodyTag).filter(Boolean))];
+  const enabled = supportsElevenLabsAudioTags(modelId);
+  const cleanText = String(text || '');
+  if (!enabled || !normalized.length) {
+    return {
+      text: cleanText,
+      applied: false,
+      tags: normalized,
+      reason: normalized.length ? 'audio_tags_disabled_for_live_model' : 'no_tags_planned',
+    };
+  }
+  const bracketTags = normalized.map((tag) => `[${tag}]`);
+  let tagged = cleanText;
+  const midSentenceTag = bracketTags.find((tag) => /\[(laughs|sighs|softly|whispers)\]/i.test(tag));
+  if (midSentenceTag && /[,.!?]\s+/.test(tagged)) {
+    tagged = tagged.replace(/([,.!?])\s+/, `$1 ${midSentenceTag} `);
+  }
+  tagged = `${bracketTags.slice(0, 2).join(' ')} ${tagged}`.replace(/\s+/g, ' ').trim();
+  return {
+    text: tagged,
+    applied: true,
+    tags: normalized,
+    reason: 'audio_tags_injected',
+  };
+}
+
+function buildProsodySsml(text = '', prosody = {}) {
+  if (!ELEVENLABS_SSML_ENABLED) {
+    return {
+      text: String(text || ''),
+      applied: false,
+      reason: 'ssml_disabled_for_provider_compatibility',
+    };
+  }
+  const speed = clampProsodyNumber(prosody.speed, 0.7, 1.35, 1);
+  const pauseMs = Math.round(clampProsodyNumber(prosody.pauseMs, 150, 1400, 500));
+  let escaped = escapeSsmlText(text);
+  if (/de_escalation|trust_builder|grief_safe/i.test(String(prosody.profile || ''))) {
+    escaped = escaped.replace(/\b(understand|hear you|fair|comfortable|concern)\b/gi, '<prosody rate="slow" pitch="-2%">$1</prosody>');
+  }
+  if (/closing_momentum/i.test(String(prosody.profile || ''))) {
+    escaped = escaped.replace(/\b(today|next step|move forward|quickly|close)\b/gi, '<prosody rate="fast" pitch="+2%">$1</prosody>');
+  }
+  escaped = escaped.replace(/([.!?])\s+/g, `$1<break time="${pauseMs}ms"/> `);
+  return {
+    text: `<speak><prosody rate="${speed.toFixed(2)}">${escaped}</prosody></speak>`,
+    applied: true,
+    reason: 'ssml_applied',
+  };
+}
+
+function applyProsodyTextControls(text = '', prosody = {}, options = {}) {
+  const modelId = String(options.modelId || '').trim();
+  const tagResult = injectDynamicProsodyTags(text, prosody.tags || prosody.audioTags?.planned || [], { modelId });
+  const ssmlResult = buildProsodySsml(tagResult.text, prosody);
+  return {
+    text: ssmlResult.applied ? ssmlResult.text : tagResult.text,
+    originalText: String(text || ''),
+    tags: tagResult.tags,
+    appliedTags: tagResult.applied,
+    tagReason: tagResult.reason,
+    ssmlApplied: ssmlResult.applied,
+    ssmlReason: ssmlResult.reason,
+    modelId,
+  };
+}
+
+function getActiveProsodyModel() {
+  const models = Array.isArray(state.prosodyModels) ? state.prosodyModels : [];
+  return sortNewest(models).find((model) => model?.active === true && plainObject(model.modelJson || model.model_json).emotionAverages);
+}
+
+function suggestProsodyFromActiveModel(params = {}) {
+  const model = getActiveProsodyModel();
+  if (!model) return { applied: false, reason: 'no_active_model' };
+  const modelJson = plainObject(model.modelJson || model.model_json);
+  const emotionAverages = plainObject(modelJson.emotionAverages);
+  const keyCandidates = [
+    String(params.emotion || '').toLowerCase(),
+    String(params.profile || '').toLowerCase(),
+    'global',
+  ].filter(Boolean);
+  let suggestion = null;
+  let matchedKey = '';
+  for (const key of keyCandidates) {
+    const candidate = plainObject(emotionAverages[key]);
+    if (Number(candidate.sampleCount || 0) >= 3) {
+      suggestion = candidate;
+      matchedKey = key;
+      break;
+    }
+  }
+  if (!suggestion) return { applied: false, reason: 'insufficient_matching_samples', modelId: model.id };
+  return {
+    applied: true,
+    reason: 'active_success_model',
+    modelId: model.id,
+    matchedKey,
+    sampleCount: Number(suggestion.sampleCount || 0),
+    stability: clampProsodyNumber(suggestion.stability, 0.2, 0.9, params.stability ?? 0.5),
+    speed: clampProsodyNumber(suggestion.speed, 0.7, 1.35, params.speed ?? 1),
+    similarityBoost: clampProsodyNumber(suggestion.similarityBoost, 0.5, 0.95, params.similarityBoost ?? 0.78),
   };
 }
 
@@ -24622,6 +24958,384 @@ async function queryPgRows(sql = '', params = []) {
   }
 }
 
+async function persistProsodyDecisionToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_prosody_decisions (
+       id, tenant_id, call_id, lead_id, utterance_id, source, text_preview,
+       emotion, intensity, turn_count, seller_sentiment, last_objection_seconds_ago,
+       stability_chosen, speed_chosen, similarity_boost_chosen, tags_chosen,
+       text_controls, model_id, voice_id, outcome_success, outcome_label, reward,
+       metadata, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18,$19,$20,$21,$22,$23::jsonb,$24,$25)
+     ON CONFLICT (id) DO UPDATE SET
+       outcome_success = EXCLUDED.outcome_success,
+       outcome_label = EXCLUDED.outcome_label,
+       reward = EXCLUDED.reward,
+       metadata = public.pbk_prosody_decisions.metadata || EXCLUDED.metadata,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      record.tenantId,
+      record.callId || '',
+      record.leadId || '',
+      record.utteranceId || '',
+      record.source || '',
+      record.textPreview || '',
+      record.emotion || 'neutral',
+      Number(record.intensity ?? 0.5),
+      Number(record.turnCount ?? 0),
+      record.sellerSentiment === null || record.sellerSentiment === undefined ? null : Number(record.sellerSentiment),
+      record.lastObjectionSecondsAgo === null || record.lastObjectionSecondsAgo === undefined ? null : Number(record.lastObjectionSecondsAgo),
+      Number(record.stabilityChosen ?? 0.5),
+      Number(record.speedChosen ?? 1),
+      Number(record.similarityBoostChosen ?? 0.75),
+      JSON.stringify(record.tagsChosen || []),
+      JSON.stringify(record.textControls || {}),
+      record.modelId || '',
+      record.voiceId || '',
+      typeof record.outcomeSuccess === 'boolean' ? record.outcomeSuccess : null,
+      record.outcomeLabel || 'pending',
+      record.reward === null || record.reward === undefined ? null : Number(record.reward),
+      JSON.stringify(record.metadata || {}),
+      record.createdAt || isoNow(),
+      record.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistProsodyModelToPg(model = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_prosody_models (
+       id, tenant_id, version, model_type, model_json, onnx_url, sample_count,
+       success_count, accuracy, active, status, metadata, trained_at, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15)
+     ON CONFLICT (id) DO UPDATE SET
+       model_json = EXCLUDED.model_json,
+       onnx_url = EXCLUDED.onnx_url,
+       sample_count = EXCLUDED.sample_count,
+       success_count = EXCLUDED.success_count,
+       accuracy = EXCLUDED.accuracy,
+       active = EXCLUDED.active,
+       status = EXCLUDED.status,
+       metadata = EXCLUDED.metadata,
+       trained_at = EXCLUDED.trained_at,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      model.id,
+      model.tenantId,
+      Number(model.version || Date.now()),
+      model.modelType || 'rule_success_average',
+      JSON.stringify(model.modelJson || {}),
+      model.onnxUrl || '',
+      Number(model.sampleCount || 0),
+      Number(model.successCount || 0),
+      model.accuracy === null || model.accuracy === undefined ? null : Number(model.accuracy),
+      model.active === true,
+      model.status || 'trained',
+      JSON.stringify(model.metadata || {}),
+      model.trainedAt || isoNow(),
+      model.createdAt || isoNow(),
+      model.updatedAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function recordProsodyDecision(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const prosody = plainObject(params.prosody);
+  const textControls = plainObject(params.textControls);
+  const id = String(params.id || `prosody-${slugify(params.callId || params.leadId || params.source || 'ava')}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim();
+  const record = {
+    id,
+    tenantId,
+    callId: String(params.callId || params.call_id || '').trim(),
+    leadId: String(params.leadId || params.lead_id || '').trim(),
+    utteranceId: String(params.utteranceId || params.utterance_id || id).trim(),
+    source: String(params.source || 'ava-tts').trim(),
+    textPreview: String(params.textPreview || params.text || textControls.originalText || '').replace(/\s+/g, ' ').trim().slice(0, 260),
+    emotion: String(params.emotion || prosody.emotion || 'neutral').toLowerCase(),
+    intensity: clampProsodyNumber(params.intensity ?? prosody.intensity, 0, 1, 0.5),
+    turnCount: Math.max(0, Math.round(toNumber(params.turnCount ?? params.turn_count ?? prosody.turnCount, 0))),
+    sellerSentiment: params.sellerSentiment ?? params.seller_sentiment ?? prosody.sentiment ?? null,
+    lastObjectionSecondsAgo: params.lastObjectionSecondsAgo ?? params.last_objection_seconds_ago ?? null,
+    stabilityChosen: clampProsodyNumber(params.stabilityChosen ?? params.stability_chosen ?? prosody.stability, 0.2, 0.95, 0.5),
+    speedChosen: clampProsodyNumber(params.speedChosen ?? params.speed_chosen ?? prosody.speed, 0.7, 1.35, 1),
+    similarityBoostChosen: clampProsodyNumber(params.similarityBoostChosen ?? params.similarity_boost_chosen ?? prosody.similarityBoost ?? prosody.similarity_boost, 0.5, 0.98, 0.75),
+    tagsChosen: Array.isArray(params.tagsChosen || params.tags_chosen) ? (params.tagsChosen || params.tags_chosen).map(normalizeProsodyTag).filter(Boolean) : (prosody.tags || []).map(normalizeProsodyTag).filter(Boolean),
+    textControls,
+    modelId: String(params.modelId || params.model_id || '').trim(),
+    voiceId: String(params.voiceId || params.voice_id || '').trim(),
+    outcomeSuccess: typeof params.outcomeSuccess === 'boolean' ? params.outcomeSuccess : null,
+    outcomeLabel: String(params.outcomeLabel || params.outcome_label || 'pending').trim() || 'pending',
+    reward: params.reward ?? null,
+    metadata: {
+      schemaVersion: 'pbk-prosody-decision-v1',
+      providerStatus: params.providerStatus ?? params.provider_status ?? null,
+      learningModel: prosody.learningModel || null,
+      ...(plainObject(params.metadata)),
+    },
+    createdAt: params.createdAt || isoNow(),
+    updatedAt: isoNow(),
+  };
+  if (!Array.isArray(state.prosodyDecisions)) state.prosodyDecisions = [];
+  upsertById(state, 'prosodyDecisions', record);
+  state.prosodyDecisions = sortNewest(state.prosodyDecisions).slice(0, LIMITS.prosodyDecisions);
+  await persistState(state);
+  void persistProsodyDecisionToPg(record);
+  return record;
+}
+
+async function recordProsodyDecisionFromTtsRequest(tts = {}, body = {}, text = '') {
+  if (body.logProsody === false || body.log_prosody === false) return null;
+  return recordProsodyDecision({
+    tenantId: body.tenantId || body.tenant_id || 'pbk',
+    callId: body.callId || body.call_id || '',
+    leadId: body.leadId || body.lead_id || '',
+    utteranceId: body.utteranceId || body.utterance_id || '',
+    source: body.source || 'voice-tts-api',
+    text,
+    prosody: tts.prosody || {},
+    textControls: tts.textControls || {},
+    modelId: tts.modelId,
+    voiceId: tts.voiceId,
+    providerStatus: tts.response?.status || null,
+    outcomeLabel: tts.response?.ok ? 'pending' : 'provider_failed',
+    outcomeSuccess: tts.response?.ok ? null : false,
+    reward: tts.response?.ok ? null : 0,
+    turnCount: body.turnCount ?? body.turn_count,
+    sellerSentiment: body.sellerSentiment ?? body.seller_sentiment,
+    lastObjectionSecondsAgo: body.lastObjectionSecondsAgo ?? body.last_objection_seconds_ago,
+    metadata: {
+      outputFormat: tts.outputFormat || '',
+      fallbackFromVoiceId: tts.fallbackFromVoiceId || '',
+    },
+  });
+}
+
+async function updateProsodyDecisionOutcome(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const id = String(params.id || '').trim();
+  const utteranceId = String(params.utteranceId || params.utterance_id || '').trim();
+  const callId = String(params.callId || params.call_id || '').trim();
+  const outcomeLabel = String(params.outcomeLabel || params.outcome_label || params.outcome || 'measured').trim();
+  const outcomeSuccess = typeof params.outcomeSuccess === 'boolean'
+    ? params.outcomeSuccess
+    : typeof params.success === 'boolean'
+      ? params.success
+      : /accepted|scheduled|resolved|positive|success|closed/i.test(outcomeLabel);
+  const reward = params.reward === undefined || params.reward === null
+    ? (outcomeSuccess ? 1 : /neutral|pending|no_decision/i.test(outcomeLabel) ? 0.45 : 0)
+    : Number(params.reward);
+  let matches = 0;
+  if (!Array.isArray(state.prosodyDecisions)) state.prosodyDecisions = [];
+  state.prosodyDecisions = state.prosodyDecisions.map((decision) => {
+    const isMatch = id
+      ? decision.id === id
+      : utteranceId
+        ? decision.utteranceId === utteranceId && (!callId || decision.callId === callId)
+        : callId && decision.callId === callId;
+    if (!isMatch) return decision;
+    matches += 1;
+    return {
+      ...decision,
+      outcomeSuccess,
+      outcomeLabel,
+      reward,
+      updatedAt: isoNow(),
+      metadata: {
+        ...(plainObject(decision.metadata)),
+        outcomeSource: params.source || 'api',
+      },
+    };
+  });
+  await persistState(state);
+  const result = await queryPgRows(
+    `UPDATE public.pbk_prosody_decisions
+     SET outcome_success = $1, outcome_label = $2, reward = $3, updated_at = NOW(),
+         metadata = metadata || $4::jsonb
+     WHERE tenant_id = $5
+       AND (($6::text <> '' AND id = $6)
+         OR ($7::text <> '' AND utterance_id = $7 AND ($8::text = '' OR call_id = $8))
+         OR ($6::text = '' AND $7::text = '' AND $8::text <> '' AND call_id = $8))`,
+    [outcomeSuccess, outcomeLabel, reward, JSON.stringify({ outcomeSource: params.source || 'api' }), tenantId, id, utteranceId, callId],
+  );
+  return {
+    ok: result.ok || matches > 0,
+    result: result.ok ? 'prosody_outcome_recorded' : 'state_only',
+    matches,
+    db: { ok: result.ok, reason: result.reason, error: result.error || '' },
+  };
+}
+
+function summarizeProsodyRows(rows = []) {
+  const measured = rows.filter((row) => typeof (row.outcomeSuccess ?? row.outcome_success) === 'boolean');
+  const successful = measured.filter((row) => (row.outcomeSuccess ?? row.outcome_success) === true);
+  const avg = (field, fallback = null) => {
+    const values = successful.map((row) => Number(row[field] ?? row[snakeCaseField(field)])).filter(Number.isFinite);
+    return values.length ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(3)) : fallback;
+  };
+  const byEmotion = {};
+  for (const row of rows) {
+    const emotion = String(row.emotion || 'neutral').toLowerCase();
+    if (!byEmotion[emotion]) byEmotion[emotion] = { emotion, total: 0, measured: 0, successes: 0 };
+    byEmotion[emotion].total += 1;
+    if (typeof (row.outcomeSuccess ?? row.outcome_success) === 'boolean') byEmotion[emotion].measured += 1;
+    if ((row.outcomeSuccess ?? row.outcome_success) === true) byEmotion[emotion].successes += 1;
+  }
+  return {
+    total: rows.length,
+    measured: measured.length,
+    successes: successful.length,
+    successRate: measured.length ? Number((successful.length / measured.length).toFixed(3)) : null,
+    averagesOnSuccess: {
+      stability: avg('stabilityChosen'),
+      speed: avg('speedChosen'),
+      similarityBoost: avg('similarityBoostChosen'),
+    },
+    byEmotion: Object.values(byEmotion).map((item) => ({
+      ...item,
+      successRate: item.measured ? Number((item.successes / item.measured).toFixed(3)) : null,
+    })),
+  };
+}
+
+function snakeCaseField(field = '') {
+  return String(field).replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+async function getProsodyAnalytics(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const days = Math.max(1, Math.min(90, Math.round(toNumber(params.days, 14))));
+  const result = await queryPgRows(
+    `SELECT emotion, intensity, turn_count, seller_sentiment, stability_chosen, speed_chosen,
+            similarity_boost_chosen, tags_chosen, outcome_success, outcome_label, created_at
+     FROM public.pbk_prosody_decisions
+     WHERE tenant_id = $1 AND created_at > NOW() - ($2::int * INTERVAL '1 day')
+     ORDER BY created_at DESC
+     LIMIT 2000`,
+    [tenantId, days],
+  );
+  const rows = result.ok ? result.rows : (Array.isArray(state.prosodyDecisions) ? state.prosodyDecisions : []);
+  const summary = summarizeProsodyRows(rows);
+  return {
+    ok: true,
+    result: result.ok ? 'live' : 'state_fallback',
+    tenantId,
+    days,
+    summary,
+    recommendation: summary.successes >= 10
+      ? `Current successful calls average stability ${summary.averagesOnSuccess.stability}, speed ${summary.averagesOnSuccess.speed}, similarity ${summary.averagesOnSuccess.similarityBoost}.`
+      : 'Collect at least 10 successful measured prosody decisions before trusting automatic tuning.',
+    db: { ok: result.ok, reason: result.reason, error: result.error || '' },
+  };
+}
+
+function trainProsodyModelFromRows(rows = [], params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const measured = rows.filter((row) => typeof (row.outcomeSuccess ?? row.outcome_success) === 'boolean');
+  const successful = measured.filter((row) => (row.outcomeSuccess ?? row.outcome_success) === true);
+  const modelId = String(params.id || `prosody-model-${Date.now()}-${randomUUID().slice(0, 8)}`).trim();
+  const minSamples = Math.max(5, Math.round(toNumber(params.minSamples ?? params.min_samples, 25)));
+  const createdAt = isoNow();
+  if (measured.length < minSamples || successful.length < 3) {
+    return {
+      id: modelId,
+      tenantId,
+      version: Date.now(),
+      modelType: 'rule_success_average',
+      modelJson: { emotionAverages: {}, reason: 'insufficient_data' },
+      sampleCount: measured.length,
+      successCount: successful.length,
+      accuracy: null,
+      active: false,
+      status: 'insufficient_data',
+      trainedAt: createdAt,
+      createdAt,
+      updatedAt: createdAt,
+      metadata: { minSamples, schemaVersion: 'pbk-prosody-model-v1' },
+    };
+  }
+  const groups = { global: [] };
+  for (const row of successful) {
+    const emotion = String(row.emotion || 'neutral').toLowerCase();
+    if (!groups[emotion]) groups[emotion] = [];
+    groups[emotion].push(row);
+    groups.global.push(row);
+  }
+  const averageGroup = (groupRows = []) => {
+    const avg = (field, fallback) => {
+      const values = groupRows.map((row) => Number(row[field] ?? row[snakeCaseField(field)])).filter(Number.isFinite);
+      return values.length ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(3)) : fallback;
+    };
+    return {
+      sampleCount: groupRows.length,
+      stability: avg('stabilityChosen', 0.5),
+      speed: avg('speedChosen', 1),
+      similarityBoost: avg('similarityBoostChosen', 0.75),
+    };
+  };
+  const emotionAverages = Object.fromEntries(Object.entries(groups).map(([key, groupRows]) => [key, averageGroup(groupRows)]));
+  return {
+    id: modelId,
+    tenantId,
+    version: Date.now(),
+    modelType: 'rule_success_average',
+    modelJson: {
+      emotionAverages,
+      strategy: 'Use averages from successful measured calls, grouped by detected emotion with global fallback.',
+      schemaVersion: 'pbk-prosody-model-v1',
+    },
+    sampleCount: measured.length,
+    successCount: successful.length,
+    accuracy: Number((successful.length / measured.length).toFixed(3)),
+    active: true,
+    status: 'trained',
+    trainedAt: createdAt,
+    createdAt,
+    updatedAt: createdAt,
+    metadata: { minSamples, measuredCount: measured.length, successCount: successful.length },
+  };
+}
+
+async function trainAndPersistProsodyModel(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const days = Math.max(1, Math.min(90, Math.round(toNumber(params.days, 14))));
+  const result = await queryPgRows(
+    `SELECT emotion, stability_chosen, speed_chosen, similarity_boost_chosen, outcome_success
+     FROM public.pbk_prosody_decisions
+     WHERE tenant_id = $1 AND outcome_success IS NOT NULL
+       AND created_at > NOW() - ($2::int * INTERVAL '1 day')
+     ORDER BY created_at DESC
+     LIMIT 5000`,
+    [tenantId, days],
+  );
+  const rows = result.ok ? result.rows : (Array.isArray(state.prosodyDecisions) ? state.prosodyDecisions : []);
+  const model = trainProsodyModelFromRows(rows, { ...params, tenantId });
+  if (model.active) {
+    state.prosodyModels = (Array.isArray(state.prosodyModels) ? state.prosodyModels : []).map((existing) => ({
+      ...existing,
+      active: existing.tenantId === tenantId ? false : existing.active,
+    }));
+  }
+  upsertById(state, 'prosodyModels', model);
+  state.prosodyModels = sortNewest(state.prosodyModels).slice(0, LIMITS.prosodyModels);
+  await persistState(state);
+  if (model.active && result.ok) {
+    await queryPgRows('UPDATE public.pbk_prosody_models SET active = FALSE WHERE tenant_id = $1 AND active IS TRUE', [tenantId]);
+  }
+  await persistProsodyModelToPg(model);
+  return {
+    ok: true,
+    result: model.status,
+    model,
+    db: { ok: result.ok, reason: result.reason, error: result.error || '' },
+  };
+}
+
 async function getPbkToolUsageSummary(params = {}) {
   const days = Math.max(1, Math.min(90, Number(params.days || params.rangeDays || 7)));
   const result = await queryPgRows(
@@ -34043,8 +34757,9 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
       text,
       sentiment: body.sentiment ?? body.sentimentScore ?? body.sentiment_score,
     });
+  const textControls = applyProsodyTextControls(text, prosody || {}, { modelId });
   const payload = {
-    text: String(text || '').slice(0, 1800),
+    text: String(textControls.text || text || '').slice(0, 1800),
     model_id: modelId,
     voice_settings: {
       stability: Number(body.stability ?? prosody?.stability ?? ELEVENLABS_STABILITY),
@@ -34063,6 +34778,7 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
     url: url.toString(),
     payload,
     prosody,
+    textControls,
   };
 }
 
@@ -34084,16 +34800,20 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
       voiceId: ELEVENLABS_FALLBACK_VOICE_ID,
     }, text, options);
     const fallbackResponse = await fireRequest(fallbackRequest);
-    return {
+    const fallbackResult = {
       ...fallbackRequest,
       response: fallbackResponse,
       fallbackFromVoiceId: request.voiceId,
     };
+    void recordProsodyDecisionFromTtsRequest(fallbackResult, body, text).catch((error) => console.warn('[Prosody] Failed to log fallback TTS decision:', error?.message || error));
+    return fallbackResult;
   }
-  return {
+  const result = {
     ...request,
     response,
   };
+  void recordProsodyDecisionFromTtsRequest(result, body, text).catch((error) => console.warn('[Prosody] Failed to log TTS decision:', error?.message || error));
+  return result;
 }
 
 async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
@@ -34128,7 +34848,17 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
     ...(process.env.PBK_TELNYX_ELEVENLABS_SIMILARITY_BOOST ? { similarityBoost: Number(process.env.PBK_TELNYX_ELEVENLABS_SIMILARITY_BOOST) } : {}),
     ...(process.env.PBK_TELNYX_ELEVENLABS_SPEED ? { speed: Number(process.env.PBK_TELNYX_ELEVENLABS_SPEED) } : {}),
     sentiment: session.sentiment?.pbkScore ?? session.sentiment?.score ?? null,
+    sellerSentiment: session.sentiment?.pbkScore ?? session.sentiment?.score ?? null,
     emotion: session.sentiment?.label || '',
+    callId: session.callId || session.call_id || session.telnyxCallControlId || '',
+    leadId: session.leadId || session.lead_id || '',
+    utteranceId: `telnyx-tts-${session.callId || session.streamId || Date.now()}-${Date.now()}`,
+    turnCount: Array.isArray(session.transcript) ? session.transcript.length : toNumber(session.turnCount, 0),
+    source: 'telnyx-live-call',
+    metadata: {
+      streamId: session.streamId || '',
+      transport: 'telnyx-media-stream',
+    },
   }, cleanText);
 
   if (!tts.response.ok) {
@@ -38766,6 +39496,57 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && matchesPath(pathname, ['/api/voice/prosody', '/api/v1/voice/prosody'])) {
       const body = await readBody(request);
       const result = await toolHandlers.getProsodyAdvice(body);
+      json(response, 200, result);
+      return;
+    }
+
+    if ((request.method === 'GET' || request.method === 'POST') && matchesPath(pathname, ['/api/prosody/debug', '/api/v1/prosody/debug'])) {
+      const body = request.method === 'POST' ? await readBody(request) : Object.fromEntries(url.searchParams.entries());
+      const text = String(body.text || body.prompt || body.transcript || 'I understand. Let me slow down and make this simple.').trim();
+      const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
+      const prosody = buildAvaProsodyProfile({
+        ...body,
+        text,
+        sentiment: body.sentiment ?? body.sentimentScore ?? body.sellerSentiment ?? body.seller_sentiment,
+      });
+      const textControls = applyProsodyTextControls(text, prosody, { modelId });
+      json(response, 200, {
+        ok: true,
+        result: 'prosody_debug',
+        noProviderWrites: true,
+        text,
+        prosody,
+        textControls,
+        elevenLabs: {
+          voiceId: ELEVENLABS_VOICE_ID,
+          modelId,
+          outputFormat: ELEVENLABS_OUTPUT_FORMAT,
+          audioTagsEnabled: supportsElevenLabsAudioTags(modelId),
+          ssmlEnabled: ELEVENLABS_SSML_ENABLED,
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/prosody/analytics', '/api/v1/prosody/analytics'])) {
+      const result = await getProsodyAnalytics({
+        tenantId: url.searchParams.get('tenantId') || url.searchParams.get('tenant_id') || 'pbk',
+        days: url.searchParams.get('days') || 14,
+      });
+      json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/prosody/outcome', '/api/v1/prosody/outcome'])) {
+      const body = await readBody(request);
+      const result = await updateProsodyDecisionOutcome({ ...body, source: body.source || 'prosody-outcome-api' });
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/prosody/train', '/api/v1/prosody/train'])) {
+      const body = await readBody(request);
+      const result = await trainAndPersistProsodyModel({ ...body, source: body.source || 'prosody-train-api' });
       json(response, 200, result);
       return;
     }

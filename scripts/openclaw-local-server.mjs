@@ -14207,12 +14207,20 @@ async function buildAvaConversationIntelligence(params = {}) {
     : null;
   const pathDecision = architecture.pathDecision || {};
   const pathCanGuide = !reaction.shouldStopContact && !reaction.shouldHandoff;
-  const pathGuidedPhrase = pathCanGuide && pathDecision.shouldClosePath && pathDecision.scriptTrigger
+  const criticalReaction = reaction.shouldStopContact
+    || reaction.shouldHandoff
+    || /\b(stop calling|do not call|don't call|remove me|unsubscribe|scam|fake|legit|real company|who are you|trust)\b/i.test(query);
+  const lockedPathPhrase = pathCanGuide && pathDecision.shouldClosePath && pathDecision.scriptTrigger
     ? pathDecision.scriptTrigger
+    : '';
+  const pathGuidedPhrase = lockedPathPhrase
+    ? (reaction.immediatePhrase && !criticalReaction ? `${reaction.immediatePhrase} ${lockedPathPhrase}` : lockedPathPhrase)
     : pathCanGuide && !pathDecision.pathLocked && pathDecision.nextProbeQuestion && !reaction.immediatePhrase
       ? pathDecision.nextProbeQuestion
       : '';
-  const responseText = reaction.immediatePhrase || pathGuidedPhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '';
+  const responseText = criticalReaction
+    ? (reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '')
+    : (pathGuidedPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
   return {
     ok: true,
     result: 'ava_conversation_intelligence',

@@ -846,6 +846,17 @@ const checks = [
       && /ava_conversation_intelligence/.test(openclawSmoke),
   },
   {
+    name: 'Ava call intelligence probes, locks, and closes down PBK deal paths',
+    ok: /PBK_PATH_SCRIPT_TRIGGERS/.test(bridge)
+      && /PBK_PATH_PROBE_QUESTIONS/.test(bridge)
+      && /function inferAvaDealPathDecision/.test(bridge)
+      && /pathDecision/.test(bridge)
+      && /Path locked: stop broad probing/.test(bridge)
+      && /smoke-test-path-decision/.test(openclawSmoke)
+      && /expectedPath: 'mt'/.test(openclawSmoke)
+      && /expectedPath: 'land'/.test(openclawSmoke),
+  },
+  {
     name: 'Production pristine debugging script names remaining ops gaps without mutating live state',
     ok: /production-pristine-check\.mjs/.test(pkg)
       && /debug:production/.test(pkg)

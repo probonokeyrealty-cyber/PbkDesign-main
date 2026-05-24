@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-24-provider-fallback-chat-brain-hardening';
+const BUILD_REVISION = '2026-05-24-ava-path-probe-lock';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -8967,6 +8967,183 @@ const PBK_CORE_DEAL_PATHS = [
   },
 ];
 
+const PBK_DEAL_PATH_PROBE_MAX_TURNS = Math.max(2, Math.min(8, Number(process.env.PBK_DEAL_PATH_PROBE_MAX_TURNS || 5)));
+const PBK_DEAL_PATH_LOCK_CONFIDENCE = Math.max(0.55, Math.min(0.9, Number(process.env.PBK_DEAL_PATH_LOCK_CONFIDENCE || 0.72)));
+
+const PBK_PATH_SCRIPT_TRIGGERS = {
+  cash: 'If you want the fastest, surest close - no lender, no appraisal, no waiting - our cash offer is the answer. I can show you the exact number the Analyzer supports once we finish the key facts.',
+  rbp: 'The Analyzer says your property may fit our Retail Buyer Program. That can often net more than the clean cash offer, with no out-of-pocket repairs or commissions from you. The tradeoff is usually about 45 to 60 days instead of a faster cash close. Want to see the side-by-side comparison?',
+  cf: 'At today\'s rates, a conventional buyer may not make the numbers work at your full asking price. The Analyzer is pointing toward a Creative Finance conversation: we may be able to get closer to your price if you are open to carrying the note. You get cash at closing, monthly income, and your attorney can review the structure. Is that worth a short conversation?',
+  mt: 'Your low-rate mortgage may be the strongest asset in the deal. If a new buyer has to borrow at today\'s rate, the payment can jump and make your price harder to support. A mortgage takeover path may let us step into the existing payment, get you cash at closing, and document protections before anyone signs. The Analyzer shows this may be your highest-net path.',
+  land: 'We work with builders who are buying lots in your zip code right now. The Analyzer checks what a builder can pay based on zoning, access, utilities, and buildability, then we back into a clean seller number. Want to see the builder-backed number?',
+};
+
+const PBK_PATH_PROBE_QUESTIONS = {
+  cash: 'Is speed and certainty more important to you than squeezing out every last dollar?',
+  rbp: 'If a higher net meant waiting about 45 to 60 days instead of a fast cash close, would that be worth looking at?',
+  cf: 'If I could get closer to your price by using terms instead of all cash, would you be open to hearing that structure?',
+  mt: 'Do you currently have a mortgage on the property, and do you know roughly what rate you have?',
+  land: 'Is this vacant or buildable land, and do you know whether utilities, access, or approvals are already in place?',
+};
+
+function makePathScoreMap() {
+  return Object.fromEntries(PBK_CORE_DEAL_PATHS.map((path) => [path.key, { path: path.key, score: 0, evidence: [] }]));
+}
+
+function addDealPathEvidence(scores = {}, path = 'cash', points = 0, reason = '') {
+  const normalizedPath = normalizePbkDealPath(path, 'cash');
+  if (!scores[normalizedPath]) scores[normalizedPath] = { path: normalizedPath, score: 0, evidence: [] };
+  scores[normalizedPath].score += Number(points || 0);
+  if (reason) scores[normalizedPath].evidence.push(reason);
+}
+
+function getDealPathLabel(path = 'cash') {
+  return getPathDisplayLabel(normalizePbkDealPath(path, 'cash'));
+}
+
+function getAvaPathProbeQuestion(path = 'cash') {
+  const normalizedPath = normalizePbkDealPath(path, 'cash');
+  return PBK_PATH_PROBE_QUESTIONS[normalizedPath] || PBK_PATH_PROBE_QUESTIONS.cash;
+}
+
+function getAvaPathScriptTrigger(path = 'cash') {
+  const normalizedPath = normalizePbkDealPath(path, 'cash');
+  return PBK_PATH_SCRIPT_TRIGGERS[normalizedPath] || PBK_PATH_SCRIPT_TRIGGERS.cash;
+}
+
+function collectAvaPathSignalText(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const context = params.context || {};
+  const bant = params.bant || {};
+  const raw = contextCall.raw && typeof contextCall.raw === 'object' ? contextCall.raw : {};
+  return [
+    params.transcript,
+    params.query,
+    params.text,
+    params.lastUserUtterance,
+    params.selectedPath,
+    params.selected_path,
+    context.selectedPath,
+    context.selected_path,
+    contextCall.selectedPath,
+    contextCall.selected_path,
+    contextCall.path,
+    contextCall.dealPath,
+    contextCall.selectedPathLabel,
+    contextCall.propertyType,
+    contextCall.property_type,
+    raw.propertyType,
+    raw.property_type,
+    raw.type,
+    session.selectedPath,
+    session.identifiedPath,
+    bant.budget,
+    bant.authority,
+    bant.need,
+    bant.timeline,
+    bant.urgency,
+  ].filter(Boolean).join(' ');
+}
+
+function getExplicitSelectedDealPath(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const context = params.context || {};
+  const rawValues = [
+    params.selectedPath,
+    params.selected_path,
+    params.path,
+    params.dealPath,
+    context.selectedPath,
+    context.selected_path,
+    context.path,
+    context.dealPath,
+    contextCall.selectedPath,
+    contextCall.selected_path,
+    contextCall.path,
+    contextCall.dealPath,
+    contextCall.contractPath,
+    contextCall.selectedPathLabel,
+    session.selectedPath,
+    session.identifiedPath,
+  ];
+  const raw = rawValues.find((value) => String(value || '').trim());
+  return raw ? normalizePbkDealPath(raw, '') : '';
+}
+
+function inferAvaDealPathDecision(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const bant = normalizeBantInfo(contextCall.bant || {}, contextCall.raw?.bant || {}, contextCall.raw || {}, params.bant || {});
+  const text = collectAvaPathSignalText({ ...params, bant }).toLowerCase();
+  const scores = makePathScoreMap();
+  const explicitPath = getExplicitSelectedDealPath(params);
+  const pathLockedAlready = Boolean(params.pathLocked || params.path_locked || session.pathLocked || contextCall.pathLocked || contextCall.path_locked);
+  const lockedPath = normalizePbkDealPath(
+    params.identifiedPath || params.identified_path || session.identifiedPath || contextCall.identifiedPath || explicitPath || '',
+    '',
+  );
+  const probeTurnCount = Math.max(
+    0,
+    Number(params.probeTurnCount || params.probe_turn_count || session.pathProbeTurnCount || session.turnCount || params.turnCount || params.turn_count || 0) || 0,
+  );
+
+  if (explicitPath && explicitPath !== 'cash') addDealPathEvidence(scores, explicitPath, 0.48, `Existing context points to ${getDealPathLabel(explicitPath)}.`);
+  if (explicitPath === 'cash' && /\b(cash|as[-\s]?is|fast|quick|certainty|repairs|distress)\b/i.test(text)) {
+    addDealPathEvidence(scores, 'cash', 0.28, 'Existing context and seller language point to a cash offer.');
+  }
+
+  if (/\b(vacant\s+land|raw\s+land|buildable\s+lot|vacant\s+lot|parcel|acreage|acres?|zoning|utilities|septic|road\s+frontage|builder|lots?)\b/i.test(text)) {
+    addDealPathEvidence(scores, 'land', 0.9, 'Seller/property language indicates land, lot, acreage, utilities, zoning, or builder math.');
+  }
+  if (/\b(3(?:\.\d+)?\s*%|4(?:\.\d+)?\s*%|low[-\s]?rate|existing\s+(?:loan|mortgage)|take\s+over\s+(?:the\s+)?payments?|subject[-\s]?to|subto|sub[-\s]?to|assumable|assumption|lose\s+(?:my\s+)?rate|can'?t\s+afford\s+to\s+sell)\b/i.test(text)) {
+    addDealPathEvidence(scores, 'mt', 0.9, 'Seller referenced a low existing mortgage/rate, subject-to, assumption, or payment takeover.');
+  }
+  if (/\b(full\s+(?:asking\s+)?price|seller\s+(?:carry|finance|financing)|carry\s+(?:a\s+)?note|owner\s+finance|installment|monthly\s+income|balloon|wrap|negative\s+cash\s*flow|rent\s+(?:doesn'?t|does not|won'?t|will not)\s+cover|no\s+lender\s+will\s+approve)\b/i.test(text)) {
+    addDealPathEvidence(scores, 'cf', 0.86, 'Seller language points to full-price terms, seller finance, or cash-flow/rate constraints.');
+  }
+  if (/\b(good\s+(?:bones|condition)|updated|move[-\s]?in\s+ready|top\s+dollar|highest\s+(?:net|price)|retail\s+buyer|fha|va|conventional|can\s+wait|45\s*(?:to|-)?\s*60\s+days|two\s+months|don'?t\s+want\s+to\s+list|do\s+not\s+want\s+to\s+list)\b/i.test(text)) {
+    addDealPathEvidence(scores, 'rbp', 0.78, 'Seller language points to good condition, higher net, retail buyer fit, or 45-60 day patience.');
+  }
+  if (/\b(fast|quick|asap|soon|21\s+days|cash|as[-\s]?is|no\s+repairs?|just\s+want\s+it\s+gone|gone\s+fast|divorce|relocat|financial\s+pressure|behind|foreclosure|vacant|distressed|needs?\s+work|repairs?)\b/i.test(text)) {
+    addDealPathEvidence(scores, 'cash', 0.72, 'Seller language points to speed, certainty, as-is, distress, vacancy, or repairs.');
+  }
+
+  const ranked = Object.values(scores)
+    .map((entry) => ({
+      ...entry,
+      score: Math.max(0, Math.min(0.98, Number(entry.score || 0))),
+      label: getDealPathLabel(entry.path),
+    }))
+    .sort((left, right) => right.score - left.score);
+  const best = ranked[0] || { path: 'cash', label: 'Cash Offer', score: 0, evidence: [] };
+  const forcedDefault = !pathLockedAlready && probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS && best.score < 0.4;
+  const selectedPath = pathLockedAlready && lockedPath ? lockedPath : forcedDefault ? 'cash' : best.path;
+  const confidence = pathLockedAlready && lockedPath ? 0.98 : forcedDefault ? 0.46 : best.score;
+  const pathLocked = pathLockedAlready || confidence >= PBK_DEAL_PATH_LOCK_CONFIDENCE || probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS;
+  const closePath = pathLocked && selectedPath;
+  const nextProbeQuestion = closePath ? '' : getAvaPathProbeQuestion(selectedPath || best.path || 'cash');
+  const scriptTrigger = closePath ? getAvaPathScriptTrigger(selectedPath) : '';
+  return {
+    selectedPath,
+    selectedPathLabel: getDealPathLabel(selectedPath),
+    confidence,
+    pathLocked: Boolean(pathLocked),
+    shouldClosePath: Boolean(closePath),
+    probeTurnCount,
+    maxProbeTurns: PBK_DEAL_PATH_PROBE_MAX_TURNS,
+    lockThreshold: PBK_DEAL_PATH_LOCK_CONFIDENCE,
+    evidence: (pathLockedAlready && lockedPath ? ['Path was already locked for this call.'] : best.evidence).slice(0, 5),
+    rankedPaths: ranked.slice(0, 5),
+    nextProbeQuestion,
+    scriptTrigger,
+    rule: closePath
+      ? 'Path locked: stop broad probing, keep the script lane clean, and move through that path toward the next safe close.'
+      : 'Probe one missing fact, then re-score. Do not present a path trigger until confidence or max probe turns locks the path.',
+  };
+}
+
 const AVA_MASTERCLASS_KNOWLEDGE_REVISION = '2026-05-14-command-center-debug-reference';
 const AVA_MASTERCLASS_SOURCE_ID = 'ava-wholesale-conversation-masterclass';
 const AVA_MASTERCLASS_KNOWLEDGE = [
@@ -13043,6 +13220,17 @@ function buildAvaCallArchitectureContext(params = {}) {
   const nextBantQuestion = missingBant.length
     ? buildBantRequiredResult({ leadId: context.leadId, address: context.address }, missingBant, bant).recommendedQuestion
     : '';
+  const pathDecision = inferAvaDealPathDecision({
+    ...params,
+    session,
+    contextCall,
+    context,
+    transcript,
+    query: transcript,
+    bant,
+    selectedPath: params.selectedPath || params.selected_path || contextCall.selectedPath || contextCall.selected_path || context.selectedPath || context.selected_path || '',
+    turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
+  });
   return {
     schemaVersion: 'pbk-ava-call-intelligence-v1',
     enabled: getAvaCallIntelligenceSettings().enabled,
@@ -13058,6 +13246,8 @@ function buildAvaCallArchitectureContext(params = {}) {
       complete: missingBant.length === 0,
       nextQuestion: nextBantQuestion,
     },
+    pathDecision,
+    dealPath: pathDecision,
     scripts,
     rexOversight: {
       recentCallAnalyses: recentAnalyses,
@@ -14015,14 +14205,22 @@ async function buildAvaConversationIntelligence(params = {}) {
   const qa = params.scoreCall === true || params.score_call === true
     ? await scoreCallQualityRecord({ ...params, transcript: params.transcript || query, createRexDecision: params.createRexDecision })
     : null;
-  const responseText = reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '';
+  const pathDecision = architecture.pathDecision || {};
+  const pathCanGuide = !reaction.shouldStopContact && !reaction.shouldHandoff;
+  const pathGuidedPhrase = pathCanGuide && pathDecision.shouldClosePath && pathDecision.scriptTrigger
+    ? pathDecision.scriptTrigger
+    : pathCanGuide && !pathDecision.pathLocked && pathDecision.nextProbeQuestion && !reaction.immediatePhrase
+      ? pathDecision.nextProbeQuestion
+      : '';
+  const responseText = reaction.immediatePhrase || pathGuidedPhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '';
   return {
     ok: true,
     result: 'ava_conversation_intelligence',
     answer: responseText,
     nextBestPhrase: responseText,
     closeQuestion: closing.closeQuestion || closing.advice?.closeQuestion || '',
-    selectedPath: closing.selectedPath || params.selectedPath || '',
+    selectedPath: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
+    pathDecision,
     objectionType: reaction.objectionType,
     reaction,
     prosody: reaction.prosody,
@@ -37488,9 +37686,16 @@ function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
 function normalizeAvaVoiceReplyText(text = '', fallback = '') {
   const candidate = normalizeAvaSpokenScript(text) || normalizeAvaSpokenScript(fallback);
   const clean = String(candidate || '')
+    .replace(/^System:.*$/gim, '')
+    .replace(/\[DEBUG\].*?(?:\n|$)/gi, '')
+    .replace(/Emotion detected:.*?(?:\n|$)/gi, '')
+    .replace(/Tool call:.*?(?:\n|$)/gi, '')
+    .replace(/Stage:.*?(?:\n|$)/gi, '')
+    .replace(/Rex strategist:.*?(?:\n|$)/gi, '')
     .replace(/\b(?:Rex|Ava)\s+Strategist,?\s*/gi, '')
     .replace(/\bPBK\s+(?:Production\s+)?Voice\s+Proof,?\s*/gi, '')
     .replace(/\b(?:PBK Command Center|OpenClaw|Meta-Agent Breeder|Agent Fleet),?\s*/gi, '')
+    .replace(/\[(?:laughs|whispers|excited|sighs|sad|softly)\]/gi, '')
     .replace(/\bnew inbound caller\b/gi, 'there')
     .replace(/\bI routed this to [^.?!]+[.?!]\s*/gi, '')
     .replace(/\s+/g, ' ')
@@ -37551,8 +37756,25 @@ function buildBrowserVoiceReplayChunks(firstAudioChunk = null, recentAudioChunks
 }
 
 async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript = '', session = {} } = {}) {
-  const fallback = buildBrowserVoiceReply(pipeline, transcript);
+  let conversation = null;
   try {
+    conversation = await buildAvaConversationIntelligence({
+      tenantId: 'pbk',
+      leadId: session.leadId || pipeline?.lead?.leadId || '',
+      leadName: session.leadName || pipeline?.lead?.leadName || '',
+      address: session.address || pipeline?.lead?.address || '',
+      query: transcript,
+      transcript,
+      source: 'browser-voice',
+      suppressLeadContext: !(session.leadId || pipeline?.lead?.leadId || session.address || pipeline?.lead?.address),
+      synthesize: false,
+    });
+  } catch {
+    conversation = null;
+  }
+  const fallback = conversation?.nextBestPhrase || conversation?.answer || buildBrowserVoiceReply(pipeline, transcript);
+  try {
+    const pathDecision = conversation?.pathDecision || {};
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
       leadId: session.leadId || pipeline?.lead?.leadId || '',
@@ -37562,12 +37784,16 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
         'Browser microphone voice turn for Ava.',
         'Ava must respond like a senior wholesale acquisition specialist, not like a query result.',
         'Use emotional intelligence and BANT+ probing; do not execute provider writes.',
+        pathDecision.selectedPath ? `Deal path state: ${pathDecision.pathLocked ? 'locked' : 'probing'} ${pathDecision.selectedPathLabel} (${Math.round((pathDecision.confidence || 0) * 100)}%).` : '',
+        pathDecision.nextProbeQuestion ? `If still probing, ask this path question: ${pathDecision.nextProbeQuestion}` : '',
+        pathDecision.scriptTrigger ? `If path is locked, use this path trigger naturally: ${pathDecision.scriptTrigger}` : '',
       ].join(' '),
       transcript,
       attemptedActions: [
         'captured-live-browser-speech',
         `intent:${pipeline?.intent?.intent || 'unknown'}`,
         `next:${pipeline?.nextAgent || 'ava'}:${pipeline?.action || 'qualify'}`,
+        `path:${pathDecision.selectedPath || 'unknown'}:${pathDecision.pathLocked ? 'locked' : 'probing'}`,
       ],
       confidence: 0.84,
       temperature: 0.68,
@@ -37584,10 +37810,12 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
     return {
       text: normalizeAvaVoiceReplyText(script, fallback),
       strategist,
+      conversation,
     };
   } catch (error) {
     return {
       text: normalizeAvaVoiceReplyText(fallback),
+      conversation,
       strategist: {
         ok: false,
         result: 'voice_reply_fallback',
@@ -38276,6 +38504,18 @@ function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
   return { text: pivot, adjusted: true, reason: 'anti_repeat_pivot' };
 }
 
+function applyAvaPathDecisionToSession(session = {}, pathDecision = {}) {
+  if (!session || typeof session !== 'object' || !pathDecision?.selectedPath) return;
+  session.selectedPath = pathDecision.selectedPath;
+  session.pathProbeTurnCount = Number(pathDecision.probeTurnCount || session.pathProbeTurnCount || 0);
+  if (pathDecision.pathLocked) {
+    session.pathLocked = true;
+    session.identifiedPath = pathDecision.selectedPath;
+    session.identifiedPathLabel = pathDecision.selectedPathLabel;
+    session.pathLockedAt = session.pathLockedAt || isoNow();
+  }
+}
+
 function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contextCall = null } = {}) {
   const raw = String(transcript || '').replace(/\s+/g, ' ').trim();
   const lower = raw.toLowerCase();
@@ -38284,6 +38524,17 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const extractedBant = extractBantFromTranscript(raw, knownBant);
   const missingBant = getMissingBantFields(extractedBant);
   const opener = leadName && !/^unknown|caller$/i.test(leadName) ? `${leadName}, ` : '';
+  session.pathProbeTurnCount = Math.max(1, Number(session.pathProbeTurnCount || 0) + 1);
+  const pathDecision = inferAvaDealPathDecision({
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    bant: extractedBant,
+    selectedPath: contextCall?.selectedPath || contextCall?.selected_path || session.selectedPath || '',
+    turnCount: session.pathProbeTurnCount,
+  });
+  applyAvaPathDecisionToSession(session, pathDecision);
   const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
@@ -38300,6 +38551,12 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   }
   if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(lower)) {
     return 'I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?';
+  }
+  if (pathDecision.shouldClosePath && pathDecision.scriptTrigger) {
+    return `${opener}${pathDecision.scriptTrigger}`;
+  }
+  if (!pathDecision.pathLocked && pathDecision.nextProbeQuestion) {
+    return `${opener}${pathDecision.nextProbeQuestion}`;
   }
   if (nextMissingBant) {
     return buildRotatedBantPhrase(nextMissingBant, opener || 'I hear you. ');
@@ -38340,6 +38597,9 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       transcript,
       sentiment: session.sentiment?.pbkScore ?? contextCall?.sentiment ?? null,
       selectedPath: contextCall?.selectedPath || contextCall?.path || '',
+      pathLocked: session.pathLocked || contextCall?.pathLocked || false,
+      identifiedPath: session.identifiedPath || contextCall?.identifiedPath || '',
+      probeTurnCount: session.pathProbeTurnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
       source: 'telnyx-live-call',
       synthesize: false,
     });
@@ -38355,7 +38615,12 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
     transcript,
     query: transcript,
     bant: conversation?.bant?.known || {},
+    selectedPath: conversation?.pathDecision?.selectedPath || contextCall?.selectedPath || contextCall?.path || session.selectedPath || '',
+    pathLocked: session.pathLocked || contextCall?.pathLocked || conversation?.pathDecision?.pathLocked || false,
+    identifiedPath: session.identifiedPath || contextCall?.identifiedPath || conversation?.pathDecision?.selectedPath || '',
+    probeTurnCount: session.pathProbeTurnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  applyAvaPathDecisionToSession(session, architecture.pathDecision);
   try {
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
@@ -38367,6 +38632,9 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         'Ava must sound conversational, emotionally intelligent, and concise.',
         'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.',
         `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`,
+        `Deal path: ${architecture.pathDecision.pathLocked ? 'LOCKED' : 'probing'} ${architecture.pathDecision.selectedPathLabel} (${Math.round((architecture.pathDecision.confidence || 0) * 100)}%). ${architecture.pathDecision.rule}`,
+        architecture.pathDecision.nextProbeQuestion ? `Next path probe: ${architecture.pathDecision.nextProbeQuestion}` : '',
+        architecture.pathDecision.scriptTrigger ? `Path trigger to use when appropriate: ${architecture.pathDecision.scriptTrigger}` : '',
         architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '',
       ].join(' '),
       transcript,
@@ -38376,6 +38644,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `intent:${pipeline?.intent?.intent || 'unknown'}`,
         `reaction:${conversation?.reaction?.trigger || 'none'}`,
         `objection:${conversation?.objectionType || 'unknown'}`,
+        `path:${architecture.pathDecision.selectedPath || 'unknown'}:${architecture.pathDecision.pathLocked ? 'locked' : 'probing'}`,
         `next_bant:${architecture.bant.missing[0] || 'complete'}`,
       ],
       confidence: 0.82,
@@ -38840,11 +39109,17 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
             antiRepeat: reply.antiRepeat || null,
             architecture: reply.architecture ? {
               bant: reply.architecture.bant,
+              pathDecision: reply.architecture.pathDecision,
               toolRouter: reply.architecture.toolRouter,
               rexOversight: reply.architecture.rexOversight,
             } : null,
           },
         ].slice(-50),
+        selectedPath: reply.architecture?.pathDecision?.selectedPath || contextCall.selectedPath || contextCall.selected_path,
+        selected_path: reply.architecture?.pathDecision?.selectedPath || contextCall.selected_path || contextCall.selectedPath,
+        selectedPathLabel: reply.architecture?.pathDecision?.selectedPathLabel || contextCall.selectedPathLabel,
+        pathLocked: reply.architecture?.pathDecision?.pathLocked || contextCall.pathLocked,
+        identifiedPath: reply.architecture?.pathDecision?.pathLocked ? reply.architecture.pathDecision.selectedPath : contextCall.identifiedPath,
         nextMove: spoken,
         avaLatency: {
           speechFinalToReplyStartMs,
@@ -38889,6 +39164,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
     session.deepgramEventCount += 1;
     session.lastDeepgramEvent = normalized.speechFinal ? 'transcript_speech_final' : normalized.isFinal ? 'transcript_final' : 'transcript_interim';
+    if (normalized.isFinal || normalized.speechFinal || session.deepgramEventCount <= 3) {
+      console.log(`[AudioPath] Deepgram ${session.lastDeepgramEvent} for ${session.callId || session.streamId || session.id}: "${transcript}"`);
+    }
     clearNoTranscriptFallbackTimer();
     const sentiment = normalizeDeepgramLiveSentiment(data);
     if (sentiment.pbkScore !== null) session.sentiment = sentiment;
@@ -38906,6 +39184,16 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     const contextCall = getCallById(session.callId);
     if (contextCall) {
       const liveBant = normalizeBantInfo(contextCall.bant || {}, extractBantFromTranscript(transcript, contextCall.bant || {}));
+      const livePathDecision = inferAvaDealPathDecision({
+        session,
+        contextCall,
+        transcript,
+        query: transcript,
+        bant: liveBant,
+        selectedPath: contextCall.selectedPath || contextCall.selected_path || session.selectedPath || '',
+        turnCount: Array.isArray(session.transcript) ? session.transcript.length : session.pathProbeTurnCount || 0,
+      });
+      applyAvaPathDecisionToSession(session, livePathDecision);
       upsertCall(state, {
         ...contextCall,
         bant: liveBant,
@@ -38918,7 +39206,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           },
         ].slice(-50),
         sentiment: sentiment.pbkScore ?? contextCall.sentiment,
-        nextMove: "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
+        selectedPath: livePathDecision.selectedPath || contextCall.selectedPath,
+        selected_path: livePathDecision.selectedPath || contextCall.selected_path,
+        selectedPathLabel: livePathDecision.selectedPathLabel || contextCall.selectedPathLabel,
+        pathLocked: livePathDecision.pathLocked || contextCall.pathLocked,
+        identifiedPath: livePathDecision.pathLocked ? livePathDecision.selectedPath : contextCall.identifiedPath,
+        pathDecision: livePathDecision,
+        nextMove: livePathDecision.pathLocked
+          ? `Path locked to ${livePathDecision.selectedPathLabel}. Use that script lane and move to the next safe close.`
+          : livePathDecision.nextProbeQuestion || "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
         updatedAt: isoNow(),
       });
       if (normalized.isFinal || normalized.speechFinal) {
@@ -39127,6 +39423,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       if (!session.firstAudioAt) session.firstAudioAt = isoNow();
       session.lastAudioAt = isoNow();
       rememberTelnyxMediaFrame(frame);
+      if (session.frameCount === 1 || session.frameCount % 100 === 0) {
+        console.log(`[AudioPath] Telnyx chunk for ${session.callId || session.streamId || session.id}: ${frame.length} bytes (${session.frameCount} frames, ${session.audioBytes} bytes total)`);
+      }
       if (session.frameCount === 1) {
         addActivity(
           state,
@@ -39875,6 +40174,43 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/status', '/api/v1/agents/status'])) {
       json(response, 200, buildAgentStatusBundle());
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/live-call-status', '/api/v1/debug/live-call-status'])) {
+      const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
+        sessionId: session.id,
+        callId: session.callId,
+        streamId: session.streamId,
+        frameCount: session.frameCount || 0,
+        audioBytes: session.audioBytes || 0,
+        deepgramReady: Boolean(session.deepgramEventCount || session.lastDeepgramEvent || session.transcript?.length),
+        lastDeepgramEvent: session.lastDeepgramEvent || '',
+        lastDeepgramError: session.lastDeepgramError || '',
+        lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
+        lastAvaResponse: session.lastAvaReplyTranscript || '',
+        selectedPath: session.selectedPath || '',
+        pathLocked: Boolean(session.pathLocked),
+        identifiedPath: session.identifiedPath || '',
+        replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+        startedAt: session.startedAt || '',
+      }));
+      json(response, 200, {
+        ok: true,
+        result: 'live_call_status',
+        generatedAt: isoNow(),
+        mediaStreamsOpen: activeMediaSessions.length,
+        activeMediaSessions,
+        activeCalls: state.calls.filter((call) => isActiveLiveCall(call)).map((call) => ({
+          id: call.id,
+          callControlId: call.callControlId || call.call_control_id || call.callId || '',
+          status: call.status || call.callStatus || '',
+          selectedPath: call.selectedPath || call.selected_path || '',
+          pathLocked: Boolean(call.pathLocked),
+          lastTranscript: Array.isArray(call.transcript) ? call.transcript.slice(-1)[0]?.text || call.transcript.slice(-1)[0]?.transcript || '' : '',
+          nextMove: call.nextMove || '',
+        })).slice(0, 12),
+      });
       return;
     }
 

@@ -340,6 +340,43 @@ async function main() {
         source: 'smoke-test',
       }),
     }).then((response) => response.json());
+    const avaPathDecisionCases = await Promise.all([
+      {
+        expectedPath: 'cash',
+        query: 'Seller says I just want this house gone fast, it needs repairs, and I want a clean cash close.',
+      },
+      {
+        expectedPath: 'rbp',
+        query: 'Seller says the house is updated and in good condition. They want top dollar and can wait 60 days.',
+      },
+      {
+        expectedPath: 'cf',
+        query: 'Seller says I need my full asking price, but rent does not cover a new loan at today rates.',
+      },
+      {
+        expectedPath: 'mt',
+        query: 'Seller says I have a 3.5% mortgage and I cannot afford to sell if I lose that low rate.',
+      },
+      {
+        expectedPath: 'land',
+        query: 'Seller says it is a vacant buildable lot with utilities nearby and builders are buying acreage around us.',
+      },
+    ].map(async (testCase) => {
+      const result = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${API_KEY}`,
+        },
+        body: JSON.stringify({
+          query: testCase.query,
+          leadId: `smoke-path-${testCase.expectedPath}`,
+          leadName: 'Path Smoke Seller',
+          source: 'smoke-test-path-decision',
+        }),
+      }).then((response) => response.json());
+      return { ...testCase, result };
+    }));
     const prosodyAdvice = await fetch(`${BASE_URL}/api/v1/voice/prosody`, {
       method: 'POST',
       headers: {
@@ -911,6 +948,18 @@ async function main() {
     assert(avaConversationIntelligence?.reaction?.trigger === 'de_escalate', 'Ava conversation intelligence did not react to low sentiment with de-escalation.');
     assert(avaConversationIntelligence?.prosody?.profile === 'de_escalation', 'Ava conversation intelligence did not return de-escalation prosody.');
     assert(avaConversationIntelligence?.promptFrame?.role?.includes('top 1%'), 'Ava conversation intelligence did not include seven-figure prompt framing.');
+    for (const testCase of avaPathDecisionCases) {
+      const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};
+      assert(
+        testCase.result?.ok === true && decision.selectedPath === testCase.expectedPath,
+        `Ava path decision expected ${testCase.expectedPath} but got ${decision.selectedPath || 'missing'} for "${testCase.query}".`,
+      );
+      assert(decision.pathLocked === true, `Ava path decision did not lock ${testCase.expectedPath}.`);
+      assert(
+        typeof decision.scriptTrigger === 'string' && decision.scriptTrigger.length > 20,
+        `Ava path decision did not return a script trigger for ${testCase.expectedPath}.`,
+      );
+    }
     assert(prosodyAdvice?.ok === true && prosodyAdvice?.prosody?.speed < 0.9, 'Prosody advice did not slow down for angry sentiment.');
     assert(liveReplyPreview?.ok === true && liveReplyPreview?.noProviderWrites === true, 'Live reply preview did not return a safe no-write response.');
     assert(!/\b(Rex Strategist|Ava Strategist|PBK Production Voice Proof|PBK Command Center|OpenClaw)\b/i.test(String(liveReplyPreview?.text || '')), 'Live reply preview leaked internal agent/test identity into seller-facing speech.');

@@ -541,6 +541,8 @@ const checks = [
       && /X-PBK-TTS-Streaming/.test(bridge)
       && /playAvaTtsStream/.test(index)
       && /MediaSource\.isTypeSupported/.test(index)
+      && /speakAvaBrowserTtsFallback/.test(index)
+      && /SpeechSynthesisUtterance/.test(index)
       && /\/api\/voice\/tts\/stream/.test(index)
       && /\/api\/voice\/tts/.test(index),
   },
@@ -876,6 +878,7 @@ const checks = [
       && /return runDeepSeekWebSearchFallback\(cleanQuery, params/.test(bridge)
       && /providerKey === 'deepseek'[\s\S]*\? 'DeepSeek fallback'/.test(bridge)
       && /leadCaptureSuppressed/.test(bridge)
+      && /speakAvaBrowserTtsFallback\(clean,\s*`elevenlabs-\$\{response\.status\}`\)/.test(index)
       && /source: 'ava-chat-bubble-tts'/.test(openclawSmoke)
       && /Public Ava TTS diagnostic text still created a lead/.test(openclawSmoke),
   },

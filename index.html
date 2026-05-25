@@ -30396,6 +30396,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     let currentVoiceAudio = null;
     let currentVoiceAudioUrl = '';
     let currentVoiceAudioStreamAbort = null;
+    let currentVoiceSpeechUtterance = null;
     let voiceFinalizeTimeout = null;
 
     const setAvaVoiceSpeaking = (speaking = false) => {
@@ -30491,6 +30492,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         try { currentVoiceAudioStreamAbort(); } catch {}
         currentVoiceAudioStreamAbort = null;
       }
+      if (currentVoiceSpeechUtterance || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) {
+        try { window.speechSynthesis.cancel(); } catch {}
+        currentVoiceSpeechUtterance = null;
+      }
       if (currentVoiceAudio) {
         try { currentVoiceAudio.pause(); } catch {}
         currentVoiceAudio.src = '';
@@ -30503,6 +30508,58 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       setAvaVoiceSpeaking(false);
       if (stopBtn) stopBtn.disabled = !shell.classList.contains('listening');
     };
+
+    const getBrowserTtsFallbackReady = () => Boolean(window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function');
+
+    const getBrowserTtsFallbackVoice = () => {
+      if (!getBrowserTtsFallbackReady()) return null;
+      const voices = window.speechSynthesis.getVoices?.() || [];
+      return voices.find((voice) => /aria|jenny|sara|zira|female|natural|neural/i.test(`${voice.name} ${voice.voiceURI}`) && /^en[-_]/i.test(voice.lang || ''))
+        || voices.find((voice) => /^en[-_]/i.test(voice.lang || ''))
+        || voices[0]
+        || null;
+    };
+
+    const speakAvaBrowserTtsFallback = (text = '', reason = 'provider-fallback') => new Promise((resolve) => {
+      const clean = String(text || '').trim();
+      if (!clean || !getBrowserTtsFallbackReady()) {
+        resolve(false);
+        return;
+      }
+      stopCurrentVoiceAudio();
+      const utterance = new SpeechSynthesisUtterance(clean);
+      const voice = getBrowserTtsFallbackVoice();
+      if (voice) utterance.voice = voice;
+      utterance.rate = 0.96;
+      utterance.pitch = 1.02;
+      utterance.volume = 1;
+      currentVoiceSpeechUtterance = utterance;
+      setAvaVoiceSpeaking(true);
+      if (stopBtn) stopBtn.disabled = false;
+      if (status) status.textContent = 'Ava is speaking with browser voice fallback.';
+      voiceBridgeStats.last = `browser TTS fallback: ${reason}`;
+      renderVoiceDoctor('fallback');
+      utterance.onend = () => {
+        if (currentVoiceSpeechUtterance === utterance) currentVoiceSpeechUtterance = null;
+        setAvaVoiceSpeaking(false);
+        if (stopBtn) stopBtn.disabled = !shell.classList.contains('listening');
+        resolve(true);
+      };
+      utterance.onerror = () => {
+        if (currentVoiceSpeechUtterance === utterance) currentVoiceSpeechUtterance = null;
+        setAvaVoiceSpeaking(false);
+        if (stopBtn) stopBtn.disabled = !shell.classList.contains('listening');
+        resolve(false);
+      };
+      try {
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        currentVoiceSpeechUtterance = null;
+        setAvaVoiceSpeaking(false);
+        resolve(false);
+      }
+    });
 
     const showAvaVoiceDiagnostic = (lane = 'connection', detail = '') => {
       const now = Date.now();
@@ -30695,9 +30752,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     async function playAvaTts(text = '') {
       const clean = String(text || '').trim();
-      if (!clean || !voiceHealth?.elevenLabs?.ready) return;
+      if (!clean) return;
+      if (!voiceHealth?.elevenLabs?.ready) {
+        const fallbackSpoken = await speakAvaBrowserTtsFallback(clean, voiceHealth?.elevenLabs?.configured ? 'elevenlabs-not-ready' : 'elevenlabs-disabled');
+        if (!fallbackSpoken) showAvaVoiceDiagnostic('tts', 'Ava text is ready, but no browser speech fallback is available.');
+        return;
+      }
       const base = getVoiceBase();
-      if (!base) return;
+      if (!base) {
+        const fallbackSpoken = await speakAvaBrowserTtsFallback(clean, 'bridge-not-configured');
+        if (!fallbackSpoken) showAvaVoiceDiagnostic('tts', 'Ava text is ready, but the PBK Brain bridge is not configured and browser speech fallback is unavailable.');
+        return;
+      }
       try {
         const streamed = await playAvaTtsStream(clean, base).catch((error) => {
           console.warn('[pbk-ava-voice] Streaming TTS fallback:', error?.message || error);
@@ -30710,7 +30776,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           body: JSON.stringify({ text: clean, source: 'ava-chat-bubble-tts', noLeadCapture: true }),
         }, 30000);
         if (!response.ok) {
-          showAvaVoiceDiagnostic('tts', `Ava text is ready, but ElevenLabs returned ${response.status}. Check the TTS key or quota.`);
+          const fallbackSpoken = await speakAvaBrowserTtsFallback(clean, `elevenlabs-${response.status}`);
+          if (!fallbackSpoken) showAvaVoiceDiagnostic('tts', `Ava text is ready, but ElevenLabs returned ${response.status}. Check the TTS key or quota.`);
           return;
         }
         const blob = await response.blob();
@@ -30725,7 +30792,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         audio.addEventListener('error', () => stopCurrentVoiceAudio(), { once: true });
         await audio.play();
       } catch (error) {
-        showAvaVoiceDiagnostic('tts', error?.message || 'Ava text is ready, but the browser could not play the spoken response.');
+        const fallbackSpoken = await speakAvaBrowserTtsFallback(clean, 'browser-audio-error');
+        if (!fallbackSpoken) showAvaVoiceDiagnostic('tts', error?.message || 'Ava text is ready, but the browser could not play the spoken response.');
       }
     }
 

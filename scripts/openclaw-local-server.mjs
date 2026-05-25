@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-24-ava-path-probe-lock';
+const BUILD_REVISION = '2026-05-25-ava-context-safe-speech';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -10726,7 +10726,7 @@ async function runLiveWebSearch(query = '', params = {}) {
   const startedAt = Date.now();
   const tavily = await runTavilySearch(query, params);
   if (tavily.ok) return decorateWebSearchForAgentCognition(query, params, { ...tavily, live: true }, startedAt);
-  const openAi = await runOpenAiWebSearch(query, params);
+  const openAi = await runOpenAiWebSearch(query, { ...params, fallback: false });
   if (openAi.ok) {
     return decorateWebSearchForAgentCognition(query, params, {
       ...openAi,
@@ -14653,19 +14653,10 @@ async function runOpenAiWebSearch(query = '', params = {}) {
     if (params.fallback !== false) {
       const fallback = answerBrainQuery(state, cleanQuery);
       const reason = `OpenAI web search is not ready. ${meta.missing.join(', ') || 'Configure the OpenAI API key and enable web search.'}`;
-      return {
-        ok: false,
-        result: 'provider_missing_with_fallback',
-        live: false,
-        query: cleanQuery,
-        answer: `${reason}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`,
-        citations: fallback?.citations || ['PBK Brain fallback'],
-        fallback: {
-          source: 'PBK Brain',
-          ...fallback,
-        },
-        provider: meta,
-      };
+      return runDeepSeekWebSearchFallback(cleanQuery, params, {
+        fallback,
+        providerErrors: [{ provider: 'openai', ok: false, result: 'provider_missing', error: reason }],
+      });
     }
     return {
       ok: false,
@@ -14738,19 +14729,10 @@ async function runOpenAiWebSearch(query = '', params = {}) {
   if (params.fallback !== false) {
     const fallback = answerBrainQuery(state, cleanQuery);
     const reason = `OpenAI web search could not complete: ${lastError?.message || 'unknown provider error'}`;
-    return {
-      ok: false,
-      result: 'provider_error_with_fallback',
-      live: false,
-      query: cleanQuery,
-      answer: `${reason}\n\nFallback from PBK Brain: ${fallback?.answer || 'No local brain match yet.'}`,
-      citations: fallback?.citations || ['PBK Brain fallback'],
-      fallback: {
-        source: 'PBK Brain',
-        ...fallback,
-      },
-      provider: meta,
-    };
+    return runDeepSeekWebSearchFallback(cleanQuery, params, {
+      fallback,
+      providerErrors: [{ provider: 'openai', ok: false, result: 'provider_error', error: reason }],
+    });
   }
 
   return {
@@ -15766,6 +15748,32 @@ function looksLikeStrategistMetaText(value = '') {
     || /^\s*\{[\s\S]*"(?:strategy|risk|rule|nextQuestion|immediateScript)"/i.test(text);
 }
 
+function sanitizeAvaSpokenOutput(value = '', fallback = '') {
+  let text = normalizeAvaSpokenScript(value) || normalizeAvaSpokenScript(fallback) || String(value || fallback || '').trim();
+  if (!text) return '';
+  text = text
+    .replace(/```(?:json|text)?/gi, '')
+    .replace(/```/g, '')
+    .replace(/^System:.*$/gim, '')
+    .replace(/\[DEBUG\].*?(?:\n|$)/gi, '')
+    .replace(/Emotion detected:.*?(?:\n|$)/gi, '')
+    .replace(/Tool call:.*?(?:\n|$)/gi, '')
+    .replace(/Stage:.*?(?:\n|$)/gi, '')
+    .replace(/Rex strategist:.*?(?:\n|$)/gi, '')
+    .replace(/Ava strategist:.*?(?:\n|$)/gi, '')
+    .replace(/\b(?:internal|debug|diagnostic|system)\s+(?:id|number|phone|call|stream|control)[^,.?!]*(?:[,.?!]|\s|$)/gi, ' ')
+    .replace(/\b(?:call[_\s-]?control[_\s-]?id|stream[_\s-]?id|lead[_\s-]?id|utterance[_\s-]?id|session[_\s-]?id|request[_\s-]?id)\s*[:=]?\s*[a-z0-9_.:-]{6,}/gi, ' ')
+    .replace(/\b(?:phone|mobile|cell|from|to|caller)\s*(?:number)?\s*[:=]\s*(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}\b/gi, ' ')
+    .replace(/(?<![$\d])(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}(?!\d)/g, ' ')
+    .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\b/gi, ' ')
+    .replace(/\b(?:call|stream|session|lead|req|request)[-_]?[a-z0-9]{10,}\b/gi, ' ')
+    .replace(/\[(?:laughs|whispers|excited|sighs|sad|softly|focused)\]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text || looksLikeStrategistMetaText(text)) return '';
+  return text;
+}
+
 function normalizeAvaSpokenScript(value = '') {
   let text = String(value || '').trim();
   if (!text) return '';
@@ -15986,10 +15994,62 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
   }
 }
 
+function formatAvaRecentTurnsForSummary(session = {}, contextCall = null, limit = 4) {
+  const source = Array.isArray(session?.transcript)
+    ? session.transcript
+    : Array.isArray(contextCall?.transcript)
+      ? contextCall.transcript
+      : [];
+  return source.slice(-limit).map((turn) => {
+    if (typeof turn === 'string') return sanitizeAvaSpokenOutput(turn).slice(0, 180);
+    const speaker = String(turn?.speaker || turn?.role || turn?.from || 'turn').trim().slice(0, 24);
+    const text = sanitizeAvaSpokenOutput(turn?.text || turn?.transcript || turn?.message || turn?.content || '').slice(0, 180);
+    return text ? `${speaker}: ${text}` : '';
+  }).filter(Boolean);
+}
+
+function buildAvaCallStateSummary(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || null;
+  const conversation = params.conversation || {};
+  const architecture = params.architecture || {};
+  const pathDecision = params.pathDecision || architecture.pathDecision || conversation.pathDecision || {};
+  const bant = params.bant || architecture.bant || conversation.bant || {};
+  const bantKnown = bant.known || bant.answers || params.bantAnswers || {};
+  const bantMissing = Array.isArray(bant.missing) ? bant.missing : [];
+  const reaction = params.reaction || conversation.reaction || {};
+  const transcript = sanitizeAvaSpokenOutput(params.transcript || params.query || '').slice(0, 260);
+  const selectedPath = pathDecision.selectedPathLabel || pathDecision.selectedPath || params.selectedPath || session.selectedPath || 'unknown';
+  const confidence = Math.round(toNumber(pathDecision.confidence, 0) * 100);
+  const pathState = pathDecision.pathLocked ? 'LOCKED' : 'PROBING';
+  const nextProbe = sanitizeAvaSpokenOutput(pathDecision.nextProbeQuestion || '').slice(0, 220);
+  const scriptTrigger = sanitizeAvaSpokenOutput(pathDecision.scriptTrigger || '').slice(0, 360);
+  const recentTurns = formatAvaRecentTurnsForSummary(session, contextCall, 4);
+  const missingText = bantMissing.length ? bantMissing.join(', ') : 'none';
+  const knownText = Object.entries(bantKnown || {})
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .slice(0, 8)
+    .map(([key, value]) => `${key}:${String(value).slice(0, 80)}`)
+    .join(', ') || 'none';
+  const lines = [
+    `Path: ${pathState} ${selectedPath}${confidence ? ` at ${confidence}% confidence` : ''}.`,
+    pathDecision.rule ? `Path rule: ${sanitizeAvaSpokenOutput(pathDecision.rule).slice(0, 220)}` : '',
+    `BANT known: ${knownText}. BANT missing: ${missingText}.`,
+    reaction.trigger ? `Seller reaction: ${sanitizeAvaSpokenOutput(reaction.trigger)}${reaction.shouldStopContact ? ' (stop-contact boundary active)' : ''}.` : '',
+    transcript ? `Latest seller words: ${transcript}` : '',
+    recentTurns.length ? `Recent safe call turns: ${recentTurns.join(' | ')}` : '',
+    nextProbe && !pathDecision.pathLocked ? `If still probing, ask exactly one useful next question: ${nextProbe}` : '',
+    scriptTrigger && pathDecision.pathLocked ? `If path is locked, close down this script path naturally: ${scriptTrigger}` : '',
+    'Speaker rule: Ava must never say call IDs, stream IDs, phone numbers, tool names, JSON, debug labels, or internal analysis. Say only the seller-facing answer.',
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 function buildStrategistMessages(params = {}) {
   const context = findLeadContext(params);
   const situation = String(params.situation || params.prompt || params.query || params.text || '').trim();
   const transcript = String(params.transcript || params.transcriptSnippet || params.callTranscript || '').trim();
+  const contextSummary = String(params.contextSummary || params.callStateSummary || '').trim();
   const attemptedActions = normalizeAttemptedActions(params.attemptedActions || params.attempted_actions || params.actions);
   const dealContext = {
     leadId: params.leadId || context.leadId || '',
@@ -16008,7 +16068,9 @@ function buildStrategistMessages(params = {}) {
     'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.',
     'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.',
     'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.',
+    'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.',
     'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.',
+    'Never speak phone numbers, call_control_id values, stream_id values, lead IDs, request IDs, JSON keys, tool names, debug labels, or internal routing notes.',
     'Use PBK masterclass behavior: emotional intelligence, phone EQ, ego handling, sensitive-topic deflection, BANT+ discipline, and path discipline across Cash Offer, Land, RBP/novation, Creative Finance, and Mortgage Takeover.',
     'Never authorize calls, contracts, SMS, email, or offer increases directly. If money or provider writes are sensitive, set approvalNeeded true.',
     'Truth boundary: Ava must not pretend to be human if asked. Offers and actions are real but approval-gated.',
@@ -16016,12 +16078,13 @@ function buildStrategistMessages(params = {}) {
   ].join(' ');
   const user = [
     `Situation: ${situation || 'Ava is uncertain during a seller conversation.'}`,
+    contextSummary ? `Call state summary:\n${contextSummary.slice(0, 1800)}` : '',
     `Transcript: ${transcript || '(none provided)'}`,
     `Attempted actions: ${attemptedActions.join('; ') || '(none)'}`,
     `Deal context: ${JSON.stringify(dealContext)}`,
     'Write natural language Ava can say immediately. Start by acknowledging the human. Include one smart question and one transition back to business.',
   ].join('\n\n');
-  return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], context, situation, transcript, attemptedActions, dealContext };
+  return { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], context, situation, transcript, contextSummary, attemptedActions, dealContext };
 }
 
 async function persistLearningRequestToPg(record = {}) {
@@ -21439,8 +21502,9 @@ async function answerTelnyxCall(callControlId = '') {
 
 async function speakTelnyxCall(callControlId = '', text = '') {
   if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  const cleanText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
   return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
-    payload: String(text || '').slice(0, 1500),
+    payload: cleanText.slice(0, 1500),
     voice: process.env.PBK_TELNYX_TTS_VOICE || 'female',
     language: process.env.PBK_TELNYX_TTS_LANGUAGE || 'en-US',
   });
@@ -31256,6 +31320,14 @@ const toolHandlers = {
     recordToolUse('openAiWebSearch');
     const query = params.query || params.q || params.prompt || params.text || '';
     const result = await runOpenAiWebSearch(query, params);
+    const providerKey = getWebSearchProviderKey(result);
+    const providerLabel = providerKey === 'deepseek'
+      ? 'DeepSeek fallback'
+      : providerKey === 'openai'
+        ? 'OpenAI web search'
+        : providerKey === 'pbk_brain'
+          ? 'PBK Brain fallback'
+          : 'web search provider';
     addActivity(
       state,
       makeActivity({
@@ -31263,9 +31335,9 @@ const toolHandlers = {
         category: 'RESEARCH',
         status: result.ok ? 'served' : 'warning',
         text: result.ok
-          ? `OpenAI web search answered: "${String(query).slice(0, 140)}"`
-          : `OpenAI web search unavailable: ${result.answer || result.result}`,
-        target: 'OpenAI Web Search',
+          ? `${providerLabel} answered: "${String(query).slice(0, 140)}"`
+          : `${providerLabel} unavailable: ${result.answer || result.result}`,
+        target: providerLabel,
       }),
     );
     await persistState(state);
@@ -36354,16 +36426,20 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
   const voiceId = String(body.voiceId || body.voice_id || ELEVENLABS_VOICE_ID).trim();
   const modelId = String(body.modelId || body.model_id || ELEVENLABS_MODEL_ID).trim();
   const outputFormat = String(body.outputFormat || body.output_format || ELEVENLABS_OUTPUT_FORMAT).trim();
+  const safeText = sanitizeAvaSpokenOutput(
+    text || body.text || body.input || '',
+    body.fallbackText || body.fallback_text || 'I hear you. Let me slow this down and make sure I understand before I recommend anything.',
+  );
   const prosody = body.autoProsody === false
     ? null
     : buildAvaProsodyProfile({
       ...body,
-      text,
+      text: safeText,
       sentiment: body.sentiment ?? body.sentimentScore ?? body.sentiment_score,
     });
-  const textControls = applyProsodyTextControls(text, prosody || {}, { modelId });
+  const textControls = applyProsodyTextControls(safeText, prosody || {}, { modelId });
   const payload = {
-    text: String(textControls.text || text || '').slice(0, 1800),
+    text: String(textControls.text || safeText || '').slice(0, 1800),
     model_id: modelId,
     voice_settings: {
       stability: Number(body.stability ?? prosody?.stability ?? ELEVENLABS_STABILITY),
@@ -36383,6 +36459,7 @@ function buildElevenLabsTtsRequest(body = {}, text = '', { stream = false } = {}
     payload,
     prosody,
     textControls,
+    sanitizedText: safeText,
   };
 }
 
@@ -36409,19 +36486,19 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
       response: fallbackResponse,
       fallbackFromVoiceId: request.voiceId,
     };
-    void recordProsodyDecisionFromTtsRequest(fallbackResult, body, text).catch((error) => console.warn('[Prosody] Failed to log fallback TTS decision:', error?.message || error));
+    void recordProsodyDecisionFromTtsRequest(fallbackResult, body, fallbackResult.sanitizedText || fallbackResult.payload?.text || text).catch((error) => console.warn('[Prosody] Failed to log fallback TTS decision:', error?.message || error));
     return fallbackResult;
   }
   const result = {
     ...request,
     response,
   };
-  void recordProsodyDecisionFromTtsRequest(result, body, text).catch((error) => console.warn('[Prosody] Failed to log TTS decision:', error?.message || error));
+  void recordProsodyDecisionFromTtsRequest(result, body, result.sanitizedText || result.payload?.text || text).catch((error) => console.warn('[Prosody] Failed to log TTS decision:', error?.message || error));
   return result;
 }
 
 async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
-  const cleanText = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 900);
+  const cleanText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?').slice(0, 900);
   const socket = session?.telnyxMediaSocket;
   if (!PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED) {
     return { ok: false, skipped: true, result: 'disabled', provider: 'ElevenLabs', error: 'ElevenLabs phone media replies are disabled.' };
@@ -36510,9 +36587,10 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
 }
 
 async function sendAvaPhoneReplyAudio(session = {}, text = '') {
+  const safeText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
   let mediaResult = null;
   try {
-    mediaResult = await sendElevenLabsTtsToTelnyxMediaStream(session, text);
+    mediaResult = await sendElevenLabsTtsToTelnyxMediaStream(session, safeText);
     if (mediaResult.ok) return mediaResult;
   } catch (error) {
     mediaResult = {
@@ -36523,7 +36601,7 @@ async function sendAvaPhoneReplyAudio(session = {}, text = '') {
     };
   }
 
-  const fallback = await speakTelnyxCall(session.callId, text);
+  const fallback = await speakTelnyxCall(session.callId, safeText);
   return {
     ...fallback,
     provider: fallback.ok ? 'Telnyx' : fallback.provider || 'Telnyx',
@@ -36893,9 +36971,14 @@ async function handlePublicAvaChatRequest(request) {
     };
   }
 
+  const source = String(body.source || body.origin || '').toLowerCase();
+  const suppressLeadCapture = body.noLeadCapture === true
+    || body.no_lead_capture === true
+    || body.ttsDiagnostic === true
+    || /\b(tts|voice|audio|avatar|chat-bubble)\b/i.test(source);
   const lead = extractPublicAvaLead(body, text);
   let leadCapture = null;
-  if (lead.hasLeadSignal && (lead.hasContact || lead.address)) {
+  if (!suppressLeadCapture && lead.hasLeadSignal && (lead.hasContact || lead.address)) {
     leadCapture = await handleEvent('lead-intake', {
       eventId: body.eventId || `public-ava-${Math.abs(hashString(`${lead.email}|${lead.phone}|${lead.address}|${text}`))}`,
       source: 'website-chat',
@@ -36955,6 +37038,7 @@ async function handlePublicAvaChatRequest(request) {
       answer,
       citations: brain?.citations || ['PBK public knowledge'],
       leadCaptured: Boolean(leadCapture?.ok),
+      leadCaptureSuppressed: suppressLeadCapture,
       requestedCallback: Boolean(lead.wantsCallback),
       safety: {
         providerWrites: 'blocked',
@@ -37691,18 +37775,10 @@ function buildBrowserVoiceReply(pipeline = {}, transcript = '') {
 }
 
 function normalizeAvaVoiceReplyText(text = '', fallback = '') {
-  const candidate = normalizeAvaSpokenScript(text) || normalizeAvaSpokenScript(fallback);
-  const clean = String(candidate || '')
-    .replace(/^System:.*$/gim, '')
-    .replace(/\[DEBUG\].*?(?:\n|$)/gi, '')
-    .replace(/Emotion detected:.*?(?:\n|$)/gi, '')
-    .replace(/Tool call:.*?(?:\n|$)/gi, '')
-    .replace(/Stage:.*?(?:\n|$)/gi, '')
-    .replace(/Rex strategist:.*?(?:\n|$)/gi, '')
+  const clean = sanitizeAvaSpokenOutput(text, fallback)
     .replace(/\b(?:Rex|Ava)\s+Strategist,?\s*/gi, '')
     .replace(/\bPBK\s+(?:Production\s+)?Voice\s+Proof,?\s*/gi, '')
     .replace(/\b(?:PBK Command Center|OpenClaw|Meta-Agent Breeder|Agent Fleet),?\s*/gi, '')
-    .replace(/\[(?:laughs|whispers|excited|sighs|sad|softly)\]/gi, '')
     .replace(/\bnew inbound caller\b/gi, 'there')
     .replace(/\bI routed this to [^.?!]+[.?!]\s*/gi, '')
     .replace(/\s+/g, ' ')
@@ -37782,6 +37858,14 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
   const fallback = conversation?.nextBestPhrase || conversation?.answer || buildBrowserVoiceReply(pipeline, transcript);
   try {
     const pathDecision = conversation?.pathDecision || {};
+    const contextSummary = buildAvaCallStateSummary({
+      session,
+      pipeline,
+      conversation,
+      pathDecision,
+      transcript,
+      source: 'browser-voice',
+    });
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
       leadId: session.leadId || pipeline?.lead?.leadId || '',
@@ -37796,6 +37880,7 @@ async function buildBrowserVoiceConversationalReply({ pipeline = {}, transcript 
         pathDecision.scriptTrigger ? `If path is locked, use this path trigger naturally: ${pathDecision.scriptTrigger}` : '',
       ].join(' '),
       transcript,
+      contextSummary,
       attemptedActions: [
         'captured-live-browser-speech',
         `intent:${pipeline?.intent?.intent || 'unknown'}`,
@@ -38629,6 +38714,15 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
   });
   applyAvaPathDecisionToSession(session, architecture.pathDecision);
   try {
+    const contextSummary = buildAvaCallStateSummary({
+      session,
+      contextCall,
+      pipeline,
+      conversation,
+      architecture,
+      transcript,
+      source: 'telnyx-live-call',
+    });
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
       leadId,
@@ -38645,6 +38739,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '',
       ].join(' '),
       transcript,
+      contextSummary,
       attemptedActions: [
         'captured-live-telnyx-speech',
         `call:${session.callId || 'unknown'}`,

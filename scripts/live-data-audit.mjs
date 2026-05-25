@@ -349,7 +349,9 @@ const checks = [
       && !/Original params:\s*\$\{paramPreview/.test(bridge)
       && !/Legacy raw admin copy/.test(index)
       && /showAvaVoiceDiagnostic/.test(index)
-      && /type:\s*'diagnostic'/.test(bridge),
+      && /type:\s*'diagnostic'/.test(bridge)
+      && /function restoreApprovalCardDecision/.test(index)
+      && /button\.textContent = normalizeRuntimeStatus\(action\) === 'cancelled' \? 'Cancelling\.\.\.' : 'Sending\.\.\.'/.test(index),
   },
   {
     name: 'Approval BANT context stays informational and hidden from non-lead approval types',
@@ -857,6 +859,27 @@ const checks = [
       && /expectedPath: 'land'/.test(openclawSmoke),
   },
   {
+    name: 'Ava voice uses DeepSeek call-state context and a speech-safe TTS boundary',
+    ok: /function buildAvaCallStateSummary/.test(bridge)
+      && /Call state summary/.test(bridge)
+      && /Use the call-state summary as the source of truth/.test(bridge)
+      && /Never speak phone numbers, call_control_id values, stream_id values/.test(bridge)
+      && /function sanitizeAvaSpokenOutput/.test(bridge)
+      && /function buildElevenLabsTtsRequest[\s\S]*sanitizeAvaSpokenOutput/.test(bridge)
+      && /async function speakTelnyxCall[\s\S]*sanitizeAvaSpokenOutput/.test(bridge)
+      && /call_control_id cc-smoke-123456/.test(openclawSmoke)
+      && /Live reply preview leaked internal IDs or phone-like text/.test(openclawSmoke),
+  },
+  {
+    name: 'OpenAI exhaustion and chat-bubble TTS fall back safely',
+    ok: /runOpenAiWebSearch\(query, \{ \.\.\.params, fallback: false \}\)/.test(bridge)
+      && /return runDeepSeekWebSearchFallback\(cleanQuery, params/.test(bridge)
+      && /providerKey === 'deepseek'[\s\S]*\? 'DeepSeek fallback'/.test(bridge)
+      && /leadCaptureSuppressed/.test(bridge)
+      && /source: 'ava-chat-bubble-tts'/.test(openclawSmoke)
+      && /Public Ava TTS diagnostic text still created a lead/.test(openclawSmoke),
+  },
+  {
     name: 'Production pristine debugging script names remaining ops gaps without mutating live state',
     ok: /production-pristine-check\.mjs/.test(pkg)
       && /debug:production/.test(pkg)
@@ -1071,7 +1094,8 @@ const checks = [
     name: 'Ava live Telnyx replies never speak strategist meta-commentary',
     ok: /function\s+looksLikeStrategistMetaText/.test(bridge)
       && /function\s+normalizeAvaSpokenScript/.test(bridge)
-      && /normalizeAvaSpokenScript\(text\)\s*\|\|\s*normalizeAvaSpokenScript\(fallback\)/.test(bridge)
+      && /function\s+sanitizeAvaSpokenOutput/.test(bridge)
+      && /sanitizeAvaSpokenOutput\(text,\s*fallback\)/.test(bridge)
       && /provider_reasoning_only/.test(bridge)
       && !/message\.content\s*\|\|\s*message\.reasoning_content/.test(bridge),
   },

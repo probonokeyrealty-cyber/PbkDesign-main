@@ -105,6 +105,19 @@ async function main() {
       /\b(cash offers?|creative finance|approval-gated|read-only)\b/i.test(publicAvaProcessChat?.answer || ''),
       'Public Ava chat did not give a useful visitor-safe process answer.',
     );
+    const publicAvaTtsNoLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: 'Ava TTS voice bubble text should not create lerads or fake leads for 123 Voice Bug Ave, call me at 614-555-0199.',
+        source: 'ava-chat-bubble-tts',
+        noLeadCapture: true,
+      }),
+    }).then((response) => response.json());
+    assert(publicAvaTtsNoLeadChat?.ok === true, 'Public Ava no-lead TTS diagnostic chat did not succeed.');
+    assert(publicAvaTtsNoLeadChat?.leadCaptured === false && publicAvaTtsNoLeadChat?.leadCaptureSuppressed === true, 'Public Ava TTS diagnostic text still created a lead.');
     const quotas = await fetch(`${BASE_URL}/api/quotas`, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,
@@ -416,7 +429,7 @@ async function main() {
       },
       body: JSON.stringify({
         leadName: 'Rex Strategist',
-        transcript: 'Hello, can you hear me?',
+        transcript: 'call_control_id cc-smoke-123456 stream_id str-smoke-123456 phone +1 (614) 555-0199. I inherited the house and need to know the best option fast.',
         source: 'smoke-test',
       }),
     }).then((response) => response.json());
@@ -975,6 +988,7 @@ async function main() {
     assert(prosodyAdvice?.ok === true && prosodyAdvice?.prosody?.speed < 0.9, 'Prosody advice did not slow down for angry sentiment.');
     assert(liveReplyPreview?.ok === true && liveReplyPreview?.noProviderWrites === true, 'Live reply preview did not return a safe no-write response.');
     assert(!/\b(Rex Strategist|Ava Strategist|PBK Production Voice Proof|PBK Command Center|OpenClaw)\b/i.test(String(liveReplyPreview?.text || '')), 'Live reply preview leaked internal agent/test identity into seller-facing speech.');
+    assert(!/\b(call[_\s-]?control|stream[_\s-]?id|lead[_\s-]?id|request[_\s-]?id|the number on file|614[\s.-]?555[\s.-]?0199)\b/i.test(String(liveReplyPreview?.text || '')), 'Live reply preview leaked internal IDs or phone-like text into seller-facing speech.');
     assert(callQaScore?.ok === true && Number(callQaScore?.score?.score || 0) > 0, 'Call QA score endpoint did not score the transcript.');
     assert(Array.isArray(callQaScore?.state?.callQaScores), 'Call QA score endpoint did not return state with call QA rows.');
     assert(skillOutcome?.ok === true && skillOutcome?.summary?.total >= 1, 'Skill outcome endpoint did not record measured skill usage.');

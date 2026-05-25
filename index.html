@@ -20699,6 +20699,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     card.style.pointerEvents = 'none';
   }
 
+  function restoreApprovalCardDecision(card) {
+    if (!card) return;
+    delete card.dataset.approvalDecisionAccepted;
+    card.style.opacity = '';
+    card.style.pointerEvents = '';
+  }
+
   function scheduleApprovalBoardRefreshRetry() {
     window.setTimeout(() => {
       syncOpenClawState({ silent: true }).catch(() => {});
@@ -20745,6 +20752,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     setBoardActionButtonsDisabled(card, '[data-approval-action]', true);
+    const originalButtonText = button.textContent;
+    button.textContent = normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancelling...' : 'Sending...';
+    markApprovalCardDecisionAccepted(card, action);
     let decisionResponse = null;
     try {
       const teamSession = getTeamSession();
@@ -20762,6 +20772,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         timeout: normalizeRuntimeStatus(action) === 'cancelled' ? 6000 : 9000
       });
     } catch (error) {
+      button.textContent = originalButtonText;
+      restoreApprovalCardDecision(card);
       setBoardActionButtonsDisabled(card, '[data-approval-action]', false);
       toast({
         type: 'error',
@@ -20770,8 +20782,6 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
       return;
     }
-
-    markApprovalCardDecisionAccepted(card, action);
 
     try {
       if (decisionResponse?.state) {
@@ -30174,10 +30184,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     setBoardActionButtonsDisabled(card, '[data-admin-action]', true);
+    const originalButtonText = button.textContent;
+    button.textContent = normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancelling...' : 'Sending...';
+    markApprovalCardDecisionAccepted(card, action);
     let decisionResponse = null;
     try {
       decisionResponse = await updateAdminTaskDecision(taskId, action);
     } catch (error) {
+      button.textContent = originalButtonText;
+      restoreApprovalCardDecision(card);
       setBoardActionButtonsDisabled(card, '[data-admin-action]', false);
       toast({
         type: 'error',
@@ -30186,8 +30201,6 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
       return;
     }
-
-    markApprovalCardDecisionAccepted(card, action);
 
     try {
       if (decisionResponse?.state) {

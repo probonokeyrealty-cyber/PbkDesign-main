@@ -6,6 +6,7 @@
 #   - puppeteer-core       (Puppeteer that talks to an external Chrome binary)
 #   - pg                   (Postgres client for durable state when PBK_DATABASE_URL is set)
 #   - @deepgram/sdk        (Deepgram transcription/sentiment bridge helpers)
+#   - redis                (optional shared call state and singleton cron leases)
 #
 # Alpine + glibc-built chromium do not mix; use the Debian slim base so the
 # Sparticuz Chromium binary can find its libc and X11 deps.
@@ -61,7 +62,8 @@ RUN npm install --no-save --no-audit --no-fund --loglevel=error \
       @sparticuz/chromium@147.0.1 \
       @deepgram/sdk@5.1.0 \
       puppeteer-core@24.41.0 \
-      pg@8.13.1
+      pg@8.13.1 \
+      redis@5.10.0
 
 # Property data import/scraping is intentionally isolated in a Python venv so
 # the hosted bridge can run HomeHarvest and Scrapling without touching Node deps.

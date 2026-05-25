@@ -39,7 +39,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-25-ava-context-safe-speech';
+const BUILD_REVISION = '2026-05-25-ava-audio-load-hardening';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -15749,9 +15749,7 @@ function looksLikeStrategistMetaText(value = '') {
 }
 
 function sanitizeAvaSpokenOutput(value = '', fallback = '') {
-  let text = normalizeAvaSpokenScript(value) || normalizeAvaSpokenScript(fallback) || String(value || fallback || '').trim();
-  if (!text) return '';
-  text = text
+  const cleanCandidate = (candidate = '') => String(candidate || '')
     .replace(/```(?:json|text)?/gi, '')
     .replace(/```/g, '')
     .replace(/^System:.*$/gim, '')
@@ -15767,11 +15765,43 @@ function sanitizeAvaSpokenOutput(value = '', fallback = '') {
     .replace(/(?<![$\d])(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}(?!\d)/g, ' ')
     .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\b/gi, ' ')
     .replace(/\b(?:call|stream|session|lead|req|request)[-_]?[a-z0-9]{10,}\b/gi, ' ')
+    .replace(/\b(?:internal\s+)?(?:m\s*number|model\s+number|debug\s+number|system\s+number)\b[^,.?!]*(?:[,.?!]|\s|$)/gi, ' ')
     .replace(/\[(?:laughs|whispers|excited|sighs|sad|softly|focused)\]/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!text || looksLikeStrategistMetaText(text)) return '';
-  return text;
+
+  const primary = cleanCandidate(normalizeAvaSpokenScript(value) || String(value || '').trim());
+  if (primary && !looksLikeStrategistMetaText(primary)) return primary;
+  const backup = cleanCandidate(normalizeAvaSpokenScript(fallback) || String(fallback || '').trim());
+  if (backup && !looksLikeStrategistMetaText(backup)) return backup;
+  return '';
+}
+
+let lastAvaSpokenOutput = null;
+
+function recordAvaSpokenOutputDiagnostics(record = {}) {
+  const spokenText = sanitizeAvaSpokenOutput(record.spokenText || record.text || '', record.fallbackText || '');
+  const rawPreview = String(record.rawText || record.text || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+  lastAvaSpokenOutput = {
+    at: isoNow(),
+    provider: record.provider || 'unknown',
+    path: record.path || '',
+    ok: record.ok !== false,
+    callId: record.callId || record.session?.callId || '',
+    streamId: record.streamId || record.session?.streamId || '',
+    replyMode: record.replyMode || '',
+    spokenPreview: spokenText.slice(0, 320),
+    rawPreview,
+    sanitizedChanged: Boolean(rawPreview && spokenText && rawPreview !== spokenText),
+    textLength: spokenText.length,
+    error: record.error || '',
+  };
+  if (state?.status) {
+    state.status.lastAvaSpokenAt = lastAvaSpokenOutput.at;
+    state.status.lastAvaSpokenProvider = lastAvaSpokenOutput.provider;
+    state.status.lastAvaSpokenPreview = lastAvaSpokenOutput.spokenPreview;
+  }
+  return lastAvaSpokenOutput;
 }
 
 function normalizeAvaSpokenScript(value = '') {
@@ -21503,11 +21533,21 @@ async function answerTelnyxCall(callControlId = '') {
 async function speakTelnyxCall(callControlId = '', text = '') {
   if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
   const cleanText = sanitizeAvaSpokenOutput(text, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
-  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
+  const result = await fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
     payload: cleanText.slice(0, 1500),
     voice: process.env.PBK_TELNYX_TTS_VOICE || 'female',
     language: process.env.PBK_TELNYX_TTS_LANGUAGE || 'en-US',
   });
+  recordAvaSpokenOutputDiagnostics({
+    provider: 'Telnyx',
+    path: 'calls.actions.speak',
+    callId: callControlId,
+    rawText: text,
+    spokenText: cleanText,
+    ok: result.ok,
+    error: result.error || '',
+  });
+  return result;
 }
 
 function getTelnyxBidirectionalMediaParams() {
@@ -36154,9 +36194,16 @@ async function handleEvent(eventType, payload = {}) {
   };
 }
 
-function buildStateSnapshot() {
+function limitSnapshotArray(items, limit, compact = false) {
+  if (!Array.isArray(items)) return [];
+  return compact ? items.slice(0, limit) : items;
+}
+
+function buildStateSnapshot(options = {}) {
   updateDerivedStatus(state);
   const runtimeMeta = getRuntimeMeta();
+  const compact = options.compact === true;
+  const list = (items, limit = 120) => limitSnapshotArray(items, limit, compact);
   return {
     status: {
       ...state.status,
@@ -36185,29 +36232,30 @@ function buildStateSnapshot() {
       stateBackend: runtimeMeta.stateBackend,
       authRequired: runtimeMeta.authRequired,
       productionReady: runtimeMeta.productionReady,
+      snapshotMode: compact ? 'compact' : 'full',
       revenueEngine: buildRevenueEngineStatus({ requestedBy: 'state-snapshot' }),
     },
-    approvals: state.approvals,
-    activity: state.activity,
-    brainDocs: state.brainDocs,
-    brainBlogPosts: state.brainBlogPosts || [],
-    marketIntel: state.marketIntel || [],
-    leadNurturePlans: state.leadNurturePlans || [],
-    dealSimulations: state.dealSimulations || [],
-    buyers: state.buyers || [],
-    buyerMatches: state.buyerMatches || [],
-    systemAuditReports: state.systemAuditReports || [],
-    leadImports: state.leadImports,
-    analyzerRuns: state.analyzerRuns,
-    propertyCache: state.propertyCache || [],
-    dncEntries: state.dncEntries,
-    calls: state.calls,
-    messages: state.messages,
+    approvals: list(state.approvals, 80),
+    activity: list(state.activity, 80),
+    brainDocs: list(state.brainDocs, 80),
+    brainBlogPosts: list(state.brainBlogPosts || [], 80),
+    marketIntel: list(state.marketIntel || [], 60),
+    leadNurturePlans: list(state.leadNurturePlans || [], 80),
+    dealSimulations: list(state.dealSimulations || [], 80),
+    buyers: list(state.buyers || [], 100),
+    buyerMatches: list(state.buyerMatches || [], 120),
+    systemAuditReports: list(state.systemAuditReports || [], 40),
+    leadImports: list(state.leadImports, 160),
+    analyzerRuns: list(state.analyzerRuns, 80),
+    propertyCache: list(state.propertyCache || [], 120),
+    dncEntries: list(state.dncEntries, 160),
+    calls: list(state.calls, 80),
+    messages: list(state.messages, 120),
     messageCounts: getMessageCounts(),
     notifications: buildNotificationSnapshot(),
-    appointments: state.appointments,
-    leadStageTransitions: state.leadStageTransitions,
-    contracts: state.contracts,
+    appointments: list(state.appointments, 80),
+    leadStageTransitions: list(state.leadStageTransitions, 120),
+    contracts: list(state.contracts, 100),
     contractTemplates: {
       loadedAt: contractTemplateCache.loadedAt,
       reason: contractTemplateCache.reason,
@@ -36229,42 +36277,42 @@ function buildStateSnapshot() {
         updatedAt: item.updatedAt,
       })),
     },
-    documentDeliveries: state.documentDeliveries,
-    attachments: state.attachments || [],
-    browserResearchJobs: state.browserResearchJobs || [],
-    campaigns: state.campaigns || [],
-    campaignLeads: state.campaignLeads || [],
-    campaignEvents: state.campaignEvents || [],
-    campaignSuppressions: state.campaignSuppressions || [],
+    documentDeliveries: list(state.documentDeliveries, 100),
+    attachments: list(state.attachments || [], 80),
+    browserResearchJobs: list(state.browserResearchJobs || [], 60),
+    campaigns: list(state.campaigns || [], 80),
+    campaignLeads: list(state.campaignLeads || [], 250),
+    campaignEvents: list(state.campaignEvents || [], 160),
+    campaignSuppressions: list(state.campaignSuppressions || [], 160),
     campaignLeadSources: getCampaignLeadSourceOptions(),
-    campaignExecutions: state.campaignExecutions || [],
+    campaignExecutions: list(state.campaignExecutions || [], 120),
     agents: Array.isArray(state.agents) ? state.agents : buildDefaultAgentFleet(),
     agentOrchestration: buildAgentOrchestrationSnapshot(),
-    agentTasks: state.agentTasks || [],
-    agentDecisions: state.agentDecisions || [],
-    callEmotions: state.callEmotions || [],
-    emotionalMemory: state.emotionalMemory || [],
-    emotionalLearningInteractions: state.emotionalLearningInteractions || [],
-    emotionalLearningMemory: state.emotionalLearningMemory || [],
-    emotionalPolicyExperiments: state.emotionalPolicyExperiments || [],
-    emotionalPolicyAssignments: state.emotionalPolicyAssignments || [],
-    emotionalPolicyOutcomes: state.emotionalPolicyOutcomes || [],
-    agentSkillTransfers: state.agentSkillTransfers || [],
-    agentSkillExperiments: state.agentSkillExperiments || [],
-    agentVersions: state.agentVersions || [],
-    rexDecisions: state.rexDecisions || [],
-    avaActiveMemories: state.avaActiveMemories || [],
-    avaLearningSessions: state.avaLearningSessions || [],
-    avaLearningRequests: state.avaLearningRequests || [],
-    repairItems: state.repairItems || [],
-    offerOverrides: state.offerOverrides || [],
-    scriptTests: state.scriptTests || [],
-    scriptTestEvents: state.scriptTestEvents || [],
-    avaOutcomeReports: state.avaOutcomeReports || [],
-    avaImprovementSuggestions: state.avaImprovementSuggestions || [],
-    knowledgeVerifications: state.knowledgeVerifications || [],
-    callQaScores: state.callQaScores || [],
-    skillOutcomes: state.skillOutcomes || [],
+    agentTasks: list(state.agentTasks || [], 120),
+    agentDecisions: list(state.agentDecisions || [], 120),
+    callEmotions: list(state.callEmotions || [], 120),
+    emotionalMemory: list(state.emotionalMemory || [], 120),
+    emotionalLearningInteractions: list(state.emotionalLearningInteractions || [], 120),
+    emotionalLearningMemory: list(state.emotionalLearningMemory || [], 120),
+    emotionalPolicyExperiments: list(state.emotionalPolicyExperiments || [], 80),
+    emotionalPolicyAssignments: list(state.emotionalPolicyAssignments || [], 120),
+    emotionalPolicyOutcomes: list(state.emotionalPolicyOutcomes || [], 120),
+    agentSkillTransfers: list(state.agentSkillTransfers || [], 80),
+    agentSkillExperiments: list(state.agentSkillExperiments || [], 80),
+    agentVersions: list(state.agentVersions || [], 80),
+    rexDecisions: list(state.rexDecisions || [], 120),
+    avaActiveMemories: list(state.avaActiveMemories || [], 120),
+    avaLearningSessions: list(state.avaLearningSessions || [], 80),
+    avaLearningRequests: list(state.avaLearningRequests || [], 80),
+    repairItems: list(state.repairItems || [], 160),
+    offerOverrides: list(state.offerOverrides || [], 80),
+    scriptTests: list(state.scriptTests || [], 80),
+    scriptTestEvents: list(state.scriptTestEvents || [], 120),
+    avaOutcomeReports: list(state.avaOutcomeReports || [], 80),
+    avaImprovementSuggestions: list(state.avaImprovementSuggestions || [], 80),
+    knowledgeVerifications: list(state.knowledgeVerifications || [], 80),
+    callQaScores: list(state.callQaScores || [], 120),
+    skillOutcomes: list(state.skillOutcomes || [], 120),
     avaStories: state.avaStories || buildDefaultAvaStories(),
     inboundCallRoutes: state.inboundCallRoutes || [],
     leadScoringWeights: getLeadScoringWeights(),
@@ -36279,11 +36327,11 @@ function buildStateSnapshot() {
         enforcement: 'seller-facing analyzer output is blocked until all BANT+ fields are present',
       },
     },
-    promptPatchApplications: state.promptPatchApplications || [],
-    recordingRetentionRuns: state.recordingRetentionRuns || [],
+    promptPatchApplications: list(state.promptPatchApplications || [], 80),
+    recordingRetentionRuns: list(state.recordingRetentionRuns || [], 40),
     settings: ensureRuntimeSettings(state),
-    adminTasks: state.adminTasks,
-    adminAudit: state.adminAudit,
+    adminTasks: list(state.adminTasks, 120),
+    adminAudit: list(state.adminAudit, 120),
   };
 }
 
@@ -36486,6 +36534,14 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
       response: fallbackResponse,
       fallbackFromVoiceId: request.voiceId,
     };
+    recordAvaSpokenOutputDiagnostics({
+      provider: 'ElevenLabs',
+      path: options.stream ? 'tts.stream.fallback' : 'tts.http.fallback',
+      rawText: text,
+      spokenText: fallbackResult.sanitizedText || fallbackResult.payload?.text || '',
+      ok: fallbackResponse.ok,
+      error: fallbackResponse.ok ? '' : `fallback status ${fallbackResponse.status}`,
+    });
     void recordProsodyDecisionFromTtsRequest(fallbackResult, body, fallbackResult.sanitizedText || fallbackResult.payload?.text || text).catch((error) => console.warn('[Prosody] Failed to log fallback TTS decision:', error?.message || error));
     return fallbackResult;
   }
@@ -36493,6 +36549,14 @@ async function fetchElevenLabsTts(body = {}, text = '', options = {}) {
     ...request,
     response,
   };
+  recordAvaSpokenOutputDiagnostics({
+    provider: 'ElevenLabs',
+    path: options.stream ? 'tts.stream' : 'tts.http',
+    rawText: text,
+    spokenText: result.sanitizedText || result.payload?.text || '',
+    ok: response.ok,
+    error: response.ok ? '' : `status ${response.status}`,
+  });
   void recordProsodyDecisionFromTtsRequest(result, body, result.sanitizedText || result.payload?.text || text).catch((error) => console.warn('[Prosody] Failed to log TTS decision:', error?.message || error));
   return result;
 }
@@ -38862,6 +38926,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     deepgramModel: '',
     deepgramEncoding: '',
     deepgramSampleRate: 0,
+    deepgramSocketOpen: false,
+    deepgramReadyAt: '',
     deepgramEventCount: 0,
     lastDeepgramEvent: '',
     lastDeepgramError: '',
@@ -38878,6 +38944,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     telnyxAiAssistantStarted: false,
     lastAvaReplyAt: 0,
     lastAvaReplyTranscript: '',
+    lastAvaReplySpoken: '',
+    lastAvaSpokenPreview: '',
     lastMediaReplyAt: 0,
     mediaPlaybackReady: false,
     mediaPlaybackMode: '',
@@ -38930,6 +38998,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       deepgramKeepAliveTimer = null;
     }
     if (session.callId) telnyxMediaSessionsByCallId.delete(session.callId);
+    session.deepgramSocketOpen = false;
     if (deepgramConnection && deepgramReady) {
       const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
       const didFinalize = sendDeepgramControl(deepgramConnection, { type: 'Finalize' });
@@ -39166,7 +39235,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       transcript: item.transcript,
       contextCall,
     });
-    const spoken = String(reply.text || '').trim();
+    const spoken = sanitizeAvaSpokenOutput(
+      reply.text || '',
+      'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
+    );
     if (!spoken) return;
     const latestCall = getCallById(session.callId);
     if (!isTelnyxCallStillSpeakable(latestCall)) return;
@@ -39183,6 +39255,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     session.replyLatencySamples = session.replyLatencySamples.slice(0, 12);
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    session.lastAvaReplySpoken = spoken;
+    session.lastAvaSpokenPreview = spoken.slice(0, 320);
     rememberAvaLiveReplyFingerprint(session, spoken);
     addActivity(state, makeActivity({
       actor: 'Ava',
@@ -39363,6 +39437,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     connection.on('close', (event = {}) => {
       if (finalized) return;
+      session.deepgramSocketOpen = false;
       if (suppressNextDeepgramCloseWarning) {
         suppressNextDeepgramCloseWarning = false;
         return;
@@ -39417,6 +39492,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         return false;
       }
       deepgramReady = true;
+      session.deepgramSocketOpen = true;
+      session.deepgramReadyAt = isoNow();
       for (const frame of replayFrames) {
         const decoded = prepareTelnyxFrameForDeepgram(frame);
         session.replayedFrameCount += 1;
@@ -39435,6 +39512,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       await persistState(state);
       return true;
     } catch (error) {
+      session.deepgramSocketOpen = false;
       session.deepgramEventCount += 1;
       session.lastDeepgramEvent = 'linear16_fallback_failed';
       session.lastDeepgramError = String(error?.message || error || 'unknown error').slice(0, 240);
@@ -39592,6 +39670,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         return;
       }
       deepgramReady = true;
+      session.deepgramSocketOpen = true;
+      session.deepgramReadyAt = isoNow();
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -39605,6 +39685,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     } catch (error) {
       const message = String(error?.message || error || 'unknown error').slice(0, 240);
       console.warn('[pbk-local-openclaw] Deepgram live stream could not start:', message);
+      session.deepgramSocketOpen = false;
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -39987,7 +40068,8 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/state', '/api/state'])) {
-      json(response, 200, buildStateSnapshot());
+      const compact = /^(1|true|yes)$/i.test(String(url.searchParams.get('compact') || '').trim());
+      json(response, 200, buildStateSnapshot({ compact }));
       return;
     }
 
@@ -40279,6 +40361,59 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/voice/status', '/api/v1/voice/status'])) {
+      const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
+        sessionId: session.id,
+        callId: session.callId,
+        streamId: session.streamId,
+        frameCount: session.frameCount || 0,
+        audioBytes: session.audioBytes || 0,
+        firstAudioAt: session.firstAudioAt || '',
+        lastAudioAt: session.lastAudioAt || '',
+        deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
+        deepgramReadyAt: session.deepgramReadyAt || '',
+        lastDeepgramEvent: session.lastDeepgramEvent || '',
+        lastDeepgramError: session.lastDeepgramError || '',
+        transcriptCount: Array.isArray(session.transcript) ? session.transcript.length : 0,
+        lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
+        lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
+        replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+      }));
+      json(response, 200, {
+        ok: true,
+        result: 'voice_status',
+        generatedAt: isoNow(),
+        providers: {
+          telnyx: getTelnyxProviderMeta(),
+          deepgram: getDeepgramProviderMeta(process.env),
+          browserVoice: getBrowserVoiceProviderMeta(),
+          elevenLabs: getElevenLabsProviderMeta(),
+        },
+        phone: {
+          activeMediaSessionCount: activeMediaSessions.length,
+          sessions: activeMediaSessions,
+          telnyxBridgeAvaReplyEnabled: PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED,
+          elevenLabsMediaReplyEnabled: PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED,
+        },
+        lastSpoken: lastAvaSpokenOutput,
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/last-spoken', '/api/v1/debug/last-spoken'])) {
+      json(response, 200, {
+        ok: true,
+        result: lastAvaSpokenOutput ? 'last_spoken_found' : 'last_spoken_empty',
+        lastSpoken: lastAvaSpokenOutput,
+        status: {
+          lastAvaSpokenAt: state.status?.lastAvaSpokenAt || '',
+          lastAvaSpokenProvider: state.status?.lastAvaSpokenProvider || '',
+          lastAvaSpokenPreview: state.status?.lastAvaSpokenPreview || '',
+        },
+      });
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/live-call-status', '/api/v1/debug/live-call-status'])) {
       const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
         sessionId: session.id,
@@ -40286,11 +40421,12 @@ const server = createServer(async (request, response) => {
         streamId: session.streamId,
         frameCount: session.frameCount || 0,
         audioBytes: session.audioBytes || 0,
-        deepgramReady: Boolean(session.deepgramEventCount || session.lastDeepgramEvent || session.transcript?.length),
+        deepgramReady: Boolean(session.deepgramSocketOpen),
+        deepgramReadyAt: session.deepgramReadyAt || '',
         lastDeepgramEvent: session.lastDeepgramEvent || '',
         lastDeepgramError: session.lastDeepgramError || '',
         lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
-        lastAvaResponse: session.lastAvaReplyTranscript || '',
+        lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
         selectedPath: session.selectedPath || '',
         pathLocked: Boolean(session.pathLocked),
         identifiedPath: session.identifiedPath || '',

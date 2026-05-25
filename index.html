@@ -16978,6 +16978,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     assertOpenClawAuthReady(config, '/state');
 
     const attempts = [
+      `${base}/state?compact=1`,
+      `${base}/api/state?compact=1`,
       `${base}/state`,
       `${base}/api/state`
     ];
@@ -17026,14 +17028,42 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     throw lastError || new Error(`OpenClaw did not accept event ${eventType}.`);
   }
 
+  const OPENCLAW_READ_CACHE_TTL_MS = 6000;
+  const openClawReadCache = new Map();
+
+  function cloneOpenClawPayload(payload) {
+    if (payload === null || payload === undefined || typeof payload !== 'object') return payload;
+    try {
+      return typeof structuredClone === 'function'
+        ? structuredClone(payload)
+        : JSON.parse(JSON.stringify(payload));
+    } catch {
+      return payload;
+    }
+  }
+
+  function canCacheOpenClawRead(path = '', method = 'GET') {
+    if (String(method || 'GET').toUpperCase() !== 'GET') return false;
+    return /^(\/?(api\/)?(state|approvals|rex\/decisions|brain\/web-search\/status|voice\/status|debug\/live-call-status))(\?|$|\/)/i.test(String(path || '').replace(/^\/+/, ''));
+  }
+
   async function requestOpenClawApi(path, { method = 'GET', body = null, timeout = 9000 } = {}) {
     const config = getOpenClawConfig();
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
     assertOpenClawAuthReady(config, path, method);
     const url = new URL(String(path || '').replace(/^\/+/, ''), `${base}/`).toString();
+    const normalizedMethod = String(method || 'GET').toUpperCase();
+    const cacheKey = `${normalizedMethod}:${url}`;
+    if (body || normalizedMethod !== 'GET') openClawReadCache.clear();
+    if (!body && canCacheOpenClawRead(path, normalizedMethod)) {
+      const cached = openClawReadCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < OPENCLAW_READ_CACHE_TTL_MS) {
+        return cloneOpenClawPayload(cached.payload);
+      }
+    }
     const response = await fetchWithTimeout(url, {
-      method,
+      method: normalizedMethod,
       headers: buildOpenClawHeaders(config, Boolean(body)),
       ...(body ? { body: JSON.stringify(body) } : {})
     }, timeout);
@@ -17042,6 +17072,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!response.ok) {
       const message = payload?.error || payload?.message || `Bridge returned ${response.status}`;
       throw new Error(message);
+    }
+    if (!body && canCacheOpenClawRead(path, normalizedMethod)) {
+      openClawReadCache.set(cacheKey, { at: Date.now(), payload: cloneOpenClawPayload(payload) });
+      if (openClawReadCache.size > 40) {
+        const firstKey = openClawReadCache.keys().next().value;
+        if (firstKey) openClawReadCache.delete(firstKey);
+      }
     }
     return payload;
   }

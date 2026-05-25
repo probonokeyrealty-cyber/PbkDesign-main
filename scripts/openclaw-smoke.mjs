@@ -68,11 +68,29 @@ async function main() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const compactState = await fetch(`${BASE_URL}/state?compact=1`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
     const ttsHealth = await fetch(`${BASE_URL}/api/voice/tts/health`, {
       headers: {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const voiceStatus = await fetch(`${BASE_URL}/api/voice/status`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const lastSpoken = await fetch(`${BASE_URL}/api/debug/last-spoken`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    assert(compactState?.status?.snapshotMode === 'compact', 'Compact state endpoint did not report compact mode.');
+    assert(voiceStatus?.ok === true && voiceStatus?.result === 'voice_status', 'Voice status endpoint did not return live diagnostics.');
+    assert(lastSpoken?.ok === true && /last_spoken_/.test(lastSpoken?.result || ''), 'Last-spoken debug endpoint did not return a safe diagnostic envelope.');
     const publicAvaLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',
       headers: {

@@ -880,6 +880,21 @@ const checks = [
       && /Public Ava TTS diagnostic text still created a lead/.test(openclawSmoke),
   },
   {
+    name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
+    ok: /BUILD_REVISION = '2026-05-25-ava-audio-load-hardening'/.test(bridge)
+      && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
+      && /lastAvaSpokenOutput/.test(bridge)
+      && /\/api\/voice\/status/.test(bridge)
+      && /\/api\/debug\/last-spoken/.test(bridge)
+      && /deepgramSocketOpen/.test(bridge)
+      && /buildStateSnapshot\(\{ compact \}\)/.test(bridge)
+      && /state\?compact=1/.test(index)
+      && /openClawReadCache/.test(index)
+      && /OPENCLAW_READ_CACHE_TTL_MS/.test(index)
+      && /Voice status endpoint did not return live diagnostics/.test(openclawSmoke)
+      && /Compact state endpoint did not report compact mode/.test(openclawSmoke),
+  },
+  {
     name: 'Production pristine debugging script names remaining ops gaps without mutating live state',
     ok: /production-pristine-check\.mjs/.test(pkg)
       && /debug:production/.test(pkg)

@@ -881,7 +881,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-25-ava-audio-load-hardening'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-25-redis-shared-state-readiness'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -893,6 +893,19 @@ const checks = [
       && /OPENCLAW_READ_CACHE_TTL_MS/.test(index)
       && /Voice status endpoint did not return live diagnostics/.test(openclawSmoke)
       && /Compact state endpoint did not report compact mode/.test(openclawSmoke),
+  },
+  {
+    name: 'Optional Redis shared state prepares bridge for multi-instance calls and singleton loops',
+    ok: /createClient as createRedisClient/.test(bridge)
+      && /PBK_REDIS_URL/.test(bridge)
+      && /function getSharedRedisClient/.test(bridge)
+      && /function syncTelnyxSessionToRedis/.test(bridge)
+      && /function getSharedTelnyxCallStates/.test(bridge)
+      && /redisAcquireLease\(`closed-loop:\$\{label\}`/.test(bridge)
+      && /sharedMediaSessions/.test(bridge)
+      && /providers:\s*\{[\s\S]*redis: getRedisProviderMeta\(\)/.test(bridge)
+      && /PBK_REDIS_URL/.test(renderConfig)
+      && /Voice status endpoint did not expose optional Redis shared-state diagnostics/.test(openclawSmoke),
   },
   {
     name: 'Production pristine debugging script names remaining ops gaps without mutating live state',

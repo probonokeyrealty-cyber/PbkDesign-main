@@ -90,6 +90,7 @@ async function main() {
     }).then((response) => response.json());
     assert(compactState?.status?.snapshotMode === 'compact', 'Compact state endpoint did not report compact mode.');
     assert(voiceStatus?.ok === true && voiceStatus?.result === 'voice_status', 'Voice status endpoint did not return live diagnostics.');
+    assert(voiceStatus?.providers?.redis && typeof voiceStatus.providers.redis.configured === 'boolean', 'Voice status endpoint did not expose optional Redis shared-state diagnostics.');
     assert(lastSpoken?.ok === true && /last_spoken_/.test(lastSpoken?.result || ''), 'Last-spoken debug endpoint did not return a safe diagnostic envelope.');
     const publicAvaLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',

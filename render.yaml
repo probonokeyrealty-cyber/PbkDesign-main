@@ -27,6 +27,14 @@ services:
       # (Telnyx call events, DocuSign envelope status, etc.) that point back here.
       - key: PBK_PUBLIC_BASE_URL
         value: https://pbk-openclaw-bridge.onrender.com
+      # Optional shared state for multi-instance readiness. Set this to a
+      # Render Key Value / Redis URL before raising numInstances above 1.
+      - key: PBK_REDIS_URL
+        sync: false
+      - key: PBK_REDIS_NAMESPACE
+        value: pbk-openclaw
+      - key: PBK_REDIS_CALL_STATE_TTL_SECONDS
+        value: "21600"
 
       # OpenAI Responses API web search for Rex/Ava current-market research.
       # Optional proxy route: set PBK_OPENAI_BASE_URL to a compatible LiteLLM

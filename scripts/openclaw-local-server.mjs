@@ -11,6 +11,7 @@ import chromium from '@sparticuz/chromium';
 import { WebSocket, WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer-core';
 import pg from 'pg';
+import { createClient as createRedisClient } from 'redis';
 import {
   DEEPGRAM_SAMPLE_URL,
   createDeepgramLiveConnection,
@@ -39,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-25-ava-audio-load-hardening';
+const BUILD_REVISION = '2026-05-25-redis-shared-state-readiness';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -162,6 +163,10 @@ hydrateWindowsUserEnv([
   'PBK_TOTP_REQUIRED',
   'PBK_TOTP_SECRET',
   'PBK_VOICE_PREWARM_ENABLED',
+  'PBK_REDIS_URL',
+  'REDIS_URL',
+  'PBK_REDIS_ENABLED',
+  'PBK_REDIS_NAMESPACE',
   'PBK_SLACK_UPDATES_CHANNEL_ID',
   'PBK_SLACK_UPDATES_CHANNEL',
   'SLACK_UPDATES_CHANNEL_ID',
@@ -283,6 +288,12 @@ const COMMAND_CENTER_CLOSED_LOOP_FIRST_DELAY_MS = Math.max(60_000, Number(proces
 const REX_GOAL_ALIGNMENT_INTERVAL_MS = Math.max(60 * 60 * 1000, Number(process.env.PBK_REX_GOAL_ALIGNMENT_INTERVAL_MS || 24 * 60 * 60 * 1000));
 const CALL_ANALYZER_INTERVAL_MS = Math.max(30 * 60 * 1000, Number(process.env.PBK_CALL_ANALYZER_INTERVAL_MS || 60 * 60 * 1000));
 const PROSODY_TRAIN_INTERVAL_MS = Math.max(24 * 60 * 60 * 1000, Number(process.env.PBK_PROSODY_TRAIN_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000));
+const REDIS_URL = String(process.env.PBK_REDIS_URL || process.env.REDIS_URL || process.env.RENDER_REDIS_URL || '').trim();
+const REDIS_ENABLED = Boolean(REDIS_URL) && !/^(0|false|no|off)$/i.test(String(process.env.PBK_REDIS_ENABLED || 'true').trim());
+const REDIS_NAMESPACE = String(process.env.PBK_REDIS_NAMESPACE || 'pbk-openclaw').trim().replace(/[^a-z0-9:_-]/gi, '-') || 'pbk-openclaw';
+const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(process.env.PBK_REDIS_CALL_STATE_TTL_SECONDS || 6 * 60 * 60)));
+const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
+const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
 const AVA_CALL_INTELLIGENCE_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_CALL_INTELLIGENCE_ENABLED || 'true').trim());
 const AVA_CALL_INTELLIGENCE_STRATEGIST_MODE = String(process.env.PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline').trim().toLowerCase();
 const AVA_CALL_INTELLIGENCE_TIMEOUT_MS = Math.max(350, Math.min(2500, Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || 1200)));
@@ -908,6 +919,192 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+let sharedRedisClient = null;
+let sharedRedisConnectPromise = null;
+let sharedRedisLastError = '';
+let sharedRedisDisabledUntil = 0;
+let sharedRedisLastReadyAt = '';
+const REDIS_INSTANCE_ID = `${process.env.RENDER_SERVICE_ID || process.env.COMPUTERNAME || process.pid}-${randomUUID().slice(0, 8)}`;
+
+function redisKey(...parts) {
+  return [REDIS_NAMESPACE, ...parts]
+    .map((part) => String(part || '').trim().replace(/[^a-zA-Z0-9:_-]/g, '-'))
+    .filter(Boolean)
+    .join(':');
+}
+
+async function getSharedRedisClient() {
+  if (!REDIS_ENABLED) return null;
+  if (sharedRedisClient?.isOpen) return sharedRedisClient;
+  if (sharedRedisConnectPromise) return sharedRedisConnectPromise;
+  if (Date.now() < sharedRedisDisabledUntil) return null;
+
+  const client = createRedisClient({
+    url: REDIS_URL,
+    socket: {
+      reconnectStrategy: (retries) => Math.min(1000, Math.max(50, retries * 100)),
+    },
+  });
+  sharedRedisClient = client;
+  client.on('error', (error) => {
+    sharedRedisLastError = String(error?.message || error || 'unknown Redis error').slice(0, 240);
+  });
+  client.on('ready', () => {
+    sharedRedisLastError = '';
+    sharedRedisLastReadyAt = isoNow();
+  });
+
+  sharedRedisConnectPromise = client.connect()
+    .then(() => client)
+    .catch(async (error) => {
+      sharedRedisLastError = String(error?.message || error || 'Redis connection failed').slice(0, 240);
+      sharedRedisDisabledUntil = Date.now() + REDIS_RETRY_COOLDOWN_MS;
+      try {
+        await client.quit();
+      } catch {
+        // Best effort cleanup. Redis is optional shared state, never a bridge blocker.
+      }
+      if (sharedRedisClient === client) sharedRedisClient = null;
+      return null;
+    })
+    .finally(() => {
+      sharedRedisConnectPromise = null;
+    });
+
+  return sharedRedisConnectPromise;
+}
+
+function getRedisProviderMeta() {
+  return {
+    configured: Boolean(REDIS_URL),
+    enabled: REDIS_ENABLED,
+    ready: Boolean(sharedRedisClient?.isOpen),
+    mode: REDIS_ENABLED ? 'shared_call_state_and_singleton_leases' : 'disabled',
+    namespace: REDIS_NAMESPACE,
+    instanceId: REDIS_INSTANCE_ID,
+    lastReadyAt: sharedRedisLastReadyAt,
+    lastError: sharedRedisLastError,
+    callStateTtlSeconds: REDIS_CALL_STATE_TTL_SECONDS,
+    leaseTtlSeconds: REDIS_LEASE_TTL_SECONDS,
+  };
+}
+
+async function redisSetJson(key, value, ttlSeconds = REDIS_CALL_STATE_TTL_SECONDS) {
+  const client = await getSharedRedisClient();
+  if (!client) return { ok: false, skipped: true, result: 'redis_unavailable' };
+  try {
+    await client.set(key, JSON.stringify(value), { EX: ttlSeconds });
+    return { ok: true, result: 'redis_set' };
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis set failed').slice(0, 240);
+    return { ok: false, result: 'redis_set_failed', error: sharedRedisLastError };
+  }
+}
+
+async function redisGetJson(key) {
+  const client = await getSharedRedisClient();
+  if (!client) return null;
+  try {
+    const raw = await client.get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis get failed').slice(0, 240);
+    return null;
+  }
+}
+
+async function redisAcquireLease(name = '', ttlSeconds = REDIS_LEASE_TTL_SECONDS) {
+  const client = await getSharedRedisClient();
+  if (!client || !name) return { ok: true, result: 'redis_lease_skipped', owner: 'local' };
+  const key = redisKey('lease', name);
+  try {
+    const acquired = await client.set(key, REDIS_INSTANCE_ID, { NX: true, EX: ttlSeconds });
+    if (acquired) return { ok: true, result: 'redis_lease_acquired', owner: REDIS_INSTANCE_ID };
+    const owner = await client.get(key).catch(() => '');
+    return { ok: false, result: 'redis_lease_held', owner: owner || 'unknown' };
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis lease failed').slice(0, 240);
+    // Fail open for safety: missing Redis must not disable the bridge.
+    return { ok: true, result: 'redis_lease_failed_open', owner: 'local', error: sharedRedisLastError };
+  }
+}
+
+function buildSharedTelnyxSessionState(session = {}, status = 'active') {
+  const lastTranscript = session.transcript?.slice?.(-1)?.[0] || {};
+  return {
+    id: session.id || '',
+    callId: session.callId || '',
+    streamId: session.streamId || '',
+    status,
+    instanceId: REDIS_INSTANCE_ID,
+    frameCount: session.frameCount || 0,
+    audioBytes: session.audioBytes || 0,
+    firstAudioAt: session.firstAudioAt || '',
+    lastAudioAt: session.lastAudioAt || '',
+    deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
+    deepgramReadyAt: session.deepgramReadyAt || '',
+    lastDeepgramEvent: session.lastDeepgramEvent || '',
+    lastDeepgramError: session.lastDeepgramError || '',
+    transcriptCount: Array.isArray(session.transcript) ? session.transcript.length : 0,
+    lastTranscript: lastTranscript.transcript || '',
+    lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
+    selectedPath: session.selectedPath || '',
+    pathLocked: Boolean(session.pathLocked),
+    identifiedPath: session.identifiedPath || '',
+    replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    startedAt: session.startedAt || '',
+    updatedAt: isoNow(),
+  };
+}
+
+async function syncTelnyxSessionToRedis(session = {}, status = 'active', options = {}) {
+  const id = session.callId || session.streamId || session.id || '';
+  if (!REDIS_ENABLED || !id) return { ok: false, skipped: true, result: 'redis_call_state_skipped' };
+  const now = Date.now();
+  const minIntervalMs = Math.max(250, Number(options.minIntervalMs || 1200));
+  if (!options.force && session.lastRedisSyncAt && now - session.lastRedisSyncAt < minIntervalMs) {
+    return { ok: false, skipped: true, result: 'redis_call_state_throttled' };
+  }
+  session.lastRedisSyncAt = now;
+  const client = await getSharedRedisClient();
+  if (!client) return { ok: false, skipped: true, result: 'redis_unavailable' };
+  const record = buildSharedTelnyxSessionState(session, status);
+  const key = redisKey('call', id);
+  const indexKey = redisKey('calls', 'active');
+  try {
+    await client.set(key, JSON.stringify(record), { EX: REDIS_CALL_STATE_TTL_SECONDS });
+    if (status === 'ended') {
+      await client.sRem(indexKey, id);
+    } else {
+      await client.sAdd(indexKey, id);
+      await client.expire(indexKey, REDIS_CALL_STATE_TTL_SECONDS);
+    }
+    return { ok: true, result: 'redis_call_state_synced', key };
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis call-state sync failed').slice(0, 240);
+    return { ok: false, result: 'redis_call_state_failed', error: sharedRedisLastError };
+  }
+}
+
+async function getSharedTelnyxCallStates() {
+  const client = await getSharedRedisClient();
+  if (!client) return [];
+  const indexKey = redisKey('calls', 'active');
+  try {
+    const ids = await client.sMembers(indexKey);
+    const records = [];
+    for (const id of ids.slice(0, 50)) {
+      const record = await redisGetJson(redisKey('call', id));
+      if (record) records.push(record);
+      else await client.sRem(indexKey, id).catch(() => {});
+    }
+    return records.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis shared call read failed').slice(0, 240);
+    return [];
+  }
+}
+
 function averageNumeric(values = []) {
   const numbers = values.map((value) => Number(value)).filter((value) => Number.isFinite(value));
   if (!numbers.length) return null;
@@ -1379,6 +1576,7 @@ function getRuntimeMeta() {
       batchdata: getBatchDataProviderMeta(),
       slack: getSlackProviderMeta(),
       render: getRenderProviderMeta(),
+      redis: getRedisProviderMeta(),
     },
     security: getSecurityMeta(),
     warnings,
@@ -36228,6 +36426,7 @@ function buildStateSnapshot(options = {}) {
         batchdata: getBatchDataProviderMeta(),
         slack: getSlackProviderMeta(),
         render: getRenderProviderMeta(),
+        redis: getRedisProviderMeta(),
       },
       stateBackend: runtimeMeta.stateBackend,
       authRequired: runtimeMeta.authRequired,
@@ -38949,6 +39148,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     lastMediaReplyAt: 0,
     mediaPlaybackReady: false,
     mediaPlaybackMode: '',
+    lastRedisSyncAt: 0,
     startedAt: isoNow(),
   };
 
@@ -38999,6 +39199,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
     if (session.callId) telnyxMediaSessionsByCallId.delete(session.callId);
     session.deepgramSocketOpen = false;
+    await syncTelnyxSessionToRedis(session, 'ended', { force: true });
     if (deepgramConnection && deepgramReady) {
       const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
       const didFinalize = sendDeepgramControl(deepgramConnection, { type: 'Finalize' });
@@ -39306,6 +39507,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
     }
     await persistState(state);
+    void syncTelnyxSessionToRedis(session, 'active', { force: true });
     scheduleRuntimeStateBroadcast('telnyx-ava-reply');
   };
 
@@ -39357,6 +39559,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       capturedAt: isoNow(),
     };
     session.transcript.push(item);
+    void syncTelnyxSessionToRedis(session, 'active', { force: normalized.isFinal || normalized.speechFinal });
     const contextCall = getCallById(session.callId);
     if (contextCall) {
       const liveBant = normalizeBantInfo(contextCall.bant || {}, extractBantFromTranscript(transcript, contextCall.bant || {}));
@@ -39426,6 +39629,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       session.deepgramEventCount += 1;
       session.lastDeepgramEvent = 'socket_error';
       session.lastDeepgramError = String(error?.message || error || 'unknown error').slice(0, 240);
+      void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -39445,6 +39649,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       session.deepgramEventCount += 1;
       session.lastDeepgramEvent = event?.code ? `socket_close_${event.code}` : 'socket_close';
       session.lastDeepgramError = String(event?.reason || '').slice(0, 240);
+      void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -39494,6 +39699,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       deepgramReady = true;
       session.deepgramSocketOpen = true;
       session.deepgramReadyAt = isoNow();
+      void syncTelnyxSessionToRedis(session, 'active', { force: true });
       for (const frame of replayFrames) {
         const decoded = prepareTelnyxFrameForDeepgram(frame);
         session.replayedFrameCount += 1;
@@ -39580,6 +39786,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       if (session.callId) telnyxMediaSessionsByCallId.set(session.callId, session);
       const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
       session.mediaFormat = mediaFormat;
+      void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(
         state,
         makeActivity({
@@ -39605,6 +39812,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       rememberTelnyxMediaFrame(frame);
       if (session.frameCount === 1 || session.frameCount % 100 === 0) {
         console.log(`[AudioPath] Telnyx chunk for ${session.callId || session.streamId || session.id}: ${frame.length} bytes (${session.frameCount} frames, ${session.audioBytes} bytes total)`);
+      }
+      if (session.frameCount === 1 || session.frameCount % 100 === 0) {
+        void syncTelnyxSessionToRedis(session, 'active', { force: session.frameCount === 1 });
       }
       if (session.frameCount === 1) {
         addActivity(
@@ -39672,6 +39882,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       deepgramReady = true;
       session.deepgramSocketOpen = true;
       session.deepgramReadyAt = isoNow();
+      void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -40362,6 +40573,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/voice/status', '/api/v1/voice/status'])) {
+      const sharedMediaSessions = await getSharedTelnyxCallStates();
       const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
         sessionId: session.id,
         callId: session.callId,
@@ -40388,10 +40600,13 @@ const server = createServer(async (request, response) => {
           deepgram: getDeepgramProviderMeta(process.env),
           browserVoice: getBrowserVoiceProviderMeta(),
           elevenLabs: getElevenLabsProviderMeta(),
+          redis: getRedisProviderMeta(),
         },
         phone: {
           activeMediaSessionCount: activeMediaSessions.length,
           sessions: activeMediaSessions,
+          sharedMediaSessionCount: sharedMediaSessions.length,
+          sharedSessions: sharedMediaSessions.slice(0, 12),
           telnyxBridgeAvaReplyEnabled: PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED,
           elevenLabsMediaReplyEnabled: PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED,
         },
@@ -40415,6 +40630,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/live-call-status', '/api/v1/debug/live-call-status'])) {
+      const sharedMediaSessions = await getSharedTelnyxCallStates();
       const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
         sessionId: session.id,
         callId: session.callId,
@@ -40439,6 +40655,9 @@ const server = createServer(async (request, response) => {
         generatedAt: isoNow(),
         mediaStreamsOpen: activeMediaSessions.length,
         activeMediaSessions,
+        sharedMediaStreamsOpen: sharedMediaSessions.length,
+        sharedMediaSessions: sharedMediaSessions.slice(0, 12),
+        sharedState: getRedisProviderMeta(),
         activeCalls: state.calls.filter((call) => isActiveLiveCall(call)).map((call) => ({
           id: call.id,
           callControlId: call.callControlId || call.call_control_id || call.callId || '',
@@ -44861,6 +45080,11 @@ function startCommandCenterClosedLoopScheduler() {
   commandCenterClosedLoopSchedulerStarted = true;
   const runSafely = async (label, fn) => {
     try {
+      const lease = await redisAcquireLease(`closed-loop:${label}`, REDIS_LEASE_TTL_SECONDS);
+      if (!lease.ok) {
+        console.log(`[pbk-local-openclaw] closed-loop ${label}: skipped, lease held by ${lease.owner || 'another instance'}`);
+        return { ok: true, result: 'skipped_redis_lease_held', owner: lease.owner || '' };
+      }
       const result = await fn();
       console.log(`[pbk-local-openclaw] closed-loop ${label}: ${result?.result || 'ok'}`);
       return result;
@@ -44901,6 +45125,15 @@ server.listen(PORT, HOST, () => {
   });
   startEmotionalLearningAutoImprove();
   startCommandCenterClosedLoopScheduler();
+  if (REDIS_ENABLED) {
+    getSharedRedisClient()
+      .then((client) => {
+        console.log(`[pbk-local-openclaw] Redis shared state ${client?.isOpen ? 'ready' : 'not connected'} (${REDIS_NAMESPACE}).`);
+      })
+      .catch((error) => {
+        console.warn('[pbk-local-openclaw] Redis shared state unavailable:', error?.message || error);
+      });
+  }
   buildOpenClawGatewayStatus({ force: true, timeoutMs: Math.min(2500, OPENCLAW_GATEWAY_PROBE_TIMEOUT_MS) })
     .then((status) => {
       const label = status.ready ? 'ok' : status.directProbeConfigured ? 'degraded' : 'standby';

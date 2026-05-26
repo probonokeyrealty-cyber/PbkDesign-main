@@ -1158,6 +1158,22 @@ const checks = [
       && /transcriptForReply === session\.lastAvaReplyTranscript/.test(bridge),
   },
   {
+    name: 'Ava live-call repair replies bypass anti-repeat and skip empty acknowledgements',
+    ok: /buildTelnyxLiveConversationalRepairReply/.test(bridge)
+      && /audio_check_repair/.test(bridge)
+      && /conversational_repair_bypass/.test(bridge)
+      && /shouldSkipTelnyxLiveAckOnlyReply/.test(bridge)
+      && /ava_phone_reply_skipped/.test(bridge),
+  },
+  {
+    name: 'Call trace diagnostics preserve transcript arrays and phone playback send details',
+    ok: /Array\.isArray\(value\)/.test(bridge)
+      && /speaker = item\.speaker/.test(bridge)
+      && /speakOutputFormat/.test(bridge)
+      && /speakBytes/.test(bridge)
+      && /mediaPlaybackMode/.test(bridge),
+  },
+  {
     name: 'Ava phone replies can use ElevenLabs over Telnyx bidirectional media',
     ok: /PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED/.test(bridge)
       && /stream_bidirectional_mode:\s*'mp3'/.test(bridge)

@@ -1223,16 +1223,20 @@ function sanitizeCallTraceDetails(details = {}) {
       sanitized[key] = maskPhoneForDiagnostics(value);
       continue;
     }
-    if (/(transcript|reply|response|spoken|text|error|reason|result|status|source|route|stage|event)/i.test(key)) {
-      sanitized[key] = typeof value === 'string' ? value.slice(0, 500) : value;
+    if (Array.isArray(value)) {
+      sanitized[key] = value.slice(0, 8).map((item) => {
+        if (/transcript/i.test(key) && item && typeof item === 'object') {
+          const speaker = item.speaker || item.role || '';
+          const text = item.text || item.transcript || item.utterance || item.message || '';
+          return [speaker, String(text || '').slice(0, 220)].filter(Boolean).join(': ');
+        }
+        if (item && typeof item === 'object') return sanitizeCallTraceDetails(item);
+        return typeof item === 'string' ? item.slice(0, 160) : item;
+      });
       continue;
     }
-    if (Array.isArray(value)) {
-      sanitized[key] = value.slice(0, 8).map((item) => (
-        item && typeof item === 'object'
-          ? sanitizeCallTraceDetails(item)
-          : typeof item === 'string' ? item.slice(0, 160) : item
-      ));
+    if (/(transcript|reply|response|spoken|text|error|reason|result|status|source|route|stage|event)/i.test(key)) {
+      sanitized[key] = typeof value === 'string' ? value.slice(0, 500) : value;
       continue;
     }
     if (value && typeof value === 'object') {
@@ -39213,6 +39217,67 @@ function hasAvaRepeatedLiveReply(session = {}, text = '') {
   return (session.recentAvaReplyFingerprints || []).includes(fingerprint);
 }
 
+function normalizeTelnyxRepairTranscript(transcript = '') {
+  return String(transcript || '')
+    .toLowerCase()
+    .replace(/[^\w\s?']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isTelnyxLiveAudioCheckUtterance(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return false;
+  return /\b(can you hear me|you can hear me|hear me right|do you hear me|are you there|still there|hello\??|anyone there)\b/i.test(clean);
+}
+
+function isTelnyxLiveGreetingOnlyUtterance(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean || clean.split(/\s+/).length > 8) return false;
+  if (/\b(address|property|sell|selling|offer|cash|price|probate|mortgage|rate|land|lot|repair|timeline)\b/i.test(clean)) return false;
+  return /^(hi|hey|hello|good morning|good afternoon|good evening)(\s+(ava|there|how are you|how's it going|what's up|today))*\??$/i.test(clean);
+}
+
+function isTelnyxLiveAckOnlyUtterance(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript).replace(/\?+$/g, '').trim();
+  return /^(yes|yeah|yep|yup|ok|okay|right|sure|correct|uh huh|mm hmm|mhm)$/.test(clean);
+}
+
+function buildTelnyxLiveConversationalRepairReply({ session = {}, transcript = '', contextCall = null } = {}) {
+  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
+  const opener = leadName && !/^unknown|caller$/i.test(leadName) ? `${leadName}, ` : '';
+  if (isTelnyxLiveAudioCheckUtterance(transcript)) {
+    const count = Math.max(1, Number(session.audioCheckReplyCount || 0) + 1);
+    session.audioCheckReplyCount = count;
+    const variants = [
+      'yes, I can hear you clearly. I am here with you. Sorry about that pause. What property address should I use so I can pull this up the right way?',
+      'yes, I have you now. Thanks for hanging with me. Let us reset for a second: what property are we talking about today?',
+      'I can hear you. Let me keep this simple and make sure I am looking at the right place. What is the property address?',
+    ];
+    return {
+      text: `${opener}${variants[(count - 1) % variants.length]}`,
+      replyMode: 'audio_check_repair',
+      bypassAntiRepeat: true,
+      reason: 'caller_audio_check',
+    };
+  }
+  if (isTelnyxLiveGreetingOnlyUtterance(transcript)) {
+    return {
+      text: `${opener}I am doing well, thank you. I am here with you. What property address should I use so I can pull this up the right way?`,
+      replyMode: 'greeting_repair',
+      bypassAntiRepeat: true,
+      reason: 'caller_greeting',
+    };
+  }
+  return null;
+}
+
+function shouldSkipTelnyxLiveAckOnlyReply(session = {}, transcript = '') {
+  if (!isTelnyxLiveAckOnlyUtterance(transcript)) return false;
+  const lastReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').toLowerCase();
+  return /\b(can hear you|have you now|property address|what property|pull this up|reset for a second|sorry about that pause)\b/i.test(lastReply);
+}
+
 function chooseMissingBantFieldForTurn(session = {}, missing = []) {
   const ordered = Array.isArray(missing) ? missing.filter(Boolean) : [];
   if (!ordered.length) return '';
@@ -39437,6 +39502,23 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
 }
 
 async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextCall = null } = {}) {
+  const repairReply = buildTelnyxLiveConversationalRepairReply({ session, transcript, contextCall });
+  if (repairReply?.text) {
+    return {
+      ...repairReply,
+      architecture: buildAvaCallArchitectureContext({ session, contextCall, transcript, query: transcript }),
+      strategist: {
+        ok: true,
+        skipped: true,
+        result: 'conversational_repair_bypass',
+      },
+      antiRepeat: {
+        adjusted: false,
+        reason: repairReply.reason,
+        bypassed: true,
+      },
+    };
+  }
   const fallback = buildFastTelnyxLiveAvaReplyText({ session, transcript, contextCall });
   const normalizedFallback = normalizeAvaVoiceReplyText(fallback, fallback);
   const mode = getTelnyxLiveReplyStrategistMode();
@@ -39834,6 +39916,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     const transcriptForReply = String(item.transcript || '').replace(/\s+/g, ' ').trim().toLowerCase();
     if (!transcriptForReply || transcriptForReply === session.lastAvaReplyTranscript) return;
     const now = Date.now();
+    if (shouldSkipTelnyxLiveAckOnlyReply(session, transcriptForReply)) {
+      session.lastAvaReplyTranscript = transcriptForReply;
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'ack_only_after_repair',
+        transcript: item.transcript,
+        replyMode: session.lastAvaReplyMode || '',
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      return;
+    }
     if (now - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_REPLY_MIN_MS) return;
     session.lastAvaReplyAt = now;
     session.lastAvaReplyTranscript = transcriptForReply;
@@ -39866,6 +39960,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
     session.lastAvaReplySpoken = spoken;
     session.lastAvaSpokenPreview = spoken.slice(0, 320);
+    session.lastAvaReplyMode = reply.replyMode || 'live';
     recordCallTrace('ava_phone_reply', {
       ...session,
       status: speakResult.ok ? 'served' : 'warning',
@@ -39873,6 +39968,14 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       error: speakResult.error || '',
       reply: spoken,
       replyMode: reply.replyMode || 'live',
+      speakProvider: speakResult.provider || '',
+      speakBytes: speakResult.bytes || speakResult.elevenLabsMedia?.bytes || 0,
+      speakOutputFormat: speakResult.outputFormat || speakResult.elevenLabsMedia?.outputFormat || '',
+      speakVoiceId: speakResult.voiceId || speakResult.elevenLabsMedia?.voiceId || '',
+      mediaPlaybackReady: Boolean(session.mediaPlaybackReady),
+      mediaPlaybackMode: session.mediaPlaybackMode || '',
+      fallbackFrom: speakResult.fallbackFrom || '',
+      elevenLabsMediaResult: speakResult.elevenLabsMedia?.result || '',
       latencyMs: speechFinalToReplyStartMs,
       stage: 'maybeSpeakTelnyxAvaReply',
     });

@@ -88,10 +88,23 @@ async function main() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const callStateDebug = await fetch(`${BASE_URL}/api/debug/call-state?callId=smoke-missing-call`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    const resetLeadCache = await fetch(`${BASE_URL}/api/debug/reset-lead-cache?phone=6145550199`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
     assert(compactState?.status?.snapshotMode === 'compact', 'Compact state endpoint did not report compact mode.');
     assert(voiceStatus?.ok === true && voiceStatus?.result === 'voice_status', 'Voice status endpoint did not return live diagnostics.');
     assert(voiceStatus?.providers?.redis && typeof voiceStatus.providers.redis.configured === 'boolean', 'Voice status endpoint did not expose optional Redis shared-state diagnostics.');
     assert(lastSpoken?.ok === true && /last_spoken_/.test(lastSpoken?.result || ''), 'Last-spoken debug endpoint did not return a safe diagnostic envelope.');
+    assert(callStateDebug?.ok === true && /^call_state_/.test(callStateDebug?.result || ''), 'Call-state debug endpoint did not return a safe diagnostic envelope.');
+    assert(resetLeadCache?.ok === true && resetLeadCache?.result === 'lead_cache_reset', 'Lead-cache reset debug endpoint did not accept a safe reset request.');
     const publicAvaLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',
       headers: {

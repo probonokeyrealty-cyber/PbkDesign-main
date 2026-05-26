@@ -1037,6 +1037,11 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     streamId: session.streamId || '',
     status,
     instanceId: REDIS_INSTANCE_ID,
+    leadId: session.leadId || '',
+    leadName: getSpokenLeadName(session.leadName || ''),
+    address: session.address || '',
+    phone: normalizePhone(session.phone || ''),
+    leadSource: session.leadSource || '',
     frameCount: session.frameCount || 0,
     audioBytes: session.audioBytes || 0,
     firstAudioAt: session.firstAudioAt || '',
@@ -1052,6 +1057,9 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     pathLocked: Boolean(session.pathLocked),
     identifiedPath: session.identifiedPath || '',
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    redisSyncStatus: 'synced',
+    lastRedisSyncResult: session.lastRedisSyncResult || '',
+    lastRedisSyncError: session.lastRedisSyncError || '',
     startedAt: session.startedAt || '',
     updatedAt: isoNow(),
   };
@@ -1059,15 +1067,28 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
 
 async function syncTelnyxSessionToRedis(session = {}, status = 'active', options = {}) {
   const id = session.callId || session.streamId || session.id || '';
-  if (!REDIS_ENABLED || !id) return { ok: false, skipped: true, result: 'redis_call_state_skipped' };
+  if (!REDIS_ENABLED || !id) {
+    session.lastRedisSyncResult = 'redis_call_state_skipped';
+    session.lastRedisSyncError = '';
+    return { ok: false, skipped: true, result: 'redis_call_state_skipped' };
+  }
   const now = Date.now();
   const minIntervalMs = Math.max(250, Number(options.minIntervalMs || 1200));
   if (!options.force && session.lastRedisSyncAt && now - session.lastRedisSyncAt < minIntervalMs) {
+    session.lastRedisSyncResult = 'redis_call_state_throttled';
+    session.lastRedisSyncError = '';
     return { ok: false, skipped: true, result: 'redis_call_state_throttled' };
   }
   session.lastRedisSyncAt = now;
   const client = await getSharedRedisClient();
-  if (!client) return { ok: false, skipped: true, result: 'redis_unavailable' };
+  if (!client) {
+    session.lastRedisSyncResult = 'redis_unavailable';
+    session.lastRedisSyncError = sharedRedisLastError || 'Redis client unavailable.';
+    if (options.force) {
+      console.warn(`[RedisState] ${session.callId || session.streamId || session.id || 'call'} sync unavailable: ${session.lastRedisSyncError}`);
+    }
+    return { ok: false, skipped: true, result: 'redis_unavailable' };
+  }
   const record = buildSharedTelnyxSessionState(session, status);
   const key = redisKey('call', id);
   const indexKey = redisKey('calls', 'active');
@@ -1079,9 +1100,14 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
       await client.sAdd(indexKey, id);
       await client.expire(indexKey, REDIS_CALL_STATE_TTL_SECONDS);
     }
+    session.lastRedisSyncResult = 'redis_call_state_synced';
+    session.lastRedisSyncError = '';
     return { ok: true, result: 'redis_call_state_synced', key };
   } catch (error) {
     sharedRedisLastError = String(error?.message || error || 'Redis call-state sync failed').slice(0, 240);
+    session.lastRedisSyncResult = 'redis_call_state_failed';
+    session.lastRedisSyncError = sharedRedisLastError;
+    console.warn(`[RedisState] ${session.callId || session.streamId || session.id || 'call'} sync failed: ${sharedRedisLastError}`);
     return { ok: false, result: 'redis_call_state_failed', error: sharedRedisLastError };
   }
 }
@@ -1102,6 +1128,22 @@ async function getSharedTelnyxCallStates() {
   } catch (error) {
     sharedRedisLastError = String(error?.message || error || 'Redis shared call read failed').slice(0, 240);
     return [];
+  }
+}
+
+async function deleteSharedTelnyxCallState(id = '') {
+  const normalizedId = String(id || '').trim();
+  const client = await getSharedRedisClient();
+  if (!client || !normalizedId) {
+    return { ok: false, skipped: true, result: client ? 'missing_call_id' : 'redis_unavailable' };
+  }
+  try {
+    await client.del(redisKey('call', normalizedId));
+    await client.sRem(redisKey('calls', 'active'), normalizedId);
+    return { ok: true, result: 'redis_call_state_deleted', id: normalizedId };
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis call-state delete failed').slice(0, 240);
+    return { ok: false, result: 'redis_call_state_delete_failed', id: normalizedId, error: sharedRedisLastError };
   }
 }
 
@@ -21847,6 +21889,10 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
       callControlId,
       route: params.route || '',
       leadId: params.leadId || '',
+      leadName: getSpokenLeadName(params.leadName || ''),
+      address: params.address || '',
+      phone: normalizePhone(params.phone || ''),
+      leadSource: params.leadSource || '',
       telnyxAiAssistantStarted: shouldStartTelnyxHostedAiAssistant(),
       streamCodec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
       streamBidirectionalMode: getTelnyxBidirectionalMediaParams().stream_bidirectional_mode || '',
@@ -21992,30 +22038,72 @@ function getSpokenLeadName(name = '') {
   return isPlaceholderInboundLeadName(trimmed) ? '' : trimmed;
 }
 
+function maskPhoneForDiagnostics(phone = '') {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return '';
+  return `${normalized.slice(0, 3)}***${normalized.slice(-4)}`;
+}
+
+function buildInboundLeadContextFromLocalLead(localLead = {}, normalizedPhone = '') {
+  const seller = localLead?.seller || {};
+  return {
+    found: true,
+    source: 'bridge-state-fallback',
+    leadId: localLead.leadId || localLead.id || '',
+    leadName: getSpokenLeadName(seller.name || localLead.name || localLead.leadName || ''),
+    address: localLead.property?.address || localLead.address || '',
+    phone: normalizedPhone,
+    email: seller.email || localLead.email || '',
+    status: localLead.status || localLead.stage || '',
+    motivationScore: toNumber(localLead.motivation_score ?? localLead.motivationScore ?? localLead.score, 0),
+    lastContactAt: localLead.lastContactAt || localLead.updatedAt || localLead.createdAt || '',
+    bant: normalizeBantInfo(localLead.bant || {}, localLead),
+    callContext: localLead.callContext || localLead.call_context || {},
+    raw: localLead,
+  };
+}
+
+function buildInboundLeadContextFromDbRow(row = {}, normalizedPhone = '') {
+  return {
+    found: true,
+    source: 'supabase-leads',
+    leadId: row.id || '',
+    leadName: getSpokenLeadName(row.name || row.full_name || row.lead_name || ''),
+    address: row.address || row.property_address || '',
+    phone: normalizedPhone,
+    email: row.email || '',
+    status: row.status || '',
+    motivationScore: toNumber(row.motivation_score ?? row.score, 0),
+    lastContactAt: row.updated_at || row.created_at || '',
+    bant: normalizeBantInfo(row.raw?.bant || {}, row.raw || {}),
+    callContext: row.raw?.call_context || row.raw?.callContext || {},
+    raw: row.raw || row,
+  };
+}
+
 async function findInboundLeadContext(phone = '') {
   const normalizedPhone = normalizePhone(phone);
-  const localLead = (state.leadImports || []).find((lead) => {
-    const seller = lead?.seller || {};
-    return normalizePhone(lead.phone || seller.phone || lead.sellerPhone) === normalizedPhone;
-  });
-  if (localLead) {
+  if (!normalizedPhone) {
     return {
-      found: true,
-      source: 'bridge-state',
-      leadId: localLead.leadId || localLead.id || '',
-      leadName: getSpokenLeadName(localLead.seller?.name || localLead.name || ''),
-      address: localLead.property?.address || localLead.address || '',
-      phone: normalizedPhone,
-      email: localLead.seller?.email || localLead.email || '',
-      status: localLead.status || localLead.stage || '',
-      motivationScore: toNumber(localLead.motivation_score ?? localLead.motivationScore ?? localLead.score, 0),
-      lastContactAt: localLead.lastContactAt || localLead.updatedAt || localLead.createdAt || '',
-      bant: normalizeBantInfo(localLead.bant || {}, localLead),
-      callContext: localLead.callContext || localLead.call_context || {},
-      raw: localLead,
+      found: false,
+      source: 'missing-phone',
+      leadId: `lead-inbound-${slugify(randomUUID())}`,
+      leadName: '',
+      address: '',
+      phone: '',
+      email: '',
+      status: 'new',
+      motivationScore: 0,
+      lastContactAt: '',
+      diagnostics: {
+        reason: 'Telnyx payload did not include a caller phone number, so PBK refused to match blank-phone leads.',
+      },
     };
   }
 
+  // Prefer the durable lead row on every inbound call. Bridge state is a fallback,
+  // not a source of truth, because stale in-memory context can make Ava greet the
+  // wrong seller after a previous call.
   const dbResult = await queryPgRows(
     `SELECT l.id, l.name, l.full_name, l.lead_name, l.address, l.property_address, l.phone, l.email,
             l.status, l.motivation_score, l.score, l.updated_at, l.created_at, to_jsonb(l.*) AS raw
@@ -22026,21 +22114,21 @@ async function findInboundLeadContext(phone = '') {
     [normalizedPhone],
   );
   if (dbResult.ok && dbResult.rows[0]) {
-    const row = dbResult.rows[0];
+    return buildInboundLeadContextFromDbRow(dbResult.rows[0], normalizedPhone);
+  }
+
+  const localLead = (state.leadImports || []).find((lead) => {
+    const seller = lead?.seller || {};
+    const candidatePhone = normalizePhone(lead.phone || seller.phone || lead.sellerPhone);
+    return candidatePhone && candidatePhone === normalizedPhone;
+  });
+  if (localLead) {
     return {
-      found: true,
-      source: 'supabase-leads',
-      leadId: row.id || '',
-      leadName: getSpokenLeadName(row.name || row.full_name || row.lead_name || ''),
-      address: row.address || row.property_address || '',
-      phone: normalizedPhone,
-      email: row.email || '',
-      status: row.status || '',
-      motivationScore: toNumber(row.motivation_score ?? row.score, 0),
-      lastContactAt: row.updated_at || row.created_at || '',
-      bant: normalizeBantInfo(row.raw?.bant || {}, row.raw || {}),
-      callContext: row.raw?.call_context || row.raw?.callContext || {},
-      raw: row.raw || row,
+      ...buildInboundLeadContextFromLocalLead(localLead, normalizedPhone),
+      diagnostics: {
+        durableLookupOk: Boolean(dbResult.ok),
+        durableLookupError: dbResult.ok ? '' : dbResult.error || dbResult.reason || '',
+      },
     };
   }
 
@@ -22154,6 +22242,15 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   const callControlId = parsed.callControlId || body.call_control_id || body.callControlId || '';
   const lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
   const spokenLeadName = getSpokenLeadName(lead.leadName);
+  const inboundDiagnostic = {
+    callControlId,
+    phone: maskPhoneForDiagnostics(parsed.from || body.from || body.phone || ''),
+    leadId: lead.leadId || '',
+    leadName: spokenLeadName || '',
+    leadSource: lead.source || '',
+    found: Boolean(lead.found),
+  };
+  console.log(`[Inbound] phone=${inboundDiagnostic.phone || 'missing'} leadId=${inboundDiagnostic.leadId || 'none'} leadName=${inboundDiagnostic.leadName || 'none'} source=${inboundDiagnostic.leadSource || 'unknown'} call=${callControlId || 'none'}`);
   const afterHours = options.forceAfterHours === true
     || (INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED && options.forceAfterHours !== false && isInboundAfterHours());
   let route = 'ava_qualify';
@@ -22180,7 +22277,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     reason,
     status: 'received',
     promptContext,
-    payload: body,
+    payload: { ...body, leadResolver: inboundDiagnostic },
     createdAt: isoNow(),
     updatedAt: isoNow(),
   };
@@ -22236,6 +22333,10 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
         result: await startTelnyxMediaStream(callControlId, {
           route,
           leadId: lead.leadId,
+          leadName: spokenLeadName,
+          address: lead.address,
+          phone: parsed.from,
+          leadSource: lead.source,
           streamTrack: DEEPGRAM_STREAM_TRACK,
           streamCodec: DEEPGRAM_STREAM_CODEC,
         }),
@@ -22248,6 +22349,10 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
         result: await startTelnyxMediaStream(callControlId, {
           route,
           leadId: lead.leadId,
+          leadName: spokenLeadName,
+          address: lead.address,
+          phone: parsed.from,
+          leadSource: lead.source,
           streamTrack: DEEPGRAM_STREAM_TRACK,
           streamCodec: DEEPGRAM_STREAM_CODEC,
         }),
@@ -22280,7 +22385,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
           ? 'queued_for_approval'
           : 'local_view_only';
   routeRecord.status = result;
-  routeRecord.payload = { ...routeRecord.payload, actions };
+  routeRecord.payload = { ...routeRecord.payload, leadResolver: inboundDiagnostic, actions };
   if (!Array.isArray(state.inboundCallRoutes)) state.inboundCallRoutes = [];
   state.inboundCallRoutes.unshift(routeRecord);
   await persistInboundCallRoute(routeRecord);
@@ -22298,7 +22403,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     status: result,
     target: spokenLeadName || parsed.from || '',
     details: reason,
-    metadata: { route, callControlId, from: parsed.from, to: parsed.to },
+    metadata: { route, callControlId, from: parsed.from, to: parsed.to, leadResolver: inboundDiagnostic },
     createdAt: isoNow(),
   });
   if (['transfer_jordan', 'transfer_underwriting', 'after_hours_voicemail'].includes(route)) {
@@ -39139,6 +39244,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     leadId: '',
     leadName: '',
     address: '',
+    phone: '',
+    leadSource: '',
     telnyxMediaSocket: socket,
     telnyxAiAssistantStarted: false,
     lastAvaReplyAt: 0,
@@ -39149,6 +39256,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     mediaPlaybackReady: false,
     mediaPlaybackMode: '',
     lastRedisSyncAt: 0,
+    lastRedisSyncResult: '',
+    lastRedisSyncError: '',
     startedAt: isoNow(),
   };
 
@@ -39778,12 +39887,24 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         || clientState.callControlId
         || session.callId;
       session.leadId = clientState.leadId || session.leadId;
+      session.leadName = getSpokenLeadName(clientState.leadName || session.leadName);
+      session.address = clientState.address || session.address;
+      session.phone = normalizePhone(clientState.phone || session.phone);
+      session.leadSource = clientState.leadSource || session.leadSource;
       session.telnyxAiAssistantStarted = Boolean(clientState.telnyxAiAssistantStarted || session.telnyxAiAssistantStarted);
       session.mediaPlaybackMode = clientState.streamBidirectionalMode || event.start?.stream_bidirectional_mode || event.start?.streamBidirectionalMode || session.mediaPlaybackMode || '';
       session.mediaPlaybackReady = PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED
         && TELNYX_BIDIRECTIONAL_MEDIA_MODE === 'mp3'
         && socket.readyState === WebSocket.OPEN;
       if (session.callId) telnyxMediaSessionsByCallId.set(session.callId, session);
+      const contextCall = getCallById(session.callId);
+      if (contextCall) {
+        session.leadId = session.leadId || contextCall.leadId || '';
+        session.leadName = getSpokenLeadName(session.leadName || contextCall.leadName || '');
+        session.address = session.address || contextCall.address || '';
+        session.phone = normalizePhone(session.phone || contextCall.phone || '');
+        session.leadSource = session.leadSource || contextCall.participantRole || '';
+      }
       const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
       session.mediaFormat = mediaFormat;
       void syncTelnyxSessionToRedis(session, 'active', { force: true });
@@ -40578,6 +40699,11 @@ const server = createServer(async (request, response) => {
         sessionId: session.id,
         callId: session.callId,
         streamId: session.streamId,
+        leadId: session.leadId || '',
+        leadName: getSpokenLeadName(session.leadName || ''),
+        address: session.address || '',
+        phone: maskPhoneForDiagnostics(session.phone || ''),
+        leadSource: session.leadSource || '',
         frameCount: session.frameCount || 0,
         audioBytes: session.audioBytes || 0,
         firstAudioAt: session.firstAudioAt || '',
@@ -40590,6 +40716,8 @@ const server = createServer(async (request, response) => {
         lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
         lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
         replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+        lastRedisSyncResult: session.lastRedisSyncResult || '',
+        lastRedisSyncError: session.lastRedisSyncError || '',
       }));
       json(response, 200, {
         ok: true,
@@ -40635,6 +40763,11 @@ const server = createServer(async (request, response) => {
         sessionId: session.id,
         callId: session.callId,
         streamId: session.streamId,
+        leadId: session.leadId || '',
+        leadName: getSpokenLeadName(session.leadName || ''),
+        address: session.address || '',
+        phone: maskPhoneForDiagnostics(session.phone || ''),
+        leadSource: session.leadSource || '',
         frameCount: session.frameCount || 0,
         audioBytes: session.audioBytes || 0,
         deepgramReady: Boolean(session.deepgramSocketOpen),
@@ -40647,6 +40780,8 @@ const server = createServer(async (request, response) => {
         pathLocked: Boolean(session.pathLocked),
         identifiedPath: session.identifiedPath || '',
         replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+        lastRedisSyncResult: session.lastRedisSyncResult || '',
+        lastRedisSyncError: session.lastRedisSyncError || '',
         startedAt: session.startedAt || '',
       }));
       json(response, 200, {
@@ -40667,6 +40802,169 @@ const server = createServer(async (request, response) => {
           lastTranscript: Array.isArray(call.transcript) ? call.transcript.slice(-1)[0]?.text || call.transcript.slice(-1)[0]?.transcript || '' : '',
           nextMove: call.nextMove || '',
         })).slice(0, 12),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/call-state', '/api/v1/debug/call-state'])) {
+      const callId = String(url.searchParams.get('callId') || url.searchParams.get('id') || '').trim();
+      const phone = normalizePhone(url.searchParams.get('phone') || '');
+      const sharedMediaSessions = await getSharedTelnyxCallStates();
+      const matchingShared = sharedMediaSessions.filter((session) => {
+        if (callId && [session.callId, session.streamId, session.id].includes(callId)) return true;
+        if (phone && normalizePhone(session.phone || '') === phone) return true;
+        return !callId && !phone;
+      });
+      const localSessions = Array.from(telnyxMediaSessionsByCallId.values()).filter((session) => {
+        const contextCall = getCallById(session.callId);
+        if (callId && [session.callId, session.streamId, session.id].includes(callId)) return true;
+        if (phone && normalizePhone(session.phone || contextCall?.phone || '') === phone) return true;
+        return !callId && !phone;
+      }).map((session) => {
+        const contextCall = getCallById(session.callId);
+        return {
+          sessionId: session.id,
+          callId: session.callId,
+          streamId: session.streamId,
+          leadId: session.leadId || contextCall?.leadId || '',
+          leadName: getSpokenLeadName(session.leadName || contextCall?.leadName || ''),
+          address: session.address || contextCall?.address || '',
+          phone: maskPhoneForDiagnostics(session.phone || contextCall?.phone || ''),
+          leadSource: session.leadSource || contextCall?.participantRole || '',
+          frameCount: session.frameCount || 0,
+          audioBytes: session.audioBytes || 0,
+          deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
+          lastDeepgramEvent: session.lastDeepgramEvent || '',
+          lastDeepgramError: session.lastDeepgramError || '',
+          lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
+          lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
+          lastRedisSyncResult: session.lastRedisSyncResult || '',
+          lastRedisSyncError: session.lastRedisSyncError || '',
+          startedAt: session.startedAt || '',
+        };
+      });
+      const localCalls = (state.calls || []).filter((call) => {
+        if (callId && [call.id, call.callId, call.callControlId, call.telnyxCallControlId].includes(callId)) return true;
+        if (phone && normalizePhone(call.phone || call.from || '') === phone) return true;
+        return false;
+      }).slice(0, 12).map((call) => ({
+        id: call.id,
+        callId: call.callId || '',
+        callControlId: call.callControlId || call.telnyxCallControlId || '',
+        status: call.status || '',
+        leadId: call.leadId || '',
+        leadName: getSpokenLeadName(call.leadName || ''),
+        address: call.address || '',
+        phone: maskPhoneForDiagnostics(call.phone || call.from || ''),
+        selectedPath: call.selectedPath || call.selected_path || '',
+        pathLocked: Boolean(call.pathLocked),
+        transcriptCount: Array.isArray(call.transcript) ? call.transcript.length : 0,
+        lastTranscript: Array.isArray(call.transcript) ? call.transcript.slice(-1)[0]?.text || call.transcript.slice(-1)[0]?.transcript || '' : '',
+        updatedAt: call.updatedAt || call.updated_at || '',
+      }));
+      json(response, 200, {
+        ok: true,
+        result: (matchingShared.length || localSessions.length || localCalls.length) ? 'call_state_found' : 'call_state_empty',
+        generatedAt: isoNow(),
+        query: {
+          callId,
+          phone: maskPhoneForDiagnostics(phone),
+        },
+        redis: getRedisProviderMeta(),
+        sharedSessions: matchingShared.slice(0, 20),
+        localSessions,
+        localCalls,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/debug/reset-lead-cache', '/api/v1/debug/reset-lead-cache'])) {
+      const body = await readBody(request);
+      const phone = normalizePhone(url.searchParams.get('phone') || body.phone || body.from || '');
+      const callId = String(url.searchParams.get('callId') || body.callId || body.id || '').trim();
+      if (!phone && !callId) {
+        json(response, 400, {
+          ok: false,
+          result: 'missing_identifier',
+          error: 'Provide phone or callId to reset live call cache diagnostics.',
+        });
+        return;
+      }
+
+      const sharedMediaSessions = await getSharedTelnyxCallStates();
+      const idsToDelete = new Set();
+      if (callId) idsToDelete.add(callId);
+      for (const session of sharedMediaSessions) {
+        if (callId && [session.callId, session.streamId, session.id].includes(callId)) idsToDelete.add(session.callId || session.streamId || session.id);
+        if (phone && normalizePhone(session.phone || '') === phone) idsToDelete.add(session.callId || session.streamId || session.id);
+      }
+
+      const localCleared = [];
+      for (const [id, session] of telnyxMediaSessionsByCallId.entries()) {
+        const contextCall = getCallById(session.callId);
+        const matchesCall = callId && [session.callId, session.streamId, session.id, contextCall?.id].includes(callId);
+        const matchesPhone = phone && normalizePhone(session.phone || contextCall?.phone || '') === phone;
+        if (!matchesCall && !matchesPhone) continue;
+        localCleared.push({
+          callId: session.callId || id,
+          streamId: session.streamId || '',
+          leadName: getSpokenLeadName(session.leadName || contextCall?.leadName || ''),
+          phone: maskPhoneForDiagnostics(session.phone || contextCall?.phone || ''),
+        });
+        telnyxMediaSessionsByCallId.delete(id);
+        idsToDelete.add(session.callId || session.streamId || session.id || id);
+      }
+
+      const callsUpdated = [];
+      for (const call of state.calls || []) {
+        const matchesCall = callId && [call.id, call.callId, call.callControlId, call.telnyxCallControlId].includes(callId);
+        const matchesPhone = phone && normalizePhone(call.phone || call.from || '') === phone;
+        if (!matchesCall && !matchesPhone) continue;
+        if (!/live|ringing|transferring|voicemail/i.test(String(call.status || ''))) continue;
+        upsertCall(state, {
+          ...call,
+          status: 'ended',
+          cacheResetAt: isoNow(),
+          cacheResetReason: 'operator_debug_reset',
+          updatedAt: isoNow(),
+        });
+        callsUpdated.push({
+          id: call.id,
+          leadName: getSpokenLeadName(call.leadName || ''),
+          phone: maskPhoneForDiagnostics(call.phone || call.from || ''),
+        });
+        idsToDelete.add(call.id || call.callId || call.callControlId || call.telnyxCallControlId);
+      }
+
+      const redisDeletes = [];
+      for (const id of [...idsToDelete].filter(Boolean)) {
+        redisDeletes.push(await deleteSharedTelnyxCallState(id));
+      }
+      state.status.lastLeadCacheResetAt = isoNow();
+      state.status.lastLeadCacheReset = {
+        phone: maskPhoneForDiagnostics(phone),
+        callId,
+        localCleared: localCleared.length,
+        callsUpdated: callsUpdated.length,
+        redisDeletes: redisDeletes.filter((item) => item.ok).length,
+      };
+      addActivity(state, makeActivity({
+        actor: 'PBK debug',
+        category: 'CALL',
+        status: 'reset',
+        text: `Reset live phone cache for ${maskPhoneForDiagnostics(phone) || callId}; local=${localCleared.length}, calls=${callsUpdated.length}, redis=${redisDeletes.filter((item) => item.ok).length}.`,
+        target: maskPhoneForDiagnostics(phone) || callId,
+      }));
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        result: 'lead_cache_reset',
+        phone: maskPhoneForDiagnostics(phone),
+        callId,
+        localCleared,
+        callsUpdated,
+        redisDeletes,
+        redis: getRedisProviderMeta(),
       });
       return;
     }

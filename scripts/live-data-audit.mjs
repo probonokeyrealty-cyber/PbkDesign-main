@@ -889,12 +889,17 @@ const checks = [
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
       && /\/api\/debug\/last-spoken/.test(bridge)
+      && /\/api\/debug\/call-state/.test(bridge)
+      && /\/api\/debug\/reset-lead-cache/.test(bridge)
       && /deepgramSocketOpen/.test(bridge)
+      && /maskPhoneForDiagnostics/.test(bridge)
+      && /leadResolver: inboundDiagnostic/.test(bridge)
       && /buildStateSnapshot\(\{ compact \}\)/.test(bridge)
       && /state\?compact=1/.test(index)
       && /openClawReadCache/.test(index)
       && /OPENCLAW_READ_CACHE_TTL_MS/.test(index)
       && /Voice status endpoint did not return live diagnostics/.test(openclawSmoke)
+      && /Call-state debug endpoint did not return a safe diagnostic envelope/.test(openclawSmoke)
       && /Compact state endpoint did not report compact mode/.test(openclawSmoke),
   },
   {

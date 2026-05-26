@@ -10203,6 +10203,30 @@ function buildAvaActiveListeningContext(params = {}) {
   };
 }
 
+function buildAvaActiveListeningReplyCandidate(activeListening = {}, options = {}) {
+  const nextStepId = String(activeListening.callFlow?.nextStepId || '').trim();
+  if (!nextStepId || options.stopContact) return '';
+  const pathLocked = options.pathLocked === true || options.shouldClosePath === true;
+  const label = sanitizeAvaSpokenOutput(activeListening.label || '').trim();
+  const line = sanitizeAvaSpokenOutput(activeListening.callFlow?.avaLine || '').trim();
+  const hook = activeListening.callFlow?.recommendedHook || '';
+  let candidate = '';
+  if (nextStepId === 'objection.spouse_3way') {
+    candidate = `${label || 'Smart to include the decision maker.'} ${line}`;
+  } else if (nextStepId === 'objection.trust_proof') {
+    candidate = `${label || 'It makes sense to verify who you are talking to.'} ${line}`;
+  } else if (nextStepId === 'objection.price_too_low') {
+    candidate = line;
+  } else if (/^(cash\.condition_probe|cash\.tenant_probe)$/.test(nextStepId) && !pathLocked) {
+    candidate = `${label || 'That detail changes the path.'} ${line}`;
+  } else if (nextStepId === 'cash.foreclosure_probe') {
+    candidate = `${label || 'That detail changes the path.'} ${line}`;
+  } else if (nextStepId === 'listen.silence_prompt') {
+    candidate = line;
+  }
+  return candidate ? ensureAvaSellerReplyHook(candidate, { hook, nextQuestion: hook }) : '';
+}
+
 async function waitForSellerResponse(timeoutMs = 15000, callId = '', options = {}) {
   const session = options.session && typeof options.session === 'object' ? options.session : null;
   const waitMs = Math.max(1000, Math.min(30000, Number(timeoutMs || 15000)));
@@ -15520,6 +15544,13 @@ async function buildAvaConversationIntelligence(params = {}) {
     && warManual.listenProbe?.question
     ? warManual.listenProbe.question
     : '';
+  const activeListeningPhrase = pathCanGuide
+    ? buildAvaActiveListeningReplyCandidate(activeListening, {
+      stopContact: reaction.shouldStopContact,
+      pathLocked: Boolean(pathDecision.pathLocked),
+      shouldClosePath: Boolean(pathDecision.shouldClosePath),
+    })
+    : '';
   const lockedPathPhrase = pathCanGuide && pathDecision.shouldClosePath && pathDecision.scriptTrigger
     ? pathDecision.scriptTrigger
     : '';
@@ -15531,8 +15562,8 @@ async function buildAvaConversationIntelligence(params = {}) {
   const rawResponseText = criticalReaction
     ? (reaction.shouldStopContact
         ? (reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '')
-        : (warObjectionPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || ''))
-    : (warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
+        : (activeListeningPhrase || warObjectionPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || ''))
+    : (activeListeningPhrase || warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
   const responseText = pathCanGuide
     ? ensureAvaSellerReplyHook(rawResponseText, {
       hook: activeListening.callFlow?.recommendedHook,
@@ -40295,10 +40326,11 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
     return withActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
   }
-  if (activeListening.callFlow?.nextStepId === 'cash.condition_probe') {
+  const activeSituationProbeAllowed = !pathDecision.shouldClosePath;
+  if (activeSituationProbeAllowed && activeListening.callFlow?.nextStepId === 'cash.condition_probe') {
     return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
   }
-  if (activeListening.callFlow?.nextStepId === 'cash.tenant_probe') {
+  if (activeSituationProbeAllowed && activeListening.callFlow?.nextStepId === 'cash.tenant_probe') {
     return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
   }
   if (activeListening.callFlow?.nextStepId === 'cash.foreclosure_probe') {

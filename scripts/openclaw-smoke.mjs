@@ -1011,6 +1011,8 @@ async function main() {
     assert(avaConversationIntelligence?.activeListening?.mirroredPhrase, 'Ava active listening did not extract seller words to mirror.');
     assert(avaConversationIntelligence?.activeListening?.callFlow?.schema === 'call_flow/call_flow_edges', 'Ava active listening did not expose the call_flow/call_flow_edges decision tree.');
     assert(avaConversationIntelligence?.activeListening?.callFlow?.nextStepId, 'Ava active listening did not choose a next call-flow step.');
+    assert(avaConversationIntelligence?.activeListening?.callFlow?.nextStepId === 'objection.spouse_3way', 'Ava active listening did not route spouse authority to the 3-way call branch.');
+    assert(/\b(?:three-way|3-way)\b/i.test(String(avaConversationIntelligence?.answer || avaConversationIntelligence?.nextBestPhrase || '')), 'Ava active-listening answer did not use the spouse 3-way branch.');
     assert(/[?]\s*$/.test(String(avaConversationIntelligence?.answer || avaConversationIntelligence?.nextBestPhrase || '')), 'Ava active-listening answer did not end with a seller-response hook.');
     for (const testCase of avaPathDecisionCases) {
       const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};

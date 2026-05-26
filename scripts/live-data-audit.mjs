@@ -894,6 +894,8 @@ const checks = [
       && /deepgramSocketOpen/.test(bridge)
       && /maskPhoneForDiagnostics/.test(bridge)
       && /leadResolver: inboundDiagnostic/.test(bridge)
+      && /redis_call_state_active_resurrection_blocked/.test(bridge)
+      && /REDIS_ACTIVE_CALL_STALE_MS/.test(bridge)
       && /buildStateSnapshot\(\{ compact \}\)/.test(bridge)
       && /state\?compact=1/.test(index)
       && /openClawReadCache/.test(index)

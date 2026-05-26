@@ -294,6 +294,7 @@ const REDIS_NAMESPACE = String(process.env.PBK_REDIS_NAMESPACE || 'pbk-openclaw'
 const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(process.env.PBK_REDIS_CALL_STATE_TTL_SECONDS || 6 * 60 * 60)));
 const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
 const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
+const REDIS_ACTIVE_CALL_STALE_MS = Math.max(30_000, Math.min(10 * 60 * 1000, Number(process.env.PBK_REDIS_ACTIVE_CALL_STALE_MS || 3 * 60 * 1000)));
 const AVA_CALL_INTELLIGENCE_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_CALL_INTELLIGENCE_ENABLED || 'true').trim());
 const AVA_CALL_INTELLIGENCE_STRATEGIST_MODE = String(process.env.PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline').trim().toLowerCase();
 const AVA_CALL_INTELLIGENCE_TIMEOUT_MS = Math.max(350, Math.min(2500, Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || 1200)));
@@ -1057,6 +1058,9 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     pathLocked: Boolean(session.pathLocked),
     identifiedPath: session.identifiedPath || '',
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    finalized: Boolean(session.finalized),
+    finalizeReason: session.finalizeReason || '',
+    endedAt: session.endedAt || '',
     redisSyncStatus: 'synced',
     lastRedisSyncResult: session.lastRedisSyncResult || '',
     lastRedisSyncError: session.lastRedisSyncError || '',
@@ -1067,10 +1071,16 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
 
 async function syncTelnyxSessionToRedis(session = {}, status = 'active', options = {}) {
   const id = session.callId || session.streamId || session.id || '';
+  const normalizedStatus = String(status || 'active').trim().toLowerCase() || 'active';
   if (!REDIS_ENABLED || !id) {
     session.lastRedisSyncResult = 'redis_call_state_skipped';
     session.lastRedisSyncError = '';
     return { ok: false, skipped: true, result: 'redis_call_state_skipped' };
+  }
+  if (normalizedStatus === 'active' && (session.finalized || session.endedAt)) {
+    session.lastRedisSyncResult = 'redis_call_state_active_resurrection_blocked';
+    session.lastRedisSyncError = '';
+    return { ok: false, skipped: true, result: 'redis_call_state_active_resurrection_blocked' };
   }
   const now = Date.now();
   const minIntervalMs = Math.max(250, Number(options.minIntervalMs || 1200));
@@ -1089,16 +1099,16 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
     }
     return { ok: false, skipped: true, result: 'redis_unavailable' };
   }
-  const record = buildSharedTelnyxSessionState(session, status);
+  const record = buildSharedTelnyxSessionState(session, normalizedStatus);
   const key = redisKey('call', id);
   const indexKey = redisKey('calls', 'active');
   try {
     await client.set(key, JSON.stringify(record), { EX: REDIS_CALL_STATE_TTL_SECONDS });
-    if (status === 'ended') {
-      await client.sRem(indexKey, id);
-    } else {
+    if (normalizedStatus === 'active') {
       await client.sAdd(indexKey, id);
       await client.expire(indexKey, REDIS_CALL_STATE_TTL_SECONDS);
+    } else {
+      await client.sRem(indexKey, id);
     }
     session.lastRedisSyncResult = 'redis_call_state_synced';
     session.lastRedisSyncError = '';
@@ -1121,8 +1131,22 @@ async function getSharedTelnyxCallStates() {
     const records = [];
     for (const id of ids.slice(0, 50)) {
       const record = await redisGetJson(redisKey('call', id));
-      if (record) records.push(record);
-      else await client.sRem(indexKey, id).catch(() => {});
+      if (!record) {
+        await client.sRem(indexKey, id).catch(() => {});
+        continue;
+      }
+      const status = String(record.status || '').trim().toLowerCase();
+      const updatedMs = Date.parse(record.updatedAt || record.lastAudioAt || record.startedAt || '');
+      const staleInactive = status && status !== 'active';
+      const staleFinalized = Boolean(record.finalized || record.endedAt);
+      const staleDisconnected = record.deepgramSocketOpen === false
+        && Number.isFinite(updatedMs)
+        && Date.now() - updatedMs > REDIS_ACTIVE_CALL_STALE_MS;
+      if (staleInactive || staleFinalized || staleDisconnected) {
+        await client.sRem(indexKey, id).catch(() => {});
+        continue;
+      }
+      records.push(record);
     }
     return records.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   } catch (error) {
@@ -39302,6 +39326,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const finalize = async (reason = 'closed') => {
     if (finalized) return;
     finalized = true;
+    const endedAt = isoNow();
+    session.finalized = true;
+    session.finalizeReason = reason;
+    session.endedAt = endedAt;
     if (deepgramKeepAliveTimer) {
       clearInterval(deepgramKeepAliveTimer);
       deepgramKeepAliveTimer = null;
@@ -39384,7 +39412,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         },
         reason,
         startedAt: session.startedAt,
-        endedAt: isoNow(),
+        endedAt,
         sentiment: session.sentiment,
         transcriptFinal: finalTranscriptItems.length > 0,
         transcript: session.transcript.slice(-50),

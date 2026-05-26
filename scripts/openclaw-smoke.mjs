@@ -1005,6 +1005,13 @@ async function main() {
     assert(avaConversationIntelligence?.warManual?.objection?.tag === 'price_too_low', 'Ava War Manual context did not decode the price-too-low objection.');
     assert(avaConversationIntelligence?.warManual?.listenProbe?.doctrine === 'L.I.S.T.E.N.', 'Ava War Manual context did not include the L.I.S.T.E.N. probe.');
     assert(avaConversationIntelligence?.warManual?.toneMode?.label, 'Ava War Manual context did not include a delivery tone mode.');
+    assert(avaConversationIntelligence?.activeListening?.revision, 'Ava conversation intelligence did not include the active-listening call-flow layer.');
+    assert(avaConversationIntelligence?.activeListening?.mode === 'twenty_year_pro_ready', 'Ava active listening was not marked 20-year-pro ready.');
+    assert(avaConversationIntelligence?.activeListening?.responseRequired === true, 'Ava active listening did not require a seller response.');
+    assert(avaConversationIntelligence?.activeListening?.mirroredPhrase, 'Ava active listening did not extract seller words to mirror.');
+    assert(avaConversationIntelligence?.activeListening?.callFlow?.schema === 'call_flow/call_flow_edges', 'Ava active listening did not expose the call_flow/call_flow_edges decision tree.');
+    assert(avaConversationIntelligence?.activeListening?.callFlow?.nextStepId, 'Ava active listening did not choose a next call-flow step.');
+    assert(/[?]\s*$/.test(String(avaConversationIntelligence?.answer || avaConversationIntelligence?.nextBestPhrase || '')), 'Ava active-listening answer did not end with a seller-response hook.');
     for (const testCase of avaPathDecisionCases) {
       const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};
       const answer = String(testCase.result?.answer || testCase.result?.nextBestPhrase || '');

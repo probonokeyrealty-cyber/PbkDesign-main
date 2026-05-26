@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-25-war-manual-live-call-intelligence';
+const BUILD_REVISION = '2026-05-26-active-listening-call-flow';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -9420,6 +9420,158 @@ const PBK_PATH_PROBE_QUESTIONS = {
 };
 
 const PBK_100K_WAR_MANUAL_REVISION = '2026-05-25-war-manual-live-call-v1';
+const PBK_ACTIVE_LISTENING_REVISION = '2026-05-26-active-listening-call-flow-v1';
+
+const PBK_CALL_FLOW_SCHEMA_SQL = `
+-- PBK Ava active-listening call-flow schema.
+-- Apply in Supabase only if you want DB-managed path steps; the bridge also ships safe defaults.
+CREATE TABLE IF NOT EXISTS public.call_flow (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  path_key text NOT NULL,
+  step_key text NOT NULL,
+  step_order integer NOT NULL DEFAULT 0,
+  step_type text NOT NULL DEFAULT 'question',
+  ava_line text NOT NULL,
+  expects_response boolean NOT NULL DEFAULT true,
+  response_timeout_ms integer NOT NULL DEFAULT 15000,
+  strategic_pause_ms integer NOT NULL DEFAULT 0,
+  hook_prompt text NOT NULL DEFAULT '',
+  active boolean NOT NULL DEFAULT true,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (path_key, step_key)
+);
+
+CREATE TABLE IF NOT EXISTS public.call_flow_edges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_step_key text NOT NULL,
+  to_step_key text NOT NULL,
+  path_key text NOT NULL,
+  condition_type text NOT NULL DEFAULT 'keyword',
+  condition_value text NOT NULL DEFAULT '*',
+  priority integer NOT NULL DEFAULT 10,
+  active boolean NOT NULL DEFAULT true,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS call_flow_path_active_idx ON public.call_flow (path_key, active, step_order);
+CREATE INDEX IF NOT EXISTS call_flow_edges_from_active_idx ON public.call_flow_edges (path_key, from_step_key, active, priority DESC);
+
+ALTER TABLE public.call_flow ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.call_flow_edges ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'call_flow' AND policyname = 'call_flow_service_role_all'
+  ) THEN
+    CREATE POLICY call_flow_service_role_all ON public.call_flow FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'call_flow_edges' AND policyname = 'call_flow_edges_service_role_all'
+  ) THEN
+    CREATE POLICY call_flow_edges_service_role_all ON public.call_flow_edges FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+`;
+
+const PBK_CALL_FLOW_DEFAULT_STEPS = [
+  {
+    pathKey: 'cash',
+    stepKey: 'cash.discovery.story',
+    stepOrder: 10,
+    stepType: 'question',
+    avaLine: "I was calling about the property. What's the story with it: are you thinking about selling, or is it just sitting?",
+    expectsResponse: true,
+    hookPrompt: "What's the story with the place?",
+  },
+  {
+    pathKey: 'cash',
+    stepKey: 'cash.condition_probe',
+    stepOrder: 20,
+    stepType: 'question',
+    avaLine: 'The condition piece matters. Give me the worst of it so I do not guess wrong: roof, HVAC, foundation, plumbing, or something else?',
+    expectsResponse: true,
+    hookPrompt: 'What repair would scare a regular buyer the most?',
+  },
+  {
+    pathKey: 'cash',
+    stepKey: 'cash.tenant_probe',
+    stepOrder: 21,
+    stepType: 'question',
+    avaLine: 'The tenant headache changes the path. Are they paying, behind, or do you need this sold without dealing with an eviction first?',
+    expectsResponse: true,
+    hookPrompt: 'Are they paying right now?',
+  },
+  {
+    pathKey: 'cash',
+    stepKey: 'cash.foreclosure_probe',
+    stepOrder: 22,
+    stepType: 'question',
+    avaLine: 'The bank timeline is the priority. How much time do you have before the next deadline or auction date?',
+    expectsResponse: true,
+    strategicPauseMs: 7000,
+    hookPrompt: 'How much time do you have before the next deadline?',
+  },
+  {
+    pathKey: 'all',
+    stepKey: 'objection.price_too_low',
+    stepOrder: 30,
+    stepType: 'objection_handler',
+    avaLine: 'Help me understand what number you would need to actually say yes today. I will tell you straight if I can or cannot get there.',
+    expectsResponse: true,
+    hookPrompt: 'What number would make this worth saying yes today?',
+  },
+  {
+    pathKey: 'all',
+    stepKey: 'objection.spouse_3way',
+    stepOrder: 31,
+    stepType: 'objection_handler',
+    avaLine: 'Smart. Can we get them on a quick three-way right now? I can explain it in five minutes so you are not stuck repeating me.',
+    expectsResponse: true,
+    hookPrompt: 'Can we get them on a quick three-way right now?',
+  },
+  {
+    pathKey: 'all',
+    stepKey: 'objection.trust_proof',
+    stepOrder: 32,
+    stepType: 'objection_handler',
+    avaLine: 'That is fair to ask. You can pick the title company, I can send proof of funds, and I can send references before you decide anything.',
+    expectsResponse: true,
+    hookPrompt: 'Which proof would help first?',
+  },
+  {
+    pathKey: 'all',
+    stepKey: 'listen.mirror_label',
+    stepOrder: 40,
+    stepType: 'question',
+    avaLine: 'I hear that. Let me make sure I am tracking the real issue before I recommend anything.',
+    expectsResponse: true,
+    hookPrompt: 'What is the biggest thing you need solved?',
+  },
+  {
+    pathKey: 'all',
+    stepKey: 'listen.silence_prompt',
+    stepOrder: 41,
+    stepType: 'question',
+    avaLine: "Take your time. I'm listening.",
+    expectsResponse: true,
+    responseTimeoutMs: 15000,
+    strategicPauseMs: 7000,
+    hookPrompt: 'What part of this feels heaviest right now?',
+  },
+  {
+    pathKey: 'all',
+    stepKey: 'close.path_commit',
+    stepOrder: 50,
+    stepType: 'close',
+    avaLine: 'Based on what you told me, I have the path. Let me keep this simple and walk you through the next step.',
+    expectsResponse: true,
+    hookPrompt: 'If it matches what we discussed, is there any reason we would not move forward today?',
+  },
+];
 
 const PBK_WAR_MANUAL_POWER_LINES = [
   {
@@ -9871,6 +10023,230 @@ function buildAvaWarManualContext(params = {}) {
       psychologyMoves: PBK_WAR_MANUAL_ADVANCED_MOVES.length,
     },
   };
+}
+
+function findAvaCallFlowStep(stepKey = '', pathKey = '') {
+  const normalizedStep = String(stepKey || '').trim();
+  const normalizedPath = normalizePbkDealPath(pathKey || '', '');
+  if (!normalizedStep) return null;
+  return PBK_CALL_FLOW_DEFAULT_STEPS.find((step) => (
+    step.stepKey === normalizedStep
+      && (!normalizedPath || step.pathKey === normalizedPath || step.pathKey === 'all')
+  )) || PBK_CALL_FLOW_DEFAULT_STEPS.find((step) => step.stepKey === normalizedStep) || null;
+}
+
+function extractAvaSellerKeyPhrase(text = '') {
+  const clean = sanitizeAvaSpokenOutput(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  const lower = clean.toLowerCase();
+  const phraseRules = [
+    { test: /\b(?:roof|leak|leaking|water damage)\b/i, phrase: 'the leaking roof' },
+    { test: /\b(?:tenant|renters?|landlord|evict|eviction|not paying)\b/i, phrase: 'dealing with the tenant' },
+    { test: /\b(?:wife|husband|spouse|partner)\b/i, phrase: 'talking it through with your spouse' },
+    { test: /\b(?:foreclosure|auction|behind|bank)\b/i, phrase: 'the bank timeline' },
+    { test: /\b(?:probate|inherited|estate|passed away|executor)\b/i, phrase: 'the estate process' },
+    { test: /\b(?:scam|fake|legit|trust|proof)\b/i, phrase: 'making sure this is legitimate' },
+    { test: /\b(?:too low|lowball|number|price|offer)\b/i, phrase: 'the number feeling too low' },
+    { test: /\b(?:repairs?|fix|broken|condition|hvac|foundation|plumbing)\b/i, phrase: 'the repair situation' },
+    { test: /\b(?:moving|relocat|new job|out of state)\b/i, phrase: 'your moving timeline' },
+    { test: /\b(?:tired|exhausted|over it|headache|done with it)\b/i, phrase: 'being tired of the headache' },
+  ];
+  const matched = phraseRules.find((rule) => rule.test.test(lower));
+  if (matched) return matched.phrase;
+  const sentences = clean.split(/[.!?]+/).map((part) => part.trim()).filter(Boolean);
+  const last = sentences.at(-1) || clean;
+  const words = last
+    .replace(/[^a-z0-9'$.\s-]/gi, ' ')
+    .split(/\s+/)
+    .filter((word) => word && !/^(i|me|my|we|you|the|a|an|and|or|but|so|to|of|for|with|it|is|are|was|were|just|really|kind|sort|like)$/i.test(word));
+  return words.slice(-6).join(' ').trim() || last.slice(0, 80);
+}
+
+function buildAvaSellerListeningLabel(params = {}) {
+  const phrase = params.phrase || extractAvaSellerKeyPhrase(params.transcript || params.query || params.text || '');
+  const emotionalState = params.emotionalState || diagnoseAvaWarManualEmotionalState(params);
+  if (!phrase) return 'I want to make sure I understand before I recommend anything.';
+  if (emotionalState?.id === 'emotional_grieving') return `It sounds like ${phrase} is carrying a lot right now.`;
+  if (emotionalState?.id === 'defensive_hostile' || emotionalState?.id === 'suspicious_skeptical') return `It makes sense that ${phrase} would matter before you trust this.`;
+  if (emotionalState?.id === 'tired_defeated') return `It sounds like ${phrase} has worn you down.`;
+  return `So ${phrase} is the piece I should pay attention to.`;
+}
+
+function ensureAvaSellerReplyHook(text = '', options = {}) {
+  const clean = sanitizeAvaSpokenOutput(text || '', options.fallback || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  if (options.stopContact || /\b(stop outreach|marked do-not-call|removed from|do not call)\b/i.test(clean)) return clean;
+  if (/[?]\s*$/.test(clean)) return clean;
+  const lastSentence = clean.split(/[.!?]+/).map((part) => part.trim()).filter(Boolean).at(-1) || '';
+  if (/\b(can you|could you|would you|will you|what|which|when|who|how|does that|is there|are you|mind if)\b/i.test(lastSentence)) {
+    return clean;
+  }
+  const hook = sanitizeAvaSpokenOutput(
+    options.hook
+      || options.hookPrompt
+      || options.nextQuestion
+      || 'What would make this feel like the right next step for you?',
+  );
+  if (!hook) return clean;
+  const separator = /[.!?]\s*$/.test(clean) ? ' ' : '. ';
+  return `${clean}${separator}${/[?]\s*$/.test(hook) ? hook : `${hook}?`}`.replace(/\s+/g, ' ').trim();
+}
+
+function getAvaStrategicPauseMs(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  if (/\b(stop calling|do not call|remove me|unsubscribe|report you)\b/i.test(text)) return 0;
+  if (params.listenProbe?.action === 'strategic_pause' || /\b(what happens|worst part|drags on|auction date|quote|offer|number)\b/i.test(text)) {
+    return 7000;
+  }
+  if (params.callFlowStep?.strategicPauseMs) return Number(params.callFlowStep.strategicPauseMs || 0);
+  return 0;
+}
+
+function selectAvaCallFlowNextStep(params = {}) {
+  const session = params.session || {};
+  const pathDecision = params.pathDecision || inferAvaDealPathDecision(params);
+  const selectedPath = normalizePbkDealPath(pathDecision.selectedPath || params.selectedPath || session.selectedPath || '', 'cash');
+  const raw = sanitizeAvaSpokenOutput(params.transcript || params.query || params.text || params.lastUserUtterance || '').trim();
+  const lower = raw.toLowerCase();
+  const currentStepId = String(params.currentStepId || session.currentCallFlowStepId || `${selectedPath}.discovery.story`).trim();
+  let nextStepId = '';
+  let reason = '';
+
+  if (!lower) {
+    nextStepId = 'listen.silence_prompt';
+    reason = 'seller_silence_or_no_transcript';
+  } else if (/\b(stop calling|do not call|remove me|unsubscribe)\b/i.test(lower)) {
+    nextStepId = 'listen.mirror_label';
+    reason = 'compliance_boundary_acknowledge_only';
+  } else if (/\b(wife|husband|spouse|partner|decision maker|talk to (?:my|our))\b/i.test(lower)) {
+    nextStepId = 'objection.spouse_3way';
+    reason = 'authority_objection_requires_3way';
+  } else if (/\b(scam|fake|legit|real company|trust|proof|how do i know)\b/i.test(lower)) {
+    nextStepId = 'objection.trust_proof';
+    reason = 'trust_gap_requires_proof';
+  } else if (/\b(too low|lowball|number is low|price is low|offer is low)\b/i.test(lower)) {
+    nextStepId = 'objection.price_too_low';
+    reason = 'price_objection_needs_exact_yes_number';
+  } else if (/\b(roof|leak|leaking|water damage|repairs?|fix|broken|hvac|foundation|plumbing|condition)\b/i.test(lower)) {
+    nextStepId = 'cash.condition_probe';
+    reason = 'condition_signal_requires_repair_probe';
+  } else if (/\b(tenant|renters?|landlord|evict|eviction|not paying|lease)\b/i.test(lower)) {
+    nextStepId = 'cash.tenant_probe';
+    reason = 'tenant_signal_requires_landlord_probe';
+  } else if (/\b(foreclosure|auction|behind|bank|notice of default|pre[-\s]?foreclosure)\b/i.test(lower)) {
+    nextStepId = 'cash.foreclosure_probe';
+    reason = 'foreclosure_signal_requires_deadline_probe';
+  } else if (pathDecision.shouldClosePath) {
+    nextStepId = 'close.path_commit';
+    reason = 'path_locked_move_to_close';
+  } else {
+    nextStepId = 'listen.mirror_label';
+    reason = 'mirror_then_probe';
+  }
+
+  const callFlowStep = findAvaCallFlowStep(nextStepId, selectedPath) || findAvaCallFlowStep('listen.mirror_label', selectedPath);
+  return {
+    schema: 'call_flow/call_flow_edges',
+    currentStepId,
+    nextStepId: callFlowStep?.stepKey || nextStepId,
+    pathKey: callFlowStep?.pathKey || selectedPath,
+    stepType: callFlowStep?.stepType || 'question',
+    expectsResponse: callFlowStep?.expectsResponse !== false,
+    responseTimeoutMs: Number(callFlowStep?.responseTimeoutMs || 15000),
+    strategicPauseMs: Number(callFlowStep?.strategicPauseMs || 0),
+    avaLine: callFlowStep?.avaLine || '',
+    recommendedHook: callFlowStep?.hookPrompt || 'What would make this feel like the right next step for you?',
+    reason,
+    source: 'pbk_active_listening_default_edges',
+  };
+}
+
+function buildAvaActiveListeningContext(params = {}) {
+  const session = params.session || {};
+  const query = sanitizeAvaSpokenOutput(params.transcript || params.query || params.text || params.lastUserUtterance || '').trim();
+  const pathDecision = params.pathDecision || inferAvaDealPathDecision(params);
+  const warManual = params.warManual || buildAvaWarManualContext({ ...params, pathDecision });
+  const phrase = extractAvaSellerKeyPhrase(query);
+  const callFlow = selectAvaCallFlowNextStep({ ...params, transcript: query, pathDecision });
+  const label = buildAvaSellerListeningLabel({
+    ...params,
+    transcript: query,
+    phrase,
+    emotionalState: warManual.emotionalState,
+  });
+  const strategicPauseMs = getAvaStrategicPauseMs({
+    ...params,
+    transcript: query,
+    listenProbe: warManual.listenProbe,
+    callFlowStep: callFlow,
+  }) || Number(callFlow.strategicPauseMs || 0);
+  return {
+    revision: PBK_ACTIVE_LISTENING_REVISION,
+    source: 'pbk_active_listening_call_flow',
+    mode: 'twenty_year_pro_ready',
+    doctrine: 'Enhance only: every Ava turn must acknowledge, mirror or label, ask one useful question, and wait for the seller before continuing.',
+    responseRequired: callFlow.expectsResponse !== false,
+    waitingForSeller: Boolean(session.waitingForSeller || session.waiting_for_seller),
+    lastSellerWords: query,
+    mirroredPhrase: phrase,
+    label,
+    strategicPauseMs,
+    callFlow,
+    schema: {
+      sqlConstant: 'PBK_CALL_FLOW_SCHEMA_SQL',
+      tables: ['call_flow', 'call_flow_edges'],
+      rls: 'enabled_service_role_only',
+    },
+    sellerWordRule: `Seller just said: "${query || 'nothing yet'}". Use their exact words before moving to strategy.`,
+    hookRule: 'End every non-boundary seller-facing line with a question or clear next step that requires the seller to answer.',
+    instruction: 'Use one sentence of acknowledgement, one tactical mirror or label, then one question. Do not monologue.',
+  };
+}
+
+async function waitForSellerResponse(timeoutMs = 15000, callId = '', options = {}) {
+  const session = options.session && typeof options.session === 'object' ? options.session : null;
+  const waitMs = Math.max(1000, Math.min(30000, Number(timeoutMs || 15000)));
+  if (session) {
+    session.waitingForSeller = true;
+    session.responseRequired = true;
+    session.waitingForSellerSince = isoNow();
+  }
+  recordCallTrace('ava_waiting_for_seller', {
+    callId: callId || session?.callId || '',
+    timeoutMs: waitMs,
+    source: options.source || 'active-listening-call-flow',
+  });
+  try {
+    if (options.nextTranscriptPromise && typeof options.nextTranscriptPromise.then === 'function') {
+      const result = await Promise.race([
+        options.nextTranscriptPromise,
+        sleep(waitMs).then(() => null),
+      ]);
+      return result ? sanitizeAvaSpokenOutput(result) : null;
+    }
+    if (typeof options.getLatestTranscript === 'function') {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < waitMs) {
+        const result = options.getLatestTranscript();
+        if (result) return sanitizeAvaSpokenOutput(result);
+        await sleep(250);
+      }
+      return null;
+    }
+    await sleep(waitMs);
+    return null;
+  } finally {
+    if (session) {
+      session.waitingForSeller = false;
+      session.responseRequired = false;
+      session.lastSellerWaitEndedAt = isoNow();
+    }
+    recordCallTrace('ava_wait_for_seller_completed', {
+      callId: callId || session?.callId || '',
+      timeoutMs: waitMs,
+      source: options.source || 'active-listening-call-flow',
+    });
+  }
 }
 
 function makePathScoreMap() {
@@ -14130,6 +14506,19 @@ function buildAvaCallArchitectureContext(params = {}) {
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  const activeListening = buildAvaActiveListeningContext({
+    ...params,
+    session,
+    contextCall,
+    context,
+    transcript,
+    query: transcript,
+    bant,
+    pathDecision,
+    warManual,
+    selectedPath: pathDecision.selectedPath,
+    turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
+  });
   return {
     schemaVersion: 'pbk-ava-call-intelligence-v1',
     enabled: getAvaCallIntelligenceSettings().enabled,
@@ -14148,6 +14537,7 @@ function buildAvaCallArchitectureContext(params = {}) {
     pathDecision,
     dealPath: pathDecision,
     warManual,
+    activeListening,
     scripts,
     rexOversight: {
       recentCallAnalyses: recentAnalyses,
@@ -14208,6 +14598,7 @@ async function activateAvaCallIntelligence(params = {}) {
     useMemory: params.useMemory !== false,
     useProsody: params.useProsody !== false,
     useWarManual: params.useWarManual !== false,
+    useActiveListening: params.useActiveListening !== false,
     useToolRouter: params.useToolRouter !== false,
     useRexOversight: params.useRexOversight !== false,
     useCallAnalyzer: params.useCallAnalyzer !== false,
@@ -14233,7 +14624,7 @@ async function activateAvaCallIntelligence(params = {}) {
 
   const ava = setAgentRuntimeActive('ava', {
     status: 'active',
-    activity: 'Call intelligence active: scripts, BANT+, $100K War Manual, memory, prosody, tool router, Rex oversight, and safety gates online.',
+    activity: 'Call intelligence active: scripts, BANT+, $100K War Manual, active listening/call-flow, memory, prosody, tool router, Rex oversight, and safety gates online.',
     updatedBy: actor,
     config: { avaCallIntelligence: callSettings },
   });
@@ -14258,7 +14649,7 @@ async function activateAvaCallIntelligence(params = {}) {
     memoryType: 'call-intelligence-activation',
     objectionTag: 'architecture_active',
     prompt: 'Before every live call response, use the activated PBK call intelligence bundle.',
-    response: 'Ava must use scripts, BANT+, the $100K War Manual, 7-second path picker, L.I.S.T.E.N. probe, fifty_plus_objection_decoder, emotional/prosody guidance, similar-deal proof, tool router, and Rex revenue focus while keeping provider writes approval-gated.',
+    response: 'Ava must use scripts, BANT+, the $100K War Manual, active-listening call_flow/call_flow_edges, seller-word mirroring, responseRequired turn-taking, L.I.S.T.E.N. probe, fifty_plus_objection_decoder, emotional/prosody guidance, similar-deal proof, tool router, and Rex revenue focus while keeping provider writes approval-gated.',
     score: 0.98,
     outcome: 'active',
     source: 'ava-call-intelligence-activation',
@@ -15108,6 +15499,14 @@ async function buildAvaConversationIntelligence(params = {}) {
     : null;
   const pathDecision = architecture.pathDecision || {};
   const warManual = architecture.warManual || {};
+  const activeListening = architecture.activeListening || buildAvaActiveListeningContext({
+    ...params,
+    ...context,
+    query,
+    transcript: params.transcript || query,
+    pathDecision,
+    warManual,
+  });
   const pathCanGuide = !reaction.shouldStopContact;
   const criticalReaction = reaction.shouldStopContact
     || /\b(stop calling|do not call|don't call|remove me|unsubscribe|scam|fake|legit|real company|who are you|trust)\b/i.test(query);
@@ -15129,11 +15528,18 @@ async function buildAvaConversationIntelligence(params = {}) {
     : pathCanGuide && !pathDecision.pathLocked && pathDecision.nextProbeQuestion && !reaction.immediatePhrase
       ? pathDecision.nextProbeQuestion
       : '';
-  const responseText = criticalReaction
+  const rawResponseText = criticalReaction
     ? (reaction.shouldStopContact
         ? (reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '')
         : (warObjectionPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || ''))
     : (warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
+  const responseText = pathCanGuide
+    ? ensureAvaSellerReplyHook(rawResponseText, {
+      hook: activeListening.callFlow?.recommendedHook,
+      nextQuestion: activeListening.callFlow?.recommendedHook || closing.closeQuestion || closing.advice?.closeQuestion || '',
+      stopContact: reaction.shouldStopContact,
+    })
+    : rawResponseText;
   return {
     ok: true,
     result: 'ava_conversation_intelligence',
@@ -15143,6 +15549,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     selectedPath: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
     pathDecision,
     warManual,
+    activeListening,
     objectionType: reaction.objectionType,
     reaction,
     prosody: reaction.prosody,
@@ -16960,6 +17367,7 @@ function buildAvaCallStateSummary(params = {}) {
   const architecture = params.architecture || {};
   const pathDecision = params.pathDecision || architecture.pathDecision || conversation.pathDecision || {};
   const warManual = params.warManual || architecture.warManual || conversation.warManual || {};
+  const activeListening = params.activeListening || architecture.activeListening || conversation.activeListening || {};
   const bant = params.bant || architecture.bant || conversation.bant || {};
   const bantKnown = bant.known || bant.answers || params.bantAnswers || {};
   const bantMissing = Array.isArray(bant.missing) ? bant.missing : [];
@@ -16978,6 +17386,11 @@ function buildAvaCallStateSummary(params = {}) {
   const warListenQuestion = sanitizeAvaSpokenOutput(warManual.listenProbe?.question || '').slice(0, 260);
   const warPowerLine = sanitizeAvaSpokenOutput(warManual.powerLine?.line || '').slice(0, 220);
   const warMove = warManual.psychologyMove || {};
+  const activeSellerWords = sanitizeAvaSpokenOutput(activeListening.lastSellerWords || transcript || '').slice(0, 220);
+  const activeMirror = sanitizeAvaSpokenOutput(activeListening.mirroredPhrase || '').slice(0, 120);
+  const activeLabel = sanitizeAvaSpokenOutput(activeListening.label || '').slice(0, 220);
+  const activeHook = sanitizeAvaSpokenOutput(activeListening.callFlow?.recommendedHook || '').slice(0, 180);
+  const activeNextStep = activeListening.callFlow?.nextStepId || '';
   const recentTurns = formatAvaRecentTurnsForSummary(session, contextCall, 4);
   const missingText = bantMissing.length ? bantMissing.join(', ') : 'none';
   const knownText = Object.entries(bantKnown || {})
@@ -16992,6 +17405,11 @@ function buildAvaCallStateSummary(params = {}) {
     warListenQuestion ? `L.I.S.T.E.N. next step (${warManual.listenProbe?.step || 'probe'}): ${warListenQuestion}` : '',
     warPowerLine ? `War manual power line if natural: ${warPowerLine}` : '',
     warMove?.instruction ? `Psychology move: ${warMove.label || warMove.id} - ${sanitizeAvaSpokenOutput(warMove.instruction).slice(0, 220)}` : '',
+    activeListening.revision ? `Active listening: ${activeListening.revision}; mode ${activeListening.mode || 'twenty_year_pro_ready'}; responseRequired=${activeListening.responseRequired !== false}; waitingForSeller=${Boolean(activeListening.waitingForSeller)}; call flow ${activeNextStep || 'listen.mirror_label'} via ${activeListening.callFlow?.schema || 'call_flow/call_flow_edges'}.` : '',
+    activeSellerWords ? `Seller just said: ${activeSellerWords}` : '',
+    activeMirror ? `Mirror or label before strategy: ${activeMirror}${activeLabel ? ` - ${activeLabel}` : ''}` : '',
+    activeHook ? `Seller-response hook required: ${activeHook}` : '',
+    activeListening.strategicPauseMs ? `Strategic pause before re-prompting: ${activeListening.strategicPauseMs}ms.` : '',
     `BANT known: ${knownText}. BANT missing: ${missingText}.`,
     reaction.trigger ? `Seller reaction: ${sanitizeAvaSpokenOutput(reaction.trigger)}${reaction.shouldStopContact ? ' (stop-contact boundary active)' : ''}.` : '',
     transcript ? `Latest seller words: ${transcript}` : '',
@@ -17025,6 +17443,8 @@ function buildStrategistMessages(params = {}) {
     'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.',
     'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.',
     'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.',
+    'Active listening rule: treat the last seller sentence as sacred. Mirror or label their exact concern before strategy, ask one question, then wait for the seller. Never monologue.',
+    'Hook rule: every non-boundary live-call response should end with a question or clear next step that requires the seller to answer.',
     'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.',
     'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.',
     'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.',
@@ -39847,40 +40267,72 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     selectedPath: pathDecision.selectedPath,
     turnCount: session.pathProbeTurnCount,
   });
+  const activeListening = buildAvaActiveListeningContext({
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    bant: extractedBant,
+    pathDecision,
+    warManual,
+    selectedPath: pathDecision.selectedPath,
+    turnCount: session.pathProbeTurnCount,
+  });
+  session.activeListening = activeListening;
+  session.currentCallFlowStepId = activeListening.callFlow?.nextStepId || session.currentCallFlowStepId || '';
+  session.responseRequired = activeListening.responseRequired !== false;
+  const withActiveHook = (text = '', options = {}) => ensureAvaSellerReplyHook(text, {
+    hook: activeListening.callFlow?.recommendedHook,
+    nextQuestion: activeListening.callFlow?.recommendedHook,
+    stopContact: options.stopContact === true,
+    fallback: options.fallback || '',
+  });
   const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
-    return `${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`;
+    return withActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
   }
   if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
-    return 'I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?';
+    return withActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
+  }
+  if (activeListening.callFlow?.nextStepId === 'cash.condition_probe') {
+    return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
+  }
+  if (activeListening.callFlow?.nextStepId === 'cash.tenant_probe') {
+    return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
+  }
+  if (activeListening.callFlow?.nextStepId === 'cash.foreclosure_probe') {
+    return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
+  }
+  if (activeListening.callFlow?.nextStepId === 'objection.spouse_3way') {
+    return withActiveHook(`${opener}${activeListening.callFlow.avaLine}`);
   }
   if (warManual.objection?.response && Number(warManual.objection?.confidence || 0) >= 0.16) {
-    return `${opener}${warManual.objection.response}`;
+    return withActiveHook(`${opener}${warManual.objection.response}`);
   }
   if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(lower)) {
-    return 'That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?';
+    return withActiveHook('That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?');
   }
   if (/\b(price|offer|how much|worth|lowball|cash)\b/i.test(lower)) {
-    return 'I can help with that, but I do not want to guess or throw out a sloppy number. What is the property address and current condition?';
+    return withActiveHook('I can help with that, but I do not want to guess or throw out a sloppy number. What is the property address and current condition?');
   }
   if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(lower)) {
-    return 'I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?';
+    return withActiveHook('I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?');
   }
   if (pathDecision.shouldClosePath && pathDecision.scriptTrigger) {
     const warPathLine = warManual.path?.nextLine ? ` ${warManual.path.nextLine}` : '';
-    return `${opener}${pathDecision.scriptTrigger}${warPathLine}`;
+    return withActiveHook(`${opener}${pathDecision.scriptTrigger}${warPathLine}`);
   }
   if (!pathDecision.pathLocked && session.pathProbeTurnCount <= 4 && warManual.listenProbe?.question) {
-    return `${opener}${warManual.listenProbe.question}`;
+    return withActiveHook(`${opener}${warManual.listenProbe.question}`);
   }
   if (!pathDecision.pathLocked && pathDecision.nextProbeQuestion) {
-    return `${opener}${pathDecision.nextProbeQuestion}`;
+    return withActiveHook(`${opener}${pathDecision.nextProbeQuestion}`);
   }
   if (nextMissingBant) {
-    return buildRotatedBantPhrase(nextMissingBant, opener || 'I hear you. ');
+    return withActiveHook(buildRotatedBantPhrase(nextMissingBant, opener || 'I hear you. '));
   }
-  return `${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`;
+  return withActiveHook(`${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`);
 }
 
 async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', contextCall = null } = {}) {
@@ -39941,12 +40393,24 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
   });
   applyAvaPathDecisionToSession(session, architecture.pathDecision);
   try {
+    const activeListening = architecture.activeListening || buildAvaActiveListeningContext({
+      session,
+      contextCall,
+      leadId,
+      leadName,
+      address,
+      transcript,
+      query: transcript,
+      pathDecision: architecture.pathDecision,
+      warManual: architecture.warManual,
+    });
     const contextSummary = buildAvaCallStateSummary({
       session,
       contextCall,
       pipeline,
       conversation,
       architecture,
+      activeListening,
       transcript,
       source: 'telnyx-live-call',
     });
@@ -39962,6 +40426,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`,
         `Deal path: ${architecture.pathDecision.pathLocked ? 'LOCKED' : 'probing'} ${architecture.pathDecision.selectedPathLabel} (${Math.round((architecture.pathDecision.confidence || 0) * 100)}%). ${architecture.pathDecision.rule}`,
         architecture.warManual?.revision ? `War manual active: ${architecture.warManual.pathPicker?.name || '7-second path picker'}, path=${architecture.warManual.path?.label || 'diagnosing'}, emotional=${architecture.warManual.emotionalState?.label || 'unknown'}, motivator=${architecture.warManual.hiddenMotivator?.id || 'unknown'}, objection=${architecture.warManual.objection?.tag || 'none'}, tone=${architecture.warManual.toneMode?.label || 'Calm Authority'}, move=${architecture.warManual.psychologyMove?.label || 'Permission Frame'}.` : '',
+        activeListening?.revision ? `Active listening active: mode=${activeListening.mode}, Seller just said "${activeListening.lastSellerWords || transcript}", mirror="${activeListening.mirroredPhrase || 'seller words'}", callFlow=${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}, responseRequired=${activeListening.responseRequired !== false}, strategicPauseMs=${activeListening.strategicPauseMs || 0}. End with a hook: ${activeListening.callFlow?.recommendedHook || 'ask one response-required question'}.` : '',
         architecture.warManual?.listenProbe?.question ? `L.I.S.T.E.N. next: ${architecture.warManual.listenProbe.question}` : '',
         architecture.warManual?.objection?.response ? `Objection decoder response if relevant: ${architecture.warManual.objection.response}` : '',
         architecture.pathDecision.nextProbeQuestion ? `Next path probe: ${architecture.pathDecision.nextProbeQuestion}` : '',
@@ -39978,6 +40443,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `objection:${conversation?.objectionType || 'unknown'}`,
         `path:${architecture.pathDecision.selectedPath || 'unknown'}:${architecture.pathDecision.pathLocked ? 'locked' : 'probing'}`,
         `war_manual:${architecture.warManual?.path?.key || 'unknown'}:${architecture.warManual?.objection?.tag || 'none'}`,
+        `active_listening:${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}:${activeListening.responseRequired !== false ? 'response_required' : 'no_response_required'}`,
         `next_bant:${architecture.bant.missing[0] || 'complete'}`,
       ],
       confidence: 0.82,
@@ -39995,16 +40461,37 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
     const fallback = conversation?.nextBestPhrase || buildBrowserVoiceReply(pipeline, transcript);
+    const hookedScript = ensureAvaSellerReplyHook(script, {
+      hook: activeListening.callFlow?.recommendedHook,
+      nextQuestion: activeListening.callFlow?.recommendedHook || strategist?.strategy?.nextQuestion || '',
+    });
     return {
-      text: normalizeAvaVoiceReplyText(script, fallback),
+      text: normalizeAvaVoiceReplyText(hookedScript, fallback),
       pipeline,
       conversation,
       strategist,
       architecture,
     };
   } catch (error) {
+    const activeListening = buildAvaActiveListeningContext({
+      session,
+      contextCall,
+      leadId,
+      leadName,
+      address,
+      transcript,
+      query: transcript,
+      pathDecision: architecture.pathDecision,
+      warManual: architecture.warManual,
+    });
     return {
-      text: normalizeAvaVoiceReplyText(conversation?.nextBestPhrase || '', 'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?'),
+      text: normalizeAvaVoiceReplyText(
+        ensureAvaSellerReplyHook(conversation?.nextBestPhrase || '', {
+          hook: activeListening.callFlow?.recommendedHook,
+          nextQuestion: activeListening.callFlow?.recommendedHook,
+        }),
+        'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?',
+      ),
       pipeline,
       conversation,
       architecture,

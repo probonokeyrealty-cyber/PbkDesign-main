@@ -880,6 +880,25 @@ const checks = [
       && /fifty_plus_objection_decoder/.test(bridge),
   },
   {
+    name: 'Ava active-listening call flow makes live replies feel present and turn-based',
+    ok: /PBK_ACTIVE_LISTENING_REVISION/.test(bridge)
+      && /PBK_CALL_FLOW_SCHEMA_SQL/.test(bridge)
+      && /CREATE TABLE IF NOT EXISTS public\.call_flow/.test(bridge)
+      && /CREATE TABLE IF NOT EXISTS public\.call_flow_edges/.test(bridge)
+      && /ALTER TABLE public\.call_flow ENABLE ROW LEVEL SECURITY/.test(bridge)
+      && /function extractAvaSellerKeyPhrase/.test(bridge)
+      && /function ensureAvaSellerReplyHook/.test(bridge)
+      && /function selectAvaCallFlowNextStep/.test(bridge)
+      && /function buildAvaActiveListeningContext/.test(bridge)
+      && /async function waitForSellerResponse/.test(bridge)
+      && /responseRequired/.test(bridge)
+      && /waitingForSeller/.test(bridge)
+      && /strategicPauseMs/.test(bridge)
+      && /twenty_year_pro_ready/.test(bridge)
+      && /call_flow\/call_flow_edges/.test(bridge)
+      && /Seller just said/.test(bridge),
+  },
+  {
     name: 'Ava voice uses DeepSeek call-state context and a speech-safe TTS boundary',
     ok: /function buildAvaCallStateSummary/.test(bridge)
       && /Call state summary/.test(bridge)
@@ -903,7 +922,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-active-listening-call-flow)'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

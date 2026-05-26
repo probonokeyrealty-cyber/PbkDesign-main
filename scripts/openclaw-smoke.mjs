@@ -98,6 +98,18 @@ async function main() {
         Authorization: `Bearer ${API_KEY}`,
       },
     }).then((response) => response.json());
+    const injectTranscriptDebugResponse = await fetch(`${BASE_URL}/api/debug/inject-transcript`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        callId: 'smoke-missing-call',
+        transcript: 'I inherited the house and need my wife to look at the offer.',
+      }),
+    });
+    const injectTranscriptDebug = await injectTranscriptDebugResponse.json();
     const resetLeadCache = await fetch(`${BASE_URL}/api/debug/reset-lead-cache?phone=6145550199`, {
       method: 'POST',
       headers: {
@@ -110,6 +122,7 @@ async function main() {
     assert(lastSpoken?.ok === true && /last_spoken_/.test(lastSpoken?.result || ''), 'Last-spoken debug endpoint did not return a safe diagnostic envelope.');
     assert(callStateDebug?.ok === true && /^call_state_/.test(callStateDebug?.result || ''), 'Call-state debug endpoint did not return a safe diagnostic envelope.');
     assert(callTraceDebug?.ok === true && /^call_trace_/.test(callTraceDebug?.result || ''), 'Call-trace debug endpoint did not return a safe diagnostic envelope.');
+    assert(injectTranscriptDebugResponse.status === 404 && injectTranscriptDebug?.result === 'active_media_session_not_found', 'Inject-transcript debug endpoint did not safely report a missing active media session.');
     assert(resetLeadCache?.ok === true && resetLeadCache?.result === 'lead_cache_reset', 'Lead-cache reset debug endpoint did not accept a safe reset request.');
     const publicAvaLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',

@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-26-active-listening-call-flow';
+const BUILD_REVISION = '2026-05-26-live-call-diagnostic-loop';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -1035,6 +1035,9 @@ async function redisAcquireLease(name = '', ttlSeconds = REDIS_LEASE_TTL_SECONDS
 
 function buildSharedTelnyxSessionState(session = {}, status = 'active') {
   const lastTranscript = session.transcript?.slice?.(-1)?.[0] || {};
+  const lastAvaPreview = String(session.lastAvaReplyPreview || session.lastAvaPreview || '').slice(0, 1200);
+  const lastAvaSpoken = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').slice(0, 1200);
+  const bantStatus = buildLiveCallBantStatus(session);
   return {
     id: session.id || '',
     callId: session.callId || '',
@@ -1051,15 +1054,25 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     firstAudioAt: session.firstAudioAt || '',
     lastAudioAt: session.lastAudioAt || '',
     deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
+    deepgramReady: Boolean(session.deepgramSocketOpen),
     deepgramReadyAt: session.deepgramReadyAt || '',
     lastDeepgramEvent: session.lastDeepgramEvent || '',
     lastDeepgramError: session.lastDeepgramError || '',
     transcriptCount: Array.isArray(session.transcript) ? session.transcript.length : 0,
     lastTranscript: lastTranscript.transcript || '',
-    lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
+    lastAvaPreview,
+    lastAvaSpoken,
+    lastAvaResponse: lastAvaSpoken || lastAvaPreview,
     selectedPath: session.selectedPath || '',
     pathLocked: Boolean(session.pathLocked),
     identifiedPath: session.identifiedPath || '',
+    pathDecision: session.pathDecision || {},
+    bantStatus,
+    prosody: session.prosody || session.lastProsody || {},
+    activeListening: session.activeListening || {},
+    responseRequired: Boolean(session.responseRequired),
+    waitingForSeller: Boolean(session.waitingForSeller),
+    waitingForSellerSince: session.waitingForSellerSince || '',
     replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
     finalized: Boolean(session.finalized),
     finalizeReason: session.finalizeReason || '',
@@ -1069,6 +1082,76 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     lastRedisSyncError: session.lastRedisSyncError || '',
     startedAt: session.startedAt || '',
     updatedAt: isoNow(),
+  };
+}
+
+function buildLiveCallBantStatus(session = {}, contextCall = null) {
+  const stored = session.bantStatus && typeof session.bantStatus === 'object' ? session.bantStatus : {};
+  const storedKnown = stored.known && typeof stored.known === 'object' ? stored.known : stored;
+  const contextKnown = normalizeBantInfo(contextCall?.bant || {}, contextCall?.raw?.bant || {}, contextCall?.raw || {});
+  const lastTranscript = session.transcript?.slice?.(-1)?.[0]?.transcript || '';
+  const known = extractBantFromTranscript(lastTranscript, normalizeBantInfo(contextKnown, storedKnown));
+  const missing = Array.isArray(stored.missing) && stored.missing.length
+    ? stored.missing.filter((field) => !normalizeBantValue(known[field]))
+    : getMissingBantFields(known);
+  return {
+    known,
+    missing,
+    complete: missing.length === 0,
+    nextMissing: missing[0] || '',
+    updatedAt: stored.updatedAt || contextCall?.updatedAt || session.lastAudioAt || session.startedAt || '',
+  };
+}
+
+function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, options = {}) {
+  const lastTranscript = session.transcript?.slice?.(-1)?.[0] || {};
+  const lastAvaPreview = String(session.lastAvaReplyPreview || session.lastAvaPreview || '').slice(0, 1200);
+  const lastAvaSpoken = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').slice(0, 1200);
+  const phone = session.phone || contextCall?.phone || contextCall?.from || '';
+  const pathDecision = session.pathDecision || contextCall?.pathDecision || {};
+  const bantStatus = buildLiveCallBantStatus(session, contextCall);
+  return {
+    sessionId: session.id || '',
+    callId: session.callId || contextCall?.id || '',
+    streamId: session.streamId || '',
+    leadId: session.leadId || contextCall?.leadId || '',
+    leadName: getSpokenLeadName(session.leadName || contextCall?.leadName || ''),
+    address: session.address || contextCall?.address || '',
+    phone: options.maskPhone === false ? normalizePhone(phone) : maskPhoneForDiagnostics(phone),
+    leadSource: session.leadSource || contextCall?.participantRole || '',
+    frameCount: session.frameCount || 0,
+    audioBytes: session.audioBytes || 0,
+    firstAudioAt: session.firstAudioAt || '',
+    lastAudioAt: session.lastAudioAt || '',
+    deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
+    deepgramReady: Boolean(session.deepgramSocketOpen),
+    deepgramReadyAt: session.deepgramReadyAt || '',
+    lastDeepgramEvent: session.lastDeepgramEvent || '',
+    lastDeepgramError: session.lastDeepgramError || '',
+    transcriptCount: Array.isArray(session.transcript) ? session.transcript.length : 0,
+    lastTranscript: lastTranscript.transcript || '',
+    lastTranscriptAt: lastTranscript.capturedAt || '',
+    lastAvaPreview,
+    lastAvaSpoken,
+    lastAvaResponse: lastAvaSpoken || lastAvaPreview,
+    selectedPath: session.selectedPath || pathDecision.selectedPath || contextCall?.selectedPath || contextCall?.selected_path || '',
+    pathLocked: Boolean(session.pathLocked || pathDecision.pathLocked || contextCall?.pathLocked),
+    identifiedPath: session.identifiedPath || contextCall?.identifiedPath || '',
+    pathDecision,
+    bantStatus,
+    prosody: session.prosody || session.lastProsody || contextCall?.prosody || {},
+    activeListening: session.activeListening || {},
+    responseRequired: Boolean(session.responseRequired),
+    waitingForSeller: Boolean(session.waitingForSeller),
+    waitingForSellerSince: session.waitingForSellerSince || '',
+    replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
+    lastAvaReplyMode: session.lastAvaReplyMode || '',
+    lastRedisSyncResult: session.lastRedisSyncResult || '',
+    lastRedisSyncError: session.lastRedisSyncError || '',
+    startedAt: session.startedAt || '',
+    finalized: Boolean(session.finalized),
+    finalizeReason: session.finalizeReason || '',
+    endedAt: session.endedAt || '',
   };
 }
 
@@ -39304,6 +39387,32 @@ function normalizeDeepgramLiveTranscript(data = {}) {
 const browserVoiceSessions = new Map();
 const telnyxMediaSessionsByCallId = new Map();
 
+function findTelnyxMediaSessionForDebug({ callId = '', streamId = '', phone = '' } = {}) {
+  const normalizedCallId = String(callId || '').trim();
+  const normalizedStreamId = String(streamId || '').trim();
+  const normalizedPhone = normalizePhone(phone || '');
+  const sessions = Array.from(telnyxMediaSessionsByCallId.values());
+  for (const session of sessions) {
+    const contextCall = getCallById(session.callId);
+    const callMatches = normalizedCallId && [
+      session.callId,
+      session.id,
+      contextCall?.id,
+      contextCall?.callId,
+      contextCall?.callControlId,
+      contextCall?.telnyxCallControlId,
+    ].filter(Boolean).includes(normalizedCallId);
+    const streamMatches = normalizedStreamId && [
+      session.streamId,
+      session.id,
+    ].filter(Boolean).includes(normalizedStreamId);
+    const phoneMatches = normalizedPhone && normalizePhone(session.phone || contextCall?.phone || contextCall?.from || '') === normalizedPhone;
+    if (callMatches || streamMatches || phoneMatches) return session;
+  }
+  if (!normalizedCallId && !normalizedStreamId && !normalizedPhone && sessions.length === 1) return sessions[0];
+  return null;
+}
+
 function pruneBrowserVoiceSessions() {
   const now = Date.now();
   for (const [token, session] of browserVoiceSessions.entries()) {
@@ -40613,6 +40722,190 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   };
 }
 
+async function injectDebugTranscriptIntoLiveCall(body = {}) {
+  const transcript = String(body.transcript || body.text || body.utterance || '').replace(/\s+/g, ' ').trim();
+  if (!transcript) {
+    return {
+      ok: false,
+      status: 400,
+      result: 'missing_transcript',
+      error: 'Provide transcript text to inject into an active Telnyx media session.',
+    };
+  }
+
+  const callId = String(body.callId || body.id || '').trim();
+  const streamId = String(body.streamId || '').trim();
+  const phone = normalizePhone(body.phone || body.from || '');
+  const session = findTelnyxMediaSessionForDebug({ callId, streamId, phone });
+  if (!session) {
+    return {
+      ok: false,
+      status: 404,
+      result: 'active_media_session_not_found',
+      error: 'No active Telnyx media session matched the supplied callId, streamId, or phone.',
+      query: {
+        callId,
+        streamId,
+        phone: maskPhoneForDiagnostics(phone),
+      },
+      activeMediaSessions: Array.from(telnyxMediaSessionsByCallId.values()).map((activeSession) => {
+        const contextCall = getCallById(activeSession.callId);
+        return buildTelnyxMediaSessionDiagnostics(activeSession, contextCall);
+      }),
+    };
+  }
+
+  const contextCall = getCallById(session.callId);
+  const sentiment = estimatePbkLiveSentiment(transcript);
+  session.sentiment = sentiment;
+  const item = {
+    transcript,
+    confidence: 1,
+    isFinal: true,
+    speechFinal: true,
+    sentiment,
+    capturedAt: isoNow(),
+    source: 'debug-inject-transcript',
+  };
+  session.transcript.push(item);
+
+  const liveBant = normalizeBantInfo(
+    contextCall?.bant || {},
+    session.bantStatus?.known || {},
+    extractBantFromTranscript(transcript, contextCall?.bant || session.bantStatus?.known || {}),
+  );
+  const livePathDecision = inferAvaDealPathDecision({
+    session,
+    contextCall,
+    transcript,
+    query: transcript,
+    bant: liveBant,
+    selectedPath: contextCall?.selectedPath || contextCall?.selected_path || session.selectedPath || '',
+    turnCount: Array.isArray(session.transcript) ? session.transcript.length : session.pathProbeTurnCount || 0,
+  });
+  applyAvaPathDecisionToSession(session, livePathDecision);
+  session.pathDecision = livePathDecision;
+  const missingBant = getMissingBantFields(liveBant);
+  session.bantStatus = {
+    known: liveBant,
+    missing: missingBant,
+    complete: missingBant.length === 0,
+    nextMissing: missingBant[0] || '',
+    updatedAt: isoNow(),
+  };
+
+  recordCallTrace('debug_injected_transcript', {
+    ...session,
+    status: 'debug',
+    result: 'transcript_injected',
+    transcript,
+    stage: 'injectDebugTranscriptIntoLiveCall',
+  });
+
+  if (contextCall) {
+    upsertCall(state, {
+      ...contextCall,
+      bant: liveBant,
+      transcript: [
+        ...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []),
+        {
+          speaker: 'Seller',
+          text: transcript,
+          ...item,
+        },
+      ].slice(-50),
+      sentiment: sentiment.pbkScore ?? contextCall.sentiment,
+      selectedPath: livePathDecision.selectedPath || contextCall.selectedPath,
+      selected_path: livePathDecision.selectedPath || contextCall.selected_path,
+      selectedPathLabel: livePathDecision.selectedPathLabel || contextCall.selectedPathLabel,
+      pathLocked: livePathDecision.pathLocked || contextCall.pathLocked,
+      identifiedPath: livePathDecision.pathLocked ? livePathDecision.selectedPath : contextCall.identifiedPath,
+      pathDecision: livePathDecision,
+      nextMove: livePathDecision.pathLocked
+        ? `Path locked to ${livePathDecision.selectedPathLabel}. Use that script lane and move to the next safe close.`
+        : livePathDecision.nextProbeQuestion || "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
+      updatedAt: isoNow(),
+    });
+  }
+
+  const reply = await buildTelnyxLiveAvaReply({ session, transcript, contextCall });
+  const spoken = sanitizeAvaSpokenOutput(
+    reply.text || '',
+    'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
+  );
+  session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
+  session.lastAvaReplyMode = reply.replyMode || 'debug_inject';
+  session.pathDecision = reply.architecture?.pathDecision || session.pathDecision || livePathDecision;
+  session.bantStatus = buildLiveCallBantStatus(session, contextCall);
+  session.prosody = reply.architecture?.prosody || reply.conversation?.prosody || session.prosody || {};
+  session.activeListening = reply.architecture?.activeListening || reply.conversation?.activeListening || session.activeListening || {};
+
+  const shouldSpeak = body.speak === true || body.sendAudio === true || body.speakIntoCall === true;
+  let speakResult = { ok: false, skipped: true, result: shouldSpeak ? 'call_not_speakable' : 'speak_not_requested' };
+  if (shouldSpeak && spoken && (!contextCall || isTelnyxCallStillSpeakable(contextCall))) {
+    speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    if (speakResult.ok) {
+      session.lastAvaReplySpoken = spoken;
+      session.lastAvaSpokenPreview = spoken.slice(0, 320);
+      rememberAvaLiveReplyFingerprint(session, spoken);
+    }
+  }
+
+  recordCallTrace('debug_injected_ava_reply', {
+    ...session,
+    status: speakResult.ok ? 'served' : 'debug',
+    result: speakResult.result || 'debug_reply_generated',
+    transcript,
+    replyPreview: session.lastAvaReplyPreview,
+    replySpoken: speakResult.ok ? spoken : '',
+    spoke: Boolean(speakResult.ok),
+    replyMode: session.lastAvaReplyMode,
+    stage: 'injectDebugTranscriptIntoLiveCall',
+  });
+
+  if (contextCall) {
+    const latestCall = getCallById(session.callId) || contextCall;
+    upsertCall(state, {
+      ...latestCall,
+      transcript: [
+        ...(Array.isArray(latestCall.transcript) ? latestCall.transcript : []),
+        {
+          speaker: 'Ava',
+          text: spoken,
+          transcript: spoken,
+          isFinal: true,
+          speechFinal: true,
+          capturedAt: isoNow(),
+          source: shouldSpeak ? 'debug-inject-live-reply' : 'debug-inject-preview',
+          replyMode: session.lastAvaReplyMode,
+        },
+      ].slice(-50),
+      nextMove: spoken,
+      updatedAt: isoNow(),
+    });
+  }
+
+  await persistState(state);
+  void syncTelnyxSessionToRedis(session, 'active', { force: true, trigger: 'debug-inject-transcript' });
+  scheduleRuntimeStateBroadcast('debug-inject-transcript');
+
+  return {
+    ok: true,
+    status: 200,
+    result: 'debug_transcript_injected',
+    spoke: Boolean(speakResult.ok),
+    speakResult,
+    transcript: item,
+    reply: {
+      text: spoken,
+      preview: session.lastAvaReplyPreview,
+      mode: session.lastAvaReplyMode,
+      sanitized: spoken !== String(reply.text || ''),
+    },
+    session: buildTelnyxMediaSessionDiagnostics(session, contextCall),
+  };
+}
+
 async function handleTelnyxDeepgramMediaSocket(socket, request) {
   const meta = getDeepgramProviderMeta(process.env);
   const session = {
@@ -40649,8 +40942,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     telnyxAiAssistantStarted: false,
     lastAvaReplyAt: 0,
     lastAvaReplyTranscript: '',
+    lastAvaReplyPreview: '',
     lastAvaReplySpoken: '',
     lastAvaSpokenPreview: '',
+    bantStatus: { known: {}, missing: BANT_FIELDS.slice(), complete: false, nextMissing: BANT_FIELDS[0] || '' },
+    pathDecision: {},
+    prosody: {},
+    activeListening: {},
+    waitingForSeller: false,
+    responseRequired: false,
     lastMediaReplyAt: 0,
     mediaPlaybackReady: false,
     mediaPlaybackMode: '',
@@ -40977,6 +41277,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       reply.text || '',
       'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
     );
+    session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
+    session.pathDecision = reply.architecture?.pathDecision || session.pathDecision || {};
+    session.bantStatus = buildLiveCallBantStatus(session, contextCall);
+    session.prosody = reply.architecture?.prosody || reply.conversation?.prosody || session.prosody || {};
+    session.activeListening = reply.architecture?.activeListening || reply.conversation?.activeListening || session.activeListening || {};
     if (!spoken) return;
     const latestCall = getCallById(session.callId);
     if (!isTelnyxCallStillSpeakable(latestCall)) return;
@@ -41137,6 +41442,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         turnCount: Array.isArray(session.transcript) ? session.transcript.length : session.pathProbeTurnCount || 0,
       });
       applyAvaPathDecisionToSession(session, livePathDecision);
+      session.pathDecision = livePathDecision;
+      const missingLiveBant = getMissingBantFields(liveBant);
+      session.bantStatus = {
+        known: liveBant,
+        missing: missingLiveBant,
+        complete: missingLiveBant.length === 0,
+        nextMissing: missingLiveBant[0] || '',
+        updatedAt: isoNow(),
+      };
       upsertCall(state, {
         ...contextCall,
         bant: liveBant,
@@ -42211,30 +42525,10 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/voice/status', '/api/v1/voice/status'])) {
       const sharedMediaSessions = await getSharedTelnyxCallStates();
-      const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
-        sessionId: session.id,
-        callId: session.callId,
-        streamId: session.streamId,
-        leadId: session.leadId || '',
-        leadName: getSpokenLeadName(session.leadName || ''),
-        address: session.address || '',
-        phone: maskPhoneForDiagnostics(session.phone || ''),
-        leadSource: session.leadSource || '',
-        frameCount: session.frameCount || 0,
-        audioBytes: session.audioBytes || 0,
-        firstAudioAt: session.firstAudioAt || '',
-        lastAudioAt: session.lastAudioAt || '',
-        deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
-        deepgramReadyAt: session.deepgramReadyAt || '',
-        lastDeepgramEvent: session.lastDeepgramEvent || '',
-        lastDeepgramError: session.lastDeepgramError || '',
-        transcriptCount: Array.isArray(session.transcript) ? session.transcript.length : 0,
-        lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
-        lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
-        replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
-        lastRedisSyncResult: session.lastRedisSyncResult || '',
-        lastRedisSyncError: session.lastRedisSyncError || '',
-      }));
+      const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => {
+        const contextCall = getCallById(session.callId);
+        return buildTelnyxMediaSessionDiagnostics(session, contextCall);
+      });
       json(response, 200, {
         ok: true,
         result: 'voice_status',
@@ -42275,31 +42569,19 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/live-call-status', '/api/v1/debug/live-call-status'])) {
       const sharedMediaSessions = await getSharedTelnyxCallStates();
-      const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => ({
-        sessionId: session.id,
-        callId: session.callId,
-        streamId: session.streamId,
-        leadId: session.leadId || '',
-        leadName: getSpokenLeadName(session.leadName || ''),
-        address: session.address || '',
-        phone: maskPhoneForDiagnostics(session.phone || ''),
-        leadSource: session.leadSource || '',
-        frameCount: session.frameCount || 0,
-        audioBytes: session.audioBytes || 0,
-        deepgramReady: Boolean(session.deepgramSocketOpen),
-        deepgramReadyAt: session.deepgramReadyAt || '',
-        lastDeepgramEvent: session.lastDeepgramEvent || '',
-        lastDeepgramError: session.lastDeepgramError || '',
-        lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
-        lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
-        selectedPath: session.selectedPath || '',
-        pathLocked: Boolean(session.pathLocked),
-        identifiedPath: session.identifiedPath || '',
-        replyLatencySamples: (session.replyLatencySamples || []).slice(0, 5),
-        lastRedisSyncResult: session.lastRedisSyncResult || '',
-        lastRedisSyncError: session.lastRedisSyncError || '',
-        startedAt: session.startedAt || '',
-      }));
+      const activeMediaSessions = Array.from(telnyxMediaSessionsByCallId.values()).map((session) => {
+        const contextCall = getCallById(session.callId);
+        return buildTelnyxMediaSessionDiagnostics(session, contextCall);
+      });
+      const activeCallRecords = state.calls.filter((call) => isActiveLiveCall(call)).map((call) => ({
+        id: call.id,
+        callControlId: call.callControlId || call.call_control_id || call.callId || '',
+        status: call.status || call.callStatus || '',
+        selectedPath: call.selectedPath || call.selected_path || '',
+        pathLocked: Boolean(call.pathLocked),
+        lastTranscript: Array.isArray(call.transcript) ? call.transcript.slice(-1)[0]?.text || call.transcript.slice(-1)[0]?.transcript || '' : '',
+        nextMove: call.nextMove || '',
+      })).slice(0, 12);
       json(response, 200, {
         ok: true,
         result: 'live_call_status',
@@ -42309,15 +42591,11 @@ const server = createServer(async (request, response) => {
         sharedMediaStreamsOpen: sharedMediaSessions.length,
         sharedMediaSessions: sharedMediaSessions.slice(0, 12),
         sharedState: getRedisProviderMeta(),
-        activeCalls: state.calls.filter((call) => isActiveLiveCall(call)).map((call) => ({
-          id: call.id,
-          callControlId: call.callControlId || call.call_control_id || call.callId || '',
-          status: call.status || call.callStatus || '',
-          selectedPath: call.selectedPath || call.selected_path || '',
-          pathLocked: Boolean(call.pathLocked),
-          lastTranscript: Array.isArray(call.transcript) ? call.transcript.slice(-1)[0]?.text || call.transcript.slice(-1)[0]?.transcript || '' : '',
-          nextMove: call.nextMove || '',
-        })).slice(0, 12),
+        activeCallRecordCount: activeCallRecords.length,
+        activeCalls: activeCallRecords,
+        activeCallsNote: activeMediaSessions.length || sharedMediaSessions.length
+          ? 'Media sessions are the source of truth for live phone audio.'
+          : 'No open media sessions; activeCalls are CRM/runtime records and may include stale/demo rows.',
       });
       return;
     }
@@ -42339,26 +42617,7 @@ const server = createServer(async (request, response) => {
         return !callId && !phone;
       }).map((session) => {
         const contextCall = getCallById(session.callId);
-        return {
-          sessionId: session.id,
-          callId: session.callId,
-          streamId: session.streamId,
-          leadId: session.leadId || contextCall?.leadId || '',
-          leadName: getSpokenLeadName(session.leadName || contextCall?.leadName || ''),
-          address: session.address || contextCall?.address || '',
-          phone: maskPhoneForDiagnostics(session.phone || contextCall?.phone || ''),
-          leadSource: session.leadSource || contextCall?.participantRole || '',
-          frameCount: session.frameCount || 0,
-          audioBytes: session.audioBytes || 0,
-          deepgramSocketOpen: Boolean(session.deepgramSocketOpen),
-          lastDeepgramEvent: session.lastDeepgramEvent || '',
-          lastDeepgramError: session.lastDeepgramError || '',
-          lastTranscript: session.transcript?.slice?.(-1)?.[0]?.transcript || '',
-          lastAvaResponse: session.lastAvaSpokenPreview || session.lastAvaReplySpoken || '',
-          lastRedisSyncResult: session.lastRedisSyncResult || '',
-          lastRedisSyncError: session.lastRedisSyncError || '',
-          startedAt: session.startedAt || '',
-        };
+        return buildTelnyxMediaSessionDiagnostics(session, contextCall);
       });
       const localCalls = (state.calls || []).filter((call) => {
         if (callId && [call.id, call.callId, call.callControlId, call.telnyxCallControlId].includes(callId)) return true;
@@ -42440,6 +42699,18 @@ const server = createServer(async (request, response) => {
         redis: getRedisProviderMeta(),
         traces,
       });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/debug/inject-transcript', '/api/v1/debug/inject-transcript'])) {
+      const body = await readBody(request);
+      const result = await injectDebugTranscriptIntoLiveCall({
+        ...body,
+        callId: body.callId || body.id || url.searchParams.get('callId') || url.searchParams.get('id') || '',
+        streamId: body.streamId || url.searchParams.get('streamId') || '',
+        phone: body.phone || body.from || url.searchParams.get('phone') || '',
+      });
+      json(response, result.status || (result.ok ? 200 : 400), result);
       return;
     }
 

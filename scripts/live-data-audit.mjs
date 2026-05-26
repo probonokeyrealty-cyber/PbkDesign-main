@@ -922,15 +922,22 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-active-listening-call-flow)'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
       && /\/api\/debug\/last-spoken/.test(bridge)
       && /\/api\/debug\/call-state/.test(bridge)
       && /\/api\/debug\/call-trace/.test(bridge)
+      && /\/api\/debug\/inject-transcript/.test(bridge)
       && /\/api\/debug\/reset-lead-cache/.test(bridge)
+      && /function buildTelnyxMediaSessionDiagnostics/.test(bridge)
+      && /async function injectDebugTranscriptIntoLiveCall/.test(bridge)
       && /deepgramSocketOpen/.test(bridge)
+      && /lastAvaPreview/.test(bridge)
+      && /lastAvaSpoken/.test(bridge)
+      && /bantStatus/.test(bridge)
+      && /prosody/.test(bridge)
       && /maskPhoneForDiagnostics/.test(bridge)
       && /leadResolver: inboundDiagnostic/.test(bridge)
       && /redis_call_state_active_resurrection_blocked/.test(bridge)
@@ -938,6 +945,7 @@ const checks = [
       && /recordCallTrace\('lead_context_resolved'/.test(bridge)
       && /recordCallTrace\('deepgram_transcript'/.test(bridge)
       && /recordCallTrace\('ava_phone_reply'/.test(bridge)
+      && /recordCallTrace\('debug_injected_transcript'/.test(bridge)
       && /buildStateSnapshot\(\{ compact \}\)/.test(bridge)
       && /state\?compact=1/.test(index)
       && /openClawReadCache/.test(index)
@@ -945,6 +953,7 @@ const checks = [
       && /Voice status endpoint did not return live diagnostics/.test(openclawSmoke)
       && /Call-state debug endpoint did not return a safe diagnostic envelope/.test(openclawSmoke)
       && /Call-trace debug endpoint did not return a safe diagnostic envelope/.test(openclawSmoke)
+      && /Inject-transcript debug endpoint did not safely report a missing active media session/.test(openclawSmoke)
       && /Compact state endpoint did not report compact mode/.test(openclawSmoke),
   },
   {

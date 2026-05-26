@@ -295,6 +295,9 @@ const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(proces
 const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
 const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
 const REDIS_ACTIVE_CALL_STALE_MS = Math.max(30_000, Math.min(10 * 60 * 1000, Number(process.env.PBK_REDIS_ACTIVE_CALL_STALE_MS || 3 * 60 * 1000)));
+const CALL_TRACE_LOCAL_LIMIT = Math.max(50, Math.min(1000, Number(process.env.PBK_CALL_TRACE_LOCAL_LIMIT || 300)));
+const CALL_TRACE_REDIS_LIMIT = Math.max(50, Math.min(2000, Number(process.env.PBK_CALL_TRACE_REDIS_LIMIT || 500)));
+const CALL_TRACE_TTL_SECONDS = Math.max(900, Math.min(86400, Number(process.env.PBK_CALL_TRACE_TTL_SECONDS || 12 * 60 * 60)));
 const AVA_CALL_INTELLIGENCE_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_CALL_INTELLIGENCE_ENABLED || 'true').trim());
 const AVA_CALL_INTELLIGENCE_STRATEGIST_MODE = String(process.env.PBK_AVA_CALL_INTELLIGENCE_STRATEGIST_MODE || 'inline').trim().toLowerCase();
 const AVA_CALL_INTELLIGENCE_TIMEOUT_MS = Math.max(350, Math.min(2500, Number(process.env.PBK_AVA_CALL_INTELLIGENCE_TIMEOUT_MS || 1200)));
@@ -1075,11 +1078,24 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
   if (!REDIS_ENABLED || !id) {
     session.lastRedisSyncResult = 'redis_call_state_skipped';
     session.lastRedisSyncError = '';
+    recordCallTrace('redis_sync_skipped', {
+      ...session,
+      status: normalizedStatus,
+      result: 'redis_call_state_skipped',
+      reason: REDIS_ENABLED ? 'missing_call_id' : 'redis_disabled',
+      stage: options.trigger || 'syncTelnyxSessionToRedis',
+    });
     return { ok: false, skipped: true, result: 'redis_call_state_skipped' };
   }
   if (normalizedStatus === 'active' && (session.finalized || session.endedAt)) {
     session.lastRedisSyncResult = 'redis_call_state_active_resurrection_blocked';
     session.lastRedisSyncError = '';
+    recordCallTrace('redis_active_resurrection_blocked', {
+      ...session,
+      status: normalizedStatus,
+      result: 'redis_call_state_active_resurrection_blocked',
+      stage: options.trigger || 'syncTelnyxSessionToRedis',
+    });
     return { ok: false, skipped: true, result: 'redis_call_state_active_resurrection_blocked' };
   }
   const now = Date.now();
@@ -1087,6 +1103,12 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
   if (!options.force && session.lastRedisSyncAt && now - session.lastRedisSyncAt < minIntervalMs) {
     session.lastRedisSyncResult = 'redis_call_state_throttled';
     session.lastRedisSyncError = '';
+    recordCallTrace('redis_sync_throttled', {
+      ...session,
+      status: normalizedStatus,
+      result: 'redis_call_state_throttled',
+      stage: options.trigger || 'syncTelnyxSessionToRedis',
+    });
     return { ok: false, skipped: true, result: 'redis_call_state_throttled' };
   }
   session.lastRedisSyncAt = now;
@@ -1097,6 +1119,13 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
     if (options.force) {
       console.warn(`[RedisState] ${session.callId || session.streamId || session.id || 'call'} sync unavailable: ${session.lastRedisSyncError}`);
     }
+    recordCallTrace('redis_sync_unavailable', {
+      ...session,
+      status: normalizedStatus,
+      result: 'redis_unavailable',
+      error: session.lastRedisSyncError,
+      stage: options.trigger || 'syncTelnyxSessionToRedis',
+    });
     return { ok: false, skipped: true, result: 'redis_unavailable' };
   }
   const record = buildSharedTelnyxSessionState(session, normalizedStatus);
@@ -1112,12 +1141,26 @@ async function syncTelnyxSessionToRedis(session = {}, status = 'active', options
     }
     session.lastRedisSyncResult = 'redis_call_state_synced';
     session.lastRedisSyncError = '';
+    recordCallTrace('redis_sync', {
+      ...session,
+      status: normalizedStatus,
+      result: 'redis_call_state_synced',
+      redisKey: key,
+      stage: options.trigger || 'syncTelnyxSessionToRedis',
+    });
     return { ok: true, result: 'redis_call_state_synced', key };
   } catch (error) {
     sharedRedisLastError = String(error?.message || error || 'Redis call-state sync failed').slice(0, 240);
     session.lastRedisSyncResult = 'redis_call_state_failed';
     session.lastRedisSyncError = sharedRedisLastError;
     console.warn(`[RedisState] ${session.callId || session.streamId || session.id || 'call'} sync failed: ${sharedRedisLastError}`);
+    recordCallTrace('redis_sync_failed', {
+      ...session,
+      status: normalizedStatus,
+      result: 'redis_call_state_failed',
+      error: sharedRedisLastError,
+      stage: options.trigger || 'syncTelnyxSessionToRedis',
+    });
     return { ok: false, result: 'redis_call_state_failed', error: sharedRedisLastError };
   }
 }
@@ -1169,6 +1212,128 @@ async function deleteSharedTelnyxCallState(id = '') {
     sharedRedisLastError = String(error?.message || error || 'Redis call-state delete failed').slice(0, 240);
     return { ok: false, result: 'redis_call_state_delete_failed', id: normalizedId, error: sharedRedisLastError };
   }
+}
+
+function sanitizeCallTraceDetails(details = {}) {
+  const sanitized = {};
+  for (const [key, value] of Object.entries(details || {})) {
+    if (value === undefined || typeof value === 'function') continue;
+    if (/^(raw|payload|body|headers?|authorization|apiKey|token|secret)$/i.test(key)) continue;
+    if (/(phone|from|to|caller)/i.test(key)) {
+      sanitized[key] = maskPhoneForDiagnostics(value);
+      continue;
+    }
+    if (/(transcript|reply|response|spoken|text|error|reason|result|status|source|route|stage|event)/i.test(key)) {
+      sanitized[key] = typeof value === 'string' ? value.slice(0, 500) : value;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      sanitized[key] = value.slice(0, 8).map((item) => (
+        item && typeof item === 'object'
+          ? sanitizeCallTraceDetails(item)
+          : typeof item === 'string' ? item.slice(0, 160) : item
+      ));
+      continue;
+    }
+    if (value && typeof value === 'object') {
+      const shallow = {};
+      for (const [childKey, childValue] of Object.entries(value).slice(0, 20)) {
+        if (/^(raw|payload|body|headers?|authorization|apiKey|token|secret)$/i.test(childKey)) continue;
+        shallow[childKey] = typeof childValue === 'string'
+          ? (/(phone|from|to|caller)/i.test(childKey) ? maskPhoneForDiagnostics(childValue) : childValue.slice(0, 240))
+          : (childValue && typeof childValue === 'object' ? '[object]' : childValue);
+      }
+      sanitized[key] = shallow;
+      continue;
+    }
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+async function persistCallTraceToRedis(record = {}) {
+  const client = await getSharedRedisClient();
+  if (!client) return { ok: false, skipped: true, result: 'redis_unavailable' };
+  const keys = [redisKey('call-trace', 'recent')];
+  if (record.callId) keys.push(redisKey('call-trace', 'call', record.callId));
+  if (record.streamId) keys.push(redisKey('call-trace', 'stream', record.streamId));
+  if (record.phone) keys.push(redisKey('call-trace', 'phone', record.phone));
+  const encoded = JSON.stringify(record);
+  try {
+    for (const key of Array.from(new Set(keys))) {
+      await client.lPush(key, encoded);
+      await client.lTrim(key, 0, CALL_TRACE_REDIS_LIMIT - 1);
+      await client.expire(key, CALL_TRACE_TTL_SECONDS);
+    }
+    return { ok: true, result: 'call_trace_written' };
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis call trace write failed').slice(0, 240);
+    return { ok: false, result: 'call_trace_write_failed', error: sharedRedisLastError };
+  }
+}
+
+function recordCallTrace(event = '', details = {}) {
+  const phone = normalizePhone(details.phone || details.from || details.caller || '');
+  const record = {
+    id: `call-trace-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    at: isoNow(),
+    event: String(event || 'call_trace').trim() || 'call_trace',
+    callId: String(details.callId || details.callControlId || details.call_control_id || '').trim(),
+    streamId: String(details.streamId || details.stream_id || '').trim(),
+    sessionId: String(details.sessionId || details.id || '').trim(),
+    phone,
+    phoneMasked: maskPhoneForDiagnostics(phone),
+    leadId: String(details.leadId || '').trim(),
+    leadName: getSpokenLeadName(details.leadName || ''),
+    address: String(details.address || '').slice(0, 240),
+    source: String(details.source || details.leadSource || '').slice(0, 120),
+    route: String(details.route || '').slice(0, 120),
+    stage: String(details.stage || '').slice(0, 120),
+    status: String(details.status || '').slice(0, 120),
+    result: String(details.result || '').slice(0, 160),
+    details: sanitizeCallTraceDetails(details),
+  };
+  if (!Array.isArray(state.callDebugTraces)) state.callDebugTraces = [];
+  state.callDebugTraces.unshift(record);
+  state.callDebugTraces = state.callDebugTraces.slice(0, CALL_TRACE_LOCAL_LIMIT);
+  const label = `${record.event}${record.callId ? ` call=${record.callId}` : ''}${record.phoneMasked ? ` phone=${record.phoneMasked}` : ''}${record.leadName ? ` lead=${record.leadName}` : ''}`;
+  console.log(`[CallTrace] ${label}`);
+  if (REDIS_ENABLED) void persistCallTraceToRedis(record);
+  return record;
+}
+
+async function readRedisCallTraces({ callId = '', phone = '', streamId = '', limit = 80 } = {}) {
+  const client = await getSharedRedisClient();
+  if (!client) return [];
+  const safeLimit = Math.max(1, Math.min(300, Number(limit || 80)));
+  const keys = [];
+  if (callId) keys.push(redisKey('call-trace', 'call', callId));
+  if (streamId) keys.push(redisKey('call-trace', 'stream', streamId));
+  if (phone) keys.push(redisKey('call-trace', 'phone', phone));
+  if (!keys.length) keys.push(redisKey('call-trace', 'recent'));
+  const records = [];
+  const seen = new Set();
+  for (const key of Array.from(new Set(keys))) {
+    try {
+      const rows = await client.lRange(key, 0, safeLimit - 1);
+      for (const row of rows) {
+        try {
+          const parsed = JSON.parse(row);
+          const id = parsed.id || row;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          records.push(parsed);
+        } catch {
+          // Skip malformed diagnostic rows.
+        }
+      }
+    } catch (error) {
+      sharedRedisLastError = String(error?.message || error || 'Redis call trace read failed').slice(0, 240);
+    }
+  }
+  return records
+    .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+    .slice(0, safeLimit);
 }
 
 function averageNumeric(values = []) {
@@ -21892,9 +22057,22 @@ function shouldStartTelnyxHostedAiAssistant() {
 }
 
 async function startTelnyxMediaStream(callControlId = '', params = {}) {
-  if (!callControlId) return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  if (!callControlId) {
+    recordCallTrace('telnyx_stream_start_skipped', {
+      ...params,
+      result: 'missing_call_control_id',
+      stage: 'startTelnyxMediaStream',
+    });
+    return { ok: false, skipped: true, error: 'Missing Telnyx call_control_id.' };
+  }
   const streamUrl = getTelnyxDeepgramStreamUrl(params);
   if (!streamUrl) {
+    recordCallTrace('telnyx_stream_start_skipped', {
+      callId: callControlId,
+      ...params,
+      result: 'provider_missing',
+      stage: 'startTelnyxMediaStream',
+    });
     return {
       ok: false,
       skipped: true,
@@ -21902,7 +22080,13 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
       error: 'PBK_PUBLIC_BASE_URL or PBK_BRIDGE_PUBLIC_URL is required before Telnyx can stream media to PBK.',
     };
   }
-  return fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/streaming_start`, {
+  recordCallTrace('telnyx_stream_start_request', {
+    callId: callControlId,
+    ...params,
+    streamUrl: streamUrl.replace(/^wss?:\/\/([^/]+).*/i, 'wss://$1/...'),
+    stage: 'startTelnyxMediaStream',
+  });
+  const result = await fireTelnyxRequest('POST', `/calls/${encodeURIComponent(callControlId)}/actions/streaming_start`, {
     stream_url: streamUrl,
     stream_track: params.streamTrack || DEEPGRAM_STREAM_TRACK || 'inbound_track',
     stream_codec: params.streamCodec || DEEPGRAM_STREAM_CODEC || 'PCMU',
@@ -21923,6 +22107,15 @@ async function startTelnyxMediaStream(callControlId = '', params = {}) {
       startedAt: isoNow(),
     }),
   });
+  recordCallTrace('telnyx_stream_start_result', {
+    callId: callControlId,
+    ...params,
+    result: result.result || (result.ok ? 'ok' : 'failed'),
+    status: result.status || '',
+    error: result.error || '',
+    stage: 'startTelnyxMediaStream',
+  });
+  return result;
 }
 
 async function startTelnyxAiAssistant(callControlId = '', promptOverride = '') {
@@ -22264,6 +22457,16 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   recordToolUse('routeInboundCall');
   const parsed = parseTelnyxCallPayload(body);
   const callControlId = parsed.callControlId || body.call_control_id || body.callControlId || '';
+  recordCallTrace('inbound_payload_parsed', {
+    callId: callControlId,
+    phone: parsed.from || body.from || body.phone || '',
+    to: parsed.to || '',
+    route: 'ava_inbound',
+    eventType: parsed.eventType,
+    direction: parsed.direction,
+    status: parsed.state,
+    stage: 'handleAvaInboundRoute',
+  });
   const lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
   const spokenLeadName = getSpokenLeadName(lead.leadName);
   const inboundDiagnostic = {
@@ -22275,6 +22478,18 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     found: Boolean(lead.found),
   };
   console.log(`[Inbound] phone=${inboundDiagnostic.phone || 'missing'} leadId=${inboundDiagnostic.leadId || 'none'} leadName=${inboundDiagnostic.leadName || 'none'} source=${inboundDiagnostic.leadSource || 'unknown'} call=${callControlId || 'none'}`);
+  recordCallTrace('lead_context_resolved', {
+    callId: callControlId,
+    phone: parsed.from || body.from || body.phone || '',
+    leadId: lead.leadId || '',
+    leadName: spokenLeadName || '',
+    address: lead.address || '',
+    source: lead.source || '',
+    route: 'ava_inbound',
+    result: lead.found ? 'lead_found' : 'lead_not_found',
+    diagnostics: lead.diagnostics || {},
+    stage: 'findInboundLeadContext',
+  });
   const afterHours = options.forceAfterHours === true
     || (INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED && options.forceAfterHours !== false && isInboundAfterHours());
   let route = 'ava_qualify';
@@ -22289,6 +22504,18 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     route = 'transfer_jordan';
     reason = 'High-motivation returning lead routed directly to Jordan.';
   }
+  recordCallTrace('inbound_route_selected', {
+    callId: callControlId,
+    phone: parsed.from || '',
+    leadId: lead.leadId || '',
+    leadName: spokenLeadName || '',
+    address: lead.address || '',
+    source: lead.source || '',
+    route,
+    reason,
+    status: 'selected',
+    stage: 'handleAvaInboundRoute',
+  });
 
   const promptContext = buildAvaInboundPromptContext({ lead, route, from: parsed.from, to: parsed.to });
   const routeRecord = {
@@ -22338,6 +22565,17 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     participantConfidence: lead.found ? 0.78 : 0.52,
   });
   upsertCall(state, callRecord);
+  recordCallTrace('call_record_upserted', {
+    callId: callRecord.id || callControlId,
+    phone: parsed.from || '',
+    leadId: lead.leadId || '',
+    leadName: spokenLeadName || '',
+    address: lead.address || '',
+    source: lead.source || '',
+    route,
+    status: callRecord.status || '',
+    stage: 'upsertCall',
+  });
 
   const actions = [];
   if (callControlId) {
@@ -22410,6 +22648,26 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
           : 'local_view_only';
   routeRecord.status = result;
   routeRecord.payload = { ...routeRecord.payload, leadResolver: inboundDiagnostic, actions };
+  recordCallTrace('inbound_actions_completed', {
+    callId: callControlId,
+    phone: parsed.from || '',
+    leadId: lead.leadId || '',
+    leadName: spokenLeadName || '',
+    address: lead.address || '',
+    source: lead.source || '',
+    route,
+    result,
+    streamRequired,
+    streamFailed,
+    actions: actions.map((item) => ({
+      action: item.action,
+      ok: item.result?.ok,
+      result: item.result?.result || '',
+      skipped: item.result?.skipped || false,
+      error: item.result?.error || '',
+    })),
+    stage: 'handleAvaInboundRoute',
+  });
   if (!Array.isArray(state.inboundCallRoutes)) state.inboundCallRoutes = [];
   state.inboundCallRoutes.unshift(routeRecord);
   await persistInboundCallRoute(routeRecord);
@@ -39330,6 +39588,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.finalized = true;
     session.finalizeReason = reason;
     session.endedAt = endedAt;
+    recordCallTrace('media_finalize_started', {
+      ...session,
+      status: 'ending',
+      result: reason,
+      stage: 'finalize',
+    });
     if (deepgramKeepAliveTimer) {
       clearInterval(deepgramKeepAliveTimer);
       deepgramKeepAliveTimer = null;
@@ -39488,6 +39752,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         target: session.callId || session.streamId || session.id,
       }),
     );
+    recordCallTrace('media_finalize_completed', {
+      ...session,
+      status: transcriptText ? 'transcribed' : 'no_transcript',
+      result: reason,
+      transcript: transcriptText,
+      stage: 'finalize',
+    });
     await persistState(state);
   };
 
@@ -39595,6 +39866,16 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
     session.lastAvaReplySpoken = spoken;
     session.lastAvaSpokenPreview = spoken.slice(0, 320);
+    recordCallTrace('ava_phone_reply', {
+      ...session,
+      status: speakResult.ok ? 'served' : 'warning',
+      result: speakResult.result || speakResult.provider || '',
+      error: speakResult.error || '',
+      reply: spoken,
+      replyMode: reply.replyMode || 'live',
+      latencyMs: speechFinalToReplyStartMs,
+      stage: 'maybeSpeakTelnyxAvaReply',
+    });
     rememberAvaLiveReplyFingerprint(session, spoken);
     addActivity(state, makeActivity({
       actor: 'Ava',
@@ -39696,6 +39977,14 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       capturedAt: isoNow(),
     };
     session.transcript.push(item);
+    recordCallTrace('deepgram_transcript', {
+      ...session,
+      status: session.lastDeepgramEvent,
+      result: normalized.speechFinal ? 'speech_final' : normalized.isFinal ? 'final' : 'interim',
+      transcript,
+      confidence: normalized.confidence,
+      stage: 'handleTelnyxDeepgramMessage',
+    });
     void syncTelnyxSessionToRedis(session, 'active', { force: normalized.isFinal || normalized.speechFinal });
     const contextCall = getCallById(session.callId);
     if (contextCall) {
@@ -39766,6 +40055,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       session.deepgramEventCount += 1;
       session.lastDeepgramEvent = 'socket_error';
       session.lastDeepgramError = String(error?.message || error || 'unknown error').slice(0, 240);
+      recordCallTrace('deepgram_socket_error', {
+        ...session,
+        status: 'warning',
+        result: 'socket_error',
+        error: session.lastDeepgramError,
+        stage: 'attachTelnyxDeepgramHandlers',
+      });
       void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
@@ -39786,6 +40082,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       session.deepgramEventCount += 1;
       session.lastDeepgramEvent = event?.code ? `socket_close_${event.code}` : 'socket_close';
       session.lastDeepgramError = String(event?.reason || '').slice(0, 240);
+      recordCallTrace('deepgram_socket_close', {
+        ...session,
+        status: 'warning',
+        result: session.lastDeepgramEvent,
+        error: session.lastDeepgramError,
+        stage: 'attachTelnyxDeepgramHandlers',
+      });
       void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
@@ -39802,6 +40105,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     if (finalized || session.deepgramFallbackActive || session.transcript.length > 0 || !session.audioBytes) return false;
     session.deepgramFallbackActive = true;
     session.deepgramFallbackReason = reason;
+    recordCallTrace('deepgram_fallback_start', {
+      ...session,
+      status: 'fallback',
+      result: reason,
+      stage: 'rotateTelnyxDeepgramToLinear16Fallback',
+    });
     clearNoTranscriptFallbackTimer();
     stopTelnyxDeepgramKeepAliveTimer();
     deepgramReady = false;
@@ -39836,6 +40145,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       deepgramReady = true;
       session.deepgramSocketOpen = true;
       session.deepgramReadyAt = isoNow();
+      recordCallTrace('deepgram_socket_open', {
+        ...session,
+        status: 'connected',
+        result: 'deepgram_ready',
+        stage: 'deepgram_open',
+      });
       void syncTelnyxSessionToRedis(session, 'active', { force: true });
       for (const frame of replayFrames) {
         const decoded = prepareTelnyxFrameForDeepgram(frame);
@@ -39852,6 +40167,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         target: session.callId || session.streamId || session.id,
       }));
       startTelnyxDeepgramKeepAliveTimer();
+      recordCallTrace('deepgram_fallback_ready', {
+        ...session,
+        status: 'fallback',
+        result: 'linear16_ready',
+        stage: 'rotateTelnyxDeepgramToLinear16Fallback',
+      });
       await persistState(state);
       return true;
     } catch (error) {
@@ -39859,6 +40180,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       session.deepgramEventCount += 1;
       session.lastDeepgramEvent = 'linear16_fallback_failed';
       session.lastDeepgramError = String(error?.message || error || 'unknown error').slice(0, 240);
+      recordCallTrace('deepgram_fallback_failed', {
+        ...session,
+        status: 'warning',
+        result: 'linear16_fallback_failed',
+        error: session.lastDeepgramError,
+        stage: 'rotateTelnyxDeepgramToLinear16Fallback',
+      });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -39935,6 +40263,14 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       }
       const mediaFormat = event.start?.media_format || event.start?.mediaFormat || {};
       session.mediaFormat = mediaFormat;
+      recordCallTrace('telnyx_media_start', {
+        ...session,
+        status: 'started',
+        result: 'media_start',
+        mediaEncoding: mediaFormat.encoding || '',
+        mediaSampleRate: mediaFormat.sample_rate || mediaFormat.sampleRate || '',
+        stage: 'liveTelnyxMessageHandler',
+      });
       void syncTelnyxSessionToRedis(session, 'active', { force: true });
       addActivity(
         state,
@@ -39966,6 +40302,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         void syncTelnyxSessionToRedis(session, 'active', { force: session.frameCount === 1 });
       }
       if (session.frameCount === 1) {
+        recordCallTrace('telnyx_first_audio_frame', {
+          ...session,
+          status: 'streaming',
+          result: 'first_audio_frame',
+          frameBytes: frame.length,
+          stage: 'liveTelnyxMessageHandler',
+        });
         addActivity(
           state,
           makeActivity({
@@ -40046,6 +40389,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       const message = String(error?.message || error || 'unknown error').slice(0, 240);
       console.warn('[pbk-local-openclaw] Deepgram live stream could not start:', message);
       session.deepgramSocketOpen = false;
+      recordCallTrace('deepgram_socket_open_failed', {
+        ...session,
+        status: 'warning',
+        result: 'deepgram_open_failed',
+        error: message,
+        stage: 'deepgram_open',
+      });
       addActivity(state, makeActivity({
         actor: 'Deepgram',
         category: 'CALL',
@@ -40837,6 +41187,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/call-state', '/api/v1/debug/call-state'])) {
       const callId = String(url.searchParams.get('callId') || url.searchParams.get('id') || '').trim();
       const phone = normalizePhone(url.searchParams.get('phone') || '');
+      const traceLimit = Math.max(1, Math.min(120, Number(url.searchParams.get('traceLimit') || 40)));
       const sharedMediaSessions = await getSharedTelnyxCallStates();
       const matchingShared = sharedMediaSessions.filter((session) => {
         if (callId && [session.callId, session.streamId, session.id].includes(callId)) return true;
@@ -40902,6 +41253,54 @@ const server = createServer(async (request, response) => {
         sharedSessions: matchingShared.slice(0, 20),
         localSessions,
         localCalls,
+        recentTrace: (await readRedisCallTraces({ callId, phone, limit: traceLimit })).map((trace) => ({
+          ...trace,
+          phone: trace.phoneMasked || maskPhoneForDiagnostics(trace.phone || ''),
+        })),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/debug/call-trace', '/api/v1/debug/call-trace'])) {
+      const callId = String(url.searchParams.get('callId') || url.searchParams.get('id') || '').trim();
+      const streamId = String(url.searchParams.get('streamId') || '').trim();
+      const phone = normalizePhone(url.searchParams.get('phone') || '');
+      const limit = Math.max(1, Math.min(300, Number(url.searchParams.get('limit') || 120)));
+      const localTraces = (state.callDebugTraces || []).filter((trace) => {
+        if (callId && trace.callId === callId) return true;
+        if (streamId && trace.streamId === streamId) return true;
+        if (phone && normalizePhone(trace.phone || '') === phone) return true;
+        return !callId && !streamId && !phone;
+      });
+      const redisTraces = await readRedisCallTraces({ callId, streamId, phone, limit });
+      const seen = new Set();
+      const traces = [...redisTraces, ...localTraces]
+        .filter((trace) => {
+          const id = trace.id || `${trace.at}:${trace.event}:${trace.callId}:${trace.streamId}`;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+        .slice(0, limit)
+        .map((trace) => ({
+          ...trace,
+          phone: trace.phoneMasked || maskPhoneForDiagnostics(trace.phone || ''),
+          phoneMasked: trace.phoneMasked || maskPhoneForDiagnostics(trace.phone || ''),
+          details: sanitizeCallTraceDetails(trace.details || {}),
+        }));
+      json(response, 200, {
+        ok: true,
+        result: traces.length ? 'call_trace_found' : 'call_trace_empty',
+        generatedAt: isoNow(),
+        query: {
+          callId,
+          streamId,
+          phone: maskPhoneForDiagnostics(phone),
+          limit,
+        },
+        redis: getRedisProviderMeta(),
+        traces,
       });
       return;
     }

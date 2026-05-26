@@ -890,18 +890,23 @@ const checks = [
       && /\/api\/voice\/status/.test(bridge)
       && /\/api\/debug\/last-spoken/.test(bridge)
       && /\/api\/debug\/call-state/.test(bridge)
+      && /\/api\/debug\/call-trace/.test(bridge)
       && /\/api\/debug\/reset-lead-cache/.test(bridge)
       && /deepgramSocketOpen/.test(bridge)
       && /maskPhoneForDiagnostics/.test(bridge)
       && /leadResolver: inboundDiagnostic/.test(bridge)
       && /redis_call_state_active_resurrection_blocked/.test(bridge)
       && /REDIS_ACTIVE_CALL_STALE_MS/.test(bridge)
+      && /recordCallTrace\('lead_context_resolved'/.test(bridge)
+      && /recordCallTrace\('deepgram_transcript'/.test(bridge)
+      && /recordCallTrace\('ava_phone_reply'/.test(bridge)
       && /buildStateSnapshot\(\{ compact \}\)/.test(bridge)
       && /state\?compact=1/.test(index)
       && /openClawReadCache/.test(index)
       && /OPENCLAW_READ_CACHE_TTL_MS/.test(index)
       && /Voice status endpoint did not return live diagnostics/.test(openclawSmoke)
       && /Call-state debug endpoint did not return a safe diagnostic envelope/.test(openclawSmoke)
+      && /Call-trace debug endpoint did not return a safe diagnostic envelope/.test(openclawSmoke)
       && /Compact state endpoint did not report compact mode/.test(openclawSmoke),
   },
   {

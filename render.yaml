@@ -30,7 +30,10 @@ services:
       # Optional shared state for multi-instance readiness. Set this to a
       # Render Key Value / Redis URL before raising numInstances above 1.
       - key: PBK_REDIS_URL
-        sync: false
+        fromService:
+          type: keyvalue
+          name: pbk-openclaw-redis
+          property: connectionString
       - key: PBK_REDIS_NAMESPACE
         value: pbk-openclaw
       - key: PBK_REDIS_CALL_STATE_TTL_SECONDS

@@ -884,7 +884,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-25-redis-shared-state-readiness'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-25-ava-call-repair-hardening'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

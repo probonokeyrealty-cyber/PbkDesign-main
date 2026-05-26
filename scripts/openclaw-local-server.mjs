@@ -9529,7 +9529,7 @@ const PBK_CALL_FLOW_DEFAULT_STEPS = [
     stepKey: 'objection.spouse_3way',
     stepOrder: 31,
     stepType: 'objection_handler',
-    avaLine: 'Smart. Can we get them on a quick three-way right now? I can explain it in five minutes so you are not stuck repeating me.',
+    avaLine: 'Smart. I can explain it in five minutes so you are not stuck repeating me. Can we get them on a quick three-way right now?',
     expectsResponse: true,
     hookPrompt: 'Can we get them on a quick three-way right now?',
   },

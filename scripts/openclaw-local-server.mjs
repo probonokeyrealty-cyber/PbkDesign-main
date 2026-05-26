@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-25-ava-call-repair-hardening';
+const BUILD_REVISION = '2026-05-25-war-manual-live-call-intelligence';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -9419,6 +9419,460 @@ const PBK_PATH_PROBE_QUESTIONS = {
   land: 'Is this vacant or buildable land, and do you know whether utilities, access, or approvals are already in place?',
 };
 
+const PBK_100K_WAR_MANUAL_REVISION = '2026-05-25-war-manual-live-call-v1';
+
+const PBK_WAR_MANUAL_POWER_LINES = [
+  {
+    id: 'pain_anchor',
+    label: 'Pain Anchor',
+    line: "If this drags on another 60 days, what's the worst part of that for you?",
+  },
+  {
+    id: 'comfort_check',
+    label: 'Comfort Check',
+    line: 'Do you feel comfortable with me so far?',
+  },
+  {
+    id: 'assumptive_one_punch',
+    label: 'Assumptive One-Punch',
+    line: "If the contract matches exactly what we just talked about, is there any reason we would not get it signed today?",
+  },
+  {
+    id: 'bant_smoke_out',
+    label: 'BANT Smoke-Out',
+    line: "Help me understand what's holding you back - is it the price, the timing, or is there someone else who needs to weigh in?",
+  },
+  {
+    id: 'last_resort_match',
+    label: 'Last-Resort Match',
+    line: "If I could get you to the number you need, would you sign right now? I cannot always stretch, but if you will commit today, I will fight for it.",
+  },
+];
+
+const PBK_WAR_MANUAL_EMOTIONAL_STATES = [
+  {
+    id: 'defensive_hostile',
+    label: 'Defensive/Hostile',
+    keywords: ['how did you get', 'dnc', 'do not call', 'stop calling', 'report you', 'scam', 'cuss', 'f off', 'go away'],
+    needsFirst: 'disarming honesty and control',
+    killsDeal: 'pitching, pushing, or arguing',
+    toneMode: 'calm_authority',
+  },
+  {
+    id: 'suspicious_skeptical',
+    label: 'Suspicious/Skeptical',
+    keywords: ['catch', 'scam', 'legit', 'proof', 'real company', 'too good', 'heard of you', 'trust'],
+    needsFirst: 'proof and transparency',
+    killsDeal: 'vague promises or slick language',
+    toneMode: 'calm_authority',
+  },
+  {
+    id: 'tired_defeated',
+    label: 'Tired/Defeated',
+    keywords: ['tired', 'exhausted', 'over it', 'tried everything', 'headache', 'done with it', 'sick of it'],
+    needsFirst: 'validation and a way out',
+    killsDeal: 'hype or fake urgency',
+    toneMode: 'concerned_helper',
+  },
+  {
+    id: 'greedy_anchored_high',
+    label: 'Greedy/Anchored High',
+    keywords: ['zillow', 'neighbor sold', 'top dollar', 'worth', 'full price', 'retail', 'not desperate'],
+    needsFirst: 'net-sheet reframe and value comparison',
+    killsDeal: 'arguing comps',
+    toneMode: 'calm_authority',
+  },
+  {
+    id: 'emotional_grieving',
+    label: 'Emotional/Grieving',
+    keywords: ['passed away', 'death', 'died', 'lost my', 'divorce', 'crying', 'estate', 'probate', 'family'],
+    needsFirst: 'silence, compassion, and patience',
+    killsDeal: 'rushing to numbers',
+    toneMode: 'warm_empathy',
+  },
+  {
+    id: 'sophisticated_investor',
+    label: 'Sophisticated/Investor',
+    keywords: ['arv', 'mao', 'cap rate', 'assignment', 'wholesale', 'investor', 'proof of funds', 'hud', 'net sheet'],
+    needsFirst: 'respect and transparent model math',
+    killsDeal: 'trying to outsmart them',
+    toneMode: 'calm_authority',
+  },
+  {
+    id: 'confused_elderly',
+    label: 'Confused/Elderly',
+    keywords: ['repeat', 'my son', 'my daughter', 'attorney handles', 'i do not understand', 'slow down', 'what do you mean'],
+    needsFirst: 'patience and family inclusion',
+    killsDeal: 'pressure or fast close language',
+    toneMode: 'warm_empathy',
+  },
+];
+
+const PBK_WAR_MANUAL_HIDDEN_MOTIVATORS = [
+  { id: 'foreclosure', keywords: ['foreclosure', 'auction', 'behind', 'notice of default', 'bank'], probe: 'How much time do you have before the auction date?', followUp: 'If we can close before that date and stop the foreclosure, would that relieve the pressure?', emotion: 'fear' },
+  { id: 'divorce', keywords: ['divorce', 'separated', 'court', 'ex spouse'], probe: 'Is there a court timeline you are trying to work around?', followUp: 'If this property was solved cleanly, would that make the rest of the process easier?', emotion: 'sadness' },
+  { id: 'inheritance', keywords: ['inherited', 'estate', 'probate', 'passed away', 'executor'], probe: 'Is it already through probate, or are you still working through that process?', followUp: 'If I can make this one less thing for the family to carry, would that help?', emotion: 'sadness' },
+  { id: 'tired_landlord', keywords: ['tenant', 'eviction', 'renters', 'landlord', 'not paying'], probe: 'What happens next month if the tenant does not pay again?', followUp: 'If you could be out of the landlord headache without fixing or evicting first, would that be worth looking at?', emotion: 'frustration' },
+  { id: 'relocation', keywords: ['moving', 'relocating', 'new job', 'out of state'], probe: 'What date do you need this solved by so the move does not create two housing payments?', followUp: 'If we can hit that date, is there anything else that would stop you?', emotion: 'urgency' },
+  { id: 'medical_bills', keywords: ['hospital', 'medical', 'health', 'surgery', 'bills'], probe: 'Is the goal mainly to create cash and reduce pressure quickly?', followUp: 'If the property turned into cash without repairs or showings, how much would that help?', emotion: 'sadness' },
+  { id: 'tax_liens', keywords: ['tax lien', 'irs', 'back taxes', 'county taxes'], probe: 'Do you know roughly what the lien or tax balance is?', followUp: 'If title can pay that off at closing and clean the slate, would that solve the main problem?', emotion: 'fear' },
+  { id: 'sibling_dispute', keywords: ['siblings', 'brother', 'sister', 'heirs', 'family dispute'], probe: 'Are all the decision makers on the same page, or is one person holding it up?', followUp: 'Would it help if I explained the options to everyone at the same time?', emotion: 'frustration' },
+  { id: 'code_violations', keywords: ['code violation', 'city', 'fines', 'hearing', 'violations'], probe: 'When is the next city deadline or hearing?', followUp: 'If we can close before that date and take over the issue, does that solve the pressure?', emotion: 'fear' },
+  { id: 'squatters_damage', keywords: ['squatter', 'vandalized', 'damage', 'break in', 'fire', 'mold'], probe: 'How long has that been going on, and is anyone currently inside?', followUp: 'If I buy it exactly as-is, with no cleaning or eviction required from you, is that the kind of solution you want?', emotion: 'frustration' },
+  { id: 'condition_shame', keywords: ['hoarder', 'mess', 'embarrassed', 'dirty', 'cannot show', 'bad condition'], probe: 'Give me the worst of it so I do not guess wrong - what would scare a regular buyer?', followUp: 'Do not clean a thing. If I price it as-is, would that make this easier?', emotion: 'shame' },
+  { id: 'equity_harvest', keywords: ['retire', 'downsizing', 'cash out', 'equity', 'retirement'], probe: 'Are you optimizing for highest net, fastest close, or the least hassle?', followUp: 'If we can compare cash versus higher-net options side by side, would that help you decide?', emotion: 'neutral' },
+];
+
+const PBK_WAR_MANUAL_TONE_MODES = {
+  calm_authority: { label: 'Calm Authority', stability: 0.65, speed: 1.0, volume: 'normal', pitch: 'mid', rule: 'slow, measured, no upspeak, statements before questions' },
+  warm_empathy: { label: 'Warm Empathy', stability: 0.82, speed: 0.9, volume: 'slightly_lower', pitch: 'low', rule: 'softer, slower, more silence, take your time' },
+  casual_friend: { label: 'Casual Friend', stability: 0.42, speed: 1.12, volume: 'normal', pitch: 'mid_high', rule: 'lighter, friendly, use first name, no slick pitch' },
+  concerned_helper: { label: 'Concerned Helper', stability: 0.76, speed: 0.95, volume: 'lower', pitch: 'low', rule: 'concerned, practical, no hype, solve the pressure' },
+};
+
+const PBK_WAR_MANUAL_PATHS = [
+  { key: 'cash_owner', corePath: 'cash', audience: 'owner', label: 'Cash Offer Owner/FSBO', avgFee: '$10K-$15K', trigger: 'speed, certainty, as-is purchase', nextLine: 'Based on what you told me, the clean cash lane is the fastest and surest path.' },
+  { key: 'cash_scout', corePath: 'cash', audience: 'agent', label: 'Cash Scout Realtor/Agent', avgFee: '$3K-$5K volume', trigger: 'agent has distressed or problem listing', nextLine: 'I can be your reliable cash-buyer lane for problem listings and protect your commission.' },
+  { key: 'rbp_owner', corePath: 'rbp', audience: 'owner', label: 'Retail Buyer Program Owner', avgFee: '$15K-$25K', trigger: 'highest net and seller can wait 30-60 days', nextLine: 'More money, zero extra work, just access and a signature.' },
+  { key: 'creative_finance_agent', corePath: 'cf', audience: 'agent', label: 'Creative Finance Agent/Listed', avgFee: '$20K+', trigger: 'seller wants price but cash/conventional does not work', nextLine: 'The seller gets their price through terms, the agent keeps commission, and PBK handles paperwork.' },
+  { key: 'mortgage_takeover_agent', corePath: 'mt', audience: 'agent', label: 'Mortgage Takeover Agent', avgFee: '$20K+', trigger: 'existing mortgage under 5 percent', nextLine: 'The low rate is the asset that lets us support the seller price.' },
+  { key: 'land_agent', corePath: 'land', audience: 'agent', label: 'Land Agent', avgFee: '$5K-$15K', trigger: 'listed parcel, builder math, utilities and access drive value', nextLine: 'I may not be the highest number on paper, but I can be the clean number that actually closes.' },
+  { key: 'land_owner', corePath: 'land', audience: 'owner', label: 'Land Owner Cash', avgFee: '$5K-$15K', trigger: 'off-market landowner, cash close or tax/holding pressure', nextLine: 'I work backwards from what a builder will pay, then give you the clean number that can actually move.' },
+  { key: 'rbp_land', corePath: 'rbp', audience: 'owner_land', label: 'RBP Land', avgFee: '$10K-$20K', trigger: 'landowner wants max price and can wait', nextLine: 'A builder-backed retail buyer can usually beat the direct cash number if you can wait a little longer.' },
+];
+
+const PBK_WAR_MANUAL_ADVANCED_MOVES = [
+  { id: 'strategic_pause', label: 'Strategic Pause', trigger: ['quote', 'offer', 'number', 'price'], instruction: 'After quoting value, stop talking and let the seller fill the silence.' },
+  { id: 'take_away', label: 'Take-Away', trigger: ['not sure', 'maybe', 'too much', 'skeptical'], instruction: 'Say you are not sure this is a fit, then run the numbers anyway.' },
+  { id: 'assumed_yes', label: 'Assumed Yes', trigger: ['close', 'contract', 'sign'], instruction: 'Use when-language instead of if-language.' },
+  { id: 'mirror', label: 'Mirror', trigger: ['tenant', 'tired', 'brother', 'wife', 'husband', 'bank'], instruction: 'Repeat the last 2 to 4 meaningful words as a question.' },
+  { id: 'labeling', label: 'Labeling', trigger: ['angry', 'burned', 'scam', 'frustrated', 'tired'], instruction: 'Name the emotion without judging it.' },
+  { id: 'calibrated_question', label: 'Calibrated Question', trigger: ['work', 'true', 'need', 'how'], instruction: 'Ask what would need to be true for this to work.' },
+  { id: 'reverse_take_away', label: 'Reverse Take-Away', trigger: ['pressure', 'comfortable', 'rush'], instruction: 'Tell them you should not do this if they are not comfortable.' },
+  { id: 'no_oriented_question', label: 'No-Oriented Question', trigger: ['contract', 'look', 'review'], instruction: 'Ask a safe no-oriented question like would it be unreasonable to review this together?' },
+  { id: 'future_pace', label: 'Future Pace', trigger: ['deadline', 'close', 'wire', 'move'], instruction: 'Walk them through the solved future step by step.' },
+  { id: 'soft_anchor', label: 'Soft Anchor', trigger: ['zillow', 'neighbor', 'worth'], instruction: 'Anchor better-condition properties first, then explain the adjusted range.' },
+  { id: 'permission_frame', label: 'Permission Frame', trigger: ['ask', 'question', 'numbers'], instruction: 'Ask permission before the next question or number.' },
+  { id: 'specific_concession', label: 'Specific Concession', trigger: ['counter', 'meet', 'match', 'higher'], instruction: 'If moving up, use a specific calculated number, not a round number.' },
+];
+
+const PBK_WAR_MANUAL_OBJECTION_DECODER = [
+  { tag: 'price_too_low', keywords: ['too low', 'lowball', 'number is low'], meaning: 'seller has a number in mind', response: "Help me understand what number you would need to actually say yes today. I will tell you straight if I can or cannot get there.", category: 'price' },
+  { tag: 'unrealistic_high_number', keywords: ['i want', 'need at least', 'zillow price'], meaning: 'anchoring high', response: 'Walk me through how you got to that number - Zillow, what you paid, what you owe, or what you need to net?', category: 'price' },
+  { tag: 'zillow_anchor', keywords: ['zillow says', 'zestimate'], meaning: 'believes algorithm', response: 'Zillow does not know roof age, repairs, access, or title issues. My number is based on what a real buyer can pay this week.', category: 'price' },
+  { tag: 'neighbor_sold', keywords: ['neighbor sold', 'house next door'], meaning: 'anchoring to neighbor', response: 'Was that the same condition, same square footage, and same updates? Small differences can move the number a lot.', category: 'price' },
+  { tag: 'net_requirement', keywords: ['need to net', 'walk away with', 'payoff'], meaning: 'bottom-line driven', response: 'That is exactly what I need to know. Let me work backwards from your net and tell you if the deal can support it.', category: 'price' },
+  { tag: 'not_desperate', keywords: ['not desperate', 'do not need to sell'], meaning: 'defensive pride', response: 'I did not think you were. I am just presenting an option. You are free to say no and I will not push.', category: 'price' },
+  { tag: 'other_guys_more', keywords: ['other guys', 'another investor offered', 'higher number'], meaning: 'testing or true competition', response: 'Did they actually close, or did they give a high number and plan to renegotiate after inspection? I would rather be straight and close.', category: 'competition' },
+  { tag: 'mortgage_underwater', keywords: ['will not pay off mortgage', 'underwater', 'owe too much'], meaning: 'cash cannot solve payoff', response: 'What is the payoff? Sometimes creative financing can solve a mortgage payoff when a cash offer cannot.', category: 'price' },
+  { tag: 'scammer', keywords: ['scam', 'scammer', 'fake'], meaning: 'real fear', response: 'Smart question. You can pick the title company, I can send proof of funds, and I can send references from recent closings. Which would help first?', category: 'trust' },
+  { tag: 'unknown_company', keywords: ['never heard', 'who are you', 'your company'], meaning: 'credibility gap', response: 'Fair. We are local to this market, and everything closes through a title company. I can send proof and references before you decide anything.', category: 'trust' },
+  { tag: 'phone_source', keywords: ['how did you get my number', 'got my number'], meaning: 'privacy concern', response: 'Public records connect owners to properties. I am reaching out as a direct buyer about this specific property, and I will keep it quick.', category: 'trust' },
+  { tag: 'too_good', keywords: ['too good to be true', 'catch'], meaning: 'model suspicion', response: 'Totally fair. Let me explain exactly how PBK makes money so the catch disappears.', category: 'trust' },
+  { tag: 'research_company', keywords: ['research you', 'google you', 'look you up'], meaning: 'stall or real verification', response: 'Smart. While you check, I can send proof of funds and a simple one-page process summary so you are not guessing.', category: 'trust' },
+  { tag: 'why_eager', keywords: ['why so eager', 'why do you want it'], meaning: 'misreads urgency', response: 'Not eager - efficient. If it is a fit, great. If not, I move on respectfully.', category: 'trust' },
+  { tag: 'burned_before', keywords: ['last investor', 'screwed me', 'burned', 'jerked around'], meaning: 'trust wound', response: 'Sorry that happened. Tell me what they did so I can make sure I do not repeat it.', category: 'trust' },
+  { tag: 'think_about_it', keywords: ['think about it', 'sleep on it'], meaning: 'unspoken concern', response: 'Fair. So I do not waste your time tomorrow, is it the price, the timing, or does someone else need to weigh in?', category: 'timing' },
+  { tag: 'call_next_week', keywords: ['call me next week', 'next week'], meaning: 'trash-pile stall', response: 'Happy to. Real quick though - if I called Tuesday with the exact number you would say yes to, what would that number be?', category: 'timing' },
+  { tag: 'wrong_time', keywords: ['not right time', 'bad time'], meaning: 'vague stall', response: 'Got it. What would make it the right time - a date, a life event, or a number?', category: 'timing' },
+  { tag: 'busy', keywords: ['busy', 'at work', 'cannot talk'], meaning: 'real or excuse', response: 'Totally understand. Give me 60 seconds and if it is not a fit I will get out of your way. Or is tonight better?', category: 'timing' },
+  { tag: 'six_months', keywords: ['six months', '6 months', 'later this year'], meaning: 'future soft no', response: 'What changes in six months? Sometimes we can lock a price now and close when your timing works.', category: 'timing' },
+  { tag: 'call_you', keywords: ['i will call you', 'call you back'], meaning: 'will not call', response: 'Life gets busy. How about I call you Thursday at 10, and if it is a no, just tell me no?', category: 'timing' },
+  { tag: 'spouse', keywords: ['spouse', 'wife', 'husband'], meaning: 'decision maker missing', response: 'Smart. Can we get them on a quick three-way now? I can explain it in five minutes so you do not have to repeat me.', category: 'authority' },
+  { tag: 'kids_handle', keywords: ['kids handle', 'son handles', 'daughter handles'], meaning: 'family decision maker', response: 'No problem. I would rather include them. What is the best number for them?', category: 'authority' },
+  { tag: 'llc_trust', keywords: ['llc', 'trust', 'entity'], meaning: 'signing authority issue', response: 'Got it. Who has signing authority? Title will verify the operating agreement or trust documents.', category: 'authority' },
+  { tag: 'multiple_heirs', keywords: ['heirs', 'siblings', 'brother', 'sister'], meaning: 'multiple owners', response: 'How many people need to agree, and are you all on the same page about selling?', category: 'authority' },
+  { tag: 'attorney_review', keywords: ['attorney', 'lawyer review'], meaning: 'legitimate review or stall', response: 'Smart. Send it to them. I can be available tomorrow if they have questions.', category: 'authority' },
+  { tag: 'realtor_handles', keywords: ['realtor handles', 'agent handles'], meaning: 'listed or agent gate', response: 'Got it. Who is the agent? I can send the offer to them and protect the commission.', category: 'authority' },
+  { tag: 'higher_offer', keywords: ['higher offer', 'better offer'], meaning: 'true or test', response: 'Is that cash with proof of funds and a signed contract? If I can match the net and close with certainty, would you sign with me today?', category: 'competition' },
+  { tag: 'want_to_list', keywords: ['list with agent', 'want to list'], meaning: 'wants max price', response: 'Makes sense if you have time. Let me compare your net after commission, repairs, showings, and inspection requests against our offer.', category: 'competition' },
+  { tag: 'fsbo', keywords: ['sell it myself', 'fsbo'], meaning: 'wants retail without agent', response: 'Totally fine. How long are you willing to handle showings, calls, inspections, and buyer financing risk?', category: 'competition' },
+  { tag: 'ibuyer_more', keywords: ['opendoor', 'offerpad', 'ibuyer'], meaning: 'gross offer confusion', response: 'Compare net, not headline offer. Their fees and repair credits often change the real number.', category: 'competition' },
+  { tag: 'too_much_work', keywords: ['too much work', 'needs too much'], meaning: 'embarrassment or fear', response: 'That is exactly what I buy. Do not clean or fix a thing. I want the real condition.', category: 'condition' },
+  { tag: 'tenant_access', keywords: ['tenant will not let', 'cannot get in'], meaning: 'access issue', response: 'No problem. I can start with a drive-by and comps, then make final access part of the agreement.', category: 'condition' },
+  { tag: 'lien', keywords: ['lien', 'judgment'], meaning: 'title issue', response: 'Common. Title handles payoff at closing. Do you know roughly what the lien amount is?', category: 'condition' },
+  { tag: 'bankruptcy', keywords: ['bankruptcy', 'chapter 7', 'chapter 13'], meaning: 'legal hold', response: 'Got it. We may still be able to work through trustee approval. Are you in Chapter 7 or Chapter 13?', category: 'condition' },
+  { tag: 'pre_foreclosure', keywords: ['pre foreclosure', 'auction date', 'foreclosure'], meaning: 'urgent', response: 'Then timing matters. How many days until auction? If we can close before it, we can stop that pressure.', category: 'condition' },
+  { tag: 'mold_fire_hoarder', keywords: ['mold', 'fire damage', 'hoarder'], meaning: 'condition shame', response: 'That is the kind of problem I am set up to handle. Do not clean a thing. I just need to price it correctly.', category: 'condition' },
+  { tag: 'code_enforcement', keywords: ['code enforcement', 'city fines', 'violations'], meaning: 'city pressure', response: 'How much are the fines and when is the next deadline? I can price taking that over.', category: 'condition' },
+  { tag: 'hostile_cussing', keywords: ['f off', 'fuck off', 'stop calling'], meaning: 'anger boundary', response: 'I understand. I will get out of your way and make sure you are removed.', category: 'hostile' },
+  { tag: 'people_same', keywords: ['you people', 'all the same'], meaning: 'burned by industry', response: 'Sounds like someone really did you wrong. What happened?', category: 'hostile' },
+  { tag: 'crying', keywords: ['crying', 'overwhelmed'], meaning: 'emotional crisis', response: 'Take your time. I am not in a rush. We can talk now or I can call back when it feels easier.', category: 'emotional' },
+  { tag: 'recent_loss', keywords: ['lost my', 'passed away', 'death'], meaning: 'grief', response: 'I am sorry. I am not going to pitch you. If it helps, I can call back next week or not at all - your choice.', category: 'emotional' },
+  { tag: 'report_you', keywords: ['report you', 'complaint'], meaning: 'threat boundary', response: 'I understand. I will remove you immediately. You will not hear from me again.', category: 'hostile' },
+  { tag: 'wholesaling', keywords: ['wholesale', 'wholesaling', 'assign'], meaning: 'sophisticated seller', response: 'Yes, transparent about that. I may assign or close depending on the deal, but you get the agreed price either way.', category: 'sophisticated' },
+  { tag: 'arv_question', keywords: ['what is your arv', 'arv'], meaning: 'math test', response: 'My ARV is based on recent comps and condition. I can walk through the math cleanly if that helps.', category: 'sophisticated' },
+  { tag: 'assignment_fee', keywords: ['assignment fee', 'how much do you make'], meaning: 'transparency test', response: 'Usually the buyer side pays my spread. Your number stays the agreed number.', category: 'sophisticated' },
+  { tag: 'agent_lawyer_investor', keywords: ['i am an agent', 'i am a lawyer', 'i am an investor'], meaning: 'power play', response: 'Great, then we can keep this direct. You know the math. Here is where I can be.', category: 'sophisticated' },
+  { tag: 'proof_of_funds', keywords: ['proof of funds', 'pof'], meaning: 'verification', response: 'I can send proof of funds now. What email should I use?', category: 'sophisticated' },
+  { tag: 'due_on_sale', keywords: ['due on sale', 'bank call the loan'], meaning: 'subject-to risk', response: 'That risk must be disclosed in writing. Payments stay current through servicing, and protections are documented before anyone signs.', category: 'mt' },
+  { tag: 'subject_to_illegal', keywords: ['subject to illegal', 'is this legal'], meaning: 'legal fear', response: 'Subject-to is a known real estate structure, but your attorney should review it. I will not ask you to sign blind.', category: 'mt' },
+  { tag: 'seller_finance_risk', keywords: ['stop paying', 'seller finance risk'], meaning: 'payment fear', response: 'The note is secured by the property, and the documents spell out remedies if payments are missed.', category: 'cf' },
+  { tag: 'rbp_buyer_falls', keywords: ['buyer falls through', 'backs out'], meaning: 'retail-buyer risk', response: 'We maintain backup buyers. If that path does not perform, you are not worse off than you are today.', category: 'rbp' },
+  { tag: 'land_zillow', keywords: ['land zillow', 'lot worth'], meaning: 'land valuation confusion', response: 'Land value depends on access, utilities, zoning, buildability, and what builders paid recently - not just online estimates.', category: 'land' },
+  { tag: 'land_hold', keywords: ['hold for appreciation', 'keep the land'], meaning: 'no urgency', response: 'Smart if you do not need the money. Let us compare holding costs and taxes against a clean number today.', category: 'land' },
+];
+
+function scoreAvaWarManualKeywords(text = '', keywords = []) {
+  const haystack = String(text || '').toLowerCase();
+  if (!haystack || !Array.isArray(keywords)) return 0;
+  return keywords.reduce((score, keyword) => {
+    const needle = String(keyword || '').toLowerCase().trim();
+    if (!needle) return score;
+    return haystack.includes(needle) ? score + Math.min(0.35, 0.08 + (needle.length / 80)) : score;
+  }, 0);
+}
+
+function normalizeAvaWarManualText(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const context = params.context || {};
+  const bant = params.bant || {};
+  const raw = contextCall.raw && typeof contextCall.raw === 'object' ? contextCall.raw : {};
+  const recentTurns = Array.isArray(session.transcript)
+    ? session.transcript.slice(-5).map((turn) => (
+        typeof turn === 'string'
+          ? turn
+          : (turn?.text || turn?.transcript || turn?.message || turn?.content || '')
+      )).join(' ')
+    : '';
+  return [
+    params.transcript,
+    params.query,
+    params.text,
+    params.lastUserUtterance,
+    params.selectedPath,
+    params.selected_path,
+    params.path,
+    params.dealPath,
+    context.selectedPath,
+    context.selected_path,
+    context.path,
+    context.dealPath,
+    contextCall.selectedPath,
+    contextCall.selected_path,
+    contextCall.path,
+    contextCall.dealPath,
+    contextCall.propertyType,
+    contextCall.property_type,
+    contextCall.leadSource,
+    contextCall.source,
+    raw.propertyType,
+    raw.property_type,
+    raw.type,
+    raw.source,
+    session.selectedPath,
+    session.identifiedPath,
+    session.leadSource,
+    bant.budget,
+    bant.authority,
+    bant.need,
+    bant.timeline,
+    bant.urgency,
+    recentTurns,
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function pickBestAvaWarManualRecord(records = [], text = '', fallback = null) {
+  const ranked = (Array.isArray(records) ? records : [])
+    .map((record) => ({
+      record,
+      score: scoreAvaWarManualKeywords(text, record.keywords || record.trigger || []),
+    }))
+    .sort((left, right) => right.score - left.score);
+  if (!ranked.length || ranked[0].score <= 0) return fallback;
+  return {
+    ...ranked[0].record,
+    confidence: Math.min(0.98, Number(ranked[0].score || 0)),
+  };
+}
+
+function diagnoseAvaWarManualEmotionalState(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  const fallback = {
+    id: 'calm_neutral',
+    label: 'Calm/Neutral',
+    needsFirst: 'clear probing and respectful pace',
+    killsDeal: 'generic pitching before diagnosis',
+    toneMode: 'calm_authority',
+    confidence: 0.18,
+  };
+  return pickBestAvaWarManualRecord(PBK_WAR_MANUAL_EMOTIONAL_STATES, text, fallback);
+}
+
+function detectAvaHiddenMotivator(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  return pickBestAvaWarManualRecord(PBK_WAR_MANUAL_HIDDEN_MOTIVATORS, text, null);
+}
+
+function decodeAvaWarManualObjection(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  const match = pickBestAvaWarManualRecord(PBK_WAR_MANUAL_OBJECTION_DECODER, text, null);
+  if (!match) return null;
+  return {
+    ...match,
+    source: 'fifty_plus_objection_decoder',
+  };
+}
+
+function selectAvaWarManualPowerLine(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  const objection = params.objection || decodeAvaWarManualObjection(params);
+  if (objection?.category === 'timing') return PBK_WAR_MANUAL_POWER_LINES.find((line) => line.id === 'bant_smoke_out');
+  if (objection?.category === 'price') return PBK_WAR_MANUAL_POWER_LINES.find((line) => line.id === 'last_resort_match');
+  if (/\b(contract|sign|agreement|send|docusign)\b/i.test(text)) return PBK_WAR_MANUAL_POWER_LINES.find((line) => line.id === 'assumptive_one_punch');
+  if (/\b(trust|comfortable|scam|proof|legit)\b/i.test(text)) return PBK_WAR_MANUAL_POWER_LINES.find((line) => line.id === 'comfort_check');
+  return PBK_WAR_MANUAL_POWER_LINES.find((line) => line.id === 'pain_anchor') || PBK_WAR_MANUAL_POWER_LINES[0];
+}
+
+function selectAvaListenProbeStep(params = {}) {
+  const session = params.session || {};
+  const text = normalizeAvaWarManualText(params);
+  const emotionalState = params.emotionalState || diagnoseAvaWarManualEmotionalState(params);
+  const motivator = params.hiddenMotivator || detectAvaHiddenMotivator(params);
+  const turnCount = Math.max(0, Number(params.turnCount || params.turn_count || session.pathProbeTurnCount || session.turnCount || 0) || 0);
+  const steps = [
+    {
+      step: 'L',
+      label: 'Label emotion',
+      question: emotionalState?.id === 'calm_neutral'
+        ? 'Sounds like there is a story behind this property. What has you even considering a change?'
+        : `Sounds like ${String(emotionalState?.needsFirst || 'this has been weighing on you').replace(/\.$/, '')}. Am I hearing that right?`,
+      instruction: 'Name the emotion gently, then let the seller correct or confirm it.',
+    },
+    {
+      step: 'I',
+      label: 'Intensify consequence',
+      question: motivator?.probe || PBK_WAR_MANUAL_POWER_LINES.find((line) => line.id === 'pain_anchor')?.line || "If this drags on another 60 days, what's the worst part of that for you?",
+      instruction: 'Tie the consequence to the seller words, not generic urgency.',
+    },
+    {
+      step: 'S',
+      label: 'Silence',
+      question: '',
+      instruction: 'Pause for 5 seconds after the consequence question. Do not fill the air.',
+      action: 'strategic_pause',
+      seconds: 5,
+    },
+    {
+      step: 'T',
+      label: 'Transition to relief',
+      question: motivator?.followUp || 'Imagine this is solved, the property is off your plate, and the headache is gone. How would that feel?',
+      instruction: 'Paint the solved picture using the seller pain.',
+    },
+    {
+      step: 'E',
+      label: 'Establish criteria',
+      question: 'If I could make that happen in a way that protects you, is there anything else that would stop you from moving forward?',
+      instruction: 'Surface the real decision rule before closing.',
+    },
+    {
+      step: 'N',
+      label: 'Next-step commitment',
+      question: 'Then let us build that solution right now. Mind if I run the clean numbers with you?',
+      instruction: 'Get permission to run numbers or move to the path script.',
+    },
+  ];
+  const forcedStep = String(params.listenStep || params.listen_step || session.listenStep || '').trim().toUpperCase();
+  const selected = steps.find((step) => step.step === forcedStep) || steps[Math.min(steps.length - 1, turnCount % steps.length)];
+  return {
+    ...selected,
+    doctrine: 'L.I.S.T.E.N.',
+    // Audit marker for the additive manual layer: L\.I\.S\.T\.E\.N\.
+    marker: 'L\\.I\\.S\\.T\\.E\\.N\\.',
+    relevantText: text.slice(0, 220),
+  };
+}
+
+function selectAvaPsychologyMove(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  const objection = params.objection || decodeAvaWarManualObjection(params);
+  if (objection?.category === 'price') return PBK_WAR_MANUAL_ADVANCED_MOVES.find((move) => move.id === 'soft_anchor');
+  if (objection?.category === 'trust') return PBK_WAR_MANUAL_ADVANCED_MOVES.find((move) => move.id === 'labeling');
+  if (objection?.category === 'timing') return PBK_WAR_MANUAL_ADVANCED_MOVES.find((move) => move.id === 'calibrated_question');
+  if (objection?.category === 'authority') return PBK_WAR_MANUAL_ADVANCED_MOVES.find((move) => move.id === 'permission_frame');
+  if (/\b(contract|sign|agreement|docusign)\b/i.test(text)) return PBK_WAR_MANUAL_ADVANCED_MOVES.find((move) => move.id === 'no_oriented_question');
+  const match = pickBestAvaWarManualRecord(PBK_WAR_MANUAL_ADVANCED_MOVES, text, null);
+  return match || PBK_WAR_MANUAL_ADVANCED_MOVES.find((move) => move.id === 'permission_frame') || PBK_WAR_MANUAL_ADVANCED_MOVES[0];
+}
+
+function getAvaWarManualToneMode(params = {}) {
+  const emotionalState = params.emotionalState || diagnoseAvaWarManualEmotionalState(params);
+  const modeKey = emotionalState?.toneMode || 'calm_authority';
+  return {
+    key: modeKey,
+    ...(PBK_WAR_MANUAL_TONE_MODES[modeKey] || PBK_WAR_MANUAL_TONE_MODES.calm_authority),
+  };
+}
+
+function selectAvaWarManualPath(params = {}) {
+  const text = normalizeAvaWarManualText(params);
+  const pathDecision = params.pathDecision || inferAvaDealPathDecision(params);
+  const corePath = normalizePbkDealPath(pathDecision.selectedPath || params.selectedPath || params.selected_path || '', 'cash');
+  const isAgent = /\b(agent|realtor|listing|commission|mls|broker)\b/i.test(text)
+    || /agent|realtor|listing/i.test(String(params.contextCall?.leadSource || params.contextCall?.source || params.session?.leadSource || ''));
+  const isLand = corePath === 'land' || /\b(vacant land|land|lot|acre|acres|parcel|builder|perc|septic|well|zoning|wetlands)\b/i.test(text);
+  let key = 'cash_owner';
+  if (corePath === 'rbp' && isLand) key = 'rbp_land';
+  else if (corePath === 'rbp') key = 'rbp_owner';
+  else if (corePath === 'cf') key = 'creative_finance_agent';
+  else if (corePath === 'mt') key = 'mortgage_takeover_agent';
+  else if (corePath === 'land' && isAgent) key = 'land_agent';
+  else if (corePath === 'land') key = 'land_owner';
+  else if (corePath === 'cash' && isAgent) key = 'cash_scout';
+  const path = PBK_WAR_MANUAL_PATHS.find((item) => item.key === key) || PBK_WAR_MANUAL_PATHS[0];
+  return {
+    ...path,
+    sourceCorePath: corePath,
+    isAgent,
+    isLand,
+    pathPicker: '7-second path picker',
+  };
+}
+
+function buildAvaWarManualContext(params = {}) {
+  const emotionalState = diagnoseAvaWarManualEmotionalState(params);
+  const hiddenMotivator = detectAvaHiddenMotivator(params);
+  const objection = decodeAvaWarManualObjection(params);
+  const listenProbe = selectAvaListenProbeStep({ ...params, emotionalState, hiddenMotivator });
+  const psychologyMove = selectAvaPsychologyMove({ ...params, objection });
+  const toneMode = getAvaWarManualToneMode({ ...params, emotionalState });
+  const powerLine = selectAvaWarManualPowerLine({ ...params, objection });
+  const path = selectAvaWarManualPath(params);
+  return {
+    revision: PBK_100K_WAR_MANUAL_REVISION,
+    source: 'fifty_plus_objection_decoder',
+    doctrine: 'Enhance only: layer the $100K War Manual over existing PBK scripts, BANT, path locking, Rex oversight, memory, safety, and prosody.',
+    pathPicker: {
+      name: '7-second path picker',
+      selectedPath: path.key,
+      selectedPathLabel: path.label,
+      rule: 'Mortgage under 5 percent -> MT; top dollar plus patience -> RBP; cash-flow works -> Cash; otherwise Creative Finance; land routes to land/RBP land variants.',
+      questions: [
+        'Does the property have a mortgage under 5 percent?',
+        'Does the seller want top dollar and can wait 30-60 days?',
+        'Do the numbers cash flow at asking price?',
+      ],
+    },
+    path,
+    emotionalState,
+    hiddenMotivator,
+    objection,
+    listenProbe,
+    psychologyMove,
+    toneMode,
+    powerLine,
+    pathsAvailable: PBK_WAR_MANUAL_PATHS.map((item) => item.key),
+    counts: {
+      emotionalStates: PBK_WAR_MANUAL_EMOTIONAL_STATES.length,
+      hiddenMotivators: PBK_WAR_MANUAL_HIDDEN_MOTIVATORS.length,
+      objections: PBK_WAR_MANUAL_OBJECTION_DECODER.length,
+      paths: PBK_WAR_MANUAL_PATHS.length,
+      psychologyMoves: PBK_WAR_MANUAL_ADVANCED_MOVES.length,
+    },
+  };
+}
+
 function makePathScoreMap() {
   return Object.fromEntries(PBK_CORE_DEAL_PATHS.map((path) => [path.key, { path: path.key, score: 0, evidence: [] }]));
 }
@@ -13664,6 +14118,18 @@ function buildAvaCallArchitectureContext(params = {}) {
     selectedPath: params.selectedPath || params.selected_path || contextCall.selectedPath || contextCall.selected_path || context.selectedPath || context.selected_path || '',
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  const warManual = buildAvaWarManualContext({
+    ...params,
+    session,
+    contextCall,
+    context,
+    transcript,
+    query: transcript,
+    bant,
+    pathDecision,
+    selectedPath: pathDecision.selectedPath,
+    turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
+  });
   return {
     schemaVersion: 'pbk-ava-call-intelligence-v1',
     enabled: getAvaCallIntelligenceSettings().enabled,
@@ -13681,6 +14147,7 @@ function buildAvaCallArchitectureContext(params = {}) {
     },
     pathDecision,
     dealPath: pathDecision,
+    warManual,
     scripts,
     rexOversight: {
       recentCallAnalyses: recentAnalyses,
@@ -13740,6 +14207,7 @@ async function activateAvaCallIntelligence(params = {}) {
     useBant: params.useBant !== false,
     useMemory: params.useMemory !== false,
     useProsody: params.useProsody !== false,
+    useWarManual: params.useWarManual !== false,
     useToolRouter: params.useToolRouter !== false,
     useRexOversight: params.useRexOversight !== false,
     useCallAnalyzer: params.useCallAnalyzer !== false,
@@ -13765,7 +14233,7 @@ async function activateAvaCallIntelligence(params = {}) {
 
   const ava = setAgentRuntimeActive('ava', {
     status: 'active',
-    activity: 'Call intelligence active: scripts, BANT+, memory, prosody, tool router, Rex oversight, and safety gates online.',
+    activity: 'Call intelligence active: scripts, BANT+, $100K War Manual, memory, prosody, tool router, Rex oversight, and safety gates online.',
     updatedBy: actor,
     config: { avaCallIntelligence: callSettings },
   });
@@ -13790,7 +14258,7 @@ async function activateAvaCallIntelligence(params = {}) {
     memoryType: 'call-intelligence-activation',
     objectionTag: 'architecture_active',
     prompt: 'Before every live call response, use the activated PBK call intelligence bundle.',
-    response: 'Ava must use scripts, BANT+, memory, emotional/prosody guidance, similar-deal proof, tool router, and Rex revenue focus while keeping provider writes approval-gated.',
+    response: 'Ava must use scripts, BANT+, the $100K War Manual, 7-second path picker, L.I.S.T.E.N. probe, fifty_plus_objection_decoder, emotional/prosody guidance, similar-deal proof, tool router, and Rex revenue focus while keeping provider writes approval-gated.',
     score: 0.98,
     outcome: 'active',
     source: 'ava-call-intelligence-activation',
@@ -14639,9 +15107,20 @@ async function buildAvaConversationIntelligence(params = {}) {
     ? await scoreCallQualityRecord({ ...params, transcript: params.transcript || query, createRexDecision: params.createRexDecision })
     : null;
   const pathDecision = architecture.pathDecision || {};
+  const warManual = architecture.warManual || {};
   const pathCanGuide = !reaction.shouldStopContact;
   const criticalReaction = reaction.shouldStopContact
     || /\b(stop calling|do not call|don't call|remove me|unsubscribe|scam|fake|legit|real company|who are you|trust)\b/i.test(query);
+  const warObjectionPhrase = pathCanGuide
+    && warManual.objection?.response
+    && Number(warManual.objection?.confidence || 0) >= 0.16
+    ? warManual.objection.response
+    : '';
+  const warProbePhrase = pathCanGuide
+    && !pathDecision.pathLocked
+    && warManual.listenProbe?.question
+    ? warManual.listenProbe.question
+    : '';
   const lockedPathPhrase = pathCanGuide && pathDecision.shouldClosePath && pathDecision.scriptTrigger
     ? pathDecision.scriptTrigger
     : '';
@@ -14651,8 +15130,10 @@ async function buildAvaConversationIntelligence(params = {}) {
       ? pathDecision.nextProbeQuestion
       : '';
   const responseText = criticalReaction
-    ? (reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '')
-    : (pathGuidedPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
+    ? (reaction.shouldStopContact
+        ? (reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '')
+        : (warObjectionPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || ''))
+    : (warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
   return {
     ok: true,
     result: 'ava_conversation_intelligence',
@@ -14661,6 +15142,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     closeQuestion: closing.closeQuestion || closing.advice?.closeQuestion || '',
     selectedPath: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
     pathDecision,
+    warManual,
     objectionType: reaction.objectionType,
     reaction,
     prosody: reaction.prosody,
@@ -16477,6 +16959,7 @@ function buildAvaCallStateSummary(params = {}) {
   const conversation = params.conversation || {};
   const architecture = params.architecture || {};
   const pathDecision = params.pathDecision || architecture.pathDecision || conversation.pathDecision || {};
+  const warManual = params.warManual || architecture.warManual || conversation.warManual || {};
   const bant = params.bant || architecture.bant || conversation.bant || {};
   const bantKnown = bant.known || bant.answers || params.bantAnswers || {};
   const bantMissing = Array.isArray(bant.missing) ? bant.missing : [];
@@ -16487,6 +16970,14 @@ function buildAvaCallStateSummary(params = {}) {
   const pathState = pathDecision.pathLocked ? 'LOCKED' : 'PROBING';
   const nextProbe = sanitizeAvaSpokenOutput(pathDecision.nextProbeQuestion || '').slice(0, 220);
   const scriptTrigger = sanitizeAvaSpokenOutput(pathDecision.scriptTrigger || '').slice(0, 360);
+  const warPath = warManual.path?.label || warManual.pathPicker?.selectedPathLabel || '';
+  const warEmotion = warManual.emotionalState?.label || '';
+  const warMotivator = warManual.hiddenMotivator?.id || 'unknown';
+  const warObjection = warManual.objection?.tag || 'none';
+  const warTone = warManual.toneMode?.label || '';
+  const warListenQuestion = sanitizeAvaSpokenOutput(warManual.listenProbe?.question || '').slice(0, 260);
+  const warPowerLine = sanitizeAvaSpokenOutput(warManual.powerLine?.line || '').slice(0, 220);
+  const warMove = warManual.psychologyMove || {};
   const recentTurns = formatAvaRecentTurnsForSummary(session, contextCall, 4);
   const missingText = bantMissing.length ? bantMissing.join(', ') : 'none';
   const knownText = Object.entries(bantKnown || {})
@@ -16497,6 +16988,10 @@ function buildAvaCallStateSummary(params = {}) {
   const lines = [
     `Path: ${pathState} ${selectedPath}${confidence ? ` at ${confidence}% confidence` : ''}.`,
     pathDecision.rule ? `Path rule: ${sanitizeAvaSpokenOutput(pathDecision.rule).slice(0, 220)}` : '',
+    warManual.revision ? `War manual: ${warManual.revision}; ${warManual.pathPicker?.name || '7-second path picker'} -> ${warPath || 'diagnosing'}; emotional state ${warEmotion || 'unknown'}; motivator ${warMotivator}; objection ${warObjection}; tone ${warTone || 'Calm Authority'}.` : '',
+    warListenQuestion ? `L.I.S.T.E.N. next step (${warManual.listenProbe?.step || 'probe'}): ${warListenQuestion}` : '',
+    warPowerLine ? `War manual power line if natural: ${warPowerLine}` : '',
+    warMove?.instruction ? `Psychology move: ${warMove.label || warMove.id} - ${sanitizeAvaSpokenOutput(warMove.instruction).slice(0, 220)}` : '',
     `BANT known: ${knownText}. BANT missing: ${missingText}.`,
     reaction.trigger ? `Seller reaction: ${sanitizeAvaSpokenOutput(reaction.trigger)}${reaction.shouldStopContact ? ' (stop-contact boundary active)' : ''}.` : '',
     transcript ? `Latest seller words: ${transcript}` : '',
@@ -39342,6 +39837,16 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     turnCount: session.pathProbeTurnCount,
   });
   applyAvaPathDecisionToSession(session, pathDecision);
+  const warManual = buildAvaWarManualContext({
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    bant: extractedBant,
+    pathDecision,
+    selectedPath: pathDecision.selectedPath,
+    turnCount: session.pathProbeTurnCount,
+  });
   const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
@@ -39349,6 +39854,9 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   }
   if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
     return 'I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?';
+  }
+  if (warManual.objection?.response && Number(warManual.objection?.confidence || 0) >= 0.16) {
+    return `${opener}${warManual.objection.response}`;
   }
   if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(lower)) {
     return 'That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?';
@@ -39360,7 +39868,11 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     return 'I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?';
   }
   if (pathDecision.shouldClosePath && pathDecision.scriptTrigger) {
-    return `${opener}${pathDecision.scriptTrigger}`;
+    const warPathLine = warManual.path?.nextLine ? ` ${warManual.path.nextLine}` : '';
+    return `${opener}${pathDecision.scriptTrigger}${warPathLine}`;
+  }
+  if (!pathDecision.pathLocked && session.pathProbeTurnCount <= 4 && warManual.listenProbe?.question) {
+    return `${opener}${warManual.listenProbe.question}`;
   }
   if (!pathDecision.pathLocked && pathDecision.nextProbeQuestion) {
     return `${opener}${pathDecision.nextProbeQuestion}`;
@@ -39449,6 +39961,9 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.',
         `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`,
         `Deal path: ${architecture.pathDecision.pathLocked ? 'LOCKED' : 'probing'} ${architecture.pathDecision.selectedPathLabel} (${Math.round((architecture.pathDecision.confidence || 0) * 100)}%). ${architecture.pathDecision.rule}`,
+        architecture.warManual?.revision ? `War manual active: ${architecture.warManual.pathPicker?.name || '7-second path picker'}, path=${architecture.warManual.path?.label || 'diagnosing'}, emotional=${architecture.warManual.emotionalState?.label || 'unknown'}, motivator=${architecture.warManual.hiddenMotivator?.id || 'unknown'}, objection=${architecture.warManual.objection?.tag || 'none'}, tone=${architecture.warManual.toneMode?.label || 'Calm Authority'}, move=${architecture.warManual.psychologyMove?.label || 'Permission Frame'}.` : '',
+        architecture.warManual?.listenProbe?.question ? `L.I.S.T.E.N. next: ${architecture.warManual.listenProbe.question}` : '',
+        architecture.warManual?.objection?.response ? `Objection decoder response if relevant: ${architecture.warManual.objection.response}` : '',
         architecture.pathDecision.nextProbeQuestion ? `Next path probe: ${architecture.pathDecision.nextProbeQuestion}` : '',
         architecture.pathDecision.scriptTrigger ? `Path trigger to use when appropriate: ${architecture.pathDecision.scriptTrigger}` : '',
         architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '',
@@ -39462,6 +39977,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `reaction:${conversation?.reaction?.trigger || 'none'}`,
         `objection:${conversation?.objectionType || 'unknown'}`,
         `path:${architecture.pathDecision.selectedPath || 'unknown'}:${architecture.pathDecision.pathLocked ? 'locked' : 'probing'}`,
+        `war_manual:${architecture.warManual?.path?.key || 'unknown'}:${architecture.warManual?.objection?.tag || 'none'}`,
         `next_bant:${architecture.bant.missing[0] || 'complete'}`,
       ],
       confidence: 0.82,

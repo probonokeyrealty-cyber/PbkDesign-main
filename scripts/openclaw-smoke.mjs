@@ -999,6 +999,12 @@ async function main() {
     assert(avaConversationIntelligence?.reaction?.trigger === 'de_escalate', 'Ava conversation intelligence did not react to low sentiment with de-escalation.');
     assert(avaConversationIntelligence?.prosody?.profile === 'de_escalation', 'Ava conversation intelligence did not return de-escalation prosody.');
     assert(avaConversationIntelligence?.promptFrame?.role?.includes('top 1%'), 'Ava conversation intelligence did not include seven-figure prompt framing.');
+    assert(avaConversationIntelligence?.warManual?.revision, 'Ava conversation intelligence did not include the War Manual context.');
+    assert(avaConversationIntelligence?.warManual?.source === 'fifty_plus_objection_decoder', 'Ava War Manual context did not expose the 50+ objection decoder source.');
+    assert(avaConversationIntelligence?.warManual?.pathPicker?.name === '7-second path picker', 'Ava War Manual context did not include the 7-second path picker.');
+    assert(avaConversationIntelligence?.warManual?.objection?.tag === 'price_too_low', 'Ava War Manual context did not decode the price-too-low objection.');
+    assert(avaConversationIntelligence?.warManual?.listenProbe?.doctrine === 'L.I.S.T.E.N.', 'Ava War Manual context did not include the L.I.S.T.E.N. probe.');
+    assert(avaConversationIntelligence?.warManual?.toneMode?.label, 'Ava War Manual context did not include a delivery tone mode.');
     for (const testCase of avaPathDecisionCases) {
       const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};
       const answer = String(testCase.result?.answer || testCase.result?.nextBestPhrase || '');

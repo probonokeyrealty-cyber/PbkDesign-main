@@ -861,6 +861,25 @@ const checks = [
       && /expectedPath: 'land'/.test(openclawSmoke),
   },
   {
+    name: 'Ava live-call intelligence embeds the additive $100K War Manual layer',
+    ok: /PBK_100K_WAR_MANUAL_REVISION/.test(bridge)
+      && /PBK_WAR_MANUAL_EMOTIONAL_STATES/.test(bridge)
+      && /PBK_WAR_MANUAL_HIDDEN_MOTIVATORS/.test(bridge)
+      && /PBK_WAR_MANUAL_OBJECTION_DECODER/.test(bridge)
+      && /PBK_WAR_MANUAL_PATHS/.test(bridge)
+      && /function buildAvaWarManualContext/.test(bridge)
+      && /function selectAvaListenProbeStep/.test(bridge)
+      && /function selectAvaPsychologyMove/.test(bridge)
+      && /function getAvaWarManualToneMode/.test(bridge)
+      && /warManual/.test(bridge)
+      && /War manual:/.test(bridge)
+      && /7-second path picker/.test(bridge)
+      && /L\\.I\\.S\\.T\\.E\\.N\\./.test(bridge)
+      && /cash_scout/.test(bridge)
+      && /rbp_land/.test(bridge)
+      && /fifty_plus_objection_decoder/.test(bridge),
+  },
+  {
     name: 'Ava voice uses DeepSeek call-state context and a speech-safe TTS boundary',
     ok: /function buildAvaCallStateSummary/.test(bridge)
       && /Call state summary/.test(bridge)
@@ -884,7 +903,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-25-ava-call-repair-hardening'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

@@ -30,6 +30,7 @@
     "campaigns:worker": "node ./scripts/campaign-worker.mjs",
     "campaigns:worker:dry-run": "set PBK_CAMPAIGN_WORKER_DRY_RUN=true&& node ./scripts/campaign-worker.mjs",
     "ava:memory:worker": "node ./scripts/ava-memory-worker.mjs",
+    "ava:memory:embed-calls": "node ./scripts/generate-call-embeddings.mjs",
     "ava:training:loop": "node ./scripts/ava-memory-worker.mjs",
     "ava:training:export": "node ./scripts/export-ava-training-data.mjs",
     "infra:up": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/pbk-runtime.ps1 up",

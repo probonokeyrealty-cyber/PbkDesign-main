@@ -9,6 +9,8 @@ const heartbeatManagerPath = resolve(root, 'scripts/pbk-openclaw-heartbeat.ps1')
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
 const productionCheckPath = resolve(root, 'scripts/production-pristine-check.mjs');
+const callEmbeddingsScriptPath = resolve(root, 'scripts/generate-call-embeddings.mjs');
+const callEmbeddingsMigrationPath = resolve(root, 'supabase/migrations/20260527010000_pbk_call_episodic_memory.sql');
 const agentsPath = resolve(root, 'AGENTS.md');
 const avaMasterclassPath = resolve(root, 'knowledge/ava-wholesale-conversation-masterclass.md');
 const analyzerHtmlPath = resolve(root, 'analyzer.html');
@@ -34,6 +36,8 @@ const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
 const productionCheck = readFileSync(productionCheckPath, 'utf8');
+const callEmbeddingsScript = existsSync(callEmbeddingsScriptPath) ? readFileSync(callEmbeddingsScriptPath, 'utf8') : '';
+const callEmbeddingsMigration = existsSync(callEmbeddingsMigrationPath) ? readFileSync(callEmbeddingsMigrationPath, 'utf8') : '';
 const agents = readFileSync(agentsPath, 'utf8');
 const avaMasterclass = readFileSync(avaMasterclassPath, 'utf8');
 const analyzerHtml = readFileSync(analyzerHtmlPath, 'utf8');
@@ -1255,6 +1259,64 @@ const checks = [
       && /Do not change the strategy\. Only phrase it\./.test(bridge)
       && /contextResolver/.test(bridge)
       && /exactNextMove/.test(bridge),
+  },
+  {
+    name: 'Ava episodic memory embeds calls and retrieves similar winning calls in the resolver',
+    ok: /CREATE TABLE IF NOT EXISTS public\.call_embeddings/.test(callEmbeddingsMigration)
+      && /embedding VECTOR\(1536\)/.test(callEmbeddingsMigration)
+      && /CREATE OR REPLACE FUNCTION public\.match_call_embeddings/.test(callEmbeddingsMigration)
+      && /text-embedding-3-small/.test(callEmbeddingsScript)
+      && /INSERT INTO public\.call_embeddings/.test(callEmbeddingsScript)
+      && /async function createOpenAiEmbedding/.test(bridge)
+      && /async function retrieveSimilarCallMemories/.test(bridge)
+      && /episodicMemory/.test(bridge)
+      && /match_call_embeddings/.test(bridge)
+      && /Similar past winning call/.test(bridge),
+  },
+  {
+    name: 'Ava live RAG retrieves Brain knowledge inside the call resolver before DeepSeek phrases',
+    ok: /AVA_LIVE_RAG_ENABLED/.test(bridge)
+      && /async function retrieveLiveBrainKnowledge/.test(bridge)
+      && /function formatLiveBrainKnowledgeForPrompt/.test(bridge)
+      && /live_brain_rag_retrieved/.test(bridge)
+      && /live_brain_rag/.test(bridge)
+      && /liveKnowledge/.test(bridge)
+      && /Live Brain RAG knowledge/.test(bridge)
+      && /answerBrainQuery\(state,\s*cleanQuery\)/.test(bridge)
+      && /queryPbkKnowledgeRecords/.test(bridge)
+      && /withTimeout\(retrieveLiveBrainKnowledge/.test(bridge),
+  },
+  {
+    name: 'Ava GOOD-style goal inference tracks multiple seller goals and uncertainty every turn',
+    ok: /AVA_GOAL_INFERENCE_GOALS/.test(bridge)
+      && /function buildAvaGoalInference/.test(bridge)
+      && /function updateAvaGoalInference/.test(bridge)
+      && /goal_uncertainty_high/.test(bridge)
+      && /goal_inference_updated/.test(bridge)
+      && /session\.userGoals/.test(bridge)
+      && /goalInference/.test(bridge)
+      && /topGoal/.test(bridge)
+      && /secondaryGoals/.test(bridge)
+      && /goalClarifyingQuestion/.test(bridge)
+      && /user_goals/.test(bridge),
+  },
+  {
+    name: 'Normal inbound Ava calls request Telnyx audio recording once before route branching',
+    ok: /PBK_TELNYX_RECORD_INBOUND_CALLS/.test(bridge)
+      && /async function maybeRecordInboundTelnyxCall/.test(bridge)
+      && /inbound_recording_start/.test(bridge)
+      && /action:\s*'record',\s*result:\s*await maybeRecordInboundTelnyxCall/.test(bridge)
+      && !/after_hours_voicemail'[\s\S]{0,1400}action:\s*'record',\s*result:\s*await recordTelnyxCall/.test(bridge),
+  },
+  {
+    name: 'Inbound lead context never falls back to another seller when phone or lead id is explicit',
+    ok: /explicitLeadId/.test(bridge)
+      && /hasExplicitContext/.test(bridge)
+      && /matchedLeadImport/.test(bridge)
+      && /matchedCall/.test(bridge)
+      && /hasExplicitContext \? '' : fallbackApproval\.leadName/.test(bridge)
+      && /hasExplicitContext \? '' : fallbackApproval\.address/.test(bridge)
+      && /lead_context_cache_cleared/.test(bridge),
   },
   {
     name: 'Ava live-call repair replies bypass anti-repeat and skip empty acknowledgements',

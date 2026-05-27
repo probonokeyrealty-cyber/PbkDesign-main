@@ -317,6 +317,14 @@ const OPENAI_API_KEY = String(process.env.PBK_OPENAI_API_KEY || process.env.OPEN
 const OPENAI_BASE_URL = String(process.env.PBK_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com').trim().replace(/\/+$/g, '');
 const OPENAI_WEB_SEARCH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_OPENAI_WEB_SEARCH_ENABLED || 'true').trim());
 const OPENAI_WEB_SEARCH_MODEL = String(process.env.PBK_OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_WEB_SEARCH_MODEL || 'gpt-4o-mini').trim();
+const OPENAI_EMBEDDING_MODEL = String(process.env.PBK_OPENAI_EMBEDDING_MODEL || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
+const AVA_EPISODIC_MEMORY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_EPISODIC_MEMORY_ENABLED || 'true').trim());
+const AVA_EPISODIC_MEMORY_TIMEOUT_MS = Math.max(50, Math.min(1000, Number(process.env.PBK_AVA_EPISODIC_MEMORY_TIMEOUT_MS || 120)));
+const AVA_EPISODIC_MEMORY_MATCH_THRESHOLD = Math.max(0.1, Math.min(0.98, Number(process.env.PBK_AVA_EPISODIC_MEMORY_MATCH_THRESHOLD || 0.72)));
+const AVA_EPISODIC_MEMORY_MATCH_COUNT = Math.max(1, Math.min(5, Number(process.env.PBK_AVA_EPISODIC_MEMORY_MATCH_COUNT || 3)));
+const AVA_LIVE_RAG_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_LIVE_RAG_ENABLED || 'true').trim());
+const AVA_LIVE_RAG_TIMEOUT_MS = Math.max(40, Math.min(1000, Number(process.env.PBK_AVA_LIVE_RAG_TIMEOUT_MS || 90)));
+const AVA_LIVE_RAG_MATCH_COUNT = Math.max(1, Math.min(5, Number(process.env.PBK_AVA_LIVE_RAG_MATCH_COUNT || 3)));
 const TAVILY_API_KEY = String(process.env.PBK_TAVILY_API_KEY || process.env.TAVILY_API_KEY || '').trim();
 const TAVILY_SEARCH_URL = String(process.env.PBK_TAVILY_SEARCH_URL || 'https://api.tavily.com/search').trim();
 const DEEPSEEK_API_KEY = String(process.env.PBK_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY || '').trim();
@@ -444,6 +452,7 @@ const SUPABASE_SERVICE_ROLE_KEY = String(
     || '',
 ).trim();
 const SUPABASE_CALL_RECORDINGS_BUCKET = String(process.env.PBK_CALL_RECORDINGS_BUCKET || 'call_recordings').trim();
+const PBK_TELNYX_RECORD_INBOUND_CALLS = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_RECORD_INBOUND_CALLS || 'true').trim());
 const SUPABASE_ATTACHMENTS_BUCKET = String(process.env.PBK_ATTACHMENTS_BUCKET || 'attachments').trim();
 const SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS = Math.max(
   60,
@@ -1044,6 +1053,7 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
   const lastAvaSpoken = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').slice(0, 1200);
   const bantStatus = buildLiveCallBantStatus(session);
   const pathDecision = session.pathDecision || {};
+  const goalInference = session.goalInference || {};
   const fullIntelligence = session.fullIntelligence || buildAvaFullIntelligenceContext({
     session,
     transcript: lastTranscript.transcript || '',
@@ -1083,7 +1093,11 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     callerRole: session.callerRole || pathDecision.callerRole?.role || '',
     callerRoleConfidence: session.callerRoleConfidence || pathDecision.callerRole?.confidence || 0,
     masterProbe: session.masterProbe || pathDecision.masterProbe || {},
+    goalInference,
+    userGoals: session.userGoals || goalInference.user_goals || [],
     agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
+    liveRag: session.liveRag || {},
+    liveKnowledge: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.slice(0, 3) : [],
     fullIntelligence,
     usedScripts: fullIntelligence.usedScripts || session.usedScripts || [],
     objectionTriggered: fullIntelligence.objectionTriggered || session.objectionTriggered || '',
@@ -1134,6 +1148,7 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
   const phone = session.phone || contextCall?.phone || contextCall?.from || '';
   const pathDecision = session.pathDecision || contextCall?.pathDecision || {};
   const bantStatus = buildLiveCallBantStatus(session, contextCall);
+  const goalInference = session.goalInference || contextCall?.goalInference || {};
   const fullIntelligence = session.fullIntelligence || buildAvaFullIntelligenceContext({
     session,
     contextCall,
@@ -1173,7 +1188,11 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
     callerRole: session.callerRole || pathDecision.callerRole?.role || '',
     callerRoleConfidence: session.callerRoleConfidence || pathDecision.callerRole?.confidence || 0,
     masterProbe: session.masterProbe || pathDecision.masterProbe || {},
+    goalInference,
+    userGoals: session.userGoals || goalInference.user_goals || [],
     agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
+    liveRag: session.liveRag || {},
+    liveKnowledge: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.slice(0, 3) : [],
     fullIntelligence,
     usedScripts: fullIntelligence.usedScripts || session.usedScripts || [],
     objectionTriggered: fullIntelligence.objectionTriggered || session.objectionTriggered || '',
@@ -1352,6 +1371,65 @@ async function deleteSharedTelnyxCallState(id = '') {
   } catch (error) {
     sharedRedisLastError = String(error?.message || error || 'Redis call-state delete failed').slice(0, 240);
     return { ok: false, result: 'redis_call_state_delete_failed', id: normalizedId, error: sharedRedisLastError };
+  }
+}
+
+async function clearInboundLeadContextCaches(phone = '', callId = '') {
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) {
+    recordCallTrace('lead_context_cache_cleared', {
+      callId,
+      phone,
+      result: 'missing_phone',
+      stage: 'clearInboundLeadContextCaches',
+    });
+    return { ok: false, skipped: true, result: 'missing_phone' };
+  }
+  const client = await getSharedRedisClient();
+  if (!client) {
+    recordCallTrace('lead_context_cache_cleared', {
+      callId,
+      phone: normalizedPhone,
+      result: 'redis_unavailable',
+      error: sharedRedisLastError || '',
+      stage: 'clearInboundLeadContextCaches',
+    });
+    return { ok: false, skipped: true, result: 'redis_unavailable' };
+  }
+  const digits = normalizedPhone.replace(/\D+/g, '');
+  const keys = [...new Set([
+    redisKey('lead', 'resolve', normalizedPhone),
+    redisKey('lead-cache', normalizedPhone),
+    redisKey('lead:cache', normalizedPhone),
+    redisKey('call', 'active', normalizedPhone),
+    `lead:cache:${normalizedPhone}`,
+    `lead:cache:${digits}`,
+    `pbk:lead:resolve:${normalizedPhone}`,
+    `pbk:lead:resolve:${digits}`,
+    `call:active:${normalizedPhone}`,
+    `call:active:${digits}`,
+  ].filter(Boolean))];
+  try {
+    const deleted = keys.length ? await client.del(keys) : 0;
+    recordCallTrace('lead_context_cache_cleared', {
+      callId,
+      phone: normalizedPhone,
+      result: 'cleared',
+      deleted,
+      keyCount: keys.length,
+      stage: 'clearInboundLeadContextCaches',
+    });
+    return { ok: true, result: 'lead_context_cache_cleared', deleted, keyCount: keys.length };
+  } catch (error) {
+    sharedRedisLastError = String(error?.message || error || 'Redis lead context cache clear failed').slice(0, 240);
+    recordCallTrace('lead_context_cache_cleared', {
+      callId,
+      phone: normalizedPhone,
+      result: 'clear_failed',
+      error: sharedRedisLastError,
+      stage: 'clearInboundLeadContextCaches',
+    });
+    return { ok: false, result: 'lead_context_cache_clear_failed', error: sharedRedisLastError };
   }
 }
 
@@ -3782,6 +3860,205 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
     extracted.urgency = text.match(/.{0,50}\b(cannot wait|need this done|need to close|must close|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b.{0,80}/i)?.[0]?.trim() || 'urgency mentioned';
   }
   return extracted;
+}
+
+const AVA_GOAL_INFERENCE_REVISION = 'pbk-good-lite-v1';
+const AVA_GOAL_INFERENCE_GOALS = [
+  {
+    id: 'sell_fast',
+    label: 'Sell fast or close quickly',
+    prior: 0.18,
+    patterns: [/\b(asap|quick|fast|soon|deadline|need cash|close by|before|right away|this week|next week)\b/i],
+    question: 'Is speed the biggest thing, or is getting the highest number more important right now?',
+  },
+  {
+    id: 'maximize_price',
+    label: 'Get highest net price',
+    prior: 0.16,
+    patterns: [/\b(top dollar|highest|best price|zillow|worth|net|lowball|more money|market value|retail)\b/i],
+    question: 'Is your priority the highest possible net, even if it takes a little longer?',
+  },
+  {
+    id: 'avoid_repairs',
+    label: 'Avoid repairs and sell as-is',
+    prior: 0.14,
+    patterns: [/\b(repair|roof|hvac|foundation|leak|mold|as-is|fix|condition|needs work|damage|ugly)\b/i],
+    question: 'Are you mainly trying to avoid putting money into repairs before selling?',
+  },
+  {
+    id: 'tenant_relief',
+    label: 'Get relief from tenants or landlord stress',
+    prior: 0.11,
+    patterns: [/\b(tenant|renter|evict|landlord|rent|not paying|lease|squatter)\b/i],
+    question: 'Is the tenant situation the main thing you want off your plate?',
+  },
+  {
+    id: 'probate_family',
+    label: 'Resolve probate, inheritance, or family decision',
+    prior: 0.11,
+    patterns: [/\b(probate|inherited|estate|executor|heirs|siblings|mom|dad|passed away|death|family)\b/i],
+    question: 'Is the goal to settle the estate cleanly, or are you still figuring out who needs to sign off?',
+  },
+  {
+    id: 'debt_pressure',
+    label: 'Stop debt, tax, or foreclosure pressure',
+    prior: 0.12,
+    patterns: [/\b(foreclosure|behind|tax lien|irs|bankruptcy|auction|payments|mortgage|bank|notice)\b/i],
+    question: 'Is there a deadline from the bank, court, or taxes that we need to work around?',
+  },
+  {
+    id: 'trust_validation',
+    label: 'Verify PBK is legitimate and safe',
+    prior: 0.1,
+    patterns: [/\b(scam|legit|real|proof|references|title company|how do i know|trust|catch|company)\b/i],
+    question: 'What would you need to see first to feel comfortable continuing?',
+  },
+  {
+    id: 'decision_alignment',
+    label: 'Align spouse, heirs, attorney, or decision maker',
+    prior: 0.1,
+    patterns: [/\b(wife|husband|spouse|partner|kids|son|daughter|attorney|lawyer|co-owner|decision|sign off)\b/i],
+    question: 'Who else needs to be included before anyone can say yes?',
+  },
+  {
+    id: 'agent_commission_solution',
+    label: 'Protect agent commission and solve listing problem',
+    prior: 0.1,
+    patterns: [/\b(agent|realtor|broker|listing|my client|commission|mls|dom|days on market)\b/i],
+    question: 'Are you representing the seller on this, and should I keep your full commission protected while I ask a few property questions?',
+  },
+  {
+    id: 'explore_options',
+    label: 'Explore options and learn what is possible',
+    prior: 0.08,
+    patterns: [/\b(maybe|depends|curious|not sure|options|what can you do|tell me more|explain)\b/i],
+    question: 'Would it help if I gave you the cleanest two options after I understand the property?',
+  },
+];
+
+function clampAvaGoalConfidence(value, fallback = 0) {
+  return Math.max(0, Math.min(1, toNumber(value, fallback)));
+}
+
+function normalizeAvaGoalText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildAvaGoalInference(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const transcript = normalizeAvaGoalText(params.transcript || params.query || params.text || '');
+  const recentTurns = collectAvaRecentSellerTurns(session, contextCall, 4)
+    .map((turn) => turn.transcript || turn.text || '')
+    .filter(Boolean)
+    .join(' ');
+  const signalText = `${transcript} ${recentTurns}`.toLowerCase();
+  const bant = normalizeBantInfo(
+    contextCall.bant || {},
+    contextCall.raw?.bant || {},
+    session.bantStatus?.known || {},
+    session.bant || {},
+    params.bant || {},
+  );
+  const pathDecision = params.pathDecision || session.pathDecision || {};
+  const callerRole = normalizeAvaCallerRole(
+    params.callerRole
+      || pathDecision.callerRole?.role
+      || params.callerRoleDecision?.role
+      || session.callerRole
+      || '',
+  );
+  const previousGoals = Array.isArray(session.userGoals)
+    ? session.userGoals
+    : Array.isArray(session.goalInference?.user_goals)
+      ? session.goalInference.user_goals
+      : [];
+  const previousConfidence = new Map(previousGoals.map((goal) => [goal.id, clampAvaGoalConfidence(goal.confidence, 0)]));
+
+  const ranked = AVA_GOAL_INFERENCE_GOALS.map((goal) => {
+    const evidence = [];
+    let score = Number(goal.prior || 0.08);
+    for (const pattern of goal.patterns || []) {
+      pattern.lastIndex = 0;
+      if (pattern.test(signalText)) {
+        evidence.push(pattern.source.replace(/\\b|\(|\)|\?:|\[|\]/g, '').slice(0, 72));
+        score += 0.2;
+      }
+    }
+    const priorConfidence = previousConfidence.get(goal.id) || 0;
+    if (priorConfidence) score += priorConfidence * 0.22;
+    if (goal.id === 'sell_fast' && normalizeBantValue(bant.timeline)) score += 0.12;
+    if (goal.id === 'maximize_price' && normalizeBantValue(bant.budget)) score += 0.1;
+    if (goal.id === 'decision_alignment' && normalizeBantValue(bant.authority)) score += 0.1;
+    if ((goal.id === 'avoid_repairs' || goal.id === 'tenant_relief' || goal.id === 'probate_family' || goal.id === 'debt_pressure') && normalizeBantValue(bant.need)) score += 0.1;
+    if (goal.id === 'agent_commission_solution' && callerRole === PBK_CALLER_ROLES.AGENT) score += 0.22;
+    if (goal.id === 'trust_validation' && /\b(how|why|who|company|number|phone)\b/i.test(signalText)) score += 0.04;
+    const confidence = clampAvaGoalConfidence(score);
+    return {
+      id: goal.id,
+      label: goal.label,
+      confidence,
+      naturalLanguageGoal: goal.label,
+      question: goal.question,
+      evidence: evidence.slice(0, 4),
+    };
+  }).sort((left, right) => right.confidence - left.confidence);
+
+  const topGoal = ranked[0] || null;
+  const secondaryGoals = ranked.slice(1, 4);
+  const margin = topGoal && secondaryGoals[0] ? topGoal.confidence - secondaryGoals[0].confidence : topGoal?.confidence || 0;
+  const uncertainty = clampAvaGoalConfidence(
+    topGoal
+      ? (1 - topGoal.confidence) * 0.62 + (margin < 0.16 ? 0.28 : margin < 0.28 ? 0.14 : 0)
+      : 1,
+    1,
+  );
+  const uncertaintyHigh = Boolean(!topGoal || topGoal.confidence < 0.56 || uncertainty >= 0.42 || margin < 0.12);
+  const goalClarifyingQuestion = uncertaintyHigh && topGoal && secondaryGoals[0]
+    ? `It sounds like it might be ${topGoal.label.toLowerCase()} or ${secondaryGoals[0].label.toLowerCase()}. Which one matters more right now?`
+    : topGoal?.question || 'What is the main outcome you want from this call: speed, price, certainty, or simplicity?';
+  const user_goals = ranked.slice(0, 5).map((goal) => ({
+    id: goal.id,
+    label: goal.label,
+    confidence: Number(goal.confidence.toFixed(2)),
+    uncertainty: Number(uncertainty.toFixed(2)),
+    naturalLanguageGoal: goal.naturalLanguageGoal,
+    evidence: goal.evidence,
+  }));
+
+  return {
+    revision: AVA_GOAL_INFERENCE_REVISION,
+    updatedAt: isoNow(),
+    transcript: transcript.slice(0, 360),
+    topGoal: topGoal ? { ...topGoal, confidence: Number(topGoal.confidence.toFixed(2)) } : null,
+    secondaryGoals: secondaryGoals.map((goal) => ({ ...goal, confidence: Number(goal.confidence.toFixed(2)) })),
+    user_goals,
+    userGoals: user_goals,
+    uncertainty: Number(uncertainty.toFixed(2)),
+    uncertaintyHigh,
+    goalClarifyingQuestion,
+    source: 'GOOD_style_goal_inference',
+  };
+}
+
+function updateAvaGoalInference(session = {}, params = {}) {
+  const inference = buildAvaGoalInference({ ...params, session });
+  if (session && typeof session === 'object') {
+    session.goalInference = inference;
+    session.userGoals = inference.user_goals;
+  }
+  recordCallTrace('goal_inference_updated', {
+    ...(session || {}),
+    status: 'active',
+    result: inference.uncertaintyHigh ? 'goal_uncertainty_high' : 'goal_inference_updated',
+    stage: 'updateAvaGoalInference',
+    topGoal: inference.topGoal?.id || '',
+    secondaryGoals: inference.secondaryGoals?.map((goal) => goal.id).join(',') || '',
+    uncertainty: inference.uncertainty,
+    goalClarifyingQuestion: inference.goalClarifyingQuestion,
+    user_goals: inference.user_goals,
+  });
+  return inference;
 }
 
 function shouldEnforceBantForAnalyze(params = {}) {
@@ -8336,19 +8613,74 @@ function findLeadContext(params = {}) {
   const fallbackImport = state.leadImports[0] || {};
   const fallbackApproval = state.approvals[0] || {};
   const fallbackCall = state.calls.find((call) => isActiveLiveCall(call)) || state.calls[0] || {};
+  const explicitLeadId = String(params.leadId || params.lead_id || '').trim();
   const explicitPhone = normalizePhone(params.phone || params.to || params.number);
-  const explicitLeadName = params.leadName || params.name || '';
-  const explicitAddress = params.address || '';
-  const hasExplicitContext = Boolean(explicitPhone || explicitLeadName || explicitAddress);
+  const explicitLeadName = getSpokenLeadName(params.leadName || params.name || '');
+  const explicitAddress = String(params.address || '').trim();
+  const hasExplicitContext = Boolean(explicitLeadId || explicitPhone || explicitLeadName || explicitAddress);
+  const explicitIdentifiers = {
+    leadId: explicitLeadId,
+    phone: explicitPhone,
+    leadName: explicitLeadName,
+    address: explicitAddress,
+    email: params.email || '',
+  };
+  const matchedLeadImport = hasExplicitContext
+    ? (state.leadImports || []).find((lead) => leadMatchesIdentifiers(lead, explicitIdentifiers)) || null
+    : null;
+  const matchedCall = hasExplicitContext
+    ? (state.calls || []).find((call) => leadMatchesIdentifiers({
+      id: call.id,
+      leadId: call.leadId,
+      leadName: call.leadName,
+      phone: call.phone,
+      address: call.address,
+    }, explicitIdentifiers)) || null
+    : null;
+  const matchedApproval = hasExplicitContext
+    ? (state.approvals || []).find((approval) => leadMatchesIdentifiers({
+      id: approval.id,
+      leadId: approval.leadId,
+      leadName: approval.leadName,
+      phone: approval.phone,
+      address: approval.address,
+    }, explicitIdentifiers)) || null
+    : null;
   const derivedLeadId = hasExplicitContext
     ? `lead-${slugify(`${explicitLeadName || 'seller'}-${explicitAddress || explicitPhone || 'manual'}`)}`
     : '';
+  const matchedLeadName = getSpokenLeadName(
+    matchedLeadImport?.seller?.name
+    || matchedLeadImport?.leadName
+    || matchedLeadImport?.name
+    || matchedCall?.leadName
+    || matchedApproval?.leadName
+    || '',
+  );
+  const matchedAddress = matchedLeadImport?.property?.address
+    || matchedLeadImport?.address
+    || matchedCall?.address
+    || matchedApproval?.address
+    || '';
+  const matchedPhone = normalizePhone(matchedLeadImport?.seller?.phone || matchedLeadImport?.phone || matchedCall?.phone || matchedApproval?.phone || '');
+  const matchedEmail = matchedLeadImport?.seller?.email || matchedLeadImport?.email || matchedApproval?.email || '';
   const fallback = {
-    leadId: params.leadId || derivedLeadId || fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId || randomUUID(),
-    leadName: explicitLeadName || fallbackApproval.leadName || fallbackImport?.seller?.name || fallbackCall.leadName || 'Unknown seller',
-    address: explicitAddress || fallbackApproval.address || fallbackImport?.property?.address || fallbackCall.address || 'Unknown property',
-    phone: explicitPhone || (hasExplicitContext ? '' : normalizePhone(fallbackCall.phone) || normalizePhone(fallbackImport?.seller?.phone) || ''),
-    email: params.email || fallbackImport?.seller?.email || '',
+    leadId: explicitLeadId
+      || matchedLeadImport?.leadId
+      || matchedLeadImport?.id
+      || matchedCall?.leadId
+      || matchedApproval?.leadId
+      || derivedLeadId
+      || (hasExplicitContext ? '' : fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId)
+      || randomUUID(),
+    leadName: explicitLeadName
+      || matchedLeadName
+      || (hasExplicitContext ? '' : fallbackApproval.leadName || fallbackImport?.seller?.name || fallbackCall.leadName || 'Unknown seller'),
+    address: explicitAddress
+      || matchedAddress
+      || (hasExplicitContext ? '' : fallbackApproval.address || fallbackImport?.property?.address || fallbackCall.address || 'Unknown property'),
+    phone: explicitPhone || matchedPhone || (hasExplicitContext ? '' : normalizePhone(fallbackCall.phone) || normalizePhone(fallbackImport?.seller?.phone) || ''),
+    email: params.email || matchedEmail || (hasExplicitContext ? '' : fallbackImport?.seller?.email || ''),
   };
   return fallback;
 }
@@ -15087,6 +15419,7 @@ function buildAvaFullIntelligenceContext(params = {}) {
   const pathDecision = params.pathDecision || architecture.pathDecision || {};
   const warManual = params.warManual || architecture.warManual || {};
   const activeListening = params.activeListening || architecture.activeListening || {};
+  const goalInference = params.goalInference || architecture.goalInference || params.session?.goalInference || {};
   const bestContext = params.bestContext || selectAvaBestContextTranscript(params);
   const usedScripts = [
     pathDecision.selectedPath || '',
@@ -15115,11 +15448,19 @@ function buildAvaFullIntelligenceContext(params = {}) {
       activeListening: true,
       scripts: true,
       memory: true,
+      goalInference: true,
       prosody: true,
       safety: true,
     },
     usedScripts,
     objectionTriggered: warManual.objection?.tag || '',
+    goalInference: goalInference.revision ? {
+      revision: goalInference.revision,
+      topGoal: goalInference.topGoal || null,
+      uncertainty: goalInference.uncertainty,
+      uncertaintyHigh: Boolean(goalInference.uncertaintyHigh),
+      user_goals: goalInference.user_goals || [],
+    } : {},
     probeDepth: Number(params.probeDepth || params.probe_depth || params.session?.probeDepth || params.session?.pathProbeTurnCount || pathDecision.probeTurnCount || 0),
     resume: {
       canResume: Boolean(bestContext.bestTranscript),
@@ -15188,6 +15529,17 @@ function buildAvaCallArchitectureContext(params = {}) {
     callerRole: callerRole.role,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  const goalInference = updateAvaGoalInference(session, {
+    ...params,
+    session,
+    contextCall,
+    context,
+    transcript,
+    query: transcript,
+    bant,
+    pathDecision,
+    callerRole: callerRole.role,
+  });
   const masterProbe = buildAvaMasterProbe({
     ...params,
     session,
@@ -15237,6 +15589,7 @@ function buildAvaCallArchitectureContext(params = {}) {
     warManual,
     activeListening,
     scripts,
+    goalInference,
     probeDepth: session.probeDepth || session.pathProbeTurnCount || pathDecision.probeTurnCount || 0,
   });
   return {
@@ -15255,6 +15608,7 @@ function buildAvaCallArchitectureContext(params = {}) {
       nextQuestion: nextBantQuestion,
     },
     callerRole,
+    goalInference,
     masterProbe,
     pathDecision,
     dealPath: pathDecision,
@@ -16229,6 +16583,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     ? await scoreCallQualityRecord({ ...params, transcript: params.transcript || query, createRexDecision: params.createRexDecision })
     : null;
   const pathDecision = architecture.pathDecision || {};
+  const goalInference = architecture.goalInference || session.goalInference || {};
   const warManual = architecture.warManual || {};
   const callerRole = architecture.callerRole || pathDecision.callerRole || detectAvaCallerRole({ ...params, ...context, query, transcript: params.transcript || query });
   const masterProbe = architecture.masterProbe || pathDecision.masterProbe || buildAvaMasterProbe({
@@ -16719,6 +17074,437 @@ async function recordTokenUsage(provider = '', model = '', usage = {}, meta = {}
       }),
     ],
   );
+}
+
+const openAiEmbeddingCache = new Map();
+
+function getEmbeddingCacheKey(model = '', text = '') {
+  return `${model}:${createHash('sha256').update(String(text || '').slice(0, 8000)).digest('hex')}`;
+}
+
+function vectorLiteral(embedding = []) {
+  return `[${embedding.map((value) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? String(number) : '0';
+  }).join(',')}]`;
+}
+
+function normalizeCallTranscriptForMemory(transcript) {
+  if (Array.isArray(transcript)) {
+    return transcript
+      .map((turn) => {
+        if (typeof turn === 'string') return turn;
+        const speaker = String(turn?.speaker || turn?.role || turn?.from || '').trim();
+        const text = String(turn?.text || turn?.transcript || turn?.message || turn?.content || '').trim();
+        return text ? [speaker, text].filter(Boolean).join(': ') : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (transcript && typeof transcript === 'object') {
+    return normalizeCallTranscriptForMemory(Object.values(transcript));
+  }
+  return String(transcript || '').trim();
+}
+
+function inferCallEmbeddingOutcome(record = {}) {
+  const status = String(record.status || record.outcome || '').trim().toLowerCase();
+  const notes = String(record.notes || record.summary || '').trim().toLowerCase();
+  const haystack = `${status} ${notes}`;
+  if (/\b(contract|signed|closed|accepted|won|appointment|transferring|qualified)\b/.test(haystack)) return 'successful';
+  if (/\b(no[_ -]?show|lost|dead|failed|dnc|blocked|rejected)\b/.test(haystack)) return 'unsuccessful';
+  return status || 'unknown';
+}
+
+async function createOpenAiEmbedding(text = '', options = {}) {
+  const cleanText = String(text || '').replace(/\s+/g, ' ').trim();
+  const model = String(options.model || OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
+  if (!OPENAI_API_KEY) return { ok: false, result: 'provider_missing', error: 'OpenAI embeddings key is not configured.' };
+  if (!cleanText || cleanText.length < 12) return { ok: false, result: 'empty_text', error: 'Embedding text was empty.' };
+  const cacheKey = getEmbeddingCacheKey(model, cleanText);
+  if (openAiEmbeddingCache.has(cacheKey)) {
+    return { ok: true, result: 'cache_hit', model, embedding: openAiEmbeddingCache.get(cacheKey) };
+  }
+  const timeoutMs = Math.max(50, Math.min(60000, toNumber(options.timeoutMs, 10000)));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${OPENAI_BASE_URL}/v1/embeddings`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        input: cleanText.slice(0, 8000),
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return {
+        ok: false,
+        result: 'provider_error',
+        status: response.status,
+        error: payload?.error?.message || payload?.message || `OpenAI embeddings returned ${response.status}`,
+      };
+    }
+    const embedding = payload?.data?.[0]?.embedding;
+    if (!Array.isArray(embedding) || embedding.length !== 1536) {
+      return {
+        ok: false,
+        result: 'dimension_mismatch',
+        error: `Expected 1536-dim embedding, got ${Array.isArray(embedding) ? embedding.length : 'none'}.`,
+      };
+    }
+    openAiEmbeddingCache.set(cacheKey, embedding);
+    if (openAiEmbeddingCache.size > 200) {
+      const oldestKey = openAiEmbeddingCache.keys().next().value;
+      if (oldestKey) openAiEmbeddingCache.delete(oldestKey);
+    }
+    await recordTokenUsage('openai', model, payload?.usage || {}, {
+      source: options.source || 'ava-episodic-memory-embedding',
+      callId: options.callId || '',
+      leadId: options.leadId || '',
+      responseId: payload?.id || '',
+    });
+    return { ok: true, result: 'live', model, embedding, usage: payload?.usage || null };
+  } catch (error) {
+    return {
+      ok: false,
+      result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
+      error: error?.name === 'AbortError' ? 'OpenAI embedding request timed out.' : (error?.message || 'OpenAI embedding request failed.'),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function upsertCallEmbeddingFromTranscript(record = {}) {
+  if (!AVA_EPISODIC_MEMORY_ENABLED) return { ok: false, skipped: true, result: 'episodic_memory_disabled' };
+  if (!DATABASE_URL) return { ok: false, skipped: true, result: 'no_database' };
+  const sourceText = normalizeCallTranscriptForMemory(record.transcriptText || record.transcript || '').replace(/\s+/g, ' ').trim();
+  const callId = String(record.callId || record.call_id || '').trim();
+  if (!callId || sourceText.length < 80) return { ok: false, skipped: true, result: 'insufficient_call_memory' };
+  const embeddingResult = await createOpenAiEmbedding(sourceText, {
+    source: 'call-embedding-upsert',
+    callId,
+    leadId: record.leadId || record.lead_id || '',
+    timeoutMs: Math.max(1000, toNumber(record.timeoutMs, 10000)),
+  });
+  if (!embeddingResult.ok) {
+    recordCallTrace('call_embedding_upserted', {
+      callId,
+      leadId: record.leadId || record.lead_id || '',
+      result: embeddingResult.result || 'embedding_failed',
+      error: embeddingResult.error || '',
+      stage: 'upsertCallEmbeddingFromTranscript',
+    });
+    return embeddingResult;
+  }
+  const transcriptHash = createHash('sha256').update(sourceText).digest('hex');
+  const metadata = {
+    source: record.source || 'bridge',
+    transcriptChars: sourceText.length,
+    status: record.status || '',
+    reason: record.reason || '',
+    streamId: record.streamId || '',
+    sentiment: record.sentiment || null,
+    synthetic: Boolean(record.synthetic),
+  };
+  const result = await queryPgRows(
+    `INSERT INTO public.call_embeddings (
+       workspace_id, call_id, lead_id, outcome, sentiment, source_text,
+       transcript_hash, embedding_model, embedding, synthetic, metadata, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector,$10,$11::jsonb,NOW(),NOW())
+     ON CONFLICT (workspace_id, call_id, embedding_model) DO UPDATE SET
+       lead_id = EXCLUDED.lead_id,
+       outcome = EXCLUDED.outcome,
+       sentiment = EXCLUDED.sentiment,
+       source_text = EXCLUDED.source_text,
+       transcript_hash = EXCLUDED.transcript_hash,
+       embedding = EXCLUDED.embedding,
+       synthetic = EXCLUDED.synthetic,
+       metadata = public.call_embeddings.metadata || EXCLUDED.metadata,
+       updated_at = NOW()`,
+    [
+      record.workspaceId || record.workspace_id || 'pbk',
+      callId,
+      record.leadId || record.lead_id || '',
+      record.outcome || inferCallEmbeddingOutcome(record),
+      record.sentiment?.pbkScore ?? record.sentiment ?? null,
+      sourceText.slice(0, 12000),
+      transcriptHash,
+      embeddingResult.model || OPENAI_EMBEDDING_MODEL,
+      vectorLiteral(embeddingResult.embedding),
+      Boolean(record.synthetic),
+      JSON.stringify(metadata),
+    ],
+  );
+  recordCallTrace('call_embedding_upserted', {
+    callId,
+    leadId: record.leadId || record.lead_id || '',
+    result: result.ok ? 'call_embedding_upserted' : 'call_embedding_upsert_failed',
+    error: result.error || '',
+    stage: 'upsertCallEmbeddingFromTranscript',
+  });
+  return result.ok ? { ok: true, result: 'call_embedding_upserted' } : result;
+}
+
+function selectMemorySearchTerms(text = '') {
+  return [...new Set(String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, ' ')
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 4 && !/^(that|this|with|have|need|want|what|when|where|your|just|like|about)$/i.test(item))
+    .slice(0, 6))];
+}
+
+async function retrieveSimilarCallMemories(params = {}) {
+  if (!AVA_EPISODIC_MEMORY_ENABLED) return { ok: false, skipped: true, result: 'episodic_memory_disabled', memories: [] };
+  if (!DATABASE_URL) return { ok: false, skipped: true, result: 'no_database', memories: [] };
+  const text = String(params.transcript || params.query || params.text || '').replace(/\s+/g, ' ').trim();
+  if (text.length < 24) return { ok: false, skipped: true, result: 'weak_transcript', memories: [] };
+  const limit = Math.max(1, Math.min(5, toNumber(params.limit, AVA_EPISODIC_MEMORY_MATCH_COUNT)));
+  const threshold = Math.max(0.1, Math.min(0.98, toNumber(params.threshold, AVA_EPISODIC_MEMORY_MATCH_THRESHOLD)));
+  const callId = String(params.callId || params.call_id || '').trim();
+  const leadId = String(params.leadId || params.lead_id || '').trim();
+  const embeddingCacheKey = getEmbeddingCacheKey(OPENAI_EMBEDDING_MODEL, text);
+  const canUseVectorNow = openAiEmbeddingCache.has(embeddingCacheKey) || params.allowSlowEmbedding === true;
+
+  let embeddingResult = { ok: false, result: canUseVectorNow ? 'not_started' : 'embedding_cache_miss' };
+  if (canUseVectorNow) {
+    embeddingResult = await createOpenAiEmbedding(text, {
+      source: 'ava-episodic-memory-query',
+      callId,
+      leadId,
+      timeoutMs: Math.max(40, Math.min(900, toNumber(params.timeoutMs, AVA_EPISODIC_MEMORY_TIMEOUT_MS))),
+    });
+  } else if (OPENAI_API_KEY) {
+    void createOpenAiEmbedding(text, {
+      source: 'ava-episodic-memory-query-background-cache',
+      callId,
+      leadId,
+      timeoutMs: 5000,
+    });
+  }
+  if (embeddingResult.ok) {
+    const vectorResult = await queryPgRows(
+      `SELECT call_id, lead_id, outcome, source_text, similarity, metadata, synthetic, created_at
+       FROM public.match_call_embeddings($1::vector, $2::double precision, $3::int, $4::text, $5::text)`,
+      [vectorLiteral(embeddingResult.embedding), threshold, limit, leadId, callId],
+    );
+    if (vectorResult.ok && vectorResult.rows.length) {
+      return {
+        ok: true,
+        result: 'pgvector_match',
+        source: 'match_call_embeddings',
+        memories: vectorResult.rows.map((row) => ({
+          callId: row.call_id || '',
+          leadId: row.lead_id || '',
+          outcome: row.outcome || '',
+          similarity: toNumber(row.similarity, 0),
+          sourceText: sanitizeAvaSpokenOutput(row.source_text || '').slice(0, 420),
+          synthetic: Boolean(row.synthetic),
+          metadata: row.metadata || {},
+        })),
+      };
+    }
+  }
+
+  const terms = selectMemorySearchTerms(text);
+  if (!terms.length) {
+    return { ok: false, result: embeddingResult.result || 'no_memory_terms', error: embeddingResult.error || '', memories: [] };
+  }
+  const fallbackResult = await queryPgRows(
+    `SELECT call_id, lead_id, outcome, source_text, metadata, synthetic, created_at,
+       ts_rank_cd(to_tsvector('english', source_text), plainto_tsquery('english', $1)) AS similarity
+     FROM public.call_embeddings
+     WHERE workspace_id = 'pbk'
+       AND ($2::text = '' OR lead_id <> $2::text)
+       AND ($3::text = '' OR call_id <> $3::text)
+       AND to_tsvector('english', source_text) @@ plainto_tsquery('english', $1)
+     ORDER BY
+       CASE WHEN outcome ~* '(successful|contract|signed|closed|accepted|qualified)' THEN 0 ELSE 1 END,
+       similarity DESC,
+       created_at DESC
+     LIMIT $4`,
+    [terms.join(' '), leadId, callId, limit],
+  );
+  if (!fallbackResult.ok) {
+    return { ok: false, result: 'memory_lookup_failed', error: fallbackResult.error || embeddingResult.error || '', memories: [] };
+  }
+  return {
+    ok: fallbackResult.rows.length > 0,
+    result: fallbackResult.rows.length ? 'lexical_memory_match' : 'no_memory_match',
+    source: 'call_embeddings_text_idx',
+    memories: fallbackResult.rows.map((row) => ({
+      callId: row.call_id || '',
+      leadId: row.lead_id || '',
+      outcome: row.outcome || '',
+      similarity: toNumber(row.similarity, 0),
+      sourceText: sanitizeAvaSpokenOutput(row.source_text || '').slice(0, 420),
+      synthetic: Boolean(row.synthetic),
+      metadata: row.metadata || {},
+    })),
+  };
+}
+
+function formatEpisodicMemoryForPrompt(episodicMemory = {}) {
+  const memories = Array.isArray(episodicMemory.memories) ? episodicMemory.memories : [];
+  if (!memories.length) return '';
+  return memories.slice(0, 3).map((memory, index) => {
+    const similarity = memory.similarity ? ` similarity ${Number(memory.similarity).toFixed(2)}` : '';
+    const outcome = memory.outcome ? ` outcome ${memory.outcome}` : ' outcome observed';
+    const label = index === 0 ? 'Similar past winning call' : 'Similar past call';
+    return `- ${label}${similarity};${outcome}: ${sanitizeAvaSpokenOutput(memory.sourceText || '').slice(0, 260)}`;
+  }).join('\n');
+}
+
+function normalizeLiveRagBrainDoc(doc = {}) {
+  const title = sanitizeAvaSpokenOutput(doc.title || doc.name || doc.source || 'Brain knowledge').slice(0, 120);
+  const text = sanitizeAvaSpokenOutput(
+    doc.summary
+      || doc.salesMentor
+      || doc.excerpt
+      || doc.content
+      || doc.text
+      || '',
+  ).slice(0, 520);
+  return {
+    type: doc.blogPost ? 'brain_blog' : 'brain_doc',
+    title,
+    text,
+    citation: sanitizeAvaSpokenOutput(doc.citation || `${doc.source || 'PBK Brain'} - ${title}`).slice(0, 180),
+    source: sanitizeAvaSpokenOutput(doc.source || 'PBK Brain').slice(0, 80),
+    tags: normalizeStringList(doc.tags || doc.revenueStreams || []),
+    metadata: doc.blogPost ? { blogPost: true, slug: doc.slug || '' } : {},
+  };
+}
+
+function normalizeLiveRagKnowledgeFact(fact = {}) {
+  const subject = sanitizeAvaSpokenOutput(fact.subject || 'PBK knowledge').slice(0, 120);
+  const predicate = sanitizeAvaSpokenOutput(fact.predicate || '').slice(0, 120);
+  const object = sanitizeAvaSpokenOutput(fact.object || fact.value || fact.content || '').slice(0, 520);
+  const text = [predicate, object].filter(Boolean).join(': ').slice(0, 520);
+  return {
+    type: 'pbk_knowledge',
+    title: subject,
+    text,
+    citation: sanitizeAvaSpokenOutput(fact.source || fact.sourceId || 'PBK knowledge').slice(0, 180),
+    source: sanitizeAvaSpokenOutput(fact.source || 'PBK knowledge').slice(0, 80),
+    confidence: toNumber(fact.confidence, 0.5),
+    tags: normalizeStringList(fact.metadata?.tags || fact.tags || []),
+    metadata: fact.metadata || {},
+  };
+}
+
+function scoreAvaLiveRagRecord(record = {}, query = '', params = {}) {
+  const searchable = [
+    record.title,
+    record.text,
+    record.citation,
+    record.source,
+    record.tags,
+    record.metadata?.intent,
+    record.metadata?.path,
+  ].flat().filter(Boolean).join(' ');
+  let score = scorePbkTextMatch(query, searchable, {
+    tags: record.tags,
+    intent: record.metadata?.intent,
+    path: record.metadata?.path,
+  });
+  if (record.type === 'pbk_knowledge') score += 0.15 + Math.min(0.35, Math.max(0, toNumber(record.confidence, 0)));
+  const path = String(params.path || params.selectedPath || '').trim().toLowerCase();
+  if (path && searchable.toLowerCase().includes(path.replace(/[_-]+/g, ' '))) score += 0.25;
+  if (/\b(war_manual|masterclass|approved|closing|objection|probe|script)\b/i.test(searchable)) score += 0.15;
+  return score;
+}
+
+async function retrieveLiveBrainKnowledge(params = {}) {
+  if (!AVA_LIVE_RAG_ENABLED) {
+    return { ok: false, skipped: true, result: 'live_brain_rag_disabled', matches: [] };
+  }
+  const cleanQuery = sanitizeAvaSpokenOutput(params.transcript || params.query || '').slice(0, 1000);
+  if (cleanQuery.length < 3) {
+    return { ok: false, skipped: true, result: 'live_brain_rag_no_query', matches: [] };
+  }
+  const limit = Math.max(1, Math.min(5, toNumber(params.limit, AVA_LIVE_RAG_MATCH_COUNT)));
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id);
+  const callId = params.callId || params.call_id || '';
+  const leadId = params.leadId || params.lead_id || '';
+  const [knowledgeResult, brainResult] = await Promise.all([
+    queryPbkKnowledgeRecords({ tenantId, query: cleanQuery, limit: Math.max(limit, 8) }).catch((error) => ({
+      ok: false,
+      error: error?.message || String(error || ''),
+      facts: [],
+    })),
+    Promise.resolve()
+      .then(() => answerBrainQuery(state, cleanQuery))
+      .catch((error) => ({
+        answer: '',
+        citations: [],
+        matches: [],
+        error: error?.message || String(error || ''),
+      })),
+  ]);
+  const records = [
+    ...(Array.isArray(knowledgeResult?.facts) ? knowledgeResult.facts.map(normalizeLiveRagKnowledgeFact) : []),
+    ...(Array.isArray(brainResult?.matches) ? brainResult.matches.map(normalizeLiveRagBrainDoc) : []),
+  ].filter((record) => record.text || record.title);
+  const seen = new Set();
+  const matches = records
+    .map((record) => ({
+      ...record,
+      score: scoreAvaLiveRagRecord(record, cleanQuery, params),
+    }))
+    .filter((record) => record.score > 0)
+    .filter((record) => {
+      const key = `${record.type}:${record.title}:${record.text}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+  const payload = {
+    ok: matches.length > 0,
+    result: matches.length ? 'live_brain_rag' : 'no_live_brain_match',
+    query: cleanQuery.slice(0, 240),
+    source: 'brain_and_pbk_knowledge',
+    matchCount: matches.length,
+    matches,
+    diagnostics: {
+      pbkKnowledgeCount: Array.isArray(knowledgeResult?.facts) ? knowledgeResult.facts.length : 0,
+      brainMatchCount: Array.isArray(brainResult?.matches) ? brainResult.matches.length : 0,
+      knowledgeError: knowledgeResult?.error || '',
+      brainError: brainResult?.error || '',
+    },
+  };
+  recordCallTrace('live_brain_rag_retrieved', {
+    callId,
+    leadId,
+    result: payload.result,
+    matchCount: payload.matchCount,
+    topCitation: matches[0]?.citation || '',
+    topTitle: matches[0]?.title || '',
+    stage: 'retrieveLiveBrainKnowledge',
+  });
+  return payload;
+}
+
+function formatLiveBrainKnowledgeForPrompt(liveRag = {}) {
+  const matches = Array.isArray(liveRag.matches) ? liveRag.matches : [];
+  if (!matches.length) return '';
+  return matches.slice(0, 3).map((match) => {
+    const title = sanitizeAvaSpokenOutput(match.title || 'Brain knowledge').slice(0, 100);
+    const text = sanitizeAvaSpokenOutput(match.text || '').slice(0, 260);
+    const citation = sanitizeAvaSpokenOutput(match.citation || match.source || 'PBK Brain').slice(0, 120);
+    return `- ${title}: ${text}${citation ? ` (source: ${citation})` : ''}`;
+  }).join('\n');
 }
 
 async function runOpenAiWebSearch(query = '', params = {}) {
@@ -18128,6 +18914,7 @@ function buildAvaCallStateSummary(params = {}) {
   const conversation = params.conversation || {};
   const architecture = params.architecture || {};
   const pathDecision = params.pathDecision || architecture.pathDecision || conversation.pathDecision || {};
+  const goalInference = params.goalInference || architecture.goalInference || session.goalInference || {};
   const warManual = params.warManual || architecture.warManual || conversation.warManual || {};
   const activeListening = params.activeListening || architecture.activeListening || conversation.activeListening || {};
   const bant = params.bant || architecture.bant || conversation.bant || {};
@@ -18165,6 +18952,11 @@ function buildAvaCallStateSummary(params = {}) {
   const activeLabel = sanitizeAvaSpokenOutput(activeListening.label || '').slice(0, 220);
   const activeHook = sanitizeAvaSpokenOutput(activeListening.callFlow?.recommendedHook || '').slice(0, 180);
   const activeNextStep = activeListening.callFlow?.nextStepId || '';
+  const topGoalLabel = goalInference.topGoal?.label || '';
+  const secondaryGoalLabels = Array.isArray(goalInference.secondaryGoals)
+    ? goalInference.secondaryGoals.map((goal) => goal.label || goal.id).filter(Boolean).slice(0, 3).join(', ')
+    : '';
+  const goalClarifyingQuestion = sanitizeAvaSpokenOutput(goalInference.goalClarifyingQuestion || '').slice(0, 240);
   const recentTurns = formatAvaRecentTurnsForSummary(session, contextCall, 4);
   const missingText = bantMissing.length ? bantMissing.join(', ') : 'none';
   const knownText = Object.entries(bantKnown || {})
@@ -18177,6 +18969,7 @@ function buildAvaCallStateSummary(params = {}) {
     `Caller role: ${callerRole.role || 'unknown'} (${Math.round(toNumber(callerRole.confidence, 0) * 100)}%). ${callerRole.needsClarification ? 'Clarify owner/agent/decision-maker before pitching.' : 'Role is clear enough for this turn.'}`,
     masterProbe?.question ? `Master probe: ${masterProbe.question} (${masterProbe.reason || 'probe required'}).` : '',
     fullIntelligence?.enabled ? `Full intelligence: ${fullIntelligence.revision}; mode=${fullIntelligence.mode}; bestContext=${fullIntelligence.context?.source || 'current_transcript'}; weakTranscript=${Boolean(fullIntelligence.context?.weakTranscript)}; layers=${Object.entries(fullIntelligence.layers || {}).filter(([, enabled]) => enabled).map(([key]) => key).join(',')}.` : '',
+    goalInference.revision ? `Goal inference: ${goalInference.revision}; topGoal=${topGoalLabel || 'unknown'}; secondaryGoals=${secondaryGoalLabels || 'none'}; uncertainty=${goalInference.uncertainty ?? 'unknown'}; uncertaintyHigh=${Boolean(goalInference.uncertaintyHigh)}.${goalClarifyingQuestion ? ` Clarifier: ${goalClarifyingQuestion}` : ''}` : '',
     fullIntelligence?.context?.bestTranscript ? `Best seller context for this answer: ${sanitizeAvaSpokenOutput(fullIntelligence.context.bestTranscript).slice(0, 260)}` : '',
     'Audience guard: Creative Finance and Multi-Family are agent-only. If caller is not an agent, do not mention those paths; ask an owner-safe probe instead.',
     pathDecision.rule ? `Path rule: ${sanitizeAvaSpokenOutput(pathDecision.rule).slice(0, 220)}` : '',
@@ -18215,6 +19008,7 @@ function buildAvaResolvedNextMove(params = {}) {
   const pathLocked = Boolean(pathDecision.pathLocked || session.pathLocked);
   const objection = warManual.objection || {};
   const objectionResponse = sanitizeAvaSpokenOutput(objection.response || '').slice(0, 360);
+  const goalClarifyingQuestion = sanitizeAvaSpokenOutput(goalInference.goalClarifyingQuestion || '').slice(0, 280);
   const nextProbe = sanitizeAvaSpokenOutput(
     pathDecision.nextProbeQuestion
       || warManual.listenProbe?.question
@@ -18254,6 +19048,11 @@ function buildAvaResolvedNextMove(params = {}) {
     source = 'master_probe_guardrail';
     reason = masterProbe.reason || 'probe_required_before_pitch';
     text = sanitizeAvaSpokenOutput(masterProbe.question).slice(0, 280);
+  } else if (!pathLocked && goalInference.uncertaintyHigh && goalClarifyingQuestion) {
+    type = 'goal_clarification';
+    source = 'GOOD_style_goal_inference';
+    reason = 'goal_uncertainty_high';
+    text = goalClarifyingQuestion;
   } else if (!pathLocked && nextProbe) {
     type = missingBant.length ? 'bant_probe' : 'path_probe';
     source = missingBant.length ? 'bant_resolver' : 'path_resolver';
@@ -18281,8 +19080,16 @@ function buildAvaResolvedNextMove(params = {}) {
     transcript,
     confidence: Math.max(
       0.5,
-      Math.min(0.97, toNumber(pathDecision.confidence, 0.72) || toNumber(conversation.confidence, 0.72) || 0.72),
+      Math.min(0.97, toNumber(pathDecision.confidence, 0.72) || toNumber(goalInference.topGoal?.confidence, 0.72) || toNumber(conversation.confidence, 0.72) || 0.72),
     ),
+    goalInference: {
+      topGoal: goalInference.topGoal || null,
+      secondaryGoals: goalInference.secondaryGoals || [],
+      uncertainty: goalInference.uncertainty,
+      uncertaintyHigh: Boolean(goalInference.uncertaintyHigh),
+      goalClarifyingQuestion,
+      user_goals: goalInference.user_goals || [],
+    },
     guardrails: {
       agentOnlyCreativeFinance: true,
       ownerSafe: role !== PBK_CALLER_ROLES.AGENT,
@@ -18297,16 +19104,18 @@ async function resolveAvaLiveCallContext(params = {}) {
   const session = params.session || {};
   const contextCall = params.contextCall || params.call || null;
   const transcript = String(params.transcript || params.query || '').trim();
+  const callId = session.callId || contextCall?.callId || contextCall?.id || params.callId || '';
+  const leadId = contextCall?.leadId || session.leadId || params.leadId || '';
   const resolverPromise = Promise.all([
     Promise.resolve(findLeadContext({
       ...params,
-      leadId: contextCall?.leadId || session.leadId || params.leadId,
+      leadId,
       leadName: contextCall?.leadName || session.leadName || params.leadName,
       address: contextCall?.address || session.address || params.address,
       phone: contextCall?.phone || session.phone || params.phone,
     })),
     Promise.resolve({
-      callId: session.callId || contextCall?.callId || contextCall?.id || '',
+      callId,
       pathLocked: Boolean(session.pathLocked || contextCall?.pathLocked),
       identifiedPath: session.identifiedPath || contextCall?.identifiedPath || session.selectedPath || contextCall?.selectedPath || '',
       bant: normalizeBantInfo(contextCall?.bant || {}, session.bant || {}, params.bant || {}),
@@ -18317,7 +19126,33 @@ async function resolveAvaLiveCallContext(params = {}) {
     Promise.resolve(params.conversation || null),
     Promise.resolve(params.pipeline || null),
     Promise.resolve(collectAvaRecentSellerTurns(session, contextCall, 4)),
-  ]).then(([lead, callState, architecture, conversation, pipeline, recentSellerTurns]) => {
+    withTimeout(retrieveSimilarCallMemories({
+      transcript,
+      callId,
+      leadId,
+      limit: AVA_EPISODIC_MEMORY_MATCH_COUNT,
+      threshold: AVA_EPISODIC_MEMORY_MATCH_THRESHOLD,
+      timeoutMs: AVA_EPISODIC_MEMORY_TIMEOUT_MS,
+    }), AVA_EPISODIC_MEMORY_TIMEOUT_MS + 20, 'ava episodic memory').catch((error) => ({
+      ok: false,
+      result: 'episodic_memory_timeout_or_error',
+      error: error?.message || String(error || ''),
+      memories: [],
+    })),
+    withTimeout(retrieveLiveBrainKnowledge({
+      transcript,
+      callId,
+      leadId,
+      path: session.selectedPath || contextCall?.selectedPath || contextCall?.selected_path || '',
+      callerRole: session.callerRole || '',
+      limit: AVA_LIVE_RAG_MATCH_COUNT,
+    }), AVA_LIVE_RAG_TIMEOUT_MS + 20, 'ava live brain rag').catch((error) => ({
+      ok: false,
+      result: 'live_brain_rag_timeout_or_error',
+      error: error?.message || String(error || ''),
+      matches: [],
+    })),
+  ]).then(([lead, callState, architecture, conversation, pipeline, recentSellerTurns, episodicMemory, liveRag]) => {
     const exactNextMove = buildAvaResolvedNextMove({
       ...params,
       session,
@@ -18329,18 +19164,23 @@ async function resolveAvaLiveCallContext(params = {}) {
     });
     const memoryLesson = sanitizeAvaSpokenOutput(
       architecture.fullIntelligence?.context?.bestTranscript
-        || recentSellerTurns[recentSellerTurns.length - 1]?.transcript
-        || '',
+      || recentSellerTurns[recentSellerTurns.length - 1]?.transcript
+      || '',
     ).slice(0, 360);
     const objection = architecture.warManual?.objection || {};
+    const liveKnowledgePrompt = formatLiveBrainKnowledgeForPrompt(liveRag);
+    session.liveRag = liveRag;
+    session.liveKnowledge = Array.isArray(liveRag?.matches) ? liveRag.matches : [];
+    session.liveKnowledgePrompt = liveKnowledgePrompt;
+    session.lastLiveRagAt = isoNow();
     return {
       ok: true,
       schemaVersion: 'pbk-ava-live-context-resolver-v1',
       latencyMs: Date.now() - startedAt,
       contextResolver: {
-        strategy: 'parallel_cached_working_episodic_memory',
+        strategy: 'parallel_cached_working_episodic_goal_rag_memory',
         timeoutMs: 150,
-        sources: ['lead', 'redis_call_state', 'scripts', 'objection_decoder', 'probe_questions', 'emotional_memory'],
+        sources: ['lead', 'redis_call_state', 'scripts', 'objection_decoder', 'probe_questions', 'emotional_memory', 'episodic_call_embeddings', 'live_brain_rag', 'goal_inference_uncertainty'],
       },
       lead: {
         leadId: lead.leadId || '',
@@ -18354,7 +19194,11 @@ async function resolveAvaLiveCallContext(params = {}) {
         callerRole: architecture.callerRole?.role || '',
         bant: architecture.bant?.known || callState.bant || {},
         probeDepth: architecture.fullIntelligence?.probeDepth || callState.probeDepth || 0,
+        userGoals: architecture.goalInference?.user_goals || [],
+        user_goals: architecture.goalInference?.user_goals || [],
+        goalUncertainty: architecture.goalInference?.uncertainty ?? null,
       },
+      goalInference: architecture.goalInference || {},
       script: {
         path: architecture.pathDecision?.selectedPath || '',
         bestMatch: sanitizeAvaSpokenOutput(architecture.pathDecision?.scriptTrigger || architecture.warManual?.powerLine?.line || '').slice(0, 360),
@@ -18368,6 +19212,15 @@ async function resolveAvaLiveCallContext(params = {}) {
       memory: {
         lesson: memoryLesson,
         recentSellerTurns,
+        episodicMemory,
+        episodicPrompt: formatEpisodicMemoryForPrompt(episodicMemory),
+        liveKnowledge: liveRag,
+        liveKnowledgePrompt,
+      },
+      knowledge: {
+        liveRag,
+        liveKnowledge: Array.isArray(liveRag?.matches) ? liveRag.matches : [],
+        prompt: liveKnowledgePrompt,
       },
       exactNextMove,
       phrasingEngineOnly: {
@@ -18390,8 +19243,9 @@ async function resolveAvaLiveCallContext(params = {}) {
       contextResolver: {
         strategy: 'fallback_existing_architecture',
         timeoutMs: 150,
-        sources: ['existing_call_architecture'],
+        sources: ['existing_call_architecture', 'goal_inference_uncertainty'],
       },
+      goalInference: architecture.goalInference || session.goalInference || {},
       exactNextMove,
       phrasingEngineOnly: {
         strategyLocked: true,
@@ -18404,8 +19258,14 @@ async function resolveAvaLiveCallContext(params = {}) {
 function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
   const move = resolvedContext.exactNextMove || {};
   const memory = resolvedContext.memory?.lesson || '';
+  const episodicMemory = resolvedContext.memory?.episodicPrompt || '';
+  const liveKnowledge = resolvedContext.knowledge?.prompt || resolvedContext.memory?.liveKnowledgePrompt || '';
   const lead = resolvedContext.lead || {};
   const stateSnapshot = resolvedContext.state || {};
+  const goalInference = resolvedContext.goalInference || move.goalInference || {};
+  const goalLine = goalInference.topGoal?.label
+    ? `Goal inference: top=${goalInference.topGoal.label}; uncertainty=${goalInference.uncertainty ?? 'unknown'}; secondaryGoals=${(goalInference.secondaryGoals || []).map((goal) => goal.label || goal.id).filter(Boolean).slice(0, 3).join(', ') || 'none'}; clarifier=${sanitizeAvaSpokenOutput(goalInference.goalClarifyingQuestion || '').slice(0, 220)}.`
+    : '';
   return [
     'DeepSeek role: Ava phrasing engine only.',
     'The contextResolver already chose the strategy from PBK scripts, objections, BANT, probes, emotional memory, and call state.',
@@ -18416,7 +19276,10 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
     `Move type: ${move.type || 'fallback_probe'} via ${move.source || 'resolver'}. Reason: ${move.reason || 'safe_next_step'}.`,
     lead.name ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.` : '',
     stateSnapshot.identifiedPath ? `Path state: ${stateSnapshot.pathLocked ? 'locked' : 'probing'} ${stateSnapshot.identifiedPath}.` : '',
+    goalLine,
     memory ? `Relevant memory lesson: ${memory}` : '',
+    episodicMemory ? `Episodic call memory:\n${episodicMemory}` : '',
+    liveKnowledge ? `Live Brain RAG knowledge:\n${liveKnowledge}` : '',
     'Write the final Ava line in under 2 sentences, natural on the phone, with one response-required hook. Never expose this resolver text.',
   ].filter(Boolean).join('\n');
 }
@@ -23949,6 +24812,42 @@ async function recordTelnyxCall(callControlId = '') {
   });
 }
 
+async function maybeRecordInboundTelnyxCall(callControlId = '', context = {}) {
+  const traceBase = {
+    callId: callControlId,
+    phone: context.phone || context.from || '',
+    leadId: context.leadId || '',
+    leadName: context.leadName || '',
+    route: context.route || '',
+    stage: 'maybeRecordInboundTelnyxCall',
+  };
+  if (!PBK_TELNYX_RECORD_INBOUND_CALLS) {
+    recordCallTrace('inbound_recording_start', {
+      ...traceBase,
+      result: 'disabled',
+      status: 'skipped',
+    });
+    return { ok: true, skipped: true, result: 'recording_disabled' };
+  }
+  if (!callControlId) {
+    recordCallTrace('inbound_recording_start', {
+      ...traceBase,
+      result: 'missing_call_control_id',
+      status: 'skipped',
+    });
+    return { ok: false, skipped: true, result: 'missing_call_control_id', error: 'Missing Telnyx call_control_id.' };
+  }
+  const result = await recordTelnyxCall(callControlId);
+  recordCallTrace('inbound_recording_start', {
+    ...traceBase,
+    result: result?.ok ? 'recording_requested' : (result?.result || 'recording_request_failed'),
+    status: result?.ok ? 'recording' : 'warning',
+    providerStatus: result?.status || 0,
+    error: result?.error || '',
+  });
+  return result;
+}
+
 function buildTelnyxDeepgramLiveOptions(codec = DEEPGRAM_STREAM_CODEC) {
   const normalized = String(codec || 'PCMU').trim().toUpperCase();
   if (normalized === 'PCMA') {
@@ -24417,6 +25316,19 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     status: parsed.state,
     stage: 'handleAvaInboundRoute',
   });
+  await withTimeout(
+    clearInboundLeadContextCaches(parsed.from || body.from || body.phone || '', callControlId),
+    150,
+    'lead context cache clear',
+  ).catch((error) => {
+    recordCallTrace('lead_context_cache_cleared', {
+      callId: callControlId,
+      phone: parsed.from || body.from || body.phone || '',
+      result: 'clear_timeout_or_error',
+      error: String(error?.message || error || '').slice(0, 240),
+      stage: 'handleAvaInboundRoute',
+    });
+  });
   const lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
   const spokenLeadName = getSpokenLeadName(lead.leadName);
   const inboundDiagnostic = {
@@ -24530,6 +25442,15 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   const actions = [];
   if (callControlId) {
     actions.push({ action: 'answer', result: await answerTelnyxCall(callControlId) });
+    actions.push({
+      action: 'record',
+      result: await maybeRecordInboundTelnyxCall(callControlId, {
+        route,
+        phone: parsed.from,
+        leadId: lead.leadId,
+        leadName: spokenLeadName,
+      }),
+    });
     if (route === 'transfer_jordan' || route === 'transfer_underwriting') {
       const target = route === 'transfer_underwriting' ? UNDERWRITING_AGENT_PHONE : HUMAN_AGENT_PHONE;
       actions.push({
@@ -24554,7 +25475,6 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
         }),
       });
       actions.push({ action: 'speak', result: await speakTelnyxCall(callControlId, 'You have reached Probono Key Realty after hours. Please leave your name, number, property address, and what you need help with. We will call you back first thing next business day.') });
-      actions.push({ action: 'record', result: await recordTelnyxCall(callControlId) });
     } else {
       actions.push({
         action: 'streaming_start',
@@ -41411,6 +42331,15 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     callerRoleDecision: callerRole,
   });
   session.masterProbe = masterProbe;
+  const goalInference = updateAvaGoalInference(session, {
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    bant: extractedBant,
+    pathDecision,
+    callerRole: callerRole.role,
+  });
   const warManual = buildAvaWarManualContext({
     session,
     contextCall,
@@ -41463,6 +42392,9 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (masterProbe.mustAskBeforePitch) {
     if (masterProbe.stage === 'agent_commission_anchor') session.agentCommissionConfirmed = true;
     return withSafeActiveHook(`${opener}${masterProbe.question}`, { fallback: masterProbe.question });
+  }
+  if (!pathDecision.pathLocked && goalInference.uncertaintyHigh && goalInference.goalClarifyingQuestion) {
+    return withSafeActiveHook(`${opener}${goalInference.goalClarifyingQuestion}`, { fallback: goalInference.goalClarifyingQuestion });
   }
   const activeSituationProbeAllowed = !pathDecision.shouldClosePath;
   if (activeSituationProbeAllowed && activeListening.callFlow?.nextStepId === 'cash.condition_probe') {
@@ -41893,6 +42825,15 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
   });
   applyAvaPathDecisionToSession(session, livePathDecision);
   session.pathDecision = livePathDecision;
+  session.goalInference = updateAvaGoalInference(session, {
+    session,
+    contextCall,
+    transcript,
+    query: transcript,
+    bant: liveBant,
+    pathDecision: livePathDecision,
+    callerRole: livePathDecision.callerRole?.role || session.callerRole,
+  });
   const missingBant = getMissingBantFields(liveBant);
   session.bantStatus = {
     known: liveBant,
@@ -41954,6 +42895,8 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
   session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
   session.lastAvaReplyMode = reply.replyMode || 'debug_inject';
   session.pathDecision = reply.architecture?.pathDecision || session.pathDecision || livePathDecision;
+  session.goalInference = reply.architecture?.goalInference || session.goalInference;
+  session.userGoals = session.goalInference?.user_goals || session.userGoals || [];
   session.bantStatus = buildLiveCallBantStatus(session, contextCall);
   session.prosody = reply.architecture?.prosody || reply.conversation?.prosody || session.prosody || {};
   session.activeListening = reply.architecture?.activeListening || reply.conversation?.activeListening || session.activeListening || {};
@@ -42070,6 +43013,8 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     lastAvaSpokenPreview: '',
     bantStatus: { known: {}, missing: BANT_FIELDS.slice(), complete: false, nextMissing: BANT_FIELDS[0] || '' },
     pathDecision: {},
+    goalInference: {},
+    userGoals: [],
     prosody: {},
     activeListening: {},
     waitingForSeller: false,
@@ -42265,6 +43210,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           recommendedAction: classification.recommendedAction,
           transcriptFinal: finalTranscriptItems.length > 0,
         },
+      });
+      void upsertCallEmbeddingFromTranscript({
+        workspaceId: 'pbk',
+        callId: message.callId || session.callId || contextCall?.id || '',
+        leadId: message.leadId || contextCall?.leadId || '',
+        transcriptText,
+        outcome: contextCall?.status || message.status || 'transcribed',
+        status: contextCall?.status || message.status || '',
+        sentiment: session.sentiment?.pbkScore ?? null,
+        source: 'telnyx-deepgram-finalize',
+        streamId: session.streamId,
+        reason,
       });
     }
 

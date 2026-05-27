@@ -16041,7 +16041,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     && warManual.listenProbe?.question
     ? warManual.listenProbe.question
     : '';
-  const masterProbePhrase = pathCanGuide && masterProbe.mustAskBeforePitch
+  const masterProbePhrase = pathCanGuide && (masterProbe.mustAskBeforePitch || (!pathDecision.pathLocked && masterProbe.question))
     ? masterProbe.question
     : '';
   const activeListeningPhrase = pathCanGuide
@@ -40987,6 +40987,9 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   }
   if (warManual.objection?.response && Number(warManual.objection?.confidence || 0) >= 0.16) {
     return withSafeActiveHook(`${opener}${warManual.objection.response}`);
+  }
+  if (!pathDecision.pathLocked && masterProbe.question) {
+    return withSafeActiveHook(`${opener}${masterProbe.question}`, { fallback: masterProbe.question });
   }
   if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(lower)) {
     return withSafeActiveHook('That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?');

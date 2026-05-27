@@ -129,6 +129,9 @@ function summarizeLiveMediaSession(session = {}) {
     prosodyProfile: session.prosody?.profile || session.prosody?.mode || '',
     waitingForSeller: Boolean(session.waitingForSeller),
     responseRequired: Boolean(session.responseRequired),
+    avaTurnLockUntil: session.avaTurnLockUntil || '',
+    avaTurnLockReason: session.avaTurnLockReason || '',
+    avaReplySuppressed: Boolean(session.avaReplySuppressed),
     lastRedisSyncResult: session.lastRedisSyncResult || '',
   };
 }

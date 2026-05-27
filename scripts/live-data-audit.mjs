@@ -922,7 +922,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-ava-turn-taking-hardening)'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -938,6 +938,10 @@ const checks = [
       && /lastAvaSpoken/.test(bridge)
       && /bantStatus/.test(bridge)
       && /prosody/.test(bridge)
+      && /telnyxAvaTurnLocksByCallId/.test(bridge)
+      && /caller_requested_floor/.test(bridge)
+      && /weak_seller_utterance/.test(bridge)
+      && /duplicate_media_stream_replaced/.test(bridge)
       && /maskPhoneForDiagnostics/.test(bridge)
       && /leadResolver: inboundDiagnostic/.test(bridge)
       && /redis_call_state_active_resurrection_blocked/.test(bridge)

@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-recording-rag-memory-db-check';
+const BUILD_REVISION = '2026-05-27-ava-recording-rag-memory-db-apply';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -5078,6 +5078,7 @@ let __pgPool = null;
 let pgSchemaPersistenceWarned = false;
 let stateDbLoadWarned = false;
 let stateDbPersistWarned = false;
+let callEmbeddingsSchemaLastError = null;
 
 function getPgPool() {
   if (__pgPool) return __pgPool;
@@ -6619,11 +6620,15 @@ async function ensurePgSchema() {
     await seedAvaMasterclassKnowledgeToPg(pool);
     return true;
   } catch (error) {
+    const embeddingsReady = await ensureCallEmbeddingsSchema(pool).catch((schemaError) => {
+      callEmbeddingsSchemaLastError = schemaError?.message || String(schemaError);
+      return false;
+    });
     if (!pgSchemaPersistenceWarned) {
       console.warn('[pbk-local-openclaw] postgres schema unavailable; continuing with runtime fallback:', error?.message || error);
       pgSchemaPersistenceWarned = true;
     }
-    return false;
+    return embeddingsReady;
   }
 }
 
@@ -6748,8 +6753,10 @@ async function ensureCallEmbeddingsSchema(pool) {
       COMMENT ON FUNCTION public.match_call_embeddings(VECTOR, DOUBLE PRECISION, INT, TEXT, TEXT) IS
         'Returns similar past call memory capsules by cosine similarity for Ava live-call resolver retrieval.';
     `);
+    callEmbeddingsSchemaLastError = null;
     return true;
   } catch (error) {
+    callEmbeddingsSchemaLastError = error?.message || String(error);
     console.warn('[pbk-local-openclaw] call_embeddings schema ensure failed:', error?.message || error);
     return false;
   }
@@ -6814,6 +6821,7 @@ async function readCallEmbeddingsSchemaStatus() {
     textIndexExists,
     columnCount,
     revision: BUILD_REVISION,
+    lastError: callEmbeddingsSchemaLastError || '',
   };
 }
 
@@ -34703,6 +34711,28 @@ const toolHandlers = {
   async getCallEmbeddingsSchemaStatus(params = {}) {
     recordToolUse('getCallEmbeddingsSchemaStatus');
     return readCallEmbeddingsSchemaStatus();
+  },
+
+  async applyCallEmbeddingsSchema(params = {}) {
+    recordToolUse('applyCallEmbeddingsSchema');
+    const pool = getPgPool();
+    if (!pool) {
+      return {
+        ok: false,
+        configured: false,
+        result: 'postgres_unavailable',
+        error: 'PBK_DATABASE_URL is not configured.',
+      };
+    }
+    const applied = await ensureCallEmbeddingsSchema(pool);
+    const status = await readCallEmbeddingsSchemaStatus();
+    return {
+      ...status,
+      applied,
+      result: status.ok
+        ? 'call_embeddings_schema_applied'
+        : 'call_embeddings_schema_apply_failed',
+    };
   },
 
   async getProsodyAdvice(params = {}) {

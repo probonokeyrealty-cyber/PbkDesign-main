@@ -951,7 +951,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1223,12 +1223,19 @@ const checks = [
       && !/message\.content\s*\|\|\s*message\.reasoning_content/.test(bridge),
   },
   {
-    name: 'Ava live Telnyx replies use a fast local script before background strategist coaching',
+    name: 'Ava live Telnyx replies prioritize inline full-intelligence strategist without robotic anti-repeat',
     ok: /function\s+buildFastTelnyxLiveAvaReplyText/.test(bridge)
-      && /TELNYX_LIVE_REPLY_STRATEGIST_MODE/.test(bridge)
+      && /TELNYX_LIVE_REPLY_STRATEGIST_MODE[^;\n]+inline/.test(bridge)
+      && /TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS[^;\n]+1200/.test(bridge)
+      && /replyMode:\s*'strategist_inline'/.test(bridge)
       && /replyMode:\s*'fast_local'/.test(bridge)
-      && /strategist_background/.test(bridge)
-      && /isTelnyxCallStillSpeakable/.test(bridge),
+      && /session\.masterProbe\?\.mustAskBeforePitch && mode !== 'inline'/.test(bridge)
+      && /maxTokens:\s*320/.test(bridge)
+      && /deepseek_call_started/.test(bridge)
+      && /deepseek_call_completed/.test(bridge)
+      && /staleExpired/.test(bridge)
+      && !/I do not want to repeat myself here/.test(bridge)
+      && /[Ww]hat would help me answer that the right way/.test(bridge),
   },
   {
     name: 'Ava live Telnyx replies are written back as conversation turns',

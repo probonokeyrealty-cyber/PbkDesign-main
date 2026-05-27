@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-full-intelligence-context';
+const BUILD_REVISION = '2026-05-27-ava-live-quality-inline';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -236,8 +236,8 @@ const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(proce
 const TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS = Math.max(2500, Math.min(12000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS || 6500)));
 const TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS = Math.max(TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS || 18000)));
 const TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS = Math.max(5000, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS || 12000)));
-const TELNYX_LIVE_REPLY_STRATEGIST_MODE = String(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'background').trim().toLowerCase();
-const TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS = Math.max(0, Math.min(2500, Number(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 650)));
+const TELNYX_LIVE_REPLY_STRATEGIST_MODE = String(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'inline').trim().toLowerCase();
+const TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS = Math.max(0, Math.min(2500, Number(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 1200)));
 const PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || 'true').trim());
 const TELNYX_BIDIRECTIONAL_MEDIA_MODE = String(process.env.PBK_TELNYX_BIDIRECTIONAL_MEDIA_MODE || 'mp3').trim().toLowerCase();
 const TELNYX_ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_TELNYX_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
@@ -1308,11 +1308,26 @@ async function getSharedTelnyxCallStates() {
       const updatedMs = Date.parse(record.updatedAt || record.lastAudioAt || record.startedAt || '');
       const staleInactive = status && status !== 'active';
       const staleFinalized = Boolean(record.finalized || record.endedAt);
+      const staleExpired = Number.isFinite(updatedMs) && Date.now() - updatedMs > REDIS_ACTIVE_CALL_STALE_MS;
       const staleDisconnected = record.deepgramSocketOpen === false
         && Number.isFinite(updatedMs)
         && Date.now() - updatedMs > REDIS_ACTIVE_CALL_STALE_MS;
-      if (staleInactive || staleFinalized || staleDisconnected) {
+      if (staleInactive || staleFinalized || staleDisconnected || staleExpired) {
         await client.sRem(indexKey, id).catch(() => {});
+        await client.del(redisKey('call', id)).catch(() => {});
+        recordCallTrace('redis_shared_call_state_pruned', {
+          callId: record.callId || '',
+          streamId: record.streamId || '',
+          sessionId: record.id || id,
+          phone: record.phone || '',
+          leadId: record.leadId || '',
+          leadName: record.leadName || '',
+          status: 'pruned',
+          result: staleExpired ? 'staleExpired' : staleFinalized ? 'staleFinalized' : staleDisconnected ? 'staleDisconnected' : 'staleInactive',
+          updatedAt: record.updatedAt || '',
+          lastAudioAt: record.lastAudioAt || '',
+          stage: 'getSharedTelnyxCallStates',
+        });
         continue;
       }
       records.push(record);
@@ -14918,12 +14933,17 @@ function getAvaCallIntelligenceSettings() {
 function getTelnyxLiveReplyStrategistMode() {
   const settings = getAvaCallIntelligenceSettings();
   if (!settings.enabled) return 'off';
-  return settings.strategistMode || TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'background';
+  const mode = String(settings.strategistMode || TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'inline').trim().toLowerCase();
+  if (mode === 'off') return 'off';
+  if (isAvaFullIntelligenceMode() && mode === 'background') return 'inline';
+  return mode || 'inline';
 }
 
 function getTelnyxLiveReplyStrategistTimeoutMs() {
   const settings = getAvaCallIntelligenceSettings();
-  return settings.strategistTimeoutMs || TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS;
+  const configured = Number(settings.strategistTimeoutMs || TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 1200);
+  if (isAvaFullIntelligenceMode()) return Math.max(1000, Math.min(1800, configured || 1200));
+  return configured;
 }
 
 function buildAvaScriptRotationSnapshot(params = {}) {
@@ -18269,14 +18289,37 @@ async function persistLearningRequestToPg(record = {}) {
 
 async function askStrategistRecord(params = {}) {
   const built = buildStrategistMessages(params);
+  const context = built.context;
   const fallbackChain = [];
   let strategist = null;
   if (STRATEGIST_PROVIDER === 'deepseek') {
+    recordCallTrace('deepseek_call_started', {
+      callId: params.callId || params.metadata?.callId || '',
+      streamId: params.streamId || params.metadata?.streamId || '',
+      leadId: params.leadId || context.leadId || '',
+      leadName: params.leadName || context.leadName || '',
+      status: 'started',
+      result: 'deepseek_live_strategist_started',
+      stage: 'askStrategistRecord',
+    });
+    const deepSeekStartedAt = Date.now();
     const primary = await runDeepSeekChatCompletion(built.messages, {
       model: params.model || DEEPSEEK_MODEL,
       responseFormat: 'json',
       temperature: params.temperature ?? 0.2,
       maxTokens: params.maxTokens || 1200,
+      timeoutMs: params.timeoutMs || params.timeout_ms,
+    });
+    recordCallTrace('deepseek_call_completed', {
+      callId: params.callId || params.metadata?.callId || '',
+      streamId: params.streamId || params.metadata?.streamId || '',
+      leadId: params.leadId || context.leadId || '',
+      leadName: params.leadName || context.leadName || '',
+      status: primary.ok ? 'ok' : 'failed',
+      result: primary.result || '',
+      latencyMs: Date.now() - deepSeekStartedAt,
+      error: primary.error || '',
+      stage: 'askStrategistRecord',
     });
     fallbackChain.push({ provider: 'deepseek', model: params.model || DEEPSEEK_MODEL, result: primary.result, ok: primary.ok, error: primary.error || '' });
     if (primary.ok) {
@@ -18295,6 +18338,7 @@ async function askStrategistRecord(params = {}) {
         responseFormat: 'json',
         temperature: params.temperature ?? 0.2,
         maxTokens: params.maxTokens || 1200,
+        timeoutMs: params.timeoutMs || params.timeout_ms,
       });
       fallbackChain.push({ provider: 'deepseek', model: DEEPSEEK_FALLBACK_MODEL, result: secondary.result, ok: secondary.ok, error: secondary.error || '' });
       if (secondary.ok) {
@@ -18316,7 +18360,6 @@ async function askStrategistRecord(params = {}) {
   }
 
   const now = isoNow();
-  const context = built.context;
   const request = {
     id: params.id || `ava-learning-request-${Date.now()}-${randomUUID().slice(0, 8)}`,
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id),
@@ -41078,7 +41121,13 @@ function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
   if (cleanFallback && !hasAvaRepeatedLiveReply(session, cleanFallback)) {
     return { text: cleanFallback, adjusted: true, reason: 'fallback_not_repeated' };
   }
-  const pivot = 'I do not want to repeat myself here. Let me ask it a different way: what would make this feel like a safe next step for you?';
+  const role = normalizeAvaCallerRole(session.callerRole || session.pathDecision?.callerRole?.role || '');
+  const path = normalizePbkDealPath(session.selectedPath || session.pathDecision?.selectedPath || session.identifiedPath || '', 'cash');
+  const pivot = role === PBK_CALLER_ROLES.AGENT
+    ? 'I hear you. What would help me answer that the right way: days on market, condition, seller timeline, or the number they need?'
+    : path === 'land'
+      ? 'I hear you. What would help me answer that the right way: access, utilities, zoning, or your timeline?'
+      : 'I hear you. What would help me answer that the right way: the property condition, your timeline, or the number you need?';
   return { text: pivot, adjusted: true, reason: 'anti_repeat_pivot' };
 }
 
@@ -41358,7 +41407,8 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       ],
       confidence: 0.82,
       temperature: 0.68,
-      maxTokens: 700,
+      maxTokens: 320,
+      timeoutMs: getTelnyxLiveReplyStrategistTimeoutMs(),
       storeRule: false,
       status: 'suggested',
       metadata: {
@@ -41464,7 +41514,10 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   }
   const fallback = buildFastTelnyxLiveAvaReplyText({ session, transcript, contextCall });
   const normalizedFallback = normalizeAvaVoiceReplyText(fallback, fallback);
-  if (session.masterProbe?.mustAskBeforePitch) {
+  const mode = getTelnyxLiveReplyStrategistMode();
+  const strategistTimeoutMs = getTelnyxLiveReplyStrategistTimeoutMs();
+
+  if (session.masterProbe?.mustAskBeforePitch && mode !== 'inline') {
     const nonRepeatingMasterProbe = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
     return {
       text: nonRepeatingMasterProbe.text,
@@ -41478,8 +41531,6 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
       },
     };
   }
-  const mode = getTelnyxLiveReplyStrategistMode();
-  const strategistTimeoutMs = getTelnyxLiveReplyStrategistTimeoutMs();
 
   if (mode === 'inline') {
     const insightPromise = buildTelnyxLiveAvaReplyInsight({ session, transcript, contextCall })

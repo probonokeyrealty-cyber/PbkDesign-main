@@ -914,6 +914,20 @@ const checks = [
       && /Ava allowed an owner call to stay on a CF\/MF path/.test(openclawSmoke),
   },
   {
+    name: 'Ava full-intelligence mode promotes best context on weak transcripts',
+    ok: /PBK_AVA_FULL_INTELLIGENCE_REVISION/.test(bridge)
+      && /PBK_INTELLIGENCE_MODE/.test(bridge)
+      && /function isAvaFullIntelligenceMode/.test(bridge)
+      && /function selectAvaBestContextTranscript/.test(bridge)
+      && /function buildAvaFullIntelligenceContext/.test(bridge)
+      && /fullIntelligence/.test(bridge)
+      && /bestTranscript/.test(bridge)
+      && /weakTranscript/.test(bridge)
+      && /weak_seller_utterance_context_promoted/.test(bridge)
+      && /Ava full intelligence mode was not enabled for a weak transcript turn/.test(openclawSmoke)
+      && /Ava did not promote recent seller context over the weak current transcript/.test(openclawSmoke),
+  },
+  {
     name: 'Ava voice uses DeepSeek call-state context and a speech-safe TTS boundary',
     ok: /function buildAvaCallStateSummary/.test(bridge)
       && /Call state summary/.test(bridge)
@@ -937,7 +951,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

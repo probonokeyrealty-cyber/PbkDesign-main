@@ -108,6 +108,7 @@ function hasWords(summary = {}) {
 function summarizeLiveMediaSession(session = {}) {
   const bantStatus = session.bantStatus || {};
   const pathDecision = session.pathDecision || {};
+  const fullIntelligence = session.fullIntelligence || {};
   return {
     callId: session.callId || '',
     streamId: session.streamId || '',
@@ -124,6 +125,12 @@ function summarizeLiveMediaSession(session = {}) {
     callerRole: session.callerRole || session.pathDecision?.callerRole?.role || '',
     masterProbe: String(session.masterProbe?.question || session.pathDecision?.masterProbe?.question || '').slice(0, 180),
     agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
+    fullIntelligenceMode: fullIntelligence.mode || '',
+    bestContextSource: fullIntelligence.context?.source || '',
+    weakTranscript: Boolean(fullIntelligence.context?.weakTranscript),
+    usedScripts: Array.isArray(session.usedScripts || fullIntelligence.usedScripts) ? (session.usedScripts || fullIntelligence.usedScripts).join(',') : '',
+    objectionTriggered: session.objectionTriggered || fullIntelligence.objectionTriggered || '',
+    probeDepth: session.probeDepth || fullIntelligence.probeDepth || 0,
     selectedPath: session.selectedPath || pathDecision.selectedPath || '',
     identifiedPath: session.identifiedPath || '',
     pathLocked: Boolean(session.pathLocked || pathDecision.pathLocked),

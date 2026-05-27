@@ -40,7 +40,9 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-role-probing-guardrails';
+const BUILD_REVISION = '2026-05-27-ava-full-intelligence-context';
+const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
+const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -1041,6 +1043,14 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
   const lastAvaPreview = String(session.lastAvaReplyPreview || session.lastAvaPreview || '').slice(0, 1200);
   const lastAvaSpoken = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').slice(0, 1200);
   const bantStatus = buildLiveCallBantStatus(session);
+  const pathDecision = session.pathDecision || {};
+  const fullIntelligence = session.fullIntelligence || buildAvaFullIntelligenceContext({
+    session,
+    transcript: lastTranscript.transcript || '',
+    query: lastTranscript.transcript || '',
+    pathDecision,
+    activeListening: session.activeListening || {},
+  });
   return {
     id: session.id || '',
     callId: session.callId || '',
@@ -1069,11 +1079,15 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     selectedPath: session.selectedPath || '',
     pathLocked: Boolean(session.pathLocked),
     identifiedPath: session.identifiedPath || '',
-    pathDecision: session.pathDecision || {},
-    callerRole: session.callerRole || session.pathDecision?.callerRole?.role || '',
-    callerRoleConfidence: session.callerRoleConfidence || session.pathDecision?.callerRole?.confidence || 0,
-    masterProbe: session.masterProbe || session.pathDecision?.masterProbe || {},
+    pathDecision,
+    callerRole: session.callerRole || pathDecision.callerRole?.role || '',
+    callerRoleConfidence: session.callerRoleConfidence || pathDecision.callerRole?.confidence || 0,
+    masterProbe: session.masterProbe || pathDecision.masterProbe || {},
     agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
+    fullIntelligence,
+    usedScripts: fullIntelligence.usedScripts || session.usedScripts || [],
+    objectionTriggered: fullIntelligence.objectionTriggered || session.objectionTriggered || '',
+    probeDepth: fullIntelligence.probeDepth || session.probeDepth || session.pathProbeTurnCount || 0,
     bantStatus,
     prosody: session.prosody || session.lastProsody || {},
     activeListening: session.activeListening || {},
@@ -1120,6 +1134,14 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
   const phone = session.phone || contextCall?.phone || contextCall?.from || '';
   const pathDecision = session.pathDecision || contextCall?.pathDecision || {};
   const bantStatus = buildLiveCallBantStatus(session, contextCall);
+  const fullIntelligence = session.fullIntelligence || buildAvaFullIntelligenceContext({
+    session,
+    contextCall,
+    transcript: lastTranscript.transcript || '',
+    query: lastTranscript.transcript || '',
+    pathDecision,
+    activeListening: session.activeListening || {},
+  });
   return {
     sessionId: session.id || '',
     callId: session.callId || contextCall?.id || '',
@@ -1152,6 +1174,10 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
     callerRoleConfidence: session.callerRoleConfidence || pathDecision.callerRole?.confidence || 0,
     masterProbe: session.masterProbe || pathDecision.masterProbe || {},
     agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
+    fullIntelligence,
+    usedScripts: fullIntelligence.usedScripts || session.usedScripts || [],
+    objectionTriggered: fullIntelligence.objectionTriggered || session.objectionTriggered || '',
+    probeDepth: fullIntelligence.probeDepth || session.probeDepth || session.pathProbeTurnCount || 0,
     bantStatus,
     prosody: session.prosody || session.lastProsody || contextCall?.prosody || {},
     activeListening: session.activeListening || {},
@@ -14934,6 +14960,155 @@ function buildAvaScriptRotationSnapshot(params = {}) {
   };
 }
 
+function getAvaIntelligenceMode(params = {}) {
+  return String(params.intelligenceMode || params.intelligence_mode || PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
+}
+
+function isAvaFullIntelligenceMode(params = {}) {
+  return !/^(off|false|0|basic|conditional|minimal)$/i.test(getAvaIntelligenceMode(params));
+}
+
+function normalizeAvaBestContextText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isAvaWeakContextTranscript(value = '') {
+  const clean = normalizeAvaBestContextText(value).toLowerCase();
+  if (!clean) return true;
+  if (/^(right|yeah|yes|yep|ok|okay|sure|mm hmm|uh huh|it'?s|submission|thanks|thank you|cool|alright|all right|hmm)[.!?\s]*$/i.test(clean)) return true;
+  const words = clean.split(/\s+/).filter(Boolean);
+  return words.length <= 1;
+}
+
+function getAvaTurnTranscriptText(turn = {}) {
+  if (typeof turn === 'string') return normalizeAvaBestContextText(turn);
+  return normalizeAvaBestContextText(turn.transcript || turn.text || turn.message || turn.content || turn.utterance || '');
+}
+
+function isAvaSellerTurn(turn = {}) {
+  if (typeof turn === 'string') return true;
+  const speaker = String(turn.speaker || turn.role || turn.from || turn.source || '').trim().toLowerCase();
+  if (!speaker) return true;
+  if (/\b(ava|assistant|bot|system|tool|strategist|rex|hermes)\b/i.test(speaker)) return false;
+  return /\b(seller|caller|owner|lead|human|user|customer|agent|realtor|broker)\b/i.test(speaker);
+}
+
+function collectAvaRecentSellerTurns(session = {}, contextCall = null, limit = 6) {
+  const sources = [
+    { label: 'session.transcript', turns: session?.transcript },
+    { label: 'session.transcripts', turns: session?.transcripts },
+    { label: 'contextCall.transcript', turns: contextCall?.transcript },
+    { label: 'contextCall.transcripts', turns: contextCall?.transcripts },
+    { label: 'contextCall.messages', turns: contextCall?.messages },
+  ];
+  const turns = [];
+  for (const source of sources) {
+    if (!Array.isArray(source.turns)) continue;
+    source.turns.forEach((turn, index) => {
+      const text = getAvaTurnTranscriptText(turn);
+      if (!text || !isAvaSellerTurn(turn)) return;
+      turns.push({
+        source: source.label,
+        index,
+        speaker: typeof turn === 'string' ? 'seller' : String(turn.speaker || turn.role || turn.from || 'seller').slice(0, 40),
+        transcript: sanitizeAvaSpokenOutput(text).slice(0, 420),
+        capturedAt: typeof turn === 'object' ? (turn.capturedAt || turn.timestamp || turn.createdAt || turn.at || '') : '',
+      });
+    });
+  }
+  const seen = new Set();
+  return turns
+    .reverse()
+    .filter((turn) => {
+      const key = turn.transcript.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, limit)
+    .reverse();
+}
+
+function selectAvaBestContextTranscript(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || null;
+  const currentTranscript = sanitizeAvaSpokenOutput(
+    normalizeAvaBestContextText(params.transcript || params.query || params.text || ''),
+  ).slice(0, 700);
+  const weakTranscript = isAvaWeakContextTranscript(currentTranscript);
+  const recentTurns = collectAvaRecentSellerTurns(session, contextCall, Number(params.limit || 6));
+  let bestTranscript = currentTranscript;
+  let source = 'current_transcript';
+  if (weakTranscript || !bestTranscript) {
+    const promoted = [...recentTurns].reverse().find((turn) => {
+      const text = normalizeAvaBestContextText(turn.transcript);
+      return text && !isAvaWeakContextTranscript(text) && text.toLowerCase() !== currentTranscript.toLowerCase();
+    });
+    if (promoted?.transcript) {
+      bestTranscript = promoted.transcript;
+      source = promoted.source || 'recent_seller_turn';
+    }
+  }
+  const resumedFromPriorContext = Boolean(bestTranscript && source !== 'current_transcript');
+  return {
+    revision: PBK_AVA_FULL_INTELLIGENCE_REVISION,
+    mode: getAvaIntelligenceMode(params),
+    currentTranscript,
+    bestTranscript: bestTranscript || currentTranscript,
+    source,
+    weakTranscript,
+    resumedFromPriorContext,
+    recentTurns,
+  };
+}
+
+function buildAvaFullIntelligenceContext(params = {}) {
+  const architecture = params.architecture || {};
+  const pathDecision = params.pathDecision || architecture.pathDecision || {};
+  const warManual = params.warManual || architecture.warManual || {};
+  const activeListening = params.activeListening || architecture.activeListening || {};
+  const bestContext = params.bestContext || selectAvaBestContextTranscript(params);
+  const usedScripts = [
+    pathDecision.selectedPath || '',
+    pathDecision.scriptTrigger ? 'path_script_trigger' : '',
+    activeListening.callFlow?.nextStepId || '',
+    warManual.path?.key || warManual.pathPicker?.selectedPath || '',
+    warManual.objection?.tag ? `objection:${warManual.objection.tag}` : '',
+  ].filter(Boolean).slice(0, 8);
+  return {
+    revision: PBK_AVA_FULL_INTELLIGENCE_REVISION,
+    mode: getAvaIntelligenceMode(params),
+    enabled: isAvaFullIntelligenceMode(params),
+    context: {
+      currentTranscript: bestContext.currentTranscript,
+      bestTranscript: bestContext.bestTranscript,
+      source: bestContext.source,
+      weakTranscript: Boolean(bestContext.weakTranscript),
+      resumedFromPriorContext: Boolean(bestContext.resumedFromPriorContext),
+      recentTurns: bestContext.recentTurns,
+    },
+    layers: {
+      callerRole: true,
+      bant: true,
+      pathDecision: true,
+      warManual: true,
+      activeListening: true,
+      scripts: true,
+      memory: true,
+      prosody: true,
+      safety: true,
+    },
+    usedScripts,
+    objectionTriggered: warManual.objection?.tag || '',
+    probeDepth: Number(params.probeDepth || params.probe_depth || params.session?.probeDepth || params.session?.pathProbeTurnCount || pathDecision.probeTurnCount || 0),
+    resume: {
+      canResume: Boolean(bestContext.bestTranscript),
+      source: bestContext.source,
+      key: params.session?.callId || params.contextCall?.id || params.contextCall?.callId || params.leadId || params.phone || '',
+    },
+  };
+}
+
 function buildAvaCallArchitectureContext(params = {}) {
   const session = params.session || {};
   const contextCall = params.contextCall || params.call || {};
@@ -14944,7 +15119,9 @@ function buildAvaCallArchitectureContext(params = {}) {
     address: contextCall.address || session.address || params.address,
     phone: contextCall.phone || session.phone || params.phone,
   });
-  const transcript = String(params.transcript || params.query || params.text || '').trim();
+  const bestContext = selectAvaBestContextTranscript({ ...params, session, contextCall });
+  const rawTranscript = String(params.transcript || params.query || params.text || '').trim();
+  const transcript = isAvaFullIntelligenceMode(params) ? (bestContext.bestTranscript || rawTranscript) : rawTranscript;
   const knownBant = normalizeBantInfo(contextCall.bant || {}, contextCall.raw?.bant || {}, contextCall.raw || {}, params.bant || {});
   const bant = normalizeBantInfo(knownBant, extractBantFromTranscript(transcript, knownBant));
   const missingBant = getMissingBantFields(bant);
@@ -15029,6 +15206,19 @@ function buildAvaCallArchitectureContext(params = {}) {
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  const fullIntelligence = buildAvaFullIntelligenceContext({
+    ...params,
+    session,
+    contextCall,
+    transcript: rawTranscript,
+    query: rawTranscript,
+    bestContext,
+    pathDecision,
+    warManual,
+    activeListening,
+    scripts,
+    probeDepth: session.probeDepth || session.pathProbeTurnCount || pathDecision.probeTurnCount || 0,
+  });
   return {
     schemaVersion: 'pbk-ava-call-intelligence-v1',
     enabled: getAvaCallIntelligenceSettings().enabled,
@@ -15050,6 +15240,7 @@ function buildAvaCallArchitectureContext(params = {}) {
     dealPath: pathDecision,
     warManual,
     activeListening,
+    fullIntelligence,
     scripts,
     rexOversight: {
       recentCallAnalyses: recentAnalyses,
@@ -15991,13 +16182,21 @@ async function buildAvaConversationIntelligence(params = {}) {
     ...baseContext,
     ...(params.context && typeof params.context === 'object' ? params.context : {}),
   };
-  const query = String(params.query || params.text || params.transcript || params.lastUserUtterance || '').trim();
+  const rawQuery = String(params.query || params.text || params.transcript || params.lastUserUtterance || '').trim();
+  const bestContext = selectAvaBestContextTranscript({
+    ...params,
+    session: params.session || {},
+    contextCall: params.contextCall || params.call || {},
+    query: rawQuery,
+    transcript: rawQuery,
+  });
+  const query = isAvaFullIntelligenceMode(params) ? (bestContext.bestTranscript || rawQuery) : rawQuery;
   const reaction = buildRealTimeConversationReaction({ ...params, ...context, query });
   const architecture = buildAvaCallArchitectureContext({
     ...params,
     ...context,
-    query,
-    transcript: params.transcript || query,
+    query: rawQuery,
+    transcript: params.transcript || rawQuery,
   });
   const [closing, similarDeals, memories] = await Promise.all([
     buildClosingIntelligenceAdvice({ ...params, query, context, objectionType: reaction.objectionType, synthesize: params.synthesize === true }),
@@ -16092,6 +16291,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     masterProbe,
     warManual,
     activeListening,
+    fullIntelligence: architecture.fullIntelligence,
     objectionType: reaction.objectionType,
     reaction,
     prosody: reaction.prosody,
@@ -17930,6 +18130,16 @@ function buildAvaCallStateSummary(params = {}) {
   const warMove = warManual.psychologyMove || {};
   const callerRole = params.callerRole || architecture.callerRole || pathDecision.callerRole || detectAvaCallerRole({ session, contextCall, transcript });
   const masterProbe = params.masterProbe || architecture.masterProbe || pathDecision.masterProbe || buildAvaMasterProbe({ session, contextCall, transcript, pathDecision, callerRoleDecision: callerRole });
+  const fullIntelligence = params.fullIntelligence || architecture.fullIntelligence || conversation.fullIntelligence || buildAvaFullIntelligenceContext({
+    session,
+    contextCall,
+    transcript,
+    query: transcript,
+    pathDecision,
+    warManual,
+    activeListening,
+    scripts: architecture.scripts || {},
+  });
   const activeSellerWords = sanitizeAvaSpokenOutput(activeListening.lastSellerWords || transcript || '').slice(0, 220);
   const activeMirror = sanitizeAvaSpokenOutput(activeListening.mirroredPhrase || '').slice(0, 120);
   const activeLabel = sanitizeAvaSpokenOutput(activeListening.label || '').slice(0, 220);
@@ -17946,6 +18156,8 @@ function buildAvaCallStateSummary(params = {}) {
     `Path: ${pathState} ${selectedPath}${confidence ? ` at ${confidence}% confidence` : ''}.`,
     `Caller role: ${callerRole.role || 'unknown'} (${Math.round(toNumber(callerRole.confidence, 0) * 100)}%). ${callerRole.needsClarification ? 'Clarify owner/agent/decision-maker before pitching.' : 'Role is clear enough for this turn.'}`,
     masterProbe?.question ? `Master probe: ${masterProbe.question} (${masterProbe.reason || 'probe required'}).` : '',
+    fullIntelligence?.enabled ? `Full intelligence: ${fullIntelligence.revision}; mode=${fullIntelligence.mode}; bestContext=${fullIntelligence.context?.source || 'current_transcript'}; weakTranscript=${Boolean(fullIntelligence.context?.weakTranscript)}; layers=${Object.entries(fullIntelligence.layers || {}).filter(([, enabled]) => enabled).map(([key]) => key).join(',')}.` : '',
+    fullIntelligence?.context?.bestTranscript ? `Best seller context for this answer: ${sanitizeAvaSpokenOutput(fullIntelligence.context.bestTranscript).slice(0, 260)}` : '',
     'Audience guard: Creative Finance and Multi-Family are agent-only. If caller is not an agent, do not mention those paths; ask an owner-safe probe instead.',
     pathDecision.rule ? `Path rule: ${sanitizeAvaSpokenOutput(pathDecision.rule).slice(0, 220)}` : '',
     warManual.revision ? `War manual: ${warManual.revision}; ${warManual.pathPicker?.name || '7-second path picker'} -> ${warPath || 'diagnosing'}; emotional state ${warEmotion || 'unknown'}; motivator ${warMotivator}; objection ${warObjection}; tone ${warTone || 'Calm Authority'}.` : '',
@@ -17996,6 +18208,7 @@ function buildStrategistMessages(params = {}) {
     'Audience guard: Creative Finance and Multi-Family are agent-only. Never pitch, explain, or hint at CF/MF to a homeowner or unknown caller.',
     'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.',
     'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.',
+    'Full intelligence mode: use the best seller context in the call-state summary. If the latest transcript is weak, answer from the strongest recent seller context and do not repeat prior questions.',
     'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.',
     'Never speak phone numbers, call_control_id values, stream_id values, lead IDs, request IDs, JSON keys, tool names, debug labels, or internal routing notes.',
     'Use PBK masterclass behavior: emotional intelligence, phone EQ, ego handling, sensitive-topic deflection, BANT+ discipline, and path discipline across Cash Offer, Land, RBP/novation, Creative Finance, and Mortgage Takeover.',
@@ -40884,8 +41097,12 @@ function applyAvaPathDecisionToSession(session = {}, pathDecision = {}) {
 }
 
 function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contextCall = null } = {}) {
-  const raw = String(transcript || '').replace(/\s+/g, ' ').trim();
-  const lower = raw.toLowerCase();
+  const currentRaw = String(transcript || '').replace(/\s+/g, ' ').trim();
+  const bestContext = selectAvaBestContextTranscript({ session, contextCall, transcript: currentRaw, query: currentRaw });
+  const raw = isAvaFullIntelligenceMode() ? (bestContext.bestTranscript || currentRaw) : currentRaw;
+  const lower = currentRaw.toLowerCase();
+  const intelligenceLower = raw.toLowerCase();
+  const turnLower = `${lower} ${intelligenceLower}`.trim();
   const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
   const knownBant = normalizeBantInfo(contextCall?.bant || {}, contextCall?.raw?.bant || {}, contextCall?.raw || {});
   const extractedBant = extractBantFromTranscript(raw, knownBant);
@@ -40991,13 +41208,13 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (!pathDecision.pathLocked && masterProbe.question) {
     return withSafeActiveHook(`${opener}${masterProbe.question}`, { fallback: masterProbe.question });
   }
-  if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(lower)) {
+  if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(turnLower)) {
     return withSafeActiveHook('That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?');
   }
-  if (/\b(price|offer|how much|worth|lowball|cash)\b/i.test(lower)) {
+  if (/\b(price|offer|how much|worth|lowball|cash)\b/i.test(turnLower)) {
     return withSafeActiveHook('I can help with that, but I do not want to guess or throw out a sloppy number. What is the property address and current condition?');
   }
-  if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(lower)) {
+  if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(turnLower)) {
     return withSafeActiveHook('I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?');
   }
   if (pathDecision.shouldClosePath && pathDecision.scriptTrigger) {
@@ -41901,14 +42118,39 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       return;
     }
     if (isWeakTelnyxSellerUtterance(transcriptForReply) && !isTelnyxLiveAudioCheckUtterance(transcriptForReply) && !isTelnyxLiveGreetingOnlyUtterance(transcriptForReply)) {
-      recordCallTrace('ava_phone_reply_skipped', {
-        ...session,
-        status: 'skipped',
-        result: 'weak_seller_utterance',
+      const weakContextCall = getCallById(session.callId);
+      const weakBestContext = selectAvaBestContextTranscript({
+        session,
+        contextCall: weakContextCall,
         transcript: item.transcript,
-        stage: 'maybeSpeakTelnyxAvaReply',
+        query: item.transcript,
       });
-      return;
+      const canPromoteWeakTranscript = isAvaFullIntelligenceMode()
+        && Boolean(weakBestContext.bestTranscript)
+        && weakBestContext.source !== 'current_transcript'
+        && session.responseRequired !== false;
+      if (canPromoteWeakTranscript) {
+        session.fullIntelligenceWeakTranscriptPromoted = true;
+        session.fullIntelligenceBestContext = weakBestContext;
+        recordCallTrace('weak_seller_utterance_context_promoted', {
+          ...session,
+          status: 'served',
+          result: 'weak_seller_utterance_context_promoted',
+          transcript: item.transcript,
+          bestContextSource: weakBestContext.source,
+          bestTranscriptPreview: weakBestContext.bestTranscript,
+          stage: 'maybeSpeakTelnyxAvaReply',
+        });
+      } else {
+        recordCallTrace('ava_phone_reply_skipped', {
+          ...session,
+          status: 'skipped',
+          result: 'weak_seller_utterance',
+          transcript: item.transcript,
+          stage: 'maybeSpeakTelnyxAvaReply',
+        });
+        return;
+      }
     }
     if (shouldSkipTelnyxLiveAckOnlyReply(session, transcriptForReply)) {
       session.lastAvaReplyTranscript = transcriptForReply;
@@ -41948,6 +42190,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     );
     session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
     session.pathDecision = reply.architecture?.pathDecision || session.pathDecision || {};
+    session.fullIntelligence = reply.architecture?.fullIntelligence || session.fullIntelligence || {};
+    session.usedScripts = session.fullIntelligence?.usedScripts || session.usedScripts || [];
+    session.objectionTriggered = session.fullIntelligence?.objectionTriggered || session.objectionTriggered || '';
+    session.probeDepth = session.fullIntelligence?.probeDepth || session.probeDepth || session.pathProbeTurnCount || 0;
     session.bantStatus = buildLiveCallBantStatus(session, contextCall);
     session.prosody = reply.architecture?.prosody || reply.conversation?.prosody || session.prosody || {};
     session.activeListening = reply.architecture?.activeListening || reply.conversation?.activeListening || session.activeListening || {};

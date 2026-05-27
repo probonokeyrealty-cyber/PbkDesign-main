@@ -477,6 +477,69 @@ async function main() {
         source: 'smoke-test-owner-cf-guard',
       }),
     }).then((response) => response.json());
+    const avaFullIntelligenceContextResume = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'Right.',
+        transcript: 'Right.',
+        selectedPath: 'cash',
+        leadId: 'smoke-full-intelligence-context',
+        leadName: 'Context Resume Seller',
+        callerRole: 'owner',
+        session: {
+          callId: 'smoke-context-resume-call',
+          responseRequired: true,
+          transcript: [
+            {
+              speaker: 'Ava',
+              transcript: 'What is actually driving this for you right now: repairs, timing, tenants, family, or just wanting a clean exit?',
+              isFinal: true,
+              speechFinal: true,
+            },
+            {
+              speaker: 'Seller',
+              transcript: 'I inherited the house from my mom, probate has been stressful, and I need to sell fast.',
+              isFinal: true,
+              speechFinal: true,
+            },
+          ],
+        },
+        source: 'smoke-test-full-intelligence-context-resume',
+      }),
+    }).then((response) => response.json());
+    const avaFullIntelligenceAgentContextResume = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'Okay.',
+        transcript: 'Okay.',
+        selectedPath: 'cf',
+        leadId: 'smoke-full-intelligence-agent-context',
+        leadName: 'Agent Context Resume',
+        callerRole: 'agent',
+        agentCommissionConfirmed: true,
+        session: {
+          callId: 'smoke-context-resume-agent-call',
+          responseRequired: true,
+          transcript: [
+            {
+              speaker: 'Agent',
+              transcript: 'I am the listing agent. My seller wants full price, but the rent does not cover a new loan at today rates.',
+              isFinal: true,
+              speechFinal: true,
+            },
+          ],
+        },
+        source: 'smoke-test-full-intelligence-agent-context-resume',
+      }),
+    }).then((response) => response.json());
     const prosodyAdvice = await fetch(`${BASE_URL}/api/v1/voice/prosody`, {
       method: 'POST',
       headers: {
@@ -1069,6 +1132,20 @@ async function main() {
     assert(avaOwnerCreativeFinanceGuard?.callerRole?.role === 'owner', 'Ava did not classify an explicit homeowner as owner caller role.');
     assert(!['cf', 'creative_finance', 'mf', 'multi_family', 'multifamily'].includes(String(avaOwnerCreativeFinanceGuard?.pathDecision?.selectedPath || '').toLowerCase()), 'Ava allowed an owner call to stay on a CF/MF path.');
     assert(!/\b(creative finance|seller financ|carry(?:ing)? the note|multifamily|multi-family|mf path)\b/i.test(String(avaOwnerCreativeFinanceGuard?.answer || avaOwnerCreativeFinanceGuard?.nextBestPhrase || '')), 'Ava spoke agent-only CF/MF language to a homeowner.');
+    assert(avaFullIntelligenceContextResume?.ok === true, 'Ava full-intelligence context-resume smoke did not succeed.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.enabled === true, 'Ava full intelligence mode was not enabled for a weak transcript turn.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.mode === 'full', 'Ava full intelligence mode was not set to full.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.context?.weakTranscript === true, 'Ava did not mark the latest weak transcript as weak.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.context?.source !== 'current_transcript', 'Ava did not promote recent seller context over the weak current transcript.');
+    assert(/\b(inherited|probate|sell fast)\b/i.test(String(avaFullIntelligenceContextResume?.fullIntelligence?.context?.bestTranscript || '')), 'Ava did not preserve the strongest recent seller context for answering.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.layers?.bant === true, 'Ava full intelligence did not force BANT on.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.layers?.pathDecision === true, 'Ava full intelligence did not force path decision on.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.layers?.warManual === true, 'Ava full intelligence did not force the War Manual on.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.layers?.activeListening === true, 'Ava full intelligence did not force active listening on.');
+    assert(avaFullIntelligenceContextResume?.fullIntelligence?.layers?.scripts === true, 'Ava full intelligence did not force scripts on.');
+    assert(/[?]\s*$/.test(String(avaFullIntelligenceContextResume?.answer || avaFullIntelligenceContextResume?.nextBestPhrase || '')), 'Ava full-intelligence weak transcript answer did not end with a seller-response hook.');
+    assert(avaFullIntelligenceAgentContextResume?.fullIntelligence?.context?.source !== 'current_transcript', 'Ava did not preserve a realtor/agent caller turn as resumable best context.');
+    assert(/\b(listing agent|full price|rent|loan)\b/i.test(String(avaFullIntelligenceAgentContextResume?.fullIntelligence?.context?.bestTranscript || '')), 'Ava did not promote the agent caller context for CF/MF-safe handling.');
     for (const testCase of avaPathDecisionCases) {
       const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};
       const answer = String(testCase.result?.answer || testCase.result?.nextBestPhrase || '');

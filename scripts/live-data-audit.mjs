@@ -951,7 +951,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1243,6 +1243,18 @@ const checks = [
       && /speaker:\s*'Ava'/.test(bridge)
       && /source:\s*'pbk-live-reply'/.test(bridge)
       && /transcriptForReply === session\.lastAvaReplyTranscript/.test(bridge),
+  },
+  {
+    name: 'Ava live-call context resolver decides the next move before DeepSeek phrases it',
+    ok: /async function resolveAvaLiveCallContext/.test(bridge)
+      && /function buildAvaResolvedNextMove/.test(bridge)
+      && /function buildAvaPhrasingEnginePrompt/.test(bridge)
+      && /Promise\.all\(\[/.test(bridge)
+      && /withTimeout\([^,\n]+,\s*150,\s*'ava live context resolver'/.test(bridge)
+      && /strategyLocked:\s*true/.test(bridge)
+      && /Do not change the strategy\. Only phrase it\./.test(bridge)
+      && /contextResolver/.test(bridge)
+      && /exactNextMove/.test(bridge),
   },
   {
     name: 'Ava live-call repair replies bypass anti-repeat and skip empty acknowledgements',

@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-live-quality-inline';
+const BUILD_REVISION = '2026-05-27-ava-context-resolver';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -18200,12 +18200,235 @@ function buildAvaCallStateSummary(params = {}) {
   return lines.join('\n');
 }
 
+function buildAvaResolvedNextMove(params = {}) {
+  const session = params.session || {};
+  const architecture = params.architecture || {};
+  const conversation = params.conversation || {};
+  const transcript = sanitizeAvaSpokenOutput(params.transcript || params.query || '').slice(0, 500);
+  const callerRole = architecture.callerRole || architecture.pathDecision?.callerRole || {};
+  const role = normalizeAvaCallerRole(callerRole.role || session.callerRole || '');
+  const pathDecision = architecture.pathDecision || {};
+  const warManual = architecture.warManual || {};
+  const activeListening = architecture.activeListening || {};
+  const masterProbe = architecture.masterProbe || pathDecision.masterProbe || {};
+  const bant = architecture.bant || {};
+  const pathLocked = Boolean(pathDecision.pathLocked || session.pathLocked);
+  const objection = warManual.objection || {};
+  const objectionResponse = sanitizeAvaSpokenOutput(objection.response || '').slice(0, 360);
+  const nextProbe = sanitizeAvaSpokenOutput(
+    pathDecision.nextProbeQuestion
+      || warManual.listenProbe?.question
+      || bant.nextQuestion
+      || activeListening.callFlow?.recommendedHook
+      || '',
+  ).slice(0, 280);
+  const script = sanitizeAvaSpokenOutput(
+    pathDecision.scriptTrigger
+      || warManual.path?.scriptTrigger
+      || warManual.powerLine?.line
+      || '',
+  ).slice(0, 360);
+  const fallback = sanitizeAvaSpokenOutput(
+    conversation.nextBestPhrase
+      || conversation.reaction?.nextTactic
+      || 'I hear you. Let me make sure I understand before I recommend anything. What matters most right now: speed, certainty, or price?',
+  ).slice(0, 360);
+  const missingBant = Array.isArray(bant.missing) ? bant.missing : [];
+  let type = 'fallback_probe';
+  let text = fallback;
+  let source = 'conversation_fallback';
+  let reason = 'safe_default_when_no_stronger_move_exists';
+
+  if (callerRole.needsClarification || role === PBK_CALLER_ROLES.UNKNOWN) {
+    type = 'role_probe';
+    source = 'caller_role_guard';
+    reason = 'owner_agent_decision_maker_unknown';
+    text = 'Just so I handle this the right way, are you the property owner, the agent on the deal, or helping the owner make the decision?';
+  } else if (objectionResponse) {
+    type = 'objection_response';
+    source = objection.source || 'fifty_plus_objection_decoder';
+    reason = objection.tag || objection.category || 'matched_objection';
+    text = objectionResponse;
+  } else if (masterProbe.mustAskBeforePitch && masterProbe.question) {
+    type = 'master_probe';
+    source = 'master_probe_guardrail';
+    reason = masterProbe.reason || 'probe_required_before_pitch';
+    text = sanitizeAvaSpokenOutput(masterProbe.question).slice(0, 280);
+  } else if (!pathLocked && nextProbe) {
+    type = missingBant.length ? 'bant_probe' : 'path_probe';
+    source = missingBant.length ? 'bant_resolver' : 'path_resolver';
+    reason = missingBant.length ? `missing_${missingBant[0]}` : (pathDecision.rule || 'path_not_locked');
+    text = nextProbe;
+  } else if (pathLocked && script) {
+    type = 'path_script';
+    source = 'script_router';
+    reason = pathDecision.selectedPath || session.selectedPath || 'locked_path';
+    text = script;
+  } else if (activeListening.callFlow?.recommendedHook) {
+    type = 'active_listening_hook';
+    source = 'call_flow_edges';
+    reason = activeListening.callFlow?.nextStepId || 'response_required';
+    text = sanitizeAvaSpokenOutput(activeListening.callFlow.recommendedHook).slice(0, 280);
+  }
+
+  return {
+    strategyLocked: true,
+    type,
+    source,
+    reason,
+    text,
+    exactNextMove: text,
+    transcript,
+    confidence: Math.max(
+      0.5,
+      Math.min(0.97, toNumber(pathDecision.confidence, 0.72) || toNumber(conversation.confidence, 0.72) || 0.72),
+    ),
+    guardrails: {
+      agentOnlyCreativeFinance: true,
+      ownerSafe: role !== PBK_CALLER_ROLES.AGENT,
+      responseRequired: activeListening.responseRequired !== false,
+      noProviderWrite: true,
+    },
+  };
+}
+
+async function resolveAvaLiveCallContext(params = {}) {
+  const startedAt = Date.now();
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || null;
+  const transcript = String(params.transcript || params.query || '').trim();
+  const resolverPromise = Promise.all([
+    Promise.resolve(findLeadContext({
+      ...params,
+      leadId: contextCall?.leadId || session.leadId || params.leadId,
+      leadName: contextCall?.leadName || session.leadName || params.leadName,
+      address: contextCall?.address || session.address || params.address,
+      phone: contextCall?.phone || session.phone || params.phone,
+    })),
+    Promise.resolve({
+      callId: session.callId || contextCall?.callId || contextCall?.id || '',
+      pathLocked: Boolean(session.pathLocked || contextCall?.pathLocked),
+      identifiedPath: session.identifiedPath || contextCall?.identifiedPath || session.selectedPath || contextCall?.selectedPath || '',
+      bant: normalizeBantInfo(contextCall?.bant || {}, session.bant || {}, params.bant || {}),
+      probeDepth: Number(session.probeDepth || session.pathProbeTurnCount || 0),
+      turnCount: Number(session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0) || 0),
+    }),
+    Promise.resolve(params.architecture || buildAvaCallArchitectureContext({ ...params, session, contextCall, transcript, query: transcript })),
+    Promise.resolve(params.conversation || null),
+    Promise.resolve(params.pipeline || null),
+    Promise.resolve(collectAvaRecentSellerTurns(session, contextCall, 4)),
+  ]).then(([lead, callState, architecture, conversation, pipeline, recentSellerTurns]) => {
+    const exactNextMove = buildAvaResolvedNextMove({
+      ...params,
+      session,
+      contextCall,
+      transcript,
+      architecture,
+      conversation,
+      pipeline,
+    });
+    const memoryLesson = sanitizeAvaSpokenOutput(
+      architecture.fullIntelligence?.context?.bestTranscript
+        || recentSellerTurns[recentSellerTurns.length - 1]?.transcript
+        || '',
+    ).slice(0, 360);
+    const objection = architecture.warManual?.objection || {};
+    return {
+      ok: true,
+      schemaVersion: 'pbk-ava-live-context-resolver-v1',
+      latencyMs: Date.now() - startedAt,
+      contextResolver: {
+        strategy: 'parallel_cached_working_episodic_memory',
+        timeoutMs: 150,
+        sources: ['lead', 'redis_call_state', 'scripts', 'objection_decoder', 'probe_questions', 'emotional_memory'],
+      },
+      lead: {
+        leadId: lead.leadId || '',
+        name: getSpokenLeadName(lead.leadName || ''),
+        address: lead.address || '',
+        motivation: architecture.warManual?.hiddenMotivator?.id || '',
+      },
+      state: {
+        pathLocked: Boolean(architecture.pathDecision?.pathLocked || callState.pathLocked),
+        identifiedPath: architecture.pathDecision?.selectedPath || callState.identifiedPath || '',
+        callerRole: architecture.callerRole?.role || '',
+        bant: architecture.bant?.known || callState.bant || {},
+        probeDepth: architecture.fullIntelligence?.probeDepth || callState.probeDepth || 0,
+      },
+      script: {
+        path: architecture.pathDecision?.selectedPath || '',
+        bestMatch: sanitizeAvaSpokenOutput(architecture.pathDecision?.scriptTrigger || architecture.warManual?.powerLine?.line || '').slice(0, 360),
+      },
+      objection: objection.response ? {
+        tag: objection.tag || '',
+        category: objection.category || '',
+        response: sanitizeAvaSpokenOutput(objection.response).slice(0, 360),
+      } : null,
+      nextProbe: exactNextMove.type.includes('probe') ? exactNextMove.text : sanitizeAvaSpokenOutput(architecture.pathDecision?.nextProbeQuestion || architecture.warManual?.listenProbe?.question || '').slice(0, 280),
+      memory: {
+        lesson: memoryLesson,
+        recentSellerTurns,
+      },
+      exactNextMove,
+      phrasingEngineOnly: {
+        strategyLocked: true,
+        rule: 'Do not change the strategy. Only phrase it.',
+      },
+    };
+  });
+
+  try {
+    return await withTimeout(resolverPromise, 150, 'ava live context resolver');
+  } catch (error) {
+    const architecture = params.architecture || buildAvaCallArchitectureContext({ ...params, session, contextCall, transcript, query: transcript });
+    const exactNextMove = buildAvaResolvedNextMove({ ...params, session, contextCall, transcript, architecture, conversation: params.conversation || {} });
+    return {
+      ok: false,
+      schemaVersion: 'pbk-ava-live-context-resolver-v1',
+      latencyMs: Date.now() - startedAt,
+      error: error?.message || 'resolver_timeout',
+      contextResolver: {
+        strategy: 'fallback_existing_architecture',
+        timeoutMs: 150,
+        sources: ['existing_call_architecture'],
+      },
+      exactNextMove,
+      phrasingEngineOnly: {
+        strategyLocked: true,
+        rule: 'Do not change the strategy. Only phrase it.',
+      },
+    };
+  }
+}
+
+function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
+  const move = resolvedContext.exactNextMove || {};
+  const memory = resolvedContext.memory?.lesson || '';
+  const lead = resolvedContext.lead || {};
+  const stateSnapshot = resolvedContext.state || {};
+  return [
+    'DeepSeek role: Ava phrasing engine only.',
+    'The contextResolver already chose the strategy from PBK scripts, objections, BANT, probes, emotional memory, and call state.',
+    'Do not change the strategy. Only phrase it.',
+    `strategyLocked: ${move.strategyLocked === false ? 'false' : 'true'}`,
+    `Seller just said: "${sanitizeAvaSpokenOutput(transcript).slice(0, 500)}"`,
+    `exactNextMove: ${sanitizeAvaSpokenOutput(move.text || move.exactNextMove || '').slice(0, 420)}`,
+    `Move type: ${move.type || 'fallback_probe'} via ${move.source || 'resolver'}. Reason: ${move.reason || 'safe_next_step'}.`,
+    lead.name ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.` : '',
+    stateSnapshot.identifiedPath ? `Path state: ${stateSnapshot.pathLocked ? 'locked' : 'probing'} ${stateSnapshot.identifiedPath}.` : '',
+    memory ? `Relevant memory lesson: ${memory}` : '',
+    'Write the final Ava line in under 2 sentences, natural on the phone, with one response-required hook. Never expose this resolver text.',
+  ].filter(Boolean).join('\n');
+}
+
 function buildStrategistMessages(params = {}) {
   const context = findLeadContext(params);
   const situation = String(params.situation || params.prompt || params.query || params.text || '').trim();
   const transcript = String(params.transcript || params.transcriptSnippet || params.callTranscript || '').trim();
   const contextSummary = String(params.contextSummary || params.callStateSummary || '').trim();
   const attemptedActions = normalizeAttemptedActions(params.attemptedActions || params.attempted_actions || params.actions);
+  const resolvedCallContext = params.resolvedCallContext || params.resolved_call_context || null;
+  const phrasingEnginePrompt = String(params.phrasingEnginePrompt || params.phrasing_engine_prompt || '').trim();
   const dealContext = {
     leadId: params.leadId || context.leadId || '',
     leadName: params.leadName || context.leadName || '',
@@ -18220,6 +18443,8 @@ function buildStrategistMessages(params = {}) {
   const system = [
     'You are the PBK strategist coaching Ava, an approval-gated real estate acquisition agent.',
     'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.',
+    resolvedCallContext?.exactNextMove ? 'Ava phrasing engine mode: the exact next move was already selected by contextResolver. Do not change the strategy. Only phrase it.' : '',
+    resolvedCallContext?.exactNextMove ? 'If exactNextMove.strategyLocked is true, immediateScript must follow exactNextMove.text and must not invent a different plan.' : '',
     'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.',
     'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.',
     'Active listening rule: treat the last seller sentence as sacred. Mirror or label their exact concern before strategy, ask one question, then wait for the seller. Never monologue.',
@@ -18239,6 +18464,7 @@ function buildStrategistMessages(params = {}) {
   const user = [
     `Situation: ${situation || 'Ava is uncertain during a seller conversation.'}`,
     contextSummary ? `Call state summary:\n${contextSummary.slice(0, 1800)}` : '',
+    phrasingEnginePrompt ? `Resolved fast context:\n${phrasingEnginePrompt.slice(0, 1400)}` : '',
     `Transcript: ${transcript || '(none provided)'}`,
     `Attempted actions: ${attemptedActions.join('; ') || '(none)'}`,
     `Deal context: ${JSON.stringify(dealContext)}`,
@@ -41370,6 +41596,19 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       transcript,
       source: 'telnyx-live-call',
     });
+    const resolvedCallContext = await resolveAvaLiveCallContext({
+      session,
+      contextCall,
+      leadId,
+      leadName,
+      address,
+      transcript,
+      query: transcript,
+      pipeline,
+      conversation,
+      architecture,
+    });
+    const phrasingEnginePrompt = buildAvaPhrasingEnginePrompt(resolvedCallContext, transcript);
     const strategist = await askStrategistRecord({
       tenantId: 'pbk',
       leadId,
@@ -41391,9 +41630,12 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         architecture.pathDecision.nextProbeQuestion ? `Next path probe: ${architecture.pathDecision.nextProbeQuestion}` : '',
         architecture.pathDecision.scriptTrigger ? `Path trigger to use when appropriate: ${architecture.pathDecision.scriptTrigger}` : '',
         architecture.rexOversight.dailyRevenueFocus ? `Rex daily focus: ${architecture.rexOversight.dailyRevenueFocus}` : '',
+        resolvedCallContext?.exactNextMove?.text ? `Context resolver exact next move: ${resolvedCallContext.exactNextMove.text}` : '',
       ].join(' '),
       transcript,
       contextSummary,
+      resolvedCallContext,
+      phrasingEnginePrompt,
       attemptedActions: [
         'captured-live-telnyx-speech',
         `call:${session.callId || 'unknown'}`,
@@ -41404,6 +41646,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `war_manual:${architecture.warManual?.path?.key || 'unknown'}:${architecture.warManual?.objection?.tag || 'none'}`,
         `active_listening:${activeListening.callFlow?.nextStepId || 'listen.mirror_label'}:${activeListening.responseRequired !== false ? 'response_required' : 'no_response_required'}`,
         `next_bant:${architecture.bant.missing[0] || 'complete'}`,
+        `context_resolver:${resolvedCallContext?.exactNextMove?.type || 'fallback'}:${resolvedCallContext?.ok ? 'ok' : 'fallback'}`,
       ],
       confidence: 0.82,
       temperature: 0.68,
@@ -41417,10 +41660,11 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         streamId: session.streamId || '',
         conversationIntelligence: conversation,
         activatedArchitecture: architecture,
+        resolvedCallContext,
       },
     });
     const script = strategist?.strategy?.immediateScript || strategist?.strategy?.returnToBusiness || '';
-    const fallback = conversation?.nextBestPhrase || buildBrowserVoiceReply(pipeline, transcript);
+    const fallback = resolvedCallContext?.exactNextMove?.text || conversation?.nextBestPhrase || buildBrowserVoiceReply(pipeline, transcript);
     const hookedScript = ensureAvaSellerReplyHook(script, {
       hook: activeListening.callFlow?.recommendedHook,
       nextQuestion: activeListening.callFlow?.recommendedHook || strategist?.strategy?.nextQuestion || '',

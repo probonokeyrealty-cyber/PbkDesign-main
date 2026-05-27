@@ -899,6 +899,21 @@ const checks = [
       && /Seller just said/.test(bridge),
   },
   {
+    name: 'Ava master probing separates owner, agent, and decision-maker paths safely',
+    ok: /PBK_CALLER_ROLE_REVISION/.test(bridge)
+      && /PBK_AGENT_ONLY_PATH_ALIASES/.test(bridge)
+      && /function detectAvaCallerRole/.test(bridge)
+      && /function buildAvaMasterProbe/.test(bridge)
+      && /function guardAvaAgentOnlyPathDecision/.test(bridge)
+      && /function enforceAvaOwnerSafeReply/.test(bridge)
+      && /full commission/.test(bridge)
+      && /keep you in the deal/.test(bridge)
+      && /are you the property owner, or are you a real estate agent representing the seller/.test(bridge)
+      && /Creative Finance and Multi-Family are agent-only/.test(bridge)
+      && /Ava did not reassure the agent that commission stays protected before probing/.test(openclawSmoke)
+      && /Ava allowed an owner call to stay on a CF\/MF path/.test(openclawSmoke),
+  },
+  {
     name: 'Ava voice uses DeepSeek call-state context and a speech-safe TTS boundary',
     ok: /function buildAvaCallStateSummary/.test(bridge)
       && /Call state summary/.test(bridge)
@@ -922,7 +937,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-ava-turn-taking-hardening)'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

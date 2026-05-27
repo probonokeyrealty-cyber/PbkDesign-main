@@ -407,23 +407,28 @@ async function main() {
     const avaPathDecisionCases = await Promise.all([
       {
         expectedPath: 'cash',
-        query: 'Seller says I just want this house gone fast, it needs repairs, and I want a clean cash close.',
+        expectedCallerRole: 'owner',
+        query: 'I am the owner and I just want this house gone fast, it needs repairs, and I want a clean cash close.',
       },
       {
         expectedPath: 'rbp',
-        query: 'Seller says the house is updated and in good condition. They want top dollar and can wait 60 days.',
+        expectedCallerRole: 'owner',
+        query: 'I own the house. It is updated and in good condition. I want top dollar and can wait 60 days.',
       },
       {
         expectedPath: 'cf',
-        query: 'Seller says I need my full asking price, but rent does not cover a new loan at today rates.',
+        expectedCallerRole: 'agent',
+        query: 'I am the listing agent. My seller needs full asking price, but rent does not cover a new loan at today rates.',
       },
       {
         expectedPath: 'mt',
-        query: 'Seller says I have a 3.5% mortgage and I cannot afford to sell if I lose that low rate.',
+        expectedCallerRole: 'owner',
+        query: 'I own the house and I have a 3.5% mortgage. I cannot afford to sell if I lose that low rate.',
       },
       {
         expectedPath: 'land',
-        query: 'Seller says it is a vacant buildable lot with utilities nearby and builders are buying acreage around us.',
+        expectedCallerRole: 'owner',
+        query: 'I own the land. It is a vacant buildable lot with utilities nearby and builders are buying acreage around us.',
       },
     ].map(async (testCase) => {
       const result = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
@@ -436,11 +441,42 @@ async function main() {
           query: testCase.query,
           leadId: `smoke-path-${testCase.expectedPath}`,
           leadName: 'Path Smoke Seller',
+          callerRole: testCase.expectedCallerRole || undefined,
+          agentCommissionConfirmed: testCase.expectedPath === 'cf' ? true : undefined,
           source: 'smoke-test-path-decision',
         }),
       }).then((response) => response.json());
       return { ...testCase, result };
     }));
+    const avaAgentCommissionProbe = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'I am the listing agent for my client. The seller wants full price but the rents do not cover the payment at today rates.',
+        leadId: 'smoke-agent-commission-probe',
+        leadName: 'Agent Smoke Test',
+        callerRole: 'agent',
+        source: 'smoke-test-agent-commission-probe',
+      }),
+    }).then((response) => response.json());
+    const avaOwnerCreativeFinanceGuard = await fetch(`${BASE_URL}/api/v1/ava/conversation-intelligence`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        query: 'I own the house myself and want to sell. Someone mentioned creative finance and multifamily terms, but I mainly need to know the safest next step.',
+        selectedPath: 'cf',
+        leadId: 'smoke-owner-cf-guard',
+        leadName: 'Owner Smoke Test',
+        callerRole: 'owner',
+        source: 'smoke-test-owner-cf-guard',
+      }),
+    }).then((response) => response.json());
     const prosodyAdvice = await fetch(`${BASE_URL}/api/v1/voice/prosody`, {
       method: 'POST',
       headers: {
@@ -1027,6 +1063,12 @@ async function main() {
     assert(avaConversationIntelligence?.activeListening?.callFlow?.nextStepId === 'objection.spouse_3way', 'Ava active listening did not route spouse authority to the 3-way call branch.');
     assert(/\b(?:three-way|3-way)\b/i.test(String(avaConversationIntelligence?.answer || avaConversationIntelligence?.nextBestPhrase || '')), 'Ava active-listening answer did not use the spouse 3-way branch.');
     assert(/[?]\s*$/.test(String(avaConversationIntelligence?.answer || avaConversationIntelligence?.nextBestPhrase || '')), 'Ava active-listening answer did not end with a seller-response hook.');
+    assert(avaAgentCommissionProbe?.callerRole?.role === 'agent', 'Ava did not classify an explicit listing agent as agent caller role.');
+    assert(/\b(full commission|keep you in the deal|protect(?:ed)? commission)\b/i.test(String(avaAgentCommissionProbe?.answer || avaAgentCommissionProbe?.nextBestPhrase || '')), 'Ava did not reassure the agent that commission stays protected before probing.');
+    assert(/\b(address|listed|market|condition|seller|client|property)\b/i.test(String(avaAgentCommissionProbe?.answer || avaAgentCommissionProbe?.nextBestPhrase || '')), 'Ava did not probe the agent for property/listing details.');
+    assert(avaOwnerCreativeFinanceGuard?.callerRole?.role === 'owner', 'Ava did not classify an explicit homeowner as owner caller role.');
+    assert(!['cf', 'creative_finance', 'mf', 'multi_family', 'multifamily'].includes(String(avaOwnerCreativeFinanceGuard?.pathDecision?.selectedPath || '').toLowerCase()), 'Ava allowed an owner call to stay on a CF/MF path.');
+    assert(!/\b(creative finance|seller financ|carry(?:ing)? the note|multifamily|multi-family|mf path)\b/i.test(String(avaOwnerCreativeFinanceGuard?.answer || avaOwnerCreativeFinanceGuard?.nextBestPhrase || '')), 'Ava spoke agent-only CF/MF language to a homeowner.');
     for (const testCase of avaPathDecisionCases) {
       const decision = testCase.result?.pathDecision || testCase.result?.architecture?.pathDecision || {};
       const answer = String(testCase.result?.answer || testCase.result?.nextBestPhrase || '');

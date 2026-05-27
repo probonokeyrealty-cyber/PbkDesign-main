@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-turn-taking-hardening';
+const BUILD_REVISION = '2026-05-27-ava-role-probing-guardrails';
 
 const IS_RESET = process.argv.includes('--reset') || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_RESET || '').trim());
 const IS_LAN = process.argv.includes('--lan');
@@ -1070,6 +1070,10 @@ function buildSharedTelnyxSessionState(session = {}, status = 'active') {
     pathLocked: Boolean(session.pathLocked),
     identifiedPath: session.identifiedPath || '',
     pathDecision: session.pathDecision || {},
+    callerRole: session.callerRole || session.pathDecision?.callerRole?.role || '',
+    callerRoleConfidence: session.callerRoleConfidence || session.pathDecision?.callerRole?.confidence || 0,
+    masterProbe: session.masterProbe || session.pathDecision?.masterProbe || {},
+    agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
     bantStatus,
     prosody: session.prosody || session.lastProsody || {},
     activeListening: session.activeListening || {},
@@ -1144,6 +1148,10 @@ function buildTelnyxMediaSessionDiagnostics(session = {}, contextCall = null, op
     pathLocked: Boolean(session.pathLocked || pathDecision.pathLocked || contextCall?.pathLocked),
     identifiedPath: session.identifiedPath || contextCall?.identifiedPath || '',
     pathDecision,
+    callerRole: session.callerRole || pathDecision.callerRole?.role || '',
+    callerRoleConfidence: session.callerRoleConfidence || pathDecision.callerRole?.confidence || 0,
+    masterProbe: session.masterProbe || pathDecision.masterProbe || {},
+    agentCommissionConfirmed: Boolean(session.agentCommissionConfirmed),
     bantStatus,
     prosody: session.prosody || session.lastProsody || contextCall?.prosody || {},
     activeListening: session.activeListening || {},
@@ -9495,6 +9503,37 @@ const PBK_CORE_DEAL_PATHS = [
 const PBK_DEAL_PATH_PROBE_MAX_TURNS = Math.max(2, Math.min(8, Number(process.env.PBK_DEAL_PATH_PROBE_MAX_TURNS || 5)));
 const PBK_DEAL_PATH_LOCK_CONFIDENCE = Math.max(0.55, Math.min(0.9, Number(process.env.PBK_DEAL_PATH_LOCK_CONFIDENCE || 0.72)));
 
+const PBK_CALLER_ROLE_REVISION = '2026-05-27-ava-role-probing-guardrails-v1';
+const PBK_CALLER_ROLES = Object.freeze({
+  OWNER: 'owner',
+  AGENT: 'agent',
+  DECISION_HELPER: 'decision_helper',
+  UNKNOWN: 'unknown',
+});
+const PBK_AGENT_ONLY_PATH_ALIASES = new Set([
+  'cf',
+  'creative_finance',
+  'creative-finance',
+  'creative finance',
+  'seller_finance',
+  'seller-finance',
+  'seller finance',
+  'owner_finance',
+  'owner-finance',
+  'owner finance',
+  'wrap',
+  'terms',
+  'mf',
+  'multi_family',
+  'multi-family',
+  'multi family',
+  'multifamily',
+]);
+const PBK_AGENT_ROLE_RE = /\b(real\s*estate\s*agent|listing\s*agent|seller'?s\s*agent|buyer'?s\s*agent|realtor|broker|licensee|my\s+client|seller\s+i\s+represent|client'?s\s+(?:house|home|property)|listed\s+on\s+mls|mls|commission|co[-\s]?broker)\b/i;
+const PBK_OWNER_ROLE_RE = /\b(i\s+(?:own|am\s+the\s+owner)|i'?m\s+the\s+owner|we\s+own|my\s+(?:house|home|property|place)|our\s+(?:house|home|property|place)|i\s+inherited|we\s+inherited|my\s+(?:mom|mother|dad|father|parent)'?s\s+(?:house|home|property)|owner\s+of\s+the\s+(?:house|home|property))\b/i;
+const PBK_DECISION_HELPER_ROLE_RE = /\b(?:my|their|the)\s+(?:wife|husband|spouse|partner|son|daughter|mom|mother|dad|father|attorney|lawyer|executor|trustee|brother|sister|client)\s+(?:handles|decides|needs|has|is)|\b(?:power\s+of\s+attorney|poa|executor|trustee|decision\s*maker|decision-maker|need\s+to\s+talk\s+to|needs?\s+to\s+weigh\s+in|talk\s+to\s+(?:my|their|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|kids?|son|daughter))\b/i;
+const PBK_AGENT_ONLY_SPEECH_RE = /\b(creative\s+finance|seller\s+financ(?:e|ing)|owner\s+financ(?:e|ing)|carry(?:ing)?\s+(?:the\s+)?note|carry\s+terms|wrap(?:around)?|balloon\s+payment|multi[-\s]?family|multifamily|mf\s+path)\b/i;
+
 const PBK_PATH_SCRIPT_TRIGGERS = {
   cash: 'If you want the fastest, surest close - no lender, no appraisal, no waiting - our cash offer is the answer. I can show you the exact number the Analyzer supports once we finish the key facts.',
   rbp: 'The Analyzer says your property may fit our Retail Buyer Program. That can often net more than the clean cash offer, with no out-of-pocket repairs or commissions from you. The tradeoff is usually about 45 to 60 days instead of a faster cash close. Want to see the side-by-side comparison?',
@@ -10051,10 +10090,10 @@ function getAvaWarManualToneMode(params = {}) {
 
 function selectAvaWarManualPath(params = {}) {
   const text = normalizeAvaWarManualText(params);
-  const pathDecision = params.pathDecision || inferAvaDealPathDecision(params);
+  const callerRole = detectAvaCallerRole(params);
+  const pathDecision = guardAvaAgentOnlyPathDecision(params.pathDecision || inferAvaDealPathDecision(params), { ...params, callerRoleDecision: callerRole });
   const corePath = normalizePbkDealPath(pathDecision.selectedPath || params.selectedPath || params.selected_path || '', 'cash');
-  const isAgent = /\b(agent|realtor|listing|commission|mls|broker)\b/i.test(text)
-    || /agent|realtor|listing/i.test(String(params.contextCall?.leadSource || params.contextCall?.source || params.session?.leadSource || ''));
+  const isAgent = callerRole.role === PBK_CALLER_ROLES.AGENT;
   const isLand = corePath === 'land' || /\b(vacant land|land|lot|acre|acres|parcel|builder|perc|septic|well|zoning|wetlands)\b/i.test(text);
   let key = 'cash_owner';
   if (corePath === 'rbp' && isLand) key = 'rbp_land';
@@ -10082,6 +10121,7 @@ function buildAvaWarManualContext(params = {}) {
   const psychologyMove = selectAvaPsychologyMove({ ...params, objection });
   const toneMode = getAvaWarManualToneMode({ ...params, emotionalState });
   const powerLine = selectAvaWarManualPowerLine({ ...params, objection });
+  const callerRole = detectAvaCallerRole(params);
   const path = selectAvaWarManualPath(params);
   return {
     revision: PBK_100K_WAR_MANUAL_REVISION,
@@ -10091,7 +10131,9 @@ function buildAvaWarManualContext(params = {}) {
       name: '7-second path picker',
       selectedPath: path.key,
       selectedPathLabel: path.label,
-      rule: 'Mortgage under 5 percent -> MT; top dollar plus patience -> RBP; cash-flow works -> Cash; otherwise Creative Finance; land routes to land/RBP land variants.',
+      rule: callerRole.role === PBK_CALLER_ROLES.AGENT
+        ? 'Mortgage under 5 percent -> MT; top dollar plus patience -> RBP; cash-flow works -> Cash; otherwise Creative Finance; land routes to land/RBP land variants.'
+        : 'Owner-safe picker: top dollar plus patience -> RBP; speed/repairs/distress -> Cash; land routes to Land/RBP Land; mortgage facts may trigger MT. Creative Finance and Multi-Family are agent-only.',
       questions: [
         'Does the property have a mortgage under 5 percent?',
         'Does the seller want top dollar and can wait 30-60 days?',
@@ -10099,6 +10141,7 @@ function buildAvaWarManualContext(params = {}) {
       ],
     },
     path,
+    callerRole,
     emotionalState,
     hiddenMotivator,
     objection,
@@ -10425,6 +10468,316 @@ function collectAvaPathSignalText(params = {}) {
   ].filter(Boolean).join(' ');
 }
 
+function normalizeAvaCallerRole(value = '') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if ([PBK_CALLER_ROLES.AGENT, PBK_CALLER_ROLES.OWNER, PBK_CALLER_ROLES.DECISION_HELPER, PBK_CALLER_ROLES.UNKNOWN].includes(raw)) return raw;
+  if (/\b(agent|realtor|broker|licensee|listing|mls)\b/.test(raw)) return PBK_CALLER_ROLES.AGENT;
+  if (/\b(owner|seller|homeowner|landowner|fsbo)\b/.test(raw)) return PBK_CALLER_ROLES.OWNER;
+  if (/\b(decision|helper|executor|trustee|poa|attorney|lawyer|spouse|partner|family|heir)\b/.test(raw)) return PBK_CALLER_ROLES.DECISION_HELPER;
+  if (raw === PBK_CALLER_ROLES.UNKNOWN) return PBK_CALLER_ROLES.UNKNOWN;
+  return '';
+}
+
+function detectAvaCallerRole(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const explicitRole = normalizeAvaCallerRole(
+    params.callerRole
+      || params.caller_role
+      || params.sellerType
+      || params.seller_type
+      || contextCall.callerRole
+      || contextCall.caller_role
+      || contextCall.sellerType
+      || contextCall.seller_type
+      || '',
+  );
+  if (explicitRole && explicitRole !== PBK_CALLER_ROLES.UNKNOWN) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      role: explicitRole,
+      confidence: 0.96,
+      evidence: ['Caller role was provided by call context.'],
+      needsClarification: false,
+    };
+  }
+
+  const humanText = [
+    params.transcript,
+    params.query,
+    params.text,
+    params.lastUserUtterance,
+    contextCall.participantRole,
+    contextCall.leadSource,
+    contextCall.source,
+    session.leadSource,
+  ].filter(Boolean).join(' ');
+  if (PBK_AGENT_ROLE_RE.test(humanText)) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      role: PBK_CALLER_ROLES.AGENT,
+      confidence: 0.91,
+      evidence: ['Caller used agent, Realtor, broker, MLS, commission, or client-representation language.'],
+      needsClarification: false,
+    };
+  }
+  if (PBK_OWNER_ROLE_RE.test(humanText)) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      role: PBK_CALLER_ROLES.OWNER,
+      confidence: 0.86,
+      evidence: ['Caller used owner/homeowner/property-owner language.'],
+      needsClarification: false,
+    };
+  }
+  if (PBK_DECISION_HELPER_ROLE_RE.test(humanText)) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      role: PBK_CALLER_ROLES.DECISION_HELPER,
+      confidence: 0.78,
+      evidence: ['Caller mentioned another decision-maker, family member, attorney, trustee, or executor.'],
+      needsClarification: true,
+    };
+  }
+
+  const storedRole = normalizeAvaCallerRole(session.callerRole || contextCall.callerRole || '');
+  if (storedRole && storedRole !== PBK_CALLER_ROLES.UNKNOWN) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      role: storedRole,
+      confidence: Number(session.callerRoleConfidence || 0.66),
+      evidence: ['Caller role was already set earlier in this call.'],
+      needsClarification: storedRole === PBK_CALLER_ROLES.DECISION_HELPER,
+    };
+  }
+
+  return {
+    revision: PBK_CALLER_ROLE_REVISION,
+    role: PBK_CALLER_ROLES.UNKNOWN,
+    confidence: 0.24,
+    evidence: ['Caller role is not clear yet.'],
+    needsClarification: true,
+  };
+}
+
+function applyAvaCallerRoleToSession(session = {}, roleDecision = {}) {
+  if (!session || typeof session !== 'object') return roleDecision;
+  const role = normalizeAvaCallerRole(roleDecision.role || '') || PBK_CALLER_ROLES.UNKNOWN;
+  session.callerRole = role;
+  session.callerRoleConfidence = Number(roleDecision.confidence || 0);
+  session.callerRoleEvidence = Array.isArray(roleDecision.evidence) ? roleDecision.evidence.slice(0, 4) : [];
+  session.isAgentCaller = role === PBK_CALLER_ROLES.AGENT;
+  session.isOwnerCaller = role === PBK_CALLER_ROLES.OWNER;
+  session.needsCallerRoleClarification = roleDecision.needsClarification !== false;
+  return { ...roleDecision, role };
+}
+
+function isAvaAgentOnlyPath(path = '') {
+  const raw = String(path || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!raw) return false;
+  const normalized = normalizePbkDealPath(raw, '');
+  return normalized === 'cf' || PBK_AGENT_ONLY_PATH_ALIASES.has(raw) || PBK_AGENT_ONLY_PATH_ALIASES.has(raw.replace(/\s+/g, '_'));
+}
+
+function pickAvaOwnerSafeFallbackPath(params = {}) {
+  const text = collectAvaPathSignalText(params).toLowerCase();
+  if (/\b(vacant\s+land|raw\s+land|buildable\s+lot|parcel|acreage|acres?|zoning|utilities|septic|road\s+frontage|builder|lots?)\b/i.test(text)) return 'land';
+  if (/\b(good\s+(?:bones|condition)|updated|move[-\s]?in\s+ready|top\s+dollar|highest\s+(?:net|price)|can\s+wait|45\s*(?:to|-)?\s*60\s+days|two\s+months)\b/i.test(text)) return 'rbp';
+  if (/\b(3(?:\.\d+)?\s*%|4(?:\.\d+)?\s*%|low[-\s]?rate|existing\s+(?:loan|mortgage)|mortgage\s+rate)\b/i.test(text)) return 'mt';
+  return 'cash';
+}
+
+function guardAvaAgentOnlyPathDecision(pathDecision = {}, params = {}) {
+  const roleDecision = typeof params.callerRoleDecision === 'string'
+    ? { revision: PBK_CALLER_ROLE_REVISION, role: normalizeAvaCallerRole(params.callerRoleDecision) || PBK_CALLER_ROLES.UNKNOWN, confidence: 0.7, evidence: ['Caller role was supplied as a string.'], needsClarification: false }
+    : params.callerRoleDecision || detectAvaCallerRole(params);
+  const role = normalizeAvaCallerRole(roleDecision.role || '') || PBK_CALLER_ROLES.UNKNOWN;
+  const selectedPath = pathDecision.selectedPath || '';
+  if (role === PBK_CALLER_ROLES.AGENT || !isAvaAgentOnlyPath(selectedPath)) {
+    return { ...pathDecision, callerRole: roleDecision };
+  }
+  const fallbackPath = pickAvaOwnerSafeFallbackPath(params);
+  const safeRanked = Array.isArray(pathDecision.rankedPaths)
+    ? pathDecision.rankedPaths.filter((entry) => !isAvaAgentOnlyPath(entry.path || entry.key || entry.selectedPath || ''))
+    : [];
+  return {
+    ...pathDecision,
+    selectedPath: fallbackPath,
+    selectedPathLabel: getDealPathLabel(fallbackPath),
+    confidence: Math.min(Number(pathDecision.confidence || 0.5), 0.64),
+    pathLocked: false,
+    shouldClosePath: false,
+    nextProbeQuestion: role === PBK_CALLER_ROLES.UNKNOWN
+      ? 'Just so I do this the right way, are you the property owner, or are you a real estate agent representing the seller?'
+      : 'Before I recommend a path, what matters more to you right now: the fastest clean close or the highest possible net?',
+    scriptTrigger: '',
+    evidence: [
+      'Creative Finance and Multi-Family are agent-only, so Ava cannot pitch that lane to a homeowner.',
+      ...(Array.isArray(pathDecision.evidence) ? pathDecision.evidence : []),
+    ].slice(0, 5),
+    rankedPaths: safeRanked.length ? safeRanked : [{ path: fallbackPath, label: getDealPathLabel(fallbackPath), score: Math.min(Number(pathDecision.confidence || 0.5), 0.64), evidence: ['Owner-safe fallback path selected.'] }],
+    rule: 'Creative Finance and Multi-Family are agent-only. If caller is not a real estate agent, probe owner facts and use Cash, RBP, Land, or Mortgage Takeover only when appropriate.',
+    callerRole: roleDecision,
+    agentOnlyGuardApplied: true,
+  };
+}
+
+function buildAvaMasterProbe(params = {}) {
+  const session = params.session || {};
+  const contextCall = params.contextCall || params.call || {};
+  const callerRole = typeof params.callerRoleDecision === 'string'
+    ? { revision: PBK_CALLER_ROLE_REVISION, role: normalizeAvaCallerRole(params.callerRoleDecision) || PBK_CALLER_ROLES.UNKNOWN, confidence: 0.7, evidence: ['Caller role was supplied as a string.'], needsClarification: false }
+    : typeof params.callerRole === 'string'
+      ? { revision: PBK_CALLER_ROLE_REVISION, role: normalizeAvaCallerRole(params.callerRole) || PBK_CALLER_ROLES.UNKNOWN, confidence: 0.7, evidence: ['Caller role was supplied as a string.'], needsClarification: false }
+      : params.callerRoleDecision || params.callerRole || detectAvaCallerRole(params);
+  const role = normalizeAvaCallerRole(callerRole.role || '') || PBK_CALLER_ROLES.UNKNOWN;
+  const pathDecision = params.pathDecision || {};
+  const text = [
+    params.transcript,
+    params.query,
+    params.text,
+    contextCall.address,
+    session.address,
+    contextCall.selectedPathLabel,
+  ].filter(Boolean).join(' ');
+  const bant = normalizeBantInfo(contextCall.bant || {}, contextCall.raw?.bant || {}, contextCall.raw || {}, params.bant || {});
+  const addressKnown = Boolean(String(contextCall.address || session.address || params.address || '').trim());
+  const hasCondition = /\b(condition|roof|hvac|foundation|plumbing|repairs?|fix|broken|tenant|occupied|vacant|turnkey|updated|needs?\s+work)\b/i.test(text);
+  const hasMotivation = /\b(foreclosure|behind|probate|inherited|divorce|moving|relocat|tenant|eviction|repairs?|code\s+violation|tax|irs|death|estate|bankruptcy|tired|headache|sell\s+fast|top\s+dollar)\b/i.test(text)
+    || Boolean(normalizeBantValue(bant.need) || normalizeBantValue(bant.urgency));
+  const hasTimeline = /\b(today|tomorrow|week|month|days?|asap|fast|quick|soon|flexible|45|60|deadline|auction|moving)\b/i.test(text)
+    || Boolean(normalizeBantValue(bant.timeline));
+  const agentCommissionConfirmed = Boolean(session.agentCommissionConfirmed || params.agentCommissionConfirmed || contextCall.agentCommissionConfirmed);
+
+  if (role === PBK_CALLER_ROLES.UNKNOWN) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'caller_role_probe',
+      priority: 1,
+      mustAskBeforePitch: true,
+      question: 'Just so I do this the right way, are you the property owner, or are you a real estate agent representing the seller?',
+      reason: 'Ava must identify owner vs agent before routing the call.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.DECISION_HELPER) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'decision_maker_probe',
+      priority: 1,
+      mustAskBeforePitch: true,
+      question: 'Smart. Can we get them on a quick 3-way right now? I can explain it in five minutes so you are not stuck repeating everything.',
+      reason: 'Authority is unclear; Ava should identify the decision-maker before pitching.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.AGENT && !agentCommissionConfirmed) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'agent_commission_anchor',
+      priority: 1,
+      mustAskBeforePitch: true,
+      question: 'Perfect. I work with agents all the time, and I keep you in the deal with your full commission. What is the property address, and what is going on with the seller?',
+      reason: 'Agent calls must be commission-protected before probing listing details.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.AGENT && !addressKnown) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'agent_property_probe',
+      priority: 2,
+      mustAskBeforePitch: !pathDecision.pathLocked,
+      question: 'You stay in the deal and keep your full commission. What is the property address, and is it currently listed?',
+      reason: 'Agent flow needs property/listing context.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.AGENT && !hasMotivation) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'agent_seller_motivation_probe',
+      priority: 2,
+      mustAskBeforePitch: !pathDecision.pathLocked,
+      question: 'What is the seller really trying to solve: speed, price, a stale listing, repairs, or something else?',
+      reason: 'Agent flow needs the seller problem before choosing a path.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.OWNER && isAvaAgentOnlyPath(pathDecision.selectedPath)) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'owner_agent_only_guard',
+      priority: 1,
+      mustAskBeforePitch: true,
+      question: 'Before I recommend a path, what matters more to you right now: the fastest clean close or the highest possible net?',
+      reason: 'Owner is on an agent-only lane; Ava must pivot to owner-safe probing.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.OWNER && !hasMotivation && !pathDecision.pathLocked) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'owner_motivation_probe',
+      priority: 3,
+      mustAskBeforePitch: false,
+      question: 'What is actually driving this for you right now: repairs, timing, tenants, family, or just wanting a clean exit?',
+      reason: 'Ava needs owner motivation to select the best owner-safe path.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.OWNER && !hasTimeline && !pathDecision.pathLocked) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'owner_timeline_probe',
+      priority: 3,
+      mustAskBeforePitch: false,
+      question: 'What timeline would actually help you: days, a few weeks, or are you flexible if the net is higher?',
+      reason: 'Timeline separates cash from RBP and other owner-safe paths.',
+      callerRole,
+    };
+  }
+  if (role === PBK_CALLER_ROLES.OWNER && !hasCondition && !pathDecision.pathLocked) {
+    return {
+      revision: PBK_CALLER_ROLE_REVISION,
+      stage: 'owner_condition_probe',
+      priority: 3,
+      mustAskBeforePitch: false,
+      question: 'Walk me through the condition honestly: roof, HVAC, foundation, tenants, and anything a normal buyer would complain about?',
+      reason: 'Condition is required before cash/RBP/land math.',
+      callerRole,
+    };
+  }
+  return {
+    revision: PBK_CALLER_ROLE_REVISION,
+    stage: 'path_ready',
+    priority: 9,
+    mustAskBeforePitch: false,
+    question: '',
+    reason: 'Caller role and minimum probing context are sufficient for the next path move.',
+    callerRole,
+  };
+}
+
+function enforceAvaOwnerSafeReply(text = '', params = {}) {
+  const clean = String(text || '').trim();
+  if (!clean) return clean;
+  const roleDecision = typeof params.callerRoleDecision === 'string'
+    ? { revision: PBK_CALLER_ROLE_REVISION, role: normalizeAvaCallerRole(params.callerRoleDecision) || PBK_CALLER_ROLES.UNKNOWN, confidence: 0.7, evidence: ['Caller role was supplied as a string.'], needsClarification: false }
+    : typeof params.callerRole === 'string'
+      ? { revision: PBK_CALLER_ROLE_REVISION, role: normalizeAvaCallerRole(params.callerRole) || PBK_CALLER_ROLES.UNKNOWN, confidence: 0.7, evidence: ['Caller role was supplied as a string.'], needsClarification: false }
+      : params.callerRoleDecision || params.callerRole || detectAvaCallerRole(params);
+  const role = normalizeAvaCallerRole(roleDecision.role || '') || PBK_CALLER_ROLES.UNKNOWN;
+  if (role === PBK_CALLER_ROLES.AGENT) return clean;
+  const pathDecision = params.pathDecision || params.architecture?.pathDecision || {};
+  const hasAgentOnlySpeech = PBK_AGENT_ONLY_SPEECH_RE.test(clean) || isAvaAgentOnlyPath(pathDecision.selectedPath || params.selectedPath || '');
+  if (!hasAgentOnlySpeech) return clean;
+  const probe = params.masterProbe || buildAvaMasterProbe({ ...params, callerRoleDecision: roleDecision, pathDecision });
+  const fallback = probe.question || 'Before I recommend a path, what matters more to you right now: the fastest clean close or the highest possible net?';
+  return ensureAvaSellerReplyHook(fallback, { nextQuestion: fallback });
+}
+
 function getExplicitSelectedDealPath(params = {}) {
   const session = params.session || {};
   const contextCall = params.contextCall || params.call || {};
@@ -10467,6 +10820,7 @@ function inferAvaDealPathDecision(params = {}) {
     0,
     Number(params.probeTurnCount || params.probe_turn_count || session.pathProbeTurnCount || session.turnCount || params.turnCount || params.turn_count || 0) || 0,
   );
+  const callerRole = detectAvaCallerRole(params);
 
   if (explicitPath && explicitPath !== 'cash') addDealPathEvidence(scores, explicitPath, 0.48, `Existing context points to ${getDealPathLabel(explicitPath)}.`);
   if (explicitPath === 'cash' && /\b(cash|as[-\s]?is|fast|quick|certainty|repairs|distress)\b/i.test(text)) {
@@ -10488,6 +10842,10 @@ function inferAvaDealPathDecision(params = {}) {
   if (/\b(fast|quick|asap|soon|21\s+days|cash|as[-\s]?is|no\s+repairs?|just\s+want\s+it\s+gone|gone\s+fast|divorce|relocat|financial\s+pressure|behind|foreclosure|vacant|distressed|needs?\s+work|repairs?)\b/i.test(text)) {
     addDealPathEvidence(scores, 'cash', 0.72, 'Seller language points to speed, certainty, as-is, distress, vacancy, or repairs.');
   }
+  if (callerRole.role !== PBK_CALLER_ROLES.AGENT && scores.cf) {
+    scores.cf.score = 0;
+    scores.cf.evidence.push('Creative Finance and Multi-Family are agent-only, so this caller must be probed down an owner-safe lane first.');
+  }
 
   const ranked = Object.values(scores)
     .map((entry) => ({
@@ -10504,7 +10862,7 @@ function inferAvaDealPathDecision(params = {}) {
   const closePath = pathLocked && selectedPath;
   const nextProbeQuestion = closePath ? '' : getAvaPathProbeQuestion(selectedPath || best.path || 'cash');
   const scriptTrigger = closePath ? getAvaPathScriptTrigger(selectedPath) : '';
-  return {
+  const decision = {
     selectedPath,
     selectedPathLabel: getDealPathLabel(selectedPath),
     confidence,
@@ -10520,6 +10878,20 @@ function inferAvaDealPathDecision(params = {}) {
     rule: closePath
       ? 'Path locked: stop broad probing, keep the script lane clean, and move through that path toward the next safe close.'
       : 'Probe one missing fact, then re-score. Do not present a path trigger until confidence or max probe turns locks the path.',
+  };
+  const guarded = guardAvaAgentOnlyPathDecision(decision, { ...params, bant, callerRoleDecision: callerRole });
+  const masterProbe = buildAvaMasterProbe({ ...params, bant, pathDecision: guarded, callerRoleDecision: callerRole });
+  if (masterProbe.mustAskBeforePitch) {
+    guarded.pathLocked = false;
+    guarded.shouldClosePath = false;
+    guarded.scriptTrigger = '';
+    guarded.nextProbeQuestion = masterProbe.question;
+    guarded.rule = `${guarded.rule || ''} Master probing guard: ${masterProbe.reason}`.trim();
+  }
+  return {
+    ...guarded,
+    callerRole,
+    masterProbe,
   };
 }
 
@@ -14577,6 +14949,14 @@ function buildAvaCallArchitectureContext(params = {}) {
   const bant = normalizeBantInfo(knownBant, extractBantFromTranscript(transcript, knownBant));
   const missingBant = getMissingBantFields(bant);
   const scripts = buildAvaScriptRotationSnapshot({ ...params, query: transcript });
+  const callerRole = applyAvaCallerRoleToSession(session, detectAvaCallerRole({
+    ...params,
+    session,
+    contextCall,
+    context,
+    transcript,
+    query: transcript,
+  }));
   const recentAnalyses = sortNewest(state.callAnalyses || [])
     .filter((analysis) => !context.leadId || !analysis.leadId || analysis.leadId === context.leadId)
     .slice(0, 5)
@@ -14608,7 +14988,19 @@ function buildAvaCallArchitectureContext(params = {}) {
     query: transcript,
     bant,
     selectedPath: params.selectedPath || params.selected_path || contextCall.selectedPath || contextCall.selected_path || context.selectedPath || context.selected_path || '',
+    callerRole: callerRole.role,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
+  });
+  const masterProbe = buildAvaMasterProbe({
+    ...params,
+    session,
+    contextCall,
+    context,
+    transcript,
+    query: transcript,
+    bant,
+    pathDecision,
+    callerRoleDecision: pathDecision.callerRole || callerRole,
   });
   const warManual = buildAvaWarManualContext({
     ...params,
@@ -14619,6 +15011,7 @@ function buildAvaCallArchitectureContext(params = {}) {
     query: transcript,
     bant,
     pathDecision,
+    callerRole: callerRole.role,
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
@@ -14632,6 +15025,7 @@ function buildAvaCallArchitectureContext(params = {}) {
     bant,
     pathDecision,
     warManual,
+    callerRole: callerRole.role,
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
@@ -14650,6 +15044,8 @@ function buildAvaCallArchitectureContext(params = {}) {
       complete: missingBant.length === 0,
       nextQuestion: nextBantQuestion,
     },
+    callerRole,
+    masterProbe,
     pathDecision,
     dealPath: pathDecision,
     warManual,
@@ -15615,6 +16011,15 @@ async function buildAvaConversationIntelligence(params = {}) {
     : null;
   const pathDecision = architecture.pathDecision || {};
   const warManual = architecture.warManual || {};
+  const callerRole = architecture.callerRole || pathDecision.callerRole || detectAvaCallerRole({ ...params, ...context, query, transcript: params.transcript || query });
+  const masterProbe = architecture.masterProbe || pathDecision.masterProbe || buildAvaMasterProbe({
+    ...params,
+    ...context,
+    query,
+    transcript: params.transcript || query,
+    pathDecision,
+    callerRoleDecision: callerRole,
+  });
   const activeListening = architecture.activeListening || buildAvaActiveListeningContext({
     ...params,
     ...context,
@@ -15636,6 +16041,9 @@ async function buildAvaConversationIntelligence(params = {}) {
     && warManual.listenProbe?.question
     ? warManual.listenProbe.question
     : '';
+  const masterProbePhrase = pathCanGuide && masterProbe.mustAskBeforePitch
+    ? masterProbe.question
+    : '';
   const activeListeningPhrase = pathCanGuide
     ? buildAvaActiveListeningReplyCandidate(activeListening, {
       stopContact: reaction.shouldStopContact,
@@ -15655,14 +16063,23 @@ async function buildAvaConversationIntelligence(params = {}) {
     ? (reaction.shouldStopContact
         ? (reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '')
         : (activeListeningPhrase || warObjectionPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || ''))
-    : (activeListeningPhrase || warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
-  const responseText = pathCanGuide
+    : (masterProbePhrase || activeListeningPhrase || warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '');
+  const hookedResponseText = pathCanGuide
     ? ensureAvaSellerReplyHook(rawResponseText, {
       hook: activeListening.callFlow?.recommendedHook,
       nextQuestion: activeListening.callFlow?.recommendedHook || closing.closeQuestion || closing.advice?.closeQuestion || '',
       stopContact: reaction.shouldStopContact,
     })
     : rawResponseText;
+  const responseText = enforceAvaOwnerSafeReply(hookedResponseText, {
+    ...params,
+    ...context,
+    query,
+    transcript: params.transcript || query,
+    pathDecision,
+    callerRoleDecision: callerRole,
+    masterProbe,
+  });
   return {
     ok: true,
     result: 'ava_conversation_intelligence',
@@ -15671,6 +16088,8 @@ async function buildAvaConversationIntelligence(params = {}) {
     closeQuestion: closing.closeQuestion || closing.advice?.closeQuestion || '',
     selectedPath: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
     pathDecision,
+    callerRole,
+    masterProbe,
     warManual,
     activeListening,
     objectionType: reaction.objectionType,
@@ -17509,6 +17928,8 @@ function buildAvaCallStateSummary(params = {}) {
   const warListenQuestion = sanitizeAvaSpokenOutput(warManual.listenProbe?.question || '').slice(0, 260);
   const warPowerLine = sanitizeAvaSpokenOutput(warManual.powerLine?.line || '').slice(0, 220);
   const warMove = warManual.psychologyMove || {};
+  const callerRole = params.callerRole || architecture.callerRole || pathDecision.callerRole || detectAvaCallerRole({ session, contextCall, transcript });
+  const masterProbe = params.masterProbe || architecture.masterProbe || pathDecision.masterProbe || buildAvaMasterProbe({ session, contextCall, transcript, pathDecision, callerRoleDecision: callerRole });
   const activeSellerWords = sanitizeAvaSpokenOutput(activeListening.lastSellerWords || transcript || '').slice(0, 220);
   const activeMirror = sanitizeAvaSpokenOutput(activeListening.mirroredPhrase || '').slice(0, 120);
   const activeLabel = sanitizeAvaSpokenOutput(activeListening.label || '').slice(0, 220);
@@ -17523,6 +17944,9 @@ function buildAvaCallStateSummary(params = {}) {
     .join(', ') || 'none';
   const lines = [
     `Path: ${pathState} ${selectedPath}${confidence ? ` at ${confidence}% confidence` : ''}.`,
+    `Caller role: ${callerRole.role || 'unknown'} (${Math.round(toNumber(callerRole.confidence, 0) * 100)}%). ${callerRole.needsClarification ? 'Clarify owner/agent/decision-maker before pitching.' : 'Role is clear enough for this turn.'}`,
+    masterProbe?.question ? `Master probe: ${masterProbe.question} (${masterProbe.reason || 'probe required'}).` : '',
+    'Audience guard: Creative Finance and Multi-Family are agent-only. If caller is not an agent, do not mention those paths; ask an owner-safe probe instead.',
     pathDecision.rule ? `Path rule: ${sanitizeAvaSpokenOutput(pathDecision.rule).slice(0, 220)}` : '',
     warManual.revision ? `War manual: ${warManual.revision}; ${warManual.pathPicker?.name || '7-second path picker'} -> ${warPath || 'diagnosing'}; emotional state ${warEmotion || 'unknown'}; motivator ${warMotivator}; objection ${warObjection}; tone ${warTone || 'Calm Authority'}.` : '',
     warListenQuestion ? `L.I.S.T.E.N. next step (${warManual.listenProbe?.step || 'probe'}): ${warListenQuestion}` : '',
@@ -17568,6 +17992,8 @@ function buildStrategistMessages(params = {}) {
     'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.',
     'Active listening rule: treat the last seller sentence as sacred. Mirror or label their exact concern before strategy, ask one question, then wait for the seller. Never monologue.',
     'Hook rule: every non-boundary live-call response should end with a question or clear next step that requires the seller to answer.',
+    'Caller-role rule: first separate owner, real estate agent, and decision-maker/helper. If agent, keep the agent in the deal, say their full commission is protected, then probe listing/property details. If owner, continue owner-safe probing.',
+    'Audience guard: Creative Finance and Multi-Family are agent-only. Never pitch, explain, or hint at CF/MF to a homeowner or unknown caller.',
     'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.',
     'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.',
     'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.',
@@ -40447,6 +40873,8 @@ function applyAvaPathDecisionToSession(session = {}, pathDecision = {}) {
   if (!session || typeof session !== 'object' || !pathDecision?.selectedPath) return;
   session.selectedPath = pathDecision.selectedPath;
   session.pathProbeTurnCount = Number(pathDecision.probeTurnCount || session.pathProbeTurnCount || 0);
+  if (pathDecision.callerRole?.role) applyAvaCallerRoleToSession(session, pathDecision.callerRole);
+  if (pathDecision.masterProbe) session.masterProbe = pathDecision.masterProbe;
   if (pathDecision.pathLocked) {
     session.pathLocked = true;
     session.identifiedPath = pathDecision.selectedPath;
@@ -40474,6 +40902,23 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     turnCount: session.pathProbeTurnCount,
   });
   applyAvaPathDecisionToSession(session, pathDecision);
+  const callerRole = applyAvaCallerRoleToSession(session, pathDecision.callerRole || detectAvaCallerRole({
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    callerRole: contextCall?.callerRole || session.callerRole || '',
+  }));
+  const masterProbe = pathDecision.masterProbe || buildAvaMasterProbe({
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    bant: extractedBant,
+    pathDecision,
+    callerRoleDecision: callerRole,
+  });
+  session.masterProbe = masterProbe;
   const warManual = buildAvaWarManualContext({
     session,
     contextCall,
@@ -40481,6 +40926,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     query: raw,
     bant: extractedBant,
     pathDecision,
+    callerRole: callerRole.role,
     selectedPath: pathDecision.selectedPath,
     turnCount: session.pathProbeTurnCount,
   });
@@ -40492,6 +40938,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     bant: extractedBant,
     pathDecision,
     warManual,
+    callerRole: callerRole.role,
     selectedPath: pathDecision.selectedPath,
     turnCount: session.pathProbeTurnCount,
   });
@@ -40504,53 +40951,66 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     stopContact: options.stopContact === true,
     fallback: options.fallback || '',
   });
+  const withSafeActiveHook = (text = '', options = {}) => withActiveHook(enforceAvaOwnerSafeReply(text, {
+    session,
+    contextCall,
+    transcript: raw,
+    query: raw,
+    pathDecision,
+    callerRoleDecision: callerRole,
+    masterProbe,
+  }), options);
   const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
-    return withActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
+    return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
   }
   if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
-    return withActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
+    return withSafeActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
+  }
+  if (masterProbe.mustAskBeforePitch) {
+    if (masterProbe.stage === 'agent_commission_anchor') session.agentCommissionConfirmed = true;
+    return withSafeActiveHook(`${opener}${masterProbe.question}`, { fallback: masterProbe.question });
   }
   const activeSituationProbeAllowed = !pathDecision.shouldClosePath;
   if (activeSituationProbeAllowed && activeListening.callFlow?.nextStepId === 'cash.condition_probe') {
-    return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
+    return withSafeActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
   }
   if (activeSituationProbeAllowed && activeListening.callFlow?.nextStepId === 'cash.tenant_probe') {
-    return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
+    return withSafeActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
   }
   if (activeListening.callFlow?.nextStepId === 'cash.foreclosure_probe') {
-    return withActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
+    return withSafeActiveHook(`${opener}${activeListening.label} ${activeListening.callFlow.avaLine}`);
   }
   if (activeListening.callFlow?.nextStepId === 'objection.spouse_3way') {
-    return withActiveHook(`${opener}${activeListening.callFlow.avaLine}`);
+    return withSafeActiveHook(`${opener}${activeListening.callFlow.avaLine}`);
   }
   if (warManual.objection?.response && Number(warManual.objection?.confidence || 0) >= 0.16) {
-    return withActiveHook(`${opener}${warManual.objection.response}`);
+    return withSafeActiveHook(`${opener}${warManual.objection.response}`);
   }
   if (/\b(scam|fake|legit|real company|who are you|trust)\b/i.test(lower)) {
-    return withActiveHook('That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?');
+    return withSafeActiveHook('That is a fair question. I am Ava with Probono Key Realty, and I will not pressure you. What would help you feel comfortable before we discuss the property?');
   }
   if (/\b(price|offer|how much|worth|lowball|cash)\b/i.test(lower)) {
-    return withActiveHook('I can help with that, but I do not want to guess or throw out a sloppy number. What is the property address and current condition?');
+    return withSafeActiveHook('I can help with that, but I do not want to guess or throw out a sloppy number. What is the property address and current condition?');
   }
   if (/\b(attorney|lawyer|executor|probate|estate|passed away|inherited)\b/i.test(lower)) {
-    return withActiveHook('I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?');
+    return withSafeActiveHook('I am sorry you are having to sort through that. I can slow this down and keep it practical. Are you the person authorized to make decisions on the property?');
   }
   if (pathDecision.shouldClosePath && pathDecision.scriptTrigger) {
     const warPathLine = warManual.path?.nextLine ? ` ${warManual.path.nextLine}` : '';
-    return withActiveHook(`${opener}${pathDecision.scriptTrigger}${warPathLine}`);
+    return withSafeActiveHook(`${opener}${pathDecision.scriptTrigger}${warPathLine}`);
   }
   if (!pathDecision.pathLocked && session.pathProbeTurnCount <= 4 && warManual.listenProbe?.question) {
-    return withActiveHook(`${opener}${warManual.listenProbe.question}`);
+    return withSafeActiveHook(`${opener}${warManual.listenProbe.question}`);
   }
   if (!pathDecision.pathLocked && pathDecision.nextProbeQuestion) {
-    return withActiveHook(`${opener}${pathDecision.nextProbeQuestion}`);
+    return withSafeActiveHook(`${opener}${pathDecision.nextProbeQuestion}`);
   }
   if (nextMissingBant) {
-    return withActiveHook(buildRotatedBantPhrase(nextMissingBant, opener || 'I hear you. '));
+    return withSafeActiveHook(buildRotatedBantPhrase(nextMissingBant, opener || 'I hear you. '));
   }
-  return withActiveHook(`${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`);
+  return withSafeActiveHook(`${opener}I hear you. Let me slow this down and make sure I help the right way. What matters most right now: speed, certainty, or price?`);
 }
 
 async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', contextCall = null } = {}) {
@@ -40610,6 +41070,15 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
     probeTurnCount: session.pathProbeTurnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
   applyAvaPathDecisionToSession(session, architecture.pathDecision);
+  const callerRole = architecture.callerRole || architecture.pathDecision?.callerRole || detectAvaCallerRole({ session, contextCall, transcript, query: transcript });
+  const masterProbe = architecture.masterProbe || architecture.pathDecision?.masterProbe || buildAvaMasterProbe({
+    session,
+    contextCall,
+    transcript,
+    query: transcript,
+    pathDecision: architecture.pathDecision,
+    callerRoleDecision: callerRole,
+  });
   try {
     const activeListening = architecture.activeListening || buildAvaActiveListeningContext({
       session,
@@ -40641,6 +41110,9 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         'Live Telnyx inbound call turn for Ava.',
         'Ava must sound conversational, emotionally intelligent, and concise.',
         'Ask one useful BANT+ or property-situation question. Do not give legal advice or seller-facing numbers yet.',
+        `Caller role: ${callerRole.role || 'unknown'} (${Math.round(toNumber(callerRole.confidence, 0) * 100)}%). ${callerRole.needsClarification ? 'Clarify whether this is owner, agent, or decision-maker/helper before pitching.' : 'Role is clear enough for this turn.'}`,
+        masterProbe.question ? `Master probing instruction: ${masterProbe.question} Reason: ${masterProbe.reason}` : '',
+        'Audience guard: Creative Finance and Multi-Family are agent-only. If caller is not an agent, do not mention CF, seller finance, carrying a note, MF, or multi-family path language.',
         `Activated architecture: scripts=${architecture.scripts.activeSkillCount}, BANT=${architecture.bant.complete ? 'complete' : `missing ${architecture.bant.missing.join(', ')}`}, prosody=${architecture.prosody.activeModel ? 'learned+rules' : 'rules+logging'}, Rex=${architecture.rexOversight.recentCallAnalyses.length} recent analyses.`,
         `Deal path: ${architecture.pathDecision.pathLocked ? 'LOCKED' : 'probing'} ${architecture.pathDecision.selectedPathLabel} (${Math.round((architecture.pathDecision.confidence || 0) * 100)}%). ${architecture.pathDecision.rule}`,
         architecture.warManual?.revision ? `War manual active: ${architecture.warManual.pathPicker?.name || '7-second path picker'}, path=${architecture.warManual.path?.label || 'diagnosing'}, emotional=${architecture.warManual.emotionalState?.label || 'unknown'}, motivator=${architecture.warManual.hiddenMotivator?.id || 'unknown'}, objection=${architecture.warManual.objection?.tag || 'none'}, tone=${architecture.warManual.toneMode?.label || 'Calm Authority'}, move=${architecture.warManual.psychologyMove?.label || 'Permission Frame'}.` : '',
@@ -40683,8 +41155,17 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       hook: activeListening.callFlow?.recommendedHook,
       nextQuestion: activeListening.callFlow?.recommendedHook || strategist?.strategy?.nextQuestion || '',
     });
+    const guardedScript = enforceAvaOwnerSafeReply(hookedScript, {
+      session,
+      contextCall,
+      transcript,
+      query: transcript,
+      pathDecision: architecture.pathDecision,
+      callerRoleDecision: callerRole,
+      masterProbe,
+    });
     return {
-      text: normalizeAvaVoiceReplyText(hookedScript, fallback),
+      text: normalizeAvaVoiceReplyText(guardedScript, fallback),
       pipeline,
       conversation,
       strategist,
@@ -40702,12 +41183,33 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       pathDecision: architecture.pathDecision,
       warManual: architecture.warManual,
     });
+    const callerRole = architecture.callerRole || architecture.pathDecision?.callerRole || detectAvaCallerRole({ session, contextCall, transcript, query: transcript });
+    const masterProbe = architecture.masterProbe || architecture.pathDecision?.masterProbe || buildAvaMasterProbe({
+      session,
+      contextCall,
+      transcript,
+      query: transcript,
+      pathDecision: architecture.pathDecision,
+      callerRoleDecision: callerRole,
+    });
+    const fallbackText = enforceAvaOwnerSafeReply(
+      ensureAvaSellerReplyHook(conversation?.nextBestPhrase || '', {
+        hook: activeListening.callFlow?.recommendedHook,
+        nextQuestion: activeListening.callFlow?.recommendedHook,
+      }),
+      {
+        session,
+        contextCall,
+        transcript,
+        query: transcript,
+        pathDecision: architecture.pathDecision,
+        callerRoleDecision: callerRole,
+        masterProbe,
+      },
+    );
     return {
       text: normalizeAvaVoiceReplyText(
-        ensureAvaSellerReplyHook(conversation?.nextBestPhrase || '', {
-          hook: activeListening.callFlow?.recommendedHook,
-          nextQuestion: activeListening.callFlow?.recommendedHook,
-        }),
+        fallbackText,
         'I hear you. Let me slow this down so I can help the right way. What is the property address, and what has you thinking about selling now?',
       ),
       pipeline,
@@ -40742,6 +41244,20 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   }
   const fallback = buildFastTelnyxLiveAvaReplyText({ session, transcript, contextCall });
   const normalizedFallback = normalizeAvaVoiceReplyText(fallback, fallback);
+  if (session.masterProbe?.mustAskBeforePitch) {
+    const nonRepeatingMasterProbe = avoidRepeatedAvaLiveReply(session, normalizedFallback, normalizedFallback);
+    return {
+      text: nonRepeatingMasterProbe.text,
+      replyMode: 'fast_local_master_probe',
+      architecture: buildAvaCallArchitectureContext({ session, contextCall, transcript, query: transcript }),
+      antiRepeat: nonRepeatingMasterProbe,
+      strategist: {
+        ok: true,
+        skipped: true,
+        result: 'master_probe_required',
+      },
+    };
+  }
   const mode = getTelnyxLiveReplyStrategistMode();
   const strategistTimeoutMs = getTelnyxLiveReplyStrategistTimeoutMs();
 
@@ -40906,8 +41422,18 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
   }
 
   const reply = await buildTelnyxLiveAvaReply({ session, transcript, contextCall });
+  const guardedReplyText = enforceAvaOwnerSafeReply(reply.text || '', {
+    session,
+    contextCall,
+    transcript,
+    query: transcript,
+    architecture: reply.architecture,
+    pathDecision: reply.architecture?.pathDecision || session.pathDecision || livePathDecision,
+    callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
+    masterProbe: reply.architecture?.masterProbe || session.masterProbe,
+  });
   const spoken = sanitizeAvaSpokenOutput(
-    reply.text || '',
+    guardedReplyText,
     'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
   );
   session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
@@ -41015,6 +41541,11 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     address: '',
     phone: '',
     leadSource: '',
+    callerRole: PBK_CALLER_ROLES.UNKNOWN,
+    callerRoleConfidence: 0,
+    callerRoleEvidence: [],
+    agentCommissionConfirmed: false,
+    masterProbe: {},
     telnyxMediaSocket: socket,
     telnyxAiAssistantStarted: false,
     lastAvaReplyAt: 0,
@@ -41398,8 +41929,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       transcript: item.transcript,
       contextCall,
     });
+    const guardedReplyText = enforceAvaOwnerSafeReply(reply.text || '', {
+      session,
+      contextCall,
+      transcript: item.transcript,
+      query: item.transcript,
+      architecture: reply.architecture,
+      pathDecision: reply.architecture?.pathDecision || session.pathDecision || {},
+      callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
+      masterProbe: reply.architecture?.masterProbe || session.masterProbe,
+    });
     const spoken = sanitizeAvaSpokenOutput(
-      reply.text || '',
+      guardedReplyText,
       'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
     );
     session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);

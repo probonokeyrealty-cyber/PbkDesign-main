@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-recording-rag-memory-db';
+const BUILD_REVISION = '2026-05-27-ava-recording-rag-memory-db-check';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -6753,6 +6753,68 @@ async function ensureCallEmbeddingsSchema(pool) {
     console.warn('[pbk-local-openclaw] call_embeddings schema ensure failed:', error?.message || error);
     return false;
   }
+}
+
+async function readCallEmbeddingsSchemaStatus() {
+  const result = await queryPgRows(`
+    SELECT
+      to_regclass('public.call_embeddings') IS NOT NULL AS table_exists,
+      EXISTS (
+        SELECT 1
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.proname = 'match_call_embeddings'
+      ) AS function_exists,
+      EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'call_embeddings'
+          AND indexname = 'call_embeddings_embedding_idx'
+      ) AS embedding_index_exists,
+      EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'call_embeddings'
+          AND indexname = 'call_embeddings_text_idx'
+      ) AS text_index_exists,
+      COALESCE((
+        SELECT COUNT(*)::int
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'call_embeddings'
+      ), 0) AS column_count
+  `);
+  if (!result.ok) {
+    return {
+      ok: false,
+      configured: false,
+      result: 'postgres_unavailable',
+      error: result.error,
+      code: result.code || '',
+    };
+  }
+
+  const row = result.rows?.[0] || {};
+  const tableExists = Boolean(row.table_exists);
+  const functionExists = Boolean(row.function_exists);
+  const embeddingIndexExists = Boolean(row.embedding_index_exists);
+  const textIndexExists = Boolean(row.text_index_exists);
+  const columnCount = Number(row.column_count || 0);
+  const ready = tableExists && functionExists && embeddingIndexExists && textIndexExists && columnCount >= 14;
+  return {
+    ok: ready,
+    configured: true,
+    result: ready ? 'call_embeddings_schema_ready' : 'call_embeddings_schema_incomplete',
+    tableExists,
+    functionExists,
+    embeddingIndexExists,
+    textIndexExists,
+    columnCount,
+    revision: BUILD_REVISION,
+  };
 }
 
 async function seedAvaMasterclassKnowledgeToPg(pool) {
@@ -34636,6 +34698,11 @@ const toolHandlers = {
   async getAvaCallIntelligenceStatus(params = {}) {
     recordToolUse('getAvaCallIntelligenceStatus');
     return getAvaCallIntelligenceStatus(params);
+  },
+
+  async getCallEmbeddingsSchemaStatus(params = {}) {
+    recordToolUse('getCallEmbeddingsSchemaStatus');
+    return readCallEmbeddingsSchemaStatus();
   },
 
   async getProsodyAdvice(params = {}) {

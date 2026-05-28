@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-war-manual-runtime-activation';
+const BUILD_REVISION = '2026-05-27-ava-rex-live-behavior-hardening';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -18530,6 +18530,120 @@ function answerBrainQuery(stateRef, query = '') {
   };
 }
 
+function buildRexConversationControlEnvelope(stateRef = {}) {
+  const pendingApprovals = Array.isArray(stateRef.approvals)
+    ? stateRef.approvals.filter((item) => String(item.status || '').toLowerCase() === 'pending').length
+    : 0;
+  const pendingAdminTasks = Array.isArray(stateRef.adminTasks)
+    ? stateRef.adminTasks.filter((item) => ['pending', 'queued', 'needs_approval'].includes(String(item.status || '').toLowerCase())).length
+    : 0;
+  const recentRevenueFocus = Array.isArray(stateRef.revenueAlignmentActions)
+    ? stateRef.revenueAlignmentActions.slice(-3).map((item) => item.label || item.action || item.title).filter(Boolean)
+    : [];
+  return {
+    mode: 'conversational-strategist',
+    brainLane: 'getBrainState',
+    adminControlLane: 'routeAdminCommand',
+    providerWritesApprovalGated: true,
+    deepSeekReady: getDeepSeekProviderMeta().ready,
+    pendingApprovals,
+    pendingAdminTasks,
+    providerMode: stateRef.status?.mode || 'approval',
+    stateBackend: STATE_BACKEND,
+    recentRevenueFocus,
+  };
+}
+
+function compactRexBrainMatchesForPrompt(matches = [], limit = 3) {
+  return (Array.isArray(matches) ? matches : [])
+    .slice(0, Math.max(1, Math.min(5, Number(limit || 3))))
+    .map((doc, index) => {
+      const title = String(doc?.title || doc?.source || `Memory ${index + 1}`).trim().slice(0, 120);
+      const summary = String(doc?.summary || doc?.excerpt || doc?.content || '').trim().slice(0, 360);
+      return summary ? `${index + 1}. ${title}: ${summary}` : `${index + 1}. ${title}`;
+    })
+    .join('\n');
+}
+
+function buildRexRecentConversationForPrompt(messages = []) {
+  return normalizeConversationMessages(messages)
+    .slice(-8)
+    .map((message) => `${message.role}: ${message.content.slice(0, 700)}`)
+    .join('\n');
+}
+
+async function buildRexConversationalBrainResponse(stateRef = {}, params = {}) {
+  const query = String(params.query || '').trim();
+  const baseResponse = params.baseResponse || answerBrainQuery(stateRef, query);
+  const control = buildRexConversationControlEnvelope(stateRef);
+  const meta = getDeepSeekProviderMeta();
+  if (!query || params.conversational === false || !meta.ready) {
+    return {
+      ...baseResponse,
+      rexControl: control,
+      rexConversationMode: meta.ready ? 'local_fallback' : 'local_fallback_provider_missing',
+    };
+  }
+
+  const memoryContext = compactRexBrainMatchesForPrompt(baseResponse.matches || [], 3);
+  const recentConversation = buildRexRecentConversationForPrompt(params.messages || []);
+  const system = [
+    'You are Rex, PBK Command Center strategist.',
+    'Be conversational, concise, and useful. Do not dump doctrine unless the operator asks for a checklist.',
+    'Synthesize before listing: give the conclusion, the why, the safest next action, and one useful follow-up question.',
+    'You may recommend system actions, but you do not claim provider writes, calls, deploys, SMS, contracts, or destructive changes were performed unless the bridge result says they were.',
+    'Admin/control actions must go through routeAdminCommand, approvals, or explicit dry-run/apply lanes. Keep that distinction clear.',
+    'If Ava or live calls are mentioned, focus on behavior: transcript quality, turn-taking, context resolver, memory retrieval, path guardrails, and prosody.',
+  ].join('\n');
+  const user = [
+    `Operator asked: ${query}`,
+    '',
+    'Local PBK brain answer to synthesize:',
+    String(baseResponse.answer || '').slice(0, 2400),
+    '',
+    memoryContext ? `Relevant memory/docs:\n${memoryContext}` : 'Relevant memory/docs: none matched strongly.',
+    '',
+    recentConversation ? `Recent Rex chat context:\n${recentConversation}` : 'Recent Rex chat context: none.',
+    '',
+    `Control envelope: ${JSON.stringify(control)}`,
+    '',
+    'Return the best conversational Rex answer in 4-8 sentences. If there is a safe command/control next step, name the lane and whether it is inspect, dry-run, approval, or apply. End with one focused next question or next action.',
+  ].join('\n');
+
+  const result = await runDeepSeekChatCompletion([
+    { role: 'system', content: system },
+    { role: 'user', content: user },
+  ], {
+    temperature: 0.22,
+    maxTokens: 520,
+    timeoutMs: Math.min(8000, Math.max(2500, DEEPSEEK_TIMEOUT_MS)),
+    source: 'rex-conversational-brain',
+  });
+
+  const synthesized = String(result?.answer || '').trim();
+  if (!result?.ok || !synthesized) {
+    return {
+      ...baseResponse,
+      rexControl: control,
+      rexConversationMode: 'local_fallback_deepseek_error',
+      rexDeepSeekError: result?.error || result?.result || 'DeepSeek did not return a conversational Rex answer.',
+    };
+  }
+
+  return {
+    ...baseResponse,
+    answer: synthesized,
+    rexControl: control,
+    rexConversationMode: 'deepseek_conversational_strategist',
+    rexDeepSeek: {
+      provider: result.provider,
+      responseId: result.responseId || '',
+      usage: result.usage || null,
+    },
+    citations: Array.from(new Set([...(baseResponse.citations || []), 'Rex DeepSeek conversational strategist'])),
+  };
+}
+
 function looksLikeRexTroubleshootingQuery(query = '') {
   const text = String(query || '').toLowerCase();
   return /\b(why\s+(can'?t|cannot|won'?t|isn'?t|doesn'?t)|can'?t|cannot|won'?t|isn'?t|doesn'?t|missing|broken|bug|error|failed|failing|stuck|confused|not\s+(showing|working|finding|loading|syncing))\b/i.test(text);
@@ -19886,6 +20000,7 @@ function buildAvaResolvedNextMove(params = {}) {
   const activeListening = architecture.activeListening || {};
   const masterProbe = architecture.masterProbe || pathDecision.masterProbe || {};
   const bant = architecture.bant || {};
+  const goalInference = architecture.goalInference || session.goalInference || conversation.goalInference || {};
   const pathLocked = Boolean(pathDecision.pathLocked || session.pathLocked);
   const objection = warManual.objection || {};
   const objectionResponse = sanitizeAvaSpokenOutput(objection.response || '').slice(0, 360);
@@ -20066,6 +20181,7 @@ async function resolveAvaLiveCallContext(params = {}) {
       lead: {
         leadId: lead.leadId || '',
         name: getSpokenLeadName(lead.leadName || ''),
+        nameConfirmed: hasConfirmedAvaLiveLeadName(session, contextCall),
         address: lead.address || '',
         motivation: architecture.warManual?.hiddenMotivator?.id || '',
       },
@@ -20155,7 +20271,8 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
     `Seller just said: "${sanitizeAvaSpokenOutput(transcript).slice(0, 500)}"`,
     `exactNextMove: ${sanitizeAvaSpokenOutput(move.text || move.exactNextMove || '').slice(0, 420)}`,
     `Move type: ${move.type || 'fallback_probe'} via ${move.source || 'resolver'}. Reason: ${move.reason || 'safe_next_step'}.`,
-    lead.name ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.` : '',
+    lead.name && lead.nameConfirmed ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.` : '',
+    lead.name && !lead.nameConfirmed ? 'Lead context has an unconfirmed CRM name. Do not say the lead name unless the caller confirms it on this call.' : '',
     stateSnapshot.identifiedPath ? `Path state: ${stateSnapshot.pathLocked ? 'locked' : 'probing'} ${stateSnapshot.identifiedPath}.` : '',
     goalLine,
     memory ? `Relevant memory lesson: ${memory}` : '',
@@ -37894,7 +38011,7 @@ const toolHandlers = {
     const isTroubleshootingIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && looksLikeRexTroubleshootingQuery(query);
     const isOpenAiWebSearchIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isTroubleshootingIntent && looksLikeOpenAiWebSearchIntent(query);
     const isAdminIntent = !isReadableSummaryIntent && !isBrowserResearchIntent && !isOpenAiWebSearchIntent && !isTroubleshootingIntent && looksLikeAdminIntent(query);
-    const response = isAdminIntent || isBrowserResearchIntent || isReadableSummaryIntent || isOpenAiWebSearchIntent || isTroubleshootingIntent
+    const baseResponse = isAdminIntent || isBrowserResearchIntent || isReadableSummaryIntent || isOpenAiWebSearchIntent || isTroubleshootingIntent
       ? null
       : answerBrainQuery(state, query);
     state.status.queryCountToday = toNumber(state.status.queryCountToday, 0) + 1;
@@ -38071,6 +38188,12 @@ const toolHandlers = {
         target: 'Brain',
       }),
     );
+    const response = await buildRexConversationalBrainResponse(state, {
+      ...params,
+      query,
+      messages,
+      baseResponse,
+    });
     const memory = await storeRexConversationMemory(state, { ...params, query, messages }, response);
     await persistState(state);
     return {
@@ -43093,12 +43216,31 @@ function rememberAvaLiveReplyFingerprint(session = {}, text = '') {
   if (!Array.isArray(session.recentAvaReplyFingerprints)) session.recentAvaReplyFingerprints = [];
   session.recentAvaReplyFingerprints.unshift(fingerprint);
   session.recentAvaReplyFingerprints = session.recentAvaReplyFingerprints.slice(0, 8);
+  const intent = getReplyIntentFingerprint(text);
+  if (intent) {
+    if (!Array.isArray(session.recentAvaReplyIntents)) session.recentAvaReplyIntents = [];
+    session.recentAvaReplyIntents.unshift(intent);
+    session.recentAvaReplyIntents = session.recentAvaReplyIntents.slice(0, 8);
+  }
 }
 
 function hasAvaRepeatedLiveReply(session = {}, text = '') {
   const fingerprint = getReplyFingerprint(text);
-  if (!fingerprint) return false;
-  return (session.recentAvaReplyFingerprints || []).includes(fingerprint);
+  const intent = getReplyIntentFingerprint(text);
+  if (fingerprint && (session.recentAvaReplyFingerprints || []).includes(fingerprint)) return true;
+  return Boolean(intent && (session.recentAvaReplyIntents || []).includes(intent));
+}
+
+function getReplyIntentFingerprint(text = '') {
+  const clean = normalizeTelnyxRepairTranscript(text);
+  if (!clean) return '';
+  if (/\b(property owner|owner|agent|real estate agent|representing the seller|helping the owner)\b/i.test(clean)
+    && /\b(agent|owner|representing|decision)\b/i.test(clean)) return 'role_probe';
+  if (/\b(property address|what property|pull this up|right place)\b/i.test(clean)) return 'property_address_probe';
+  if (/\b(condition|timeline|number you need|number they need|answer that the right way)\b/i.test(clean)) return 'condition_timeline_number_probe';
+  if (/\b(speed|certainty|price|simplicity)\b/i.test(clean)) return 'priority_probe';
+  if (/\b(can hear you|have you now|sorry about that pause|reset for a second)\b/i.test(clean)) return 'audio_repair';
+  return '';
 }
 
 function normalizeTelnyxRepairTranscript(transcript = '') {
@@ -43127,9 +43269,18 @@ function isTelnyxLiveAckOnlyUtterance(transcript = '') {
   return /^(yes|yeah|yep|yup|ok|okay|right|sure|correct|uh huh|mm hmm|mhm)$/.test(clean);
 }
 
+function extractLikelyCallerNameOnlyUtterance(transcript = '') {
+  const raw = String(transcript || '').replace(/[^\p{L}' -]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const words = raw.split(/\s+/).filter(Boolean);
+  if (words.length !== 1) return '';
+  const word = words[0].replace(/^'+|'+$/g, '');
+  if (!/^[A-Z][a-zA-Z' -]{2,24}$/.test(word)) return '';
+  if (/\b(owner|agent|realtor|broker|seller|hello|thanks|okay|alright|right|yes|yeah|no|cash|offer|price|timeline|condition|probate|foreclosure|tenant|land)\b/i.test(word)) return '';
+  return word;
+}
+
 function buildTelnyxLiveConversationalRepairReply({ session = {}, transcript = '', contextCall = null } = {}) {
-  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
-  const opener = leadName && !/^unknown|caller$/i.test(leadName) ? `${leadName}, ` : '';
+  const opener = getAvaLiveLeadNameOpener({ session, contextCall });
   if (isTelnyxLiveAudioCheckUtterance(transcript)) {
     const count = Math.max(1, Number(session.audioCheckReplyCount || 0) + 1);
     session.audioCheckReplyCount = count;
@@ -43160,7 +43311,8 @@ function shouldSkipTelnyxLiveAckOnlyReply(session = {}, transcript = '') {
   if (!isTelnyxLiveAckOnlyUtterance(transcript)) return false;
   const lastReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').toLowerCase();
   if (Date.now() - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS) return true;
-  return /\b(can hear you|have you now|property address|what property|pull this up|reset for a second|sorry about that pause)\b/i.test(lastReply);
+  return /[?]\s*$/.test(lastReply)
+    || /\b(can hear you|have you now|property address|what property|pull this up|reset for a second|sorry about that pause|owner|agent|decision|number you need|timeline|condition|speed|certainty|price)\b/i.test(lastReply);
 }
 
 function isWeakTelnyxSellerUtterance(transcript = '') {
@@ -43173,6 +43325,38 @@ function isWeakTelnyxSellerUtterance(transcript = '') {
 
 function isCallerRequestingFloor(transcript = '') {
   return /\b(let me talk|not letting me talk|you'?re talking over|stop talking|hold on|wait a second|i can'?t (even )?talk|give me a second|listen to me)\b/i.test(String(transcript || ''));
+}
+
+function hasConfirmedAvaLiveLeadName(session = {}, contextCall = null) {
+  return Boolean(
+    session.leadNameConfirmed
+    || session.callerNameConfirmed
+    || contextCall?.leadNameConfirmed
+    || contextCall?.nameConfirmed
+  );
+}
+
+function getAvaLiveLeadNameOpener({ session = {}, contextCall = null } = {}) {
+  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
+  if (!leadName || /^unknown|caller$/i.test(leadName)) return '';
+  return hasConfirmedAvaLiveLeadName(session, contextCall) ? `${leadName}, ` : '';
+}
+
+function stripUnconfirmedAvaLiveLeadName(text = '', { session = {}, contextCall = null } = {}) {
+  const clean = String(text || '').trim();
+  if (!clean || hasConfirmedAvaLiveLeadName(session, contextCall)) return clean;
+  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
+  if (!leadName || /^unknown|caller$/i.test(leadName)) return clean;
+  const parts = [...new Set([
+    leadName,
+    ...leadName.split(/\s+/).filter((part) => part.length >= 3),
+  ])].filter(Boolean);
+  let stripped = clean;
+  for (const part of parts) {
+    const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    stripped = stripped.replace(new RegExp(`^\\s*${escaped}\\s*,\\s*`, 'i'), '');
+  }
+  return stripped.trim() || clean;
 }
 
 function chooseMissingBantFieldForTurn(session = {}, missing = []) {
@@ -43206,12 +43390,33 @@ function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
   }
   const role = normalizeAvaCallerRole(session.callerRole || session.pathDecision?.callerRole?.role || '');
   const path = normalizePbkDealPath(session.selectedPath || session.pathDecision?.selectedPath || session.identifiedPath || '', 'cash');
-  const pivot = role === PBK_CALLER_ROLES.AGENT
-    ? 'I hear you. What would help me answer that the right way: days on market, condition, seller timeline, or the number they need?'
-    : path === 'land'
-      ? 'I hear you. What would help me answer that the right way: access, utilities, zoning, or your timeline?'
-      : 'I hear you. What would help me answer that the right way: the property condition, your timeline, or the number you need?';
-  return { text: pivot, adjusted: true, reason: 'anti_repeat_pivot' };
+  const intent = getReplyIntentFingerprint(cleanProposed || cleanFallback);
+  const variants = intent === 'role_probe'
+    ? [
+        'I may have asked that clumsily. Are you the owner, the agent, or helping the owner make the decision?',
+        'No worries. I can keep this simple: are you able to make decisions on the property today?',
+      ]
+    : intent === 'condition_timeline_number_probe'
+      ? [
+          'I got it: the number is the issue. What number would make this worth your time today?',
+          'Instead of me asking the same thing again, give me the number you need and I will tell you straight if the math can work.',
+        ]
+      : role === PBK_CALLER_ROLES.AGENT
+        ? [
+            'That helps. Is the bigger issue days on market, condition, seller timeline, or the number they need?',
+            'Let me narrow it down for you: is this a listing problem, a condition problem, or a seller-expectation problem?',
+          ]
+        : path === 'land'
+          ? [
+              'That helps. Is the main unknown access, utilities, zoning, or your timeline?',
+              'Let me narrow this down: is the land buildable as-is, or is there a zoning or utility issue?',
+            ]
+          : [
+              'That helps. What is the biggest thing I need to solve for you: repairs, timeline, payoff, or net number?',
+              'Let me get out of the loop. What would make this feel simple enough to keep talking: speed, certainty, or price?',
+            ];
+  const pivot = variants.find((variant) => !hasAvaRepeatedLiveReply(session, variant)) || variants.at(-1) || cleanFallback || cleanProposed;
+  return { text: normalizeAvaVoiceReplyText(pivot, pivot), adjusted: true, reason: `anti_repeat_${intent || 'pivot'}` };
 }
 
 function applyAvaPathDecisionToSession(session = {}, pathDecision = {}) {
@@ -43235,11 +43440,10 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const lower = currentRaw.toLowerCase();
   const intelligenceLower = raw.toLowerCase();
   const turnLower = `${lower} ${intelligenceLower}`.trim();
-  const leadName = getSpokenLeadName(contextCall?.leadName || session.leadName || '') || '';
   const knownBant = normalizeBantInfo(contextCall?.bant || {}, contextCall?.raw?.bant || {}, contextCall?.raw || {});
   const extractedBant = extractBantFromTranscript(raw, knownBant);
   const missingBant = getMissingBantFields(extractedBant);
-  const opener = leadName && !/^unknown|caller$/i.test(leadName) ? `${leadName}, ` : '';
+  const opener = getAvaLiveLeadNameOpener({ session, contextCall });
   session.pathProbeTurnCount = Math.max(1, Number(session.pathProbeTurnCount || 0) + 1);
   const pathDecision = inferAvaDealPathDecision({
     session,
@@ -43815,7 +44019,7 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
   }
 
   const reply = await buildTelnyxLiveAvaReply({ session, transcript, contextCall });
-  const guardedReplyText = enforceAvaOwnerSafeReply(reply.text || '', {
+  const guardedReplyText = stripUnconfirmedAvaLiveLeadName(enforceAvaOwnerSafeReply(reply.text || '', {
     session,
     contextCall,
     transcript,
@@ -43824,7 +44028,7 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
     pathDecision: reply.architecture?.pathDecision || session.pathDecision || livePathDecision,
     callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
     masterProbe: reply.architecture?.masterProbe || session.masterProbe,
-  });
+  }), { session, contextCall });
   const spoken = sanitizeAvaSpokenOutput(
     guardedReplyText,
     'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
@@ -44306,6 +44510,32 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
       return;
     }
+    const callerNameOnly = extractLikelyCallerNameOnlyUtterance(item.transcript || '');
+    if (callerNameOnly) {
+      session.callerProvidedName = callerNameOnly;
+      session.callerNameCapturedAt = isoNow();
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'caller_name_only_utterance',
+        transcript: item.transcript,
+        capturedName: callerNameOnly,
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      return;
+    }
+    if (shouldSkipTelnyxLiveAckOnlyReply(session, transcriptForReply)) {
+      session.lastAvaReplyTranscript = transcriptForReply;
+      recordCallTrace('ava_phone_reply_skipped', {
+        ...session,
+        status: 'skipped',
+        result: 'ack_only_after_ava_question',
+        transcript: item.transcript,
+        replyMode: session.lastAvaReplyMode || '',
+        stage: 'maybeSpeakTelnyxAvaReply',
+      });
+      return;
+    }
     if (isWeakTelnyxSellerUtterance(transcriptForReply) && !isTelnyxLiveAudioCheckUtterance(transcriptForReply) && !isTelnyxLiveGreetingOnlyUtterance(transcriptForReply)) {
       const weakContextCall = getCallById(session.callId);
       const weakBestContext = selectAvaBestContextTranscript({
@@ -44363,7 +44593,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       transcript: item.transcript,
       contextCall,
     });
-    const guardedReplyText = enforceAvaOwnerSafeReply(reply.text || '', {
+    const guardedReplyText = stripUnconfirmedAvaLiveLeadName(enforceAvaOwnerSafeReply(reply.text || '', {
       session,
       contextCall,
       transcript: item.transcript,
@@ -44372,7 +44602,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       pathDecision: reply.architecture?.pathDecision || session.pathDecision || {},
       callerRoleDecision: reply.architecture?.callerRole || session.callerRole,
       masterProbe: reply.architecture?.masterProbe || session.masterProbe,
-    });
+    }), { session, contextCall });
     const spoken = sanitizeAvaSpokenOutput(
       guardedReplyText,
       'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?',
@@ -44537,6 +44767,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     };
     session.transcript.push(item);
     const actionableTranscript = !isWeakTelnyxSellerUtterance(transcript);
+    const committedTranscript = Boolean(normalized.isFinal || normalized.speechFinal);
     recordCallTrace('deepgram_transcript', {
       ...session,
       status: session.lastDeepgramEvent,
@@ -44548,7 +44779,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     void syncTelnyxSessionToRedis(session, 'active', { force: normalized.isFinal || normalized.speechFinal });
     const contextCall = getCallById(session.callId);
-    if (contextCall && actionableTranscript) {
+    if (contextCall && actionableTranscript && committedTranscript) {
       const liveBant = normalizeBantInfo(contextCall.bant || {}, extractBantFromTranscript(transcript, contextCall.bant || {}));
       const livePathDecision = inferAvaDealPathDecision({
         session,
@@ -44598,7 +44829,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         });
       }
       scheduleRuntimeStateBroadcast('telnyx-transcript');
-    } else if (contextCall) {
+    } else if (contextCall && committedTranscript) {
       upsertCall(state, {
         ...contextCall,
         transcript: [

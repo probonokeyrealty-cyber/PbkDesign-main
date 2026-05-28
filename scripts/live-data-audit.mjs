@@ -323,6 +323,9 @@ const checks = [
       && /Follow-up question:/.test(bridge)
       && /looksLikeRexTroubleshootingQuery/.test(bridge)
       && /buildRexTroubleshootingAnswer/.test(bridge)
+      && /buildRexConversationalBrainResponse/.test(bridge)
+      && /deepseek_conversational_strategist/.test(bridge)
+      && /adminControlLane:\s*'routeAdminCommand'/.test(bridge)
       && /DeepSeek strategist/.test(bridge),
   },
   {
@@ -961,7 +964,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1245,7 +1248,7 @@ const checks = [
       && /deepseek_call_completed/.test(bridge)
       && /staleExpired/.test(bridge)
       && !/I do not want to repeat myself here/.test(bridge)
-      && /[Ww]hat would help me answer that the right way/.test(bridge),
+      && /I got it: the number is the issue/.test(bridge),
   },
   {
     name: 'Ava live Telnyx replies are written back as conversation turns',
@@ -1258,6 +1261,7 @@ const checks = [
     name: 'Ava live-call context resolver decides the next move before DeepSeek phrases it',
     ok: /async function resolveAvaLiveCallContext/.test(bridge)
       && /function buildAvaResolvedNextMove/.test(bridge)
+      && /const goalInference = architecture\.goalInference \|\| session\.goalInference \|\| conversation\.goalInference \|\| \{\}/.test(bridge)
       && /function buildAvaPhrasingEnginePrompt/.test(bridge)
       && /Promise\.all\(\[/.test(bridge)
       && /withTimeout\([^,\n]+,\s*150,\s*'ava live context resolver'/.test(bridge)
@@ -1333,6 +1337,12 @@ const checks = [
       && /audio_check_repair/.test(bridge)
       && /conversational_repair_bypass/.test(bridge)
       && /shouldSkipTelnyxLiveAckOnlyReply/.test(bridge)
+      && /ack_only_after_ava_question/.test(bridge)
+      && /extractLikelyCallerNameOnlyUtterance/.test(bridge)
+      && /caller_name_only_utterance/.test(bridge)
+      && /stripUnconfirmedAvaLiveLeadName/.test(bridge)
+      && /getReplyIntentFingerprint/.test(bridge)
+      && /recentAvaReplyIntents/.test(bridge)
       && /ava_phone_reply_skipped/.test(bridge),
   },
   {

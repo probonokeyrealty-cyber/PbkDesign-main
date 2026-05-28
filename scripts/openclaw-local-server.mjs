@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-security-fail-closed';
+const BUILD_REVISION = '2026-05-28-ava-full-intelligence-call-gap-fix';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -333,6 +333,15 @@ const DEEPSEEK_BASE_URL = String(process.env.PBK_DEEPSEEK_BASE_URL || 'https://a
 const DEEPSEEK_MODEL = String(process.env.PBK_DEEPSEEK_MODEL || 'deepseek-v4-pro').trim();
 const DEEPSEEK_FALLBACK_MODEL = String(process.env.PBK_DEEPSEEK_FALLBACK_MODEL || 'deepseek-v4-flash').trim();
 const DEEPSEEK_LIVE_MODEL = String(process.env.PBK_DEEPSEEK_LIVE_MODEL || DEEPSEEK_FALLBACK_MODEL || DEEPSEEK_MODEL).trim();
+const DEEPSEEK_THINKING_MODE = /^(enabled|disabled)$/i.test(String(process.env.PBK_DEEPSEEK_THINKING_MODE || 'disabled').trim())
+  ? String(process.env.PBK_DEEPSEEK_THINKING_MODE || 'disabled').trim().toLowerCase()
+  : 'disabled';
+const DEEPSEEK_LIVE_RETRY_MODELS = String(
+  process.env.PBK_DEEPSEEK_LIVE_RETRY_MODELS || 'deepseek-v4-flash,deepseek-v4-pro',
+)
+  .split(',')
+  .map((model) => model.trim())
+  .filter(Boolean);
 const STRATEGIST_PROVIDER = String(process.env.PBK_STRATEGIST_PROVIDER || 'deepseek').trim().toLowerCase();
 const DEEPSEEK_TIMEOUT_MS = Math.max(5000, Math.min(90000, Number(process.env.PBK_DEEPSEEK_TIMEOUT_MS || 30000)));
 const EMOTION_WORLD_MODEL_ENDPOINT = String(
@@ -3930,8 +3939,8 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   const extracted = normalizeBantInfo(existing);
   const moneyMatch = text.match(/(?:\$|want|need|asking|happy with|walk away|take)\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand)?)/i);
   if (!extracted.budget && moneyMatch) extracted.budget = moneyMatch[0].trim();
-  if (!extracted.authority && /\b(owner|i own|my house|my property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text)) {
-    extracted.authority = text.match(/.{0,40}\b(owner|i own|my house|my property|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
+  if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || /\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text))) {
+    extracted.authority = text.match(/.{0,40}\b(owner|i own|my house|my home|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
   if (!extracted.need && /\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b/i.test(text)) {
     extracted.need = text.match(/.{0,40}\b(probate|estate|divorce|relocat|foreclos|tax|vacant|repair|tenant|downsiz|behind|inherited|condition)\b.{0,80}/i)?.[0]?.trim() || 'seller need mentioned';
@@ -10867,9 +10876,53 @@ const PBK_AGENT_ONLY_PATH_ALIASES = new Set([
   'multifamily',
 ]);
 const PBK_AGENT_ROLE_RE = /\b((?:i'?m|i\s+am|we'?re|we\s+are|this\s+is)\s+(?:an?\s+|the\s+)?(?:real\s*estate\s*)?(?:listing\s*)?agent|real\s*estate\s*agent|listing\s*agent|seller'?s\s*agent|buyer'?s\s*agent|realtor|broker|licensee|my\s+client|seller\s+i\s+represent|client'?s\s+(?:house|home|property)|listed\s+on\s+mls|mls|commission|co[-\s]?broker)\b/i;
-const PBK_OWNER_ROLE_RE = /\b(i\s+(?:own|am\s+the\s+owner)|i'?m\s+(?:the\s+)?(?:property\s+)?owner|(?:i\s+am|i'?m)\s+(?:the\s+)?(?:seller|homeowner)|we\s+own|my\s+(?:house|home|property|place)|our\s+(?:house|home|property|place)|i\s+inherited|we\s+inherited|my\s+(?:mom|mother|dad|father|parent)'?s\s+(?:house|home|property)|owner\s+of\s+the\s+(?:house|home|property)|(?:on|i'?m|i\s+am|yeah\s+on)\s+(?:the\s+)?property\s+owner|(?:the\s+)?property\s+owner\b)\b/i;
+const PBK_OWNER_ROLE_RE = /\b(i\s+(?:own|am\s+the\s+owner)|i'?m\s+(?:the\s+)?(?:property\s+)?owner|(?:i\s+am|i'?m)\s+(?:the\s+)?(?:seller|homeowner)|we\s+own|my\s+(?:house|home|property(?!\s+address)|place)|our\s+(?:house|home|property(?!\s+address)|place)|i\s+inherited|we\s+inherited|my\s+(?:mom|mother|dad|father|parent)'?s\s+(?:house|home|property)|owner\s+of\s+the\s+(?:house|home|property)|(?:on|i'?m|i\s+am|yeah\s+on)\s+(?:the\s+)?property\s+owner|(?:the\s+)?property\s+owner\b)\b/i;
 const PBK_DECISION_HELPER_ROLE_RE = /\b(?:my|their|the)\s+(?:wife|husband|spouse|partner|son|daughter|mom|mother|dad|father|attorney|lawyer|executor|trustee|brother|sister|client)\s+(?:handles|decides|needs|has|is)|\b(?:power\s+of\s+attorney|poa|executor|trustee|decision\s*maker|decision-maker|need\s+to\s+talk\s+to|needs?\s+to\s+weigh\s+in|talk\s+to\s+(?:my|their|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|kids?|son|daughter))\b/i;
 const PBK_AGENT_ONLY_SPEECH_RE = /\b(creative\s+finance|seller\s+financ(?:e|ing)|owner\s+financ(?:e|ing)|carry(?:ing)?\s+(?:the\s+)?note|carry\s+terms|wrap(?:around)?|balloon\s+payment|multi[-\s]?family|multifamily|mf\s+path)\b/i;
+const AVA_PATH_LOCK_MOTIVATION_RE = /\b(probate|inherited|estate|executor|divorce|foreclosure|pre[-\s]?foreclosure|behind\s+on\s+payments?|tax\s+lien|irs|bankruptcy|moving|relocat|tenant|eviction|vacant|repairs?|roof|hvac|foundation|code\s+violation|death|passed\s+away|tired|headache|need\s+(?:cash|money|to\s+sell)|sell\s+(?:fast|quick|soon)|top\s+dollar|highest\s+net|as[-\s]?is|cash\s+offer)\b/i;
+const AVA_PATH_LOCK_FACT_RE = /\b(net\s+number|walk\s+away|payoff|asking|price|offer|condition|timeline|days?|weeks?|months?|asap|soon|fast|quick|cash|repairs?|roof|hvac|foundation|tenant|vacant|occupied|mortgage|rate|land|lot|parcel|acreage|zoning)\b/i;
+
+function isAvaLiveAddressMetaQuestion(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return false;
+  return /\b(?:do|did|don'?t|should|shouldn'?t|can|could)\s+you\s+(?:already\s+)?(?:have|got|get|know)\s+(?:my|the)?\s*(?:property\s+)?address\b/i.test(clean)
+    || /\byou\s+(?:already\s+)?(?:have|got|should\s+have|know)\s+(?:my|the)?\s*(?:property\s+)?address\b/i.test(clean)
+    || /\b(?:i\s+)?(?:gave|sent|told)\s+you\s+(?:my|the)?\s*(?:property\s+)?address\b/i.test(clean)
+    || /\bwhat\s+(?:address|property)\s+(?:do|did)\s+you\s+(?:have|pull|show)\b/i.test(clean)
+    || /\byou\s+called\s+me\b.*\b(?:address|property)\b/i.test(clean);
+}
+
+function hasStrongAvaOwnerRoleAssertion(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean || isAvaLiveAddressMetaQuestion(clean)) return false;
+  return /\b(i\s+(?:own|own\s+it|own\s+the\s+(?:house|home|property|place)|am\s+the\s+owner)|i'?m\s+(?:the\s+)?(?:property\s+)?owner|(?:i\s+am|i'?m)\s+(?:the\s+)?(?:seller|homeowner)|we\s+own|my\s+(?:house|home|place)\b|our\s+(?:house|home|place)\b|i\s+inherited|we\s+inherited|owner\s+of\s+the\s+(?:house|home|property)|(?:on|yeah\s+on)\s+(?:the\s+)?property\s+owner|(?:the\s+)?property\s+owner\b)\b/i.test(clean);
+}
+
+function isAvaLivePathLockBlockedTranscript(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return true;
+  return isAvaLiveAddressMetaQuestion(clean)
+    || isTelnyxLiveAudioCheckUtterance(clean)
+    || isTelnyxLiveGreetingOnlyUtterance(clean)
+    || isTelnyxLiveAckOnlyUtterance(clean)
+    || /\b(?:same thing|repeating|already told you|you asked that already)\b/i.test(clean);
+}
+
+function hasAvaLivePathLockEvidence(transcript = '', bant = {}, best = {}) {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean || isAvaLivePathLockBlockedTranscript(clean)) return false;
+  const hasBantEvidence = Boolean(
+    normalizeBantValue(bant.need)
+    || normalizeBantValue(bant.urgency)
+    || normalizeBantValue(bant.timeline)
+    || normalizeBantValue(bant.budget)
+  );
+  const hasScoredEvidence = Array.isArray(best.evidence) && best.evidence.length > 0 && Number(best.score || 0) >= 0.4;
+  return AVA_PATH_LOCK_MOTIVATION_RE.test(clean)
+    || AVA_PATH_LOCK_FACT_RE.test(clean)
+    || hasBantEvidence
+    || hasScoredEvidence;
+}
 
 const PBK_PATH_SCRIPT_TRIGGERS = {
   cash: 'If you want the fastest, surest close - no lender, no appraisal, no waiting - our cash offer is the answer. I can show you the exact number the Analyzer supports once we finish the key facts.',
@@ -11859,7 +11912,7 @@ function detectAvaCallerRole(params = {}) {
       needsClarification: false,
     };
   }
-  if (PBK_OWNER_ROLE_RE.test(humanText)) {
+  if (hasStrongAvaOwnerRoleAssertion(humanText)) {
     return {
       revision: PBK_CALLER_ROLE_REVISION,
       role: PBK_CALLER_ROLES.OWNER,
@@ -12192,10 +12245,12 @@ function inferAvaDealPathDecision(params = {}) {
     }))
     .sort((left, right) => right.score - left.score);
   const best = ranked[0] || { path: 'cash', label: 'Cash Offer', score: 0, evidence: [] };
-  const forcedDefault = !pathLockedAlready && probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS && best.score < 0.4;
+  const pathLockEvidence = hasAvaLivePathLockEvidence(text, bant, best);
+  const pathLockBlocked = isAvaLivePathLockBlockedTranscript(text);
+  const forcedDefault = !pathLockedAlready && !pathLockBlocked && pathLockEvidence && probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS && best.score >= 0.4 && best.score < PBK_DEAL_PATH_LOCK_CONFIDENCE;
   const selectedPath = pathLockedAlready && lockedPath ? lockedPath : forcedDefault ? 'cash' : best.path;
   const confidence = pathLockedAlready && lockedPath ? 0.98 : forcedDefault ? 0.46 : best.score;
-  const pathLocked = pathLockedAlready || confidence >= PBK_DEAL_PATH_LOCK_CONFIDENCE || probeTurnCount >= PBK_DEAL_PATH_PROBE_MAX_TURNS;
+  const pathLocked = pathLockedAlready || (!pathLockBlocked && pathLockEvidence && confidence >= PBK_DEAL_PATH_LOCK_CONFIDENCE);
   const closePath = pathLocked && selectedPath;
   const nextProbeQuestion = closePath ? '' : getAvaPathProbeQuestion(selectedPath || best.path || 'cash');
   const scriptTrigger = closePath ? getAvaPathScriptTrigger(selectedPath) : '';
@@ -12214,7 +12269,11 @@ function inferAvaDealPathDecision(params = {}) {
     scriptTrigger,
     rule: closePath
       ? 'Path locked: stop broad probing, keep the script lane clean, and move through that path toward the next safe close.'
-      : 'Probe one missing fact, then re-score. Do not present a path trigger until confidence or max probe turns locks the path.',
+      : pathLockBlocked
+        ? 'Path not locked: seller turn was setup, acknowledgement, repeat complaint, or address meta. Answer the immediate context issue before routing.'
+        : 'Probe one missing fact, then re-score. Do not present a path trigger until confidence and real seller motivation or deal facts lock the path.',
+    pathLockEvidence,
+    pathLockBlocked,
   };
   const guarded = guardAvaAgentOnlyPathDecision(decision, { ...params, bant, callerRoleDecision: callerRole });
   const masterProbe = buildAvaMasterProbe({ ...params, bant, pathDecision: guarded, callerRoleDecision: callerRole });
@@ -16426,7 +16485,7 @@ function applyAvaLiveTurnFacts(session = {}, transcript = '', supportTranscript 
       evidence: [`Latest caller turn identified agent role: ${String(transcript || '').slice(0, 100)}`],
       needsClarification: false,
     });
-  } else if (PBK_OWNER_ROLE_RE.test(transcript)) {
+  } else if (hasStrongAvaOwnerRoleAssertion(transcript)) {
     applyAvaCallerRoleToSession(session, {
       revision: PBK_CALLER_ROLE_REVISION,
       role: PBK_CALLER_ROLES.OWNER,
@@ -20048,6 +20107,9 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
     };
   }
   const model = String(params.model || meta.model || DEEPSEEK_MODEL).trim();
+  const thinkingMode = /^(enabled|disabled)$/i.test(String(params.thinkingMode || params.thinking || DEEPSEEK_THINKING_MODE).trim())
+    ? String(params.thinkingMode || params.thinking || DEEPSEEK_THINKING_MODE).trim().toLowerCase()
+    : DEEPSEEK_THINKING_MODE;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1000, toNumber(params.timeoutMs, DEEPSEEK_TIMEOUT_MS)));
   try {
@@ -20063,6 +20125,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         messages,
         temperature: params.temperature ?? 0.25,
         max_tokens: Math.max(128, Math.min(4096, toNumber(params.maxTokens || params.max_tokens, 1200))),
+        thinking: { type: thinkingMode },
         ...(params.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       }),
     });
@@ -20072,7 +20135,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         ok: false,
         result: 'provider_error',
         status: response.status,
-        provider: { ...meta, model },
+        provider: { ...meta, model, thinkingMode },
         error: payload?.error?.message || payload?.message || `DeepSeek returned ${response.status}`,
         payload,
       };
@@ -20090,7 +20153,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       return {
         ok: false,
         result: 'provider_reasoning_only',
-        provider: { ...meta, model },
+        provider: { ...meta, model, thinkingMode },
         error: 'DeepSeek returned reasoning content without a speakable JSON response.',
         reasoning,
         usage: payload?.usage || null,
@@ -20101,7 +20164,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       return {
         ok: false,
         result: 'provider_empty_response',
-        provider: { ...meta, model },
+        provider: { ...meta, model, thinkingMode },
         error: 'DeepSeek returned an empty response.',
         usage: payload?.usage || null,
         responseId: payload?.id || '',
@@ -20113,7 +20176,7 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
       result: 'live',
       answer,
       reasoning,
-      provider: { ...meta, model },
+      provider: { ...meta, model, thinkingMode },
       usage: payload?.usage || null,
       responseId: payload?.id || '',
     };
@@ -20121,12 +20184,22 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
     return {
       ok: false,
       result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
-      provider: { ...meta, model },
+      provider: { ...meta, model, thinkingMode },
       error: error?.name === 'AbortError' ? 'DeepSeek request timed out.' : (error?.message || 'DeepSeek request failed.'),
     };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function buildDeepSeekLiveRetryModels(primaryModel = '') {
+  return Array.from(new Set([
+    String(primaryModel || '').trim(),
+    DEEPSEEK_LIVE_MODEL,
+    DEEPSEEK_FALLBACK_MODEL,
+    DEEPSEEK_MODEL,
+    ...DEEPSEEK_LIVE_RETRY_MODELS,
+  ].filter(Boolean)));
 }
 
 function formatAvaRecentTurnsForSummary(session = {}, contextCall = null, limit = 4) {
@@ -20653,6 +20726,7 @@ async function askStrategistRecord(params = {}) {
       temperature: params.temperature ?? 0.2,
       maxTokens: params.maxTokens || 1200,
       timeoutMs: params.timeoutMs || params.timeout_ms,
+      thinkingMode: params.thinkingMode || 'disabled',
     });
     recordCallTrace('deepseek_call_completed', {
       callId: params.callId || params.metadata?.callId || '',
@@ -20686,6 +20760,7 @@ async function askStrategistRecord(params = {}) {
         temperature: params.temperature ?? 0.2,
         maxTokens: params.maxTokens || 1200,
         timeoutMs: params.timeoutMs || params.timeout_ms,
+        thinkingMode: params.thinkingMode || 'disabled',
       });
       fallbackChain.push({ provider: 'deepseek', model: params.model || DEEPSEEK_MODEL, result: textRetry.result, ok: textRetry.ok, error: textRetry.error || '', retry: 'json_mode_text_retry' });
       if (textRetry.ok) {
@@ -20707,6 +20782,7 @@ async function askStrategistRecord(params = {}) {
         temperature: params.temperature ?? 0.2,
         maxTokens: params.maxTokens || 1200,
         timeoutMs: params.timeoutMs || params.timeout_ms,
+        thinkingMode: params.thinkingMode || 'disabled',
       });
       fallbackChain.push({ provider: 'deepseek', model: DEEPSEEK_FALLBACK_MODEL, result: secondary.result, ok: secondary.ok, error: secondary.error || '' });
       if (secondary.ok) {
@@ -20719,6 +20795,67 @@ async function askStrategistRecord(params = {}) {
           rawAnswer: secondary.answer,
           usage: secondary.usage || null,
         };
+      }
+    }
+    if (!strategist) {
+      const triedModels = new Set(
+        fallbackChain
+          .filter((attempt) => attempt.provider === 'deepseek')
+          .map((attempt) => String(attempt.model || '').trim())
+          .filter(Boolean),
+      );
+      for (const retryModel of buildDeepSeekLiveRetryModels(params.model || DEEPSEEK_MODEL)) {
+        if (strategist || triedModels.has(retryModel)) continue;
+        recordCallTrace('deepseek_call_retry_started', {
+          callId: params.callId || params.metadata?.callId || '',
+          streamId: params.streamId || params.metadata?.streamId || '',
+          leadId: params.leadId || context.leadId || '',
+          leadName: params.leadName || context.leadName || '',
+          status: 'started',
+          result: 'deepseek_live_model_retry_started',
+          stage: 'askStrategistRecord',
+          model: retryModel,
+        });
+        const retryStartedAt = Date.now();
+        const retry = await runDeepSeekChatCompletion(built.messages, {
+          model: retryModel,
+          responseFormat: requestedResponseFormat === 'text' || requestedResponseFormat === 'none' ? 'text' : 'json',
+          temperature: params.temperature ?? 0.2,
+          maxTokens: params.maxTokens || 1200,
+          timeoutMs: params.timeoutMs || params.timeout_ms,
+          thinkingMode: params.thinkingMode || 'disabled',
+        });
+        recordCallTrace('deepseek_call_retry_completed', {
+          callId: params.callId || params.metadata?.callId || '',
+          streamId: params.streamId || params.metadata?.streamId || '',
+          leadId: params.leadId || context.leadId || '',
+          leadName: params.leadName || context.leadName || '',
+          status: retry.ok ? 'ok' : 'failed',
+          result: retry.result || '',
+          latencyMs: Date.now() - retryStartedAt,
+          error: retry.error || '',
+          stage: 'askStrategistRecord',
+          model: retryModel,
+        });
+        fallbackChain.push({
+          provider: 'deepseek',
+          model: retryModel,
+          result: retry.result,
+          ok: retry.ok,
+          error: retry.error || '',
+          retry: 'live_model_fallback',
+        });
+        if (retry.ok) {
+          const parsed = extractJsonObjectFromText(retry.answer);
+          strategist = {
+            ok: true,
+            result: 'live_model_retry',
+            provider: retry.provider,
+            response: normalizeStrategistResponse(parsed || {}, retry.answer),
+            rawAnswer: retry.answer,
+            usage: retry.usage || null,
+          };
+        }
       }
     }
   }
@@ -28364,6 +28501,8 @@ function getDeepSeekProviderMeta() {
     model: DEEPSEEK_MODEL,
     fallbackModel: DEEPSEEK_FALLBACK_MODEL,
     liveModel: DEEPSEEK_LIVE_MODEL,
+    thinkingMode: DEEPSEEK_THINKING_MODE,
+    liveRetryModels: DEEPSEEK_LIVE_RETRY_MODELS,
     baseUrl: DEEPSEEK_BASE_URL,
     timeoutMs: DEEPSEEK_TIMEOUT_MS,
     strategistProvider: STRATEGIST_PROVIDER,
@@ -43608,20 +43747,22 @@ function classifyAvaLiveSellerIntent(transcript = '', session = {}) {
   else if (isTelnyxLiveAudioCheckUtterance(clean)) intent = 'audio_check';
   else if (isTelnyxLiveGreetingOnlyUtterance(clean)) intent = 'greeting';
   else if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(clean)) intent = 'stop_contact';
+  else if (isAvaLiveAddressMetaQuestion(clean)) intent = 'address_question';
   else if (isAvaLiveRepeatComplaint(clean)) intent = 'repeat_complaint';
   else if (isAvaLivePriceAlreadyGivenComplaint(clean)) intent = 'price_already_given';
   else if (isAvaLiveDealMomentumRequest(clean)) intent = 'deal_momentum';
   else if (isAvaLiveOfferRequest(clean)) intent = 'offer_request';
   else if (PBK_AGENT_ROLE_RE.test(clean)) intent = 'agent_identity';
-  else if (PBK_OWNER_ROLE_RE.test(clean)) intent = 'owner_identity';
+  else if (hasStrongAvaOwnerRoleAssertion(clean)) intent = 'owner_identity';
   else if (isAvaLiveNetNumberAnswer(clean)) intent = 'net_number_priority';
   else if (/\btimeline|days?|weeks?|months?|asap|soon|fast|quick\b/i.test(clean)) intent = 'timeline_or_speed';
   else if (/\brepairs?|condition|roof|hvac|foundation|tenant|vacant|occupied\b/i.test(clean)) intent = 'condition_signal';
   else if (isTelnyxLiveAckOnlyUtterance(clean)) intent = isAvaLiveAuthorityQuestion(lastReply) ? 'authority_confirmation' : 'acknowledgement';
   const money = extractAvaLiveMoneyAmount(transcript);
   if (money) signals.push(`money:${money}`);
-  if (PBK_OWNER_ROLE_RE.test(clean)) signals.push('owner_language');
+  if (hasStrongAvaOwnerRoleAssertion(clean)) signals.push('owner_language');
   if (PBK_AGENT_ROLE_RE.test(clean)) signals.push('agent_language');
+  if (isAvaLiveAddressMetaQuestion(clean)) signals.push('address_meta_question');
   if (isAvaLiveOfferRequest(clean)) signals.push('offer_request');
   if (isAvaLiveRepeatComplaint(clean)) signals.push('repeat_complaint');
   return { intent, signals, normalized: clean, money };
@@ -43639,6 +43780,10 @@ function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcrip
     session.desiredNet = session.desiredNet || intent.money;
     if (!session.bant || typeof session.bant !== 'object') session.bant = {};
     if (!normalizeBantValue(session.bant.budget)) session.bant.budget = intent.money;
+  }
+  if (intent.intent === 'address_question') {
+    session.awaitingPropertyAddress = true;
+    return `${prefix}I do not have the full address safely enough to price it yet, and I do not want to pull the wrong property. Read me the street address once, then I can move straight to condition and the net number.`;
   }
   if (intent.intent === 'price_already_given') {
     return `${prefix}You are right, and I am not going to make you repeat the whole story.${desiredNetKnown ? ` I have your number around ${session.sellerAskingPrice || session.desiredNet}.` : ' I heard that price matters, but I do not have the actual number clearly.'} ${fullAddressKnown ? 'Tell me the current condition so I can see if our cash number can meet it.' : 'What is the full street address so I can price it correctly?'}`;

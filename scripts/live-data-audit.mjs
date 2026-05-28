@@ -986,7 +986,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1011,6 +1011,9 @@ const checks = [
       && /isAvaLiveNetNumberAnswer/.test(bridge)
       && /function buildAvaLiveSalesNextMove/.test(bridge)
       && /function recordAvaLiveTurnDecision/.test(bridge)
+      && /function isAvaLiveAddressMetaQuestion/.test(bridge)
+      && /function hasAvaLivePathLockEvidence/.test(bridge)
+      && /pathLockBlocked/.test(bridge)
       && /maskPhoneForDiagnostics/.test(bridge)
       && /leadResolver: inboundDiagnostic/.test(bridge)
       && /redis_call_state_active_resurrection_blocked/.test(bridge)
@@ -1276,6 +1279,10 @@ const checks = [
       && /responseFormat:\s*'text'/.test(bridge)
       && /deepseek_call_started/.test(bridge)
       && /deepseek_call_completed/.test(bridge)
+      && /DEEPSEEK_THINKING_MODE[^;\n]+disabled/.test(bridge)
+      && /thinking:\s*\{\s*type:\s*thinkingMode\s*\}/.test(bridge)
+      && /function buildDeepSeekLiveRetryModels/.test(bridge)
+      && /deepseek_call_retry_completed/.test(bridge)
       && /staleExpired/.test(bridge)
       && !/I do not want to repeat myself here/.test(bridge)
       && /I got it: the number is the issue/.test(bridge),

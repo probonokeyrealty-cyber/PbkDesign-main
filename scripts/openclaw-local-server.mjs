@@ -2893,6 +2893,20 @@ function isDemoRuntimeApproval(approval = {}) {
     || /approval-offer-202-cherry|approval-contract-robert-chen|approval-batch-akron|lead-diane-kowalski|lead-robert-chen|daily_probate_import\.csv|Diane Kowalski|Robert Chen|Akron Probate Batch|202 Cherry Ln|55 Birch Rd/i.test(text);
 }
 
+function isPendingRuntimeApproval(approval = {}) {
+  return String(approval?.status || '').toLowerCase() === 'pending'
+    && !isDemoRuntimeApproval(approval);
+}
+
+function getPendingRuntimeApprovals(approvals = []) {
+  return (Array.isArray(approvals) ? approvals : []).filter(isPendingRuntimeApproval);
+}
+
+function getPendingAdminTasks(adminTasks = []) {
+  return (Array.isArray(adminTasks) ? adminTasks : [])
+    .filter((task) => String(task?.status || '').toLowerCase() === 'pending');
+}
+
 function decodeBase32Secret(secret = '') {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const normalized = String(secret || '')
@@ -8868,8 +8882,8 @@ function updateDerivedStatus(nextState) {
   nextState.status.activeBuyers = (nextState.buyers || []).filter((buyer) => String(buyer.status || 'active').toLowerCase() === 'active').length;
   nextState.status.buyerMatches = (nextState.buyerMatches || []).length;
   nextState.status.systemAuditReports = (nextState.systemAuditReports || []).length;
-  nextState.status.pendingApprovals = nextState.approvals.filter((approval) => approval.status === 'pending').length;
-  nextState.status.pendingAdminTasks = nextState.adminTasks.filter((task) => task.status === 'pending').length;
+  nextState.status.pendingApprovals = getPendingRuntimeApprovals(nextState.approvals).length;
+  nextState.status.pendingAdminTasks = getPendingAdminTasks(nextState.adminTasks).length;
   nextState.status.activeCalls = nextState.calls.filter((call) => isActiveLiveCall(call)).length;
   nextState.status.appointmentsScheduled = nextState.appointments.filter((appointment) => ['scheduled', 'confirmed'].includes(String(appointment.status || '').toLowerCase())).length;
   nextState.status.pendingBookingRequests = nextState.appointments.filter((appointment) => ['requested', 'call-now', 'pending-confirmation'].includes(String(appointment.status || '').toLowerCase())).length;
@@ -12421,9 +12435,7 @@ function looksLikePbkDoctrineQuery(query = '') {
 
 function buildRexDoctrineAnswer(stateRef, query = '', matches = []) {
   const normalized = String(query || '').toLowerCase();
-  const pendingApprovals = Array.isArray(stateRef.approvals)
-    ? stateRef.approvals.filter((item) => String(item.status || '').toLowerCase() === 'pending').length
-    : 0;
+  const pendingApprovals = getPendingRuntimeApprovals(stateRef.approvals).length;
   const providerMode = stateRef.status?.mode || 'approval';
   const identity = 'Rex here. I am PBK\'s research, strategy, and memory agent. Ava is the acquisition specialist who uses the analyzer, BANT+, scripts, objections, and approval guardrails to move sellers toward the right contract path.';
   const guardrails = [
@@ -15115,7 +15127,7 @@ function getRevenueContactValue(lead = {}, field = 'phone') {
 }
 
 function countPendingFounderWork() {
-  const approvals = (state.approvals || []).filter((item) => String(item.status || '').toLowerCase() === 'pending').length;
+  const approvals = getPendingRuntimeApprovals(state.approvals).length;
   const adminTasks = (state.adminTasks || []).filter((item) =>
     ['pending', 'open', 'needs_review', 'queued'].includes(String(item.status || '').toLowerCase())).length;
   return { approvals, adminTasks, total: approvals + adminTasks };
@@ -17818,8 +17830,7 @@ function isProviderOperational(meta = {}) {
 
 function buildReadableOperatorSummary(stateRef, params = {}) {
   const limit = Math.max(1, Math.min(20, Number(params.limit || 8)));
-  const pendingApprovals = sortNewest(Array.isArray(stateRef.approvals) ? stateRef.approvals : [])
-    .filter((item) => String(item.status || '').toLowerCase() === 'pending')
+  const pendingApprovals = sortNewest(getPendingRuntimeApprovals(stateRef.approvals))
     .slice(0, limit);
   const recentFeedback = sortNewest(Array.isArray(stateRef.pbkFeedback) ? stateRef.pbkFeedback : []).slice(0, limit);
   const recentIntents = sortNewest(Array.isArray(stateRef.pbkIntentEvents) ? stateRef.pbkIntentEvents : []).slice(0, limit);
@@ -18553,9 +18564,7 @@ function answerBrainQuery(stateRef, query = '') {
 }
 
 function buildRexConversationControlEnvelope(stateRef = {}) {
-  const pendingApprovals = Array.isArray(stateRef.approvals)
-    ? stateRef.approvals.filter((item) => String(item.status || '').toLowerCase() === 'pending').length
-    : 0;
+  const pendingApprovals = getPendingRuntimeApprovals(stateRef.approvals).length;
   const pendingAdminTasks = Array.isArray(stateRef.adminTasks)
     ? stateRef.adminTasks.filter((item) => ['pending', 'queued', 'needs_approval'].includes(String(item.status || '').toLowerCase())).length
     : 0;
@@ -18767,7 +18776,7 @@ function buildRexTroubleshootingAnswer(stateRef, query = '') {
       mode: 'troubleshooting',
       maxSentences: 3,
       stateBackend: getRuntimeMeta().stateBackend,
-      pendingApprovals: Array.isArray(stateRef?.approvals) ? stateRef.approvals.filter((item) => item.status === 'pending').length : 0,
+      pendingApprovals: getPendingRuntimeApprovals(stateRef?.approvals).length,
     },
   };
 }
@@ -25418,7 +25427,7 @@ function buildQuotasSnapshot() {
     },
     docs: {
       deliveredToday: todaysDocumentDeliveries,
-      queuedAdminTasks: state.adminTasks.filter((task) => task.status === 'pending').length,
+      queuedAdminTasks: getPendingAdminTasks(state.adminTasks).length,
       openContracts: state.contracts.filter((contract) => !['completed', 'void', 'rejected'].includes(String(contract.status || '').toLowerCase())).length,
     },
   };
@@ -25427,8 +25436,8 @@ function buildQuotasSnapshot() {
 function buildPrometheusMetrics() {
   const runtime = getRuntimeMeta();
   const quotas = buildQuotasSnapshot();
-  const pendingApprovals = state.approvals.filter((item) => item.status === 'pending').length;
-  const pendingAdminTasks = state.adminTasks.filter((item) => item.status === 'pending').length;
+  const pendingApprovals = getPendingRuntimeApprovals(state.approvals).length;
+  const pendingAdminTasks = getPendingAdminTasks(state.adminTasks).length;
   const liveCalls = state.calls.filter((item) => isActiveLiveCall(item)).length;
   const openContracts = quotas.docs.openContracts;
   const documentDeliveriesToday = quotas.docs.deliveredToday;
@@ -30342,7 +30351,7 @@ function buildAgentOrchestrationSnapshot() {
     agentTasks: (state.agentTasks || []).filter((task) => !['complete', 'completed', 'failed', 'cancelled'].includes(String(task.status || '').toLowerCase())).length,
     rexDecisions: (state.rexDecisions || []).filter((decision) => ['proposed', 'queued_for_approval', 'approved'].includes(String(decision.status || '').toLowerCase())).length,
     adminTasks: (state.adminTasks || []).filter((task) => ['pending', 'approved', 'executing'].includes(String(task.status || '').toLowerCase())).length,
-    approvals: (state.approvals || []).filter((approval) => String(approval.status || '').toLowerCase() === 'pending').length,
+    approvals: getPendingRuntimeApprovals(state.approvals).length,
   };
   const registryReady = missingAgents.length === 0 && Boolean(supervisor) && workers.some((agent) => agent.id === 'rex') && workers.some((agent) => agent.id === 'hermes');
   const toolsReady = requiredToolGaps.length === 0;
@@ -32562,8 +32571,8 @@ function getMessageCounts() {
     calls: (state.calls || []).length,
     sms: channel('sms'),
     email: channel('email'),
-    approvals: (state.approvals || []).filter((approval) => String(approval.status || '').toLowerCase() === 'pending').length
-      + (state.adminTasks || []).filter((task) => String(task.status || '').toLowerCase() === 'pending').length,
+    approvals: getPendingRuntimeApprovals(state.approvals).length
+      + getPendingAdminTasks(state.adminTasks).length,
     hot: (state.leadImports || []).filter((lead) => {
       const tags = Array.isArray(lead.tags) ? lead.tags.join(' ') : '';
       return /hot|urgent|probate|high-equity/i.test(`${tags} ${lead.status || ''}`);
@@ -34475,8 +34484,7 @@ function isDemoActivity(item = {}) {
 }
 
 function buildNotificationSnapshot() {
-  const approvals = (state.approvals || [])
-    .filter((approval) => String(approval.status || '').toLowerCase() === 'pending')
+  const approvals = getPendingRuntimeApprovals(state.approvals)
     .slice(0, 8)
     .map((approval) => ({
       id: approval.id,
@@ -34486,8 +34494,7 @@ function buildNotificationSnapshot() {
       at: approval.createdAt,
       unread: true,
     }));
-  const admin = (state.adminTasks || [])
-    .filter((task) => String(task.status || '').toLowerCase() === 'pending')
+  const admin = getPendingAdminTasks(state.adminTasks)
     .slice(0, 6)
     .map((task) => ({
       id: task.id,
@@ -36074,9 +36081,7 @@ const toolHandlers = {
       activeCampaigns: Array.isArray(state.campaigns)
         ? state.campaigns.filter((campaign) => /active|running|queued/i.test(String(campaign.status || campaign.state || ''))).length
         : 0,
-      pendingApprovals: Array.isArray(state.approvals)
-        ? state.approvals.filter((approval) => String(approval.status || '').toLowerCase() === 'pending').length
-        : 0,
+      pendingApprovals: getPendingRuntimeApprovals(state.approvals).length,
       activeCalls: Array.isArray(state.calls)
         ? state.calls.filter((call) => /active|ringing|answered|in-progress|live/i.test(String(call.status || call.callStatus || ''))).length
         : 0,

@@ -41,6 +41,26 @@ function authHeaders() {
   };
 }
 
+function isDemoRuntimeApproval(approval = {}) {
+  const source = String(approval.source || approval.fixture || approval.kind || approval.importSource || '').toLowerCase();
+  const text = [
+    approval.id,
+    approval.taskId,
+    approval.leadId,
+    approval.leadName,
+    approval.address,
+    approval.title,
+    approval.description,
+    approval.notes,
+    approval.fileName,
+    approval.templateName,
+    approval.type,
+  ].filter(Boolean).join(' ');
+  return source.includes('demo')
+    || source.includes('fixture')
+    || /approval-offer-202-cherry|approval-contract-robert-chen|approval-batch-akron|lead-diane-kowalski|lead-robert-chen|daily_probate_import\.csv|Diane Kowalski|Robert Chen|Akron Probate Batch|202 Cherry Ln|55 Birch Rd/i.test(text);
+}
+
 async function main() {
   const expectedRevision = getExpectedBridgeRevision();
   const { response: healthResponse, parsed: health } = await requestJson('/health');
@@ -228,7 +248,8 @@ async function main() {
         hosted: health.runtime.hosted,
         agentOrchestration: agentOrchestration?.orchestration?.result || '',
         agentWorkers: (agentOrchestration?.orchestration?.workers || []).map((agent) => agent.id),
-        approvals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
+        approvals: Array.isArray(state?.approvals) ? state.approvals.filter((approval) => !isDemoRuntimeApproval(approval)).length : 0,
+        rawApprovals: Array.isArray(state?.approvals) ? state.approvals.length : 0,
         pdfBytes: pdfBuffer.length,
         leadReplaySafe,
         approvalReplaySafe,

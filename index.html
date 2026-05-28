@@ -17892,9 +17892,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const snapshot = PBK.state.openclawRuntime || {};
     const docs = Array.isArray(snapshot.brainDocs) ? snapshot.brainDocs : [];
     const activity = Array.isArray(snapshot.activity) ? snapshot.activity : [];
-    const approvals = Array.isArray(snapshot.approvals)
-      ? snapshot.approvals.filter((item) => item.status === 'pending')
-      : [];
+    const approvals = getRealRuntimeApprovals(snapshot)
+      .filter((item) => normalizeRuntimeStatus(item.status) === 'pending');
     const dealRuntime = getAnalyzerContractRuntimeSync();
     const deal = dealRuntime?.deal || {};
     const hasDeal = Boolean(String(deal.address || '').trim());
@@ -22844,7 +22843,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const page = getPageNode('campaigns');
     if (!page) return;
     const providers = snapshot?.status?.providers || {};
-    const pendingCount = (snapshot?.approvals || []).filter((approval) =>
+    const pendingCount = getRealRuntimeApprovals(snapshot).filter((approval) =>
       String(approval.type || '').toLowerCase() === 'campaign'
       && String(approval.status || '').toLowerCase() === 'pending'
     ).length;

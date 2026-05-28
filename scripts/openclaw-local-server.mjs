@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-authority-yes-progression';
+const BUILD_REVISION = '2026-05-28-ava-latest-turn-agent-tts-trace';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -10847,7 +10847,7 @@ const PBK_AGENT_ONLY_PATH_ALIASES = new Set([
   'multi family',
   'multifamily',
 ]);
-const PBK_AGENT_ROLE_RE = /\b(real\s*estate\s*agent|listing\s*agent|seller'?s\s*agent|buyer'?s\s*agent|realtor|broker|licensee|my\s+client|seller\s+i\s+represent|client'?s\s+(?:house|home|property)|listed\s+on\s+mls|mls|commission|co[-\s]?broker)\b/i;
+const PBK_AGENT_ROLE_RE = /\b((?:i'?m|i\s+am|we'?re|we\s+are|this\s+is)\s+(?:an?\s+|the\s+)?(?:real\s*estate\s*)?(?:listing\s*)?agent|real\s*estate\s*agent|listing\s*agent|seller'?s\s*agent|buyer'?s\s*agent|realtor|broker|licensee|my\s+client|seller\s+i\s+represent|client'?s\s+(?:house|home|property)|listed\s+on\s+mls|mls|commission|co[-\s]?broker)\b/i;
 const PBK_OWNER_ROLE_RE = /\b(i\s+(?:own|am\s+the\s+owner)|i'?m\s+the\s+owner|we\s+own|my\s+(?:house|home|property|place)|our\s+(?:house|home|property|place)|i\s+inherited|we\s+inherited|my\s+(?:mom|mother|dad|father|parent)'?s\s+(?:house|home|property)|owner\s+of\s+the\s+(?:house|home|property))\b/i;
 const PBK_DECISION_HELPER_ROLE_RE = /\b(?:my|their|the)\s+(?:wife|husband|spouse|partner|son|daughter|mom|mother|dad|father|attorney|lawyer|executor|trustee|brother|sister|client)\s+(?:handles|decides|needs|has|is)|\b(?:power\s+of\s+attorney|poa|executor|trustee|decision\s*maker|decision-maker|need\s+to\s+talk\s+to|needs?\s+to\s+weigh\s+in|talk\s+to\s+(?:my|their|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|kids?|son|daughter))\b/i;
 const PBK_AGENT_ONLY_SPEECH_RE = /\b(creative\s+finance|seller\s+financ(?:e|ing)|owner\s+financ(?:e|ing)|carry(?:ing)?\s+(?:the\s+)?note|carry\s+terms|wrap(?:around)?|balloon\s+payment|multi[-\s]?family|multifamily|mf\s+path)\b/i;
@@ -41306,6 +41306,22 @@ async function sendElevenLabsTtsToTelnyxMediaStream(session = {}, text = '') {
       transport: 'telnyx-media-stream',
     },
   }, cleanText);
+  recordCallTrace('elevenlabs_tts_payload', {
+    ...session,
+    status: tts.response?.ok ? 'sent' : 'provider_error',
+    result: 'tts_payload_sent',
+    rawText: text,
+    sanitizedText: tts.sanitizedText || cleanText,
+    spokenText: tts.payload?.text || tts.sanitizedText || cleanText,
+    voiceId: tts.voiceId,
+    modelId: tts.modelId,
+    outputFormat: tts.outputFormat,
+    voiceSettings: tts.payload?.voice_settings || {},
+    prosody: tts.prosody || {},
+    textControls: tts.textControls || {},
+    source: 'telnyx-live-call',
+    stage: 'sendElevenLabsTtsToTelnyxMediaStream',
+  });
 
   if (!tts.response.ok) {
     const errorText = await tts.response.text().catch(() => '');
@@ -43752,7 +43768,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   }), options);
   const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
   const lastAvaReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || session.lastAvaReplyPreview || '');
-  const authorityConfirmedByAnswer = isAvaLiveAuthorityQuestion(lastAvaReply) && isAffirmativeAvaAuthorityAnswer(raw);
+  const authorityConfirmedByAnswer = isAvaLiveAuthorityQuestion(lastAvaReply) && isAffirmativeAvaAuthorityAnswer(currentRaw);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
@@ -43761,13 +43777,13 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     return withSafeActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
   }
   if (authorityConfirmedByAnswer) {
-    applyAvaAuthorityConfirmation(session, raw);
+    applyAvaAuthorityConfirmation(session, currentRaw);
     return withSafeActiveHook(`${opener}Perfect, thank you. What property address should I use, and what are you hoping to do with it?`, {
       fallback: 'Perfect, thank you. What property address should I use, and what are you hoping to do with it?',
     });
   }
   if (/\b(i already told you|already told you|i told you|told you that|said this already|you just said that|you already said that|you asked that already|gave you the address)\b/i.test(lower)) {
-    if (isAvaLiveAuthorityQuestion(lastAvaReply)) applyAvaAuthorityConfirmation(session, raw);
+    if (isAvaLiveAuthorityQuestion(lastAvaReply)) applyAvaAuthorityConfirmation(session, currentRaw);
     return withSafeActiveHook(`${opener}You're right, I repeated myself. I will move forward: what property are we talking about, and what are you hoping to do with it?`, {
       fallback: "You're right, I repeated myself. What property are we talking about, and what are you hoping to do with it?",
     });
@@ -44474,9 +44490,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       clearInterval(deepgramKeepAliveTimer);
       deepgramKeepAliveTimer = null;
     }
-    if (session.callId) telnyxMediaSessionsByCallId.delete(session.callId);
+    const ownsCurrentCallSlot = Boolean(session.callId && telnyxMediaSessionsByCallId.get(session.callId) === session);
+    if (ownsCurrentCallSlot) telnyxMediaSessionsByCallId.delete(session.callId);
     session.deepgramSocketOpen = false;
-    await syncTelnyxSessionToRedis(session, 'ended', { force: true });
+    if (ownsCurrentCallSlot || !session.avaReplySuppressed) {
+      await syncTelnyxSessionToRedis(session, 'ended', { force: true });
+    }
     if (deepgramConnection && deepgramReady) {
       const halfGraceMs = Math.max(125, Math.floor(TELNYX_DEEPGRAM_FINALIZE_GRACE_MS / 2));
       const didFinalize = sendDeepgramControl(deepgramConnection, { type: 'Finalize' });
@@ -44511,6 +44530,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
+    if (session.avaReplySuppressed || session.duplicateMediaStreamRejected) {
+      recordCallTrace('media_finalize_completed', {
+        ...session,
+        status: session.duplicateMediaStreamRejected ? 'duplicate_ignored' : 'superseded_ignored',
+        result: reason,
+        transcript: transcriptText,
+        ignoredMediaFrames: session.ignoredMediaFrames || 0,
+        stage: 'finalize',
+      });
+      await persistState(state);
+      return;
+    }
     if (transcriptText && (!session.sentiment || session.sentiment.pbkScore === null || session.sentiment.pbkScore === undefined)) {
       session.sentiment = estimatePbkLiveSentiment(transcriptText);
     }
@@ -45332,13 +45363,38 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       if (session.callId) {
         const existingSession = telnyxMediaSessionsByCallId.get(session.callId);
         if (existingSession && existingSession !== session) {
+          const existingSocketOpen = existingSession.telnyxMediaSocket?.readyState === WebSocket.OPEN;
+          const existingAgeMs = Math.max(0, Date.now() - (Date.parse(existingSession.startedAt || '') || Date.now()));
+          const existingLooksActive = !existingSession.finalized
+            && existingSocketOpen
+            && (Number(existingSession.audioBytes || 0) > 0 || existingAgeMs < 15000);
+          if (existingLooksActive) {
+            session.avaReplySuppressed = true;
+            session.duplicateMediaStreamRejected = true;
+            session.supersededByStreamId = existingSession.streamId || existingSession.id;
+            session.supersededAt = isoNow();
+            recordCallTrace('telnyx_media_stream_duplicate_rejected', {
+              ...session,
+              status: 'rejected',
+              result: 'first_active_media_stream_kept',
+              activeStreamId: existingSession.streamId || existingSession.id,
+              duplicateStreamId: session.streamId || session.id,
+              stage: 'liveTelnyxMessageHandler',
+            });
+            try {
+              socket.close(1000, 'duplicate media stream');
+            } catch {
+              // Best effort; the media handler will also ignore suppressed frames.
+            }
+            return;
+          }
           existingSession.avaReplySuppressed = true;
           existingSession.supersededByStreamId = session.streamId || session.id;
           existingSession.supersededAt = isoNow();
           recordCallTrace('telnyx_media_stream_superseded', {
             ...existingSession,
             status: 'superseded',
-            result: 'duplicate_media_stream_replaced',
+            result: 'inactive_media_stream_replaced',
             replacementStreamId: session.streamId || session.id,
             stage: 'liveTelnyxMessageHandler',
           });
@@ -45379,6 +45435,18 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
 
     if (event.event === 'media' && event.media?.payload) {
+      if (session.avaReplySuppressed || !isCurrentTelnyxMediaSession(session)) {
+        if (!session.ignoredMediaFrames) {
+          recordCallTrace('telnyx_media_frame_ignored', {
+            ...session,
+            status: 'ignored',
+            result: session.duplicateMediaStreamRejected ? 'duplicate_media_stream' : 'not_current_media_session',
+            stage: 'liveTelnyxMessageHandler',
+          });
+        }
+        session.ignoredMediaFrames = Number(session.ignoredMediaFrames || 0) + 1;
+        return;
+      }
       const frame = Buffer.from(String(event.media.payload), 'base64');
       session.frameCount += 1;
       session.audioBytes += frame.length;

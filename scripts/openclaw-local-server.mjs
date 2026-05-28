@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-approval-controls-visibility';
+const BUILD_REVISION = '2026-05-28-ava-phone-real-world-hardening';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -233,12 +233,13 @@ const PBK_TELNYX_BRIDGE_AVA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(p
 const PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_ALLOW_HOSTED_AI_ASSISTANT_WITH_BRIDGE || '').trim());
 const PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE = /^(1|true|yes)$/i.test(String(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_FORCE || '').trim());
 const TELNYX_BRIDGE_AVA_REPLY_MIN_MS = Math.max(600, Math.min(6000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_REPLY_MIN_MS || 1800)));
-const TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS = Math.max(2500, Math.min(12000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS || 6500)));
-const TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS = Math.max(TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS || 18000)));
+const TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS = Math.max(1800, Math.min(12000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS || 2800)));
+const TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS = Math.max(TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS || 9000)));
 const TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS = Math.max(5000, Math.min(30000, Number(process.env.PBK_TELNYX_BRIDGE_AVA_CALLER_FLOOR_MS || 12000)));
 const TELNYX_LIVE_REPLY_STRATEGIST_MODE = String(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_MODE || 'inline').trim().toLowerCase();
 const TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS = Math.max(0, Math.min(2500, Number(process.env.PBK_TELNYX_LIVE_REPLY_STRATEGIST_TIMEOUT_MS || 1200)));
 const PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_ELEVENLABS_MEDIA_REPLY_ENABLED || 'true').trim());
+const PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED || '').trim());
 const TELNYX_BIDIRECTIONAL_MEDIA_MODE = String(process.env.PBK_TELNYX_BIDIRECTIONAL_MEDIA_MODE || 'mp3').trim().toLowerCase();
 const TELNYX_ELEVENLABS_OUTPUT_FORMAT = String(process.env.PBK_TELNYX_ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_128').trim();
 const TELNYX_ELEVENLABS_MEDIA_REPLY_MIN_MS = Math.max(
@@ -331,6 +332,7 @@ const DEEPSEEK_API_KEY = String(process.env.PBK_DEEPSEEK_API_KEY || process.env.
 const DEEPSEEK_BASE_URL = String(process.env.PBK_DEEPSEEK_BASE_URL || 'https://api.deepseek.com').trim().replace(/\/+$/g, '');
 const DEEPSEEK_MODEL = String(process.env.PBK_DEEPSEEK_MODEL || 'deepseek-v4-pro').trim();
 const DEEPSEEK_FALLBACK_MODEL = String(process.env.PBK_DEEPSEEK_FALLBACK_MODEL || 'deepseek-v4-flash').trim();
+const DEEPSEEK_LIVE_MODEL = String(process.env.PBK_DEEPSEEK_LIVE_MODEL || DEEPSEEK_FALLBACK_MODEL || DEEPSEEK_MODEL).trim();
 const STRATEGIST_PROVIDER = String(process.env.PBK_STRATEGIST_PROVIDER || 'deepseek').trim().toLowerCase();
 const DEEPSEEK_TIMEOUT_MS = Math.max(5000, Math.min(90000, Number(process.env.PBK_DEEPSEEK_TIMEOUT_MS || 30000)));
 const EMOTION_WORLD_MODEL_ENDPOINT = String(
@@ -20473,6 +20475,7 @@ async function askStrategistRecord(params = {}) {
   const context = built.context;
   const fallbackChain = [];
   let strategist = null;
+  const requestedResponseFormat = String(params.responseFormat || params.response_format || 'json').trim().toLowerCase();
   if (STRATEGIST_PROVIDER === 'deepseek') {
     recordCallTrace('deepseek_call_started', {
       callId: params.callId || params.metadata?.callId || '',
@@ -20486,7 +20489,7 @@ async function askStrategistRecord(params = {}) {
     const deepSeekStartedAt = Date.now();
     const primary = await runDeepSeekChatCompletion(built.messages, {
       model: params.model || DEEPSEEK_MODEL,
-      responseFormat: 'json',
+      responseFormat: requestedResponseFormat === 'text' || requestedResponseFormat === 'none' ? 'text' : 'json',
       temperature: params.temperature ?? 0.2,
       maxTokens: params.maxTokens || 1200,
       timeoutMs: params.timeoutMs || params.timeout_ms,
@@ -20513,10 +20516,34 @@ async function askStrategistRecord(params = {}) {
         rawAnswer: primary.answer,
         usage: primary.usage || null,
       };
-    } else if (DEEPSEEK_FALLBACK_MODEL && DEEPSEEK_FALLBACK_MODEL !== (params.model || DEEPSEEK_MODEL)) {
+    } else if (
+      requestedResponseFormat !== 'text'
+      && ['provider_empty_response', 'provider_reasoning_only'].includes(primary.result)
+    ) {
+      const textRetry = await runDeepSeekChatCompletion(built.messages, {
+        model: params.model || DEEPSEEK_MODEL,
+        responseFormat: 'text',
+        temperature: params.temperature ?? 0.2,
+        maxTokens: params.maxTokens || 1200,
+        timeoutMs: params.timeoutMs || params.timeout_ms,
+      });
+      fallbackChain.push({ provider: 'deepseek', model: params.model || DEEPSEEK_MODEL, result: textRetry.result, ok: textRetry.ok, error: textRetry.error || '', retry: 'json_mode_text_retry' });
+      if (textRetry.ok) {
+        const parsed = extractJsonObjectFromText(textRetry.answer);
+        strategist = {
+          ok: true,
+          result: 'live_text_retry',
+          provider: textRetry.provider,
+          response: normalizeStrategistResponse(parsed || {}, textRetry.answer),
+          rawAnswer: textRetry.answer,
+          usage: textRetry.usage || null,
+        };
+      }
+    }
+    if (!strategist && DEEPSEEK_FALLBACK_MODEL && DEEPSEEK_FALLBACK_MODEL !== (params.model || DEEPSEEK_MODEL)) {
       const secondary = await runDeepSeekChatCompletion(built.messages, {
         model: DEEPSEEK_FALLBACK_MODEL,
-        responseFormat: 'json',
+        responseFormat: requestedResponseFormat === 'text' || requestedResponseFormat === 'none' ? 'text' : 'json',
         temperature: params.temperature ?? 0.2,
         maxTokens: params.maxTokens || 1200,
         timeoutMs: params.timeoutMs || params.timeout_ms,
@@ -23009,12 +23036,21 @@ function createLeadStageTransitionRecord(params = {}) {
 }
 
 function createCallRecord(params = {}) {
-  const context = findLeadContext(params);
+  const explicitPhone = normalizePhone(params.phone || params.to || params.number || '');
+  const context = params.strictLeadContext === true || params.suppressLeadContext === true
+    ? {
+      leadId: params.leadId || params.lead_id || '',
+      leadName: getSpokenLeadName(params.leadName || params.name || ''),
+      address: String(params.address || '').trim(),
+      phone: explicitPhone,
+      email: params.email || '',
+    }
+    : findLeadContext(params);
   return {
     id: params.id || `call-${slugify(context.leadName || context.address || randomUUID())}-${Date.now()}`,
     leadId: params.leadId || context.leadId,
-    leadName: context.leadName,
-    address: context.address,
+    leadName: getSpokenLeadName(params.leadName || params.name || context.leadName || ''),
+    address: String(params.address || context.address || '').trim(),
     phone: normalizePhone(params.phone || params.to || context.phone),
     from: normalizePhone(params.from || params.fromNumber || ''),
     direction: params.direction || 'outbound',
@@ -26503,6 +26539,7 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
 
   const callRecord = createCallRecord({
     id: callControlId || undefined,
+    strictLeadContext: true,
     leadId: lead.leadId,
     leadName: spokenLeadName,
     address: lead.address,
@@ -26581,15 +26618,35 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
           streamCodec: DEEPGRAM_STREAM_CODEC,
         }),
       });
-      actions.push({
-        action: 'speak',
-        result: await speakAvaPhoneReplyByCallId(
-          callControlId,
-          lead.found && spokenLeadName
-            ? `Hi ${spokenLeadName}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?`
-            : 'Hi, this is Ava with Probono Key Realty. Thanks for calling. What property can I help you with today?',
-        ),
-      });
+      if (PBK_AVA_INBOUND_CALL_CONTROL_GREETING_ENABLED) {
+        actions.push({
+          action: 'speak',
+          result: await speakAvaPhoneReplyByCallId(
+            callControlId,
+            lead.found && spokenLeadName
+              ? `Hi ${spokenLeadName}, this is Ava with Probono Key Realty. I pulled up your file. What can I help you with today?`
+              : 'Hi, this is Ava with Probono Key Realty. Thanks for calling. What property can I help you with today?',
+          ),
+        });
+      } else {
+        const skippedGreeting = {
+          ok: true,
+          skipped: true,
+          result: 'disabled_for_bridge_ava_media',
+          provider: 'PBK Bridge Ava',
+          error: 'Normal inbound calls do not use Telnyx Call Control speak before the ElevenLabs media stream; Ava replies after seller speech with full live context.',
+        };
+        actions.push({ action: 'speak', result: skippedGreeting });
+        recordCallTrace('inbound_call_control_greeting_skipped', {
+          callId: callControlId,
+          phone: parsed.from || '',
+          leadId: lead.leadId || '',
+          leadName: spokenLeadName || '',
+          route,
+          result: skippedGreeting.result,
+          stage: 'handleAvaInboundRoute',
+        });
+      }
       actions.push({ action: 'start_ai_assistant', result: await startTelnyxAiAssistant(callControlId, promptContext) });
     }
   }
@@ -28143,6 +28200,7 @@ function getDeepSeekProviderMeta() {
     mode: 'openai-chat-completions',
     model: DEEPSEEK_MODEL,
     fallbackModel: DEEPSEEK_FALLBACK_MODEL,
+    liveModel: DEEPSEEK_LIVE_MODEL,
     baseUrl: DEEPSEEK_BASE_URL,
     timeoutMs: DEEPSEEK_TIMEOUT_MS,
     strategistProvider: STRATEGIST_PROVIDER,
@@ -42447,7 +42505,7 @@ function setTelnyxAvaTurnLock(session = {}, lock = {}) {
 
 function estimateTelnyxAvaSpeechLockMs(text = '') {
   const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
-  const estimated = 1200 + words * 430;
+  const estimated = 900 + words * 310;
   return Math.max(
     TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS,
     Math.min(TELNYX_BRIDGE_AVA_TURN_LOCK_MAX_MS, estimated),
@@ -42540,6 +42598,7 @@ function normalizeAvaVoiceReplyText(text = '', fallback = '') {
     .trim();
   if (!clean) return 'I hear you. Let me slow this down and make sure I understand the property situation before I recommend anything. What matters most right now: speed, certainty, or price?';
   const wordCount = clean.split(/\s+/).filter(Boolean).length;
+  if (/[?]\s*$/.test(clean)) return clean;
   if (wordCount >= 24) return clean;
   return `${clean} Let me ask one clean question so I do not guess wrong: what matters most right now, speed, certainty, or price?`;
 }
@@ -43369,7 +43428,7 @@ function extractLikelyCallerNameOnlyUtterance(transcript = '') {
   if (words.length !== 1) return '';
   const word = words[0].replace(/^'+|'+$/g, '');
   if (!/^[A-Z][a-zA-Z' -]{2,24}$/.test(word)) return '';
-  if (/\b(owner|agent|realtor|broker|seller|hello|thanks|okay|alright|right|yes|yeah|no|cash|offer|price|timeline|condition|probate|foreclosure|tenant|land)\b/i.test(word)) return '';
+  if (/\b(owner|agent|realtor|broker|seller|hello|thanks|okay|alright|right|yes|yeah|no|cash|offer|price|speed|certainty|simplicity|timeline|condition|repairs|address|probate|foreclosure|tenant|land)\b/i.test(word)) return '';
   return word;
 }
 
@@ -43624,6 +43683,15 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
     return withSafeActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
   }
+  if (/\b(i already told you|already told you|i told you|told you that|said this already|gave you the address)\b/i.test(lower)) {
+    return withSafeActiveHook(`${opener}You're right, I will not make you repeat it. What matters most now: speed, certainty, or price?`);
+  }
+  if (/\bspeed\b/i.test(turnLower)) {
+    const roleKnown = callerRole.role && callerRole.role !== PBK_CALLER_ROLES.UNKNOWN && !callerRole.needsClarification;
+    return withSafeActiveHook(roleKnown
+      ? `${opener}Got it, speed. Are you trying to solve this in days, or a few weeks?`
+      : `${opener}Speed makes sense. Are you the owner, the agent, or helping the owner make the decision?`);
+  }
   if (masterProbe.mustAskBeforePitch) {
     if (masterProbe.stage === 'agent_commission_anchor') session.agentCommissionConfirmed = true;
     return withSafeActiveHook(`${opener}${masterProbe.question}`, { fallback: masterProbe.question });
@@ -43816,8 +43884,10 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
         `context_resolver:${resolvedCallContext?.exactNextMove?.type || 'fallback'}:${resolvedCallContext?.ok ? 'ok' : 'fallback'}`,
       ],
       confidence: 0.82,
-      temperature: 0.68,
-      maxTokens: 320,
+      model: DEEPSEEK_LIVE_MODEL,
+      responseFormat: 'text',
+      temperature: 0.35,
+      maxTokens: 220,
       timeoutMs: getTelnyxLiveReplyStrategistTimeoutMs(),
       storeRule: false,
       status: 'suggested',

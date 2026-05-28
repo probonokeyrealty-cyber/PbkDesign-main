@@ -970,7 +970,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1251,7 +1251,8 @@ const checks = [
       && /replyMode:\s*'strategist_inline'/.test(bridge)
       && /replyMode:\s*'fast_local'/.test(bridge)
       && /session\.masterProbe\?\.mustAskBeforePitch && mode !== 'inline'/.test(bridge)
-      && /maxTokens:\s*320/.test(bridge)
+      && /maxTokens:\s*(?:220|320)/.test(bridge)
+      && /responseFormat:\s*'text'/.test(bridge)
       && /deepseek_call_started/.test(bridge)
       && /deepseek_call_completed/.test(bridge)
       && /staleExpired/.test(bridge)

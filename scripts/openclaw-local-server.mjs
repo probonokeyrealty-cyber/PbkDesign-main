@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-live-turn-coordinator';
+const BUILD_REVISION = '2026-05-28-ava-sales-intelligence-turn-trace';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -10848,7 +10848,7 @@ const PBK_AGENT_ONLY_PATH_ALIASES = new Set([
   'multifamily',
 ]);
 const PBK_AGENT_ROLE_RE = /\b((?:i'?m|i\s+am|we'?re|we\s+are|this\s+is)\s+(?:an?\s+|the\s+)?(?:real\s*estate\s*)?(?:listing\s*)?agent|real\s*estate\s*agent|listing\s*agent|seller'?s\s*agent|buyer'?s\s*agent|realtor|broker|licensee|my\s+client|seller\s+i\s+represent|client'?s\s+(?:house|home|property)|listed\s+on\s+mls|mls|commission|co[-\s]?broker)\b/i;
-const PBK_OWNER_ROLE_RE = /\b(i\s+(?:own|am\s+the\s+owner)|i'?m\s+the\s+owner|we\s+own|my\s+(?:house|home|property|place)|our\s+(?:house|home|property|place)|i\s+inherited|we\s+inherited|my\s+(?:mom|mother|dad|father|parent)'?s\s+(?:house|home|property)|owner\s+of\s+the\s+(?:house|home|property))\b/i;
+const PBK_OWNER_ROLE_RE = /\b(i\s+(?:own|am\s+the\s+owner)|i'?m\s+(?:the\s+)?(?:property\s+)?owner|(?:i\s+am|i'?m)\s+(?:the\s+)?(?:seller|homeowner)|we\s+own|my\s+(?:house|home|property|place)|our\s+(?:house|home|property|place)|i\s+inherited|we\s+inherited|my\s+(?:mom|mother|dad|father|parent)'?s\s+(?:house|home|property)|owner\s+of\s+the\s+(?:house|home|property)|(?:on|i'?m|i\s+am|yeah\s+on)\s+(?:the\s+)?property\s+owner|(?:the\s+)?property\s+owner\b)\b/i;
 const PBK_DECISION_HELPER_ROLE_RE = /\b(?:my|their|the)\s+(?:wife|husband|spouse|partner|son|daughter|mom|mother|dad|father|attorney|lawyer|executor|trustee|brother|sister|client)\s+(?:handles|decides|needs|has|is)|\b(?:power\s+of\s+attorney|poa|executor|trustee|decision\s*maker|decision-maker|need\s+to\s+talk\s+to|needs?\s+to\s+weigh\s+in|talk\s+to\s+(?:my|their|the)\s+(?:wife|husband|spouse|partner|attorney|lawyer|kids?|son|daughter))\b/i;
 const PBK_AGENT_ONLY_SPEECH_RE = /\b(creative\s+finance|seller\s+financ(?:e|ing)|owner\s+financ(?:e|ing)|carry(?:ing)?\s+(?:the\s+)?note|carry\s+terms|wrap(?:around)?|balloon\s+payment|multi[-\s]?family|multifamily|mf\s+path)\b/i;
 
@@ -20215,7 +20215,7 @@ function buildAvaResolvedNextMove(params = {}) {
   const conversation = params.conversation || {};
   const transcript = sanitizeAvaSpokenOutput(params.transcript || params.query || '').slice(0, 500);
   const callerRole = architecture.callerRole || architecture.pathDecision?.callerRole || {};
-  const role = normalizeAvaCallerRole(callerRole.role || session.callerRole || '');
+  let role = normalizeAvaCallerRole(callerRole.role || session.callerRole || '');
   const pathDecision = architecture.pathDecision || {};
   const warManual = architecture.warManual || {};
   const activeListening = architecture.activeListening || {};
@@ -20249,8 +20249,24 @@ function buildAvaResolvedNextMove(params = {}) {
   let text = fallback;
   let source = 'conversation_fallback';
   let reason = 'safe_default_when_no_stronger_move_exists';
+  const sellerIntent = classifyAvaLiveSellerIntent(transcript, session);
+  if (sellerIntent.intent === 'owner_identity' && role !== PBK_CALLER_ROLES.OWNER) {
+    applyAvaLiveTurnFacts(session, transcript, '');
+    role = PBK_CALLER_ROLES.OWNER;
+  }
+  const salesMove = buildAvaLiveSalesNextMove({
+    session,
+    contextCall: params.contextCall || params.call || null,
+    transcript,
+    intent: sellerIntent,
+  });
 
-  if (callerRole.needsClarification || role === PBK_CALLER_ROLES.UNKNOWN) {
+  if (salesMove && !['unknown', 'empty', 'greeting', 'audio_check', 'acknowledgement'].includes(sellerIntent.intent)) {
+    type = 'sales_progression';
+    source = 'live_sales_wholesale_intelligence';
+    reason = sellerIntent.intent;
+    text = salesMove;
+  } else if ((callerRole.needsClarification && ![PBK_CALLER_ROLES.OWNER, PBK_CALLER_ROLES.AGENT].includes(role)) || role === PBK_CALLER_ROLES.UNKNOWN) {
     type = 'role_probe';
     source = 'caller_role_guard';
     reason = 'owner_agent_decision_maker_unknown';
@@ -43526,13 +43542,140 @@ function hasAvaRepeatedLiveReply(session = {}, text = '') {
 function getReplyIntentFingerprint(text = '') {
   const clean = normalizeTelnyxRepairTranscript(text);
   if (!clean) return '';
-  if (/\b(property owner|owner|agent|real estate agent|representing the seller|helping the owner)\b/i.test(clean)
-    && /\b(agent|owner|representing|decision)\b/i.test(clean)) return 'role_probe';
+  if (isAvaLiveAuthorityQuestion(clean) || isAvaLiveRoleChoiceQuestion(clean)) return 'role_probe';
   if (/\b(property address|what property|pull this up|right place)\b/i.test(clean)) return 'property_address_probe';
   if (/\b(condition|timeline|number you need|number they need|answer that the right way)\b/i.test(clean)) return 'condition_timeline_number_probe';
   if (/\b(speed|certainty|price|simplicity)\b/i.test(clean)) return 'priority_probe';
   if (/\b(can hear you|have you now|sorry about that pause|reset for a second)\b/i.test(clean)) return 'audio_repair';
   return '';
+}
+
+function isAvaLiveOfferRequest(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return false;
+  return /\b(what'?s\s+(?:the\s+)?offer|what\s+is\s+(?:the\s+)?offer|how\s+much\s+(?:can|would|will)\s+you\s+(?:offer|pay)|how\s+far\s+(?:can|would|will)\s+you\s+(?:offer|go)|cash\s+offer|good\s+offer|want\s+(?:a\s+)?(?:good\s+)?offer|i\s+(?:want|wanna)\s+see\s+how\s+far|i'?d\s+like\s+(?:to\s+)?(?:see\s+)?(?:an?\s+)?offer|can\s+you\s+make\s+an?\s+offer|give\s+me\s+(?:a\s+)?number|tell\s+me\s+(?:the\s+)?number|what\s+can\s+you\s+pay)\b/i.test(clean);
+}
+
+function isAvaLiveDealMomentumRequest(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return false;
+  return /\b(can\s+we\s+(?:get|do|make)\s+(?:a\s+)?deal|let'?s\s+(?:get|do|make)\s+(?:a\s+)?deal|move\s+(?:forward|ahead)|send\s+(?:me\s+)?(?:the\s+)?(?:contract|agreement)|ready\s+to\s+(?:move|go|sign)|get\s+(?:this\s+)?going)\b/i.test(clean);
+}
+
+function isAvaLivePriceAlreadyGivenComplaint(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return false;
+  return /\b(i\s+already\s+told\s+you\s+(?:the\s+)?price|i\s+told\s+you\s+(?:the\s+)?price|gave\s+you\s+(?:the\s+)?price|said\s+(?:the\s+)?price|you\s+have\s+(?:the\s+)?price)\b/i.test(clean);
+}
+
+function extractAvaLiveMoneyAmount(transcript = '') {
+  const raw = String(transcript || '');
+  const match = raw.match(/\$?\s?(\d{2,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(k|thousand|grand|m|million)?\b/i);
+  if (!match) return '';
+  const suffix = String(match[2] || '').toLowerCase();
+  const number = String(match[1] || '').replace(/\s+/g, '');
+  return `${number}${suffix ? ` ${suffix}` : ''}`.trim();
+}
+
+function classifyAvaLiveSellerIntent(transcript = '', session = {}) {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  const lastReply = normalizeTelnyxRepairTranscript(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || session.lastAvaReplyPreview || '');
+  const signals = [];
+  let intent = 'unknown';
+  if (!clean) intent = 'empty';
+  else if (isTelnyxLiveAudioCheckUtterance(clean)) intent = 'audio_check';
+  else if (isTelnyxLiveGreetingOnlyUtterance(clean)) intent = 'greeting';
+  else if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(clean)) intent = 'stop_contact';
+  else if (isAvaLiveRepeatComplaint(clean)) intent = 'repeat_complaint';
+  else if (isAvaLivePriceAlreadyGivenComplaint(clean)) intent = 'price_already_given';
+  else if (isAvaLiveDealMomentumRequest(clean)) intent = 'deal_momentum';
+  else if (isAvaLiveOfferRequest(clean)) intent = 'offer_request';
+  else if (PBK_AGENT_ROLE_RE.test(clean)) intent = 'agent_identity';
+  else if (PBK_OWNER_ROLE_RE.test(clean)) intent = 'owner_identity';
+  else if (isAvaLiveNetNumberAnswer(clean)) intent = 'net_number_priority';
+  else if (/\btimeline|days?|weeks?|months?|asap|soon|fast|quick\b/i.test(clean)) intent = 'timeline_or_speed';
+  else if (/\brepairs?|condition|roof|hvac|foundation|tenant|vacant|occupied\b/i.test(clean)) intent = 'condition_signal';
+  else if (isTelnyxLiveAckOnlyUtterance(clean)) intent = isAvaLiveAuthorityQuestion(lastReply) ? 'authority_confirmation' : 'acknowledgement';
+  const money = extractAvaLiveMoneyAmount(transcript);
+  if (money) signals.push(`money:${money}`);
+  if (PBK_OWNER_ROLE_RE.test(clean)) signals.push('owner_language');
+  if (PBK_AGENT_ROLE_RE.test(clean)) signals.push('agent_language');
+  if (isAvaLiveOfferRequest(clean)) signals.push('offer_request');
+  if (isAvaLiveRepeatComplaint(clean)) signals.push('repeat_complaint');
+  return { intent, signals, normalized: clean, money };
+}
+
+function buildAvaLiveSalesNextMove({ session = {}, contextCall = null, transcript = '', intent = {}, opener = '' } = {}) {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
+  const conditionKnown = Boolean(session.conditionCaptured || session.propertyCondition || contextCall?.condition || /\b(roof|hvac|foundation|tenant|vacant|occupied|repairs?|condition|updated|needs work|as is|as-is)\b/i.test(clean));
+  const desiredNetKnown = Boolean(session.sellerAskingPrice || session.desiredNet || session.bant?.budget || intent.money);
+  const regionLine = session.partialAddress ? ` I have ${session.partialAddress}.` : '';
+  const prefix = opener || '';
+  if (intent.money) {
+    session.sellerAskingPrice = intent.money;
+    session.desiredNet = session.desiredNet || intent.money;
+    if (!session.bant || typeof session.bant !== 'object') session.bant = {};
+    if (!normalizeBantValue(session.bant.budget)) session.bant.budget = intent.money;
+  }
+  if (intent.intent === 'price_already_given') {
+    return `${prefix}You are right, and I am not going to make you repeat the whole story.${desiredNetKnown ? ` I have your number around ${session.sellerAskingPrice || session.desiredNet}.` : ' I heard that price matters, but I do not have the actual number clearly.'} ${fullAddressKnown ? 'Tell me the current condition so I can see if our cash number can meet it.' : 'What is the full street address so I can price it correctly?'}`;
+  }
+  if (intent.intent === 'repeat_complaint') {
+    return `${prefix}You are right, I repeated myself. Let us move forward.${regionLine} ${fullAddressKnown ? 'What number are you trying to walk away with, and what condition should I price in?' : 'What is the full street address so I can run the cash lane correctly?'}`;
+  }
+  if (intent.intent === 'deal_momentum') {
+    return `${prefix}Yes, let us get a real deal going.${regionLine} ${fullAddressKnown && conditionKnown ? 'Give me the net number you need, and I will tell you straight if the cash lane can work.' : fullAddressKnown ? 'Walk me through condition: roof, HVAC, foundation, and anything a buyer would complain about.' : 'First give me the full street address, then I can run condition and numbers instead of circling.'}`;
+  }
+  if (intent.intent === 'offer_request') {
+    return `${prefix}I can get you to a real cash number, but I will not fake one without the facts.${regionLine} ${fullAddressKnown && conditionKnown ? 'What number would make this worth saying yes today?' : fullAddressKnown ? 'What condition should I price in: roof, HVAC, foundation, tenants, and major repairs?' : 'What is the full street address?'}`;
+  }
+  if (intent.intent === 'timeline_or_speed') {
+    session.sellerPriority = 'speed';
+    if (!session.bant || typeof session.bant !== 'object') session.bant = {};
+    if (!normalizeBantValue(session.bant.timeline)) session.bant.timeline = clean;
+    return `${prefix}Timeline, got it.${regionLine} ${fullAddressKnown ? 'Are you trying to close in days or a few weeks, and what net number do you need?' : 'What is the full street address, and are you trying to close in days or a few weeks?'}`;
+  }
+  if (/\b(all of them|all three|all four|everything|all that)\b/i.test(clean)) {
+    session.sellerPriority = 'balanced';
+    return `${prefix}That makes sense: price, speed, and certainty all matter.${regionLine} ${fullAddressKnown ? 'Give me the condition and the number you need, and I will tell you if the cash lane is real.' : 'What is the full street address so I can stop guessing and price the cash lane correctly?'}`;
+  }
+  return '';
+}
+
+function buildAvaLiveTurnStateSnapshot(session = {}, contextCall = null, extra = {}) {
+  return {
+    callerRole: session.callerRole || contextCall?.callerRole || '',
+    callerRoleConfidence: session.callerRoleConfidence ?? null,
+    authorityConfirmed: Boolean(session.authorityConfirmed || session.decisionMakerConfirmed),
+    pathLocked: Boolean(session.pathLocked || contextCall?.pathLocked),
+    selectedPath: session.selectedPath || session.identifiedPath || contextCall?.selectedPath || contextCall?.selected_path || '',
+    sellerPriority: session.sellerPriority || '',
+    partialAddress: session.partialAddress || '',
+    addressKnown: Boolean(contextCall?.address || session.address),
+    responseRequired: session.responseRequired !== false,
+    currentCallFlowStepId: session.currentCallFlowStepId || '',
+    lastAvaReply: String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').slice(0, 260),
+    bantStatus: session.bantStatus || {},
+    ...extra,
+  };
+}
+
+function recordAvaLiveTurnDecision(session = {}, details = {}) {
+  recordCallTrace('ava_turn_decision', {
+    ...session,
+    status: details.status || 'decision',
+    result: details.result || details.phase || 'turn_decision',
+    stage: details.stage || 'ava_live_turn_decision',
+    rawTranscript: details.rawTranscript || details.transcript || '',
+    transcript: details.transcript || details.rawTranscript || '',
+    latestTranscript: details.latestTranscript || details.transcript || details.rawTranscript || '',
+    classifiedIntent: details.classifiedIntent || {},
+    stateFlags: details.stateFlags || buildAvaLiveTurnStateSnapshot(session, details.contextCall || null),
+    resolvedAction: details.resolvedAction || {},
+    ttsPayload: details.ttsPayload || {},
+    note: details.note || '',
+  });
 }
 
 function normalizeTelnyxRepairTranscript(transcript = '') {
@@ -43746,6 +43889,9 @@ function buildRotatedBantPhrase(field = '', opener = '') {
 
 function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
   const cleanProposed = normalizeAvaVoiceReplyText(proposed, fallback || proposed);
+  if (/\b(you'?re right,? i repeated myself|let us get a real deal going|i can get you to a real cash number|i will not fake one without the facts|what is the full street address|what number would make this worth saying yes|what condition should i price in)\b/i.test(cleanProposed)) {
+    return { text: cleanProposed, adjusted: false, reason: 'sales_progression_protected' };
+  }
   if (!hasAvaRepeatedLiveReply(session, cleanProposed)) {
     return { text: cleanProposed, adjusted: false };
   }
@@ -43756,7 +43902,13 @@ function avoidRepeatedAvaLiveReply(session = {}, proposed = '', fallback = '') {
   const role = normalizeAvaCallerRole(session.callerRole || session.pathDecision?.callerRole?.role || '');
   const path = normalizePbkDealPath(session.selectedPath || session.pathDecision?.selectedPath || session.identifiedPath || '', 'cash');
   const intent = getReplyIntentFingerprint(cleanProposed || cleanFallback);
-  const variants = intent === 'role_probe'
+  const authorityKnown = Boolean(session.authorityConfirmed || session.decisionMakerConfirmed || session.isOwnerCaller || normalizeAvaCallerRole(session.callerRole || '') === PBK_CALLER_ROLES.OWNER);
+  const variants = intent === 'role_probe' && authorityKnown
+    ? [
+        'I have you as the owner. What is the full street address so I can price this correctly?',
+        'Perfect, I have you as the decision maker. What number are you trying to walk away with?',
+      ]
+    : intent === 'role_probe'
     ? [
         'I may have asked that clumsily. Are you the owner, the agent, or helping the owner make the decision?',
         'No worries. I can keep this simple: are you able to make decisions on the property today?',
@@ -43893,6 +44045,12 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const lastAvaReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || session.lastAvaReplyPreview || '');
   const authorityConfirmedByAnswer = isAvaLiveAuthorityQuestion(lastAvaReply) && isAffirmativeAvaAuthorityAnswer(latestTranscript);
   const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
+  const sellerIntent = classifyAvaLiveSellerIntent(latestTranscript, session);
+  if (sellerIntent.money) {
+    session.sellerAskingPrice = sellerIntent.money;
+    session.desiredNet = session.desiredNet || sellerIntent.money;
+    if (!normalizeBantValue(session.bant?.budget)) session.bant.budget = sellerIntent.money;
+  }
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
@@ -43911,12 +44069,17 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
       fallback: 'I heard yes, but I need one word so I route this correctly: are you the owner or the agent?',
     });
   }
-  if (PBK_OWNER_ROLE_RE.test(latestTranscript)) {
+  if (sellerIntent.intent === 'owner_identity') {
+    applyAvaLiveTurnFacts(session, latestTranscript, turnContext.supportTranscript);
     return withSafeActiveHook(`${opener}Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?`, {
       fallback: 'Perfect, thanks. What is the full property address, and what net number would make this worth saying yes today?',
     });
   }
-  if (isAvaLiveRepeatComplaint(latestTranscript)) {
+  const salesNextMove = buildAvaLiveSalesNextMove({ session, contextCall, transcript: latestTranscript, intent: sellerIntent, opener });
+  if (salesNextMove) {
+    return withSafeActiveHook(salesNextMove, { fallback: salesNextMove });
+  }
+  if (sellerIntent.intent === 'repeat_complaint') {
     if (isAvaLiveAuthorityQuestion(lastAvaReply)) applyAvaAuthorityConfirmation(session, latestTranscript);
     const knownContext = [
       session.partialAddress || '',
@@ -44170,6 +44333,7 @@ async function buildTelnyxLiveAvaReplyInsight({ session = {}, transcript = '', c
       conversation,
       strategist,
       architecture,
+      resolvedCallContext,
     };
   } catch (error) {
     const activeListening = buildAvaActiveListeningContext({
@@ -44916,6 +45080,21 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
     const transcriptForReply = String(item.transcript || '').replace(/\s+/g, ' ').trim().toLowerCase();
     if (!transcriptForReply || transcriptForReply === session.lastAvaReplyTranscript) return;
+    const inputIntent = classifyAvaLiveSellerIntent(item.transcript || transcriptForReply, session);
+    recordAvaLiveTurnDecision(session, {
+      phase: 'input_received',
+      result: 'seller_turn_received',
+      rawTranscript: item.originalTranscript || item.transcript,
+      transcript: item.transcript,
+      latestTranscript: item.transcript,
+      classifiedIntent: inputIntent,
+      stateFlags: buildAvaLiveTurnStateSnapshot(session, getCallById(session.callId), {
+        expandedOptionAnswer: expandedOptionAnswer || '',
+        isFinal: Boolean(item.isFinal),
+        speechFinal: Boolean(item.speechFinal),
+      }),
+      stage: 'maybeSpeakTelnyxAvaReply.input',
+    });
     const now = Date.now();
     const activeTurnLock = getActiveTelnyxAvaTurnLock(session, now);
     if (activeTurnLock) {
@@ -45035,6 +45214,28 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.prosody = reply.architecture?.prosody || reply.conversation?.prosody || session.prosody || {};
     session.activeListening = reply.architecture?.activeListening || reply.conversation?.activeListening || session.activeListening || {};
     if (!spoken) return;
+    recordAvaLiveTurnDecision(session, {
+      phase: 'resolved',
+      result: 'reply_resolved_before_tts',
+      rawTranscript: item.originalTranscript || item.transcript,
+      transcript: item.transcript,
+      latestTranscript: item.transcript,
+      classifiedIntent: classifyAvaLiveSellerIntent(item.transcript || transcriptForReply, session),
+      stateFlags: buildAvaLiveTurnStateSnapshot(session, contextCall, {
+        pathConfidence: reply.architecture?.pathDecision?.confidence ?? session.pathDecision?.confidence ?? null,
+        missingBant: reply.architecture?.bant?.missing || session.bantStatus?.missing || [],
+        liveKnowledgeCount: Array.isArray(session.liveKnowledge) ? session.liveKnowledge.length : 0,
+      }),
+      resolvedAction: {
+        replyMode: reply.replyMode || 'live',
+        replyPreview: spoken.slice(0, 500),
+        preSanitizedPreview: String(reply.text || '').slice(0, 500),
+        antiRepeat: reply.antiRepeat || null,
+        exactNextMove: reply.resolvedCallContext?.exactNextMove || null,
+        pathDecision: reply.architecture?.pathDecision || session.pathDecision || {},
+      },
+      stage: 'maybeSpeakTelnyxAvaReply.resolved',
+    });
     const latestCall = getCallById(session.callId);
     if (!isTelnyxCallStillSpeakable(latestCall)) return;
     const sendingLock = setTelnyxAvaTurnLock(session, {
@@ -45055,6 +45256,29 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     session.replyLatencySamples = session.replyLatencySamples.slice(0, 12);
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    recordAvaLiveTurnDecision(session, {
+      phase: 'tts_sent',
+      result: speakResult.ok ? 'tts_audio_sent' : 'tts_audio_warning',
+      rawTranscript: item.originalTranscript || item.transcript,
+      transcript: item.transcript,
+      latestTranscript: item.transcript,
+      classifiedIntent: classifyAvaLiveSellerIntent(item.transcript || transcriptForReply, session),
+      stateFlags: buildAvaLiveTurnStateSnapshot(session, contextCall),
+      resolvedAction: {
+        replyMode: reply.replyMode || 'live',
+        replyPreview: spoken.slice(0, 500),
+      },
+      ttsPayload: {
+        provider: speakResult.provider || '',
+        ok: Boolean(speakResult.ok),
+        result: speakResult.result || '',
+        voiceId: speakResult.voiceId || speakResult.elevenLabsMedia?.voiceId || '',
+        outputFormat: speakResult.outputFormat || speakResult.elevenLabsMedia?.outputFormat || '',
+        bytes: speakResult.bytes || speakResult.elevenLabsMedia?.bytes || 0,
+        fallbackFrom: speakResult.fallbackFrom || '',
+      },
+      stage: 'maybeSpeakTelnyxAvaReply.tts',
+    });
     session.lastAvaReplySpoken = spoken;
     session.lastAvaSpokenPreview = spoken.slice(0, 320);
     session.lastAvaReplyMode = reply.replyMode || 'live';

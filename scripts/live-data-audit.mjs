@@ -300,6 +300,9 @@ const checks = [
   {
     name: 'Approval list fetch stays compact unless state is explicitly requested',
     ok: /const includeState = \['1', 'true', 'yes'\]\.includes/.test(bridge)
+      && /const includeDemo = \['1', 'true', 'yes'\]\.includes/.test(bridge)
+      && /hiddenDemoApprovalCount/.test(bridge)
+      && /isDemoRuntimeApproval/.test(bridge)
       && /stateIncluded:\s*includeState/.test(bridge)
       && /\.\.\.\(includeState \? \{ state: buildStateSnapshot\(\) \} : \{\}\)/.test(bridge),
   },
@@ -967,7 +970,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1030,6 +1033,8 @@ const checks = [
       && /PBK_SLACK_BOT_TOKEN/.test(productionPristineCheck)
       && /slackHealth/.test(productionPristineCheck)
       && /\/api\/emotion\/predict/.test(productionPristineCheck)
+      && /function isDemoRuntimeApproval/.test(productionPristineCheck)
+      && /ignoredDemoApprovalCount/.test(productionPristineCheck)
       && /pending_approvals_not_cleared/.test(productionPristineCheck)
       && /openclaw_gateway_not_live/.test(productionPristineCheck)
       && /PBK_CHECK_OPENCLAW_GATEWAY_GAP/.test(productionPristineCheck)

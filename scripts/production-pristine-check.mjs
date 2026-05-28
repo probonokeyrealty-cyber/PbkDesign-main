@@ -34,6 +34,26 @@ function redactPreview(value = '') {
     .slice(0, 120);
 }
 
+function isDemoRuntimeApproval(approval = {}) {
+  const source = String(approval.source || approval.fixture || approval.kind || approval.importSource || '').toLowerCase();
+  const text = [
+    approval.id,
+    approval.taskId,
+    approval.leadId,
+    approval.leadName,
+    approval.address,
+    approval.title,
+    approval.description,
+    approval.notes,
+    approval.fileName,
+    approval.templateName,
+    approval.type,
+  ].filter(Boolean).join(' ');
+  return source.includes('demo')
+    || source.includes('fixture')
+    || /approval-offer-202-cherry|approval-contract-robert-chen|approval-batch-akron|lead-diane-kowalski|lead-robert-chen|daily_probate_import\.csv|Diane Kowalski|Robert Chen|Akron Probate Batch|202 Cherry Ln|55 Birch Rd/i.test(text);
+}
+
 async function requestJson(pathname, { method = 'GET', auth = true, body = null } = {}) {
   if (auth && !API_KEY) {
     return {
@@ -94,6 +114,7 @@ function collectPendingWork(state = {}) {
   return [
     ...approvals
       .filter((item) => normalizeStatus(item.status || 'pending') === 'pending')
+      .filter((item) => !isDemoRuntimeApproval(item))
       .map((item) => ({
         id: item.id || '',
         lane: 'approval',
@@ -310,6 +331,9 @@ async function main() {
   const slackHealth = slackHealthResult.parsed || {};
   const emotionPredict = emotionPredictResult.parsed || {};
   const pendingWork = collectPendingWork(state);
+  const ignoredDemoApprovalCount = (Array.isArray(state.approvals) ? state.approvals : [])
+    .filter((item) => normalizeStatus(item.status || 'pending') === 'pending')
+    .filter((item) => isDemoRuntimeApproval(item)).length;
   const providerSummary = summarizeProviders(health);
   const optionalIgnored = Object.entries(providerSummary)
     .filter(([name, meta]) => !meta.ready && OPTIONAL_PROVIDER_GAPS.has(name.toLowerCase()))
@@ -346,6 +370,7 @@ async function main() {
     production: {
       pendingWorkCount: pendingWork.length,
       pendingWorkPreview: pendingWork.slice(0, 12),
+      ignoredDemoApprovalCount,
       webSearchMode: state.status?.providers?.webSearch?.mode || state.status?.webSearchMode || null,
       openclawGateway: state.status?.providers?.openclawGateway || null,
       worldModel: state.status?.worldModel || null,
@@ -382,6 +407,7 @@ async function main() {
       ok: report.ok,
       checkedAt: report.checkedAt,
       pendingWorkCount: report.production.pendingWorkCount,
+      ignoredDemoApprovalCount: report.production.ignoredDemoApprovalCount,
       webSearchMode: report.production.webSearchMode,
       agentDebug: report.production.agentDebug,
       manualActions: report.production.manualControl?.manualActions?.length || 0,

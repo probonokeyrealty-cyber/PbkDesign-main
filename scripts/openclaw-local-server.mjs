@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-rex-deepseek-hardening';
+const BUILD_REVISION = '2026-05-28-approval-controls-visibility';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -2869,6 +2869,26 @@ function getTeamApprovalRestriction(approval = {}, status = '') {
     return 'This approval can trigger a contract, provider write, admin change, campaign, or prompt application. Admin approval required.';
   }
   return null;
+}
+
+function isDemoRuntimeApproval(approval = {}) {
+  const source = String(approval.source || approval.fixture || approval.kind || approval.importSource || '').toLowerCase();
+  const text = [
+    approval.id,
+    approval.taskId,
+    approval.leadId,
+    approval.leadName,
+    approval.address,
+    approval.title,
+    approval.description,
+    approval.notes,
+    approval.fileName,
+    approval.templateName,
+    approval.type,
+  ].filter(Boolean).join(' ');
+  return source.includes('demo')
+    || source.includes('fixture')
+    || /approval-offer-202-cherry|approval-contract-robert-chen|approval-batch-akron|lead-diane-kowalski|lead-robert-chen|daily_probate_import\.csv|Diane Kowalski|Robert Chen|Akron Probate Batch|202 Cherry Ln|55 Birch Rd/i.test(text);
 }
 
 function decodeBase32Secret(secret = '') {
@@ -48495,7 +48515,11 @@ const server = createServer(async (request, response) => {
       const statusFilter = String(url.searchParams.get('status') || '').trim().toLowerCase();
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 60)));
       const includeState = ['1', 'true', 'yes'].includes(String(url.searchParams.get('includeState') || '').trim().toLowerCase());
+      const includeDemo = ['1', 'true', 'yes'].includes(String(url.searchParams.get('includeDemo') || url.searchParams.get('includeFixtures') || '').trim().toLowerCase());
+      const allApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : []);
+      const visibleApprovals = includeDemo ? allApprovals : allApprovals.filter((approval) => !isDemoRuntimeApproval(approval));
       const filteredApprovals = sortNewest(Array.isArray(state.approvals) ? state.approvals : [])
+        .filter((approval) => includeDemo || !isDemoRuntimeApproval(approval))
         .filter((approval) => !statusFilter || String(approval.status || '').toLowerCase() === statusFilter)
         .slice(0, limit);
       const pendingAdminTasks = sortNewest(Array.isArray(state.adminTasks) ? state.adminTasks : [])
@@ -48506,6 +48530,9 @@ const server = createServer(async (request, response) => {
         result: 'live',
         status: statusFilter || 'all',
         count: filteredApprovals.length,
+        rawApprovalCount: allApprovals.length,
+        hiddenDemoApprovalCount: includeDemo ? 0 : allApprovals.length - visibleApprovals.length,
+        includeDemo,
         approvals: filteredApprovals,
         adminTasks: pendingAdminTasks,
         stateIncluded: includeState,

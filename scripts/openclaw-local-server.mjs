@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-rex-conversation-hardening';
+const BUILD_REVISION = '2026-05-28-ava-rex-deepseek-hardening';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -18661,15 +18661,25 @@ async function buildRexConversationalBrainResponse(stateRef = {}, params = {}) {
     'Return the best conversational Rex answer in 4-8 sentences. If there is a safe command/control next step, name the lane and whether it is inspect, dry-run, approval, or apply. End with one focused next question or next action.',
   ].join('\n');
 
-  const result = await runDeepSeekChatCompletion([
+  const rexMessages = [
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ], {
+  ];
+  let result = await runDeepSeekChatCompletion(rexMessages, {
     temperature: 0.22,
     maxTokens: 520,
     timeoutMs: Math.min(8000, Math.max(2500, DEEPSEEK_TIMEOUT_MS)),
     source: 'rex-conversational-brain',
   });
+  if (!result?.ok && DEEPSEEK_FALLBACK_MODEL && DEEPSEEK_FALLBACK_MODEL !== DEEPSEEK_MODEL) {
+    result = await runDeepSeekChatCompletion(rexMessages, {
+      model: DEEPSEEK_FALLBACK_MODEL,
+      temperature: 0.18,
+      maxTokens: 420,
+      timeoutMs: 4500,
+      source: 'rex-conversational-brain-fallback-model',
+    });
+  }
 
   const synthesized = String(result?.answer || '').trim();
   if (!result?.ok || !synthesized) {
@@ -19919,6 +19929,17 @@ async function runDeepSeekChatCompletion(messages = [], params = {}) {
         reasoning,
         usage: payload?.usage || null,
         responseId: payload?.id || '',
+      };
+    }
+    if (!answer) {
+      return {
+        ok: false,
+        result: 'provider_empty_response',
+        provider: { ...meta, model },
+        error: 'DeepSeek returned an empty response.',
+        usage: payload?.usage || null,
+        responseId: payload?.id || '',
+        payload,
       };
     }
     return {

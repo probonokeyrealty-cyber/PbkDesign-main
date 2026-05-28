@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-legacy-context-sanitizer';
+const BUILD_REVISION = '2026-05-28-ava-live-state-cleanup';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -1567,7 +1567,7 @@ function averageNumeric(values = []) {
   return Number((numbers.reduce((sum, value) => sum + value, 0) / numbers.length).toFixed(4));
 }
 
-const LIVE_CALL_STALE_AFTER_MS = Math.max(15, toNumber(process.env.PBK_LIVE_CALL_STALE_MINUTES, 240)) * 60_000;
+const LIVE_CALL_STALE_AFTER_MS = Math.max(15, toNumber(process.env.PBK_LIVE_CALL_STALE_MINUTES, 45)) * 60_000;
 
 function callTimeMs(call = {}) {
   const candidates = [call.updatedAt, call.updated_at, call.startedAt, call.started_at, call.createdAt, call.created_at];

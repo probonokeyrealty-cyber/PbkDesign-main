@@ -324,7 +324,9 @@ const checks = [
       && /looksLikeRexTroubleshootingQuery/.test(bridge)
       && /buildRexTroubleshootingAnswer/.test(bridge)
       && /buildRexConversationalBrainResponse/.test(bridge)
+      && /buildRexLocalConversationalFallbackAnswer/.test(bridge)
       && /deepseek_conversational_strategist/.test(bridge)
+      && /local_conversational_fallback_deepseek_error/.test(bridge)
       && /adminControlLane:\s*'routeAdminCommand'/.test(bridge)
       && /DeepSeek strategist/.test(bridge),
   },
@@ -964,7 +966,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

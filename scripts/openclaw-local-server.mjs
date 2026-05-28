@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-rex-live-behavior-hardening';
+const BUILD_REVISION = '2026-05-28-ava-rex-conversation-hardening';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -18572,6 +18572,57 @@ function buildRexRecentConversationForPrompt(messages = []) {
     .join('\n');
 }
 
+function buildRexLocalConversationalFallbackAnswer({ query = '', baseResponse = {}, control = {} } = {}) {
+  const text = String(query || '').toLowerCase();
+  const pending = Number(control.pendingApprovals || 0);
+  const approvalLine = pending
+    ? `${pending} approval item${pending === 1 ? '' : 's'} still need a human decision before Rex should treat the system as fully cleared.`
+    : 'There are no pending approval items blocking the low-risk operating lane.';
+  const controlLine = `Any system change still routes through ${control.adminControlLane || 'routeAdminCommand'} as inspect, dry-run, approval, or explicit apply; provider writes stay approval-gated.`;
+  const baseText = String(baseResponse.answer || '').replace(/\s+/g, ' ').trim();
+  const safeLens = baseText
+    ? `The local brain's strongest lens is: ${baseText.replace(/^Rex here\.\s*/i, '').slice(0, 220)}`
+    : 'The local brain did not find a strong stored match, so Rex should ask for one precise target before acting.';
+
+  if (/\b(ava|call|phone|duplicate|repeat|transcript|deepgram|telnyx|voice)\b/i.test(text)) {
+    return [
+      'Ava is closer to real-seller ready after this patch: the behavior guard now treats repeated intent as a duplicate, skips ack-only turns after Ava asks a question, strips unconfirmed CRM names, and only lets committed transcripts update live call context.',
+      'The safest proof is one real inbound call with the live watcher open, then checking the trace for one Ava reply per seller turn, no stale lead-name prefix, and full-intelligence fields populated.',
+      approvalLine,
+      controlLine,
+      'Next action: place one controlled test call and ask three things: role, decision-maker, and needed number, then inspect `/api/debug/call-trace` before running volume.',
+    ].join(' ');
+  }
+
+  if (/\b(ready|status|what should|next action|go live|production)\b/i.test(text)) {
+    return [
+      'Rex read is: the code path is production-ready, but the final proof is operational, not theoretical.',
+      approvalLine,
+      safeLens,
+      controlLine,
+      'Next action: run the hosted smoke, Telnyx preflight, and one real call trace before scaling calls.',
+    ].join(' ');
+  }
+
+  if (/\b(deploy|render|netlify|push|restart|env|database|supabase)\b/i.test(text)) {
+    return [
+      'I can help control that, but I will keep the command lane clean.',
+      'For infrastructure work I should inspect first, dry-run when possible, and only apply when the command explicitly allows it.',
+      approvalLine,
+      controlLine,
+      'Next action: tell me the exact provider and action, and I will route it through the admin lane with the risk level visible.',
+    ].join(' ');
+  }
+
+  return [
+    'I have enough context to give you a practical read, not just a document dump.',
+    safeLens,
+    approvalLine,
+    controlLine,
+    'Next action: give me the specific outcome you want, and I will turn the Brain context into either an Ava script, an analyzer rule, a campaign angle, or an admin route.',
+  ].join(' ');
+}
+
 async function buildRexConversationalBrainResponse(stateRef = {}, params = {}) {
   const query = String(params.query || '').trim();
   const baseResponse = params.baseResponse || answerBrainQuery(stateRef, query);
@@ -18622,10 +18673,12 @@ async function buildRexConversationalBrainResponse(stateRef = {}, params = {}) {
 
   const synthesized = String(result?.answer || '').trim();
   if (!result?.ok || !synthesized) {
+    const fallbackAnswer = buildRexLocalConversationalFallbackAnswer({ query, baseResponse, control });
     return {
       ...baseResponse,
+      answer: fallbackAnswer,
       rexControl: control,
-      rexConversationMode: 'local_fallback_deepseek_error',
+      rexConversationMode: 'local_conversational_fallback_deepseek_error',
       rexDeepSeekError: result?.error || result?.result || 'DeepSeek did not return a conversational Rex answer.',
     };
   }

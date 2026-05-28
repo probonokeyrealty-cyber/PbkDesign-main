@@ -7206,12 +7206,12 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
   await pool.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
         SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'probe_questions' AND policyname = 'probe_questions_service_role_all'
       ) THEN
         CREATE POLICY probe_questions_service_role_all ON public.probe_questions FOR ALL TO service_role USING (true) WITH CHECK (true);
       END IF;
-      IF NOT EXISTS (
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
         SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'scripts' AND policyname = 'scripts_service_role_all'
       ) THEN
         CREATE POLICY scripts_service_role_all ON public.scripts FOR ALL TO service_role USING (true) WITH CHECK (true);
@@ -10849,12 +10849,12 @@ ALTER TABLE public.call_flow_edges ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'call_flow' AND policyname = 'call_flow_service_role_all'
   ) THEN
     CREATE POLICY call_flow_service_role_all ON public.call_flow FOR ALL TO service_role USING (true) WITH CHECK (true);
   END IF;
-  IF NOT EXISTS (
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
     SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'call_flow_edges' AND policyname = 'call_flow_edges_service_role_all'
   ) THEN
     CREATE POLICY call_flow_edges_service_role_all ON public.call_flow_edges FOR ALL TO service_role USING (true) WITH CHECK (true);

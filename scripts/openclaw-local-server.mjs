@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-approval-controls-real-counts';
+const BUILD_REVISION = '2026-05-28-ava-legacy-context-sanitizer';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -1578,16 +1578,44 @@ function callTimeMs(call = {}) {
   return 0;
 }
 
-function normalizeStaleLiveCall(call = {}) {
+function hasLegacyDemoLeadContext(item = {}) {
+  const text = [
+    item.leadId,
+    item.leadName,
+    item.name,
+    item.address,
+    item.propertyAddress,
+  ].filter(Boolean).join(' ');
+  return /lead-diane-kowalski|lead-robert-chen|Diane Kowalski|Robert Chen|202 Cherry Ln|55 Birch Rd/i.test(text);
+}
+
+function sanitizeLegacyInboundCallContext(call = {}) {
   if (!call || typeof call !== 'object') return call;
-  if (String(call.status || '').toLowerCase() !== 'live') return call;
-  const timestamp = callTimeMs(call);
-  if (!timestamp || Date.now() - timestamp <= LIVE_CALL_STALE_AFTER_MS) return call;
+  const isTelnyx = /telnyx/i.test(String(call.provider || call.source || ''));
+  const isInbound = String(call.direction || '').toLowerCase() === 'inbound';
+  const generatedInboundLead = /^lead-inbound-/i.test(String(call.leadId || ''));
+  if (!hasLegacyDemoLeadContext(call) || (!isTelnyx && !isInbound && !generatedInboundLead)) return call;
   return {
     ...call,
+    leadName: '',
+    address: '',
+    legacyContextSanitized: true,
+    legacyContextSanitizedAt: call.legacyContextSanitizedAt || isoNow(),
+    legacyContextSanitizedReason: 'Removed stale demo lead context from a real Telnyx inbound call record.',
+  };
+}
+
+function normalizeStaleLiveCall(call = {}) {
+  if (!call || typeof call !== 'object') return call;
+  const contextSafeCall = sanitizeLegacyInboundCallContext(call);
+  if (String(contextSafeCall.status || '').toLowerCase() !== 'live') return contextSafeCall;
+  const timestamp = callTimeMs(contextSafeCall);
+  if (!timestamp || Date.now() - timestamp <= LIVE_CALL_STALE_AFTER_MS) return contextSafeCall;
+  return {
+    ...contextSafeCall,
     status: 'ended',
-    endedAt: call.endedAt || call.ended_at || new Date(timestamp).toISOString(),
-    updatedAt: call.updatedAt || call.updated_at || new Date(timestamp).toISOString(),
+    endedAt: contextSafeCall.endedAt || contextSafeCall.ended_at || new Date(timestamp).toISOString(),
+    updatedAt: contextSafeCall.updatedAt || contextSafeCall.updated_at || new Date(timestamp).toISOString(),
     staleLiveCall: true,
     staleReason: `No live call update within ${Math.round(LIVE_CALL_STALE_AFTER_MS / 60_000)} minutes.`,
   };

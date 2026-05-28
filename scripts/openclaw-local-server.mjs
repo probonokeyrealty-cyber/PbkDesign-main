@@ -555,10 +555,16 @@ const OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS = Math.max(
   Number(process.env.PBK_OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS || 90_000),
 );
 
-// Bearer token required on mutating endpoints when set. Leave unset for local
-// dev so the bridge stays open on 127.0.0.1. Set on hosted deploys.
+// Bearer token required on mutating endpoints when set. Local dev can stay open,
+// but hosted production must fail closed if the key is accidentally missing.
 const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
-const PUBLIC_AVA_CHAT_ENABLED = !/^(0|false|no)$/i.test(String(process.env.PBK_PUBLIC_AVA_CHAT_ENABLED || 'true').trim());
+const ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE || '').trim());
+const HOSTED_BRIDGE_AUTH_MISCONFIGURED = Boolean(IS_HOSTED && !BRIDGE_API_KEY && !ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE);
+const PUBLIC_AVA_CHAT_ENABLED_CONFIGURED = Object.prototype.hasOwnProperty.call(process.env, 'PBK_PUBLIC_AVA_CHAT_ENABLED');
+const PUBLIC_AVA_CHAT_ENABLED_DEFAULT = IS_HOSTED ? 'false' : 'true';
+const PUBLIC_AVA_CHAT_ENABLED = !/^(0|false|no)$/i.test(String(
+  PUBLIC_AVA_CHAT_ENABLED_CONFIGURED ? process.env.PBK_PUBLIC_AVA_CHAT_ENABLED : PUBLIC_AVA_CHAT_ENABLED_DEFAULT,
+).trim());
 const PUBLIC_AVA_CHAT_KEY = String(process.env.PBK_PUBLIC_AVA_CHAT_KEY || '').trim();
 const PUBLIC_AVA_CHAT_RATE_LIMIT_MAX = Math.max(5, Number(process.env.PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_MAX || 24));
 const PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS = Math.max(
@@ -1673,11 +1679,19 @@ function normalizeStringList(value = []) {
 
 function getRuntimeWarnings() {
   const warnings = [];
-  if (IS_HOSTED && !BRIDGE_API_KEY) {
-    warnings.push('PBK_BRIDGE_API_KEY is not set.');
+  if (HOSTED_BRIDGE_AUTH_MISCONFIGURED) {
+    warnings.push('PBK_BRIDGE_API_KEY is required on hosted; protected endpoints are failing closed.');
+  } else if (IS_HOSTED && !BRIDGE_API_KEY) {
+    warnings.push('PBK_BRIDGE_API_KEY is not set because PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE is enabled.');
   }
   if (IS_HOSTED && STATE_BACKEND !== 'postgres') {
     warnings.push('Hosted bridge is still using file-backed state. Set PBK_DATABASE_URL.');
+  }
+  if (IS_HOSTED && !REDIS_ENABLED) {
+    warnings.push('PBK_REDIS_URL is not active; hosted multi-instance call state will not be shared.');
+  }
+  if (IS_HOSTED && PUBLIC_AVA_CHAT_ENABLED && !PUBLIC_AVA_CHAT_ENABLED_CONFIGURED) {
+    warnings.push('Public Ava chat is enabled on hosted without explicit PBK_PUBLIC_AVA_CHAT_ENABLED=true.');
   }
   if (IS_HOSTED && !APPROVAL_WEBHOOK_URL) {
     warnings.push('PBK_N8N_APPROVAL_WEBHOOK is not set.');
@@ -2752,6 +2766,8 @@ function shouldReturnGatewayStatusOk(gatewayStatus = {}) {
 function getSecurityMeta() {
   return {
     bridgeBearerRequired: Boolean(BRIDGE_API_KEY),
+    hostedBridgeAuthFailClosed: HOSTED_BRIDGE_AUTH_MISCONFIGURED,
+    allowUnauthenticatedHostedBridge: ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE,
     totpRequired: TOTP_REQUIRED,
     totpConfigured: Boolean(TOTP_SECRET),
     totpEnrolled: Boolean(state?.settings?.security?.totpEnrolledAt),
@@ -2762,6 +2778,9 @@ function getSecurityMeta() {
     teamSessionTtlMs: TEAM_SESSION_TTL_MS,
     providerWritesApprovalGated: getRuntimeOperatingMode() !== 'autopilot',
     voicePrewarmEnabled: VOICE_PREWARM_ENABLED,
+    publicAvaChatEnabled: PUBLIC_AVA_CHAT_ENABLED,
+    publicAvaChatExplicitlyConfigured: PUBLIC_AVA_CHAT_ENABLED_CONFIGURED,
+    publicAvaChatKeyRequired: Boolean(PUBLIC_AVA_CHAT_KEY),
   };
 }
 
@@ -28265,9 +28284,12 @@ function getSlackProviderMeta() {
   if (!SLACK_SIGNING_SECRET) interactiveMissing.push('PBK_SLACK_SIGNING_SECRET');
   if (SLACK_BOT_TOKEN && botAuthError) interactiveMissing.push(`PBK_SLACK_BOT_TOKEN (${botAuthError})`);
   const interactiveReady = interactiveMissing.length === 0 && (!botAuthKnown || botAuthLive);
+  for (const item of interactiveMissing) {
+    if (!missing.includes(item)) missing.push(item);
+  }
   return {
     configured: Boolean(SLACK_WEBHOOK_URL || SLACK_BOT_TOKEN),
-    ready: notifyReady,
+    ready: Boolean(notifyReady && approvalPostReady && interactiveReady),
     notifyReady,
     approvalPostReady,
     webhookReady: Boolean(SLACK_WEBHOOK_URL),
@@ -45957,9 +45979,20 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  // Bearer-token gate. Skipped entirely when PBK_BRIDGE_API_KEY is unset
-  // (local dev). Healthcheck endpoints stay open so Render's healthCheckPath
-  // and external monitors keep working without credentials.
+  // Bearer-token gate. Local dev can run open, but hosted production must not
+  // become public if PBK_BRIDGE_API_KEY is accidentally omitted.
+  if (HOSTED_BRIDGE_AUTH_MISCONFIGURED && !PUBLIC_PATHS.has(pathname)) {
+    json(response, 503, {
+      ok: false,
+      error: 'Hosted bridge authentication is not configured.',
+      code: 'hosted_bridge_auth_not_configured',
+      hint: 'Set PBK_BRIDGE_API_KEY before using protected PBK bridge endpoints.',
+    });
+    return;
+  }
+
+  // Healthcheck endpoints stay open so Render's healthCheckPath and external
+  // monitors keep working without credentials.
   if (BRIDGE_API_KEY && !PUBLIC_PATHS.has(pathname)) {
     const header = String(request.headers.authorization || '').trim();
     const expected = `Bearer ${BRIDGE_API_KEY}`;

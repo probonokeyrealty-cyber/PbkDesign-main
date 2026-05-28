@@ -298,6 +298,18 @@ const checks = [
       && /assertOpenClawAuthReady\(config,\s*'\/state'\)/.test(index),
   },
   {
+    name: 'Hosted bridge security controls fail closed and expose interactive readiness',
+    ok: /HOSTED_BRIDGE_AUTH_MISCONFIGURED/.test(bridge)
+      && /PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE/.test(bridge)
+      && /hosted_bridge_auth_not_configured/.test(bridge)
+      && /protected endpoints are failing closed/.test(bridge)
+      && /ready:\s*Boolean\(notifyReady && approvalPostReady && interactiveReady\)/.test(bridge)
+      && /PBK_SLACK_SIGNING_SECRET/.test(bridge)
+      && /PBK_REDIS_URL is not active/.test(bridge)
+      && /PUBLIC_AVA_CHAT_ENABLED_CONFIGURED/.test(bridge)
+      && /PUBLIC_AVA_CHAT_ENABLED_DEFAULT\s*=\s*IS_HOSTED\s*\?\s*'false'\s*:\s*'true'/.test(bridge),
+  },
+  {
     name: 'Approval list fetch stays compact unless state is explicitly requested',
     ok: /const includeState = \['1', 'true', 'yes'\]\.includes/.test(bridge)
       && /const includeDemo = \['1', 'true', 'yes'\]\.includes/.test(bridge)

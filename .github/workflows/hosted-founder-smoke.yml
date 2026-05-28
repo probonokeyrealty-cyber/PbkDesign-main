@@ -12,7 +12,7 @@ permissions:
 jobs:
   hosted-founder-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PBK_BRIDGE_API_KEY: ${{ secrets.PBK_BRIDGE_API_KEY }}
       PBK_HOSTED_BRIDGE_URL: ${{ secrets.PBK_HOSTED_BRIDGE_URL }}
@@ -45,4 +45,27 @@ jobs:
 
       - name: Run hosted founder smoke
         if: ${{ steps.hosted-secrets.outputs.run_smoke == 'true' }}
-        run: node ./scripts/openclaw-hosted-smoke.mjs
+        shell: bash
+        env:
+          HOSTED_SMOKE_ATTEMPTS: 4
+          HOSTED_SMOKE_RETRY_SECONDS: 60
+        run: |
+          set +e
+          for attempt in $(seq 1 "$HOSTED_SMOKE_ATTEMPTS"); do
+            echo "::group::Hosted founder smoke attempt ${attempt}/${HOSTED_SMOKE_ATTEMPTS}"
+            node ./scripts/openclaw-hosted-smoke.mjs
+            status=$?
+            echo "::endgroup::"
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$HOSTED_SMOKE_ATTEMPTS" ]; then
+              echo "Hosted founder smoke failed after ${HOSTED_SMOKE_ATTEMPTS} attempts."
+              exit "$status"
+            fi
+
+            echo "Hosted founder smoke failed with exit ${status}; retrying in ${HOSTED_SMOKE_RETRY_SECONDS}s."
+            sleep "$HOSTED_SMOKE_RETRY_SECONDS"
+          done

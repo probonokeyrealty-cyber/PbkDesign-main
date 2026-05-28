@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-28-ava-live-state-cleanup';
+const BUILD_REVISION = '2026-05-28-ava-authority-yes-progression';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -43443,6 +43443,47 @@ function isTelnyxLiveAudioCheckUtterance(transcript = '') {
   return /\b(can you hear me|you can hear me|hear me right|do you hear me|are you there|still there|hello\??|anyone there)\b/i.test(clean);
 }
 
+function isAvaLiveAuthorityQuestion(text = '') {
+  const clean = normalizeTelnyxRepairTranscript(text);
+  if (!clean) return false;
+  return /\b(able to make decisions|make decisions on the property|person helping make the decision|authorized to make decisions|owner or the person helping|owner agent or helping)\b/i.test(clean);
+}
+
+function isAffirmativeAvaAuthorityAnswer(transcript = '') {
+  const clean = normalizeTelnyxRepairTranscript(transcript);
+  if (!clean) return false;
+  if (/^(yes|yeah|yep|yup|correct|right|sure|i can|yes i can|yeah i can|yep i can|i am|that'?s me|that is me|owner|seller)$/i.test(clean)) return true;
+  const words = clean.split(/\s+/).filter(Boolean);
+  return words.length <= 8
+    && /\b(yes|yeah|yep|yup|i can|i am|i'm able|i make the decisions|i make decisions|i'm the owner|i am the owner|i own it|my property)\b/i.test(clean);
+}
+
+function applyAvaAuthorityConfirmation(session = {}, transcript = '') {
+  if (!session || typeof session !== 'object') return;
+  session.authorityConfirmed = true;
+  session.decisionMakerConfirmed = true;
+  session.authorityConfirmedAt = isoNow();
+  if (!session.bant || typeof session.bant !== 'object') session.bant = {};
+  if (!normalizeBantValue(session.bant.authority)) {
+    session.bant.authority = 'caller confirmed decision authority';
+  }
+  applyAvaCallerRoleToSession(session, {
+    revision: PBK_CALLER_ROLE_REVISION,
+    role: PBK_CALLER_ROLES.OWNER,
+    confidence: 0.78,
+    evidence: [`Caller confirmed decision authority: ${String(transcript || '').slice(0, 80)}`],
+    needsClarification: false,
+  });
+  session.masterProbe = {
+    ...(session.masterProbe && typeof session.masterProbe === 'object' ? session.masterProbe : {}),
+    revision: PBK_CALLER_ROLE_REVISION,
+    stage: 'authority_confirmed',
+    mustAskBeforePitch: false,
+    question: '',
+    reason: 'Caller confirmed they can make decisions, so Ava should advance instead of repeating the authority probe.',
+  };
+}
+
 function isTelnyxLiveGreetingOnlyUtterance(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean || clean.split(/\s+/).length > 8) return false;
@@ -43496,6 +43537,7 @@ function buildTelnyxLiveConversationalRepairReply({ session = {}, transcript = '
 function shouldSkipTelnyxLiveAckOnlyReply(session = {}, transcript = '') {
   if (!isTelnyxLiveAckOnlyUtterance(transcript)) return false;
   const lastReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '').toLowerCase();
+  if (isAvaLiveAuthorityQuestion(lastReply) && isAffirmativeAvaAuthorityAnswer(transcript)) return false;
   if (Date.now() - Number(session.lastAvaReplyAt || 0) < TELNYX_BRIDGE_AVA_TURN_LOCK_MIN_MS) return true;
   return /[?]\s*$/.test(lastReply)
     || /\b(can hear you|have you now|property address|what property|pull this up|reset for a second|sorry about that pause|owner|agent|decision|number you need|timeline|condition|speed|certainty|price)\b/i.test(lastReply);
@@ -43709,6 +43751,8 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     masterProbe,
   }), options);
   const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
+  const lastAvaReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || session.lastAvaReplyPreview || '');
+  const authorityConfirmedByAnswer = isAvaLiveAuthorityQuestion(lastAvaReply) && isAffirmativeAvaAuthorityAnswer(raw);
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
     return withSafeActiveHook(`${opener}yes, I can hear you clearly. Thanks for staying with me. Let me pull this up the right way: what property address should I use today?`);
@@ -43716,8 +43760,17 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   if (/\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(lower)) {
     return withSafeActiveHook('I hear you. I can make sure we stop calling, and I will keep this simple. Is this the number you want removed from our follow-up list?', { stopContact: true });
   }
-  if (/\b(i already told you|already told you|i told you|told you that|said this already|gave you the address)\b/i.test(lower)) {
-    return withSafeActiveHook(`${opener}You're right, I will not make you repeat it. What matters most now: speed, certainty, or price?`);
+  if (authorityConfirmedByAnswer) {
+    applyAvaAuthorityConfirmation(session, raw);
+    return withSafeActiveHook(`${opener}Perfect, thank you. What property address should I use, and what are you hoping to do with it?`, {
+      fallback: 'Perfect, thank you. What property address should I use, and what are you hoping to do with it?',
+    });
+  }
+  if (/\b(i already told you|already told you|i told you|told you that|said this already|you just said that|you already said that|you asked that already|gave you the address)\b/i.test(lower)) {
+    if (isAvaLiveAuthorityQuestion(lastAvaReply)) applyAvaAuthorityConfirmation(session, raw);
+    return withSafeActiveHook(`${opener}You're right, I repeated myself. I will move forward: what property are we talking about, and what are you hoping to do with it?`, {
+      fallback: "You're right, I repeated myself. What property are we talking about, and what are you hoping to do with it?",
+    });
   }
   if (/\bspeed\b/i.test(turnLower)) {
     const roleKnown = callerRole.role && callerRole.role !== PBK_CALLER_ROLES.UNKNOWN && !callerRole.needsClarification;
@@ -44733,7 +44786,12 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       });
       return;
     }
-    if (isWeakTelnyxSellerUtterance(transcriptForReply) && !isTelnyxLiveAudioCheckUtterance(transcriptForReply) && !isTelnyxLiveGreetingOnlyUtterance(transcriptForReply)) {
+    const confirmsAuthorityFromLastQuestion = isAvaLiveAuthorityQuestion(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || '')
+      && isAffirmativeAvaAuthorityAnswer(item.transcript || transcriptForReply);
+    if (isWeakTelnyxSellerUtterance(transcriptForReply)
+      && !confirmsAuthorityFromLastQuestion
+      && !isTelnyxLiveAudioCheckUtterance(transcriptForReply)
+      && !isTelnyxLiveGreetingOnlyUtterance(transcriptForReply)) {
       const weakContextCall = getCallById(session.callId);
       const weakBestContext = selectAvaBestContextTranscript({
         session,

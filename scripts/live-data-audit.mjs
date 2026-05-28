@@ -881,7 +881,13 @@ const checks = [
       && /L\\.I\\.S\\.T\\.E\\.N\\./.test(bridge)
       && /cash_scout/.test(bridge)
       && /rbp_land/.test(bridge)
-      && /fifty_plus_objection_decoder/.test(bridge),
+      && /fifty_plus_objection_decoder/.test(bridge)
+      && /function buildAvaWarManualRuntimeSeedBundle/.test(bridge)
+      && /async function ensureAvaWarManualRuntimeSchema/.test(bridge)
+      && /async function seedAvaWarManualRuntimeKnowledgeToPg/.test(bridge)
+      && /applyAvaWarManualRuntimeKnowledge/.test(bridge)
+      && /getAvaWarManualRuntimeKnowledgeStatus/.test(bridge)
+      && /match_coach_memory/.test(bridge),
   },
   {
     name: 'Ava active-listening call flow makes live replies feel present and turn-based',
@@ -955,7 +961,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

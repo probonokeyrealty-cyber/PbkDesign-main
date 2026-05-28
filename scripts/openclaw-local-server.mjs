@@ -40,7 +40,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-27-ava-recording-rag-memory-db-apply';
+const BUILD_REVISION = '2026-05-27-ava-war-manual-runtime-activation';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -6617,6 +6617,8 @@ async function ensurePgSchema() {
       updated_at = NOW();
   `);
     await ensureCallEmbeddingsSchema(pool);
+    await ensureAvaWarManualRuntimeSchema(pool);
+    await seedAvaWarManualRuntimeKnowledgeToPg(pool);
     await seedAvaMasterclassKnowledgeToPg(pool);
     return true;
   } catch (error) {
@@ -6624,11 +6626,17 @@ async function ensurePgSchema() {
       callEmbeddingsSchemaLastError = schemaError?.message || String(schemaError);
       return false;
     });
+    const warManualReady = await ensureAvaWarManualRuntimeSchema(pool)
+      .then((schemaReady) => seedAvaWarManualRuntimeKnowledgeToPg(pool).then((seeded) => schemaReady && seeded))
+      .catch((schemaError) => {
+        console.warn('[pbk-local-openclaw] war manual runtime seed skipped:', schemaError?.message || schemaError);
+        return false;
+      });
     if (!pgSchemaPersistenceWarned) {
       console.warn('[pbk-local-openclaw] postgres schema unavailable; continuing with runtime fallback:', error?.message || error);
       pgSchemaPersistenceWarned = true;
     }
-    return embeddingsReady;
+    return embeddingsReady || warManualReady;
   }
 }
 
@@ -6822,6 +6830,680 @@ async function readCallEmbeddingsSchemaStatus() {
     columnCount,
     revision: BUILD_REVISION,
     lastError: callEmbeddingsSchemaLastError || '',
+  };
+}
+
+function buildAvaWarManualTrustBuilders() {
+  return [
+    ['title_company_choice', 'Trust Builder: seller picks title company', 'You can pick the title company so the closing runs through neutral ground, not through me.'],
+    ['written_agreement', 'Trust Builder: everything in writing', 'Anything important goes in writing before anyone relies on it.'],
+    ['line_by_line_contract', 'Trust Builder: line-by-line contract walk-through', 'I can walk through the agreement line by line before you sign anything.'],
+    ['proof_of_funds', 'Trust Builder: proof of funds when ready', 'If the numbers make sense, I can send proof of funds so you know the offer is real.'],
+    ['no_upfront_fees', 'Trust Builder: no upfront seller fees', 'You should not be paying upfront fees to hear a real offer.'],
+    ['attorney_review', 'Trust Builder: attorney review welcome', 'If you want an attorney to review it, that is fine. I want you comfortable, not rushed.'],
+    ['family_inclusion', 'Trust Builder: include family or advisor', 'If someone else helps you decide, bring them into the conversation early.'],
+    ['transparent_model', 'Trust Builder: explain PBK model', 'I can explain exactly how PBK makes money so the structure is clear.'],
+    ['no_pressure_exit', 'Trust Builder: seller can say no', 'You can say no. My job is to give you a clear option, not corner you.'],
+    ['as_is_clarity', 'Trust Builder: as-is means as-is', 'When I say as-is, I mean do not clean, repair, or hide the hard parts.'],
+    ['net_sheet', 'Trust Builder: compare net not headline', 'We should compare the net you keep, not just the biggest number on paper.'],
+    ['commission_protection_agent', 'Trust Builder: protect agent commission', 'If you are represented by an agent, I keep them in the deal and protect the commission.'],
+    ['recording_clarity', 'Trust Builder: clear record of terms', 'I will keep the notes clean so the next step matches what we actually discussed.'],
+    ['title_handles_liens', 'Trust Builder: title handles payoff math', 'Title verifies payoff, liens, and closing numbers so nobody is guessing.'],
+    ['no_fake_deadlines', 'Trust Builder: no fake deadline', 'I will not use fake urgency. If timing matters, I will explain why.'],
+    ['repair_honesty', 'Trust Builder: price repair reality honestly', 'I would rather price the real repair situation than surprise you later.'],
+    ['seller_control', 'Trust Builder: seller remains in control', 'You stay in control of the decision until the agreement is signed and title is moving.'],
+    ['plain_english', 'Trust Builder: plain English explanation', 'I will keep this in plain English. If anything sounds unclear, stop me.'],
+    ['close_through_title', 'Trust Builder: close through title', 'Closings go through title or attorney channels, not handshakes.'],
+    ['documented_protections', 'Trust Builder: document protections', 'If there is a risk or condition, it belongs in the documents, not in a vague promise.'],
+    ['no_repair_pressure', 'Trust Builder: no repair pressure', 'Do not spend money fixing things for me before we know the path.'],
+    ['decision_criteria', 'Trust Builder: clarify decision criteria', 'Let us define what would make this a yes before we talk paperwork.'],
+    ['agent_friendly', 'Trust Builder: agent-friendly buyer lane', 'Agents should get paid for bringing the relationship and keeping the seller informed.'],
+    ['timeline_truth', 'Trust Builder: honest timeline', 'If a timeline is tight, I will say that. If it is unrealistic, I will say that too.'],
+    ['seller_question_space', 'Trust Builder: space for questions', 'Before I ask for a decision, I want to answer the question that would keep you up tonight.'],
+    ['no_hidden_repair_ask', 'Trust Builder: no hidden repair ask', 'I am not going to agree today and then secretly ask you to fix everything tomorrow.'],
+    ['specific_numbers', 'Trust Builder: specific numbers', 'Specific numbers are better than vague ranges once the facts are clear.'],
+    ['call_back_commitment', 'Trust Builder: exact follow-up time', 'If this needs a follow-up, I will set an exact time instead of disappearing.'],
+    ['respect_dnc', 'Trust Builder: respect do-not-call', 'If you want no more calls, I will remove you. No argument.'],
+    ['comfort_check', 'Trust Builder: comfort check', 'Before moving forward, I will ask whether you feel comfortable with me so far.'],
+  ].map(([id, name, evidence]) => ({ id, name, evidence }));
+}
+
+function buildAvaWarManualUrgencyTriggers() {
+  return [
+    ['auction_deadline', 'Urgency Trigger: auction deadline', 'If there is an auction date, title and payoff work need to start before that deadline becomes impossible.'],
+    ['tax_bill_due', 'Urgency Trigger: tax bill due', 'Upcoming taxes can change your net if the property is still in your name.'],
+    ['city_hearing', 'Urgency Trigger: city hearing', 'A code hearing or fine deadline can make a clean closing more valuable than waiting.'],
+    ['holding_costs', 'Urgency Trigger: monthly holding costs', 'Every month adds taxes, insurance, utilities, and stress.'],
+    ['vacant_risk', 'Urgency Trigger: vacant property risk', 'Vacant properties can pick up vandalism, leaks, and insurance problems fast.'],
+    ['tenant_nonpayment', 'Urgency Trigger: tenant nonpayment', 'Another unpaid month can cost more than people expect.'],
+    ['winterization', 'Urgency Trigger: winterization risk', 'Cold weather can turn a small plumbing issue into a major repair.'],
+    ['repair_spread', 'Urgency Trigger: repair issue spreading', 'Some repairs get more expensive the longer they sit.'],
+    ['rate_window', 'Urgency Trigger: buyer rate window', 'Investor capital and buyer payments shift when rates move.'],
+    ['title_timeline', 'Urgency Trigger: title timeline', 'Title still needs time to clear payoff, liens, and signatures.'],
+    ['moving_date', 'Urgency Trigger: moving date', 'If you are moving, the closing date needs to work backward from that move.'],
+    ['probate_pressure', 'Urgency Trigger: probate pressure', 'Estate decisions can drag unless one clear next step gets scheduled.'],
+    ['family_alignment', 'Urgency Trigger: family alignment', 'If multiple people need to agree, waiting usually creates more side conversations.'],
+    ['contractor_slot', 'Urgency Trigger: contractor slot', 'Repair crews and walkthrough slots are easier to reserve before the calendar fills.'],
+    ['offer_budget', 'Urgency Trigger: monthly buy budget', 'Buying budgets are real; once capital is allocated, the next offer may change.'],
+    ['net_protection', 'Urgency Trigger: protect net', 'The sooner the facts are verified, the sooner you know the real net.'],
+    ['inspection_calendar', 'Urgency Trigger: inspection calendar', 'Access and inspection timing can delay a close if we wait too long to schedule.'],
+    ['payoff_statement', 'Urgency Trigger: payoff statement timing', 'Mortgage and lien payoff statements can take days; waiting compresses the closing window.'],
+    ['insurance_risk', 'Urgency Trigger: insurance risk', 'Some insurers dislike vacant or distressed property, and that risk gets worse with time.'],
+    ['market_days', 'Urgency Trigger: days-on-market risk', 'If retail days on market are stretching, certainty may beat waiting.'],
+    ['buyer_backup', 'Urgency Trigger: buyer backup lane', 'Backup buyers can protect the plan, but only if we know the seller is serious.'],
+    ['doc_sign_today', 'Urgency Trigger: documents today', 'If the terms are right, sending documents while the details are fresh prevents drift.'],
+    ['next_payment', 'Urgency Trigger: next mortgage payment', 'The next payment date matters if the property is already creating pressure.'],
+    ['utility_bills', 'Urgency Trigger: utility bills', 'Utilities keep running even when the house is not helping you.'],
+    ['hoa_dues', 'Urgency Trigger: HOA dues', 'HOA dues and assessments can quietly eat into net.'],
+    ['repair_quote_expiry', 'Urgency Trigger: repair quote expiry', 'Repair pricing can change, especially when material costs move.'],
+    ['buyer_attention', 'Urgency Trigger: buyer attention window', 'The best buyer attention is usually highest while the deal is fresh.'],
+    ['seller_energy', 'Urgency Trigger: seller energy', 'You already did the hard part by talking through the facts; use that momentum.'],
+    ['clear_next_step', 'Urgency Trigger: clear next step', 'The risk is not saying no; the risk is leaving without a clear next step.'],
+    ['same_day_followup', 'Urgency Trigger: same-day follow-up', 'Same-day follow-up keeps the deal from becoming another unresolved thing.'],
+  ].map(([id, name, evidence]) => ({ id, name, evidence }));
+}
+
+function buildAvaWarManualScriptContent(path = {}) {
+  const label = path.label || 'PBK Deal Path';
+  const audience = path.audience || 'seller';
+  const corePath = path.corePath || path.key || 'cash';
+  return [
+    `${label} (${audience})`,
+    `Trigger: ${path.trigger || 'Use when the seller facts match this path.'}`,
+    `Positioning: ${path.nextLine || 'Keep the path simple, seller-safe, and tied to their stated goal.'}`,
+    'Open: Acknowledge the seller words first, then ask one diagnostic question.',
+    `Probe: ${PBK_PATH_PROBE_QUESTIONS[corePath] || PBK_PATH_PROBE_QUESTIONS.cash}`,
+    `Path line: ${PBK_PATH_SCRIPT_TRIGGERS[corePath] || PBK_PATH_SCRIPT_TRIGGERS.cash}`,
+    'Close: If the agreement matches what we discussed, is there any reason we would not move forward today?',
+    'Guardrail: Do not blend paths. Creative Finance and Mortgage Takeover language stays agent-friendly unless explicit owner-safe review language is available.',
+  ].join('\n');
+}
+
+function buildAvaWarManualRuntimeSeedBundle() {
+  const trustBuilders = buildAvaWarManualTrustBuilders();
+  const urgencyTriggers = buildAvaWarManualUrgencyTriggers();
+  const skills = [
+    ...trustBuilders.map((item) => ({ ...item, kind: 'trust_builder', level: 'active', confidence: 95 })),
+    ...urgencyTriggers.map((item) => ({ ...item, kind: 'urgency_trigger', level: 'active', confidence: 92 })),
+    ...PBK_WAR_MANUAL_POWER_LINES.map((line) => ({
+      id: `power_line_${line.id}`,
+      name: `Power Line: ${line.label}`,
+      evidence: line.line,
+      kind: 'power_line',
+      level: 'active',
+      confidence: 96,
+    })),
+    ...PBK_WAR_MANUAL_ADVANCED_MOVES.map((move) => ({
+      id: `psychology_move_${move.id}`,
+      name: `Psychology Move: ${move.label}`,
+      evidence: move.instruction,
+      kind: 'psychology_move',
+      level: 'active',
+      confidence: 93,
+    })),
+    ...PBK_WAR_MANUAL_PATHS.map((path) => ({
+      id: `path_${path.key}`,
+      name: `Path Script: ${path.label}`,
+      evidence: `${path.trigger}. ${path.nextLine}`,
+      kind: 'path_script',
+      level: 'active',
+      confidence: 94,
+      pathKey: path.corePath,
+      audience: path.audience,
+    })),
+  ];
+
+  const coachMemories = [
+    ...PBK_WAR_MANUAL_OBJECTION_DECODER.map((item) => ({
+      id: `objection_${item.tag}`,
+      memoryType: 'objection',
+      objectionTag: item.tag,
+      pathKey: item.category || '',
+      prompt: `Seller signal: ${(item.keywords || []).join(', ')}. Meaning: ${item.meaning || 'handle the objection directly'}.`,
+      response: item.response,
+      outcome: 'approved',
+      score: 0.95,
+      metadata: {
+        category: item.category || '',
+        keywords: item.keywords || [],
+        source: 'fifty_plus_objection_decoder',
+      },
+    })),
+    ...PBK_WAR_MANUAL_HIDDEN_MOTIVATORS.map((item) => ({
+      id: `motivator_${item.id}`,
+      memoryType: 'hidden_motivator_probe',
+      objectionTag: item.id,
+      pathKey: '',
+      prompt: `Seller signal: ${(item.keywords || []).join(', ')}.`,
+      response: `${item.probe} ${item.followUp}`,
+      outcome: 'approved',
+      score: 0.9,
+      metadata: {
+        emotion: item.emotion || '',
+        keywords: item.keywords || [],
+        source: 'hidden_motivator_probe',
+      },
+    })),
+  ];
+
+  const probeQuestions = PBK_WAR_MANUAL_HIDDEN_MOTIVATORS.flatMap((item, index) => ([
+    {
+      id: `war_manual_probe_${item.id}_1`,
+      signalKeywords: item.keywords || [],
+      emotionTags: item.emotion ? [item.emotion] : [],
+      questionText: item.probe,
+      followUpDepth: 1,
+      priority: 10 + index,
+      metadata: { motivator: item.id, source: 'hidden_motivator_probe' },
+    },
+    {
+      id: `war_manual_probe_${item.id}_2`,
+      signalKeywords: item.keywords || [],
+      emotionTags: item.emotion ? [item.emotion] : [],
+      questionText: item.followUp,
+      followUpDepth: 2,
+      priority: 30 + index,
+      metadata: { motivator: item.id, source: 'hidden_motivator_follow_up' },
+    },
+  ]));
+
+  const scripts = PBK_WAR_MANUAL_PATHS.map((path) => ({
+    id: `war_manual_script_${path.key}`,
+    title: `${path.label} - War Manual Runtime Script`,
+    content: buildAvaWarManualScriptContent(path),
+    tags: ['war_manual', path.corePath, path.audience, path.key].filter(Boolean),
+    pathKey: path.corePath,
+    allowedRoles: path.audience === 'agent' ? ['agent'] : path.audience === 'owner' || path.audience === 'owner_land' ? ['owner', 'decision_helper'] : ['owner', 'agent', 'decision_helper'],
+    version: PBK_100K_WAR_MANUAL_REVISION,
+    metadata: {
+      manualPathKey: path.key,
+      audience: path.audience,
+      avgFee: path.avgFee,
+      trigger: path.trigger,
+    },
+  }));
+
+  const callFlowSteps = PBK_CALL_FLOW_DEFAULT_STEPS.map((step) => ({
+    ...step,
+    metadata: {
+      source: 'war_manual_activation',
+      mode: 'active_listening',
+    },
+  }));
+
+  const callFlowEdges = [
+    ['cash', 'cash.discovery.story', 'cash.condition_probe', 'keyword', 'repair|repairs|roof|hvac|foundation|plumbing|broken|fix', 90],
+    ['cash', 'cash.discovery.story', 'cash.tenant_probe', 'keyword', 'tenant|renter|evict|eviction|lease|landlord', 90],
+    ['cash', 'cash.discovery.story', 'cash.foreclosure_probe', 'keyword', 'foreclosure|auction|behind|bank|notice of default', 95],
+    ['cash', 'cash.condition_probe', 'listen.mirror_label', 'keyword', '*', 10],
+    ['cash', 'cash.tenant_probe', 'listen.mirror_label', 'keyword', '*', 10],
+    ['cash', 'cash.foreclosure_probe', 'listen.mirror_label', 'keyword', '*', 10],
+    ['all', 'listen.mirror_label', 'objection.spouse_3way', 'keyword', 'spouse|wife|husband|partner|decision maker', 95],
+    ['all', 'listen.mirror_label', 'objection.trust_proof', 'keyword', 'scam|legit|proof|trust|real company', 95],
+    ['all', 'listen.mirror_label', 'objection.price_too_low', 'keyword', 'too low|lowball|price|number', 95],
+    ['all', 'listen.silence_prompt', 'listen.mirror_label', 'timeout', '*', 20],
+    ['all', 'objection.price_too_low', 'close.path_commit', 'keyword', 'yes|that works|send it|okay|ok', 80],
+    ['all', 'objection.trust_proof', 'listen.mirror_label', 'keyword', '*', 20],
+    ['all', 'objection.spouse_3way', 'listen.mirror_label', 'keyword', '*', 20],
+  ].map(([pathKey, fromStepKey, toStepKey, conditionType, conditionValue, priority]) => ({
+    pathKey,
+    fromStepKey,
+    toStepKey,
+    conditionType,
+    conditionValue,
+    priority,
+    metadata: { source: 'war_manual_activation' },
+  }));
+
+  return { skills, coachMemories, probeQuestions, scripts, callFlowSteps, callFlowEdges };
+}
+
+async function ensureAvaWarManualRuntimeSchema(pool) {
+  if (!pool) return false;
+  await pool.query(PBK_CALL_FLOW_SCHEMA_SQL);
+  await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    CREATE OR REPLACE FUNCTION public.pbk_set_updated_at()
+    RETURNS TRIGGER
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$;
+
+    ALTER TABLE public.coach_memory
+      ADD COLUMN IF NOT EXISTS embedding VECTOR(1536);
+
+    CREATE TABLE IF NOT EXISTS public.probe_questions (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      signal_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      sentiment_range TEXT,
+      emotion_tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      question_text TEXT NOT NULL DEFAULT '',
+      follow_up_depth INTEGER NOT NULL DEFAULT 1,
+      priority INTEGER NOT NULL DEFAULT 100,
+      source TEXT NOT NULL DEFAULT 'bridge',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.scripts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      title TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      path_key TEXT NOT NULL DEFAULT '',
+      allowed_roles TEXT[] NOT NULL DEFAULT ARRAY['owner','agent','decision_helper']::TEXT[],
+      version TEXT NOT NULL DEFAULT 'v1',
+      source TEXT NOT NULL DEFAULT 'bridge',
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workspace_id, path_key, title, version)
+    );
+
+    ALTER TABLE public.probe_questions
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS signal_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      ADD COLUMN IF NOT EXISTS sentiment_range TEXT,
+      ADD COLUMN IF NOT EXISTS emotion_tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      ADD COLUMN IF NOT EXISTS question_text TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS follow_up_depth INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 100,
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'bridge',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    ALTER TABLE public.scripts
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      ADD COLUMN IF NOT EXISTS path_key TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS allowed_roles TEXT[] NOT NULL DEFAULT ARRAY['owner','agent','decision_helper']::TEXT[],
+      ADD COLUMN IF NOT EXISTS version TEXT NOT NULL DEFAULT 'v1',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'bridge',
+      ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE UNIQUE INDEX IF NOT EXISTS probe_questions_workspace_id_idx
+      ON public.probe_questions (workspace_id, id);
+
+    CREATE INDEX IF NOT EXISTS probe_questions_source_active_idx
+      ON public.probe_questions (workspace_id, source, active, priority);
+
+    CREATE INDEX IF NOT EXISTS scripts_path_active_idx
+      ON public.scripts (workspace_id, path_key, active);
+
+    CREATE INDEX IF NOT EXISTS scripts_tags_idx
+      ON public.scripts USING GIN (tags);
+
+    DELETE FROM public.scripts old_script
+    USING public.scripts keep_script
+    WHERE old_script.ctid < keep_script.ctid
+      AND old_script.workspace_id = keep_script.workspace_id
+      AND old_script.path_key = keep_script.path_key
+      AND old_script.title = keep_script.title
+      AND old_script.version = keep_script.version;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS scripts_workspace_path_title_version_idx
+      ON public.scripts (workspace_id, path_key, title, version);
+
+    DELETE FROM public.call_flow_edges old_edge
+    USING public.call_flow_edges keep_edge
+    WHERE old_edge.ctid < keep_edge.ctid
+      AND old_edge.path_key = keep_edge.path_key
+      AND old_edge.from_step_key = keep_edge.from_step_key
+      AND old_edge.to_step_key = keep_edge.to_step_key
+      AND old_edge.condition_type = keep_edge.condition_type
+      AND old_edge.condition_value = keep_edge.condition_value;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS call_flow_edges_unique_idx
+      ON public.call_flow_edges (path_key, from_step_key, to_step_key, condition_type, condition_value);
+
+    DROP TRIGGER IF EXISTS probe_questions_set_updated_at ON public.probe_questions;
+    CREATE TRIGGER probe_questions_set_updated_at
+      BEFORE UPDATE ON public.probe_questions
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS scripts_set_updated_at ON public.scripts;
+    CREATE TRIGGER scripts_set_updated_at
+      BEFORE UPDATE ON public.scripts
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    ALTER TABLE public.probe_questions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.scripts ENABLE ROW LEVEL SECURITY;
+  `);
+
+  try {
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS coach_memory_embedding_idx
+        ON public.coach_memory
+        USING hnsw (embedding vector_cosine_ops);
+    `);
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] coach_memory hnsw index unavailable; falling back to ivfflat:', error?.message || error);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS coach_memory_embedding_idx
+        ON public.coach_memory
+        USING ivfflat (embedding vector_cosine_ops);
+    `);
+  }
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'probe_questions' AND policyname = 'probe_questions_service_role_all'
+      ) THEN
+        CREATE POLICY probe_questions_service_role_all ON public.probe_questions FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'scripts' AND policyname = 'scripts_service_role_all'
+      ) THEN
+        CREATE POLICY scripts_service_role_all ON public.scripts FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+    END $$;
+
+    CREATE OR REPLACE FUNCTION public.match_coach_memory(
+      query_embedding VECTOR(1536),
+      match_threshold DOUBLE PRECISION DEFAULT 0.75,
+      match_count INT DEFAULT 3,
+      memory_type_filter TEXT DEFAULT ''
+    )
+    RETURNS TABLE (
+      id TEXT,
+      memory_type TEXT,
+      objection_tag TEXT,
+      path_key TEXT,
+      prompt TEXT,
+      response TEXT,
+      score NUMERIC,
+      similarity DOUBLE PRECISION,
+      metadata JSONB
+    )
+    LANGUAGE sql
+    STABLE
+    AS $$
+      SELECT
+        cm.id,
+        cm.memory_type,
+        cm.objection_tag,
+        cm.path_key,
+        cm.prompt,
+        cm.response,
+        cm.score,
+        1 - (cm.embedding <=> query_embedding) AS similarity,
+        cm.metadata
+      FROM public.coach_memory cm
+      WHERE cm.workspace_id = 'pbk'
+        AND cm.embedding IS NOT NULL
+        AND (memory_type_filter = '' OR cm.memory_type = memory_type_filter)
+        AND 1 - (cm.embedding <=> query_embedding) >= match_threshold
+      ORDER BY cm.embedding <=> query_embedding
+      LIMIT GREATEST(1, LEAST(match_count, 10));
+    $$;
+  `);
+  return true;
+}
+
+async function seedAvaWarManualRuntimeKnowledgeToPg(pool) {
+  if (!pool) return false;
+  const bundle = buildAvaWarManualRuntimeSeedBundle();
+
+  for (const skill of bundle.skills) {
+    await pool.query(
+      `INSERT INTO public.skills (
+        id, workspace_id, agent_id, agent_name, name, source, level, status,
+        confidence, evidence, metadata, created_at, updated_at
+      )
+      VALUES ($1,'pbk','ava','Ava',$2,'war_manual',$3,'active',$4,$5,$6::jsonb,NOW(),NOW())
+      ON CONFLICT (workspace_id, agent_id, name) DO UPDATE SET
+        source = EXCLUDED.source,
+        level = EXCLUDED.level,
+        status = EXCLUDED.status,
+        confidence = EXCLUDED.confidence,
+        evidence = EXCLUDED.evidence,
+        metadata = public.skills.metadata || EXCLUDED.metadata,
+        updated_at = NOW()`,
+      [
+        `war_manual_skill_${slugify(skill.id || skill.name)}`,
+        skill.name,
+        skill.level || 'active',
+        Number(skill.confidence || 90),
+        skill.evidence || '',
+        JSON.stringify({
+          warManualKind: skill.kind || 'skill',
+          pathKey: skill.pathKey || '',
+          audience: skill.audience || '',
+          source: 'war_manual_runtime_activation',
+          revision: BUILD_REVISION,
+        }),
+      ],
+    );
+  }
+
+  for (const memory of bundle.coachMemories) {
+    await pool.query(
+      `INSERT INTO public.coach_memory (
+        id, workspace_id, memory_type, objection_tag, path_key, prompt, response,
+        source, source_url, outcome, score, metadata, created_at, updated_at
+      )
+      VALUES ($1,'pbk',$2,$3,$4,$5,$6,'war_manual','',$7,$8,$9::jsonb,NOW(),NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        memory_type = EXCLUDED.memory_type,
+        objection_tag = EXCLUDED.objection_tag,
+        path_key = EXCLUDED.path_key,
+        prompt = EXCLUDED.prompt,
+        response = EXCLUDED.response,
+        source = EXCLUDED.source,
+        outcome = EXCLUDED.outcome,
+        score = EXCLUDED.score,
+        metadata = public.coach_memory.metadata || EXCLUDED.metadata,
+        updated_at = NOW()`,
+      [
+        `war_manual_${memory.id}`,
+        memory.memoryType,
+        memory.objectionTag || '',
+        memory.pathKey || '',
+        memory.prompt || '',
+        memory.response || '',
+        memory.outcome || 'approved',
+        Number(memory.score || 0.9),
+        JSON.stringify({
+          ...(memory.metadata || {}),
+          source: 'war_manual_runtime_activation',
+          revision: BUILD_REVISION,
+        }),
+      ],
+    );
+  }
+
+  for (const probe of bundle.probeQuestions) {
+    await pool.query(
+      `INSERT INTO public.probe_questions (
+        id, workspace_id, signal_keywords, sentiment_range, emotion_tags, question_text,
+        follow_up_depth, priority, source, metadata, active, created_at, updated_at
+      )
+      VALUES ($1,'pbk',$2::text[],NULL,$3::text[],$4,$5,$6,'war_manual',$7::jsonb,TRUE,NOW(),NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        signal_keywords = EXCLUDED.signal_keywords,
+        emotion_tags = EXCLUDED.emotion_tags,
+        question_text = EXCLUDED.question_text,
+        follow_up_depth = EXCLUDED.follow_up_depth,
+        priority = EXCLUDED.priority,
+        source = EXCLUDED.source,
+        metadata = public.probe_questions.metadata || EXCLUDED.metadata,
+        active = TRUE,
+        updated_at = NOW()`,
+      [
+        probe.id,
+        probe.signalKeywords || [],
+        probe.emotionTags || [],
+        probe.questionText || '',
+        Number(probe.followUpDepth || 1),
+        Number(probe.priority || 100),
+        JSON.stringify({
+          ...(probe.metadata || {}),
+          revision: BUILD_REVISION,
+        }),
+      ],
+    );
+  }
+
+  for (const script of bundle.scripts) {
+    await pool.query(
+      `INSERT INTO public.scripts (
+        id, workspace_id, title, content, tags, path_key, allowed_roles,
+        version, source, active, metadata, created_at, updated_at
+      )
+      VALUES ($1,'pbk',$2,$3,$4::text[],$5,$6::text[],$7,'war_manual',TRUE,$8::jsonb,NOW(),NOW())
+      ON CONFLICT (workspace_id, path_key, title, version) DO UPDATE SET
+        content = EXCLUDED.content,
+        tags = EXCLUDED.tags,
+        allowed_roles = EXCLUDED.allowed_roles,
+        source = EXCLUDED.source,
+        active = TRUE,
+        metadata = public.scripts.metadata || EXCLUDED.metadata,
+        updated_at = NOW()`,
+      [
+        script.id,
+        script.title,
+        script.content,
+        script.tags || [],
+        script.pathKey || '',
+        script.allowedRoles || ['owner', 'agent', 'decision_helper'],
+        script.version || PBK_100K_WAR_MANUAL_REVISION,
+        JSON.stringify({
+          ...(script.metadata || {}),
+          source: 'war_manual_runtime_activation',
+          revision: BUILD_REVISION,
+        }),
+      ],
+    );
+  }
+
+  for (const step of bundle.callFlowSteps) {
+    await pool.query(
+      `INSERT INTO public.call_flow (
+        path_key, step_key, step_order, step_type, ava_line, expects_response,
+        response_timeout_ms, strategic_pause_ms, hook_prompt, active, metadata, created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,$10::jsonb,NOW(),NOW())
+      ON CONFLICT (path_key, step_key) DO UPDATE SET
+        step_order = EXCLUDED.step_order,
+        step_type = EXCLUDED.step_type,
+        ava_line = EXCLUDED.ava_line,
+        expects_response = EXCLUDED.expects_response,
+        response_timeout_ms = EXCLUDED.response_timeout_ms,
+        strategic_pause_ms = EXCLUDED.strategic_pause_ms,
+        hook_prompt = EXCLUDED.hook_prompt,
+        active = TRUE,
+        metadata = public.call_flow.metadata || EXCLUDED.metadata,
+        updated_at = NOW()`,
+      [
+        step.pathKey || 'all',
+        step.stepKey,
+        Number(step.stepOrder || 0),
+        step.stepType || 'question',
+        step.avaLine || '',
+        step.expectsResponse !== false,
+        Number(step.responseTimeoutMs || 15000),
+        Number(step.strategicPauseMs || 0),
+        step.hookPrompt || '',
+        JSON.stringify(step.metadata || { source: 'war_manual_activation' }),
+      ],
+    );
+  }
+
+  for (const edge of bundle.callFlowEdges) {
+    await pool.query(
+      `INSERT INTO public.call_flow_edges (
+        path_key, from_step_key, to_step_key, condition_type, condition_value,
+        priority, active, metadata, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7::jsonb,NOW())
+      ON CONFLICT (path_key, from_step_key, to_step_key, condition_type, condition_value) DO UPDATE SET
+        priority = EXCLUDED.priority,
+        active = TRUE,
+        metadata = public.call_flow_edges.metadata || EXCLUDED.metadata`,
+      [
+        edge.pathKey || 'all',
+        edge.fromStepKey,
+        edge.toStepKey,
+        edge.conditionType || 'keyword',
+        edge.conditionValue || '*',
+        Number(edge.priority || 10),
+        JSON.stringify(edge.metadata || { source: 'war_manual_activation' }),
+      ],
+    );
+  }
+
+  return true;
+}
+
+async function readAvaWarManualRuntimeKnowledgeStatus() {
+  const result = await queryPgRows(`
+    SELECT
+      COALESCE((SELECT COUNT(*)::int FROM public.skills WHERE workspace_id = 'pbk' AND source = 'war_manual'), 0) AS skills_count,
+      COALESCE((SELECT COUNT(*)::int FROM public.coach_memory WHERE workspace_id = 'pbk' AND source = 'war_manual'), 0) AS coach_memory_count,
+      COALESCE((SELECT COUNT(*)::int FROM public.coach_memory WHERE workspace_id = 'pbk' AND source = 'war_manual' AND memory_type = 'objection'), 0) AS objection_count,
+      COALESCE((SELECT COUNT(*)::int FROM public.probe_questions WHERE workspace_id = 'pbk' AND source = 'war_manual' AND active = TRUE), 0) AS probe_question_count,
+      COALESCE((SELECT COUNT(*)::int FROM public.scripts WHERE workspace_id = 'pbk' AND source = 'war_manual' AND active = TRUE), 0) AS script_count,
+      COALESCE((SELECT COUNT(*)::int FROM public.call_flow WHERE metadata->>'source' = 'war_manual_activation' AND active = TRUE), 0) AS call_flow_step_count,
+      COALESCE((SELECT COUNT(*)::int FROM public.call_flow_edges WHERE metadata->>'source' = 'war_manual_activation' AND active = TRUE), 0) AS call_flow_edge_count,
+      EXISTS (
+        SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public' AND p.proname = 'match_coach_memory'
+      ) AS match_coach_memory_exists
+  `);
+  if (!result.ok) {
+    return {
+      ok: false,
+      configured: false,
+      result: 'war_manual_runtime_status_unavailable',
+      error: result.error,
+      code: result.code || '',
+      revision: BUILD_REVISION,
+    };
+  }
+  const row = result.rows?.[0] || {};
+  const status = {
+    skillsCount: Number(row.skills_count || 0),
+    coachMemoryCount: Number(row.coach_memory_count || 0),
+    objectionCount: Number(row.objection_count || 0),
+    probeQuestionCount: Number(row.probe_question_count || 0),
+    scriptCount: Number(row.script_count || 0),
+    callFlowStepCount: Number(row.call_flow_step_count || 0),
+    callFlowEdgeCount: Number(row.call_flow_edge_count || 0),
+    matchCoachMemoryExists: Boolean(row.match_coach_memory_exists),
+  };
+  const ready = status.skillsCount >= 80
+    && status.objectionCount >= 50
+    && status.probeQuestionCount >= 20
+    && status.scriptCount >= 8
+    && status.callFlowStepCount >= 8
+    && status.callFlowEdgeCount >= 8
+    && status.matchCoachMemoryExists;
+  return {
+    ok: ready,
+    configured: true,
+    result: ready ? 'war_manual_runtime_knowledge_ready' : 'war_manual_runtime_knowledge_incomplete',
+    ...status,
+    revision: BUILD_REVISION,
   };
 }
 
@@ -34731,7 +35413,36 @@ const toolHandlers = {
       applied,
       result: status.ok
         ? 'call_embeddings_schema_applied'
-        : 'call_embeddings_schema_apply_failed',
+      : 'call_embeddings_schema_apply_failed',
+    };
+  },
+
+  async getAvaWarManualRuntimeKnowledgeStatus(params = {}) {
+    recordToolUse('getAvaWarManualRuntimeKnowledgeStatus');
+    return readAvaWarManualRuntimeKnowledgeStatus();
+  },
+
+  async applyAvaWarManualRuntimeKnowledge(params = {}) {
+    recordToolUse('applyAvaWarManualRuntimeKnowledge');
+    const pool = getPgPool();
+    if (!pool) {
+      return {
+        ok: false,
+        configured: false,
+        result: 'postgres_unavailable',
+        error: 'PBK_DATABASE_URL is not configured.',
+      };
+    }
+    const schemaReady = await ensureAvaWarManualRuntimeSchema(pool);
+    const seeded = schemaReady ? await seedAvaWarManualRuntimeKnowledgeToPg(pool) : false;
+    const status = await readAvaWarManualRuntimeKnowledgeStatus();
+    return {
+      ...status,
+      schemaReady,
+      seeded,
+      result: status.ok
+        ? 'war_manual_runtime_knowledge_applied'
+        : 'war_manual_runtime_knowledge_apply_failed',
     };
   },
 

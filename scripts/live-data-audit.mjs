@@ -933,18 +933,19 @@ const checks = [
       && /Ava allowed an owner call to stay on a CF\/MF path/.test(openclawSmoke),
   },
   {
-    name: 'Ava full-intelligence mode promotes best context on weak transcripts',
+    name: 'Ava full-intelligence mode keeps latest valid turns authoritative and blocks stale weak-context replies',
     ok: /PBK_AVA_FULL_INTELLIGENCE_REVISION/.test(bridge)
       && /PBK_INTELLIGENCE_MODE/.test(bridge)
       && /function isAvaFullIntelligenceMode/.test(bridge)
       && /function selectAvaBestContextTranscript/.test(bridge)
+      && /function buildAvaLiveTurnContext/.test(bridge)
       && /function buildAvaFullIntelligenceContext/.test(bridge)
       && /fullIntelligence/.test(bridge)
       && /bestTranscript/.test(bridge)
       && /weakTranscript/.test(bridge)
-      && /weak_seller_utterance_context_promoted/.test(bridge)
-      && /Ava full intelligence mode was not enabled for a weak transcript turn/.test(openclawSmoke)
-      && /Ava did not promote recent seller context over the weak current transcript/.test(openclawSmoke),
+      && /fullIntelligenceWeakTranscriptPromoted = false/.test(bridge)
+      && /Weak live turns are no longer promoted from stale memory\/context/.test(bridge)
+      && /Ava full intelligence mode was not enabled for a weak transcript turn/.test(openclawSmoke),
   },
   {
     name: 'Ava voice uses DeepSeek call-state context and a speech-safe TTS boundary',
@@ -970,7 +971,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -991,6 +992,8 @@ const checks = [
       && /weak_seller_utterance/.test(bridge)
       && /(?:duplicate_media_stream_replaced|first_active_media_stream_kept)/.test(bridge)
       && /recordCallTrace\('elevenlabs_tts_payload'/.test(bridge)
+      && /function buildAvaLiveTurnContext/.test(bridge)
+      && /isAvaLiveNetNumberAnswer/.test(bridge)
       && /maskPhoneForDiagnostics/.test(bridge)
       && /leadResolver: inboundDiagnostic/.test(bridge)
       && /redis_call_state_active_resurrection_blocked/.test(bridge)

@@ -45036,11 +45036,14 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
   };
   session.transcript.push(item);
 
+  applyAvaLiveTurnFacts(session, transcript, '');
   const liveBant = normalizeBantInfo(
     contextCall?.bant || {},
     session.bantStatus?.known || {},
-    extractBantFromTranscript(transcript, contextCall?.bant || session.bantStatus?.known || {}),
+    deriveLiveBantFactsFromSession(session),
+    extractBantFromTranscript(transcript, normalizeBantInfo(contextCall?.bant || {}, session.bantStatus?.known || {}, session.bant || {})),
   );
+  session.bant = normalizeBantInfo(session.bant || {}, liveBant);
   const livePathDecision = inferAvaDealPathDecision({
     session,
     contextCall,

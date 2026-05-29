@@ -8,6 +8,7 @@ const bridgePath = resolve(root, 'scripts/openclaw-local-server.mjs');
 const heartbeatManagerPath = resolve(root, 'scripts/pbk-openclaw-heartbeat.ps1');
 const widgetPath = resolve(root, 'public/ava-chat-widget.js');
 const packagePath = resolve(root, 'package.json');
+const dockerfileOpenclawPath = resolve(root, 'Dockerfile.openclaw');
 const productionCheckPath = resolve(root, 'scripts/production-pristine-check.mjs');
 const callEmbeddingsScriptPath = resolve(root, 'scripts/generate-call-embeddings.mjs');
 const callEmbeddingsMigrationPath = resolve(root, 'supabase/migrations/20260527010000_pbk_call_episodic_memory.sql');
@@ -35,6 +36,7 @@ const bridge = readFileSync(bridgePath, 'utf8');
 const heartbeatManager = readFileSync(heartbeatManagerPath, 'utf8');
 const widget = readFileSync(widgetPath, 'utf8');
 const pkg = readFileSync(packagePath, 'utf8');
+const dockerfileOpenclaw = existsSync(dockerfileOpenclawPath) ? readFileSync(dockerfileOpenclawPath, 'utf8') : '';
 const productionCheck = readFileSync(productionCheckPath, 'utf8');
 const callEmbeddingsScript = existsSync(callEmbeddingsScriptPath) ? readFileSync(callEmbeddingsScriptPath, 'utf8') : '';
 const callEmbeddingsMigration = existsSync(callEmbeddingsMigrationPath) ? readFileSync(callEmbeddingsMigrationPath, 'utf8') : '';
@@ -416,12 +418,25 @@ const checks = [
       && /skipped:\s*true/.test(bridge),
   },
   {
+    name: 'S3 cold recording archive is optional, private, and wired beside Supabase playback',
+    ok: /@aws-sdk\/client-s3/.test(pkg)
+      && /@aws-sdk\/client-s3@3\.1056\.0/.test(dockerfileOpenclaw)
+      && /function getS3ArchiveProviderMeta/.test(bridge)
+      && /function uploadS3RecordingArchive/.test(bridge)
+      && /ServerSideEncryption:\s*'AES256'/.test(bridge)
+      && /getMessageS3Archive/.test(bridge)
+      && /\/api\/storage\/s3\/status/.test(bridge)
+      && /PBK_S3_RECORDINGS_BUCKET/.test(renderConfig)
+      && /PBK_AWS_SECRET_ACCESS_KEY/.test(renderConfig),
+  },
+  {
     name: 'Recordings can be deleted from UI and bridge storage/state',
     ok: /deleteRuntimeRecording/.test(index)
       && /data-recording-delete/.test(index)
       && /data-recording-delete-active/.test(index)
       && /recordingMatch && request\.method === 'DELETE'/.test(bridge)
       && /deleteSupabaseRecording/.test(bridge)
+      && /deleteS3RecordingArchive/.test(bridge)
       && /GET\/DELETE \/api\/recordings\/:messageId/.test(bridge),
   },
   {

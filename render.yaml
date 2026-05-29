@@ -39,6 +39,22 @@ services:
       - key: PBK_REDIS_CALL_STATE_TTL_SECONDS
         value: "21600"
 
+      # Optional AWS S3 cold archive for Ava/Rex long-term call memory.
+      # Supabase Storage remains the active playback store; S3 keeps private
+      # raw audio for model training, audits, and future memory pipelines.
+      - key: PBK_S3_RECORDING_ARCHIVE_ENABLED
+        value: "true"
+      - key: PBK_S3_RECORDINGS_BUCKET
+        value: pbk-ava-recordings-679432970378-us-east-2
+      - key: PBK_S3_RECORDINGS_PREFIX
+        value: recordings
+      - key: PBK_AWS_REGION
+        value: us-east-2
+      - key: PBK_AWS_ACCESS_KEY_ID
+        sync: false
+      - key: PBK_AWS_SECRET_ACCESS_KEY
+        sync: false
+
       # OpenAI Responses API web search for Rex/Ava current-market research.
       # Optional proxy route: set PBK_OPENAI_BASE_URL to a compatible LiteLLM
       # or OpenAI-compatible proxy that supports /v1/responses + web_search.

@@ -12,6 +12,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import puppeteer from 'puppeteer-core';
 import pg from 'pg';
 import { createClient as createRedisClient } from 'redis';
+import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   DEEPGRAM_SAMPLE_URL,
   createDeepgramLiveConnection,
@@ -465,6 +467,18 @@ const SUPABASE_SERVICE_ROLE_KEY = String(
 const SUPABASE_CALL_RECORDINGS_BUCKET = String(process.env.PBK_CALL_RECORDINGS_BUCKET || 'call_recordings').trim();
 const PBK_TELNYX_RECORD_INBOUND_CALLS = !/^(0|false|no|off)$/i.test(String(process.env.PBK_TELNYX_RECORD_INBOUND_CALLS || 'true').trim());
 const SUPABASE_ATTACHMENTS_BUCKET = String(process.env.PBK_ATTACHMENTS_BUCKET || 'attachments').trim();
+const AWS_REGION = String(process.env.PBK_AWS_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-2').trim();
+const AWS_ACCESS_KEY_ID = String(process.env.PBK_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || '').trim();
+const AWS_SECRET_ACCESS_KEY = String(process.env.PBK_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || '').trim();
+const AWS_SESSION_TOKEN = String(process.env.PBK_AWS_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN || '').trim();
+const S3_RECORDINGS_BUCKET = String(process.env.PBK_S3_RECORDINGS_BUCKET || process.env.PBK_AWS_S3_RECORDINGS_BUCKET || '').trim();
+const S3_RECORDINGS_PREFIX = String(process.env.PBK_S3_RECORDINGS_PREFIX || 'recordings').trim().replace(/^\/+|\/+$/g, '');
+const S3_RECORDING_ARCHIVE_ENABLED = Boolean(S3_RECORDINGS_BUCKET)
+  && !/^(0|false|no|off)$/i.test(String(process.env.PBK_S3_RECORDING_ARCHIVE_ENABLED || 'true').trim());
+const S3_RECORDING_SIGNED_URL_TTL_SECONDS = Math.max(
+  60,
+  Number(process.env.PBK_S3_RECORDING_SIGNED_URL_TTL_SECONDS || process.env.PBK_RECORDING_SIGNED_URL_TTL_SECONDS || 3600),
+);
 const SUPABASE_RECORDING_SIGNED_URL_TTL_SECONDS = Math.max(
   60,
   Number(process.env.PBK_RECORDING_SIGNED_URL_TTL_SECONDS || 3600),
@@ -2076,6 +2090,7 @@ function getRuntimeMeta() {
       instantly: getInstantlyProviderMeta(),
       googleCalendar: getGoogleCalendarProviderMeta(),
       supabaseStorage: getSupabaseStorageProviderMeta(),
+      s3Archive: getS3ArchiveProviderMeta(),
       n8nWorkflows: getN8nWorkflowProviderMeta(),
       streak: getStreakProviderMeta(),
       crmSync: getCrmSyncProviderMeta(),
@@ -2249,6 +2264,11 @@ function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
       label: 'Supabase storage',
       optional: true,
       note: 'Recording/document storage surface.',
+    }),
+    s3Archive: summarizeProviderComponent(providers.s3Archive, {
+      label: 'S3 cold memory archive',
+      optional: true,
+      note: 'Private long-term recording dataset store for Ava/Rex learning loops; Supabase remains active playback.',
     }),
     browseros: {
       label: 'BrowserOS MCP',
@@ -28660,6 +28680,28 @@ function getSupabaseStorageProviderMeta() {
   };
 }
 
+function getS3ArchiveProviderMeta() {
+  const missing = [];
+  if (!S3_RECORDINGS_BUCKET) missing.push('PBK_S3_RECORDINGS_BUCKET');
+  if (!AWS_REGION) missing.push('PBK_AWS_REGION or AWS_REGION');
+  if (!AWS_ACCESS_KEY_ID) missing.push('PBK_AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID');
+  if (!AWS_SECRET_ACCESS_KEY) missing.push('PBK_AWS_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY');
+  return {
+    configured: Boolean(S3_RECORDINGS_BUCKET),
+    ready: S3_RECORDING_ARCHIVE_ENABLED && missing.length === 0,
+    enabled: S3_RECORDING_ARCHIVE_ENABLED,
+    mode: 's3-cold-recording-archive',
+    bucket: S3_RECORDINGS_BUCKET,
+    prefix: S3_RECORDINGS_PREFIX,
+    region: AWS_REGION,
+    signedUrlTtlSeconds: S3_RECORDING_SIGNED_URL_TTL_SECONDS,
+    missing,
+    note: S3_RECORDINGS_BUCKET
+      ? 'S3 archive is configured for long-term Ava/Rex memory datasets; Supabase remains the active playback store.'
+      : 'Optional S3 archive is not configured; call playback still uses Supabase Storage.',
+  };
+}
+
 function getN8nWorkflowProviderMeta() {
   const missing = [];
   if (!N8N_API_BASE_URL) missing.push('PBK_N8N_API_BASE_URL');
@@ -28895,6 +28937,182 @@ async function deleteSupabaseRecording(storagePath = '') {
   };
 }
 
+let s3ArchiveClient = null;
+
+function getS3ArchiveClient() {
+  const meta = getS3ArchiveProviderMeta();
+  if (!meta.ready) return null;
+  if (s3ArchiveClient) return s3ArchiveClient;
+  s3ArchiveClient = new S3Client({
+    region: AWS_REGION,
+    credentials: {
+      accessKeyId: AWS_ACCESS_KEY_ID,
+      secretAccessKey: AWS_SECRET_ACCESS_KEY,
+      ...(AWS_SESSION_TOKEN ? { sessionToken: AWS_SESSION_TOKEN } : {}),
+    },
+  });
+  return s3ArchiveClient;
+}
+
+function normalizeS3Key(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/g, '')
+    .replace(/\/{2,}/g, '/');
+}
+
+function buildS3RecordingKey(storagePath = '') {
+  const normalizedPath = normalizeStoragePath(storagePath) || `${randomUUID()}.mp3`;
+  const prefix = normalizeS3Key(S3_RECORDINGS_PREFIX);
+  return normalizeS3Key(prefix ? `${prefix}/${normalizedPath}` : normalizedPath);
+}
+
+function normalizeS3Metadata(metadata = {}) {
+  const normalized = {};
+  for (const [rawKey, rawValue] of Object.entries(metadata || {})) {
+    const key = String(rawKey || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 64);
+    const value = String(rawValue ?? '').slice(0, 512);
+    if (key && value) normalized[key] = value;
+  }
+  return normalized;
+}
+
+async function verifyS3ArchiveBucket() {
+  const meta = getS3ArchiveProviderMeta();
+  if (!S3_RECORDING_ARCHIVE_ENABLED) {
+    return { ok: false, skipped: true, configured: meta.configured, enabled: false, missing: meta.missing };
+  }
+  const client = getS3ArchiveClient();
+  if (!client) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      enabled: meta.enabled,
+      missing: meta.missing,
+      error: `S3 archive is not ready (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  try {
+    await client.send(new HeadBucketCommand({ Bucket: S3_RECORDINGS_BUCKET }));
+    return { ok: true, bucket: S3_RECORDINGS_BUCKET, region: AWS_REGION, prefix: S3_RECORDINGS_PREFIX };
+  } catch (error) {
+    return {
+      ok: false,
+      bucket: S3_RECORDINGS_BUCKET,
+      region: AWS_REGION,
+      error: error?.message || 'S3 HeadBucket failed.',
+      code: error?.name || '',
+    };
+  }
+}
+
+async function uploadS3RecordingArchive({ storagePath, contentType = 'audio/mpeg', bytes, metadata = {} }) {
+  const meta = getS3ArchiveProviderMeta();
+  if (!S3_RECORDING_ARCHIVE_ENABLED) {
+    return { ok: false, skipped: true, configured: meta.configured, enabled: false, missing: meta.missing };
+  }
+  const client = getS3ArchiveClient();
+  if (!client) {
+    return {
+      ok: false,
+      configured: meta.configured,
+      enabled: meta.enabled,
+      missing: meta.missing,
+      error: `S3 archive is not configured (${meta.missing.join(', ') || 'missing credentials'}).`,
+    };
+  }
+  if (!bytes?.length) return { ok: false, error: 'S3 archive bytes are missing.' };
+  const key = buildS3RecordingKey(storagePath);
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket: S3_RECORDINGS_BUCKET,
+      Key: key,
+      Body: bytes,
+      ContentType: contentType || 'application/octet-stream',
+      ServerSideEncryption: 'AES256',
+      Metadata: normalizeS3Metadata(metadata),
+    }));
+    return {
+      ok: true,
+      provider: 's3',
+      bucket: S3_RECORDINGS_BUCKET,
+      key,
+      region: AWS_REGION,
+      contentType,
+      bytes: bytes.length,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      provider: 's3',
+      bucket: S3_RECORDINGS_BUCKET,
+      key,
+      region: AWS_REGION,
+      error: error?.message || 'S3 recording archive upload failed.',
+      code: error?.name || '',
+    };
+  }
+}
+
+async function createS3RecordingSignedUrl(key = '', expiresIn = S3_RECORDING_SIGNED_URL_TTL_SECONDS) {
+  const client = getS3ArchiveClient();
+  const normalizedKey = normalizeS3Key(key);
+  if (!client) return { ok: false, error: 'S3 archive is not ready.', missing: getS3ArchiveProviderMeta().missing };
+  if (!normalizedKey) return { ok: false, error: 'S3 archive key is missing.' };
+  try {
+    const command = new GetObjectCommand({ Bucket: S3_RECORDINGS_BUCKET, Key: normalizedKey });
+    const signedUrl = await getS3SignedUrl(client, command, { expiresIn });
+    return {
+      ok: true,
+      provider: 's3',
+      bucket: S3_RECORDINGS_BUCKET,
+      key: normalizedKey,
+      expiresIn,
+      signedUrl,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      provider: 's3',
+      bucket: S3_RECORDINGS_BUCKET,
+      key: normalizedKey,
+      error: error?.message || 'S3 signed URL request failed.',
+      code: error?.name || '',
+    };
+  }
+}
+
+async function deleteS3RecordingArchive(key = '') {
+  const client = getS3ArchiveClient();
+  const normalizedKey = normalizeS3Key(key);
+  if (!client || !normalizedKey) return { ok: true, skipped: true, reason: !client ? 's3_not_ready' : 'missing_s3_key' };
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: S3_RECORDINGS_BUCKET, Key: normalizedKey }));
+    return { ok: true, provider: 's3', deleted: true, bucket: S3_RECORDINGS_BUCKET, key: normalizedKey };
+  } catch (error) {
+    return {
+      ok: false,
+      provider: 's3',
+      bucket: S3_RECORDINGS_BUCKET,
+      key: normalizedKey,
+      error: error?.message || 'S3 recording archive delete failed.',
+      code: error?.name || '',
+    };
+  }
+}
+
+function getMessageS3Archive(message = {}) {
+  const archive = message.s3Archive || message.payload?.s3Archive || message.payload?.s3_archive || {};
+  const key = normalizeS3Key(archive.key || archive.storagePath || archive.s3Key || message.s3Key || '');
+  return key ? { ...archive, key, bucket: archive.bucket || S3_RECORDINGS_BUCKET } : null;
+}
+
 async function fetchRecordingBytes(recordingUrl = '') {
   const url = String(recordingUrl || '').trim();
   if (!url) return { ok: false, error: 'Recording URL is missing.' };
@@ -29017,6 +29235,21 @@ async function captureRecordingFromPayload(input = {}) {
       storagePath,
     };
   }
+  const s3Archive = await uploadS3RecordingArchive({
+    storagePath,
+    contentType,
+    bytes,
+    metadata: {
+      callId: params.callId || existingCall?.id || '',
+      messageId,
+      leadId: params.leadId || existingCall?.leadId || '',
+      source: 'telnyx-recording',
+    },
+  }).catch((error) => ({
+    ok: false,
+    provider: 's3',
+    error: error?.message || String(error),
+  }));
   const deepgramMeta = getDeepgramProviderMeta(process.env);
   const deepgram = deepgramMeta.ready && deepgramMeta.analyzeRecordings
     ? await transcribeDeepgramFile({
@@ -29053,6 +29286,7 @@ async function captureRecordingFromPayload(input = {}) {
     status: 'recorded',
     storagePath,
     storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+    s3Archive: s3Archive?.ok ? s3Archive : null,
     audioContentType: contentType,
     durationSeconds: toNumber(params.durationSeconds, 0),
     recordingUrl: '',
@@ -29066,6 +29300,7 @@ async function captureRecordingFromPayload(input = {}) {
       storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
       contentType,
       upload,
+      s3Archive,
       deepgram: deepgram
         ? {
           ok: deepgram.ok,
@@ -29093,6 +29328,7 @@ async function captureRecordingFromPayload(input = {}) {
       status: existingCall.status === 'live' ? 'ended' : existingCall.status,
       storagePath,
       storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
+      s3Archive: s3Archive?.ok ? s3Archive : null,
       audioContentType: contentType,
       durationSeconds: message.durationSeconds,
       recordingMessageId: message.id,
@@ -29116,6 +29352,7 @@ async function captureRecordingFromPayload(input = {}) {
     result: 'live',
     message,
     upload,
+    s3Archive,
     deepgram,
     storagePath,
     callId: params.callId,
@@ -49876,6 +50113,19 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/storage/s3/status', '/api/recordings/s3/status'])) {
+      const verify = /^(1|true|yes)$/i.test(String(url.searchParams.get('verify') || '').trim());
+      const meta = getS3ArchiveProviderMeta();
+      const bucketCheck = verify ? await verifyS3ArchiveBucket() : null;
+      json(response, bucketCheck?.ok === false ? 503 : 200, {
+        ok: verify ? Boolean(bucketCheck?.ok) : true,
+        result: 's3_archive_status',
+        s3Archive: meta,
+        bucketCheck,
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/recordings/capture') {
       const body = await readBody(request);
       const result = await captureRecordingFromPayload(body);
@@ -49904,6 +50154,10 @@ const server = createServer(async (request, response) => {
       const storageDelete = storagePath
         ? await deleteSupabaseRecording(storagePath).catch((error) => ({ ok: false, error: error?.message || String(error) }))
         : { ok: true, skipped: true, reason: 'no_storage_path' };
+      const s3Archive = getMessageS3Archive(existing);
+      const s3Delete = s3Archive?.key
+        ? await deleteS3RecordingArchive(s3Archive.key).catch((error) => ({ ok: false, error: error?.message || String(error) }))
+        : { ok: true, skipped: true, reason: 'no_s3_archive_key' };
       const identifiers = uniqueLeadLookupValues([
         existing.id,
         existing.messageId,
@@ -49955,6 +50209,7 @@ const server = createServer(async (request, response) => {
         deleted: true,
         messageId,
         storageDelete,
+        s3Delete,
         dbDelete,
         state: buildStateSnapshot(),
       });
@@ -49979,6 +50234,21 @@ const server = createServer(async (request, response) => {
         return;
       }
       const storagePath = getMessageRecordingPath(message);
+      const s3Archive = getMessageS3Archive(message);
+      const preferS3 = /^(1|true|yes|s3)$/i.test(String(url.searchParams.get('s3') || url.searchParams.get('source') || '').trim());
+      if (preferS3 && s3Archive?.key) {
+        const s3Signed = await createS3RecordingSignedUrl(
+          s3Archive.key,
+          Number(url.searchParams.get('expiresIn') || S3_RECORDING_SIGNED_URL_TTL_SECONDS),
+        );
+        json(response, s3Signed.ok ? 200 : 501, {
+          ...s3Signed,
+          source: 's3-archive',
+          messageId,
+          message,
+        });
+        return;
+      }
       if (isMetadataOnlySmokeRecording(message)) {
         json(response, 501, {
           ok: false,
@@ -49998,6 +50268,7 @@ const server = createServer(async (request, response) => {
       );
       json(response, signed.ok ? 200 : 501, {
         ...signed,
+        s3Archive,
         messageId,
         message,
       });
@@ -51189,6 +51460,7 @@ const server = createServer(async (request, response) => {
         'POST /api/calls/:id/action',
         'GET/POST/DELETE /api/messages',
         'GET/DELETE /api/recordings/:messageId',
+        'GET /api/storage/s3/status',
         'POST /api/recordings/fixture',
         'POST /api/recordings',
         'GET/POST /api/contracts',

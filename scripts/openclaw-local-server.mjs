@@ -18817,6 +18817,37 @@ function buildRexRecentConversationForPrompt(messages = []) {
     .join('\n');
 }
 
+function looksLikeRexDirectedCommand(command = '', params = {}) {
+  const explicitAgent = String(
+    params.agent
+    || params.agentId
+    || params.agent_id
+    || params.targetAgent
+    || params.target_agent
+    || params.toAgent
+    || params.to_agent
+    || '',
+  ).trim().toLowerCase();
+  if (explicitAgent === 'rex' || explicitAgent.includes('rex strategist')) return true;
+
+  const source = String(params.source || params.surface || '').trim().toLowerCase();
+  if (source === 'rex' || source === 'rex-chat' || source === 'brain-rex') return true;
+
+  const text = String(command || '').trim();
+  if (!text) return false;
+  return /^(?:\/?rex\b|hey\s+rex\b|rex\s*[:,\-]|ask\s+rex\b|tell\s+rex\b)/i.test(text)
+    || /\b(?:ask|tell|have|let)\s+rex\s+(?:to\s+)?(?:check|answer|diagnose|inspect|research|route|plan|recommend|explain|summarize|control)\b/i.test(text);
+}
+
+function stripRexInvocation(command = '') {
+  return String(command || '')
+    .trim()
+    .replace(/^\/?rex\b\s*[:,\-]?\s*/i, '')
+    .replace(/^hey\s+rex\b\s*[:,\-]?\s*/i, '')
+    .replace(/^(?:ask|tell|have|let)\s+rex\s+(?:to\s+)?/i, '')
+    .trim();
+}
+
 function buildRexLocalConversationalFallbackAnswer({ query = '', baseResponse = {}, control = {} } = {}) {
   const text = String(query || '').toLowerCase();
   const pending = Number(control.pendingApprovals || 0);
@@ -40379,8 +40410,26 @@ const toolHandlers = {
     const readOnlyAvaCommand = looksLikeReadOnlyAvaCommand(command, params);
     const explicitCrmWriteIntent = hasExplicitCrmWriteIntent(command);
     const toolFirstDetected = detectToolFirstIntent(intentCommand, params, context);
+    const rexDirectedCommand = looksLikeRexDirectedCommand(command, params);
 
-    if (ttsDiagnosticCommand) {
+    if (rexDirectedCommand) {
+      routedTo = 'rex_conversational_brain';
+      const rexQuery = stripRexInvocation(intentCommand || command)
+        || stripRexInvocation(command)
+        || intentCommand
+        || command
+        || 'Give a conversational PBK strategist status.';
+      response = await toolHandlers.getBrainState({
+        ...params,
+        query: rexQuery,
+        text: rexQuery,
+        agent: 'rex',
+        source: params.source || 'agent-console-rex',
+        messages: params.messages || [
+          { role: 'user', content: rexQuery },
+        ],
+      });
+    } else if (ttsDiagnosticCommand) {
       routedTo = 'ava_conversation_intelligence';
       const responseQuery = intentCommand || command;
       response = await toolHandlers.getAvaConversationIntelligence({
@@ -40583,10 +40632,10 @@ const toolHandlers = {
     addActivity(
       state,
       makeActivity({
-        actor: 'Ava',
+        actor: routedTo === 'rex_conversational_brain' ? 'Rex' : 'Ava',
         category: 'DECISION',
         status: 'queued',
-        text: `Ava routed the command to ${routedTo}.`,
+        text: `${routedTo === 'rex_conversational_brain' ? 'Rex' : 'Ava'} routed the command to ${routedTo}.`,
         target: context.address || context.leadName,
       }),
     );

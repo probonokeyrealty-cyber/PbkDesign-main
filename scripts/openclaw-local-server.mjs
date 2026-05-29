@@ -1159,7 +1159,13 @@ function buildLiveCallBantStatus(session = {}, contextCall = null) {
   const storedKnown = stored.known && typeof stored.known === 'object' ? stored.known : stored;
   const contextKnown = normalizeBantInfo(contextCall?.bant || {}, contextCall?.raw?.bant || {}, contextCall?.raw || {});
   const lastTranscript = session.transcript?.slice?.(-1)?.[0]?.transcript || '';
-  const known = extractBantFromTranscript(lastTranscript, normalizeBantInfo(contextKnown, storedKnown));
+  const sessionKnown = deriveLiveBantFactsFromSession(session);
+  const known = normalizeBantInfo(
+    contextKnown,
+    storedKnown,
+    sessionKnown,
+    extractBantFromTranscript(lastTranscript, normalizeBantInfo(contextKnown, storedKnown, sessionKnown)),
+  );
   const missing = Array.isArray(stored.missing) && stored.missing.length
     ? stored.missing.filter((field) => !normalizeBantValue(known[field]))
     : getMissingBantFields(known);
@@ -3953,12 +3959,35 @@ function getMissingBantFields(bant = {}) {
   return BANT_FIELDS.filter((field) => !normalizeBantValue(bant[field]));
 }
 
+function deriveLiveBantFactsFromSession(session = {}) {
+  const facts = normalizeBantInfo(session.bant || {}, session.bantStatus?.known || {});
+  const money = normalizeBantValue(session.sellerAskingPrice || session.desiredNet);
+  if (money && !facts.budget) facts.budget = money;
+  if ((session.authorityConfirmed || session.decisionMakerConfirmed) && !facts.authority) {
+    facts.authority = 'caller confirmed decision authority';
+  }
+  const priority = String(session.sellerPriority || session.goalPreference || '').trim().toLowerCase();
+  if (priority && !facts.need) {
+    facts.need = priority === 'balanced'
+      ? 'balanced priorities: price, speed, and certainty'
+      : priority.replace(/_/g, ' ');
+  }
+  if (priority && /\b(speed|timeline|balanced)\b/i.test(priority) && !facts.timeline) {
+    facts.timeline = priority === 'balanced' ? 'speed matters to seller' : 'seller mentioned timing';
+  }
+  if (priority && /\b(speed|certainty|balanced)\b/i.test(priority) && !facts.urgency) {
+    facts.urgency = priority === 'balanced' ? 'seller wants price, speed, and certainty' : 'seller priority implies urgency';
+  }
+  return facts;
+}
+
 function extractBantFromTranscript(transcript = '', existing = {}) {
   const text = String(transcript || '').trim();
   const lower = text.toLowerCase();
   const extracted = normalizeBantInfo(existing);
-  const moneyMatch = text.match(/(?:\$|want|need|asking|happy with|walk away|take)\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand)?)/i);
-  if (!extracted.budget && moneyMatch) extracted.budget = moneyMatch[0].trim();
+  const looseMoney = typeof extractAvaLiveMoneyAmount === 'function' ? extractAvaLiveMoneyAmount(text) : '';
+  const moneyMatch = text.match(/(?:\$|want|need|asking|happy with|walk away|take|number|price)\s*([0-9][0-9,]{3,}(?:\.\d+)?\s*(?:k|thousand|grand)?)/i);
+  if (!extracted.budget && (moneyMatch || looseMoney)) extracted.budget = (looseMoney || moneyMatch[0]).trim();
   if (!extracted.authority && (hasStrongAvaOwnerRoleAssertion(text) || /\b(wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b/i.test(text))) {
     extracted.authority = text.match(/.{0,40}\b(owner|i own|my house|my home|wife|husband|spouse|partner|attorney|lawyer|executor|co-?owner|decision|my client|seller)\b.{0,60}/i)?.[0]?.trim() || 'decision authority mentioned';
   }
@@ -3968,8 +3997,17 @@ function extractBantFromTranscript(transcript = '', existing = {}) {
   if (!extracted.timeline && /\b(asap|soon|quick|days|weeks|months|close|closing|deadline|by [a-z]+|before)\b/i.test(text)) {
     extracted.timeline = text.match(/.{0,40}\b(asap|soon|quick|days|weeks|months|close|closing|deadline|before)\b.{0,80}/i)?.[0]?.trim() || 'timeline mentioned';
   }
+  if (!extracted.need && /\b(all of them|all three|all four|everything|price,?\s+speed|speed,?\s+and\s+certainty)\b/i.test(lower)) {
+    extracted.need = 'balanced priorities: price, speed, and certainty';
+  }
+  if (!extracted.timeline && /\b(all of them|all three|all four|speed)\b/i.test(lower)) {
+    extracted.timeline = 'speed matters to seller';
+  }
   if (!extracted.urgency && /\b(if it does not sell|cannot wait|need this done|need to close|must close|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b/i.test(lower)) {
     extracted.urgency = text.match(/.{0,50}\b(cannot wait|need this done|need to close|must close|behind|deadline|foreclosure|tax bill|vacancy|utilities|stress|next 90 days|next 3 months)\b.{0,80}/i)?.[0]?.trim() || 'urgency mentioned';
+  }
+  if (!extracted.urgency && /\b(all of them|all three|all four|certainty)\b/i.test(lower)) {
+    extracted.urgency = 'seller wants price, speed, and certainty';
   }
   return extracted;
 }
@@ -16522,12 +16560,20 @@ function applyAvaLiveTurnFacts(session = {}, transcript = '', supportTranscript 
     session.sellerPriority = 'net_number';
     session.goalPreference = 'highest_net';
     if (!normalizeBantValue(session.bant.need)) session.bant.need = 'highest net number';
+  } else if (/\b(all of them|all three|all four|everything|all that)\b/i.test(clean)) {
+    session.sellerPriority = 'balanced';
+    session.goalPreference = 'balanced';
+    if (!normalizeBantValue(session.bant.need)) session.bant.need = 'balanced priorities: price, speed, and certainty';
+    if (!normalizeBantValue(session.bant.timeline)) session.bant.timeline = 'speed matters to seller';
+    if (!normalizeBantValue(session.bant.urgency)) session.bant.urgency = 'seller wants price, speed, and certainty';
   } else if (/\bspeed|fast|quick|timeline\b/i.test(clean)) {
     session.sellerPriority = 'speed';
     if (!normalizeBantValue(session.bant.need)) session.bant.need = 'speed';
+    if (!normalizeBantValue(session.bant.timeline)) session.bant.timeline = clean;
   } else if (/\bcertainty|sure\s+thing|simple|clean\b/i.test(clean)) {
     session.sellerPriority = 'certainty';
     if (!normalizeBantValue(session.bant.need)) session.bant.need = 'certainty';
+    if (!normalizeBantValue(session.bant.urgency)) session.bant.urgency = 'certainty matters to seller';
   } else if (/\brepairs?|condition\b/i.test(clean)) {
     session.sellerPriority = 'repairs';
     if (!normalizeBantValue(session.bant.need)) session.bant.need = 'avoid repairs';
@@ -44414,7 +44460,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
   const turnLower = `${lower} ${intelligenceLower}`.trim();
   const knownBant = normalizeBantInfo(contextCall?.bant || {}, contextCall?.raw?.bant || {}, contextCall?.raw || {});
   const extractedBant = normalizeBantInfo(knownBant, session.bant || {}, extractBantFromTranscript(intelligenceTranscript, knownBant));
-  const missingBant = getMissingBantFields(extractedBant);
+  let missingBant = getMissingBantFields(extractedBant);
   const opener = getAvaLiveLeadNameOpener({ session, contextCall });
   session.pathProbeTurnCount = Math.max(1, Number(session.pathProbeTurnCount || 0) + 1);
   const pathDecision = inferAvaDealPathDecision({
@@ -44494,7 +44540,7 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     callerRoleDecision: callerRole,
     masterProbe,
   }), options);
-  const nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
+  let nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
   const lastAvaReply = String(session.lastAvaReplySpoken || session.lastAvaSpokenPreview || session.lastAvaReplyPreview || '');
   const authorityConfirmedByAnswer = isAvaLiveAuthorityQuestion(lastAvaReply) && isAffirmativeAvaAuthorityAnswer(latestTranscript);
   const fullAddressKnown = Boolean(String(contextCall?.address || session.address || '').trim());
@@ -44503,6 +44549,16 @@ function buildFastTelnyxLiveAvaReplyText({ session = {}, transcript = '', contex
     session.sellerAskingPrice = sellerIntent.money;
     session.desiredNet = session.desiredNet || sellerIntent.money;
     if (!normalizeBantValue(session.bant?.budget)) session.bant.budget = sellerIntent.money;
+    const refreshedBant = normalizeBantInfo(extractedBant, deriveLiveBantFactsFromSession(session));
+    missingBant = getMissingBantFields(refreshedBant);
+    nextMissingBant = chooseMissingBantFieldForTurn(session, missingBant);
+    session.bantStatus = {
+      known: refreshedBant,
+      missing: missingBant,
+      complete: missingBant.length === 0,
+      nextMissing: missingBant[0] || '',
+      updatedAt: isoNow(),
+    };
   }
 
   if (/\b(hear me|can you hear|you hear|hello\??|are you there)\b/i.test(lower)) {
@@ -45878,7 +45934,14 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     void syncTelnyxSessionToRedis(session, 'active', { force: normalized.isFinal || normalized.speechFinal });
     const contextCall = getCallById(session.callId);
     if (contextCall && actionableTranscript && committedTranscript) {
-      const liveBant = normalizeBantInfo(contextCall.bant || {}, extractBantFromTranscript(transcript, contextCall.bant || {}));
+      applyAvaLiveTurnFacts(session, transcript, '');
+      const liveBant = normalizeBantInfo(
+        contextCall.bant || {},
+        session.bantStatus?.known || {},
+        deriveLiveBantFactsFromSession(session),
+        extractBantFromTranscript(transcript, normalizeBantInfo(contextCall.bant || {}, session.bantStatus?.known || {}, session.bant || {})),
+      );
+      session.bant = normalizeBantInfo(session.bant || {}, liveBant);
       const livePathDecision = inferAvaDealPathDecision({
         session,
         contextCall,

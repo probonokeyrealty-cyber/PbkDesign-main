@@ -113,6 +113,38 @@ function isTextResponse(contentType = '') {
   return /json|text|javascript|xml|html|csv|svg/i.test(contentType);
 }
 
+function compactHealthPayload(payload: Record<string, any>) {
+  const components = payload.components && typeof payload.components === 'object' ? payload.components : {};
+  const providers = payload.providers && typeof payload.providers === 'object' ? payload.providers : {};
+  const providerStatuses = Object.fromEntries(
+    Object.entries(providers).map(([name, value]) => {
+      if (typeof value === 'string') return [name, value];
+      if (value && typeof value === 'object') {
+        const meta = value as Record<string, any>;
+        return [name, meta.status || meta.readiness || meta.ready || meta.configured || 'unknown'];
+      }
+      return [name, 'unknown'];
+    }),
+  );
+
+  return {
+    ok: payload.ok !== false,
+    status: payload.status || 'unknown',
+    service: payload.service || 'pbk-openclaw-bridge',
+    revision: payload.revision || '',
+    checkedAt: payload.checkedAt || new Date().toISOString(),
+    hosted: payload.hosted ?? payload.mode === 'hosted',
+    stateBackend: payload.stateBackend || payload.state_backend || '',
+    providers: providerStatuses,
+    componentCount: Object.keys(components).length,
+    healthStatus: payload.healthStatus || payload.status || 'unknown',
+  };
+}
+
+function shouldCompactHealthResponse(targetPath = '') {
+  return ['/health', '/status', '/api/health', '/api/status'].includes(targetPath);
+}
+
 export const handler: Handler = async (event) => {
   const requestId = getRequestId(event);
 
@@ -155,6 +187,18 @@ export const handler: Handler = async (event) => {
 
     const bytes = Buffer.from(await response.arrayBuffer());
     const contentType = responseHeaders['content-type'] || responseHeaders['Content-Type'] || '';
+    if (shouldCompactHealthResponse(targetPath) && isTextResponse(contentType)) {
+      try {
+        const payload = JSON.parse(bytes.toString('utf8'));
+        return json(compactHealthPayload(payload), response.status, {
+          'X-PBK-Bridge-Proxy': 'netlify',
+          'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
+        });
+      } catch {
+        // Fall through to the normal proxy response when upstream is not JSON.
+      }
+    }
+
     const textResponse = isTextResponse(contentType);
     return {
       statusCode: response.status,

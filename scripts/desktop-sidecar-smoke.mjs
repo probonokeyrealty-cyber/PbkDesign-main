@@ -97,6 +97,8 @@ const rootPackage = readFileSync(path.resolve('package.json'), 'utf8');
 
 assert.match(bridge, /desktopSidecarWss/, 'bridge should define a dedicated desktop sidecar WebSocket server.');
 assert.match(bridge, /\/ws\/sidecar/, 'bridge should expose WS /ws/sidecar.');
+assert.match(bridge, /PBK_SIDECAR_TOKEN/, 'bridge should support a dedicated PBK_SIDECAR_TOKEN secret.');
+assert.match(bridge, /requiredSidecarToken/, 'bridge should authenticate sidecar sockets with the dedicated sidecar token when configured.');
 assert.match(bridge, /\/api\/desktop-sidecar\/status/, 'bridge should expose a desktop sidecar status endpoint.');
 assert.match(bridge, /\/api\/desktop-sidecar\/command/, 'bridge should expose a desktop sidecar command endpoint.');
 assert.match(bridge, /async sidecarCommand/, 'bridge should expose sidecarCommand as an Ava/Rex tool.');

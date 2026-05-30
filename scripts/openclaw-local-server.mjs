@@ -659,6 +659,7 @@ const OPENCLAW_GATEWAY_HEARTBEAT_MAX_AGE_MS = Math.max(
 // Bearer token required on mutating endpoints when set. Local dev can stay open,
 // but hosted production must fail closed if the key is accidentally missing.
 const BRIDGE_API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+const DESKTOP_SIDECAR_TOKEN = String(process.env.PBK_SIDECAR_TOKEN || '').trim();
 const ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE = /^(1|true|yes|on)$/i.test(String(process.env.PBK_ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE || '').trim());
 const HOSTED_BRIDGE_AUTH_MISCONFIGURED = Boolean(IS_HOSTED && !BRIDGE_API_KEY && !ALLOW_UNAUTHENTICATED_HOSTED_BRIDGE);
 const PUBLIC_AVA_CHAT_ENABLED_CONFIGURED = Object.prototype.hasOwnProperty.call(process.env, 'PBK_PUBLIC_AVA_CHAT_ENABLED');
@@ -55211,9 +55212,10 @@ server.on('upgrade', (request, socket, head) => {
   }
 
   if (matchesPath(upgradePath, ['/ws/sidecar', '/api/ws/sidecar', '/api/desktop-sidecar/ws'])) {
-    if (BRIDGE_API_KEY) {
+    const requiredSidecarToken = DESKTOP_SIDECAR_TOKEN || BRIDGE_API_KEY;
+    if (requiredSidecarToken) {
       const providedToken = getDesktopSidecarAuthToken(request, upgradeUrl);
-      if (!providedToken || !safeCompareString(providedToken, BRIDGE_API_KEY)) {
+      if (!providedToken || !safeCompareString(providedToken, requiredSidecarToken)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;

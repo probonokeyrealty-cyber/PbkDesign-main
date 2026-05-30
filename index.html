@@ -966,6 +966,7 @@
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
+    display: none;
   }
   @keyframes pageIn {
     from { opacity: 0; transform: translateY(6px); }
@@ -2191,7 +2192,7 @@
       <div class="panel fade-in" style="animation-delay: 0.05s">
         <div class="panel-head">
           <div class="panel-title">Unified Inbox <span class="tt-count">— 12</span></div>
-          <button type="button" class="chip-btn">+ New</button>
+          <button type="button" class="chip-btn" data-open-compose>Compose</button>
         </div>
         <div class="inbox-filters">
           <button type="button" class="chip-btn active">All</button>
@@ -3587,6 +3588,22 @@
       color: var(--text-tertiary); margin-bottom: 6px;
       display: flex; justify-content: space-between;
     }
+    .field-help {
+      position: relative; display: inline-flex; align-items: center; justify-content: center;
+      width: 17px; height: 17px; margin-left: 5px; border-radius: 50%;
+      border: 1px solid var(--sky-dim); color: var(--sky); background: var(--sky-glow);
+      font: 10px/1 var(--font-mono); cursor: help;
+    }
+    .field-help::after {
+      content: attr(data-help); position: absolute; left: 50%; bottom: calc(100% + 8px);
+      transform: translateX(-50%); width: min(260px, 72vw); padding: 9px 10px;
+      border: 1px solid var(--border-bright); border-radius: var(--radius-md);
+      background: var(--bg-panel-elevated); color: var(--text-secondary);
+      box-shadow: var(--shadow-xl); white-space: normal; text-transform: none;
+      letter-spacing: 0; font: 11px/1.5 var(--font-mono); opacity: 0;
+      pointer-events: none; transition: opacity .12s ease; z-index: 30;
+    }
+    .field-help:hover::after, .field-help:focus::after { opacity: 1; }
     .field-label .hint { color: var(--text-ghost); text-transform: none; letter-spacing: 0; font-size: 10px; }
     .field input[type="text"], .field input[type="number"] {
       width: 100%; background: var(--bg-void); border: 1px solid var(--border);
@@ -3894,22 +3911,22 @@
 
       <div class="field field-row">
         <div>
-          <div class="field-label"><span>Holding (mo)</span></div>
+          <div class="field-label"><span>Holding (mo)<button class="field-help" type="button" data-help="Estimated holding period in months. Longer timelines increase taxes, utilities, insurance, and risk before resale.">?</button></span></div>
           <input type="number" value="3"/>
         </div>
         <div>
-          <div class="field-label"><span>Assignment Fee</span></div>
+          <div class="field-label"><span>Assignment Fee<button class="field-help" type="button" data-help="Target wholesale fee reserved in the deal math before Ava recommends an offer.">?</button></span></div>
           <input type="text" value="$10,000"/>
         </div>
       </div>
 
       <div class="field field-row">
         <div>
-          <div class="field-label"><span>MAO Rule</span></div>
+          <div class="field-label"><span>MAO Rule<button class="field-help" type="button" data-help="Maximum Allowable Offer formula. 70% of ARV minus repairs, fees, and safety margin is the default cash-buyer standard.">?</button></span></div>
           <input type="text" value="70% of ARV"/>
         </div>
         <div>
-          <div class="field-label"><span>Min Profit</span></div>
+          <div class="field-label"><span>Min Profit<button class="field-help" type="button" data-help="Minimum expected profit PBK requires before Ava treats an offer as safe enough to queue for approval.">?</button></span></div>
           <input type="text" value="$15,000"/>
         </div>
       </div>
@@ -4549,6 +4566,23 @@
     .fleet-field input, .fleet-field select, .fleet-field textarea { min-height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-void); color: var(--text-primary); padding: 10px 12px; font: 13px/1.4 var(--font-body); }
     .fleet-field textarea { min-height: 112px; resize: vertical; }
     .fleet-modal-foot { padding: var(--s-5); border-top: 1px solid var(--border-dim); display: flex; gap: var(--s-2); justify-content: flex-end; flex-wrap: wrap; }
+    .fleet-transfer-list { display: grid; gap: 8px; }
+    .fleet-transfer-agent {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px; border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg); background: rgba(255,255,255,.025);
+      cursor: pointer;
+    }
+    .fleet-transfer-agent input { width: 18px; height: 18px; accent-color: var(--sky); }
+    .fleet-transfer-agent strong { display: block; color: var(--text-primary); font-size: 13px; }
+    .fleet-transfer-agent span { display: block; color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
+    .fleet-transfer-version {
+      display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+      padding: var(--s-3); border: 1px solid var(--sky-dim); border-radius: var(--radius-lg);
+      background: var(--sky-glow); color: var(--text-secondary);
+    }
+    .fleet-transfer-version input { width: 38px; height: 20px; accent-color: var(--sky); }
+    .fleet-transfer-count { margin-right: auto; color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
     .fleet-mini-input { display: flex; gap: 8px; flex-wrap: wrap; margin-top: var(--s-3); }
     .fleet-mini-input input { flex: 1 1 260px; min-height: 40px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-void); color: var(--text-primary); padding: 9px 11px; }
     @media (max-width: 1180px) { .fleet-shell { grid-template-columns: 1fr; } .fleet-detail { position: static; } .fleet-pane { max-height: none; } }
@@ -4661,6 +4695,31 @@
         <button class="btn btn-ghost" data-fleet-close type="button">Close</button>
       </div>
       <div class="fleet-modal-body" id="fleetSkillsLibraryBody"></div>
+    </div>
+  </div>
+
+  <div class="fleet-modal-backdrop" id="fleetSkillTransferModal" role="dialog" aria-modal="true" aria-label="Transfer agent skill">
+    <div class="fleet-modal">
+      <div class="fleet-modal-head">
+        <div>
+          <div class="ph-tag">Skill transfer</div>
+          <h3 id="fleetTransferTitle">Transfer skill</h3>
+          <p class="note" id="fleetTransferMeta">Select one or more agents to receive this skill. This is a UI-only transfer preview until approved.</p>
+        </div>
+        <button class="btn btn-ghost" data-fleet-close type="button">Close</button>
+      </div>
+      <div class="fleet-modal-body">
+        <div class="fleet-transfer-list" id="fleetTransferAgentList"></div>
+        <label class="fleet-transfer-version">
+          <span><strong>Version this skill</strong><br><span>Keep a rollback path before the target agent uses it.</span></span>
+          <input type="checkbox" id="fleetTransferVersioned" checked>
+        </label>
+      </div>
+      <div class="fleet-modal-foot">
+        <span class="fleet-transfer-count" id="fleetTransferCount">0 agents selected</span>
+        <button class="btn btn-ghost" data-fleet-close type="button">Cancel</button>
+        <button class="btn btn-primary" type="button" id="fleetTransferConfirm" disabled>Transfer skill</button>
+      </div>
     </div>
   </div>
 
@@ -4803,6 +4862,49 @@
       margin-bottom: 6px;
     }
 
+    .call-floor-panel {
+      margin: 0 var(--s-6) var(--s-4);
+      display: grid; grid-template-columns: minmax(280px, 1.2fr) minmax(280px, .8fr);
+      gap: var(--s-4);
+    }
+    .call-floor-box {
+      border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+      background: var(--bg-panel); padding: var(--s-4);
+      box-shadow: var(--shadow-sm);
+    }
+    .call-floor-box h3 { margin: 0 0 4px; font-size: 16px; }
+    .call-floor-box p { margin: 0 0 var(--s-3); color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
+    .call-floor-search-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .call-floor-search-row input,
+    .call-floor-schedule input {
+      flex: 1 1 220px; min-height: 42px; border: 1px solid var(--border-dim);
+      border-radius: var(--radius-md); background: var(--bg-void); color: var(--text-primary);
+      padding: 9px 11px; font: 13px/1.3 var(--font-body);
+    }
+    .outbound-lead-results { display: grid; gap: 8px; margin-top: var(--s-3); }
+    .outbound-lead-result {
+      display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border-dim);
+      border-radius: var(--radius-md); background: rgba(255,255,255,.025);
+    }
+    .outbound-lead-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .score-badge { font: 10px/1 var(--font-mono); color: var(--sky); background: var(--sky-glow); border: 1px solid var(--sky-dim); padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
+    .in-call-badge { color: var(--crimson); border-color: rgba(255,55,94,.32); background: rgba(255,55,94,.08); }
+    .lead-result-meta { color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
+    .lead-result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .call-floor-quick-times { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--s-2) 0; }
+    .call-floor-scheduled-list { display: grid; gap: 8px; margin-top: var(--s-3); }
+    .call-floor-scheduled-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: rgba(255,255,255,.025); }
+    .call-floor-scheduled-item span { display: block; color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
+    .loading-spinner-small {
+      display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.28);
+      border-top-color: currentColor; border-radius: 50%; animation: spin .65s linear infinite; margin-right: 6px; vertical-align: -2px;
+    }
+    @media (max-width: 900px) { .call-floor-panel { grid-template-columns: 1fr; margin: 0 var(--s-3) var(--s-4); } }
+    @media (max-width: 720px) {
+      .call-floor-search-row .btn, .lead-result-actions .btn, .call-floor-scheduled-item .btn { min-height: 44px; }
+      .call-floor-schedule input { font-size: 16px; }
+    }
+
     /* upcoming queue */
     .upcoming-queue {
       padding: var(--s-6);
@@ -4914,6 +5016,32 @@
         <button type="button" class="btn btn-ghost">Transfer</button>
         <button type="button" class="btn btn-danger">End</button>
       </div>
+    </div>
+  </div>
+
+  <div class="call-floor-panel" aria-label="Outbound call floor tools">
+    <div class="call-floor-box">
+      <h3>Find a lead to call</h3>
+      <p>Search the live lead cache. Results show score, last touch, motivation, and call readiness.</p>
+      <div class="call-floor-search-row">
+        <input id="callFloorLeadSearch" type="search" placeholder="Search by seller, phone, address, tag...">
+        <button class="btn btn-primary" type="button" data-call-floor-search>Search</button>
+      </div>
+      <div class="outbound-lead-results" id="callFloorLeadResults" aria-live="polite"></div>
+    </div>
+    <div class="call-floor-box">
+      <h3>Schedule callback</h3>
+      <p>Quick-pick a callback time, then keep the local queue clean before provider scheduling is approved.</p>
+      <div class="call-floor-quick-times">
+        <button class="chip-btn quick-time" type="button" data-offset="3600">In 1 hour</button>
+        <button class="chip-btn quick-time" type="button" data-offset="7200">In 2 hours</button>
+        <button class="chip-btn quick-time" type="button" data-offset="86400">Tomorrow</button>
+      </div>
+      <div class="call-floor-schedule">
+        <input id="callFloorCallbackTime" type="datetime-local">
+        <button class="btn btn-ghost" type="button" data-schedule-local-call>Save local</button>
+      </div>
+      <div class="call-floor-scheduled-list" id="callFloorScheduledList" aria-live="polite"></div>
     </div>
   </div>
 
@@ -5947,6 +6075,14 @@
     .funnel-step.s4 .fs-bar { width: 18%; background: var(--ion); }
     .funnel-step.s5 .fs-bar { width: 7%; background: var(--lime); color: var(--bg-void); }
     .funnel-step .fs-val { text-align: right; color: var(--text-primary); font-weight: 500; }
+    .roi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); margin-top: var(--s-4); }
+    .roi-tile { border: 1px solid var(--border-dim); border-radius: var(--radius); background: rgba(255,255,255,.025); padding: var(--s-4); }
+    .roi-tile span { display: block; color: var(--text-tertiary); font: 10px/1.3 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 8px; }
+    .roi-tile strong { color: var(--text-primary); font: 26px/1 var(--font-display); }
+    .roi-tile strong.lime { color: var(--lime); }
+    .roi-formula { margin-top: var(--s-3); color: var(--text-tertiary); font: 11px/1.6 var(--font-mono); border-top: 1px solid var(--border-dim); padding-top: var(--s-3); }
+    @media (max-width: 900px) { .roi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 520px) { .roi-grid { grid-template-columns: 1fr; } }
 
     /* ai performance table */
     .perf-table { margin-top: var(--s-4); border: 1px solid var(--border-dim); border-radius: var(--radius); overflow: hidden; }
@@ -6196,6 +6332,17 @@
           <span class="fs-val">7%</span>
         </div>
       </div>
+    </div>
+
+    <div class="chart-panel an-full">
+      <h4><span>ROI / cost per lead</span><span class="tf">AI spend efficiency</span></h4>
+      <div class="roi-grid">
+        <div class="roi-tile"><span>Cost per contacted lead</span><strong>$0.31</strong></div>
+        <div class="roi-tile"><span>Cost per qualified lead</span><strong>$0.55</strong></div>
+        <div class="roi-tile"><span>ROI on AI spend</span><strong class="lime">124x</strong></div>
+        <div class="roi-tile"><span>Cost per closed deal</span><strong>$14.22</strong></div>
+      </div>
+      <div class="roi-formula">$260 total AI spend / 836 calls = $0.31 - $32k profit / $260 = 124x</div>
     </div>
 
     <!-- AI PERFORMANCE -->
@@ -8242,7 +8389,7 @@
     [data-page="memory"] .memory-outcome { display: inline-block; margin-top: 5px; padding: 4px 8px; border-radius: 4px; background: var(--bg-void); color: var(--text-tertiary); font-size: 10px; }
     [data-page="memory"] .memory-outcome.win { color: var(--lime); }
     [data-page="memory"] .memory-outcome.loss { color: var(--crimson); }
-    [data-page="memory"] .memory-skill-row { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 88px auto; gap: var(--s-2); align-items: center; padding: 10px 0; border-bottom: 1px dashed var(--border-dim); }
+    [data-page="memory"] .memory-skill-row { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 70px 88px auto; gap: var(--s-2); align-items: center; padding: 10px 0; border-bottom: 1px dashed var(--border-dim); }
     [data-page="memory"] .memory-skill-row:last-child { border-bottom: 0; }
     [data-page="memory"] .memory-skill-name { min-width: 0; font: 600 13px/1.35 var(--font-ui); color: var(--text-primary); overflow-wrap: anywhere; }
     [data-page="memory"] .memory-skill-source { display: block; margin-top: 2px; font: 9px/1.2 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--text-tertiary); }
@@ -8282,6 +8429,22 @@
     [data-page="memory"] .memory-agent-stat span:last-child { color: var(--text-primary); font-weight: 700; }
     [data-page="memory"] .memory-agent-stat .lime { color: var(--lime); }
     [data-page="memory"] .memory-agent-stat .amber { color: var(--amber); }
+    [data-page="memory"] .memory-skill-trend { width: 60px; height: 20px; display: inline-flex; align-items: center; justify-content: center; color: var(--sky); }
+    [data-page="memory"] .memory-skill-trend.up { color: var(--lime); }
+    [data-page="memory"] .memory-skill-trend.down { color: var(--crimson); }
+    [data-page="memory"] .memory-skill-trend.flat { color: var(--sky); }
+    [data-page="memory"] .memory-skill-trend svg { width: 60px; height: 20px; overflow: visible; }
+    [data-page="memory"] .memory-ab-card { grid-column: 1 / -1; }
+    [data-page="memory"] .ab-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+    [data-page="memory"] .ab-variant { padding: var(--s-4); border: 1px solid var(--border-dim); border-radius: var(--radius-lg); background: rgba(255,255,255,.025); display: grid; gap: 8px; }
+    [data-page="memory"] .ab-variant.winner { border-color: rgba(77,255,154,.5); background: rgba(77,255,154,.08); }
+    [data-page="memory"] .ab-variant-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+    [data-page="memory"] .ab-variant strong { color: var(--text-primary); }
+    [data-page="memory"] .ab-variant .badge { font: 10px/1 var(--font-mono); padding: 4px 7px; border-radius: 999px; border: 1px solid rgba(77,255,154,.4); color: var(--lime); background: rgba(77,255,154,.08); }
+    [data-page="memory"] .ab-progress { height: 8px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; }
+    [data-page="memory"] .ab-progress span { display: block; height: 100%; width: var(--w); border-radius: inherit; background: linear-gradient(90deg, var(--sky), var(--lime)); }
+    [data-page="memory"] .ab-meta { display: flex; flex-wrap: wrap; gap: var(--s-2); color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
+    [data-page="memory"] .ab-footer { color: var(--text-tertiary); font: 11px/1.6 var(--font-mono); border-top: 1px solid var(--border-dim); padding-top: var(--s-3); }
     [data-page="memory"] .memory-info-callout { grid-column: 1 / -1; padding: var(--s-4); border: 1px solid var(--sky-dim); border-radius: var(--radius); background: var(--sky-glow); color: var(--text-secondary); font: 11px/1.65 var(--font-mono); overflow-wrap: anywhere; }
     [data-page="memory"] .memory-info-callout strong { color: var(--sky); }
     [data-page="memory"] .memory-info-callout code { color: var(--magenta); }
@@ -8299,6 +8462,7 @@
       [data-page="memory"] .memory-time { grid-column: 1 / -1; margin-left: 0; }
       [data-page="memory"] .memory-skill-row { grid-template-columns: 1fr; gap: 7px; }
       [data-page="memory"] .memory-skill-num { text-align: left; }
+      [data-page="memory"] .ab-card-grid { grid-template-columns: 1fr; }
       [data-page="memory"] .memory-skill-actions { justify-content: stretch; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
       [data-page="memory"] .memory-mini-btn { min-height: 40px; }
       [data-page="memory"] .memory-outcomes-grid { grid-template-columns: 1fr; }
@@ -8373,6 +8537,28 @@
         <div class="memory-skill-row" data-memory-skill="What would need to be true" data-memory-agent="ava"><div class="memory-skill-name">What would need to be true?<span class="memory-skill-source">analytics - evolving</span></div><div class="memory-skill-num">11x</div><div class="memory-skill-num warn">45%</div><div class="memory-skill-bar"><span class="amber" style="--w:64%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
         <div class="memory-skill-row" data-memory-skill="Direct close" data-memory-agent="max"><div class="memory-skill-name">Direct close<span class="memory-skill-source">trained - Max default</span></div><div class="memory-skill-num">94x</div><div class="memory-skill-num good">62%</div><div class="memory-skill-bar"><span style="--w:91%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
         <div class="memory-skill-row" data-memory-skill="Comp analysis" data-memory-agent="rex"><div class="memory-skill-name">Comp analysis<span class="memory-skill-source">tool integration - Rex</span></div><div class="memory-skill-num">412x</div><div class="memory-skill-num good">89%</div><div class="memory-skill-bar"><span class="lime" style="--w:89%"></span></div><div class="memory-skill-actions"><button type="button" class="memory-mini-btn" data-memory-skill-action="promote_skill">Promote</button><button type="button" class="memory-mini-btn" data-memory-skill-action="transfer_skill">Pass</button><button type="button" class="memory-mini-btn" data-memory-skill-action="ab_test_skill">Test</button></div></div>
+      </div>
+    </article>
+
+    <article class="memory-card memory-ab-card" aria-label="Active A/B test">
+      <div class="memory-card-head">
+        <h3>A/B test - Ackerman Negotiation</h3>
+        <button class="memory-card-action" type="button" data-memory-action="skills">view skills -></button>
+      </div>
+      <div class="memory-card-body">
+        <div class="ab-card-grid">
+          <div class="ab-variant winner">
+            <div class="ab-variant-head"><strong>v3 (winner)</strong><span class="badge">+10 lift</span></div>
+            <div class="ab-meta"><span>50 attempts</span><span>24 successes</span><span>48% rate</span></div>
+            <div class="ab-progress" aria-label="v3 success rate 48 percent"><span style="--w:48%"></span></div>
+          </div>
+          <div class="ab-variant">
+            <div class="ab-variant-head"><strong>v2 (control)</strong><span class="badge" style="color:var(--text-tertiary);border-color:var(--border-dim);background:rgba(255,255,255,.04);">control</span></div>
+            <div class="ab-meta"><span>50 attempts</span><span>19 successes</span><span>38% rate</span></div>
+            <div class="ab-progress" aria-label="v2 success rate 38 percent"><span style="--w:38%"></span></div>
+          </div>
+        </div>
+        <div class="ab-footer">Running 5 days - Statistical confidence: 86% - test ends in 2 days.</div>
       </div>
     </article>
 
@@ -10794,6 +10980,11 @@
   .modal h3 { font-family: var(--font-display); font-weight: 500; font-size: 22px; margin-bottom: var(--s-2); letter-spacing: -0.02em; }
   .modal p { color: var(--text-secondary); font-size: 13px; line-height: 1.6; margin-bottom: var(--s-4); }
   .modal .modal-actions { display: flex; gap: var(--s-2); justify-content: flex-end; }
+  .shortcut-sheet { display: grid; gap: 8px; margin-top: var(--s-3); }
+  .shortcut-sheet > div { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-dim); }
+  .shortcut-sheet > div:last-child { border-bottom: 0; }
+  .shortcut-sheet span { color: var(--text-secondary); }
+  .shortcut-sheet kbd { min-width: 34px; text-align: center; border: 1px solid var(--border-bright); border-radius: 7px; padding: 4px 7px; color: var(--sky); background: var(--sky-glow); font: 11px/1 var(--font-mono); }
   .pbk-form-modal { width: min(720px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; }
   .pbk-form-modal form { display: grid; gap: var(--s-3); margin-top: var(--s-4); }
   .pbk-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
@@ -12765,11 +12956,18 @@
     window.scrollTo(0, 0);
   }
 
+  let pbkBootReadyMarked = false;
+
   function markPbkBootReady(reason = 'ready') {
     document.body.dataset.pbkBootReason = reason;
-    requestAnimationFrame(() => {
+    const releaseBoot = () => {
+      if (pbkBootReadyMarked) return;
+      pbkBootReadyMarked = true;
       document.body.classList.add('pbk-boot-ready');
-    });
+    };
+    releaseBoot();
+    requestAnimationFrame(releaseBoot);
+    setTimeout(releaseBoot, 120);
   }
 
   function isLeadRowInteractiveTarget(event) {
@@ -13918,6 +14116,39 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   // =========================================================
   // KEYBOARD SHORTCUTS
   // =========================================================
+  function openInboxCompose() {
+    showPage('inbox');
+    setTimeout(() => {
+      const compose = document.querySelector('.page[data-page="inbox"] .compose');
+      const textarea = compose?.querySelector('textarea');
+      textarea?.focus();
+      compose?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    toast({ type: 'info', title: 'Compose ready', desc: 'Draft a SMS, email, or call note from the Inbox composer.' });
+  }
+
+  function showShortcutCheatSheet() {
+    showUtilityModal('Keyboard shortcuts', `
+      <div class="shortcut-sheet">
+        <div><span>Open command palette</span><kbd>Cmd K</kbd><kbd>Ctrl K</kbd></div>
+        <div><span>Show this sheet</span><kbd>?</kbd></div>
+        <div><span>Focus global search</span><kbd>F</kbd></div>
+        <div><span>Toggle theme</span><kbd>T</kbd></div>
+        <div><span>Collapse / expand rail</span><kbd>[</kbd></div>
+        <div><span>Compose new message</span><kbd>C</kbd></div>
+        <div><span>Approve first card</span><kbd>A</kbd></div>
+        <div><span>Reject first card</span><kbd>R</kbd></div>
+        <div><span>Close modals</span><kbd>Esc</kbd></div>
+      </div>
+    `);
+  }
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-open-compose]')) return;
+    event.preventDefault();
+    openInboxCompose();
+  });
+
   let gPressed = false;
   let gTimer = null;
   document.addEventListener('keydown', (e) => {
@@ -13938,6 +14169,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       notifPanel.classList.remove('open');
       userMenu.classList.remove('open');
       modePopover.classList.remove('open');
+      closeFleetModals();
       if (modalBackdrop.classList.contains('open')) {
         modalBackdrop.classList.remove('open');
         confirmModal.classList.remove('open');
@@ -13947,11 +14179,37 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     // ? for shortcuts
     if (e.key === '?') {
       e.preventDefault();
-      toast({
-        type: 'info',
-        title: 'Keyboard shortcuts',
-        desc: 'Ctrl/Command+K palette - G+D/L/I/B navigate - A approve - R decline - ? shortcuts'
-      });
+      showShortcutCheatSheet();
+      return;
+    }
+
+    if (e.key.toLowerCase() === 'f') {
+      const search = document.querySelector('.top-search input, input[type="search"], #globalSearch');
+      if (search) {
+        e.preventDefault();
+        search.focus();
+      }
+      return;
+    }
+
+    if (e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      themeToggle?.click();
+      return;
+    }
+
+    if (e.key === '[') {
+      e.preventDefault();
+      const shell = document.querySelector('.app');
+      shell?.classList.toggle('rail-collapsed');
+      toast({ type: 'info', title: 'Rail toggled', desc: shell?.classList.contains('rail-collapsed') ? 'Navigation rail collapsed.' : 'Navigation rail expanded.' });
+      return;
+    }
+
+    if (e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      openInboxCompose();
+      return;
     }
 
     // G + letter navigation
@@ -13971,6 +14229,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (e.key.toLowerCase() === 'a') {
       const firstApprove = document.querySelector('.page.active .qcard .btn-primary');
       if (firstApprove) { e.preventDefault(); firstApprove.click(); }
+    }
+
+    if (e.key.toLowerCase() === 'r') {
+      const firstReject = document.querySelector('.page.active .qcard .btn-danger, .page.active .qcard .btn-ghost');
+      if (firstReject) { e.preventDefault(); firstReject.click(); }
     }
   });
 
@@ -16887,6 +17150,52 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
+  function openFleetSkillTransferModal(agentId, skillName = '') {
+    const agent = getFleetAgent(agentId);
+    const modal = document.getElementById('fleetSkillTransferModal');
+    const list = document.getElementById('fleetTransferAgentList');
+    const title = document.getElementById('fleetTransferTitle');
+    const meta = document.getElementById('fleetTransferMeta');
+    const versioned = document.getElementById('fleetTransferVersioned');
+    const confirm = document.getElementById('fleetTransferConfirm');
+    const count = document.getElementById('fleetTransferCount');
+    if (!agent || !modal || !list || !confirm || !count) return;
+
+    const recipients = getFleetAgents().filter((candidate) => candidate.id !== agent.id);
+    modal.dataset.sourceAgent = agent.id;
+    modal.dataset.skillName = skillName;
+    if (title) title.textContent = `Transfer "${skillName || 'Selected skill'}"`;
+    if (meta) meta.textContent = `Source: ${agent.name}. Choose target agents, then PBK will show a local transfer confirmation.`;
+    if (versioned) versioned.checked = true;
+
+    list.innerHTML = recipients.map((candidate) => `
+      <label class="fleet-transfer-agent">
+        <input type="checkbox" value="${escapeHtml(candidate.id)}" data-agent-name="${escapeHtml(candidate.name)}">
+        <span><strong>${escapeHtml(candidate.name)}</strong><span>${escapeHtml(candidate.role || candidate.status || 'agent')} - ${escapeHtml(candidate.env || 'production')}</span></span>
+      </label>
+    `).join('');
+
+    const sync = () => {
+      const selected = Array.from(list.querySelectorAll('input:checked'));
+      count.textContent = `${selected.length} agent${selected.length === 1 ? '' : 's'} selected`;
+      confirm.disabled = selected.length === 0;
+    };
+    list.onchange = sync;
+    confirm.onclick = () => {
+      const selected = Array.from(list.querySelectorAll('input:checked'));
+      const names = selected.map((input) => input.dataset.agentName || input.value);
+      const isVersioned = versioned?.checked !== false;
+      closeFleetModals();
+      toast({
+        type: 'success',
+        title: 'Skill transferred',
+        desc: `'${skillName || 'Selected skill'}' copied to ${names.join(', ')}${isVersioned ? ' (versioned)' : ''}.`
+      });
+    };
+    sync();
+    openFleetModal('fleetSkillTransferModal');
+  }
+
   async function handleFleetAction(action, agentId, extra = {}) {
     const agent = getFleetAgent(agentId);
     if (!agent) return;
@@ -16904,7 +17213,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       });
       return;
     }
-    if (action === 'transfer_skill' || action === 'promote_skill' || action === 'ab_test_skill') {
+    if (action === 'transfer_skill') {
+      openFleetSkillTransferModal(agent.id, extra.skill || '');
+      return;
+    }
+    if (action === 'promote_skill' || action === 'ab_test_skill') {
       await queueFleetProposal({
         tool: action,
         params: { sourceAgentId: agent.id, sourceAgentName: agent.name, skill: extra.skill || '', targetAgentId: 'next-best-agent' },
@@ -25106,10 +25419,148 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  const CALL_FLOOR_SCHEDULE_KEY = 'pbk:call-floor:scheduled:v1';
+
+  function getCallFloorLeads() {
+    const live = getRuntimeLeads(PBK.state.openclawRuntime || {});
+    if (live.length) return live;
+    return [
+      { id: 'local-latoya', leadName: 'Latoya Briggs', phone: '+1 330-555-0192', address: '8804 Waterloo, Akron OH', score: 71, status: 'Probate', tags: ['probate', 'equity'], updatedAt: new Date(Date.now() - 27 * 60000).toISOString(), motivation: 'Inherited property; wants simple close' },
+      { id: 'local-marcus', leadName: 'Marcus Delaney', phone: '+1 330-555-0188', address: '14 Maple Ct, Akron OH', score: 82, status: 'Pre-foreclosure', tags: ['urgent', 'sms-engaged'], updatedAt: new Date(Date.now() - 2 * 3600000).toISOString(), motivation: 'Best time 11am-1pm' },
+      { id: 'local-kelvin', leadName: 'Kelvin Obi', phone: '+1 330-555-0177', address: '44 Walnut Ct, Akron OH', score: 52, status: 'New lead', tags: ['qualify'], updatedAt: '', motivation: 'Needs first qualification call' }
+    ];
+  }
+
+  function renderCallFloorLeadResults(query = '') {
+    const list = document.getElementById('callFloorLeadResults');
+    if (!list) return;
+    const needle = query.trim().toLowerCase();
+    const activePhones = new Set(getRuntimeCalls(PBK.state.openclawRuntime || {}).map((call) => String(call.to || call.phone || call.from || '').replace(/\D+/g, '')));
+    const leads = getCallFloorLeads().filter((lead) => {
+      const text = [getLeadSellerName(lead), getLeadPhone(lead), getLeadAddress(lead), getLeadTags(lead).join(' '), lead.status, lead.motivation].join(' ').toLowerCase();
+      return !needle || text.includes(needle);
+    }).slice(0, 5);
+
+    if (!leads.length) {
+      list.innerHTML = '<div class="outbound-lead-result"><strong>No matching leads</strong><span class="lead-result-meta">Try seller name, phone, address, or tag.</span></div>';
+      return;
+    }
+
+    list.innerHTML = leads.map((lead) => {
+      const phoneDigits = String(getLeadPhone(lead)).replace(/\D+/g, '');
+      const inCall = phoneDigits && activePhones.has(phoneDigits);
+      const score = lead.score || lead.engagement_score || lead.engagementScore || lead.priorityScore || 0;
+      const lastTouch = lead.updated_at || lead.updatedAt || lead.lastTouch || lead.last_touch || '';
+      const tags = getLeadTags(lead).slice(0, 3).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('');
+      return `
+        <div class="outbound-lead-result">
+          <div class="outbound-lead-head">
+            <strong>${escapeHtml(getLeadSellerName(lead))}</strong>
+            <span class="score-badge ${inCall ? 'in-call-badge' : ''}">${inCall ? 'In call' : `Score ${escapeHtml(score)}`}</span>
+          </div>
+          <div class="lead-result-meta">${escapeHtml(formatPhoneForDisplay(getLeadPhone(lead)))} - ${escapeHtml(getLeadAddress(lead))}</div>
+          <div class="lead-result-meta">Last touch: ${escapeHtml(lastTouch ? formatRelativeTime(lastTouch) : 'never')} - ${escapeHtml(String(lead.motivation?.summary || lead.motivation || lead.status || 'ready'))}</div>
+          <div class="lead-result-actions">
+            ${tags}
+            <button class="btn btn-primary btn-call" type="button" data-call-floor-call="${escapeHtml(getLeadRuntimeId(lead) || getLeadPhone(lead))}" ${inCall ? 'disabled' : ''}>Call</button>
+            <button class="btn btn-ghost" type="button" data-call-floor-open-lead="${escapeHtml(getLeadRuntimeId(lead) || getLeadPhone(lead))}">Open</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function getCallFloorSchedule() {
+    return parseJSONSafe(localStorage.getItem(CALL_FLOOR_SCHEDULE_KEY), []);
+  }
+
+  function setCallFloorSchedule(items = []) {
+    localStorage.setItem(CALL_FLOOR_SCHEDULE_KEY, JSON.stringify(items.slice(0, 12)));
+  }
+
+  function renderCallFloorSchedule() {
+    const list = document.getElementById('callFloorScheduledList');
+    if (!list) return;
+    const items = getCallFloorSchedule();
+    list.innerHTML = items.length
+      ? items.map((item) => `
+        <div class="call-floor-scheduled-item">
+          <div><strong>${escapeHtml(item.title || 'Callback')}</strong><span>${escapeHtml(item.whenLabel || item.when || '')}</span></div>
+          <button class="btn btn-ghost" type="button" data-cancel-scheduled-call="${escapeHtml(item.id)}">Cancel</button>
+        </div>
+      `).join('')
+      : '<div class="call-floor-scheduled-item"><div><strong>No local callbacks</strong><span>Quick-pick a time, then save it here.</span></div></div>';
+  }
+
+  function wireCallFloorPolish(page) {
+    if (!page || page.dataset.callFloorPolishWired === 'true') return;
+    page.dataset.callFloorPolishWired = 'true';
+    const search = page.querySelector('#callFloorLeadSearch');
+    const callbackTime = page.querySelector('#callFloorCallbackTime');
+    renderCallFloorLeadResults('');
+    renderCallFloorSchedule();
+
+    search?.addEventListener('input', () => renderCallFloorLeadResults(search.value));
+    page.querySelector('[data-call-floor-search]')?.addEventListener('click', () => renderCallFloorLeadResults(search?.value || ''));
+    page.querySelectorAll('.quick-time').forEach((button) => {
+      button.addEventListener('click', () => {
+        const offsetSeconds = Number(button.dataset.offset || 0);
+        const date = new Date(Date.now() + offsetSeconds * 1000);
+        if (callbackTime) callbackTime.value = date.toISOString().slice(0, 16);
+      });
+    });
+
+    page.addEventListener('click', (event) => {
+      const callButton = event.target.closest('[data-call-floor-call]');
+      if (callButton) {
+        const original = callButton.textContent;
+        callButton.disabled = true;
+        callButton.innerHTML = '<span class="loading-spinner-small"></span>Calling...';
+        setTimeout(() => {
+          callButton.disabled = false;
+          callButton.textContent = original || 'Call';
+          toast({ type: 'info', title: 'Call queued', desc: 'UI preview only - live Telnyx dialing remains approval-aware.' });
+        }, 900);
+        return;
+      }
+
+      const openLead = event.target.closest('[data-call-floor-open-lead]');
+      if (openLead) {
+        const lead = getCallFloorLeads().find((item) => [getLeadRuntimeId(item), getLeadPhone(item), getLeadSellerName(item)].includes(openLead.dataset.callFloorOpenLead));
+        if (lead) openLeadDetail(getLeadRuntimeId(lead));
+        else showPage('lead-detail');
+        return;
+      }
+
+      if (event.target.closest('[data-schedule-local-call]')) {
+        const value = callbackTime?.value || '';
+        if (!value) {
+          toast({ type: 'warning', title: 'Choose a time', desc: 'Pick a callback time before saving.' });
+          return;
+        }
+        const items = getCallFloorSchedule();
+        const when = new Date(value);
+        items.unshift({ id: `local-${Date.now()}`, title: 'Callback follow-up', when: value, whenLabel: Number.isFinite(when.getTime()) ? when.toLocaleString() : value });
+        setCallFloorSchedule(items);
+        renderCallFloorSchedule();
+        toast({ type: 'success', title: 'Callback saved', desc: 'Saved locally for this browser session.' });
+        return;
+      }
+
+      const cancel = event.target.closest('[data-cancel-scheduled-call]');
+      if (cancel) {
+        setCallFloorSchedule(getCallFloorSchedule().filter((item) => item.id !== cancel.dataset.cancelScheduledCall));
+        renderCallFloorSchedule();
+        toast({ type: 'info', title: 'Callback removed', desc: 'Local scheduled item cancelled.' });
+      }
+    });
+  }
+
   function wireCallsRuntime() {
     const page = getPageNode('calls');
     if (!page || page.dataset.runtimeWired === 'true') return;
     page.dataset.runtimeWired = 'true';
+    wireCallFloorPolish(page);
 
     page.addEventListener('click', async (event) => {
       const button = event.target.closest('.btn');
@@ -26809,6 +27260,34 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     'attorney-review': ['Rex note - attorney-review playbook', 'Support attorney review. Send a clean summary and ask for a review deadline so the deal does not drift.']
   };
 
+  const MEMORY_SKILL_TRENDS = [
+    [50, 51, 50, 52, 54, 55, 54, 56, 58, 57, 59, 61, 60, 62, 64, 63, 66, 67, 68, 70, 69, 71, 73, 74, 76, 77, 79, 80, 82, 84],
+    [76, 75, 74, 73, 74, 72, 71, 70, 68, 67, 66, 65, 64, 62, 63, 61, 60, 59, 58, 56, 55, 54, 53, 52, 50, 49, 48, 47, 46, 45],
+    [61, 62, 61, 61, 62, 61, 62, 62, 61, 62, 63, 62, 62, 63, 62, 62, 63, 63, 62, 63, 64, 63, 63, 64, 63, 64, 64, 63, 64, 64]
+  ];
+
+  function buildMemorySkillSparkline(values = []) {
+    const clean = values.length ? values : MEMORY_SKILL_TRENDS[0];
+    const points = clean.map((value, index) => {
+      const x = clean.length <= 1 ? 0 : (index / (clean.length - 1)) * 60;
+      const y = 20 - (Number(value || 0) / 100) * 18;
+      return `${x.toFixed(1)},${Math.max(1, Math.min(19, y)).toFixed(1)}`;
+    }).join(' ');
+    const first = Number(clean[0] || 0);
+    const last = Number(clean[clean.length - 1] || 0);
+    const tone = Math.abs(last - first) <= 2 ? 'flat' : last > first ? 'up' : 'down';
+    return `<span class="memory-skill-trend ${tone}" title="30-day confidence trend"><svg width="60" height="20" viewBox="0 0 60 20" aria-hidden="true"><polyline points="${points}" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
+  }
+
+  function enhanceMemorySkillSparklines(root = document) {
+    root.querySelectorAll('[data-memory-skills-list] .memory-skill-row').forEach((row, index) => {
+      if (row.querySelector('.memory-skill-trend')) return;
+      const rate = row.querySelectorAll('.memory-skill-num')[1];
+      if (!rate) return;
+      rate.insertAdjacentHTML('afterend', buildMemorySkillSparkline(MEMORY_SKILL_TRENDS[index % MEMORY_SKILL_TRENDS.length]));
+    });
+  }
+
   function wireMemoryAnalyticsControls() {
     const page = document.querySelector('section.page[data-page="memory"]');
     if (!page || page.dataset.memoryWired === 'true') return;
@@ -26939,6 +27418,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
         `;
       }).join('');
+      enhanceMemorySkillSparklines(page);
     };
 
     const renderObjectionPlaybooks = (items = []) => {
@@ -27061,6 +27541,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         toastOutcome({ outcome: 'unavailable', title: `${title} not queued`, desc: error?.message || 'Bridge did not accept the Memory & Analytics request.' });
       }
     };
+
+    enhanceMemorySkillSparklines(page);
 
     page.addEventListener('click', async (event) => {
       const rangeCycle = event.target.closest('[data-memory-cycle="range"]');

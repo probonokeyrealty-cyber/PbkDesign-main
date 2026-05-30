@@ -382,7 +382,7 @@ const checks = [
       && /showAvaVoiceDiagnostic/.test(index)
       && /type:\s*'diagnostic'/.test(bridge)
       && /function restoreApprovalCardDecision/.test(index)
-      && /button\.textContent = normalizeRuntimeStatus\(action\) === 'cancelled' \? 'Cancelling\.\.\.' : 'Sending\.\.\.'/.test(index),
+      && /withButtonLoading\(\s*button,[\s\S]*normalizeRuntimeStatus\(action\) === 'cancelled' \? 'Cancelling\.\.\.' : 'Sending\.\.\.'/.test(index),
   },
   {
     name: 'Approval BANT context stays informational and hidden from non-lead approval types',
@@ -704,8 +704,8 @@ const checks = [
   {
     name: 'Approval board decisions render from write responses without blocking on full refresh',
     ok: /let decisionResponse = null/.test(index)
-      && /decisionResponse = await requestOpenClawApi\(approvalPath/.test(index)
-      && /decisionResponse = await updateAdminTaskDecision/.test(index)
+      && /decisionResponse = await withButtonLoading\([\s\S]*requestOpenClawApi\(approvalPath/.test(index)
+      && /decisionResponse = await withButtonLoading\([\s\S]*updateAdminTaskDecision/.test(index)
       && /decisionResponse\?\.state[\s\S]*renderOpenClawState\(decisionResponse\.state\)/.test(index)
       && /scheduleApprovalBoardRefreshRetry/.test(index),
   },

@@ -84,11 +84,62 @@
     0% { background-position: 200% 0; }
     100% { background-position: -200% 0; }
   }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
   .skeleton.line { height: 1em; width: 100%; }
   .skeleton.short { width: 40%; }
   .skeleton.medium { width: 70%; }
   .skeleton.box { display: block; height: 80px; width: 100%; }
   .skeleton.circle { border-radius: 50%; }
+  .loading-spinner-small,
+  .loading-spinner {
+    display: inline-block;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.26);
+    border-top-color: var(--sky);
+    animation: spin .65s linear infinite;
+    flex: 0 0 auto;
+  }
+  .loading-spinner-small {
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+  }
+  .loading-spinner {
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
+  }
+  .btn.is-loading,
+  .chip-btn.is-loading {
+    opacity: .78;
+    cursor: wait;
+    pointer-events: none;
+  }
+  .btn.is-loading,
+  .chip-btn.is-loading,
+  .thinking-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .rc-msg.thinking {
+    color: var(--text-secondary);
+    border-style: dashed;
+    background: rgba(125, 211, 252, .06);
+  }
+  .rec-feedback {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .rec-feedback-btn.active {
+    border-color: var(--sky-dim);
+    color: var(--sky-bright);
+    background: var(--sky-glow);
+  }
   .runtime-skeleton-card {
     display: grid;
     gap: 10px;
@@ -12807,6 +12858,40 @@
   }
   window.toast = toast;
 
+  function setElementBusy(element, busy = true, label = 'Loading...') {
+    if (!element) return () => {};
+    const previous = {
+      html: element.innerHTML,
+      disabled: element.disabled,
+      ariaBusy: element.getAttribute('aria-busy'),
+      title: element.getAttribute('title'),
+    };
+    if (busy) {
+      element.disabled = true;
+      element.classList.add('is-loading');
+      element.setAttribute('aria-busy', 'true');
+      element.innerHTML = `<span class="loading-spinner-small" aria-hidden="true"></span><span>${escapeHtml(label)}</span>`;
+    }
+    return () => {
+      element.innerHTML = previous.html;
+      element.disabled = previous.disabled;
+      element.classList.remove('is-loading');
+      if (previous.ariaBusy === null) element.removeAttribute('aria-busy');
+      else element.setAttribute('aria-busy', previous.ariaBusy);
+      if (previous.title === null) element.removeAttribute('title');
+      else element.setAttribute('title', previous.title);
+    };
+  }
+
+  async function withButtonLoading(button, label, task) {
+    const restore = setElementBusy(button, true, label);
+    try {
+      return await task();
+    } finally {
+      restore();
+    }
+  }
+
   function refreshNetworkBanner() {
     const offline = navigator.onLine === false;
     document.body.classList.toggle('is-offline', offline);
@@ -18665,6 +18750,60 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
   }
 
+  async function recordCallFeedback(button) {
+    const callId = String(button?.dataset.callId || button?.dataset.recordingId || PBK.state.activeRecordingId || '').trim();
+    const messageId = String(button?.dataset.messageId || '').trim();
+    const rating = String(button?.dataset.feedbackRating || '').trim().toLowerCase();
+    if (!callId && !messageId) {
+      toast({ type: 'warning', title: 'No recording selected', desc: 'Select a live recording before rating the call.' });
+      return null;
+    }
+    if (!/^(good|bad)$/.test(rating)) {
+      toast({ type: 'warning', title: 'Feedback rating missing', desc: 'Use thumbs up or thumbs down so Rex can learn from the call.' });
+      return null;
+    }
+
+    try {
+      const response = await withButtonLoading(button, 'Saving...', () => requestOpenClawApi('/api/feedback', {
+        method: 'POST',
+        body: {
+          callId: callId || messageId,
+          messageId,
+          rating,
+          feedback: rating === 'good' ? 'thumbs_up' : 'thumbs_down',
+          requestedBy: 'recordings-library',
+          source: 'recordings_library',
+          metadata: {
+            recordingId: callId,
+            messageId,
+            surface: 'recordings',
+          },
+        },
+        timeout: 10000,
+      }));
+      button.closest('.rec-feedback')?.querySelectorAll('[data-call-feedback]').forEach((peer) => {
+        peer.classList.toggle('active', peer === button);
+        peer.setAttribute('aria-pressed', peer === button ? 'true' : 'false');
+      });
+      toastOutcome({
+        outcome: getRuntimeOutcome(response, response?.postgres === false ? 'local_view_only' : 'live'),
+        title: 'Call feedback recorded',
+        desc: rating === 'good'
+          ? 'Rex will weight this call as a winning pattern.'
+          : 'Rex will review this call for script, prosody, and objection fixes.',
+        response,
+      });
+      return response;
+    } catch (error) {
+      toast({
+        type: 'error',
+        title: 'Feedback failed',
+        desc: error?.message || 'PBK Brain did not accept the call feedback.'
+      });
+      return null;
+    }
+  }
+
   function getRuntimeRecordingItems(snapshot = {}) {
     const deletedIds = new Set(getDeletedRecordingIds());
     const messageRecordings = Array.isArray(snapshot.messages)
@@ -18796,6 +18935,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           </div>
           <button type="button" class="chip-btn">Send to lead</button>
           <button type="button" class="chip-btn">Download</button>
+          <div class="rec-feedback" aria-label="Rate this call">
+            <button type="button" class="chip-btn rec-feedback-btn" data-call-feedback data-feedback-rating="good" data-call-id="${escapeHtml(active.id)}" data-message-id="${escapeHtml(active.messageId || active.id)}" aria-pressed="false" title="Mark this call as useful">👍 Good</button>
+            <button type="button" class="chip-btn rec-feedback-btn" data-call-feedback data-feedback-rating="bad" data-call-id="${escapeHtml(active.id)}" data-message-id="${escapeHtml(active.messageId || active.id)}" aria-pressed="false" title="Mark this call for review">👎 Fix</button>
+          </div>
           <button type="button" class="chip-btn" data-recording-delete-active="${escapeHtml(active.messageId || active.id)}" data-recording-id="${escapeHtml(active.id)}">Delete</button>
         `
         : `
@@ -20788,27 +20931,28 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     setBoardActionButtonsDisabled(card, '[data-approval-action]', true);
-    const originalButtonText = button.textContent;
-    button.textContent = normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancelling...' : 'Sending...';
     markApprovalCardDecisionAccepted(card, action);
     let decisionResponse = null;
     try {
       const teamSession = getTeamSession();
-      decisionResponse = await requestOpenClawApi(approvalPath, {
-        method: 'PUT',
-        body: {
-          status: action,
-          actor: teamSession?.role === 'team' ? 'PBK team dashboard' : 'PBK founder dashboard',
-          actedAt: new Date().toISOString(),
-          notes: decisionNotes,
-          reviewReason,
-          falsePositiveTag: reviewReason,
-          teamToken: teamSession?.token || getTeamSessionToken()
-        },
-        timeout: normalizeRuntimeStatus(action) === 'cancelled' ? 6000 : 9000
-      });
+      decisionResponse = await withButtonLoading(
+        button,
+        normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancelling...' : 'Sending...',
+        () => requestOpenClawApi(approvalPath, {
+          method: 'PUT',
+          body: {
+            status: action,
+            actor: teamSession?.role === 'team' ? 'PBK team dashboard' : 'PBK founder dashboard',
+            actedAt: new Date().toISOString(),
+            notes: decisionNotes,
+            reviewReason,
+            falsePositiveTag: reviewReason,
+            teamToken: teamSession?.token || getTeamSessionToken()
+          },
+          timeout: normalizeRuntimeStatus(action) === 'cancelled' ? 6000 : 9000
+        })
+      );
     } catch (error) {
-      button.textContent = originalButtonText;
       restoreApprovalCardDecision(card);
       setBoardActionButtonsDisabled(card, '[data-approval-action]', false);
       toast({
@@ -24558,7 +24702,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           const label = button.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
           if (label === 'send') {
-            const response = await submitAgentCommand(textarea?.value || '');
+            const response = await withButtonLoading(button, 'Sending...', () => submitAgentCommand(textarea?.value || ''));
             if (response && textarea) textarea.value = '';
             return;
           }
@@ -24583,7 +24727,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       textarea?.addEventListener('keydown', async (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
           event.preventDefault();
-          const response = await submitAgentCommand(textarea.value || '');
+          const sendButton = buttons.find((button) => button.textContent.replace(/\s+/g, ' ').trim().toLowerCase() === 'send');
+          const response = sendButton
+            ? await withButtonLoading(sendButton, 'Sending...', () => submitAgentCommand(textarea.value || ''))
+            : await submitAgentCommand(textarea.value || '');
           if (response) textarea.value = '';
         }
       });
@@ -25538,6 +25685,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     page.addEventListener('click', (event) => {
       const button = event.target.closest('button');
       if (!button) return;
+      const feedbackButton = button.closest('[data-call-feedback]');
+      if (feedbackButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        void recordCallFeedback(feedbackButton);
+        return;
+      }
       const label = normalizeControlText(button.textContent?.trim() ? button.textContent : button.title);
 
       if (label === 'filter') {
@@ -26931,6 +27085,27 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     body.scrollTop = body.scrollHeight;
   }
 
+  function addBrainThinkingMessage() {
+    const body = document.querySelector('[data-brain-chat-body]');
+    if (!body) return '';
+    const id = `brain-thinking-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const message = document.createElement('div');
+    message.className = 'rc-msg ai thinking';
+    message.dataset.brainThinkingId = id;
+    message.innerHTML = '<div class="thinking-indicator"><span class="loading-spinner" aria-hidden="true"></span><span>Rex is thinking...</span></div>';
+    body.appendChild(message);
+    body.scrollTop = body.scrollHeight;
+    return id;
+  }
+
+  function removeBrainThinkingMessage(id = '') {
+    if (!id) return;
+    const safeId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? CSS.escape(id)
+      : String(id).replace(/["\\]/g, '\\$&');
+    document.querySelector(`[data-brain-thinking-id="${safeId}"]`)?.remove();
+  }
+
   async function submitBrainQuery(prefill = '') {
     const input = document.querySelector('[data-brain-chat-input]');
     const query = (prefill || input?.value || '').trim();
@@ -26951,6 +27126,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     PBK.state.runtime.rexMessages.push(userMessage);
     appendBrainMessage('user', query);
     if (input) input.value = '';
+    const thinkingId = addBrainThinkingMessage();
 
     try {
       const response = await requestOpenClawApi('/api/brain/query', {
@@ -26980,6 +27156,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         title: 'Rex could not answer',
         desc: error?.message || 'PBK Brain did not return a research response. Check the bridge connection.'
       });
+    } finally {
+      removeBrainThinkingMessage(thinkingId);
     }
   }
 
@@ -30220,14 +30398,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     setBoardActionButtonsDisabled(card, '[data-admin-action]', true);
-    const originalButtonText = button.textContent;
-    button.textContent = normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancelling...' : 'Sending...';
     markApprovalCardDecisionAccepted(card, action);
     let decisionResponse = null;
     try {
-      decisionResponse = await updateAdminTaskDecision(taskId, action);
+      decisionResponse = await withButtonLoading(
+        button,
+        normalizeRuntimeStatus(action) === 'cancelled' ? 'Cancelling...' : 'Sending...',
+        () => updateAdminTaskDecision(taskId, action)
+      );
     } catch (error) {
-      button.textContent = originalButtonText;
       restoreApprovalCardDecision(card);
       setBoardActionButtonsDisabled(card, '[data-admin-action]', false);
       toast({

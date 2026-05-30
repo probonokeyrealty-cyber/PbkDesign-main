@@ -57,6 +57,10 @@ import {
   runYouTubeTrainingEvalSuite,
 } from './youtube-training.mjs';
 import {
+  SYNTHETIC_EDGE_CASE_SOURCE,
+  buildSyntheticEdgeCaseObjections,
+} from './synthetic-edge-cases.mjs';
+import {
   getObservabilityStatus as getPbkObservabilityStatus,
   incrementObservabilityCounter,
   initializeObservability,
@@ -358,6 +362,10 @@ const COMMAND_CENTER_CLOSED_LOOP_FIRST_DELAY_MS = Math.max(60_000, Number(proces
 const REX_GOAL_ALIGNMENT_INTERVAL_MS = Math.max(60 * 60 * 1000, Number(process.env.PBK_REX_GOAL_ALIGNMENT_INTERVAL_MS || 24 * 60 * 60 * 1000));
 const CALL_ANALYZER_INTERVAL_MS = Math.max(30 * 60 * 1000, Number(process.env.PBK_CALL_ANALYZER_INTERVAL_MS || 60 * 60 * 1000));
 const PROSODY_TRAIN_INTERVAL_MS = Math.max(24 * 60 * 60 * 1000, Number(process.env.PBK_PROSODY_TRAIN_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000));
+const EMOTION_WORLD_MODEL_RETRAIN_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.PBK_EMOTION_WORLD_MODEL_RETRAIN_ENABLED || process.env.PBK_ONNX_WEEKLY_RETRAIN_ENABLED || 'true').trim());
+const EMOTION_WORLD_MODEL_RETRAIN_MIN_SAMPLES = Math.max(1, Number(process.env.PBK_EMOTION_WORLD_MODEL_RETRAIN_MIN_SAMPLES || process.env.PBK_ONNX_RETRAIN_MIN_CALLS || 500));
+const EMOTION_WORLD_MODEL_RETRAIN_TIMEOUT_MS = Math.max(60_000, Number(process.env.PBK_EMOTION_WORLD_MODEL_RETRAIN_TIMEOUT_MS || 15 * 60 * 1000));
+const SYNTHETIC_EDGE_CASE_INTERVAL_MS = Math.max(24 * 60 * 60 * 1000, Number(process.env.PBK_SYNTHETIC_EDGE_CASE_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000));
 const REDIS_URL = String(process.env.PBK_REDIS_URL || process.env.REDIS_URL || process.env.RENDER_REDIS_URL || '').trim();
 const REDIS_ENABLED = Boolean(REDIS_URL) && !/^(0|false|no|off)$/i.test(String(process.env.PBK_REDIS_ENABLED || 'true').trim());
 const REDIS_NAMESPACE = String(process.env.PBK_REDIS_NAMESPACE || 'pbk-openclaw').trim().replace(/[^a-z0-9:_-]/gi, '-') || 'pbk-openclaw';
@@ -779,6 +787,8 @@ const TOOL_NAMES = [
   'runCoworkerHeartbeat',
   'runYouTubeTrainingPipeline',
   'runYouTubeTrainingEvalSuite',
+  'generateSyntheticEdgeCases',
+  'trainEmotionWorldModel',
   'selectContextAwareScript',
   'recordContextAwareScriptOutcome',
   'validateProviderActionSafety',
@@ -9991,6 +10001,105 @@ async function recordYouTubeCoachMemoryEntries(entries = [], artifact = {}) {
     console.warn('[pbk-local-openclaw] YouTube coach_memory persistence skipped:', error?.message || error);
     return { ok: false, result: 'coach_memory_failed', error: error?.message || String(error), count };
   }
+}
+
+async function recordSyntheticEdgeCaseCoachMemoryEntries(entries = [], params = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const pool = getPgPool();
+  if (!pool || !list.length) {
+    return {
+      ok: true,
+      result: pool ? 'empty' : 'state_only',
+      count: list.length,
+      postgres: false,
+    };
+  }
+  let count = 0;
+  try {
+    for (const entry of list) {
+      await pool.query(
+        `INSERT INTO public.coach_memory (
+          id, workspace_id, memory_type, objection_tag, path_key, prompt, response,
+          source, source_url, outcome, score, metadata, created_at, updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,NOW(),NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          workspace_id = EXCLUDED.workspace_id,
+          memory_type = EXCLUDED.memory_type,
+          objection_tag = EXCLUDED.objection_tag,
+          path_key = EXCLUDED.path_key,
+          prompt = EXCLUDED.prompt,
+          response = EXCLUDED.response,
+          source = EXCLUDED.source,
+          source_url = EXCLUDED.source_url,
+          outcome = EXCLUDED.outcome,
+          score = GREATEST(public.coach_memory.score, EXCLUDED.score),
+          metadata = public.coach_memory.metadata || EXCLUDED.metadata,
+          updated_at = NOW()`,
+        [
+          String(entry.id || `synthetic-edge-${Date.now()}-${count}`).slice(0, 160),
+          normalizeTenantId(entry.workspaceId || entry.workspace_id || params.workspaceId || params.workspace_id || 'pbk'),
+          String(entry.memoryType || entry.memory_type || 'objection').slice(0, 80),
+          String(entry.objectionTag || entry.objection_tag || 'synthetic').slice(0, 120),
+          String(entry.pathKey || entry.path_key || params.pathKey || params.path_key || 'general').slice(0, 120),
+          String(entry.prompt || '').slice(0, 4000),
+          String(entry.response || '').slice(0, 4000),
+          String(entry.source || SYNTHETIC_EDGE_CASE_SOURCE).slice(0, 80),
+          String(entry.sourceUrl || entry.source_url || '').slice(0, 1000),
+          String(entry.outcome || 'approved').slice(0, 80),
+          Math.max(0, Math.min(1, toNumber(entry.score, 0.84))),
+          JSON.stringify({
+            ...(entry.metadata && typeof entry.metadata === 'object' ? entry.metadata : {}),
+            generatedBy: params.source || 'synthetic-edge-case-tool',
+            generatedAt: isoNow(),
+          }),
+        ],
+      );
+      count += 1;
+    }
+    return { ok: true, result: 'coach_memory_upserted', count, postgres: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] synthetic coach_memory persistence skipped:', error?.message || error);
+    return {
+      ok: false,
+      result: 'coach_memory_failed',
+      error: error?.message || String(error),
+      count,
+      postgres: false,
+    };
+  }
+}
+
+async function generateSyntheticEdgeCasesRecord(params = {}) {
+  const count = Math.max(1, Math.min(50, Number(params.count || 50)));
+  const entries = buildSyntheticEdgeCaseObjections({
+    count,
+    workspaceId: params.workspaceId || params.workspace_id || 'pbk',
+    pathKey: params.pathKey || params.path_key || 'general',
+  });
+  const persistence = params.persist === false
+    ? { ok: true, result: 'dry_run', count: entries.length, postgres: false }
+    : await recordSyntheticEdgeCaseCoachMemoryEntries(entries, params);
+  addActivity(state, makeActivity({
+    actor: params.requestedBy || params.actor || 'Rex Synthetic Coach',
+    category: 'BRAIN',
+    status: persistence.ok === false ? 'warning' : 'success',
+    text: `${persistence.ok === false ? 'Prepared' : 'Upserted'} ${entries.length} synthetic rare-objection coach memories.`,
+    target: 'coach_memory',
+  }));
+  if (params.persist !== false) await persistState(state);
+  return {
+    ok: persistence.ok !== false,
+    result: persistence.ok === false ? 'synthetic_edge_cases_state_only' : 'synthetic_edge_cases_ready',
+    count: entries.length,
+    entries: params.includeEntries ? entries : entries.map((entry) => ({
+      id: entry.id,
+      objectionTag: entry.objectionTag,
+      prompt: entry.prompt,
+      source: entry.source,
+    })),
+    persistence,
+  };
 }
 
 async function readYouTubeTrainingCases(params = {}) {
@@ -34096,6 +34205,106 @@ async function trainAndPersistProsodyModel(params = {}) {
   };
 }
 
+function parseLastJsonObjectFromOutput(output = '') {
+  const lines = String(output || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      return JSON.parse(line);
+    } catch {
+      // Continue scanning older lines; trainer output can include status logs.
+    }
+  }
+  return null;
+}
+
+async function getEmotionWorldModelTrainingReadiness(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const minSamples = Math.max(1, Number(params.minSamples || params.min_samples || EMOTION_WORLD_MODEL_RETRAIN_MIN_SAMPLES));
+  const result = await queryPgRows(
+    `SELECT
+       COALESCE(COUNT(*) FILTER (WHERE training_ready IS TRUE), 0)::int AS training_ready_count,
+       COALESCE(COUNT(*), 0)::int AS decision_count
+     FROM public.pbk_agent_decisions
+     WHERE tenant_id = $1`,
+    [tenantId],
+  );
+  const emotionResult = await queryPgRows(
+    `SELECT COALESCE(COUNT(*), 0)::int AS call_emotion_count
+     FROM public.pbk_call_emotions
+     WHERE tenant_id = $1`,
+    [tenantId],
+  );
+  const fallback = summarizeAgentDecisionBuffer(state.agentDecisions || []);
+  const row = result.ok ? (result.rows?.[0] || {}) : {};
+  const emotionRow = emotionResult.ok ? (emotionResult.rows?.[0] || {}) : {};
+  const trainingReadyCount = Number(row.training_ready_count ?? fallback.trainingReadyCount ?? 0);
+  return {
+    ok: result.ok || fallback.trainingReadyCount > 0,
+    tenantId,
+    minSamples,
+    decisionCount: Number(row.decision_count ?? fallback.totalDecisions ?? 0),
+    trainingReadyCount,
+    callEmotionCount: Number(emotionRow.call_emotion_count || 0),
+    ready: trainingReadyCount >= minSamples,
+    db: {
+      decisions: { ok: result.ok, reason: result.reason, error: result.error || '' },
+      emotions: { ok: emotionResult.ok, reason: emotionResult.reason, error: emotionResult.error || '' },
+    },
+  };
+}
+
+async function runEmotionWorldModelExportJob(params = {}) {
+  const enabled = params.enabled ?? params.force ?? EMOTION_WORLD_MODEL_RETRAIN_ENABLED;
+  if (!enabled) {
+    return { ok: true, skipped: true, result: 'emotion_world_model_retrain_disabled' };
+  }
+  const readiness = await getEmotionWorldModelTrainingReadiness(params);
+  if (!params.force && !readiness.ready) {
+    return {
+      ok: true,
+      skipped: true,
+      result: 'insufficient_emotion_world_model_samples',
+      readiness,
+    };
+  }
+  try {
+    const stdout = execFileSync(process.execPath, ['./scripts/train-emotion-world-model.mjs', '--export-onnx'], {
+      cwd: ROOT_DIR,
+      env: process.env,
+      encoding: 'utf8',
+      timeout: Math.max(60_000, Number(params.timeoutMs || params.timeout_ms || EMOTION_WORLD_MODEL_RETRAIN_TIMEOUT_MS)),
+      maxBuffer: 1024 * 1024 * 8,
+    });
+    const manifest = parseLastJsonObjectFromOutput(stdout) || {};
+    addActivity(state, makeActivity({
+      actor: params.requestedBy || params.actor || 'Rex ONNX Trainer',
+      category: 'BRAIN',
+      status: manifest.onnxReady ? 'success' : 'warning',
+      text: `Emotion world-model export ${manifest.onnxExport?.status || manifest.result || 'completed'} with ${manifest.sampleCount ?? readiness.trainingReadyCount} samples.`,
+      target: manifest.modelPath || 'emotion-world-model',
+    }));
+    await persistState(state);
+    return {
+      ok: true,
+      result: 'emotion_world_model_export_checked',
+      readiness,
+      manifest,
+      stdoutTail: stdout.slice(-2000),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      result: 'emotion_world_model_export_failed',
+      readiness,
+      error: error?.message || String(error),
+      stdoutTail: String(error?.stdout || '').slice(-2000),
+      stderrTail: String(error?.stderr || '').slice(-2000),
+    };
+  }
+}
+
 async function getPbkToolUsageSummary(params = {}) {
   const days = Math.max(1, Math.min(90, Number(params.days || params.rangeDays || 7)));
   const result = await queryPgRows(
@@ -38417,6 +38626,16 @@ const toolHandlers = {
   async runYouTubeTrainingEvalSuite(params = {}) {
     recordToolUse('runYouTubeTrainingEvalSuite');
     return runYouTubeTrainingEvalSuiteRecord(params);
+  },
+
+  async generateSyntheticEdgeCases(params = {}) {
+    recordToolUse('generateSyntheticEdgeCases');
+    return generateSyntheticEdgeCasesRecord(params);
+  },
+
+  async trainEmotionWorldModel(params = {}) {
+    recordToolUse('trainEmotionWorldModel');
+    return runEmotionWorldModelExportJob(params);
   },
 
   async getRevenueEngineStatus(params = {}) {
@@ -51304,6 +51523,27 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/feedback') {
+      const body = await readBody(request);
+      const rating = String(body.rating || body.score || body.humanDecision || body.decision || '').trim().toLowerCase();
+      const positive = /^(good|great|positive|up|thumbs_up|approved|approve|win|yes|1|true)$/i.test(rating);
+      const negative = /^(bad|poor|negative|down|thumbs_down|rejected|reject|loss|no|0|false)$/i.test(rating);
+      const result = await toolHandlers.recordPbkFeedback({
+        ...body,
+        requestedBy: body.requestedBy || 'api-feedback',
+        agentAction: body.agentAction || body.agent_action || 'post_call_feedback',
+        humanDecision: body.humanDecision || body.human_decision || (positive ? 'approved' : negative ? 'rejected' : 'reviewed'),
+        outcomeLabel: body.outcomeLabel || body.outcome_label || rating || 'reviewed',
+        metadata: {
+          ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {}),
+          feedbackRating: rating || '',
+          feedbackEndpoint: '/api/feedback',
+        },
+      });
+      json(response, result.ok === false ? 400 : 200, result);
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/leads/nurture') {
       json(response, 200, { ok: true, result: 'live', plans: sortNewest(state.leadNurturePlans || []), status: state.status });
       return;
@@ -54499,6 +54739,16 @@ function startCommandCenterClosedLoopScheduler() {
     void runSafely('weekly-prosody-training', () => trainAndPersistProsodyModel({ minSamples: 25, source: 'scheduled-weekly' }));
   }, PROSODY_TRAIN_INTERVAL_MS);
   prosodyTimer.unref?.();
+
+  const emotionModelTimer = setInterval(() => {
+    void runSafely('weekly-emotion-world-model-export', () => runEmotionWorldModelExportJob({ source: 'scheduled-weekly' }));
+  }, PROSODY_TRAIN_INTERVAL_MS);
+  emotionModelTimer.unref?.();
+
+  const syntheticEdgeCaseTimer = setInterval(() => {
+    void runSafely('weekly-synthetic-edge-cases', () => generateSyntheticEdgeCasesRecord({ count: 50, source: 'scheduled-weekly' }));
+  }, SYNTHETIC_EDGE_CASE_INTERVAL_MS);
+  syntheticEdgeCaseTimer.unref?.();
 }
 
 function startAgentRegistryHealthScheduler() {

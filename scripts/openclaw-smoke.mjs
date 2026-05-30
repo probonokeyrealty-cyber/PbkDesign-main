@@ -296,6 +296,7 @@ async function main() {
         phone: '+1 (614) 555-0123',
         script: 'Smoke provider-action approval should replay telnyx_call after approval.',
         actor: 'smoke-test',
+        nowLocalHour: 12,
       }),
     }).then((response) => response.json());
     const providerActionApprovalId = queuedProviderCall?.approval?.approval?.id

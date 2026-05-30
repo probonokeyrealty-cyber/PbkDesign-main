@@ -39,6 +39,23 @@ services:
       - key: PBK_REDIS_CALL_STATE_TTL_SECONDS
         value: "21600"
 
+      # OpenTelemetry/Grafana observability. Keep OTLP endpoint/headers secret
+      # in Render; bridge runs fail-open if not configured.
+      - key: PBK_OBSERVABILITY_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SERVICE_NAME
+        value: pbk-openclaw-bridge
+      - key: OTEL_SERVICE_NAME
+        value: pbk-openclaw-bridge
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: PBK_OBSERVABILITY_ALERTS_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SLACK_WEBHOOK_URL
+        sync: false
+
       # Optional AWS S3 cold archive for Ava/Rex long-term call memory.
       # Supabase Storage remains the active playback store; S3 keeps private
       # raw audio for model training, audits, and future memory pipelines.
@@ -280,4 +297,85 @@ services:
       # ── Slack incoming webhook (direct from bridge) ─────────────────────
       # Channel is determined by the URL when the webhook is created in Slack.
       - key: PBK_SLACK_WEBHOOK_URL
+        sync: false
+
+  - type: worker
+    name: pbk-event-worker
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run events:worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PBK_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: pbk-openclaw-redis
+          property: connectionString
+      - key: PBK_REDIS_NAMESPACE
+        value: pbk-openclaw
+      - key: PBK_EVENT_STREAM_NAME
+        value: pbk:events
+      - key: PBK_EVENT_CONSUMER_GROUP
+        value: pbk-consumers
+      - key: PBK_EVENT_WORKER_BATCH_SIZE
+        value: "10"
+      - key: PBK_EVENT_WORKER_BLOCK_MS
+        value: "5000"
+      - key: PBK_DATABASE_URL
+        sync: false
+      - key: PBK_PUBLIC_BASE_URL
+        value: https://pbk-openclaw-bridge.onrender.com
+      - key: PBK_EVENT_WORKER_BRIDGE_URL
+        value: https://pbk-openclaw-bridge.onrender.com
+      - key: PBK_BRIDGE_API_KEY
+        sync: false
+      - key: PBK_OBSERVABILITY_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SERVICE_NAME
+        value: pbk-event-worker
+      - key: OTEL_SERVICE_NAME
+        value: pbk-event-worker
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: PBK_OBSERVABILITY_ALERTS_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SLACK_WEBHOOK_URL
+        sync: false
+
+  - type: worker
+    name: pbk-coworker-heartbeat
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run coworker:heartbeat:loop
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PBK_HEARTBEAT_BRIDGE_URL
+        value: https://pbk-openclaw-bridge.onrender.com
+      - key: PBK_PUBLIC_BASE_URL
+        value: https://pbk-openclaw-bridge.onrender.com
+      - key: PBK_BRIDGE_API_KEY
+        sync: false
+      - key: PBK_COWORKER_HEARTBEAT_INTERVAL_MS
+        value: "21600000"
+      - key: PBK_OBSERVABILITY_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SERVICE_NAME
+        value: pbk-coworker-heartbeat
+      - key: OTEL_SERVICE_NAME
+        value: pbk-coworker-heartbeat
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: PBK_OBSERVABILITY_ALERTS_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SLACK_WEBHOOK_URL
         sync: false

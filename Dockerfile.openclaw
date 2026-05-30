@@ -63,9 +63,18 @@ RUN npm install --no-save --no-audit --no-fund --loglevel=error \
       @deepgram/sdk@5.1.0 \
       @aws-sdk/client-s3@3.1056.0 \
       @aws-sdk/s3-request-presigner@3.1056.0 \
+      @opentelemetry/api@1.9.1 \
+      @opentelemetry/exporter-metrics-otlp-http@0.218.0 \
+      @opentelemetry/exporter-trace-otlp-http@0.218.0 \
+      @opentelemetry/instrumentation-express@0.66.0 \
+      @opentelemetry/instrumentation-http@0.218.0 \
+      @opentelemetry/sdk-metrics@2.7.1 \
+      @opentelemetry/sdk-node@0.218.0 \
       puppeteer-core@24.41.0 \
       pg@8.13.1 \
-      redis@5.10.0
+      redis@5.10.0 \
+      ws@8.20.1 \
+      youtube-transcript@1.3.1
 
 # Property data import/scraping is intentionally isolated in a Python venv so
 # the hosted bridge can run HomeHarvest and Scrapling without touching Node deps.
@@ -78,6 +87,19 @@ RUN python3 -m venv /app/.venv \
 
 # Copy the bridge source last so dependency installation caches across rebuilds.
 COPY scripts/pbk-deepgram-client.mjs ./scripts/pbk-deepgram-client.mjs
+COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
+COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
+COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
+COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
+COPY scripts/safety-validator.mjs ./scripts/safety-validator.mjs
+COPY scripts/ava-eval-suite.mjs ./scripts/ava-eval-suite.mjs
+COPY scripts/observability.mjs ./scripts/observability.mjs
+COPY scripts/ava-latency-status.mjs ./scripts/ava-latency-status.mjs
+COPY scripts/coworker-heartbeat.mjs ./scripts/coworker-heartbeat.mjs
+COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs
+COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
+COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
+COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs
 COPY index.html ./index.html

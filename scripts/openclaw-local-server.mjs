@@ -15,6 +15,65 @@ import { createClient as createRedisClient } from 'redis';
 import { DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
+  buildAgentRegistrySnapshot,
+  buildDefaultAgentRegistry,
+  findAgentsByCapability,
+  invokeRegisteredAgent,
+  mergeAgentRegistryRecords,
+  normalizeAgentRegistryId,
+  normalizeAgentRegistryRecord,
+} from './agent-registry.mjs';
+import {
+  EventTypes,
+  getEventBusStatus,
+  publishEvent as publishEventBusEvent,
+} from './event-bus/streams.mjs';
+import {
+  buildRexKpiSnapshot,
+  proposeAutonomousRexGoals,
+  selectRexProactiveLeadAction,
+} from './rex-autonomy.mjs';
+import {
+  recordScriptOutcomeStats,
+  selectContextAwareScript,
+} from './context-aware-script-rotator.mjs';
+import {
+  validateProviderActionSafety as validateProviderActionSafetyCore,
+} from './safety-validator.mjs';
+import {
+  runAvaCanonicalEvalSuite as runAvaCanonicalEvalSuiteCore,
+} from './ava-eval-suite.mjs';
+import {
+  buildCoworkerHeartbeatPlan,
+  summarizeHeartbeatPlan,
+} from './coworker-heartbeat.mjs';
+import {
+  buildSlackMentionAck,
+  classifySlackMentionIntent,
+} from './slack-mention-router.mjs';
+import {
+  isYouTubeUrl,
+  processYouTubeTraining,
+  runYouTubeTrainingEvalSuite,
+} from './youtube-training.mjs';
+import {
+  getObservabilityStatus as getPbkObservabilityStatus,
+  incrementObservabilityCounter,
+  initializeObservability,
+  recordEventBusBacklogMetric,
+  recordGuardrailViolationMetric,
+  recordLatencyMetric,
+  withObservabilitySpan,
+} from './observability.mjs';
+import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
+import {
+  appendAssistantMessage,
+  createAssistantSessionId,
+  detectAssistantIntent,
+  normalizeAssistantSession,
+  planAssistantIntent,
+} from './ava-assistant-chat.mjs';
+import {
   DEEPGRAM_SAMPLE_URL,
   createDeepgramLiveConnection,
   getDeepgramProviderMeta,
@@ -23,7 +82,10 @@ import {
   transcribeDeepgramFile,
   transcribeDeepgramUrl,
 } from './pbk-deepgram-client.mjs';
+import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
+
+void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
 
 const OUTBOUND_MAX_SOCKETS = Math.max(20, Number(process.env.PBK_BRIDGE_OUTBOUND_MAX_SOCKETS || 160));
 const OUTBOUND_MAX_FREE_SOCKETS = Math.max(
@@ -595,6 +657,11 @@ const PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS = Math.max(
   Number(process.env.PBK_PUBLIC_AVA_CHAT_RATE_LIMIT_WINDOW_MS || 15 * 60_000),
 );
 const publicAvaChatBuckets = new Map();
+const publicAvaAssistantSessionFallback = new Map();
+const PUBLIC_AVA_ASSISTANT_SESSION_TTL_SECONDS = Math.max(
+  300,
+  Math.min(7 * 24 * 60 * 60, Number(process.env.PBK_PUBLIC_AVA_ASSISTANT_SESSION_TTL_SECONDS || 24 * 60 * 60)),
+);
 const ANALYZE_DEAL_RATE_LIMIT_MAX = Math.max(3, Number(process.env.PBK_ANALYZE_DEAL_RATE_LIMIT_MAX || 30));
 const ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS = Math.max(
   10_000,
@@ -668,6 +735,8 @@ const PUBLIC_PATHS = new Set([
   '/api/slack/commands',
   '/api/webhooks/slack/commands',
   '/api/webhooks/slack/slash',
+  '/api/slack/events',
+  '/api/webhooks/slack/events',
   '/api/webhooks/docusign',
   '/api/webhooks/external-events',
   '/api/v1/webhooks/external-events',
@@ -701,9 +770,20 @@ const TOOL_NAMES = [
   'getProsodyAdvice',
   'retrieveSimilarDeals',
   'recallConversationMemory',
+  'upsertCallEmbeddingFromTranscript',
   'scoreCallQuality',
   'recordSkillOutcome',
   'runRexSkillAutopilot',
+  'runAutonomousRexGoalDiscovery',
+  'handleRexLeadImported',
+  'runCoworkerHeartbeat',
+  'runYouTubeTrainingPipeline',
+  'runYouTubeTrainingEvalSuite',
+  'selectContextAwareScript',
+  'recordContextAwareScriptOutcome',
+  'validateProviderActionSafety',
+  'runAvaCanonicalEvalSuite',
+  'getObservabilityStatus',
   'humanHandoff',
   'webSearch',
   'getReplyTemplates',
@@ -5395,6 +5475,22 @@ async function ensurePgSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.agent_registry (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      capabilities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      status TEXT NOT NULL DEFAULT 'active',
+      endpoint TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      health_checked_at TIMESTAMPTZ,
+      last_error TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS public.pbk_memories (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5478,6 +5574,114 @@ async function ensurePgSchema() {
       latency_ms INT,
       error_message TEXT NOT NULL DEFAULT '',
       context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_qa_audit (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      tool_name TEXT NOT NULL,
+      passed BOOLEAN NOT NULL DEFAULT FALSE,
+      skipped BOOLEAN NOT NULL DEFAULT FALSE,
+      reason TEXT NOT NULL DEFAULT '',
+      validator TEXT NOT NULL DEFAULT '',
+      retry_count INT NOT NULL DEFAULT 0,
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      qa JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.event_dead_letters (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      event_id TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error TEXT NOT NULL DEFAULT '',
+      stack TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_rex_autonomy_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      run_type TEXT NOT NULL DEFAULT 'goal_discovery',
+      kpis JSONB NOT NULL DEFAULT '{}'::jsonb,
+      goals JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'complete',
+      source TEXT NOT NULL DEFAULT 'rex-autonomy',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_safety_audit (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      tool_name TEXT NOT NULL,
+      blocked BOOLEAN NOT NULL DEFAULT FALSE,
+      approval_required BOOLEAN NOT NULL DEFAULT TRUE,
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      validation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      suite_name TEXT NOT NULL DEFAULT 'ava_canonical',
+      ok BOOLEAN NOT NULL DEFAULT FALSE,
+      total INT NOT NULL DEFAULT 0,
+      passed INT NOT NULL DEFAULT 0,
+      failed INT NOT NULL DEFAULT 0,
+      report JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.test_cases (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      source TEXT NOT NULL DEFAULT 'youtube',
+      source_url TEXT NOT NULL DEFAULT '',
+      video_id TEXT NOT NULL DEFAULT '',
+      agent_id TEXT NOT NULL DEFAULT 'ava',
+      title TEXT NOT NULL DEFAULT '',
+      transcript TEXT NOT NULL DEFAULT '',
+      assertions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      coach_memory_entries JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'ready',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_turn_latency (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      speech_final_to_reply_start_ms INT,
+      turn_completion_ms INT,
+      transcript_to_tts_ms INT,
+      reply_mode TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      ok BOOLEAN,
+      labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_observability_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      alert_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      message TEXT NOT NULL DEFAULT '',
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -6321,6 +6525,21 @@ async function ensurePgSchema() {
     CREATE INDEX IF NOT EXISTS agent_tasks_memory_idx
       ON public.agent_tasks (workspace_id, created_at DESC);
 
+    CREATE INDEX IF NOT EXISTS agent_registry_capabilities_idx
+      ON public.agent_registry USING gin (capabilities);
+
+    CREATE INDEX IF NOT EXISTS agent_registry_status_idx
+      ON public.agent_registry (tenant_id, status, updated_at DESC);
+
+    ALTER TABLE public.agent_registry ENABLE ROW LEVEL SECURITY;
+
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.agent_registry TO service_role;
+      END IF;
+    END $$;
+
     CREATE INDEX IF NOT EXISTS pbk_memories_tenant_lead_idx
       ON public.pbk_memories (tenant_id, lead_id, created_at DESC);
 
@@ -6567,6 +6786,116 @@ async function ensurePgSchema() {
     CREATE INDEX IF NOT EXISTS pbk_call_qa_scores_lookup_idx
       ON public.pbk_call_qa_scores (tenant_id, lead_id, call_id, created_at DESC);
 
+    CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
+      ON public.pbk_qa_audit (tenant_id, tool_name, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_qa_audit_failed_idx
+      ON public.pbk_qa_audit (tenant_id, passed, skipped, created_at DESC);
+
+    ALTER TABLE public.pbk_qa_audit ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS event_dead_letters_type_idx
+      ON public.event_dead_letters (tenant_id, event_type, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS event_dead_letters_event_idx
+      ON public.event_dead_letters (tenant_id, event_id);
+
+    ALTER TABLE public.event_dead_letters ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_rex_autonomy_runs_lookup_idx
+      ON public.pbk_rex_autonomy_runs (tenant_id, run_type, created_at DESC);
+
+    ALTER TABLE public.pbk_rex_autonomy_runs ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_safety_audit_lookup_idx
+      ON public.pbk_safety_audit (tenant_id, tool_name, blocked, created_at DESC);
+
+    ALTER TABLE public.pbk_safety_audit ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_eval_runs_lookup_idx
+      ON public.pbk_eval_runs (tenant_id, suite_name, created_at DESC);
+
+    ALTER TABLE public.pbk_eval_runs ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS test_cases_tenant_status_idx
+      ON public.test_cases (tenant_id, status, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS test_cases_tenant_agent_idx
+      ON public.test_cases (tenant_id, agent_id, updated_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS test_cases_tenant_source_agent_idx
+      ON public.test_cases (tenant_id, source_url, agent_id)
+      WHERE source = 'youtube';
+
+    CREATE INDEX IF NOT EXISTS test_cases_assertions_gin_idx
+      ON public.test_cases USING GIN (assertions);
+
+    ALTER TABLE public.test_cases ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_turn_latency_lookup_idx
+      ON public.pbk_turn_latency (tenant_id, call_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_turn_latency_perf_idx
+      ON public.pbk_turn_latency (tenant_id, turn_completion_ms, speech_final_to_reply_start_ms, created_at DESC);
+
+    ALTER TABLE public.pbk_turn_latency ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_observability_alerts_lookup_idx
+      ON public.pbk_observability_alerts (tenant_id, alert_type, severity, created_at DESC);
+
+    ALTER TABLE public.pbk_observability_alerts ENABLE ROW LEVEL SECURITY;
+
+    CREATE OR REPLACE VIEW public.guardrail_violations
+    WITH (security_invoker = true)
+    AS
+    SELECT
+      id,
+      tenant_id,
+      tool_name,
+      blocked,
+      approval_required,
+      validation->'violations' AS violations,
+      validation->'warnings' AS warnings,
+      source,
+      created_at
+    FROM public.pbk_safety_audit
+    WHERE blocked = true
+       OR COALESCE(jsonb_array_length(validation->'violations'), 0) > 0;
+
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_qa_audit TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.event_dead_letters TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_rex_autonomy_runs TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_safety_audit TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_eval_runs TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.test_cases TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_turn_latency TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_observability_alerts TO service_role;
+        GRANT SELECT ON public.guardrail_violations TO service_role;
+      END IF;
+    END $$;
+
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'test_cases' AND policyname = 'test_cases_service_role_all'
+      ) THEN
+        CREATE POLICY test_cases_service_role_all ON public.test_cases FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_turn_latency' AND policyname = 'pbk_turn_latency_service_role_all'
+      ) THEN
+        CREATE POLICY pbk_turn_latency_service_role_all ON public.pbk_turn_latency FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_observability_alerts' AND policyname = 'pbk_observability_alerts_service_role_all'
+      ) THEN
+        CREATE POLICY pbk_observability_alerts_service_role_all ON public.pbk_observability_alerts FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+    END $$;
+
     CREATE INDEX IF NOT EXISTS pbk_skill_outcomes_lookup_idx
       ON public.pbk_skill_outcomes (tenant_id, skill_name, version, created_at DESC);
 
@@ -6607,6 +6936,16 @@ async function ensurePgSchema() {
     DROP TRIGGER IF EXISTS agent_tasks_set_updated_at ON public.agent_tasks;
     CREATE TRIGGER agent_tasks_set_updated_at
       BEFORE UPDATE ON public.agent_tasks
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS agent_registry_set_updated_at ON public.agent_registry;
+    CREATE TRIGGER agent_registry_set_updated_at
+      BEFORE UPDATE ON public.agent_registry
+      FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
+
+    DROP TRIGGER IF EXISTS test_cases_set_updated_at ON public.test_cases;
+    CREATE TRIGGER test_cases_set_updated_at
+      BEFORE UPDATE ON public.test_cases
       FOR EACH ROW EXECUTE FUNCTION public.pbk_set_updated_at();
 
     DROP TRIGGER IF EXISTS pbk_memories_set_updated_at ON public.pbk_memories;
@@ -7255,6 +7594,11 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
       version TEXT NOT NULL DEFAULT 'v1',
       source TEXT NOT NULL DEFAULT 'bridge',
       active BOOLEAN NOT NULL DEFAULT TRUE,
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      conversion_count INTEGER NOT NULL DEFAULT 0,
+      deal_value NUMERIC NOT NULL DEFAULT 0,
+      last_selected_at TIMESTAMPTZ,
+      last_outcome_at TIMESTAMPTZ,
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -7285,6 +7629,11 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
       ADD COLUMN IF NOT EXISTS version TEXT NOT NULL DEFAULT 'v1',
       ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'bridge',
       ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS usage_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS conversion_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS deal_value NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS last_selected_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS last_outcome_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
@@ -7297,6 +7646,9 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
 
     CREATE INDEX IF NOT EXISTS scripts_path_active_idx
       ON public.scripts (workspace_id, path_key, active);
+
+    CREATE INDEX IF NOT EXISTS scripts_context_rotation_idx
+      ON public.scripts (workspace_id, path_key, active, conversion_count DESC, usage_count DESC);
 
     CREATE INDEX IF NOT EXISTS scripts_tags_idx
       ON public.scripts USING GIN (tags);
@@ -9282,6 +9634,581 @@ async function recordPbkToolUsage(params = {}) {
     console.warn('[pbk-local-openclaw] PBK tool usage persistence skipped:', error?.message || error);
     return { ok: false, error: error?.message || String(error) };
   }
+}
+
+async function recordPbkQaAudit(record = {}) {
+  const toolName = String(record.toolName || record.tool_name || '').trim();
+  if (!toolName) return { ok: false, reason: 'missing_tool_name' };
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_qa_audit (
+        id, tenant_id, tool_name, passed, skipped, reason, validator,
+        retry_count, params, result, qa, source, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)`,
+      [
+        record.id || `pbk-qa-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(record.qa || {})}`))}`,
+        normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+        toolName,
+        Boolean(record.passed),
+        Boolean(record.skipped),
+        String(record.reason || '').slice(0, 500),
+        String(record.validator || '').slice(0, 120),
+        Math.max(0, Math.round(toNumber(record.retryCount ?? record.retry_count, 0))),
+        JSON.stringify(record.params && typeof record.params === 'object' ? record.params : {}),
+        JSON.stringify(record.result && typeof record.result === 'object' ? record.result : {}),
+        JSON.stringify(record.qa && typeof record.qa === 'object' ? record.qa : {}),
+        String(record.source || 'pbk-bridge').slice(0, 120),
+        record.createdAt || record.created_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK QA audit persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+async function recordPbkSafetyAudit(record = {}) {
+  const toolName = String(record.toolName || record.tool_name || '').trim();
+  if (!toolName) return { ok: false, reason: 'missing_tool_name' };
+  const validation = record.validation && typeof record.validation === 'object' ? record.validation : {};
+  if (validation.blocked || Array.isArray(validation.violations)) {
+    for (const violation of validation.violations || []) {
+      recordGuardrailViolationMetric({
+        toolName,
+        code: violation.code || validation.result || 'guardrail_violation',
+        severity: violation.severity || 'critical',
+        source: record.source || 'pbk-bridge',
+      });
+    }
+  }
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_safety_audit (
+        id, tenant_id, tool_name, blocked, approval_required,
+        params, validation, source, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)`,
+      [
+        record.id || `pbk-safety-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(validation)}`))}`,
+        normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+        toolName,
+        Boolean(record.blocked ?? validation.blocked),
+        Boolean(record.approvalRequired ?? record.approval_required ?? validation.approvalRequired),
+        JSON.stringify(record.params && typeof record.params === 'object' ? record.params : {}),
+        JSON.stringify(validation),
+        String(record.source || 'pbk-bridge').slice(0, 120),
+        record.createdAt || record.created_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK safety audit persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+async function recordPbkEvalRun(report = {}, params = {}) {
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_eval_runs (
+        id, tenant_id, suite_name, ok, total, passed, failed,
+        report, source, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,
+      [
+        params.id || `pbk-eval-${Date.now()}-${Math.abs(hashString(`${params.suiteName || 'ava_canonical'}\n${JSON.stringify(report.coverage || {})}`))}`,
+        normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+        String(params.suiteName || params.suite_name || 'ava_canonical').slice(0, 120),
+        Boolean(report.ok),
+        Math.max(0, Math.round(toNumber(report.total, 0))),
+        Math.max(0, Math.round(toNumber(report.passed, 0))),
+        Math.max(0, Math.round(toNumber(report.failed, 0))),
+        JSON.stringify(report && typeof report === 'object' ? report : {}),
+        String(params.source || 'pbk-bridge').slice(0, 120),
+        params.createdAt || params.created_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK eval run persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+async function recordEventDeadLetter(record = {}) {
+  const eventType = String(record.eventType || record.event_type || '').trim();
+  if (!eventType) return { ok: false, reason: 'missing_event_type' };
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.event_dead_letters (
+        id, tenant_id, event_id, event_type, source, payload, error, stack, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)`,
+      [
+        record.id || `pbk-event-dlq-${Date.now()}-${Math.abs(hashString(`${eventType}\n${record.eventId || record.event_id || ''}`))}`,
+        normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+        String(record.eventId || record.event_id || '').trim(),
+        eventType,
+        String(record.source || '').slice(0, 120),
+        JSON.stringify(record.payload && typeof record.payload === 'object' ? record.payload : {}),
+        String(record.error || '').slice(0, 1000),
+        String(record.stack || '').slice(0, 5000),
+        record.createdAt || record.created_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] event dead-letter persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+async function recordPbkTurnLatency(record = {}) {
+  state.status = state.status && typeof state.status === 'object' ? state.status : {};
+  recordAvaResponseLatencyStatus(state.status, record);
+  const pool = getPgPool();
+  if (!pool) {
+    await persistState(state);
+    return { ok: false, reason: 'postgres_unavailable', statusUpdated: true };
+  }
+  try {
+    await pool.query(
+      `INSERT INTO public.pbk_turn_latency (
+        id, tenant_id, call_id, lead_id, speech_final_to_reply_start_ms,
+        turn_completion_ms, transcript_to_tts_ms, reply_mode, provider,
+        ok, labels, source, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)`,
+      [
+        record.id || `pbk-turn-latency-${Date.now()}-${Math.abs(hashString(`${record.callId || record.call_id || ''}\n${record.createdAt || record.created_at || ''}`))}`,
+        normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+        String(record.callId || record.call_id || '').trim(),
+        String(record.leadId || record.lead_id || '').trim(),
+        record.speechFinalToReplyStartMs === undefined && record.speech_final_to_reply_start_ms === undefined
+          ? null
+          : Math.max(0, Math.round(toNumber(record.speechFinalToReplyStartMs ?? record.speech_final_to_reply_start_ms, 0))),
+        record.turnCompletionMs === undefined && record.turn_completion_ms === undefined
+          ? null
+          : Math.max(0, Math.round(toNumber(record.turnCompletionMs ?? record.turn_completion_ms, 0))),
+        record.transcriptToTtsMs === undefined && record.transcript_to_tts_ms === undefined
+          ? null
+          : Math.max(0, Math.round(toNumber(record.transcriptToTtsMs ?? record.transcript_to_tts_ms, 0))),
+        String(record.replyMode || record.reply_mode || '').slice(0, 80),
+        String(record.provider || '').slice(0, 80),
+        record.ok === undefined ? null : Boolean(record.ok),
+        JSON.stringify(record.labels && typeof record.labels === 'object' ? record.labels : {}),
+        String(record.source || 'pbk-bridge').slice(0, 120),
+        record.createdAt || record.created_at || isoNow(),
+      ],
+    );
+    await persistState(state);
+    return { ok: true, statusUpdated: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] PBK turn latency persistence skipped:', error?.message || error);
+    await persistState(state);
+    return { ok: false, error: error?.message || String(error), statusUpdated: true };
+  }
+}
+
+async function publishPbkEvent(type, payload = {}, source = 'bridge') {
+  try {
+    return await publishEventBusEvent(type, payload, source);
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] event publish skipped:', error?.message || error);
+    return { ok: false, result: 'event_publish_failed', error: error?.message || String(error), eventType: type };
+  }
+}
+
+async function runAvaCanonicalEvalSuiteRecord(params = {}) {
+  const scenarios = Array.isArray(params.scenarios) ? params.scenarios : undefined;
+  const report = runAvaCanonicalEvalSuiteCore(scenarios);
+  const persisted = await recordPbkEvalRun(report, {
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    suiteName: params.suiteName || params.suite_name || 'ava_canonical',
+    source: params.source || 'pbk-bridge',
+  });
+  if (report.ok) {
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.actor || 'Ava eval suite',
+        category: 'EVAL',
+        status: 'passed',
+        text: `Ava canonical eval passed ${report.passed}/${report.total} scenarios.`,
+        target: 'Ava call intelligence',
+      }),
+    );
+  } else {
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.actor || 'Ava eval suite',
+        category: 'EVAL',
+        status: 'failed',
+        text: `Ava canonical eval failed ${report.failed}/${report.total} scenarios.`,
+        target: 'Ava call intelligence',
+      }),
+    );
+  }
+  await persistState(state);
+  return {
+    ...report,
+    persisted,
+  };
+}
+
+function upsertRuntimeYouTubeTrainingCase(testCase = {}) {
+  const sourceUrl = String(testCase.sourceUrl || testCase.source_url || '').trim();
+  const agentId = String(testCase.agentId || testCase.agent_id || 'ava').trim() || 'ava';
+  const id = String(testCase.id || `yt_case_${Date.now()}_${Math.abs(hashString(`${sourceUrl}\n${agentId}`))}`).trim();
+  const normalized = {
+    ...testCase,
+    id,
+    sourceUrl,
+    agentId,
+    updatedAt: isoNow(),
+  };
+  state.youtubeTrainingCases = Array.isArray(state.youtubeTrainingCases) ? state.youtubeTrainingCases : [];
+  state.youtubeTrainingCases = [
+    normalized,
+    ...state.youtubeTrainingCases.filter((item) => {
+      const sameId = String(item?.id || '') === id;
+      const sameSource = sourceUrl
+        && String(item?.sourceUrl || item?.source_url || '') === sourceUrl
+        && String(item?.agentId || item?.agent_id || 'ava') === agentId;
+      return !sameId && !sameSource;
+    }),
+  ].slice(0, 250);
+  return normalized;
+}
+
+async function recordYouTubeTrainingCase(testCase = {}) {
+  const runtimeCase = upsertRuntimeYouTubeTrainingCase(testCase);
+  const pool = getPgPool();
+  if (!pool) return { ok: true, result: 'state_only', testCase: runtimeCase };
+  try {
+    await pool.query(
+      `INSERT INTO public.test_cases (
+        id, tenant_id, source, source_url, video_id, agent_id, title,
+        transcript, assertions, coach_memory_entries, status, metadata,
+        created_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13,$14)
+      ON CONFLICT (id) DO UPDATE SET
+        source = EXCLUDED.source,
+        source_url = EXCLUDED.source_url,
+        video_id = EXCLUDED.video_id,
+        agent_id = EXCLUDED.agent_id,
+        title = EXCLUDED.title,
+        transcript = EXCLUDED.transcript,
+        assertions = EXCLUDED.assertions,
+        coach_memory_entries = EXCLUDED.coach_memory_entries,
+        status = EXCLUDED.status,
+        metadata = public.test_cases.metadata || EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        runtimeCase.id,
+        normalizeTenantId(runtimeCase.tenantId || runtimeCase.tenant_id || 'pbk'),
+        String(runtimeCase.source || 'youtube').slice(0, 80),
+        String(runtimeCase.sourceUrl || runtimeCase.source_url || '').slice(0, 1000),
+        String(runtimeCase.videoId || runtimeCase.video_id || '').slice(0, 80),
+        String(runtimeCase.agentId || runtimeCase.agent_id || 'ava').slice(0, 80),
+        String(runtimeCase.title || 'YouTube Training').slice(0, 240),
+        String(runtimeCase.transcript || '').slice(0, 240000),
+        JSON.stringify(Array.isArray(runtimeCase.assertions) ? runtimeCase.assertions : []),
+        JSON.stringify(Array.isArray(runtimeCase.coachMemoryEntries) ? runtimeCase.coachMemoryEntries : []),
+        String(runtimeCase.status || 'ready').slice(0, 80),
+        JSON.stringify(runtimeCase.metadata && typeof runtimeCase.metadata === 'object' ? runtimeCase.metadata : {}),
+        runtimeCase.createdAt || runtimeCase.created_at || isoNow(),
+        runtimeCase.updatedAt || runtimeCase.updated_at || isoNow(),
+      ],
+    );
+    return { ok: true, result: 'postgres_and_state', testCase: runtimeCase };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] YouTube training case persistence skipped:', error?.message || error);
+    return { ok: false, result: 'state_only_postgres_failed', error: error?.message || String(error), testCase: runtimeCase };
+  }
+}
+
+async function recordYouTubeCoachMemoryEntries(entries = [], artifact = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const pool = getPgPool();
+  if (!pool || !list.length) return { ok: true, result: pool ? 'empty' : 'state_only', count: list.length };
+  let count = 0;
+  try {
+    for (const entry of list) {
+      await pool.query(
+        `INSERT INTO public.coach_memory (
+          id, workspace_id, memory_type, objection_tag, path_key, prompt, response,
+          source, source_url, outcome, score, metadata, created_at, updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'youtube_training',$8,$9,$10,$11::jsonb,NOW(),NOW())
+        ON CONFLICT (id) DO UPDATE SET
+          memory_type = EXCLUDED.memory_type,
+          objection_tag = EXCLUDED.objection_tag,
+          path_key = EXCLUDED.path_key,
+          prompt = EXCLUDED.prompt,
+          response = EXCLUDED.response,
+          source = EXCLUDED.source,
+          source_url = EXCLUDED.source_url,
+          outcome = EXCLUDED.outcome,
+          score = GREATEST(public.coach_memory.score, EXCLUDED.score),
+          metadata = public.coach_memory.metadata || EXCLUDED.metadata,
+          updated_at = NOW()`,
+        [
+          String(entry.id || `yt_memory_${Date.now()}_${count}`).slice(0, 160),
+          normalizeTenantId(entry.workspaceId || entry.workspace_id || artifact.testCase?.tenantId || 'pbk'),
+          String(entry.memoryType || entry.memory_type || 'objection').slice(0, 80),
+          String(entry.objectionTag || entry.objection_tag || '').slice(0, 120),
+          String(entry.pathKey || entry.path_key || '').slice(0, 120),
+          String(entry.prompt || '').slice(0, 4000),
+          String(entry.response || '').slice(0, 4000),
+          String(entry.sourceUrl || entry.source_url || artifact.url || '').slice(0, 1000),
+          String(entry.outcome || 'training_observed').slice(0, 80),
+          Math.max(0, Math.min(1, toNumber(entry.score, 0.82))),
+          JSON.stringify({
+            ...(entry.metadata && typeof entry.metadata === 'object' ? entry.metadata : {}),
+            testCaseId: artifact.testCase?.id || '',
+            videoId: artifact.videoId || '',
+            agentId: artifact.testCase?.agentId || 'ava',
+          }),
+        ],
+      );
+      count += 1;
+    }
+    return { ok: true, result: 'coach_memory_upserted', count };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] YouTube coach_memory persistence skipped:', error?.message || error);
+    return { ok: false, result: 'coach_memory_failed', error: error?.message || String(error), count };
+  }
+}
+
+async function readYouTubeTrainingCases(params = {}) {
+  const pool = getPgPool();
+  const limit = Math.max(1, Math.min(200, Number(params.limit || 50)));
+  if (!pool) {
+    return {
+      ok: true,
+      result: 'state_only',
+      testCases: (state.youtubeTrainingCases || []).slice(0, limit),
+    };
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, tenant_id, source, source_url, video_id, agent_id, title,
+              transcript, assertions, coach_memory_entries, status, metadata,
+              created_at, updated_at
+       FROM public.test_cases
+       WHERE tenant_id = $1
+         AND source = 'youtube'
+         AND ($2::text = '' OR agent_id = $2)
+         AND ($3::text = '' OR status = $3)
+       ORDER BY updated_at DESC
+       LIMIT $4`,
+      [
+        normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+        String(params.agentId || params.agent_id || '').trim(),
+        String(params.status || 'ready').trim(),
+        limit,
+      ],
+    );
+    return {
+      ok: true,
+      result: 'postgres',
+      testCases: result.rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        source: row.source,
+        sourceUrl: row.source_url,
+        videoId: row.video_id,
+        agentId: row.agent_id,
+        title: row.title,
+        transcript: row.transcript,
+        assertions: Array.isArray(row.assertions) ? row.assertions : [],
+        coachMemoryEntries: Array.isArray(row.coach_memory_entries) ? row.coach_memory_entries : [],
+        status: row.status,
+        metadata: row.metadata || {},
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] YouTube training case read skipped:', error?.message || error);
+    return {
+      ok: false,
+      result: 'state_fallback',
+      error: error?.message || String(error),
+      testCases: (state.youtubeTrainingCases || []).slice(0, limit),
+    };
+  }
+}
+
+async function runYouTubeTrainingPipelineRecord(params = {}) {
+  const result = await processYouTubeTraining(params, {
+    publishEvent: async (eventType, payload) => {
+      const mappedType = eventType === 'youtube.training.started'
+        ? EventTypes.YOUTUBE_TRAINING_STARTED
+        : eventType === 'youtube.training.ready'
+          ? EventTypes.YOUTUBE_TRAINING_READY
+          : eventType;
+      return publishPbkEvent(mappedType, payload, params.source || 'youtube-training');
+    },
+    storeTestCase: recordYouTubeTrainingCase,
+    storeCoachMemory: recordYouTubeCoachMemoryEntries,
+    storeBrainDoc: async (brainDoc) => {
+      addBrainDoc(state, brainDoc);
+      state.status.weeklySources = toNumber(state.status.weeklySources, 0) + 1;
+      return { ok: true, result: 'brain_doc_indexed', docId: brainDoc.id };
+    },
+  });
+
+  if (result.ok) {
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.actor || params.requestedBy || 'Rex',
+        category: 'TRAINING',
+        status: 'indexed',
+        text: `YouTube training indexed ${result.assertions.length} assertions and ${result.coachMemoryEntries.length} coach memories for ${result.testCase.agentId}.`,
+        target: result.testCase.title || result.url,
+      }),
+    );
+    await publishPbkEvent(EventTypes.TEST_CASE_UPDATED, {
+      source: 'youtube',
+      sourceUrl: result.url,
+      testCaseId: result.testCase.id,
+      agentId: result.testCase.agentId,
+    }, params.source || 'youtube-training').catch(() => null);
+  } else {
+    addActivity(
+      state,
+      makeActivity({
+        actor: params.actor || params.requestedBy || 'Rex',
+        category: 'TRAINING',
+        status: 'warning',
+        text: `YouTube training skipped: ${result.error || result.result || 'unknown error'}.`,
+        target: params.url || params.sourceUrl || 'YouTube source',
+      }),
+    );
+  }
+
+  await persistState(state);
+  return result;
+}
+
+async function runYouTubeTrainingEvalSuiteRecord(params = {}) {
+  const cases = Array.isArray(params.testCases)
+    ? params.testCases
+    : (await readYouTubeTrainingCases(params)).testCases;
+  const report = runYouTubeTrainingEvalSuite(cases, {
+    suiteName: params.suiteName || params.suite_name || 'youtube_training',
+  });
+  const persisted = await recordPbkEvalRun(report, {
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    suiteName: params.suiteName || params.suite_name || 'youtube_training',
+    source: params.source || 'pbk-bridge',
+  });
+  return {
+    ...report,
+    persisted,
+  };
+}
+
+async function upsertAgentRegistryRecordsToPg(records = []) {
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  const agents = mergeAgentRegistryRecords(records, []);
+  let count = 0;
+  try {
+    for (const agent of agents) {
+      await pool.query(
+        `INSERT INTO public.agent_registry (
+          id, tenant_id, name, description, capabilities, status, endpoint,
+          version, health_checked_at, last_error, metadata, updated_at
+        )
+        VALUES ($1,$2,$3,$4,$5::text[],$6,$7,$8,$9,$10,$11::jsonb,$12)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          description = EXCLUDED.description,
+          capabilities = ARRAY(SELECT DISTINCT capability FROM unnest(public.agent_registry.capabilities || EXCLUDED.capabilities) AS capability),
+          status = EXCLUDED.status,
+          endpoint = EXCLUDED.endpoint,
+          version = EXCLUDED.version,
+          health_checked_at = EXCLUDED.health_checked_at,
+          last_error = EXCLUDED.last_error,
+          metadata = public.agent_registry.metadata || EXCLUDED.metadata,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          agent.id,
+          normalizeTenantId(agent.tenantId || agent.tenant_id || 'pbk'),
+          agent.name,
+          agent.description || '',
+          agent.capabilities || [],
+          agent.status || 'active',
+          agent.endpoint || '',
+          agent.version || '',
+          agent.healthCheckedAt || agent.health_checked_at || null,
+          agent.lastError || agent.last_error || '',
+          JSON.stringify(agent.metadata && typeof agent.metadata === 'object' ? agent.metadata : {}),
+          isoNow(),
+        ],
+      );
+      count += 1;
+    }
+    return { ok: true, count };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] agent registry persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error), count };
+  }
+}
+
+async function readAgentRegistryFromPg() {
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable', agents: [] };
+  try {
+    const result = await pool.query(
+      `SELECT id, tenant_id, name, description, capabilities, status, endpoint,
+              version, health_checked_at, last_error, metadata, created_at, updated_at
+       FROM public.agent_registry
+       WHERE tenant_id = $1
+       ORDER BY id ASC`,
+      [normalizeTenantId('pbk')],
+    );
+    return {
+      ok: true,
+      agents: result.rows.map((row) => normalizeAgentRegistryRecord(row)),
+    };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] agent registry read skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error), agents: [] };
+  }
+}
+
+async function syncAgentRegistryFromPg({ seed = true, persist = false } = {}) {
+  const defaults = buildDefaultAgentRegistry();
+  if (seed) await upsertAgentRegistryRecordsToPg(defaults);
+  const read = await readAgentRegistryFromPg();
+  const registry = mergeAgentRegistryRecords(read.ok && read.agents.length ? read.agents : [], defaults);
+  applyAgentRegistryToRuntime(registry);
+  if (persist) await persistState(state);
+  return {
+    ok: true,
+    result: read.ok ? 'agent_registry_loaded' : 'agent_registry_state_fallback',
+    source: read.ok ? 'postgres' : 'runtime_state',
+    loadedAt: agentRegistryLoadedAt,
+    registry: buildAgentRegistrySnapshot(registry),
+    persistence: read.ok ? { ok: true } : { ok: false, error: read.error || read.reason || 'unavailable' },
+  };
 }
 
 async function persistPbkTaskRecord(task = {}) {
@@ -16137,6 +17064,184 @@ async function buildRevenueGoalAlignment(params = {}) {
   };
 }
 
+function buildRexAutonomyKpiSnapshot(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const knownRevenue = getKnownRevenueLastDays(Number(params.revenueDays || params.revenue_days || 30));
+  const monthlyRunRate = toMoneyNumber(params.monthlyRunRate ?? params.monthly_run_rate, knownRevenue.revenue, 0);
+  return buildRexKpiSnapshot({
+    calls: state.calls || [],
+    callAnalyses: state.callAnalyses || [],
+    prosodyDecisions: state.prosodyDecisions || [],
+    targetMonthlyRevenue: params.targetMonthlyRevenue || params.target_monthly_revenue || REVENUE_TARGET_MONTHLY,
+    monthlyRunRate,
+    tenantId,
+  });
+}
+
+async function persistRexAutonomyRunToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_rex_autonomy_runs (
+       id, tenant_id, run_type, kpis, goals, status, source, created_at
+     )
+     VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8)
+     ON CONFLICT (id) DO UPDATE SET
+       kpis = EXCLUDED.kpis,
+       goals = EXCLUDED.goals,
+       status = EXCLUDED.status`,
+    [
+      record.id || `rex-autonomy-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+      record.runType || record.run_type || 'goal_discovery',
+      JSON.stringify(record.kpis || {}),
+      JSON.stringify(record.goals || []),
+      record.status || 'complete',
+      record.source || 'rex-autonomy',
+      record.createdAt || record.created_at || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function runAutonomousRexGoalDiscoveryRecord(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || 'pbk');
+  const kpis = buildRexAutonomyKpiSnapshot({ ...params, tenantId });
+  const goals = proposeAutonomousRexGoals(kpis, {
+    now: params.now || isoNow(),
+    minCallsForModel: params.minCallsForModel || params.min_calls_for_model || 500,
+    targetConversionRate: params.targetConversionRate || params.target_conversion_rate || 0.18,
+  });
+  const actions = goals.map((goal) => ({
+    actionId: goal.actionId,
+    actionType: goal.actionType,
+    label: goal.label || goal.title,
+    target: goal.target,
+    riskLevel: goal.riskLevel || 'low',
+    source: 'rex_autonomy',
+    reason: goal.reason || goal.description,
+    expectedImpact: goal.successMetric,
+    recommendation: goal,
+    providerWritesBlocked: true,
+    approvalRequired: goal.approvalRequired !== false,
+    metadata: {
+      ...(goal.metadata || {}),
+      kpis,
+    },
+  }));
+  const storedActions = await storeRevenueActions(actions, { tenantId });
+  const run = {
+    id: params.id || `rex-autonomy-goals-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    tenantId,
+    runType: 'goal_discovery',
+    kpis,
+    goals,
+    status: 'complete',
+    source: 'rex-autonomy',
+    createdAt: isoNow(),
+  };
+  const postgres = await persistRexAutonomyRunToPg(run);
+  const focus = goals.map((goal, index) => `${index + 1}. ${goal.title}: ${goal.successMetric}`).join(' ');
+  upsertAvaActiveMemory({
+    id: `rex-autonomous-focus-${new Date().toISOString().slice(0, 10)}`,
+    memoryType: 'rex-autonomous-goals',
+    objectionTag: 'rex_daily_autonomy',
+    prompt: 'Before Ava calls, retrieve today Rex autonomous focus.',
+    response: focus,
+    summary: focus,
+    score: 0.93,
+    outcome: 'rex_autonomous_goal_discovery',
+    source: 'rex-autonomy',
+    metadata: { kpis, goals },
+  });
+  void publishPbkEvent(EventTypes.REX_GOALS_PROPOSED, {
+    runId: run.id,
+    goalCount: goals.length,
+    goals: goals.map((goal) => ({ actionId: goal.actionId, title: goal.title, priority: goal.priority })),
+  }, 'rex-autonomy');
+  addActivity(state, makeActivity({
+    actor: params.actor || 'Rex Autonomy',
+    category: 'REX',
+    status: 'success',
+    text: `Rex proposed ${goals.length} autonomous goal${goals.length === 1 ? '' : 's'} from current PBK KPIs.`,
+    target: 'rex-autonomous-goals',
+  }));
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'rex_autonomous_goals_proposed',
+    providerWritesBlocked: true,
+    kpis,
+    goals,
+    actions: storedActions,
+    run,
+    storage: { localState: true, postgres },
+  };
+}
+
+async function handleRexLeadImportedRecord(params = {}) {
+  const action = selectRexProactiveLeadAction(params, {
+    nowLocalHour: params.nowLocalHour ?? params.now_local_hour,
+    hotLeadThreshold: params.hotLeadThreshold || params.hot_lead_threshold || 80,
+    reviewThreshold: params.reviewThreshold || params.review_threshold || 65,
+  });
+  let task = null;
+  let decision = null;
+  if (['queue_call', 'schedule_for_calling_window', 'create_rex_decision'].includes(action.action)) {
+    task = await recordAgentHandoffTask({
+      tenantId: params.tenantId || params.tenant_id || 'pbk',
+      fromAgent: 'Rex',
+      toAgent: 'Ava',
+      taskType: action.action === 'queue_call' ? 'hot_lead_call_queue' : 'hot_lead_follow_up_review',
+      status: action.action === 'queue_call' ? 'queued' : 'pending',
+      summary: action.reason,
+      correlationId: action.leadId || params.correlationId || params.correlation_id || '',
+      providerWrites: 'blocked',
+      metadata: {
+        ...action,
+        lead: {
+          leadId: action.leadId,
+          phone: action.phone,
+          motivationScore: action.motivationScore,
+        },
+        source: params.source || 'lead.imported',
+      },
+    });
+    decision = await createRexDecision({
+      requestApproval: false,
+      source: 'rex-proactive-lead-trigger',
+      actor: 'Rex',
+      status: action.action === 'queue_call' ? 'proactive_queued' : 'proposed',
+      tool: 'revenue_engine_next_best_action',
+      params: {
+        leadId: action.leadId,
+        phone: action.phone,
+        action: action.action,
+        motivationScore: action.motivationScore,
+        providerWritesBlocked: true,
+      },
+      rationale: action.reason,
+      targetType: 'lead',
+      targetId: action.leadId,
+      targetLabel: action.leadId || action.phone || 'hot lead',
+    }, { requestApproval: false, actor: 'Rex', source: 'rex-proactive-lead-trigger' });
+  }
+  void publishPbkEvent(EventTypes.REX_PROACTIVE_TRIGGERED, {
+    action: action.action,
+    leadId: action.leadId,
+    motivationScore: action.motivationScore,
+    taskId: task?.id || '',
+    decisionId: decision?.decision?.id || '',
+  }, 'rex-autonomy');
+  await persistState(state);
+  return {
+    ok: true,
+    result: 'rex_lead_import_processed',
+    providerWritesBlocked: true,
+    action,
+    task,
+    decision: decision?.decision || null,
+  };
+}
+
 function getCommandCenterClosedLoopSettings() {
   const settings = ensureRuntimeSettings(state);
   const configured = plainObject(settings.commandCenterClosedLoop);
@@ -16360,6 +17465,20 @@ function getTelnyxLiveReplyStrategistTimeoutMs() {
 function buildAvaScriptRotationSnapshot(params = {}) {
   ensureAgentFleetCollections();
   const query = String(params.query || params.transcript || params.text || '').toLowerCase();
+  const contextScripts = buildContextAwareScriptLibrary(params);
+  const contextAwareSelection = selectContextAwareScript({
+    scripts: contextScripts,
+    pathKey: params.pathKey || params.path_key || params.selectedPath || params.selected_path || params.pathDecision?.selectedPath || '',
+    sentiment: params.sentiment ?? params.sellerSentiment ?? params.seller_sentiment ?? params.session?.sellerSentiment ?? 0,
+    callerRole: params.callerRole || params.caller_role || params.session?.callerRole || '',
+    lastObjection: params.lastObjection || params.last_objection || params.objectionTag || params.objection_tag || params.warManual?.objection?.tag || '',
+    transcript: query,
+    recentScriptIds: params.recentScriptIds || params.recent_script_ids || params.session?.recentScriptIds || [],
+    recentAvaLines: params.recentAvaLines || params.recent_ava_lines || params.session?.recentAvaLines || [],
+    leadId: params.leadId || params.lead_id || params.session?.leadId || '',
+    callId: params.callId || params.call_id || params.session?.callId || '',
+    explorationRate: params.explorationRate ?? params.exploration_rate ?? 0.06,
+  });
   const ava = findAgentRecord('ava') || {};
   const bridgeSkills = (ava.skills || [])
     .map((skill) => ({
@@ -16387,8 +17506,170 @@ function buildAvaScriptRotationSnapshot(params = {}) {
     activeSkillCount: bridgeSkills.length || Number(ava.skillsTotal || 0),
     selectedSkills: bridgeSkills.slice(0, 6),
     activeMemories,
-    rotationRule: 'Do not repeat a prior Ava line. Rotate skill, memory, BANT question, or proof angle every turn.',
+    contextAwareSelection: contextAwareSelection.ok ? {
+      selectedScript: contextAwareSelection.selectedScript,
+      score: contextAwareSelection.score,
+      reasonCodes: contextAwareSelection.reasonCodes,
+      scoredScripts: contextAwareSelection.scoredScripts,
+      exploration: contextAwareSelection.exploration,
+    } : null,
+    selectedScript: contextAwareSelection.selectedScript ? {
+      id: contextAwareSelection.selectedScript.id,
+      title: contextAwareSelection.selectedScript.title,
+      pathKey: contextAwareSelection.selectedScript.pathKey,
+      content: contextAwareSelection.selectedScript.content,
+      reasonCodes: contextAwareSelection.reasonCodes,
+      score: contextAwareSelection.score,
+    } : null,
+    rotationRule: contextAwareSelection.rotationRule || 'Do not repeat a prior Ava line. Rotate skill, memory, BANT question, or proof angle every turn.',
   };
+}
+
+function buildContextAwareScriptLibrary(params = {}) {
+  const provided = Array.isArray(params.scriptsLibrary || params.scripts_library || params.scripts)
+    ? (params.scriptsLibrary || params.scripts_library || params.scripts)
+    : [];
+  if (provided.length) return provided;
+  const bundle = buildAvaWarManualRuntimeSeedBundle();
+  return (bundle.scripts || []).map((script) => ({
+    id: script.id,
+    title: script.title,
+    content: script.content,
+    tags: script.tags || [],
+    pathKey: script.pathKey || '',
+    allowedRoles: script.allowedRoles || ['owner', 'agent', 'decision_helper'],
+    metadata: script.metadata || {},
+  }));
+}
+
+async function persistContextAwareScriptExposureToPg(selection = {}, params = {}) {
+  const script = selection.selectedScript || selection.selected || {};
+  if (!script?.id) return false;
+  const result = await queryPgRows(
+    `UPDATE public.scripts
+     SET usage_count = COALESCE(usage_count, 0) + 1,
+         last_selected_at = NOW(),
+         metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [
+      script.id,
+      JSON.stringify({
+        lastContextAwareSelection: {
+          callId: params.callId || params.call_id || '',
+          leadId: params.leadId || params.lead_id || '',
+          score: selection.score || 0,
+          reasonCodes: selection.reasonCodes || [],
+          selectedAt: isoNow(),
+        },
+      }),
+    ],
+  );
+  return result.ok && result.rows.length > 0;
+}
+
+async function selectContextAwareScriptRecord(params = {}) {
+  const selection = selectContextAwareScript({
+    ...params,
+    scripts: buildContextAwareScriptLibrary(params),
+  });
+  let postgres = false;
+  if (selection.ok && params.persistExposure !== false && params.persist_exposure !== false) {
+    postgres = await persistContextAwareScriptExposureToPg(selection, params);
+    void publishPbkEvent(EventTypes.SCRIPT_VARIANT_SELECTED, {
+      scriptId: selection.selectedScript?.id || '',
+      title: selection.selectedScript?.title || '',
+      callId: params.callId || params.call_id || '',
+      leadId: params.leadId || params.lead_id || '',
+      reasonCodes: selection.reasonCodes || [],
+      score: selection.score || 0,
+    }, 'script-rotator');
+  }
+  return {
+    ...selection,
+    providerWritesBlocked: true,
+    storage: { postgres },
+  };
+}
+
+async function recordContextAwareScriptOutcomeRecord(params = {}) {
+  const scriptId = String(params.scriptId || params.script_id || params.id || '').trim();
+  if (!scriptId) return { ok: false, result: 'invalid_request', error: 'scriptId is required.' };
+  const scripts = buildContextAwareScriptLibrary(params);
+  const script = scripts.find((item) => String(item.id || '') === scriptId) || { id: scriptId, metadata: {} };
+  const stats = recordScriptOutcomeStats(script, params);
+  const success = typeof params.success === 'boolean'
+    ? params.success
+    : /accepted|signed|closed|won|appointment/i.test(String(params.outcome || params.outcomeLabel || params.outcome_label || ''));
+  const dealValue = Math.max(0, toMoneyNumber(params.dealValue ?? params.deal_value ?? params.assignmentFee ?? params.assignment_fee, 0));
+  const result = await queryPgRows(
+    `UPDATE public.scripts
+     SET usage_count = COALESCE(usage_count, 0) + 1,
+         conversion_count = COALESCE(conversion_count, 0) + $2,
+         deal_value = COALESCE(deal_value, 0) + $3,
+         last_outcome_at = NOW(),
+         metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id, usage_count, conversion_count, deal_value`,
+    [
+      scriptId,
+      success ? 1 : 0,
+      dealValue,
+      JSON.stringify({
+        lastContextAwareOutcome: {
+          callId: params.callId || params.call_id || '',
+          leadId: params.leadId || params.lead_id || '',
+          outcome: stats.lastOutcomeLabel,
+          success,
+          recordedAt: isoNow(),
+        },
+      }),
+    ],
+  );
+  const returned = result.rows?.[0] || {};
+  const finalStats = returned.id ? {
+    usageCount: Number(returned.usage_count || stats.usageCount),
+    conversionCount: Number(returned.conversion_count || stats.conversionCount),
+    dealValue: Number(returned.deal_value || stats.dealValue),
+    lastOutcomeLabel: stats.lastOutcomeLabel,
+    lastSelectedAt: stats.lastSelectedAt,
+  } : stats;
+  void publishPbkEvent(EventTypes.SCRIPT_OUTCOME_RECORDED, {
+    scriptId,
+    callId: params.callId || params.call_id || '',
+    leadId: params.leadId || params.lead_id || '',
+    outcome: finalStats.lastOutcomeLabel,
+    stats: finalStats,
+  }, 'script-rotator');
+  return {
+    ok: result.ok,
+    result: result.ok ? 'script_outcome_recorded' : 'script_outcome_record_failed',
+    scriptId,
+    stats: finalStats,
+    storage: { postgres: result.ok && result.rows.length > 0 },
+    error: result.ok ? '' : result.error || '',
+  };
+}
+
+function rememberContextAwareScriptSelection(session = {}, architecture = {}) {
+  const selection = architecture?.scripts?.contextAwareSelection || session.contextAwareScriptSelection || null;
+  const script = selection?.selectedScript || architecture?.scripts?.selectedScript || {};
+  const scriptId = script?.id
+    || session.contextAwareScriptSelection?.selectedScript?.id
+    || '';
+  if (!scriptId) return;
+  if (!Array.isArray(session.recentScriptIds)) session.recentScriptIds = [];
+  session.recentScriptIds = [scriptId, ...session.recentScriptIds.filter((id) => id !== scriptId)].slice(0, 8);
+  void publishPbkEvent(EventTypes.SCRIPT_VARIANT_SELECTED, {
+    scriptId,
+    title: script.title || '',
+    callId: session.callId || '',
+    leadId: session.leadId || '',
+    reasonCodes: selection?.reasonCodes || [],
+    score: selection?.score || 0,
+  }, 'ava-live-call');
 }
 
 function getAvaIntelligenceMode(params = {}) {
@@ -16661,7 +17942,7 @@ function buildAvaCallArchitectureContext(params = {}) {
   const knownBant = normalizeBantInfo(contextCall.bant || {}, contextCall.raw?.bant || {}, contextCall.raw || {}, params.bant || {});
   const bant = normalizeBantInfo(knownBant, session.bant || {}, extractBantFromTranscript(intelligenceTranscript, knownBant));
   const missingBant = getMissingBantFields(bant);
-  const scripts = buildAvaScriptRotationSnapshot({ ...params, query: intelligenceTranscript });
+  let scripts = buildAvaScriptRotationSnapshot({ ...params, session, contextCall, query: intelligenceTranscript });
   const callerRole = applyAvaCallerRoleToSession(session, detectAvaCallerRole({
     ...params,
     session,
@@ -16739,6 +18020,22 @@ function buildAvaCallArchitectureContext(params = {}) {
     selectedPath: pathDecision.selectedPath,
     turnCount: params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0),
   });
+  scripts = buildAvaScriptRotationSnapshot({
+    ...params,
+    session,
+    contextCall,
+    query: intelligenceTranscript,
+    pathDecision,
+    pathKey: pathDecision.selectedPath,
+    selectedPath: pathDecision.selectedPath,
+    callerRole: callerRole.role,
+    lastObjection: warManual.objection?.tag || '',
+    warManual,
+  });
+  const contextScriptId = scripts.contextAwareSelection?.selectedScript?.id || scripts.selectedScript?.id || '';
+  if (contextScriptId) {
+    session.contextAwareScriptSelection = scripts.contextAwareSelection;
+  }
   const activeListening = buildAvaActiveListeningContext({
     ...params,
     session,
@@ -18251,6 +19548,9 @@ async function recordTokenUsage(provider = '', model = '', usage = {}, meta = {}
 }
 
 const openAiEmbeddingCache = new Map();
+const CALL_EMBEDDING_CHUNK_SIZE = Math.max(1000, Math.min(8000, toNumber(process.env.PBK_CALL_EMBEDDING_CHUNK_SIZE, 6000)));
+const CALL_EMBEDDING_CHUNK_OVERLAP = Math.max(0, Math.min(1000, toNumber(process.env.PBK_CALL_EMBEDDING_CHUNK_OVERLAP, 400)));
+const CALL_EMBEDDING_MAX_CHUNKS = Math.max(1, Math.min(24, toNumber(process.env.PBK_CALL_EMBEDDING_MAX_CHUNKS, 6)));
 
 function getEmbeddingCacheKey(model = '', text = '') {
   return `${model}:${createHash('sha256').update(String(text || '').slice(0, 8000)).digest('hex')}`;
@@ -18281,6 +19581,43 @@ function normalizeCallTranscriptForMemory(transcript) {
   return String(transcript || '').trim();
 }
 
+function chunkCallTranscriptForEmbedding(text = '', options = {}) {
+  const cleanText = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleanText) return [];
+  const chunkSize = Math.max(1000, Math.min(8000, toNumber(options.chunkSize, CALL_EMBEDDING_CHUNK_SIZE)));
+  const overlap = Math.max(0, Math.min(chunkSize - 1, toNumber(options.overlap, CALL_EMBEDDING_CHUNK_OVERLAP)));
+  const maxChunks = Math.max(1, Math.min(24, toNumber(options.maxChunks, CALL_EMBEDDING_MAX_CHUNKS)));
+  const chunks = [];
+  let cursor = 0;
+  while (cursor < cleanText.length && chunks.length < maxChunks) {
+    const hardEnd = Math.min(cleanText.length, cursor + chunkSize);
+    const softWindow = cleanText.slice(cursor, hardEnd);
+    const sentenceBreak = softWindow.length >= chunkSize * 0.55
+      ? Math.max(softWindow.lastIndexOf('. '), softWindow.lastIndexOf('? '), softWindow.lastIndexOf('! '), softWindow.lastIndexOf('\n'))
+      : -1;
+    const end = sentenceBreak > 500 && hardEnd < cleanText.length
+      ? cursor + sentenceBreak + 1
+      : hardEnd;
+    const chunk = cleanText.slice(cursor, end).trim();
+    if (chunk) chunks.push(chunk);
+    if (end >= cleanText.length) break;
+    cursor = Math.max(end - overlap, cursor + 1);
+  }
+  return chunks;
+}
+
+function averageEmbeddingVectors(vectors = []) {
+  const usable = vectors.filter((vector) => Array.isArray(vector) && vector.length === 1536);
+  if (!usable.length) return [];
+  const averaged = new Array(1536).fill(0);
+  for (const vector of usable) {
+    for (let index = 0; index < averaged.length; index += 1) {
+      averaged[index] += Number(vector[index]) || 0;
+    }
+  }
+  return averaged.map((value) => value / usable.length);
+}
+
 function inferCallEmbeddingOutcome(record = {}) {
   const status = String(record.status || record.outcome || '').trim().toLowerCase();
   const notes = String(record.notes || record.summary || '').trim().toLowerCase();
@@ -18288,6 +19625,58 @@ function inferCallEmbeddingOutcome(record = {}) {
   if (/\b(contract|signed|closed|accepted|won|appointment|transferring|qualified)\b/.test(haystack)) return 'successful';
   if (/\b(no[_ -]?show|lost|dead|failed|dnc|blocked|rejected)\b/.test(haystack)) return 'unsuccessful';
   return status || 'unknown';
+}
+
+async function createCallTranscriptEmbedding(sourceText = '', record = {}) {
+  const chunks = chunkCallTranscriptForEmbedding(sourceText, record);
+  if (!chunks.length) return { ok: false, result: 'empty_text', error: 'Embedding text was empty.' };
+  const chunkResults = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const embeddingResult = await createOpenAiEmbedding(chunks[index], {
+      source: 'call-embedding-upsert-chunk',
+      callId: record.callId || record.call_id || '',
+      leadId: record.leadId || record.lead_id || '',
+      timeoutMs: Math.max(1000, toNumber(record.timeoutMs, 10000)),
+    });
+    if (!embeddingResult.ok) {
+      return {
+        ...embeddingResult,
+        chunkIndex: index,
+        chunkCount: chunks.length,
+      };
+    }
+    chunkResults.push({
+      index,
+      chars: chunks[index].length,
+      hash: createHash('sha256').update(chunks[index]).digest('hex'),
+      embedding: embeddingResult.embedding,
+      model: embeddingResult.model,
+    });
+  }
+  return {
+    ok: true,
+    result: chunkResults.length > 1 ? 'chunked_average_embedding' : 'single_chunk_embedding',
+    model: chunkResults[0]?.model || OPENAI_EMBEDDING_MODEL,
+    embedding: averageEmbeddingVectors(chunkResults.map((item) => item.embedding)),
+    chunks: chunkResults.map(({ embedding, ...item }) => item),
+  };
+}
+
+async function loadCallRecordForEmbedding(callId = '') {
+  const id = String(callId || '').trim();
+  if (!id || !DATABASE_URL) return null;
+  const result = await queryPgRows(
+    `SELECT id, lead_id, workspace_id, status, sentiment, transcript, notes, started_at, ended_at, created_at, updated_at
+     FROM public.calls
+     WHERE id = $1
+        OR telnyx_call_control_id = $1
+        OR telnyx_call_leg_id = $1
+        OR telnyx_call_session_id = $1
+     ORDER BY COALESCE(ended_at, updated_at, created_at, NOW()) DESC
+     LIMIT 1`,
+    [id],
+  );
+  return result.ok ? result.rows?.[0] || null : null;
 }
 
 async function createOpenAiEmbedding(text = '', options = {}) {
@@ -18358,34 +19747,77 @@ async function createOpenAiEmbedding(text = '', options = {}) {
 async function upsertCallEmbeddingFromTranscript(record = {}) {
   if (!AVA_EPISODIC_MEMORY_ENABLED) return { ok: false, skipped: true, result: 'episodic_memory_disabled' };
   if (!DATABASE_URL) return { ok: false, skipped: true, result: 'no_database' };
-  const sourceText = normalizeCallTranscriptForMemory(record.transcriptText || record.transcript || '').replace(/\s+/g, ' ').trim();
   const callId = String(record.callId || record.call_id || '').trim();
+  const callRecord = normalizeCallTranscriptForMemory(record.transcriptText || record.transcript || '').trim()
+    ? null
+    : await loadCallRecordForEmbedding(callId).catch(() => null);
+  const sourceText = normalizeCallTranscriptForMemory(
+    record.transcriptText
+      || record.transcript
+      || callRecord?.transcript
+      || callRecord?.notes
+      || '',
+  ).replace(/\s+/g, ' ').trim();
   if (!callId || sourceText.length < 80) return { ok: false, skipped: true, result: 'insufficient_call_memory' };
-  const embeddingResult = await createOpenAiEmbedding(sourceText, {
-    source: 'call-embedding-upsert',
+  const leadId = record.leadId || record.lead_id || callRecord?.lead_id || '';
+  const transcriptHash = createHash('sha256').update(sourceText).digest('hex');
+  const existing = await queryPgRows(
+    `SELECT id, embedding_model, transcript_hash
+     FROM public.call_embeddings
+     WHERE workspace_id = $1
+       AND call_id = $2
+       AND embedding_model = $3
+       AND transcript_hash = $4
+     LIMIT 1`,
+    [
+      record.workspaceId || record.workspace_id || callRecord?.workspace_id || 'pbk',
+      callId,
+      OPENAI_EMBEDDING_MODEL,
+      transcriptHash,
+    ],
+  );
+  if (existing.ok && existing.rows?.length) {
+    return {
+      ok: true,
+      skipped: true,
+      result: 'call_embedding_already_current',
+      callId,
+      leadId,
+      embeddingModel: OPENAI_EMBEDDING_MODEL,
+    };
+  }
+  const embeddingResult = await createCallTranscriptEmbedding(sourceText, {
+    ...record,
     callId,
-    leadId: record.leadId || record.lead_id || '',
-    timeoutMs: Math.max(1000, toNumber(record.timeoutMs, 10000)),
+    leadId,
   });
   if (!embeddingResult.ok) {
     recordCallTrace('call_embedding_upserted', {
       callId,
-      leadId: record.leadId || record.lead_id || '',
+      leadId,
       result: embeddingResult.result || 'embedding_failed',
       error: embeddingResult.error || '',
+      chunkIndex: embeddingResult.chunkIndex,
+      chunkCount: embeddingResult.chunkCount,
       stage: 'upsertCallEmbeddingFromTranscript',
     });
     return embeddingResult;
   }
-  const transcriptHash = createHash('sha256').update(sourceText).digest('hex');
   const metadata = {
     source: record.source || 'bridge',
     transcriptChars: sourceText.length,
     status: record.status || '',
     reason: record.reason || '',
     streamId: record.streamId || '',
-    sentiment: record.sentiment || null,
+    sentiment: record.sentiment ?? callRecord?.sentiment ?? null,
     synthetic: Boolean(record.synthetic),
+    chunking: {
+      strategy: 'bounded-overlap-average',
+      chunkCount: embeddingResult.chunks?.length || 1,
+      chunkSize: CALL_EMBEDDING_CHUNK_SIZE,
+      chunkOverlap: CALL_EMBEDDING_CHUNK_OVERLAP,
+      chunks: embeddingResult.chunks || [],
+    },
   };
   const result = await queryPgRows(
     `INSERT INTO public.call_embeddings (
@@ -18406,9 +19838,9 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
     [
       record.workspaceId || record.workspace_id || 'pbk',
       callId,
-      record.leadId || record.lead_id || '',
-      record.outcome || inferCallEmbeddingOutcome(record),
-      record.sentiment?.pbkScore ?? record.sentiment ?? null,
+      leadId,
+      record.outcome || inferCallEmbeddingOutcome({ ...callRecord, ...record }),
+      record.sentiment?.pbkScore ?? record.sentiment ?? callRecord?.sentiment ?? null,
       sourceText.slice(0, 12000),
       transcriptHash,
       embeddingResult.model || OPENAI_EMBEDDING_MODEL,
@@ -18419,12 +19851,22 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
   );
   recordCallTrace('call_embedding_upserted', {
     callId,
-    leadId: record.leadId || record.lead_id || '',
+    leadId,
     result: result.ok ? 'call_embedding_upserted' : 'call_embedding_upsert_failed',
     error: result.error || '',
+    chunkCount: embeddingResult.chunks?.length || 1,
     stage: 'upsertCallEmbeddingFromTranscript',
   });
-  return result.ok ? { ok: true, result: 'call_embedding_upserted' } : result;
+  return result.ok
+    ? {
+      ok: true,
+      result: 'call_embedding_upserted',
+      callId,
+      leadId,
+      chunkCount: embeddingResult.chunks?.length || 1,
+      embeddingModel: embeddingResult.model || OPENAI_EMBEDDING_MODEL,
+    }
+    : result;
 }
 
 function selectMemorySearchTerms(text = '') {
@@ -20357,6 +21799,10 @@ function buildAvaCallStateSummary(params = {}) {
   const activeLabel = sanitizeAvaSpokenOutput(activeListening.label || '').slice(0, 220);
   const activeHook = sanitizeAvaSpokenOutput(activeListening.callFlow?.recommendedHook || '').slice(0, 180);
   const activeNextStep = activeListening.callFlow?.nextStepId || '';
+  const contextScript = architecture.scripts?.contextAwareSelection?.selectedScript || architecture.scripts?.selectedScript || {};
+  const contextScriptLine = contextScript?.content
+    ? `Context-aware script rotator selected "${contextScript.title || contextScript.id}" (${(architecture.scripts?.contextAwareSelection?.reasonCodes || contextScript.reasonCodes || []).join(',') || 'best_context'}): ${sanitizeAvaSpokenOutput(contextScript.content).slice(0, 260)}`
+    : '';
   const topGoalLabel = goalInference.topGoal?.label || '';
   const secondaryGoalLabels = Array.isArray(goalInference.secondaryGoals)
     ? goalInference.secondaryGoals.map((goal) => goal.label || goal.id).filter(Boolean).slice(0, 3).join(', ')
@@ -20382,6 +21828,7 @@ function buildAvaCallStateSummary(params = {}) {
     warListenQuestion ? `L.I.S.T.E.N. next step (${warManual.listenProbe?.step || 'probe'}): ${warListenQuestion}` : '',
     warPowerLine ? `War manual power line if natural: ${warPowerLine}` : '',
     warMove?.instruction ? `Psychology move: ${warMove.label || warMove.id} - ${sanitizeAvaSpokenOutput(warMove.instruction).slice(0, 220)}` : '',
+    contextScriptLine,
     activeListening.revision ? `Active listening: ${activeListening.revision}; mode ${activeListening.mode || 'twenty_year_pro_ready'}; responseRequired=${activeListening.responseRequired !== false}; waitingForSeller=${Boolean(activeListening.waitingForSeller)}; call flow ${activeNextStep || 'listen.mirror_label'} via ${activeListening.callFlow?.schema || 'call_flow/call_flow_edges'}.` : '',
     activeSellerWords ? `Seller just said: ${activeSellerWords}` : '',
     activeMirror ? `Mirror or label before strategy: ${activeMirror}${activeLabel ? ` - ${activeLabel}` : ''}` : '',
@@ -20422,12 +21869,18 @@ function buildAvaResolvedNextMove(params = {}) {
       || activeListening.callFlow?.recommendedHook
       || '',
   ).slice(0, 280);
+  const contextAwareScript = sanitizeAvaSpokenOutput(
+    architecture.scripts?.contextAwareSelection?.selectedScript?.content
+      || architecture.scripts?.selectedScript?.content
+      || '',
+  ).slice(0, 420);
   const script = sanitizeAvaSpokenOutput(
-    pathDecision.scriptTrigger
+    contextAwareScript
+      || pathDecision.scriptTrigger
       || warManual.path?.scriptTrigger
       || warManual.powerLine?.line
       || '',
-  ).slice(0, 360);
+  ).slice(0, 420);
   const fallback = sanitizeAvaSpokenOutput(
     conversation.nextBestPhrase
       || conversation.reaction?.nextTactic
@@ -20482,8 +21935,10 @@ function buildAvaResolvedNextMove(params = {}) {
     text = nextProbe;
   } else if (pathLocked && script) {
     type = 'path_script';
-    source = 'script_router';
-    reason = pathDecision.selectedPath || session.selectedPath || 'locked_path';
+    source = contextAwareScript ? 'context_aware_script_rotator' : 'script_router';
+    reason = contextAwareScript
+      ? (architecture.scripts?.contextAwareSelection?.reasonCodes || []).join(',') || 'context_aware_script'
+      : pathDecision.selectedPath || session.selectedPath || 'locked_path';
     text = script;
   } else if (activeListening.callFlow?.recommendedHook) {
     type = 'active_listening_hook';
@@ -20595,10 +22050,16 @@ async function resolveAvaLiveCallContext(params = {}) {
     session.liveKnowledge = Array.isArray(liveRag?.matches) ? liveRag.matches : [];
     session.liveKnowledgePrompt = liveKnowledgePrompt;
     session.lastLiveRagAt = isoNow();
+    const latencyMs = Date.now() - startedAt;
+    recordLatencyMetric('ava_context_resolver_ms', latencyMs, {
+      callId,
+      leadId,
+      path: architecture.pathDecision?.selectedPath || '',
+    });
     return {
       ok: true,
       schemaVersion: 'pbk-ava-live-context-resolver-v1',
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
       contextResolver: {
         strategy: 'parallel_cached_working_episodic_goal_rag_memory',
         timeoutMs: 150,
@@ -20625,6 +22086,7 @@ async function resolveAvaLiveCallContext(params = {}) {
       script: {
         path: architecture.pathDecision?.selectedPath || '',
         bestMatch: sanitizeAvaSpokenOutput(architecture.pathDecision?.scriptTrigger || architecture.warManual?.powerLine?.line || '').slice(0, 360),
+        contextAware: architecture.scripts?.contextAwareSelection || null,
       },
       objection: objection.response ? {
         tag: objection.tag || '',
@@ -20658,10 +22120,16 @@ async function resolveAvaLiveCallContext(params = {}) {
   } catch (error) {
     const architecture = params.architecture || buildAvaCallArchitectureContext({ ...params, session, contextCall, transcript, query: transcript });
     const exactNextMove = buildAvaResolvedNextMove({ ...params, session, contextCall, transcript, architecture, conversation: params.conversation || {} });
+    const latencyMs = Date.now() - startedAt;
+    recordLatencyMetric('ava_context_resolver_ms', latencyMs, {
+      callId,
+      leadId,
+      result: 'fallback',
+    });
     return {
       ok: false,
       schemaVersion: 'pbk-ava-live-context-resolver-v1',
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
       error: error?.message || 'resolver_timeout',
       contextResolver: {
         strategy: 'fallback_existing_architecture',
@@ -20685,6 +22153,7 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
   const liveKnowledge = resolvedContext.knowledge?.prompt || resolvedContext.memory?.liveKnowledgePrompt || '';
   const lead = resolvedContext.lead || {};
   const stateSnapshot = resolvedContext.state || {};
+  const contextScript = resolvedContext.script?.contextAware?.selectedScript || resolvedContext.script?.contextAware?.selected || null;
   const goalInference = resolvedContext.goalInference || move.goalInference || {};
   const goalLine = goalInference.topGoal?.label
     ? `Goal inference: top=${goalInference.topGoal.label}; uncertainty=${goalInference.uncertainty ?? 'unknown'}; secondaryGoals=${(goalInference.secondaryGoals || []).map((goal) => goal.label || goal.id).filter(Boolean).slice(0, 3).join(', ') || 'none'}; clarifier=${sanitizeAvaSpokenOutput(goalInference.goalClarifyingQuestion || '').slice(0, 220)}.`
@@ -20700,6 +22169,7 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
     lead.name && lead.nameConfirmed ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.` : '',
     lead.name && !lead.nameConfirmed ? 'Lead context has an unconfirmed CRM name. Do not say the lead name unless the caller confirms it on this call.' : '',
     stateSnapshot.identifiedPath ? `Path state: ${stateSnapshot.pathLocked ? 'locked' : 'probing'} ${stateSnapshot.identifiedPath}.` : '',
+    contextScript?.content ? `Context-aware script selected: ${sanitizeAvaSpokenOutput(contextScript.content).slice(0, 360)}` : '',
     goalLine,
     memory ? `Relevant memory lesson: ${memory}` : '',
     episodicMemory ? `Episodic call memory:\n${episodicMemory}` : '',
@@ -20836,6 +22306,12 @@ async function askStrategistRecord(params = {}) {
       error: primary.error || '',
       stage: 'askStrategistRecord',
     });
+    recordLatencyMetric('llm_deepseek_latency_ms', Date.now() - deepSeekStartedAt, {
+      model: params.model || DEEPSEEK_MODEL,
+      ok: Boolean(primary.ok),
+      stage: 'askStrategistRecord',
+    });
+    if (!primary.ok) incrementObservabilityCounter('llm_deepseek_errors', 1, { model: params.model || DEEPSEEK_MODEL, result: primary.result || '' });
     fallbackChain.push({ provider: 'deepseek', model: params.model || DEEPSEEK_MODEL, result: primary.result, ok: primary.ok, error: primary.error || '' });
     if (primary.ok) {
       const parsed = extractJsonObjectFromText(primary.answer);
@@ -29398,6 +30874,20 @@ async function captureRecordingFromPayload(input = {}) {
   };
   upsertMessage(state, message);
   await persistUnifiedMessageRecord(message);
+  if (deepgramSummary?.transcript) {
+    void publishPbkEvent(EventTypes.CALL_COMPLETED, {
+      workspaceId: 'pbk',
+      callId: message.callId || params.callId || existingCall?.id || '',
+      leadId: message.leadId || params.leadId || existingCall?.leadId || '',
+      transcript: deepgramSummary.transcript,
+      outcome: existingCall?.status || message.status || 'recorded',
+      status: existingCall?.status || message.status || 'recorded',
+      sentiment: deepgramSummary?.sentiment?.pbkScore ?? params.sentiment ?? null,
+      recordingMessageId: message.id,
+      storagePath,
+      s3Archive: s3Archive?.ok ? s3Archive : null,
+    }, 'telnyx-recording-capture').catch(() => null);
+  }
 
   if (existingCall) {
     upsertCall(state, {
@@ -30594,6 +32084,11 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   if (mode === 'autopilot') return null;
 
   const label = toolName.replace(/_/g, ' ');
+  const safetyValidation = await preValidateToolSafety(toolName, params, 'operating-mode-guard');
+  if (safetyValidation?.blocked) {
+    return buildSafetyBlockedToolResult(toolName, safetyValidation);
+  }
+
   if (mode === 'manual') {
     const event = makeActivity({
       category: 'Guardrail',
@@ -30635,6 +32130,7 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
       kind: 'provider_action',
       requestedTool: toolName,
+      safetyValidation,
       executionParams: buildProviderActionReplayParams(params || {}),
     },
   });
@@ -30645,14 +32141,164 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     mode,
     toolName,
     approval,
+    safety: safetyValidation,
     message: `${label} was queued because Approval mode is active.`,
   };
+}
+
+function buildSafetyBlockedToolResult(toolName, safetyValidation = {}) {
+  const label = String(toolName || 'provider action').replace(/_/g, ' ');
+  return {
+    ok: false,
+    result: 'safety_blocked',
+    outcome: 'safety_blocked',
+    toolName,
+    safety: safetyValidation,
+    providerWritesBlocked: true,
+    message: `${label} was blocked by PBK safety validation.`,
+  };
+}
+
+async function preValidateToolSafety(toolName, params = {}, source = 'pbk-bridge') {
+  try {
+    const validation = validateProviderActionSafetyCore(toolName, params, {
+      nowLocalHour: params.nowLocalHour ?? params.now_local_hour,
+      callStartHour: params.callStartHour ?? params.call_start_hour,
+      callEndHour: params.callEndHour ?? params.call_end_hour,
+    });
+    if (!validation?.providerWrite) return validation;
+
+    await recordPbkSafetyAudit({
+      toolName,
+      params: redactApprovalParamPreview(params || {}),
+      validation,
+      blocked: validation.blocked,
+      approvalRequired: validation.approvalRequired,
+      source,
+    });
+
+    if (validation.blocked) {
+      const firstViolation = validation.violations?.[0]?.message || 'Safety validation failed.';
+      addActivity(
+        state,
+        makeActivity({
+          category: 'SAFETY',
+          actor: 'PBK safety validator',
+          status: 'blocked',
+          text: `Blocked ${String(toolName).replace(/_/g, ' ')}: ${firstViolation}`,
+          target: params.leadName || params.name || params.address || params.phone || params.email || 'provider action',
+        }, 'runtime'),
+      );
+      await persistState(state);
+      void publishPbkEvent(EventTypes.SAFETY_VALIDATION_FAILED, {
+        toolName,
+        source,
+        result: validation.result,
+        violations: validation.violations || [],
+        warnings: validation.warnings || [],
+      }, 'safety-validator');
+    }
+    return validation;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] safety validation skipped:', error?.message || error);
+    return {
+      ok: true,
+      result: 'safety_runtime_error',
+      blocked: false,
+      providerWrite: false,
+      approvalRequired: false,
+      skipped: true,
+      error: error?.message || String(error),
+    };
+  }
+}
+
+async function validateToolResultWithQa(toolName, params = {}, result = {}, source = 'pbk-bridge') {
+  try {
+    const validation = await validateToolCallWithQa({
+      toolName,
+      params,
+      result,
+      source,
+      auditSink: recordPbkQaAudit,
+      approvalSink: async (approval) => toolHandlers.createApproval({
+        ...approval,
+        actor: approval.actor || 'PBK QA Agent',
+      }),
+    });
+    if (validation?.qa?.ok === false) {
+      void publishPbkEvent(EventTypes.QA_VALIDATION_FAILED, {
+        toolName,
+        reason: validation.qa.reason || '',
+        validator: validation.qa.validator || '',
+        source,
+      }, 'qa-agent');
+    }
+    return validation;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] QA validation skipped:', error?.message || error);
+    return {
+      ok: true,
+      skipped: true,
+      qa: {
+        ok: true,
+        skipped: true,
+        reason: 'qa_runtime_error',
+        error: error?.message || String(error),
+      },
+    };
+  }
+}
+
+async function executeToolHandlerWithQa(toolName, params = {}, source = 'pbk-bridge') {
+  const safetyValidation = await preValidateToolSafety(toolName, params, source);
+  if (safetyValidation?.blocked) {
+    return {
+      result: buildSafetyBlockedToolResult(toolName, safetyValidation),
+      qaValidation: {
+        ok: true,
+        skipped: true,
+        qa: {
+          ok: true,
+          skipped: true,
+          reason: 'safety_precheck_blocked',
+        },
+      },
+      safetyValidation,
+    };
+  }
+
+  const toolStartedAt = Date.now();
+  let result;
+  try {
+    result = await withObservabilitySpan(`tool.${toolName}`, { toolName, source }, () => toolHandlers[toolName](params));
+  } catch (error) {
+    incrementObservabilityCounter('tool_call_errors', 1, { toolName, source, error: error?.message || String(error) });
+    throw error;
+  } finally {
+    recordLatencyMetric('tool_call_duration_ms', Date.now() - toolStartedAt, { toolName, source });
+  }
+  const qaValidation = await validateToolResultWithQa(toolName, params, result, source);
+  void publishPbkEvent(EventTypes.TOOL_INVOKED, {
+    toolName,
+    source,
+    ok: result?.ok !== false && qaValidation?.ok !== false,
+    qa: qaValidation?.qa ? {
+      ok: qaValidation.qa.ok,
+      skipped: qaValidation.qa.skipped,
+      reason: qaValidation.qa.reason || '',
+      validator: qaValidation.qa.validator || '',
+    } : null,
+    result: result?.result || result?.outcome || '',
+  }, 'pbk-bridge');
+  return { result, qaValidation, safetyValidation };
 }
 
 async function invokeToolWithOperatingGuard(toolName, params = {}) {
   const guarded = await enforceOperatingModeForTool(toolName, params);
   if (guarded) return guarded;
-  return toolHandlers[toolName](params);
+  const { result } = await executeToolHandlerWithQa(toolName, params, 'operating-guard');
+  return result;
 }
 
 function getRangeStart(range = '30d') {
@@ -30894,9 +32540,62 @@ function ensureRexCollections() {
   if (!Array.isArray(state.rexDecisions)) state.rexDecisions = [];
 }
 
+let agentRegistryCache = buildDefaultAgentRegistry();
+let agentRegistryLoadedAt = '';
+
+function mapRegistryAgentToFleetAgent(agent = {}) {
+  const normalized = normalizeAgentRegistryRecord(agent);
+  const metadata = normalized.metadata && typeof normalized.metadata === 'object' ? normalized.metadata : {};
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    role: metadata.role || normalized.description || normalized.name,
+    version: normalized.version || metadata.version || 'v1.0',
+    target: metadata.target || 'production',
+    status: normalized.status || 'active',
+    activity: metadata.activity || `${normalized.name} registered for ${normalized.capabilities.slice(0, 3).join(', ') || 'PBK work'}.`,
+    orchestrationRole: metadata.orchestrationRole || (metadata.supervisor ? 'worker' : 'worker'),
+    supervisor: metadata.supervisor || '',
+    supervises: normalizeStringList(metadata.supervises || []),
+    communication: metadata.communication || (normalized.endpoint ? 'http-agent' : 'pbk-bridge-local'),
+    healthProbe: metadata.healthProbe || `agent:${normalized.id}:heartbeat`,
+    requiredTools: normalizeStringList(metadata.requiredTools || []),
+    safety: metadata.safety || { approvalGate: true, providerWrites: metadata.suggestOnly ? 'blocked' : 'approval-gated' },
+    endpoint: normalized.endpoint || '',
+    capabilities: normalized.capabilities,
+    lastSeen: normalized.healthCheckedAt || normalized.health_checked_at || isoNow(),
+    registry: {
+      source: 'agent_registry',
+      lastError: normalized.lastError || normalized.last_error || '',
+      metadata,
+    },
+  };
+}
+
+function getCurrentAgentRegistry() {
+  const fromState = Array.isArray(state?.agentRegistry) ? state.agentRegistry : [];
+  return mergeAgentRegistryRecords(fromState.length ? fromState : agentRegistryCache, buildDefaultAgentRegistry());
+}
+
+function applyAgentRegistryToRuntime(registry = []) {
+  agentRegistryCache = mergeAgentRegistryRecords(registry, buildDefaultAgentRegistry());
+  agentRegistryLoadedAt = isoNow();
+  state.agentRegistry = agentRegistryCache;
+  const registryFleet = agentRegistryCache.map(mapRegistryAgentToFleetAgent);
+  state.agents = ensureRequiredAgentRoster([
+    ...(Array.isArray(state.agents) ? state.agents : []),
+    ...registryFleet,
+  ]);
+  return agentRegistryCache;
+}
+
 function ensureAgentFleetCollections() {
   if (!Array.isArray(state.agents)) state.agents = buildDefaultAgentFleet();
-  state.agents = ensureRequiredAgentRoster(state.agents);
+  if (!Array.isArray(state.agentRegistry)) {
+    state.agentRegistry = mergeAgentRegistryRecords(agentRegistryCache, buildDefaultAgentRegistry());
+  }
+  const registryFleet = getCurrentAgentRegistry().map(mapRegistryAgentToFleetAgent);
+  state.agents = ensureRequiredAgentRoster([...state.agents, ...registryFleet]);
   if (!Array.isArray(state.agentTasks)) state.agentTasks = [];
   if (!Array.isArray(state.agentSkillTransfers)) state.agentSkillTransfers = [];
   if (!Array.isArray(state.agentSkillExperiments)) state.agentSkillExperiments = [];
@@ -30946,10 +32645,11 @@ function buildAgentHealthProbe(agent = {}) {
 
 function buildAgentOrchestrationSnapshot() {
   ensureAgentFleetCollections();
+  const registryStatus = buildAgentRegistrySnapshot(getCurrentAgentRegistry());
   const probes = (state.agents || []).map(buildAgentHealthProbe);
   const supervisor = probes.find((agent) => agent.id === 'ava') || null;
   const workers = probes.filter((agent) => agent.supervisor === 'ava' || ['rex', 'hermes'].includes(agent.id));
-  const requiredIds = ['ava', 'rex', 'hermes'];
+  const requiredIds = registryStatus.required.ids;
   const missingAgents = requiredIds.filter((id) => !probes.find((agent) => agent.id === id));
   const requiredToolGaps = probes
     .filter((agent) => requiredIds.includes(agent.id) && agent.missingTools.length)
@@ -30960,7 +32660,7 @@ function buildAgentOrchestrationSnapshot() {
     adminTasks: (state.adminTasks || []).filter((task) => ['pending', 'approved', 'executing'].includes(String(task.status || '').toLowerCase())).length,
     approvals: getPendingRuntimeApprovals(state.approvals).length,
   };
-  const registryReady = missingAgents.length === 0 && Boolean(supervisor) && workers.some((agent) => agent.id === 'rex') && workers.some((agent) => agent.id === 'hermes');
+  const registryReady = registryStatus.ok && missingAgents.length === 0 && Boolean(supervisor) && workers.some((agent) => agent.id === 'rex') && workers.some((agent) => agent.id === 'hermes');
   const toolsReady = requiredToolGaps.length === 0;
   return {
     ok: registryReady && toolsReady,
@@ -30970,10 +32670,14 @@ function buildAgentOrchestrationSnapshot() {
     supervisor,
     workers,
     registry: {
-      ready: registryReady,
+      ready: registryReady && registryStatus.ok,
       requiredAgents: requiredIds,
       missingAgents,
       count: probes.length,
+      source: 'agent_registry',
+      loadedAt: agentRegistryLoadedAt,
+      capabilities: registryStatus.capabilities,
+      degraded: registryStatus.degraded,
     },
     mcp: {
       ready: toolsReady,
@@ -31016,6 +32720,14 @@ async function recordAgentHandoffTask(task = {}) {
   state.agentTasks.unshift(record);
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
   void persistPbkTaskRecord(record);
+  void publishPbkEvent(EventTypes.AGENT_TASK_CREATED, {
+    id: record.id,
+    fromAgent: record.fromAgent,
+    toAgent: record.toAgent,
+    taskType: record.taskType,
+    status: record.status,
+    correlationId: record.correlationId,
+  }, 'agent-orchestration');
   return record;
 }
 
@@ -31126,6 +32838,177 @@ async function runAgentOrchestrationSmoke(params = {}) {
     tasks: [avaTask, rexTask, hermesTask],
     orchestration,
   };
+}
+
+function buildAgentRegistryStatus(params = {}) {
+  const registry = getCurrentAgentRegistry();
+  const snapshot = buildAgentRegistrySnapshot(registry);
+  const capability = String(params.capability || '').trim();
+  return {
+    ok: Boolean(snapshot.ok),
+    result: snapshot.result,
+    loadedAt: agentRegistryLoadedAt,
+    source: Array.isArray(state.agentRegistry) && state.agentRegistry.length ? 'runtime_registry' : 'default_registry',
+    capability,
+    matches: capability ? findAgentsByCapability(registry, capability, { includeInactive: Boolean(params.includeInactive) }) : [],
+    registry: snapshot,
+  };
+}
+
+async function checkAgentRegistryHealth({ persist = false } = {}) {
+  const checkedAt = isoNow();
+  const nextRegistry = [];
+  for (const agent of getCurrentAgentRegistry()) {
+    const normalized = normalizeAgentRegistryRecord(agent);
+    if (!normalized.endpoint) {
+      nextRegistry.push({
+        ...normalized,
+        status: normalized.status || 'active',
+        healthCheckedAt: checkedAt,
+        health_checked_at: checkedAt,
+        lastError: '',
+        last_error: '',
+      });
+      continue;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const healthUrl = `${normalized.endpoint.replace(/\/+$/, '')}/health`;
+      const response = await fetch(healthUrl, { signal: controller.signal });
+      nextRegistry.push({
+        ...normalized,
+        status: response.ok ? 'active' : 'degraded',
+        healthCheckedAt: checkedAt,
+        health_checked_at: checkedAt,
+        lastError: response.ok ? '' : `HTTP ${response.status}`,
+        last_error: response.ok ? '' : `HTTP ${response.status}`,
+      });
+    } catch (error) {
+      nextRegistry.push({
+        ...normalized,
+        status: 'degraded',
+        healthCheckedAt: checkedAt,
+        health_checked_at: checkedAt,
+        lastError: error?.name === 'AbortError' ? 'health_check_timeout' : (error?.message || String(error)),
+        last_error: error?.name === 'AbortError' ? 'health_check_timeout' : (error?.message || String(error)),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  applyAgentRegistryToRuntime(nextRegistry);
+  await upsertAgentRegistryRecordsToPg(nextRegistry);
+  if (persist) await persistState(state);
+  return {
+    ok: true,
+    result: 'agent_registry_health_checked',
+    checkedAt,
+    registry: buildAgentRegistrySnapshot(nextRegistry),
+  };
+}
+
+function getLocalAgentRegistryHandlers() {
+  return {
+    ava: async (payload = {}) => toolHandlers.runAgentCommand({
+      ...payload,
+      command: payload.command || payload.query || 'Summarize Ava live-call readiness.',
+      actor: payload.actor || 'Agent Registry',
+      source: payload.source || 'agent-registry',
+    }),
+    rex: async (payload = {}) => toolHandlers.getBrainState({
+      ...payload,
+      query: payload.query || payload.command || 'Rex, summarize PBK strategy and next best action.',
+      agent: 'rex',
+      requestedBy: payload.requestedBy || payload.actor || 'Agent Registry',
+    }),
+    hermes: async () => ({
+      ok: true,
+      result: 'hermes_registry_status',
+      hermes: getHermesProviderMeta(),
+      safety: { suggestOnly: true, providerWrites: 'blocked' },
+    }),
+    'call-analyzer': async (payload = {}) => analyzeRecentAvaCalls({
+      ...payload,
+      actor: payload.actor || 'Agent Registry Call Analyzer',
+      source: payload.source || 'agent-registry',
+      limit: payload.limit || 20,
+    }),
+    'prosody-tuner': async (payload = {}) => {
+      if (payload.train || payload.action === 'train') {
+        return trainAndPersistProsodyModel({
+          ...payload,
+          source: payload.source || 'agent-registry',
+        });
+      }
+      return toolHandlers.getProsodyAdvice(payload);
+    },
+    'script-rotator': async (payload = {}) => toolHandlers.retrieveClosingIntelligence({
+      ...payload,
+      query: payload.query || payload.transcript || payload.objection || 'best closing script for current seller context',
+      source: payload.source || 'agent-registry',
+    }),
+    'bant-enforcer': async (payload = {}) => {
+      const bant = normalizeBantInfo(payload.bant || {}, payload, extractBantFromTranscript(payload.transcript || payload.query || '', payload.bant || {}));
+      const missing = getMissingBantFields(bant);
+      return {
+        ok: true,
+        result: 'bant_enforcer_status',
+        bant,
+        missing,
+        complete: missing.length === 0,
+        nextMissing: missing[0] || '',
+      };
+    },
+    'qa-agent': async (payload = {}) => {
+      if (payload.toolName && payload.result) {
+        return validateToolResultWithQa(payload.toolName, payload.params || {}, payload.result, 'agent-registry');
+      }
+      return {
+        ok: true,
+        result: 'qa_agent_registered',
+        qa: { validators: 'active', auditTable: 'pbk_qa_audit' },
+      };
+    },
+  };
+}
+
+async function invokeAgentFromRegistry(params = {}) {
+  const registry = getCurrentAgentRegistry();
+  const requestedId = normalizeAgentRegistryId(params.agentId || params.id || params.agent || '');
+  const capability = String(params.capability || '').trim();
+  const candidates = requestedId
+    ? registry.filter((agent) => agent.id === requestedId)
+    : findAgentsByCapability(registry, capability);
+  const agent = candidates[0] || null;
+  if (!agent) {
+    return {
+      ok: false,
+      result: 'agent_not_found',
+      error: requestedId ? `No registered agent ${requestedId}.` : `No active agent found for capability ${capability || '(missing)'}.`,
+      registry: buildAgentRegistrySnapshot(registry),
+    };
+  }
+  try {
+    const output = await invokeRegisteredAgent(agent, params.payload || params, {
+      localHandlers: getLocalAgentRegistryHandlers(),
+      timeoutMs: params.timeoutMs || params.timeout_ms || 5000,
+    });
+    return {
+      ok: true,
+      result: 'agent_invoked',
+      agent,
+      output,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      result: 'agent_invoke_failed',
+      agent,
+      error: error?.message || String(error),
+    };
+  }
 }
 
 function normalizeRexTool(value = '') {
@@ -36113,6 +37996,7 @@ async function fireDocuSignEnvelope(params = {}) {
 }
 
 let state = await loadState();
+await syncAgentRegistryFromPg({ seed: true, persist: false });
 await seedMemoryAnalyticsStateToPg();
 const analyzerResultCache = new Map();
 
@@ -36338,6 +38222,66 @@ const toolHandlers = {
     };
   },
 
+  async getAgentRegistry(params = {}) {
+    recordToolUse('getAgentRegistry');
+    return buildAgentRegistryStatus(params);
+  },
+
+  async refreshAgentRegistry(params = {}) {
+    recordToolUse('refreshAgentRegistry');
+    return syncAgentRegistryFromPg({ seed: params.seed !== false, persist: params.persist !== false });
+  },
+
+  async checkAgentRegistryHealth(params = {}) {
+    recordToolUse('checkAgentRegistryHealth');
+    return checkAgentRegistryHealth({ persist: params.persist !== false });
+  },
+
+  async getEventBusStatus(params = {}) {
+    recordToolUse('getEventBusStatus');
+    const status = await getEventBusStatus(params);
+    recordEventBusBacklogMetric(status.backlog || status.streamLength || status.pendingMemoryEvents || 0, {
+      streamName: status.streamName || '',
+      mode: status.mode || '',
+    });
+    return status;
+  },
+
+  async getObservabilityStatus(params = {}) {
+    recordToolUse('getObservabilityStatus');
+    return {
+      ...getPbkObservabilityStatus(),
+      requestedBy: params.actor || params.requestedBy || '',
+    };
+  },
+
+  async publishEventBusTest(params = {}) {
+    recordToolUse('publishEventBusTest');
+    return publishPbkEvent(params.type || 'debug.test', {
+      message: params.message || 'PBK event bus test',
+      requestedBy: params.requestedBy || params.actor || 'operator',
+      createdAt: isoNow(),
+    }, params.source || 'debug');
+  },
+
+  async findAgentsByCapability(params = {}) {
+    recordToolUse('findAgentsByCapability');
+    const capability = params.capability || params.name || params.query || '';
+    return {
+      ok: true,
+      result: 'agents_by_capability',
+      capability,
+      agents: findAgentsByCapability(getCurrentAgentRegistry(), capability, {
+        includeInactive: Boolean(params.includeInactive),
+      }),
+    };
+  },
+
+  async invokeRegisteredAgent(params = {}) {
+    recordToolUse('invokeRegisteredAgent');
+    return invokeAgentFromRegistry(params);
+  },
+
   async retrieveSimilarDeals(params = {}) {
     recordToolUse('retrieveSimilarDeals');
     return retrieveSimilarDealProof(params);
@@ -36346,6 +38290,14 @@ const toolHandlers = {
   async recallConversationMemory(params = {}) {
     recordToolUse('recallConversationMemory');
     return recallConversationMemoryForDeal(params);
+  },
+
+  async upsertCallEmbeddingFromTranscript(params = {}) {
+    recordToolUse('upsertCallEmbeddingFromTranscript');
+    return upsertCallEmbeddingFromTranscript({
+      ...params,
+      source: params.source || 'bridge-tool',
+    });
   },
 
   async scoreCallQuality(params = {}) {
@@ -36361,6 +38313,110 @@ const toolHandlers = {
   async runRexSkillAutopilot(params = {}) {
     recordToolUse('runRexSkillAutopilot');
     return runRexSkillAutopilotRecord(params);
+  },
+
+  async runAutonomousRexGoalDiscovery(params = {}) {
+    recordToolUse('runAutonomousRexGoalDiscovery');
+    return runAutonomousRexGoalDiscoveryRecord(params);
+  },
+
+  async handleRexLeadImported(params = {}) {
+    recordToolUse('handleRexLeadImported');
+    return handleRexLeadImportedRecord(params);
+  },
+
+  async runCoworkerHeartbeat(params = {}) {
+    recordToolUse('runCoworkerHeartbeat');
+    const eventBus = await getEventBusStatus().catch(() => ({}));
+    const observability = getPbkObservabilityStatus();
+    const qaValidations = Number(observability?.metrics?.counters?.qa_validations || 0);
+    const qaFailures = Number(observability?.metrics?.counters?.qa_failures || 0);
+    const snapshot = params.snapshot || {
+      now: isoNow(),
+      approvals: state.approvals || [],
+      calls: [
+        ...(state.calls || []),
+        ...(state.liveCalls || []),
+        ...(state.callRecords || []),
+      ],
+      contracts: [
+        ...(state.contracts || []),
+        ...(state.contractDrafts || []),
+        ...(state.contractPackages || []),
+      ],
+      leads: [
+        ...(state.leads || []),
+        ...(state.leadImports || []),
+      ],
+      eventBus,
+      qa: {
+        failureRate: qaValidations > 0 ? qaFailures / qaValidations : 0,
+      },
+    };
+    const plan = buildCoworkerHeartbeatPlan(snapshot, params);
+    const summary = summarizeHeartbeatPlan(plan);
+    if (params.postSlack !== false && params.slack !== false) {
+      plan.slack = await toolHandlers.slackNotify({
+        text: summary,
+        channel: params.channel || params.slackChannel || '',
+        source: 'coworker-heartbeat',
+      });
+    }
+    await publishPbkEvent(EventTypes.COWORKER_HEARTBEAT_RUN, {
+      actionCount: plan.counts?.actions || 0,
+      highPriority: plan.counts?.highPriority || 0,
+      generatedAt: plan.generatedAt,
+    }, params.source || 'coworker-heartbeat').catch(() => null);
+    return {
+      ...plan,
+      summary,
+    };
+  },
+
+  async selectContextAwareScript(params = {}) {
+    recordToolUse('selectContextAwareScript');
+    return selectContextAwareScriptRecord(params);
+  },
+
+  async recordContextAwareScriptOutcome(params = {}) {
+    recordToolUse('recordContextAwareScriptOutcome');
+    return recordContextAwareScriptOutcomeRecord(params);
+  },
+
+  async validateProviderActionSafety(params = {}) {
+    recordToolUse('validateProviderActionSafety');
+    const toolName = params.toolName || params.tool || params.action || '';
+    const validationParams = params.params && typeof params.params === 'object' ? params.params : params;
+    const validation = validateProviderActionSafetyCore(toolName, validationParams, params.options || {});
+    await recordPbkSafetyAudit({
+      toolName,
+      params: redactApprovalParamPreview(validationParams || {}),
+      validation,
+      blocked: validation.blocked,
+      approvalRequired: validation.approvalRequired,
+      source: params.source || 'safety-tool',
+    });
+    return {
+      ok: validation.ok,
+      result: validation.result,
+      providerWritesBlocked: validation.blocked,
+      safety: validation,
+    };
+  },
+
+  async runAvaCanonicalEvalSuite(params = {}) {
+    recordToolUse('runAvaCanonicalEvalSuite');
+    return runAvaCanonicalEvalSuiteRecord(params);
+  },
+
+  async runYouTubeTrainingPipeline(params = {}) {
+    recordToolUse('runYouTubeTrainingPipeline');
+    return runYouTubeTrainingPipelineRecord(params);
+  },
+
+  async runYouTubeTrainingEvalSuite(params = {}) {
+    recordToolUse('runYouTubeTrainingEvalSuite');
+    return runYouTubeTrainingEvalSuiteRecord(params);
   },
 
   async getRevenueEngineStatus(params = {}) {
@@ -40457,8 +42513,16 @@ const toolHandlers = {
     const explicitCrmWriteIntent = hasExplicitCrmWriteIntent(command);
     const toolFirstDetected = detectToolFirstIntent(intentCommand, params, context);
     const rexDirectedCommand = looksLikeRexDirectedCommand(command, params);
+    const browserResearchCommand = looksLikeBrowserResearchIntent(command);
 
-    if (rexDirectedCommand) {
+    if (rexDirectedCommand && browserResearchCommand) {
+      routedTo = 'launchBrowserResearch';
+      response = await toolHandlers.launchBrowserResearch({
+        query: command,
+        requestedBy: params.actor || 'Jordan',
+        source: 'agent-console',
+      });
+    } else if (rexDirectedCommand) {
       routedTo = 'rex_conversational_brain';
       const rexQuery = stripRexInvocation(intentCommand || command)
         || stripRexInvocation(command)
@@ -40562,7 +42626,7 @@ const toolHandlers = {
         requestedBy: params.actor || 'Jordan',
         source: 'agent-console',
       });
-    } else if (looksLikeBrowserResearchIntent(command)) {
+    } else if (browserResearchCommand) {
       routedTo = 'launchBrowserResearch';
       response = await toolHandlers.launchBrowserResearch({
         query: command,
@@ -40917,11 +42981,12 @@ async function handleEvent(eventType, payload = {}) {
             });
           }
 
-          contractResult = await toolHandlers.sendDocuSign({
+          const qaContractExecution = await executeToolHandlerWithQa('sendDocuSign', {
             ...contract,
             notes: approval.sellerNotice || contract.sellerNotice || contract.notes || 'Prepared for underwriting sign-off.',
             signers,
-          });
+          }, 'approval-contract');
+          contractResult = qaContractExecution.result;
           const deliveredContract = contractResult?.contract || contract;
           deliveredContract.approvalId = approval.id;
           deliveredContract.underwritingStatus = contractResult?.ok
@@ -40998,13 +43063,15 @@ async function handleEvent(eventType, payload = {}) {
         const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object'
           ? approval.metadata.executionParams
           : {};
-        providerActionResult = await toolHandlers[toolName]({
+        const qaProviderExecution = await executeToolHandlerWithQa(toolName, {
           ...executionParams,
           approvalId: approval.id,
           actor: incomingActor || executionParams.actor || 'PBK Approval',
-        });
+        }, 'approval-replay');
+        providerActionResult = qaProviderExecution.result;
         approval.metadata.providerActionAttemptedAt = isoNow();
         approval.metadata.providerActionResult = summarizeProviderActionResult(providerActionResult);
+        approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
       }
     }
 
@@ -42177,6 +44244,51 @@ function checkAnalyzeDealRateLimit(request) {
   };
 }
 
+function sanitizePublicAvaAssistantSessionId(value = '') {
+  const clean = String(value || '').trim().replace(/[^a-zA-Z0-9:_-]/g, '-').slice(0, 120);
+  return clean || createAssistantSessionId();
+}
+
+function getPublicAvaAssistantSessionId(request, body = {}) {
+  let querySession = '';
+  try {
+    const requestUrl = new URL(request.url || '/', 'http://pbk.local');
+    querySession = requestUrl.searchParams.get('sessionId') || requestUrl.searchParams.get('session_id') || '';
+  } catch {
+    querySession = '';
+  }
+  return sanitizePublicAvaAssistantSessionId(
+    body.sessionId
+      || body.session_id
+      || body.chatSessionId
+      || body.chat_session_id
+      || querySession
+      || '',
+  );
+}
+
+async function readPublicAvaAssistantSession(sessionId = '') {
+  const cleanSessionId = sanitizePublicAvaAssistantSessionId(sessionId);
+  const redisSession = await redisGetJson(redisKey('public-ava-assistant-session', cleanSessionId));
+  if (redisSession) return normalizeAssistantSession(redisSession);
+  return normalizeAssistantSession(publicAvaAssistantSessionFallback.get(cleanSessionId) || {});
+}
+
+async function writePublicAvaAssistantSession(sessionId = '', session = {}) {
+  const cleanSessionId = sanitizePublicAvaAssistantSessionId(sessionId);
+  const normalized = normalizeAssistantSession(session);
+  publicAvaAssistantSessionFallback.set(cleanSessionId, {
+    ...normalized,
+    updatedAt: isoNow(),
+  });
+  await redisSetJson(redisKey('public-ava-assistant-session', cleanSessionId), normalized, PUBLIC_AVA_ASSISTANT_SESSION_TTL_SECONDS);
+  if (publicAvaAssistantSessionFallback.size > 500) {
+    const oldestKey = publicAvaAssistantSessionFallback.keys().next().value;
+    if (oldestKey) publicAvaAssistantSessionFallback.delete(oldestKey);
+  }
+  return normalized;
+}
+
 function isMortgageTakeoverPath(params = {}) {
   const pathValue = String(
     params.selectedPath
@@ -42352,6 +44464,18 @@ async function handlePublicAvaChatRequest(request) {
   }
 
   const source = String(body.source || body.origin || '').toLowerCase();
+  const sessionId = getPublicAvaAssistantSessionId(request, body);
+  const priorAssistantSession = await readPublicAvaAssistantSession(sessionId);
+  const assistantIntent = detectAssistantIntent(text);
+  const assistantPlan = planAssistantIntent(assistantIntent, {
+    publicMode: true,
+    authenticated: false,
+    session: priorAssistantSession,
+  });
+  let assistantSession = appendAssistantMessage(priorAssistantSession, 'user', text, {
+    source,
+    intent: assistantIntent.intent,
+  });
   const suppressLeadCapture = body.noLeadCapture === true
     || body.no_lead_capture === true
     || body.ttsDiagnostic === true
@@ -42384,13 +44508,23 @@ async function handlePublicAvaChatRequest(request) {
     ? null
     : answerBrainQuery(state, text);
   const matched = Boolean(brain?.matches?.length) && isPublicAvaBrainAnswerSafe(brain?.answer);
-  const answer = matched
+  const assistantPlannedAnswer = assistantPlan?.answer && assistantPlan.action !== 'general'
+    ? assistantPlan.answer
+    : '';
+  const answer = assistantPlannedAnswer || (matched
     ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.`
     : lead.hasLeadSignal && (!processQuestion || lead.hasContact || lead.address)
       ? buildPublicAvaLeadAnswer(lead, leadCapture)
       : processQuestion
         ? buildPublicAvaProcessAnswer()
-        : buildPublicAvaFallbackAnswer(lead);
+        : buildPublicAvaFallbackAnswer(lead));
+
+  assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
+    source: 'public-ava-chat',
+    intent: assistantPlan.usedIntent || assistantIntent.intent,
+    action: assistantPlan.action || 'answered',
+  });
+  await writePublicAvaAssistantSession(sessionId, assistantSession);
 
   addActivity(
     state,
@@ -42416,6 +44550,10 @@ async function handlePublicAvaChatRequest(request) {
       ok: true,
       mode: 'public-readonly',
       answer,
+      suggestions: assistantPlan.suggestions || [],
+      sessionId,
+      usedIntent: assistantPlan.usedIntent || assistantIntent.intent,
+      assistantAction: assistantPlan.action || 'answered',
       citations: brain?.citations || ['PBK public knowledge'],
       leadCaptured: Boolean(leadCapture?.ok),
       leadCaptureSuppressed: suppressLeadCapture,
@@ -42439,6 +44577,159 @@ async function handlePublicAvaChatRequest(request) {
           }
         : null,
       rateLimit: rate,
+    },
+  };
+}
+
+function buildInternalAssistantApprovalAnswer() {
+  const pending = getPendingRuntimeApprovals(state.approvals || []);
+  if (!pending.length) {
+    return 'You have no pending approvals right now.';
+  }
+  const preview = pending
+    .slice(0, 3)
+    .map((approval, index) => {
+      const target = approval.leadName || approval.address || approval.type || approval.id || 'approval';
+      return `${index + 1}. ${target}`;
+    })
+    .join(' ');
+  return `You have ${pending.length} pending approval${pending.length === 1 ? '' : 's'}. ${preview}`;
+}
+
+function buildInternalAssistantSummaryAnswer() {
+  const hotLeads = sortNewest(state.leadImports || []).slice(0, 3);
+  const recentCalls = sortNewest(state.calls || []).slice(0, 3);
+  const pendingApprovals = getPendingRuntimeApprovals(state.approvals || []).length;
+  return [
+    `Snapshot: ${pendingApprovals} pending approval${pendingApprovals === 1 ? '' : 's'}`,
+    `${recentCalls.length} recent call${recentCalls.length === 1 ? '' : 's'}`,
+    `${hotLeads.length} recent lead import${hotLeads.length === 1 ? '' : 's'}.`,
+  ].join(', ');
+}
+
+function findInternalAssistantLead(query = '') {
+  const cleanQuery = String(query || '').trim().toLowerCase();
+  if (!cleanQuery) return null;
+  return (state.leadImports || []).find((lead) => {
+    const haystack = [
+      lead.leadName,
+      lead.name,
+      lead.sellerName,
+      lead.address,
+      lead.phone,
+      lead.email,
+      lead.leadId,
+      lead.id,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(cleanQuery);
+  }) || null;
+}
+
+async function handleInternalAvaAssistantChatRequest(request) {
+  const body = await readBody(request);
+  const messages = normalizeConversationMessages(body.messages);
+  const text = sanitizePublicAvaChatText(
+    getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''),
+  );
+  if (!text) {
+    return {
+      statusCode: 400,
+      body: {
+        ok: false,
+        error: 'message is required',
+      },
+    };
+  }
+
+  const sessionId = getPublicAvaAssistantSessionId(request, body);
+  const priorAssistantSession = await readPublicAvaAssistantSession(sessionId);
+  const assistantIntent = detectAssistantIntent(text);
+  const assistantPlan = planAssistantIntent(assistantIntent, {
+    publicMode: false,
+    authenticated: true,
+    session: priorAssistantSession,
+  });
+  let assistantSession = appendAssistantMessage(priorAssistantSession, 'user', text, {
+    source: body.source || 'command-center-assistant',
+    intent: assistantIntent.intent,
+  });
+
+  let answer = assistantPlan.answer || '';
+  let toolResult = null;
+  let qa = null;
+  let safety = null;
+
+  if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
+    const execution = await executeToolHandlerWithQa('analyzeDeal', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
+    toolResult = execution.result;
+    qa = execution.qaValidation?.qa || null;
+    safety = execution.safetyValidation || null;
+    const arv = Number(toolResult?.analysis?.arv ?? toolResult?.arv ?? 0);
+    const mao = Number(toolResult?.analysis?.mao ?? toolResult?.mao ?? 0);
+    const profit = Number(toolResult?.analysis?.profit ?? toolResult?.profit ?? 0);
+    answer = [
+      `For ${assistantPlan.toolPlan.params.address}, the analysis is ready.`,
+      arv ? `ARV ${currency(arv)}.` : '',
+      mao ? `MAO ${currency(mao)}.` : '',
+      profit ? `Estimated profit ${currency(profit)}.` : '',
+    ].filter(Boolean).join(' ');
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getApprovals') {
+    answer = buildInternalAssistantApprovalAnswer();
+    toolResult = {
+      ok: true,
+      result: 'approval_summary',
+      pendingApprovals: getPendingRuntimeApprovals(state.approvals || []).length,
+    };
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'findLead') {
+    const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
+    answer = lead
+      ? `Found ${lead.leadName || lead.name || 'lead'}${lead.address ? ` at ${lead.address}` : ''}.`
+      : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current runtime snapshot.`;
+    toolResult = { ok: Boolean(lead), result: lead ? 'lead_found' : 'lead_not_found', lead: lead || null };
+  } else if (assistantPlan.action === 'summary_plan') {
+    answer = buildInternalAssistantSummaryAnswer();
+    toolResult = { ok: true, result: 'runtime_summary' };
+  } else if (assistantPlan.action === 'general' && !answer) {
+    const brain = answerBrainQuery(state, text);
+    answer = isPublicAvaBrainAnswerSafe(brain?.answer)
+      ? brain.answer
+      : 'I can help with deal analysis, approvals, recent activity, lead lookup, and PBK workflow questions.';
+    toolResult = { ok: true, result: 'brain_answer', citations: brain?.citations || [] };
+  }
+
+  assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
+    source: 'command-center-assistant',
+    intent: assistantPlan.usedIntent || assistantIntent.intent,
+    action: assistantPlan.action || 'answered',
+  });
+  await writePublicAvaAssistantSession(sessionId, assistantSession);
+
+  addActivity(
+    state,
+    makeActivity({
+      actor: 'Ava Assistant',
+      category: 'ASSISTANT',
+      status: assistantPlan.action || 'answered',
+      text: `Ava assistant handled ${assistantPlan.usedIntent || assistantIntent.intent}.`,
+      target: assistantIntent.address || assistantIntent.phone || assistantIntent.query || 'command center',
+    }),
+  );
+  await persistState(state);
+
+  return {
+    statusCode: 200,
+    body: {
+      ok: true,
+      mode: 'command-center-assistant',
+      answer,
+      suggestions: assistantPlan.suggestions || [],
+      sessionId,
+      usedIntent: assistantPlan.usedIntent || assistantIntent.intent,
+      assistantAction: assistantPlan.action || 'answered',
+      toolPlan: assistantPlan.toolPlan || null,
+      toolResult,
+      qa,
+      safety,
     },
   };
 }
@@ -42608,6 +44899,31 @@ async function readSlackSlashCommandRequest(request) {
   }
 }
 
+async function readSlackEventRequest(request) {
+  const buffer = await readRawBodyBuffer(request);
+  const raw = buffer.toString('utf8');
+  const signature = verifySlackRequestSignature(request.headers || {}, raw);
+  if (!signature.ok) {
+    return { ok: false, status: 401, signature, payload: null };
+  }
+  try {
+    return {
+      ok: true,
+      status: 200,
+      signature,
+      payload: raw ? JSON.parse(raw) : {},
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 400,
+      signature,
+      payload: null,
+      error: error instanceof Error ? error.message : 'Slack event payload parse failed.',
+    };
+  }
+}
+
 async function handleSlackApprovalInteraction(payload = {}) {
   const action = Array.isArray(payload.actions) ? payload.actions[0] : null;
   const actionId = String(action?.action_id || '').trim();
@@ -42719,6 +45035,58 @@ async function handleSlackApprovalInteraction(payload = {}) {
       : (result.error || 'PBK approval was not found.'),
     result,
     update,
+  };
+}
+
+async function handleSlackAppMention(payload = {}) {
+  const event = payload.event || payload;
+  const route = classifySlackMentionIntent(event);
+  const toolName = route.toolName;
+  const handler = toolHandlers[toolName];
+  if (!handler) {
+    return {
+      ok: false,
+      status: 404,
+      text: `PBK could not route that Slack mention. Missing tool: ${toolName}`,
+      route,
+    };
+  }
+
+  await publishPbkEvent(EventTypes.SLACK_MENTION_RECEIVED, {
+    channel: event.channel || '',
+    user: event.user || '',
+    text: event.text || '',
+    route: {
+      intent: route.intent,
+      toolName,
+      requiresApproval: route.requiresApproval,
+    },
+  }, 'slack-app-mention').catch(() => null);
+
+  const result = await handler(route.params || {});
+  const ack = buildSlackMentionAck(route, result);
+  const reply = await toolHandlers.pbk_send_slack_reply({
+    ...ack,
+    actor: 'Rex',
+    source: 'slack-app-mention',
+  });
+
+  addActivity(state, makeActivity({
+    actor: event.user || 'Slack',
+    category: 'SLACK',
+    status: reply.ok ? 'routed' : 'warning',
+    text: `Slack mention routed to ${toolName} (${route.intent || 'workflow'}).`,
+    target: event.channel || 'Slack',
+  }));
+  await persistState(state);
+
+  return {
+    ok: result?.ok !== false,
+    status: result?.ok === false ? 400 : 200,
+    text: ack.text,
+    route,
+    result,
+    reply,
   };
 }
 
@@ -45138,6 +47506,7 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
     if (speakResult.ok) {
       session.lastAvaReplySpoken = spoken;
       session.lastAvaSpokenPreview = spoken.slice(0, 320);
+      rememberContextAwareScriptSelection(session, reply.architecture || {});
       rememberAvaLiveReplyFingerprint(session, spoken);
     }
   }
@@ -45468,6 +47837,17 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         streamId: session.streamId,
         reason,
       });
+      void publishPbkEvent(EventTypes.CALL_COMPLETED, {
+        workspaceId: 'pbk',
+        callId: message.callId || session.callId || contextCall?.id || '',
+        leadId: message.leadId || contextCall?.leadId || '',
+        transcript: transcriptText,
+        outcome: contextCall?.status || message.status || 'transcribed',
+        status: contextCall?.status || message.status || 'transcribed',
+        sentiment: session.sentiment?.pbkScore ?? null,
+        streamId: session.streamId,
+        reason,
+      }, 'telnyx-deepgram-finalize').catch(() => null);
     }
 
     if (contextCall) {
@@ -45768,6 +48148,33 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     });
     session.replyLatencySamples = session.replyLatencySamples.slice(0, 12);
     const speakResult = await sendAvaPhoneReplyAudio(session, spoken);
+    const turnCompletionMs = Math.max(0, Date.now() - speechFinalAt);
+    recordLatencyMetric('speech_final_to_reply_start_ms', speechFinalToReplyStartMs, {
+      callId: session.callId || '',
+      leadId: session.leadId || contextCall?.leadId || '',
+      replyMode: reply.replyMode || 'live',
+    });
+    recordLatencyMetric('turn_completion_ms', turnCompletionMs, {
+      callId: session.callId || '',
+      leadId: session.leadId || contextCall?.leadId || '',
+      replyMode: reply.replyMode || 'live',
+      provider: speakResult.provider || '',
+    });
+    void recordPbkTurnLatency({
+      callId: session.callId || '',
+      leadId: session.leadId || contextCall?.leadId || '',
+      speechFinalToReplyStartMs,
+      turnCompletionMs,
+      transcriptToTtsMs: turnCompletionMs,
+      replyMode: reply.replyMode || 'live',
+      provider: speakResult.provider || '',
+      ok: Boolean(speakResult.ok),
+      labels: {
+        path: session.selectedPath || contextCall?.selectedPath || '',
+        result: speakResult.result || '',
+      },
+      source: 'telnyx-live-call',
+    });
     recordAvaLiveTurnDecision(session, {
       phase: 'tts_sent',
       result: speakResult.ok ? 'tts_audio_sent' : 'tts_audio_warning',
@@ -45794,6 +48201,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     session.lastAvaReplySpoken = spoken;
     session.lastAvaSpokenPreview = spoken.slice(0, 320);
     session.lastAvaReplyMode = reply.replyMode || 'live';
+    rememberContextAwareScriptSelection(session, reply.architecture || {});
     const speechLock = setTelnyxAvaTurnLock(session, {
       reason: speakResult.ok ? 'ava_speaking' : 'ava_reply_attempted',
       durationMs: estimateTelnyxAvaSpeechLockMs(spoken),
@@ -46657,10 +49065,48 @@ const server = createServer(async (request, response) => {
         ok: Boolean(orchestration.ok),
         result: orchestration.result,
         orchestration,
+        agentRegistry: buildAgentRegistryStatus(),
         state: {
           status: buildStateSnapshot().status,
         },
       });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/registry', '/api/agent-registry'])) {
+      const capability = url.searchParams.get('capability') || '';
+      const status = buildAgentRegistryStatus({
+        capability,
+        includeInactive: /^(1|true|yes)$/i.test(String(url.searchParams.get('includeInactive') || '').trim()),
+      });
+      json(response, status.ok ? 200 : 503, status);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/registry/refresh', '/api/agent-registry/refresh'])) {
+      const body = await readBody(request);
+      const result = await syncAgentRegistryFromPg({ seed: body.seed !== false, persist: body.persist !== false });
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/registry/health', '/api/agent-registry/health'])) {
+      const body = await readBody(request);
+      const result = await checkAgentRegistryHealth({ persist: body.persist !== false });
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/invoke', '/api/agent-registry/invoke'])) {
+      const body = await readBody(request);
+      const result = await invokeAgentFromRegistry(body);
+      json(response, result.ok ? 200 : 404, result);
       return;
     }
 
@@ -46671,6 +49117,7 @@ const server = createServer(async (request, response) => {
         result: orchestration.result,
         agents: orchestration.agents,
         registry: orchestration.registry,
+        agentRegistry: buildAgentRegistryStatus(),
         mcp: orchestration.mcp,
         safety: orchestration.safety,
       });
@@ -46697,6 +49144,12 @@ const server = createServer(async (request, response) => {
         ...(result.headers || {}),
       });
       response.end(JSON.stringify(result.body || {}));
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/assistant/chat', '/api/v1/assistant/chat'])) {
+      const result = await handleInternalAvaAssistantChatRequest(request);
+      json(response, result.statusCode || 200, result.body || {});
       return;
     }
 
@@ -46943,6 +49396,36 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/safety/validate', '/api/v1/safety/validate'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.validateProviderActionSafety(body);
+      json(response, result.ok === false ? 409 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/evals/ava-canonical/run', '/api/v1/evals/ava-canonical/run'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.runAvaCanonicalEvalSuite(body);
+      json(response, result.ok ? 200 : 422, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/evals/youtube-training/run', '/api/v1/evals/youtube-training/run'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.runYouTubeTrainingEvalSuite(body);
+      json(response, result.ok ? 200 : 422, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/revenue/engine/status', '/api/v1/revenue/engine/status'])) {
       json(response, 200, buildRevenueEngineStatus(Object.fromEntries(url.searchParams.entries())));
       return;
@@ -47004,6 +49487,34 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && matchesPath(pathname, ['/api/rex/align-goal', '/api/v1/rex/align-goal'])) {
       const body = await readBody(request);
       const result = await buildRevenueGoalAlignment(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/rex/autonomy/run', '/api/v1/rex/autonomy/run'])) {
+      const body = await readBody(request);
+      const result = await runAutonomousRexGoalDiscoveryRecord(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/rex/lead-imported', '/api/v1/rex/lead-imported'])) {
+      const body = await readBody(request);
+      const result = await handleRexLeadImportedRecord(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/scripts/context-select', '/api/v1/scripts/context-select'])) {
+      const body = await readBody(request);
+      const result = await selectContextAwareScriptRecord(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/scripts/context-outcome', '/api/v1/scripts/context-outcome'])) {
+      const body = await readBody(request);
+      const result = await recordContextAwareScriptOutcomeRecord(body);
       json(response, result.ok ? 200 : 400, result);
       return;
     }
@@ -47894,6 +50405,50 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/slack/events', '/api/webhooks/slack/events'])) {
+      const slackRequest = await readSlackEventRequest(request);
+      if (!slackRequest.ok) {
+        json(response, slackRequest.status || 400, {
+          ok: false,
+          error: slackRequest.error || slackRequest.signature?.error || 'Slack event rejected.',
+          signature: {
+            verified: false,
+            skipped: Boolean(slackRequest.signature?.skipped),
+          },
+        });
+        return;
+      }
+      const slackPayload = slackRequest.payload || {};
+      if (slackPayload.type === 'url_verification' && slackPayload.challenge) {
+        json(response, 200, { challenge: slackPayload.challenge });
+        return;
+      }
+      if (slackPayload.type === 'event_callback' && slackPayload.event?.type === 'app_mention') {
+        void handleSlackAppMention(slackPayload)
+          .then((result) => {
+            console.log('[pbk-local-openclaw] Slack app mention processed:', {
+              ok: result.ok,
+              toolName: result.route?.toolName,
+              intent: result.route?.intent,
+            });
+          })
+          .catch((error) => {
+            console.warn('[pbk-local-openclaw] Slack app mention background failure:', error?.message || error);
+          });
+        json(response, 200, {
+          ok: true,
+          result: 'slack_app_mention_ack_queued',
+        });
+        return;
+      }
+      json(response, 200, {
+        ok: true,
+        result: 'slack_event_ignored',
+        eventType: slackPayload.event?.type || slackPayload.type || '',
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/slack/notify', '/api/v1/slack/notify', '/slack/notify'])) {
       const body = await readBody(request);
       const result = await toolHandlers.slackNotify({
@@ -48455,12 +51010,29 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/training/youtube', '/api/v1/training/youtube'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.runYouTubeTrainingPipeline(body);
+      json(response, result.ok === false ? 400 : 200, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/brain/ingest', '/api/brain/ingest'])) {
       const body = await readBody(request);
-      const result = await toolHandlers.ingestResearchDoc({
-        ...body,
-        source: body.source || body.sourceUrl || body.url || 'brain-api',
-      });
+      const candidateUrl = body.url || body.sourceUrl || body.source_url || body.source || '';
+      const result = isYouTubeUrl(candidateUrl)
+        ? await toolHandlers.runYouTubeTrainingPipeline({
+          ...body,
+          url: candidateUrl,
+          source: body.source || 'brain-ingest',
+        })
+        : await toolHandlers.ingestResearchDoc({
+          ...body,
+          source: body.source || body.sourceUrl || body.url || 'brain-api',
+        });
       json(response, result.ok === false ? 400 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -49360,13 +51932,49 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const result = await toolHandlers[toolName](params);
+      const { result, qaValidation, safetyValidation } = await executeToolHandlerWithQa(toolName, params, 'bridge-invoke');
       json(response, 200, {
-        ok: true,
+        ok: result?.ok !== false && qaValidation?.ok !== false && safetyValidation?.ok !== false,
         toolName,
         result,
+        qa: qaValidation?.qa || null,
+        safety: safetyValidation || null,
         state: buildStateSnapshot(),
       });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/events/bus/status', '/api/event-bus/status'])) {
+      const status = await getEventBusStatus();
+      recordEventBusBacklogMetric(status.backlog || status.streamLength || status.pendingMemoryEvents || 0, {
+        streamName: status.streamName || '',
+        mode: status.mode || '',
+      });
+      json(response, 200, status);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/observability/status', '/api/v1/observability/status'])) {
+      const eventBus = await getEventBusStatus();
+      recordEventBusBacklogMetric(eventBus.backlog || eventBus.streamLength || eventBus.pendingMemoryEvents || 0, {
+        streamName: eventBus.streamName || '',
+        mode: eventBus.mode || '',
+      });
+      json(response, 200, {
+        ...getPbkObservabilityStatus(),
+        eventBus,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/events/bus/publish-test', '/api/event-bus/publish-test'])) {
+      const body = await readBody(request);
+      const result = await publishPbkEvent(body.type || 'debug.test', {
+        message: body.message || 'PBK event bus test',
+        requestedBy: body.requestedBy || body.actor || 'operator',
+        createdAt: isoNow(),
+      }, body.source || 'debug-api');
+      json(response, result.ok ? 200 : 202, result);
       return;
     }
 
@@ -49484,7 +52092,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts'];
       if (!pool) {
         json(response, 200, {
           ok: false,
@@ -51508,6 +54116,7 @@ const server = createServer(async (request, response) => {
         'POST /api/campaigns/:id/sequence',
         'POST /api/slack/interactions',
         'POST /api/slack/commands',
+        'POST /api/slack/events',
         'GET /api/deepgram/health',
         'GET /api/voice/browser/health',
         'POST /api/ws/browser/session',
@@ -51523,6 +54132,8 @@ const server = createServer(async (request, response) => {
         'GET/POST /api/property-data',
         'GET /api/brain/email-context',
         'POST /brain/ingest',
+        'POST /api/training/youtube',
+        'POST /api/evals/youtube-training/run',
         'GET/POST /brain/query',
         'GET /api/participants/profile',
         'GET /api/crm/streak/status',
@@ -51869,6 +54480,7 @@ function startCommandCenterClosedLoopScheduler() {
   const firstTimer = setTimeout(() => {
     void runSafely('startup-call-analysis', () => analyzeRecentAvaCalls({ actor: 'Rex Call Analyzer', source: 'scheduled-startup', limit: 20 }));
     void runSafely('startup-goal-alignment', () => buildRevenueGoalAlignment({ actor: 'Rex Goal Alignment', source: 'scheduled-startup' }));
+    void runSafely('startup-rex-autonomy', () => runAutonomousRexGoalDiscoveryRecord({ actor: 'Rex Autonomy', source: 'scheduled-startup' }));
   }, COMMAND_CENTER_CLOSED_LOOP_FIRST_DELAY_MS);
   firstTimer.unref?.();
 
@@ -51879,6 +54491,7 @@ function startCommandCenterClosedLoopScheduler() {
 
   const rexTimer = setInterval(() => {
     void runSafely('daily-goal-alignment', () => buildRevenueGoalAlignment({ actor: 'Rex Goal Alignment', source: 'scheduled-daily' }));
+    void runSafely('daily-rex-autonomy', () => runAutonomousRexGoalDiscoveryRecord({ actor: 'Rex Autonomy', source: 'scheduled-daily' }));
   }, REX_GOAL_ALIGNMENT_INTERVAL_MS);
   rexTimer.unref?.();
 
@@ -51886,6 +54499,24 @@ function startCommandCenterClosedLoopScheduler() {
     void runSafely('weekly-prosody-training', () => trainAndPersistProsodyModel({ minSamples: 25, source: 'scheduled-weekly' }));
   }, PROSODY_TRAIN_INTERVAL_MS);
   prosodyTimer.unref?.();
+}
+
+function startAgentRegistryHealthScheduler() {
+  const enabled = !/^(0|false|no)$/i.test(String(process.env.PBK_AGENT_REGISTRY_HEALTH_ENABLED || 'true').trim());
+  if (!enabled) return;
+  const intervalMs = Math.max(30_000, Number(process.env.PBK_AGENT_REGISTRY_HEALTH_INTERVAL_MS || 60_000));
+  const firstDelayMs = Math.max(5_000, Number(process.env.PBK_AGENT_REGISTRY_HEALTH_FIRST_DELAY_MS || 15_000));
+  const firstTimer = setTimeout(() => {
+    void checkAgentRegistryHealth({ persist: false })
+      .then((result) => console.log(`[pbk-local-openclaw] agent registry health: ${result.result}`))
+      .catch((error) => console.warn('[pbk-local-openclaw] agent registry health skipped:', error?.message || error));
+  }, firstDelayMs);
+  firstTimer.unref?.();
+  const interval = setInterval(() => {
+    void checkAgentRegistryHealth({ persist: false })
+      .catch((error) => console.warn('[pbk-local-openclaw] agent registry health skipped:', error?.message || error));
+  }, intervalMs);
+  interval.unref?.();
 }
 
 server.listen(PORT, HOST, () => {
@@ -51898,6 +54529,7 @@ server.listen(PORT, HOST, () => {
   });
   startEmotionalLearningAutoImprove();
   startCommandCenterClosedLoopScheduler();
+  startAgentRegistryHealthScheduler();
   if (REDIS_ENABLED) {
     getSharedRedisClient()
       .then((client) => {

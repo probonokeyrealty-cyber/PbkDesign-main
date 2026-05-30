@@ -156,6 +156,43 @@ async function main() {
       /\b(cash offers?|creative finance|approval-gated|read-only)\b/i.test(publicAvaProcessChat?.answer || ''),
       'Public Ava chat did not give a useful visitor-safe process answer.',
     );
+    const publicAvaAssistantChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: 'smoke-assistant-session',
+        message: 'Call 614-555-0199 for me now.',
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    assert(publicAvaAssistantChat?.ok === true, 'Public Ava assistant chat did not accept a routed assistant request.');
+    assert(publicAvaAssistantChat?.sessionId === 'smoke-assistant-session', 'Public Ava assistant chat did not preserve the provided session id.');
+    assert(publicAvaAssistantChat?.usedIntent === 'call', 'Public Ava assistant chat did not expose the detected call intent.');
+    assert(Array.isArray(publicAvaAssistantChat?.suggestions) && publicAvaAssistantChat.suggestions.length > 0, 'Public Ava assistant chat did not return proactive suggestions.');
+    assert(
+      /public chat.*will not start calls|will not start calls, texts/i.test(publicAvaAssistantChat?.answer || ''),
+      'Public Ava assistant chat did not block provider-write call behavior.',
+    );
+    const internalAvaAssistantCall = await fetch(`${BASE_URL}/api/assistant/chat`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: 'smoke-internal-assistant-session',
+        message: 'Call 614-555-0199 for me now.',
+      }),
+    }).then((response) => response.json());
+    assert(internalAvaAssistantCall?.ok === true, 'Internal Ava assistant chat did not accept an authenticated assistant request.');
+    assert(internalAvaAssistantCall?.assistantAction === 'approval_required', 'Internal Ava assistant chat did not keep provider-write call requests approval-gated.');
+    assert(internalAvaAssistantCall?.toolPlan?.toolName === 'telnyx_call', 'Internal Ava assistant chat did not prepare the expected call tool plan.');
+    assert(
+      /approval-gated/i.test(internalAvaAssistantCall?.answer || ''),
+      'Internal Ava assistant chat did not explain the approval-gated call boundary.',
+    );
     const publicAvaTtsNoLeadChat = await fetch(`${BASE_URL}/api/public/ava-chat`, {
       method: 'POST',
       headers: {
@@ -283,6 +320,109 @@ async function main() {
       providerActionApproval?.providerActionResult?.ok === true
         && providerActionApproval?.providerActionResult?.call?.phone === '+16145550123',
       'Approved provider-action telnyx_call did not replay into a call record.',
+    );
+    const unsafeOfferInvoke = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'sendDocuSign',
+        params: {
+          leadName: 'Unsafe Offer Smoke',
+          email: 'unsafe-offer-smoke@example.com',
+          offerAmount: 120000,
+          mao: 100000,
+          source: 'smoke-test-safety',
+        },
+      }),
+    }).then((response) => response.json());
+    assert(
+      unsafeOfferInvoke?.ok === false
+        && unsafeOfferInvoke?.result?.result === 'safety_blocked'
+        && unsafeOfferInvoke?.result?.safety?.violations?.some((item) => item.code === 'offer_above_mao'),
+      'Unsafe provider-write offer was not blocked before approval/execution.',
+    );
+    const safetyValidation = await fetch(`${BASE_URL}/api/safety/validate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'telnyx_call',
+        params: {
+          leadName: 'DNC Smoke',
+          phone: '+16145550124',
+          dnc: true,
+          nowLocalHour: 12,
+        },
+      }),
+    }).then((response) => response.json());
+    assert(
+      safetyValidation?.ok === false
+        && safetyValidation?.safety?.violations?.some((item) => item.code === 'dnc_block'),
+      'Safety validation endpoint did not block a DNC call.',
+    );
+    const slackUrlVerification = await fetch(`${BASE_URL}/api/slack/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'url_verification',
+        challenge: 'pbk-slack-events-challenge',
+      }),
+    }).then((response) => response.json());
+    assert(
+      slackUrlVerification?.challenge === 'pbk-slack-events-challenge',
+      'Slack Events API URL verification did not return the challenge.',
+    );
+    const slackMentionAck = await fetch(`${BASE_URL}/api/slack/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'event_callback',
+        event: {
+          type: 'app_mention',
+          user: 'UFOUNDER',
+          channel: 'CDEALS',
+          ts: '1717000000.000400',
+          text: '<@UAVA123> what needs my attention today?',
+        },
+      }),
+    }).then((response) => response.json());
+    assert(
+      slackMentionAck?.result === 'slack_app_mention_ack_queued',
+      'Slack app mention did not ACK for background routing.',
+    );
+    const avaEvalRun = await fetch(`${BASE_URL}/api/evals/ava-canonical/run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        source: 'smoke-test',
+      }),
+    }).then((response) => response.json());
+    assert(
+      avaEvalRun?.ok === true && avaEvalRun?.total >= 20 && avaEvalRun?.failed === 0,
+      'Ava canonical eval suite endpoint did not pass the canonical scenarios.',
+    );
+    const observabilityStatus = await fetch(`${BASE_URL}/api/observability/status`, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+    }).then((response) => response.json());
+    assert(
+      observabilityStatus?.ok === true
+        && observabilityStatus?.metrics
+        && observabilityStatus?.eventBus,
+      'Observability status endpoint did not expose metrics and event bus diagnostics.',
     );
     const invoke = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',
@@ -679,6 +819,26 @@ async function main() {
         source: 'bridge-smoke',
         excerpt: 'Smoke brain memory for recording and workflow endpoint coverage.',
         tags: ['smoke', 'brain'],
+      }),
+    }).then((response) => response.json());
+    const youtubeBrainIngest = await fetch(`${BASE_URL}/brain/ingest`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        title: 'Smoke YouTube Expert Call',
+        url: 'https://www.youtube.com/watch?v=pbkSmoke12345',
+        agentId: 'ava',
+        transcript: [
+          'Expert: What has you thinking about selling the house?',
+          'Seller: I inherited it and I need to talk to my wife before signing.',
+          'Expert: That makes sense. What would she need to feel comfortable moving forward?',
+          'Seller: The price feels low and I need this sold fast because taxes are behind.',
+          'Expert: Let us compare the net and solve speed, repairs, and certainty before the deadline.',
+        ].join('\n'),
+        tags: ['smoke', 'youtube-training'],
       }),
     }).then((response) => response.json());
     const brainQuery = await fetch(`${BASE_URL}/brain/query`, {
@@ -1190,6 +1350,10 @@ async function main() {
     assert(filteredApprovals?.stateIncluded === true, 'Filtered approvals endpoint did not honor includeState=1.');
     assert(filteredApprovals?.state?.approvals, 'Filtered approvals endpoint did not return runtime state for the approval board.');
     assert(brainIngest?.ok === true, 'Brain ingest endpoint did not succeed.');
+    assert(youtubeBrainIngest?.ok === true, 'YouTube Brain ingest endpoint did not succeed.');
+    assert(youtubeBrainIngest?.result === 'youtube_training_ready', 'YouTube Brain ingest did not route through training pipeline.');
+    assert(youtubeBrainIngest?.testCase?.assertions?.length >= 3, 'YouTube Brain ingest did not create eval assertions.');
+    assert(youtubeBrainIngest?.coachMemoryEntries?.some((entry) => entry.objectionTag === 'spouse_approval'), 'YouTube Brain ingest did not extract spouse objection memory.');
     assert(Array.isArray(brainQuery?.brainDocs), 'Brain query endpoint did not return brainDocs.');
     assert(rexDecisions?.ok === true && Array.isArray(rexDecisions?.decisions), 'Rex decisions endpoint did not return decisions.');
     assert(rexProposal?.ok === true, 'Rex strategist proposal endpoint did not queue a proposal.');

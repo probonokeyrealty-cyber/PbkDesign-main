@@ -20,8 +20,8 @@ status = 200
 force = true
 
 [[redirects]]
-from = "/index.shell.html"
-to = "/index.html"
+from = "/index.shell.html/*"
+to = "/index.shell.html"
 status = 200
 force = true
 

@@ -204,18 +204,18 @@ if (!netlifySpaFallbackOrdered || !netlifyBrainCleanRouteOrdered) {
   });
 }
 
-const netlifyShellPreviewIndex = netlifyConfig.lastIndexOf('from = "/index.shell.html"');
-const netlifyShellPreviewBlock = netlifyShellPreviewIndex >= 0 ? netlifyConfig.slice(netlifyShellPreviewIndex) : '';
-const netlifyShellPreviewHidden = /from\s*=\s*"\/index\.shell\.html"/.test(netlifyShellPreviewBlock)
-  && /to\s*=\s*"\/index\.html"/.test(netlifyShellPreviewBlock)
-  && /status\s*=\s*200/.test(netlifyShellPreviewBlock)
-  && /force\s*=\s*true/.test(netlifyShellPreviewBlock)
-  && netlifyShellPreviewIndex >= 0
-  && (netlifyApiProxyIndex < 0 || netlifyShellPreviewIndex < netlifyApiProxyIndex);
-if (!netlifyShellPreviewHidden) {
+const netlifyShellRouteIndex = netlifyConfig.lastIndexOf('from = "/index.shell.html/*"');
+const netlifyShellRouteBlock = netlifyShellRouteIndex >= 0 ? netlifyConfig.slice(netlifyShellRouteIndex) : '';
+const netlifyModernShellRouted = /from\s*=\s*"\/index\.shell\.html\/\*"/.test(netlifyShellRouteBlock)
+  && /to\s*=\s*"\/index\.shell\.html"/.test(netlifyShellRouteBlock)
+  && /status\s*=\s*200/.test(netlifyShellRouteBlock)
+  && /force\s*=\s*true/.test(netlifyShellRouteBlock)
+  && netlifyShellRouteIndex >= 0
+  && (netlifyApiProxyIndex < 0 || netlifyShellRouteIndex < netlifyApiProxyIndex);
+if (!netlifyModernShellRouted) {
   fail.push({
-    name: 'Netlify production must not expose the experimental shell preview',
-    details: ['Add a forced /index.shell.html -> /index.html redirect before API and SPA fallback rewrites so operators never see the old shell in production.'],
+    name: 'Netlify production must serve modern shell preview routes',
+    details: ['Add a forced /index.shell.html/* -> /index.shell.html rewrite before API and SPA fallback rewrites so deep links render the modern React shell instead of the legacy dashboard.'],
   });
 }
 

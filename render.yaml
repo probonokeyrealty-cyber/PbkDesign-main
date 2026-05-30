@@ -19,6 +19,11 @@ services:
       # credential.
       - key: PBK_BRIDGE_API_KEY
         sync: false
+      # Dedicated outbound Desktop Sidecar WebSocket token. Use a separate
+      # secret from PBK_BRIDGE_API_KEY so local desktop access can be rotated
+      # without changing dashboard/API auth.
+      - key: PBK_SIDECAR_TOKEN
+        sync: false
       # Postgres connection string. Use Render's "Add From Database" pattern
       # against the pbk-openclaw-db service so this is wired automatically.
       - key: PBK_DATABASE_URL

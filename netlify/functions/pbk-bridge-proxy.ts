@@ -127,6 +127,11 @@ function compactHealthPayload(payload: Record<string, any>) {
     }),
   );
 
+  const runtime = payload.runtime && typeof payload.runtime === 'object' ? payload.runtime as Record<string, any> : {};
+  const postgres = components.postgres && typeof components.postgres === 'object'
+    ? components.postgres as Record<string, any>
+    : {};
+
   return {
     ok: payload.ok !== false,
     status: payload.status || 'unknown',
@@ -134,7 +139,8 @@ function compactHealthPayload(payload: Record<string, any>) {
     revision: payload.revision || '',
     checkedAt: payload.checkedAt || new Date().toISOString(),
     hosted: payload.hosted ?? payload.mode === 'hosted',
-    stateBackend: payload.stateBackend || payload.state_backend || '',
+    stateBackend: payload.stateBackend || payload.state_backend || runtime.stateBackend || runtime.state_backend || '',
+    databaseStatus: postgres.status || postgres.state || '',
     providers: providerStatuses,
     componentCount: Object.keys(components).length,
     healthStatus: payload.healthStatus || payload.status || 'unknown',

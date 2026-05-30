@@ -25601,7 +25601,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderCallFloorSearchSkeleton(rawQuery);
     callFloorSearchTimer = window.setTimeout(() => {
       if (sequence !== callFloorSearchSequence) return;
-      window.requestAnimationFrame(() => renderCallFloorLeadResults(rawQuery));
+      renderCallFloorLeadResults(rawQuery);
     }, CALL_FLOOR_SEARCH_DEBOUNCE_MS);
   }
 

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 const bridgePath = resolve('scripts/openclaw-local-server.mjs');
 const bridge = readFileSync(bridgePath, 'utf8');
+const dockerfile = readFileSync(resolve('Dockerfile.openclaw'), 'utf8');
 
 const synthetic = await import('./synthetic-edge-cases.mjs');
 const entries = synthetic.buildSyntheticEdgeCaseObjections({ count: 50 });
@@ -22,6 +23,7 @@ assert.match(bridge, /POST' && pathname === '\/api\/feedback'/, 'bridge should e
 assert.match(bridge, /EventTypes\.CALL_COMPLETED[\s\S]*upsertCallEmbeddingFromTranscript/, 'call.completed should trigger transcript embedding upsert.');
 assert.match(bridge, /async function retrieveLiveBrainKnowledge/, 'live Ava RAG retrieval should remain wired.');
 assert.match(bridge, /async getPropertyData/, 'property-data tool should remain wired.');
+assert.match(dockerfile, /COPY scripts\/synthetic-edge-cases\.mjs \.\/scripts\/synthetic-edge-cases\.mjs/, 'Render Docker image should copy the synthetic edge-case runtime module.');
 
 console.log('[tier-additives-smoke] ok', {
   syntheticCount: entries.length,

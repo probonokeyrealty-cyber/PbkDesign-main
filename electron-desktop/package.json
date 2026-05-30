@@ -10,6 +10,9 @@
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
   "devDependencies": {
     "electron": "latest",
     "electron-builder": "^24.13.3"
@@ -22,6 +25,7 @@
     },
     "files": [
       "main.js",
+      "sidecar-core.js",
       "preload.js",
       "package.json"
     ],

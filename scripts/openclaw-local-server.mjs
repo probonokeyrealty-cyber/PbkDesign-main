@@ -78,6 +78,14 @@ import {
   planAssistantIntent,
 } from './ava-assistant-chat.mjs';
 import {
+  buildDeclarativeActionIntent,
+  curateEpisodicMemories as curateEpisodicMemoriesCore,
+  reconcileDeclarativeActionIntent,
+  runMissionResilienceEval as runMissionResilienceEvalCore,
+  selectBacktrackingStrategy as selectBacktrackingStrategyCore,
+  updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore,
+} from './mission-resilience.mjs';
+import {
   DEEPGRAM_SAMPLE_URL,
   createDeepgramLiveConnection,
   getDeepgramProviderMeta,
@@ -1026,6 +1034,11 @@ const LIMITS = {
   goalPlans: 180,
   emotionSerPredictions: 360,
   voiceProsodyPlans: 240,
+  goalTrajectories: 600,
+  backtrackingPlans: 240,
+  declarativeActionIntents: 600,
+  memoryCurationEvents: 240,
+  missionResilienceEvalRuns: 120,
   adminTasks: 90,
   adminAudit: 160,
 };
@@ -5291,6 +5304,11 @@ function buildDefaultState() {
     goalPlans: [],
     emotionSerPredictions: [],
     voiceProsodyPlans: [],
+    goalTrajectories: [],
+    backtrackingPlans: [],
+    declarativeActionIntents: [],
+    memoryCurationEvents: [],
+    missionResilienceEvalRuns: [],
     settings: {
       ui: {
         operatingMode: 'approval',
@@ -5691,6 +5709,57 @@ async function ensurePgSchema() {
       severity TEXT NOT NULL DEFAULT 'warning',
       message TEXT NOT NULL DEFAULT '',
       details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_goal_trajectories (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL DEFAULT 'goal_inference_updated',
+      utterance TEXT NOT NULL DEFAULT '',
+      beliefs JSONB NOT NULL DEFAULT '{}'::jsonb,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_action_intents (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      idempotency_key TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      lead_id TEXT NOT NULL DEFAULT '',
+      desired_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_observed_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending_reconcile',
+      attempts INT NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_memory_curation_events (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      delete_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      dry_run BOOLEAN NOT NULL DEFAULT TRUE,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_mission_resilience_eval_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ok BOOLEAN NOT NULL DEFAULT FALSE,
+      score INT NOT NULL DEFAULT 0,
+      scores JSONB NOT NULL DEFAULT '{}'::jsonb,
+      coverage JSONB NOT NULL DEFAULT '[]'::jsonb,
+      assertions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      report JSONB NOT NULL DEFAULT '{}'::jsonb,
       source TEXT NOT NULL DEFAULT 'pbk-bridge',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -6855,6 +6924,29 @@ async function ensurePgSchema() {
 
     ALTER TABLE public.pbk_observability_alerts ENABLE ROW LEVEL SECURITY;
 
+    CREATE INDEX IF NOT EXISTS pbk_goal_trajectories_lookup_idx
+      ON public.pbk_goal_trajectories (tenant_id, lead_id, call_id, created_at DESC);
+
+    ALTER TABLE public.pbk_goal_trajectories ENABLE ROW LEVEL SECURITY;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pbk_action_intents_idempotency_idx
+      ON public.pbk_action_intents (tenant_id, idempotency_key);
+
+    CREATE INDEX IF NOT EXISTS pbk_action_intents_lookup_idx
+      ON public.pbk_action_intents (tenant_id, tool_name, lead_id, status, created_at DESC);
+
+    ALTER TABLE public.pbk_action_intents ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_memory_curation_events_lookup_idx
+      ON public.pbk_memory_curation_events (tenant_id, created_at DESC);
+
+    ALTER TABLE public.pbk_memory_curation_events ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_mission_resilience_eval_runs_lookup_idx
+      ON public.pbk_mission_resilience_eval_runs (tenant_id, ok, created_at DESC);
+
+    ALTER TABLE public.pbk_mission_resilience_eval_runs ENABLE ROW LEVEL SECURITY;
+
     CREATE OR REPLACE VIEW public.guardrail_violations
     WITH (security_invoker = true)
     AS
@@ -6883,6 +6975,10 @@ async function ensurePgSchema() {
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.test_cases TO service_role;
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_turn_latency TO service_role;
         GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_observability_alerts TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_goal_trajectories TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_action_intents TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_memory_curation_events TO service_role;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON public.pbk_mission_resilience_eval_runs TO service_role;
         GRANT SELECT ON public.guardrail_violations TO service_role;
       END IF;
     END $$;
@@ -6903,6 +6999,26 @@ async function ensurePgSchema() {
         SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_observability_alerts' AND policyname = 'pbk_observability_alerts_service_role_all'
       ) THEN
         CREATE POLICY pbk_observability_alerts_service_role_all ON public.pbk_observability_alerts FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_goal_trajectories' AND policyname = 'pbk_goal_trajectories_service_role_all'
+      ) THEN
+        CREATE POLICY pbk_goal_trajectories_service_role_all ON public.pbk_goal_trajectories FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_action_intents' AND policyname = 'pbk_action_intents_service_role_all'
+      ) THEN
+        CREATE POLICY pbk_action_intents_service_role_all ON public.pbk_action_intents FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_memory_curation_events' AND policyname = 'pbk_memory_curation_events_service_role_all'
+      ) THEN
+        CREATE POLICY pbk_memory_curation_events_service_role_all ON public.pbk_memory_curation_events FOR ALL TO service_role USING (true) WITH CHECK (true);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'pbk_mission_resilience_eval_runs' AND policyname = 'pbk_mission_resilience_eval_runs_service_role_all'
+      ) THEN
+        CREATE POLICY pbk_mission_resilience_eval_runs_service_role_all ON public.pbk_mission_resilience_eval_runs FOR ALL TO service_role USING (true) WITH CHECK (true);
       END IF;
     END $$;
 
@@ -9558,6 +9674,11 @@ function hydrateState(raw = {}) {
     inboundCallRoutes: trimArray(raw.inboundCallRoutes || defaults.inboundCallRoutes, LIMITS.inboundCallRoutes),
     promptPatchApplications: trimArray(raw.promptPatchApplications || defaults.promptPatchApplications, LIMITS.promptPatchApplications),
     recordingRetentionRuns: trimArray(raw.recordingRetentionRuns || defaults.recordingRetentionRuns, LIMITS.recordingRetentionRuns),
+    goalTrajectories: trimArray(raw.goalTrajectories || defaults.goalTrajectories, LIMITS.goalTrajectories),
+    backtrackingPlans: trimArray(raw.backtrackingPlans || defaults.backtrackingPlans, LIMITS.backtrackingPlans),
+    declarativeActionIntents: trimArray(raw.declarativeActionIntents || defaults.declarativeActionIntents, LIMITS.declarativeActionIntents),
+    memoryCurationEvents: trimArray(raw.memoryCurationEvents || defaults.memoryCurationEvents, LIMITS.memoryCurationEvents),
+    missionResilienceEvalRuns: trimArray(raw.missionResilienceEvalRuns || defaults.missionResilienceEvalRuns, LIMITS.missionResilienceEvalRuns),
     settings: {
       ...defaults.settings,
       ...(raw.settings && typeof raw.settings === 'object' ? raw.settings : {}),
@@ -17205,6 +17326,114 @@ async function persistRexAutonomyRunToPg(record = {}) {
       JSON.stringify(record.goals || []),
       record.status || 'complete',
       record.source || 'rex-autonomy',
+      record.createdAt || record.created_at || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistGoalTrajectoryToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_goal_trajectories (
+       id, tenant_id, call_id, lead_id, event_type, utterance, beliefs, evidence, source, created_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10)
+     ON CONFLICT (id) DO UPDATE SET
+       beliefs = EXCLUDED.beliefs,
+       evidence = EXCLUDED.evidence`,
+    [
+      record.id || `goal-trajectory-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+      record.callId || record.call_id || '',
+      record.leadId || record.lead_id || '',
+      record.eventType || record.event_type || 'goal_inference_updated',
+      record.utterance || '',
+      JSON.stringify(record.beliefs || {}),
+      JSON.stringify(record.evidence || {}),
+      record.source || 'mission-resilience',
+      record.createdAt || record.created_at || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistDeclarativeActionIntentToPg(record = {}) {
+  if (!record?.id || !record?.idempotencyKey) return false;
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_action_intents (
+       id, tenant_id, idempotency_key, tool_name, lead_id, desired_state,
+       last_observed_state, status, attempts, source, created_at, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12)
+     ON CONFLICT (tenant_id, idempotency_key) DO UPDATE SET
+       last_observed_state = EXCLUDED.last_observed_state,
+       status = EXCLUDED.status,
+       attempts = public.pbk_action_intents.attempts,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      record.id,
+      normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+      record.idempotencyKey || record.idempotency_key,
+      record.toolName || record.tool_name || '',
+      record.leadId || record.lead_id || '',
+      JSON.stringify(record.desiredState || record.desired_state || {}),
+      JSON.stringify(record.lastObservedState || record.last_observed_state || {}),
+      record.status || 'pending_reconcile',
+      Number(record.attempts || 0),
+      record.source || 'mission-resilience',
+      record.createdAt || record.created_at || isoNow(),
+      record.updatedAt || record.updated_at || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistMemoryCurationEventToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_memory_curation_events (
+       id, tenant_id, summary, delete_ids, dry_run, source, created_at
+     )
+     VALUES ($1,$2,$3::jsonb,$4::jsonb,$5,$6,$7)
+     ON CONFLICT (id) DO UPDATE SET
+       summary = EXCLUDED.summary,
+       delete_ids = EXCLUDED.delete_ids,
+       dry_run = EXCLUDED.dry_run`,
+    [
+      record.id || `memory-curation-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+      JSON.stringify(record.summary || {}),
+      JSON.stringify(record.deleteIds || record.delete_ids || []),
+      record.dryRun !== false && record.dry_run !== false,
+      record.source || 'mission-resilience',
+      record.createdAt || record.created_at || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
+async function persistMissionResilienceEvalRunToPg(record = {}) {
+  const result = await queryPgRows(
+    `INSERT INTO public.pbk_mission_resilience_eval_runs (
+       id, tenant_id, ok, score, scores, coverage, assertions, report, source, created_at
+     )
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9,$10)
+     ON CONFLICT (id) DO UPDATE SET
+       ok = EXCLUDED.ok,
+       score = EXCLUDED.score,
+       scores = EXCLUDED.scores,
+       coverage = EXCLUDED.coverage,
+       assertions = EXCLUDED.assertions,
+       report = EXCLUDED.report`,
+    [
+      record.id || `mission-resilience-eval-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+      Boolean(record.ok),
+      Number(record.score || 0),
+      JSON.stringify(record.scores || {}),
+      JSON.stringify(record.coverage || []),
+      JSON.stringify(record.assertions || []),
+      JSON.stringify(record.report || record),
+      record.source || 'mission-resilience',
       record.createdAt || record.created_at || isoNow(),
     ],
   );
@@ -38356,6 +38585,110 @@ const toolHandlers = {
     return toolHandlers.pbk_ava_conversation_intelligence(params);
   },
 
+  async updateGoalBeliefsBayesian(params = {}) {
+    recordToolUse('updateGoalBeliefsBayesian');
+    const result = updateGoalBeliefsBayesianCore(params);
+    if (!Array.isArray(state.goalTrajectories)) state.goalTrajectories = [];
+    state.goalTrajectories.unshift(result.trajectoryEvent);
+    state.goalTrajectories = sortNewest(state.goalTrajectories).slice(0, LIMITS.goalTrajectories);
+    void persistGoalTrajectoryToPg(result.trajectoryEvent);
+    await persistState(state);
+    return result;
+  },
+
+  async selectBacktrackingStrategy(params = {}) {
+    recordToolUse('selectBacktrackingStrategy');
+    const result = selectBacktrackingStrategyCore(params);
+    const record = {
+      id: `backtrack-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 500)))}`,
+      ...result,
+      callId: params.callId || params.call_id || '',
+      leadId: params.leadId || params.lead_id || '',
+      createdAt: isoNow(),
+    };
+    if (!Array.isArray(state.backtrackingPlans)) state.backtrackingPlans = [];
+    state.backtrackingPlans.unshift(record);
+    state.backtrackingPlans = sortNewest(state.backtrackingPlans).slice(0, LIMITS.backtrackingPlans);
+    await persistState(state);
+    return record;
+  },
+
+  async reconcileDeclarativeAction(params = {}) {
+    recordToolUse('reconcileDeclarativeAction');
+    const intent = buildDeclarativeActionIntent(params);
+    const result = reconcileDeclarativeActionIntent(intent, state.declarativeActionIntents || []);
+    if (result.intentRecord) {
+      if (!Array.isArray(state.declarativeActionIntents)) state.declarativeActionIntents = [];
+      state.declarativeActionIntents.unshift({
+        ...result.intentRecord,
+        createdAt: result.intentRecord.createdAt || isoNow(),
+        updatedAt: isoNow(),
+      });
+      state.declarativeActionIntents = sortNewest(state.declarativeActionIntents).slice(0, LIMITS.declarativeActionIntents);
+      void persistDeclarativeActionIntentToPg(state.declarativeActionIntents[0]);
+      await persistState(state);
+    }
+    return result;
+  },
+
+  async curateEpisodicMemories(params = {}) {
+    recordToolUse('curateEpisodicMemories');
+    const result = curateEpisodicMemoriesCore(params);
+    const event = {
+      id: `memory-curation-${Date.now()}-${Math.abs(hashString(JSON.stringify(result.summary || {})))}`,
+      result: result.result,
+      summary: result.summary,
+      deleteIds: (result.delete || []).map((item) => item.id || item.callId || item.call_id).filter(Boolean),
+      createdAt: isoNow(),
+      dryRun: params.dryRun !== false,
+    };
+    if (!Array.isArray(state.memoryCurationEvents)) state.memoryCurationEvents = [];
+    state.memoryCurationEvents.unshift(event);
+    state.memoryCurationEvents = sortNewest(state.memoryCurationEvents).slice(0, LIMITS.memoryCurationEvents);
+    void persistMemoryCurationEventToPg(event);
+    await persistState(state);
+    return {
+      ...result,
+      event,
+      providerWritesBlocked: true,
+    };
+  },
+
+  async runMissionResilienceEval(params = {}) {
+    recordToolUse('runMissionResilienceEval');
+    const eventBus = params.eventBus || await getEventBusStatus();
+    const registry = params.registry || buildAgentRegistrySnapshot(state.agents || buildDefaultAgentRegistry());
+    const result = runMissionResilienceEvalCore({
+      ...params,
+      eventBus,
+      registry,
+      toolAttempts: params.toolAttempts || state.declarativeActionIntents || [],
+      memoryCuration: params.memoryCuration || state.memoryCurationEvents?.[0] || {},
+      conversations: params.conversations || (state.calls || []).slice(0, 20).map((call) => ({
+        callId: call.id || call.callId || call.call_id || '',
+        turnsBeforePathLock: call.turnsBeforePathLock || call.turns_before_path_lock || 0,
+        backtrackingUsed: Boolean((state.backtrackingPlans || []).some((plan) => plan.callId && plan.callId === (call.id || call.callId))),
+        wastedTurns: call.wastedTurns || call.wasted_turns || 0,
+      })),
+    });
+    const record = {
+      id: `mission-resilience-eval-${Date.now()}`,
+      ...result,
+      createdAt: isoNow(),
+    };
+    if (!Array.isArray(state.missionResilienceEvalRuns)) state.missionResilienceEvalRuns = [];
+    state.missionResilienceEvalRuns.unshift(record);
+    state.missionResilienceEvalRuns = sortNewest(state.missionResilienceEvalRuns).slice(0, LIMITS.missionResilienceEvalRuns);
+    void persistMissionResilienceEvalRunToPg(record);
+    await persistState(state);
+    return record;
+  },
+
+  async sidecarCommand(params = {}) {
+    recordToolUse('sidecarCommand');
+    return sendDesktopSidecarCommand(params);
+  },
+
   async activateAvaCallIntelligence(params = {}) {
     recordToolUse('activateAvaCallIntelligence');
     return activateAvaCallIntelligence(params);
@@ -49645,6 +49978,28 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/evals/mission-resilience/run', '/api/v1/evals/mission-resilience/run'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.runMissionResilienceEval(body);
+      json(response, result.ok ? 200 : 422, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/desktop-sidecar/status', '/api/v1/desktop-sidecar/status'])) {
+      json(response, 200, buildDesktopSidecarStatus());
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/desktop-sidecar/command', '/api/v1/desktop-sidecar/command'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.sidecarCommand(body);
+      json(response, result.ok ? 200 : 409, result);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/revenue/engine/status', '/api/v1/revenue/engine/status'])) {
       json(response, 200, buildRevenueEngineStatus(Object.fromEntries(url.searchParams.entries())));
       return;
@@ -52332,7 +52687,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs'];
       if (!pool) {
         json(response, 200, {
           ok: false,
@@ -54358,6 +54713,9 @@ const server = createServer(async (request, response) => {
         'POST /api/slack/commands',
         'POST /api/slack/events',
         'GET /api/deepgram/health',
+        'GET /api/desktop-sidecar/status',
+        'POST /api/desktop-sidecar/command',
+        'WS /ws/sidecar',
         'GET /api/voice/browser/health',
         'POST /api/ws/browser/session',
         'POST /api/voice/browser/session',
@@ -54479,6 +54837,260 @@ browserVoiceWss.on('connection', (socket, request) => {
   void handleBrowserVoiceSocket(socket, request);
 });
 
+const desktopSidecarSockets = new Map();
+const pendingSidecarCommands = new Map();
+const desktopSidecarEvents = [];
+const DESKTOP_SIDECAR_ALLOWED_ACTIONS = new Set([
+  'ping',
+  'status',
+  'read_file',
+  'list_dir',
+  'screenshot',
+  'screenshot_ocr',
+  'type_text',
+  'llm_query',
+  'watch_folder',
+]);
+
+function pushDesktopSidecarEvent(event = {}) {
+  desktopSidecarEvents.unshift({
+    ...event,
+    at: event.at || isoNow(),
+  });
+  desktopSidecarEvents.splice(120);
+}
+
+function sendDesktopSidecarSocketMessage(socket, message = {}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  try {
+    socket.send(JSON.stringify(message));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getDesktopSidecarAuthToken(request, upgradeUrl) {
+  return upgradeUrl.searchParams.get('token')
+    || String(request.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
+    || String(request.headers['x-pbk-sidecar-token'] || '').trim()
+    || String(request.headers['sec-websocket-protocol'] || '').split(',').map((item) => item.trim()).find(Boolean)
+    || '';
+}
+
+function buildDesktopSidecarStatus() {
+  const sidecars = [...desktopSidecarSockets.entries()].map(([sidecarId, socket]) => ({
+    sidecarId,
+    connected: socket.readyState === WebSocket.OPEN,
+    machineName: socket.meta?.machineName || '',
+    capabilities: socket.meta?.capabilities || {},
+    allowedRootLabels: socket.meta?.allowedRootLabels || [],
+    connectedAt: socket.meta?.connectedAt || '',
+    lastMessageAt: socket.meta?.lastMessageAt || '',
+    lastCommandAt: socket.meta?.lastCommandAt || '',
+  }));
+  return {
+    ok: true,
+    result: 'desktop_sidecar_status',
+    connected: sidecars.some((sidecar) => sidecar.connected),
+    connectedCount: sidecars.filter((sidecar) => sidecar.connected).length,
+    sidecars,
+    pendingCommands: pendingSidecarCommands.size,
+    recentEvents: desktopSidecarEvents.slice(0, 20),
+  };
+}
+
+function getActiveDesktopSidecar(sidecarId = '') {
+  const requested = String(sidecarId || '').trim();
+  if (requested && desktopSidecarSockets.get(requested)?.readyState === WebSocket.OPEN) {
+    return desktopSidecarSockets.get(requested);
+  }
+  return [...desktopSidecarSockets.values()].find((socket) => socket.readyState === WebSocket.OPEN) || null;
+}
+
+function validateDesktopSidecarBridgeCommand(params = {}) {
+  const action = String(params.action || params.command || '').trim().toLowerCase();
+  if (!action || !DESKTOP_SIDECAR_ALLOWED_ACTIONS.has(action)) {
+    return { ok: false, error: 'unsupported_sidecar_action', action };
+  }
+  if (action === 'type_text' && params.allowAutomation !== true && params.allow_automation !== true) {
+    return {
+      ok: false,
+      error: 'automation_requires_explicit_allow',
+      action,
+      hint: 'Pass allowAutomation:true after human approval before sending desktop automation commands.',
+    };
+  }
+  return { ok: true, action };
+}
+
+async function sendDesktopSidecarCommand(params = {}) {
+  const validation = validateDesktopSidecarBridgeCommand(params);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      result: 'sidecar_command_rejected',
+      ...validation,
+    };
+  }
+  const socket = getActiveDesktopSidecar(params.sidecarId || params.sidecar_id);
+  if (!socket) {
+    return {
+      ok: false,
+      result: 'no_sidecar_connected',
+      connected: false,
+      status: buildDesktopSidecarStatus(),
+    };
+  }
+  const commandId = params.id || `sidecar-command-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const payload = {
+    ...params,
+    id: commandId,
+    action: validation.action,
+  };
+  const waitForResult = params.wait !== false;
+  socket.meta = {
+    ...(socket.meta || {}),
+    lastCommandAt: isoNow(),
+  };
+  const sent = sendDesktopSidecarSocketMessage(socket, {
+    type: 'sidecar.command',
+    commandId,
+    payload,
+    at: isoNow(),
+  });
+  if (!sent) {
+    return { ok: false, result: 'sidecar_send_failed', commandId };
+  }
+  pushDesktopSidecarEvent({
+    type: 'command_sent',
+    sidecarId: socket.meta?.sidecarId || '',
+    commandId,
+    action: validation.action,
+  });
+  if (!waitForResult) {
+    return {
+      ok: true,
+      result: 'sidecar_command_sent',
+      commandId,
+      sidecarId: socket.meta?.sidecarId || '',
+    };
+  }
+  return new Promise((resolve) => {
+    const timeoutMs = Math.max(1000, Math.min(30000, Number(params.timeoutMs || params.timeout_ms || 12000)));
+    const timer = setTimeout(() => {
+      pendingSidecarCommands.delete(commandId);
+      resolve({
+        ok: false,
+        result: 'sidecar_command_timeout',
+        commandId,
+        timeoutMs,
+      });
+    }, timeoutMs);
+    timer.unref?.();
+    pendingSidecarCommands.set(commandId, {
+      resolve: (message) => {
+        clearTimeout(timer);
+        resolve({
+          ok: message.ok !== false,
+          result: message.result || 'sidecar_command_result',
+          commandId,
+          sidecarId: socket.meta?.sidecarId || '',
+          action: validation.action,
+          payload: message.payload || {},
+          error: message.error || '',
+        });
+      },
+      createdAt: isoNow(),
+    });
+  });
+}
+
+function handleDesktopSidecarMessage(socket, raw) {
+  socket.meta = {
+    ...(socket.meta || {}),
+    lastMessageAt: isoNow(),
+  };
+  const message = safeJsonParse(String(raw || ''), {});
+  if (message.type === 'sidecar.hello') {
+    const status = message.status || {};
+    const sidecarId = String(message.sidecarId || status.sidecarId || socket.meta?.sidecarId || `sidecar-${randomUUID().slice(0, 8)}`).trim();
+    if (socket.meta?.sidecarId && socket.meta.sidecarId !== sidecarId) {
+      desktopSidecarSockets.delete(socket.meta.sidecarId);
+    }
+    socket.meta = {
+      ...(socket.meta || {}),
+      sidecarId,
+      machineName: status.machineName || message.machineName || '',
+      capabilities: status.capabilities || {},
+      allowedRootLabels: status.allowedRootLabels || [],
+      connectedAt: socket.meta?.connectedAt || isoNow(),
+      lastMessageAt: isoNow(),
+    };
+    desktopSidecarSockets.set(sidecarId, socket);
+    pushDesktopSidecarEvent({ type: 'sidecar_connected', sidecarId, machineName: socket.meta.machineName });
+    sendDesktopSidecarSocketMessage(socket, {
+      type: 'sidecar.ready',
+      sidecarId,
+      bridgeRevision: BUILD_REVISION,
+      at: isoNow(),
+    });
+    return;
+  }
+  if (message.type === 'sidecar.command.result') {
+    const commandId = String(message.commandId || message.id || '').trim();
+    const pending = pendingSidecarCommands.get(commandId);
+    if (pending) {
+      pendingSidecarCommands.delete(commandId);
+      pending.resolve(message);
+    }
+    pushDesktopSidecarEvent({
+      type: 'command_result',
+      sidecarId: socket.meta?.sidecarId || '',
+      commandId,
+      action: message.action || '',
+      ok: message.ok !== false,
+    });
+    return;
+  }
+  if (message.type === 'sidecar.event') {
+    pushDesktopSidecarEvent({
+      type: message.event || 'sidecar_event',
+      sidecarId: socket.meta?.sidecarId || '',
+      payload: message.payload || {},
+    });
+    return;
+  }
+  if (message.type === 'ping') {
+    sendDesktopSidecarSocketMessage(socket, { type: 'pong', at: isoNow() });
+  }
+}
+
+const desktopSidecarWss = new WebSocketServer({ noServer: true });
+desktopSidecarWss.on('connection', (socket, request) => {
+  const sidecarId = `sidecar-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  socket.meta = {
+    sidecarId,
+    connectedAt: isoNow(),
+    lastMessageAt: '',
+  };
+  desktopSidecarSockets.set(sidecarId, socket);
+  sendDesktopSidecarSocketMessage(socket, {
+    type: 'sidecar.bridge_ready',
+    sidecarId,
+    bridgeRevision: BUILD_REVISION,
+    at: isoNow(),
+  });
+  socket.on('message', (raw) => handleDesktopSidecarMessage(socket, raw));
+  socket.on('close', () => {
+    desktopSidecarSockets.delete(socket.meta?.sidecarId || sidecarId);
+    pushDesktopSidecarEvent({ type: 'sidecar_disconnected', sidecarId: socket.meta?.sidecarId || sidecarId });
+  });
+  socket.on('error', () => {
+    desktopSidecarSockets.delete(socket.meta?.sidecarId || sidecarId);
+  });
+});
+
 const runtimeBrowserWss = new WebSocketServer({
   noServer: true,
   perMessageDeflate: {
@@ -54594,6 +55206,21 @@ server.on('upgrade', (request, socket, head) => {
     }
     runtimeBrowserWss.handleUpgrade(request, socket, head, (ws) => {
       runtimeBrowserWss.emit('connection', ws, request);
+    });
+    return;
+  }
+
+  if (matchesPath(upgradePath, ['/ws/sidecar', '/api/ws/sidecar', '/api/desktop-sidecar/ws'])) {
+    if (BRIDGE_API_KEY) {
+      const providedToken = getDesktopSidecarAuthToken(request, upgradeUrl);
+      if (!providedToken || !safeCompareString(providedToken, BRIDGE_API_KEY)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+    }
+    desktopSidecarWss.handleUpgrade(request, socket, head, (ws) => {
+      desktopSidecarWss.emit('connection', ws, request);
     });
     return;
   }

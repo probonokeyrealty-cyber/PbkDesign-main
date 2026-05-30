@@ -100,6 +100,7 @@ COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs
 COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/synthetic-edge-cases.mjs ./scripts/synthetic-edge-cases.mjs
+COPY scripts/mission-resilience.mjs ./scripts/mission-resilience.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs

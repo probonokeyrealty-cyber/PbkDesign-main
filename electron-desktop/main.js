@@ -1,11 +1,38 @@
 const path = require('node:path');
-const { app, BrowserWindow, globalShortcut, Menu, nativeImage, Tray } = require('electron');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, Menu, nativeImage, Tray } = require('electron');
+const WebSocket = require('ws');
+const {
+  buildBridgeSidecarUrl,
+  buildCommandResult,
+  buildSidecarStatusPayload,
+  isTruthy,
+  limitText,
+  normalizeAllowedRoots,
+  validateSidecarCommand,
+} = require('./sidecar-core');
 
 const DASHBOARD_URL = process.env.PBK_DESKTOP_DASHBOARD_URL || 'https://pbkcommandcenter.netlify.app';
 const HOTKEY = process.env.PBK_DESKTOP_HOTKEY || 'CommandOrControl+Shift+A';
+const SIDECAR_ID = process.env.PBK_SIDECAR_ID || `pbk-sidecar-${os.hostname()}`;
+const SIDECAR_ENABLED = !/^(0|false|no)$/i.test(String(process.env.PBK_DESKTOP_SIDECAR_ENABLED || 'true').trim());
+const SIDECAR_BRIDGE_URL = buildBridgeSidecarUrl(process.env.PBK_SIDECAR_BRIDGE_URL || process.env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com');
+const SIDECAR_TOKEN = String(process.env.PBK_SIDECAR_TOKEN || process.env.PBK_BRIDGE_API_KEY || '').trim();
+const SIDECAR_AUTOMATION_ENABLED = isTruthy(process.env.PBK_SIDECAR_AUTOMATION_ENABLED);
+const SIDECAR_SCREEN_ENABLED = process.env.PBK_SIDECAR_SCREEN_ENABLED === undefined
+  ? true
+  : isTruthy(process.env.PBK_SIDECAR_SCREEN_ENABLED);
+const SIDECAR_LOCAL_LLM_ENABLED = isTruthy(process.env.PBK_SIDECAR_LOCAL_LLM_ENABLED);
+const SIDECAR_ALLOWED_ROOTS_RAW = process.env.PBK_SIDECAR_ALLOWED_ROOTS || '';
 
 let win = null;
 let tray = null;
+let sidecarSocket = null;
+let sidecarReconnectTimer = null;
+let sidecarStartedAt = new Date().toISOString();
+let sidecarLastBridgeMessageAt = '';
+let sidecarWatchers = new Map();
 
 function createTrayIcon() {
   const svg = `
@@ -60,6 +87,182 @@ function createWindow() {
   });
 }
 
+function getSidecarAllowedRoots() {
+  const fallbackRoots = [
+    app.getPath('documents'),
+    app.getPath('desktop'),
+    app.getPath('downloads'),
+  ].filter(Boolean);
+  return normalizeAllowedRoots(SIDECAR_ALLOWED_ROOTS_RAW, fallbackRoots);
+}
+
+function sendSidecarMessage(message) {
+  if (!sidecarSocket || sidecarSocket.readyState !== WebSocket.OPEN) return false;
+  sidecarSocket.send(JSON.stringify(message));
+  return true;
+}
+
+function buildLocalSidecarStatus(connected = false) {
+  return buildSidecarStatusPayload({
+    connected,
+    sidecarId: SIDECAR_ID,
+    machineName: os.hostname(),
+    startedAt: sidecarStartedAt,
+    lastBridgeMessageAt: sidecarLastBridgeMessageAt,
+    allowedRoots: getSidecarAllowedRoots(),
+    automationEnabled: SIDECAR_AUTOMATION_ENABLED,
+    screenEnabled: SIDECAR_SCREEN_ENABLED,
+    localLlmEnabled: SIDECAR_LOCAL_LLM_ENABLED,
+  });
+}
+
+async function runLocalLlmQuery(command) {
+  const response = await fetch(process.env.PBK_OLLAMA_URL || 'http://127.0.0.1:11434/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: command.model || process.env.PBK_OLLAMA_MODEL || 'phi3',
+      stream: false,
+      messages: [{ role: 'user', content: String(command.query || command.prompt || '').slice(0, 8000) }],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Ollama returned ${response.status}`);
+  }
+  const payload = await response.json();
+  return payload?.message?.content || payload?.response || '';
+}
+
+async function captureScreenPayload(command) {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: {
+      width: Number(command.width || 1280),
+      height: Number(command.height || 720),
+    },
+  });
+  const source = sources.find((item) => item.name && !/entire screen/i.test(item.name)) || sources[0];
+  if (!source) throw new Error('No desktop capture source available.');
+  return {
+    sourceName: source.name,
+    displayId: source.display_id || '',
+    imageDataUrl: source.thumbnail.toDataURL(),
+    ocrText: '',
+    note: 'OCR is optional. Screenshot image is returned locally to the bridge for Ava/Rex review.',
+  };
+}
+
+function watchFolderForSidecar(command) {
+  const watcherId = command.id || `${command.action}-${Date.now()}`;
+  if (sidecarWatchers.has(watcherId)) return { watcherId, status: 'already_watching' };
+  const watcher = require('node:fs').watch(command.path, { recursive: true }, (eventType, filename) => {
+    sendSidecarMessage({
+      type: 'sidecar.event',
+      event: 'file_changed',
+      sidecarId: SIDECAR_ID,
+      payload: {
+        watcherId,
+        eventType,
+        path: filename ? path.join(command.path, filename) : command.path,
+      },
+      at: new Date().toISOString(),
+    });
+  });
+  sidecarWatchers.set(watcherId, watcher);
+  return { watcherId, status: 'watching' };
+}
+
+async function handleSidecarCommand(rawCommand) {
+  const validation = validateSidecarCommand(rawCommand, {
+    allowedRoots: getSidecarAllowedRoots(),
+    automationEnabled: SIDECAR_AUTOMATION_ENABLED,
+    screenEnabled: SIDECAR_SCREEN_ENABLED,
+    localLlmEnabled: SIDECAR_LOCAL_LLM_ENABLED,
+  });
+  const command = validation.command || rawCommand;
+  if (!validation.ok) {
+    sendSidecarMessage(buildCommandResult(command, {
+      ok: false,
+      result: 'rejected',
+      error: validation.reason,
+      payload: { reason: validation.reason },
+    }));
+    return;
+  }
+
+  try {
+    let payload = {};
+    if (command.action === 'ping' || command.action === 'status') {
+      payload = buildLocalSidecarStatus(true);
+    } else if (command.action === 'read_file') {
+      const content = await fs.readFile(command.path, 'utf8');
+      payload = {
+        path: command.path,
+        content: limitText(content, Number(command.maxBytes || 64 * 1024)),
+      };
+    } else if (command.action === 'list_dir') {
+      const entries = await fs.readdir(command.path, { withFileTypes: true });
+      payload = {
+        path: command.path,
+        entries: entries.slice(0, Number(command.limit || 200)).map((entry) => ({
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other',
+        })),
+      };
+    } else if (command.action === 'screenshot' || command.action === 'screenshot_ocr') {
+      payload = await captureScreenPayload(command);
+    } else if (command.action === 'type_text') {
+      clipboard.writeText(String(command.text || ''));
+      payload = {
+        copiedToClipboard: true,
+        note: 'Text copied to clipboard. Full OS typing requires an optional automation driver and explicit PBK_SIDECAR_AUTOMATION_ENABLED=true.',
+      };
+    } else if (command.action === 'llm_query') {
+      payload = { answer: await runLocalLlmQuery(command) };
+    } else if (command.action === 'watch_folder') {
+      payload = watchFolderForSidecar(command);
+    }
+    sendSidecarMessage(buildCommandResult(command, { ok: true, payload }));
+  } catch (error) {
+    sendSidecarMessage(buildCommandResult(command, {
+      ok: false,
+      result: 'failed',
+      error: error?.message || String(error),
+    }));
+  }
+}
+
+function connectDesktopSidecar() {
+  if (!SIDECAR_ENABLED) return;
+  if (sidecarSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(sidecarSocket.readyState)) return;
+  const url = new URL(SIDECAR_BRIDGE_URL);
+  if (SIDECAR_TOKEN) url.searchParams.set('token', SIDECAR_TOKEN);
+  sidecarSocket = new WebSocket(url.toString(), {
+    headers: SIDECAR_TOKEN ? { Authorization: `Bearer ${SIDECAR_TOKEN}` } : {},
+  });
+  sidecarSocket.on('open', () => {
+    sendSidecarMessage({
+      type: 'sidecar.hello',
+      sidecarId: SIDECAR_ID,
+      status: buildLocalSidecarStatus(true),
+    });
+  });
+  sidecarSocket.on('message', (raw) => {
+    sidecarLastBridgeMessageAt = new Date().toISOString();
+    const message = JSON.parse(String(raw || '{}'));
+    if (message.type === 'sidecar.command' || message.type === 'command') {
+      void handleSidecarCommand(message.payload || message);
+    }
+  });
+  sidecarSocket.on('close', () => {
+    if (sidecarReconnectTimer) clearTimeout(sidecarReconnectTimer);
+    sidecarReconnectTimer = setTimeout(connectDesktopSidecar, 5000);
+  });
+  sidecarSocket.on('error', (error) => {
+    console.warn('[pbk-ava-desktop] sidecar socket error:', error?.message || error);
+  });
+}
+
 function createTray() {
   tray = new Tray(createTrayIcon());
   tray.setToolTip('PBK Ava Desktop');
@@ -83,8 +286,10 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+  sidecarStartedAt = new Date().toISOString();
   createWindow();
   createTray();
+  connectDesktopSidecar();
   const registered = globalShortcut.register(HOTKEY, () => dispatchVoiceEvent('pbk-desktop-start-voice'));
   if (!registered) {
     console.warn(`[pbk-ava-desktop] hotkey registration failed: ${HOTKEY}`);
@@ -98,4 +303,10 @@ app.on('activate', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  for (const watcher of sidecarWatchers.values()) {
+    try { watcher.close(); } catch {}
+  }
+  sidecarWatchers = new Map();
+  if (sidecarReconnectTimer) clearTimeout(sidecarReconnectTimer);
+  try { sidecarSocket?.close(); } catch {}
 });

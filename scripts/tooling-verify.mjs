@@ -144,6 +144,8 @@ async function main() {
     const researchJobs = JSON.parse(await readFile(path.join(ROOT_DIR, 'ops', 'browser-research', 'generated-jobs.json'), 'utf8'));
     const scenario = JSON.parse(await readFile(path.join(ROOT_DIR, 'labs', 'meta-agent', 'generated', 'latest-scenario.json'), 'utf8'));
     const registry = JSON.parse(await readFile(path.join(ROOT_DIR, 'mcp-servers', 'registry.example.json'), 'utf8'));
+    const dockerfile = await readFile(path.join(ROOT_DIR, 'Dockerfile.openclaw'), 'utf8');
+    const dockerignore = await readFile(path.join(ROOT_DIR, '.dockerignore'), 'utf8');
 
     assert(Array.isArray(dashboard?.panels) && dashboard.panels.length > 0, 'Grafana dashboard has no panels.');
     assert(Array.isArray(researchJobs?.jobs), 'Browser research job seed is missing jobs.');
@@ -160,6 +162,19 @@ async function main() {
       /human-mcp\.cmd/.test(String(registry.mcpServers['human-mcp']?.command || '')),
       'human-mcp registry entry should use the installed Windows shim.',
     );
+    [
+      'labs/meta-agent/generated',
+      'ops/browser-research',
+      'ops/upgrade-integrations',
+      'ops/monitoring',
+      'mcp-servers',
+      'n8n-lite/tooling-health-check.json',
+      '.github/workflows/tooling-verify.yml',
+    ].forEach((copyTarget) => {
+      assert(dockerfile.includes(`COPY ${copyTarget}`), `Dockerfile.openclaw must ship ${copyTarget} for hosted tooling status.`);
+    });
+    assert(/!n8n-lite[\s\S]*!n8n-lite\/tooling-health-check\.json/.test(dockerignore), '.dockerignore must un-ignore n8n tooling health workflow.');
+    assert(/!\.github[\s\S]*!\.github\/workflows\/tooling-verify\.yml/.test(dockerignore), '.dockerignore must un-ignore tooling verify workflow.');
 
     console.log(JSON.stringify({
       ok: true,

@@ -38,6 +38,13 @@ deploy-*.zip
 PBK_*
 n8n-lite
 
+# Hosted bridge tooling status needs these repo metadata assets at runtime.
+!.github
+!.github/workflows
+!.github/workflows/tooling-verify.yml
+!n8n-lite
+!n8n-lite/tooling-health-check.json
+
 # Runtime prompt + contract library must ship with the OpenClaw bridge image.
 !wholesale.agent.md
 !contracts

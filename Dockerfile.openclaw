@@ -109,6 +109,16 @@ COPY public ./public
 COPY contracts ./contracts
 COPY wholesale.agent.md ./wholesale.agent.md
 
+# Advanced tooling status assets. These are read-only manifests/configs used by
+# /api/tooling/status so hosted production reflects the same readiness as local.
+COPY labs/meta-agent/generated ./labs/meta-agent/generated
+COPY ops/browser-research ./ops/browser-research
+COPY ops/upgrade-integrations ./ops/upgrade-integrations
+COPY ops/monitoring ./ops/monitoring
+COPY mcp-servers ./mcp-servers
+COPY n8n-lite/tooling-health-check.json ./n8n-lite/tooling-health-check.json
+COPY .github/workflows/tooling-verify.yml ./.github/workflows/tooling-verify.yml
+
 # Default to the persistent state path for file-mode fallback. When
 # PBK_DATABASE_URL is set the bridge ignores this and uses Postgres instead.
 ENV NODE_ENV=production

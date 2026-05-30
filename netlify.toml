@@ -20,6 +20,12 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/index.shell.html"
+to = "/index.html"
+status = 200
+force = true
+
+[[redirects]]
 from = "/health"
 to = "/.netlify/functions/pbk-bridge-proxy?path=/health"
 status = 200

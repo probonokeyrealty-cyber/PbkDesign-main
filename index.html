@@ -890,6 +890,83 @@
      ================================================================ */
   .page { display: none; animation: pageIn 0.4s ease-out; }
   .page.active { display: block; }
+  body:not(.pbk-boot-ready) .app {
+    visibility: hidden;
+  }
+  .pbk-boot-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    padding: var(--s-6);
+    background:
+      radial-gradient(circle at 24% 18%, rgba(125, 211, 252, 0.18), transparent 32%),
+      radial-gradient(circle at 76% 74%, rgba(163, 230, 53, 0.10), transparent 30%),
+      linear-gradient(135deg, #05070B 0%, #0B111A 54%, #07111A 100%);
+    color: var(--text-primary);
+    transition: opacity .18s ease, visibility .18s ease;
+  }
+  .pbk-boot-card {
+    width: min(440px, 100%);
+    border: 1px solid rgba(125, 211, 252, .24);
+    border-radius: var(--radius-xl);
+    padding: var(--s-6);
+    background: rgba(10, 14, 20, .74);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255,255,255,.04);
+    backdrop-filter: blur(18px);
+  }
+  .pbk-boot-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    margin-bottom: var(--s-4);
+    color: var(--bg-void);
+    background: linear-gradient(135deg, var(--sky-bright), var(--sky-dim));
+    font: 800 20px/1 var(--font-display);
+    box-shadow: 0 0 30px var(--sky-glow-strong);
+  }
+  .pbk-boot-title {
+    margin: 0 0 var(--s-2);
+    font-family: var(--font-display);
+    font-size: clamp(28px, 7vw, 40px);
+    letter-spacing: -.035em;
+  }
+  .pbk-boot-copy {
+    margin: 0;
+    color: var(--text-secondary);
+    font: 500 12px/1.7 var(--font-mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .pbk-boot-progress {
+    position: relative;
+    height: 4px;
+    margin-top: var(--s-5);
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255,255,255,.08);
+  }
+  .pbk-boot-progress::after {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 38%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, transparent, var(--sky), var(--lime));
+    animation: pbkBootSweep .92s ease-in-out infinite;
+  }
+  @keyframes pbkBootSweep {
+    from { transform: translateX(-110%); }
+    to { transform: translateX(270%); }
+  }
+  body.pbk-boot-ready .pbk-boot-overlay {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
   @keyframes pageIn {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
@@ -1024,6 +1101,17 @@
 </style>
 </head>
 <body>
+<div class="pbk-boot-overlay" role="status" aria-live="polite" aria-label="Loading PBK Command Center">
+  <div class="pbk-boot-card">
+    <div class="pbk-boot-mark">P</div>
+    <h1 class="pbk-boot-title">PBK is syncing.</h1>
+    <p class="pbk-boot-copy">Command Center runtime, tooling, and memory lanes are warming up.</p>
+    <div class="pbk-boot-progress" aria-hidden="true"></div>
+  </div>
+</div>
+<noscript>
+  <style>.pbk-boot-overlay{display:none!important}.app{visibility:visible!important}</style>
+</noscript>
 
 <div class="app">
 
@@ -12675,6 +12763,13 @@
     }
     document.querySelector('.main').scrollTop = 0;
     window.scrollTo(0, 0);
+  }
+
+  function markPbkBootReady(reason = 'ready') {
+    document.body.dataset.pbkBootReason = reason;
+    requestAnimationFrame(() => {
+      document.body.classList.add('pbk-boot-ready');
+    });
   }
 
   function isLeadRowInteractiveTarget(event) {
@@ -31499,6 +31594,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   } else {
     syncAnalyzerFrame(false);
   }
+  markPbkBootReady(initialPage || 'dashboard');
 </script>
 <style id="pbk-mobile-messaging-polish">
   @media (max-width: 720px), (pointer: coarse) {

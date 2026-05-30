@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 const index = readFileSync(resolve('index.html'), 'utf8');
 const bridge = readFileSync(resolve('scripts/openclaw-local-server.mjs'), 'utf8');
 const eventWorker = readFileSync(resolve('scripts/event-worker.mjs'), 'utf8');
+const netlifyConfig = readFileSync(resolve('netlify.toml'), 'utf8');
 
 assert.match(
   eventWorker,
@@ -21,6 +22,11 @@ assert.match(index, /loading-spinner-small/, 'dashboard should include a reusabl
 assert.match(index, /function setElementBusy/, 'dashboard should include a shared busy-state helper.');
 assert.match(index, /function withButtonLoading/, 'dashboard should include a shared button loading helper.');
 assert.match(index, /aria-busy/, 'busy controls should expose aria-busy for assistive tech.');
+assert.match(index, /pbk-boot-overlay/, 'dashboard should hide static fallback markup behind a PBK boot overlay.');
+assert.match(index, /body:not\(\.pbk-boot-ready\) \.app/, 'dashboard should keep the app hidden until boot routing is ready.');
+assert.match(index, /function markPbkBootReady/, 'dashboard should explicitly release the boot overlay after initial routing.');
+assert.match(index, /markPbkBootReady\(initialPage \|\| 'dashboard'\)/, 'dashboard should mark boot ready after choosing the initial page.');
+assert.match(netlifyConfig, /from\s*=\s*"\/index\.shell\.html"[\s\S]*?to\s*=\s*"\/index\.html"[\s\S]*?force\s*=\s*true/, 'Netlify should not publicly serve the experimental shell preview.');
 
 assert.match(index, /function addBrainThinkingMessage/, 'Rex chat should add an inline thinking message.');
 assert.match(index, /data-brain-thinking-id/, 'Rex thinking messages should be removable by id.');

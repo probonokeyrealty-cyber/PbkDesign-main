@@ -204,6 +204,21 @@ if (!netlifySpaFallbackOrdered || !netlifyBrainCleanRouteOrdered) {
   });
 }
 
+const netlifyShellPreviewIndex = netlifyConfig.lastIndexOf('from = "/index.shell.html"');
+const netlifyShellPreviewBlock = netlifyShellPreviewIndex >= 0 ? netlifyConfig.slice(netlifyShellPreviewIndex) : '';
+const netlifyShellPreviewHidden = /from\s*=\s*"\/index\.shell\.html"/.test(netlifyShellPreviewBlock)
+  && /to\s*=\s*"\/index\.html"/.test(netlifyShellPreviewBlock)
+  && /status\s*=\s*200/.test(netlifyShellPreviewBlock)
+  && /force\s*=\s*true/.test(netlifyShellPreviewBlock)
+  && netlifyShellPreviewIndex >= 0
+  && (netlifyApiProxyIndex < 0 || netlifyShellPreviewIndex < netlifyApiProxyIndex);
+if (!netlifyShellPreviewHidden) {
+  fail.push({
+    name: 'Netlify production must not expose the experimental shell preview',
+    details: ['Add a forced /index.shell.html -> /index.html redirect before API and SPA fallback rewrites so operators never see the old shell in production.'],
+  });
+}
+
 const requiredArchitectureRoutes = [
   { label: '/api/analyzeDeal', path: '/api/analyzeDeal' },
   { label: '/api/approvals/:id/approve', path: '/api/approvals/approval-smoke/approve' },

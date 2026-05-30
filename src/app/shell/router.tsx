@@ -5,9 +5,13 @@ import { Leads } from '../routes/Leads';
 import { DealView } from '../routes/DealView';
 import { Inbox } from '../routes/Inbox';
 import { Settings } from '../routes/Settings';
+import { AgentFleet } from '../routes/AgentFleet';
+import { MemoryAnalytics } from '../routes/MemoryAnalytics';
+import { Analytics } from '../routes/Analytics';
 
 const shellBasename =
-  typeof window !== 'undefined' && window.location.pathname.endsWith('/index.shell.html')
+  typeof window !== 'undefined' &&
+  (window.location.pathname.endsWith('/index.shell.html') || window.location.pathname.includes('/index.shell.html/'))
     ? '/index.shell.html'
     : undefined;
 
@@ -21,6 +25,9 @@ const router = createBrowserRouter([
       { path: 'deal', Component: DealView },
       { path: 'deal/:id', Component: DealView },
       { path: 'inbox', Component: Inbox },
+      { path: 'fleet', Component: AgentFleet },
+      { path: 'memory', Component: MemoryAnalytics },
+      { path: 'analytics', Component: Analytics },
       { path: 'settings', Component: Settings },
     ],
   },

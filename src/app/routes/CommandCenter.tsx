@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { CallFloorPanel } from '../components/CallFloorPanel';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
 import type { LiveCallState, TranscriptLine } from '../components/shell/LiveCallWidget';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
@@ -9,6 +10,7 @@ import {
   updateAdminTaskDecision,
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
+import { showUiToast } from '../utils/uiFeedback';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -98,6 +100,7 @@ export function CommandCenter() {
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
   const [actionStatus, setActionStatus] = useState('');
   const [pendingAction, setPendingAction] = useState('');
+  const announcedCallRef = useRef('');
 
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
@@ -115,6 +118,32 @@ export function CommandCenter() {
     calls.find((call) => ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(String(call.status || '').toLowerCase()))
       || calls[0],
   );
+
+  useEffect(() => {
+    if (!activeCall?.callId || activeCall.status === 'idle') return;
+    const key = `${activeCall.callId}:${activeCall.status}`;
+    if (announcedCallRef.current === key) return;
+    announcedCallRef.current = key;
+    if (activeCall.status === 'dialing' || activeCall.status === 'connected') {
+      showUiToast({
+        tone: 'info',
+        title: activeCall.status === 'dialing' ? 'Call is dialing' : 'Call connected',
+        desc: `${activeCall.caller.name || 'Unknown caller'} · ${activeCall.caller.phone || 'no phone'}`,
+      });
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('PBK call floor', {
+          body: `${activeCall.status === 'dialing' ? 'Dialing' : 'Connected'}: ${activeCall.caller.name || 'Unknown caller'}`,
+        });
+      }
+    }
+    if (activeCall.status === 'ended') {
+      showUiToast({
+        tone: 'success',
+        title: 'Call ended',
+        desc: 'Outcome summary will appear here when the provider event includes disposition.',
+      });
+    }
+  }, [activeCall?.callId, activeCall?.status, activeCall?.caller.name, activeCall?.caller.phone]);
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
   const toolingHighlights = [
     { label: 'Meta-Agent', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
@@ -244,6 +273,8 @@ export function CommandCenter() {
               });
             }}
           />
+
+          <CallFloorPanel leads={leadImports} calls={calls} />
 
           <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
             <div className="flex items-center justify-between gap-3">
@@ -432,7 +463,9 @@ export function CommandCenter() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs font-medium text-slate-100">{String(item.actor || 'System')}</div>
-                    <div className="text-[10px] text-slate-500">{formatRelative(String(item.at || item.createdAt || ''))}</div>
+                    <div className="text-[10px] text-slate-500" title={item.at || item.createdAt ? new Date(String(item.at || item.createdAt)).toLocaleString() : 'Current session'}>
+                      {formatRelative(String(item.at || item.createdAt || ''))}
+                    </div>
                   </div>
                   <div className="mt-2 text-xs text-slate-300">{String(item.text || 'Runtime event')}</div>
                   <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
@@ -471,6 +504,7 @@ export function CommandCenter() {
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
+                      data-approval-primary="true"
                       disabled={pendingAction === `approval:${String(approval.id)}:approved`}
                       onClick={() => {
                         const approvalId = String(approval.id || '');
@@ -485,6 +519,7 @@ export function CommandCenter() {
                     </button>
                     <button
                       type="button"
+                      data-approval-secondary="true"
                       disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
                       onClick={() => {
                         const approvalId = String(approval.id || '');

@@ -4,6 +4,7 @@ import { LandAnalysis } from './LandAnalysis';
 import { DealScoring } from './DealScoring';
 import { StrategySelector } from './StrategySelector';
 import { UnderwritingControls } from './UnderwritingControls';
+import { HelpTooltip } from './HelpTooltip';
 import { formatCurrency } from '../utils/formatting';
 import { calculateARV } from '../utils/dealCalculations';
 import { getAnalyzeReadiness } from '../utils/pbk';
@@ -355,7 +356,10 @@ export function AnalyzerTab({
               <div className="flex items-start gap-2">
                 <div className="flex-1">
                   <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
-                    Your assignment fee
+                    <span className="inline-flex items-center gap-1.5">
+                      Your assignment fee
+                      <HelpTooltip text="Your wholesale fee - the difference between your contract price and what you assign it to your buyer for. Default $10,000; adjust based on deal margin." />
+                    </span>
                   </label>
                 </div>
                 <div className="relative w-32">

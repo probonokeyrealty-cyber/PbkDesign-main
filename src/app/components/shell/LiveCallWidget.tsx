@@ -140,6 +140,31 @@ function speakerStyle(speaker: TranscriptLine['speaker']) {
   }
 }
 
+const TRANSCRIPT_HIGHLIGHT_REGEX =
+  /(too expensive|think about it|talk to spouse|talk to my spouse|need to talk|not interested|angry|frustrated|probate|foreclosure|cash offer|creative finance|mortgage takeover|retail buyer|rbp|path locked|mao)/gi;
+
+function highlightTone(match: string) {
+  const lower = match.toLowerCase();
+  if (/too expensive|think about|talk to|not interested|angry|frustrated/.test(lower)) return 'objection';
+  if (/cash offer|creative finance|mortgage takeover|retail buyer|rbp|path locked|mao/.test(lower)) return 'decision';
+  return 'emotion';
+}
+
+function renderHighlightedTranscript(text: string) {
+  const parts = text.split(TRANSCRIPT_HIGHLIGHT_REGEX);
+  return parts.map((part, index) => {
+    if (!part) return null;
+    TRANSCRIPT_HIGHLIGHT_REGEX.lastIndex = 0;
+    if (!TRANSCRIPT_HIGHLIGHT_REGEX.test(part)) return <span key={`${part}-${index}`}>{part}</span>;
+    TRANSCRIPT_HIGHLIGHT_REGEX.lastIndex = 0;
+    return (
+      <mark key={`${part}-${index}`} className={`transcript-highlight ${highlightTone(part)}`}>
+        {part}
+      </mark>
+    );
+  });
+}
+
 // ---- Component ----------------------------------------------------------
 
 export interface LiveCallWidgetProps {
@@ -269,7 +294,7 @@ export function LiveCallWidget({
                 >
                   {sp.label}
                 </span>
-                <span className={`${sp.text}`}>{line.text}</span>
+                <span className={`${sp.text}`}>{renderHighlightedTranscript(line.text)}</span>
               </div>
             );
           })

@@ -1,6 +1,7 @@
 import { SlidersHorizontal, Target } from 'lucide-react';
 import { DealData, UnderwritingSettings } from '../types';
 import { formatCurrency } from '../utils/formatting';
+import { HelpTooltip } from './HelpTooltip';
 
 interface UnderwritingControlsProps {
   deal: DealData;
@@ -55,6 +56,29 @@ const CONTROL_DEFS: ControlDef[] = [
   },
 ];
 
+const MATH_HELP = [
+  {
+    label: 'Holding (mo)',
+    value: '3',
+    text: "Months you'll hold the property between contract and resale. Taxes, insurance, utilities, and lost opportunity cost - typically about $3,000/mo total in the Cleveland/Columbus metros.",
+  },
+  {
+    label: 'MAO Rule',
+    value: '70% of ARV',
+    text: 'Maximum Allowable Offer formula. 70% of ARV is the cash-buyer standard. Lower for risky deals, higher for proven cash buyers in hot markets. Ava will never offer above this cap.',
+  },
+  {
+    label: 'Min Profit',
+    value: '$15,000',
+    text: 'Walk-away threshold. If the projected spread drops below this number, Ava flags the deal as un-workable and routes to manual review.',
+  },
+  {
+    label: 'Assignment Fee',
+    value: '$10,000',
+    text: 'Your wholesale fee - the difference between your contract price and what you assign it to your buyer for. Default $10,000; adjust based on deal margin.',
+  },
+];
+
 export function UnderwritingControls({ deal, onDealChange }: UnderwritingControlsProps) {
   const underwriting: UnderwritingSettings = {
     maoCashPct: deal.underwriting?.maoCashPct || 60,
@@ -106,14 +130,29 @@ export function UnderwritingControls({ deal, onDealChange }: UnderwritingControl
         This restores the v5 underwriting knobs inside the modern shell. Defaults stay aligned to the current PBK engine until you intentionally change them.
       </div>
 
+      <div className="mb-4 grid grid-cols-2 gap-2 xl:grid-cols-4">
+        {MATH_HELP.map((item) => (
+          <div key={item.label} className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span>{item.label}</span>
+              <HelpTooltip text={item.text} />
+            </div>
+            <div className="mt-2 text-[13px] font-semibold text-gray-900 dark:text-gray-100">{item.value}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
         {CONTROL_DEFS.map((control) => (
           <div
             key={control.key}
             className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 px-3 py-3"
           >
-            <div className="text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+            <div className="mb-1 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {control.label}
+              {control.key === 'assignFeePct' && (
+                <HelpTooltip text="Your wholesale fee - the difference between your contract price and what you assign it to your buyer for. Default $10,000; adjust based on deal margin." />
+              )}
             </div>
             <div className="relative">
               <input

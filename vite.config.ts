@@ -32,9 +32,24 @@ function figmaAssetResolver() {
   }
 }
 
+function shellHistoryFallback() {
+  return {
+    name: 'pbk-shell-history-fallback',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url?.startsWith('/index.shell.html/')) {
+          req.url = '/index.shell.html'
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     figmaAssetResolver(),
+    shellHistoryFallback(),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),

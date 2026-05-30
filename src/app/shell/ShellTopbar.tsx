@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import { Search, Power } from 'lucide-react';
+import { Moon, Power, Search, Sun } from 'lucide-react';
+
+interface ShellTopbarProps {
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
+}
 
 /**
  * ShellTopbar — global topbar for the Paradise shell.
@@ -7,7 +12,7 @@ import { Search, Power } from 'lucide-react';
  * Contains: global search input, Autopilot control, and account chip.
  * Distinct from the engine's own `TopBar.tsx` (which lives inside DealView).
  */
-export function ShellTopbar() {
+export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
   const [autopilot, setAutopilot] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -19,6 +24,7 @@ export function ShellTopbar() {
           className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
         />
         <input
+          id="pbk-global-search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search leads, addresses, owners..."
@@ -41,6 +47,16 @@ export function ShellTopbar() {
       >
         <Power size={14} />
         Autopilot {autopilot ? 'ON' : 'OFF'}
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleTheme}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-800 bg-slate-900 text-slate-400 transition-colors hover:text-sky-200"
+        aria-label="Toggle theme"
+        title="Toggle theme (T)"
+      >
+        {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
       </button>
 
       <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-slate-800 min-w-0">

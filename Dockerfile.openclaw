@@ -49,16 +49,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxrender1 \
       libxss1 \
       libxtst6 \
+      make \
+      g++ \
       python3 \
       python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# The bridge uses @sparticuz/chromium + puppeteer-core. Avoid accidental
+# browser downloads during npm install in constrained hosted builders.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_CACHE_DIR=/tmp/puppeteer
+
 # Install ONLY the bridge's runtime deps. The frontend's React/Radix universe
 # in the repo's package.json is irrelevant to this container, so we don't ship it.
 # Pinned versions for reproducibility.
-RUN npm install --no-save --no-audit --no-fund --loglevel=error \
+RUN npm install --no-save --no-audit --no-fund --loglevel=error --timeout=600000 \
       @sparticuz/chromium@147.0.1 \
       @deepgram/sdk@5.1.0 \
       @aws-sdk/client-s3@3.1056.0 \

@@ -18,6 +18,7 @@ import {
   patchLeadRequest,
   sendLeadContractRequest,
 } from '../utils/runtimeBridge';
+import { showUiToast } from '../utils/uiFeedback';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -144,6 +145,29 @@ function getLeadAddress(lead: BridgeRecord) {
   return text(lead.address || property.address, 'No property');
 }
 
+function getLeadScore(lead: BridgeRecord) {
+  const score = Number(lead.score || lead.motivation_score || lead.motivationScore || 0);
+  return Number.isFinite(score) && score > 0 ? Math.round(score) : 72;
+}
+
+function getLeadTags(lead: BridgeRecord) {
+  if (Array.isArray(lead.tags)) return lead.tags.map(String).filter(Boolean).slice(0, 3);
+  const raw = text(lead.tags || lead.source || 'runtime');
+  return raw.split(',').map((item) => item.trim()).filter(Boolean).slice(0, 3);
+}
+
+function getLeadFinancial(lead: BridgeRecord, key: 'arv' | 'mao') {
+  const property = getProperty(lead);
+  const callContext = getCallContext(lead);
+  return money(lead[key] || property[key] || callContext[key]);
+}
+
+function scoreTone(score: number) {
+  if (score >= 80) return 'bg-lime-400/15 text-lime-300 border-lime-400/40';
+  if (score >= 60) return 'bg-sky-400/15 text-sky-300 border-sky-400/40';
+  return 'bg-amber-400/15 text-amber-300 border-amber-400/40';
+}
+
 function normalizePath(value: unknown, lead?: BridgeRecord): CanonicalPath {
   const raw = [
     value,
@@ -252,11 +276,13 @@ export function Leads() {
   const [contractForm, setContractForm] = useState<ContractFormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
+  const [displayLimit, setDisplayLimit] = useState(40);
 
   const selectedLead = useMemo(
     () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
     [leads, selectedLeadId],
   );
+  const visibleLeads = useMemo(() => leads.slice(0, displayLimit), [displayLimit, leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
   const leadActivity = Array.isArray(activeLead?.activity)
@@ -435,8 +461,66 @@ export function Leads() {
             <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Pipeline leads</div>
             <div className="mt-1 text-sm text-slate-300">Tap a lead to load detail.</div>
           </div>
-          <div className="max-h-[68vh] divide-y divide-slate-800 overflow-y-auto">
-            {leads.slice(0, 40).map((lead) => {
+          <div className="leads-mobile-cards">
+            {visibleLeads.map((lead) => {
+              const id = getLeadId(lead);
+              const score = getLeadScore(lead);
+              const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
+              const sellerName = getSellerName(lead);
+              return (
+                <div
+                  key={id}
+                  role="button"
+                  tabIndex={0}
+                  className="lead-mobile-card"
+                  onClick={() => setSelectedLeadId(id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedLeadId(id);
+                    }
+                  }}
+                >
+                  <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-base font-semibold text-slate-100">{sellerName}</span>
+                    <span className="mt-1 block text-xs text-slate-400">{getLeadAddress(lead)}</span>
+                    <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                      <span>ARV <strong className="text-slate-100">{getLeadFinancial(lead, 'arv')}</strong></span>
+                      <span>MAO <strong className="text-slate-100">{getLeadFinancial(lead, 'mao')}</strong></span>
+                    </span>
+                    <span className="mt-3 flex flex-wrap gap-1.5">
+                      {getLeadTags(lead).map((tag) => (
+                        <span key={tag} className="rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400">{tag}</span>
+                      ))}
+                    </span>
+                    <span className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                      <span>{text(lead.status || lead.stage, PATH_LABELS[path])}</span>
+                      <span>{formatDate(lead.updatedAt || lead.createdAt)}</span>
+                    </span>
+                  </span>
+                  <span className="flex flex-col items-end gap-2">
+                    <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-800 text-xs font-semibold text-sky-200">
+                      {sellerName.charAt(0).toUpperCase()}
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        showUiToast({ tone: 'info', title: 'Call queued (demo)', desc: `${sellerName} stays selected. No provider call was made.` });
+                      }}
+                    >
+                      Call
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="leads-table-container max-h-[68vh] divide-y divide-slate-800 overflow-y-auto">
+            {visibleLeads.map((lead) => {
               const id = getLeadId(lead);
               const isSelected = id === activeLeadId;
               const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
@@ -479,6 +563,17 @@ export function Leads() {
               </div>
             )}
           </div>
+          {leads.length > visibleLeads.length && (
+            <div className="border-t border-slate-800 p-3">
+              <button
+                type="button"
+                className="load-more-leads"
+                onClick={() => setDisplayLimit((current) => current + 50)}
+              >
+                Load 50 more
+              </button>
+            </div>
+          )}
         </section>
 
         <section className={`${softPanelClass} min-h-[520px] p-4 md:p-5`}>

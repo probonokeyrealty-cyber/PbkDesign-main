@@ -4868,33 +4868,64 @@
       gap: var(--s-4);
     }
     .call-floor-box {
-      border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
-      background: var(--bg-panel); padding: var(--s-4);
-      box-shadow: var(--shadow-sm);
+      position: relative; overflow: hidden;
+      border: 1px solid rgba(125, 211, 252, 0.16); border-radius: var(--radius-xl);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(125,211,252,.11), transparent 34%),
+        linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012)),
+        var(--bg-panel);
+      padding: var(--s-5);
+      box-shadow: 0 18px 40px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.03);
     }
-    .call-floor-box h3 { margin: 0 0 4px; font-size: 16px; }
+    .call-floor-box h3 { margin: 0 0 4px; font-size: 18px; letter-spacing: -.01em; }
     .call-floor-box p { margin: 0 0 var(--s-3); color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
     .call-floor-search-row { display: flex; gap: 8px; flex-wrap: wrap; }
     .call-floor-search-row input,
     .call-floor-schedule input {
-      flex: 1 1 220px; min-height: 42px; border: 1px solid var(--border-dim);
-      border-radius: var(--radius-md); background: var(--bg-void); color: var(--text-primary);
+      flex: 1 1 220px; min-height: 44px; border: 1px solid rgba(125,211,252,.14);
+      border-radius: var(--radius-lg); background: rgba(6,8,11,.72); color: var(--text-primary);
       padding: 9px 11px; font: 13px/1.3 var(--font-body);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
     }
-    .outbound-lead-results { display: grid; gap: 8px; margin-top: var(--s-3); }
+    .call-floor-search-row input:focus,
+    .call-floor-schedule input:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
+    .outbound-lead-results { display: grid; gap: 10px; margin-top: var(--s-3); contain: content; }
+    .call-floor-search-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--text-tertiary); font: 10px/1.4 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
     .outbound-lead-result {
-      display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border-dim);
-      border-radius: var(--radius-md); background: rgba(255,255,255,.025);
+      display: grid; gap: 8px; padding: 14px 15px; border: 1px solid rgba(148,163,184,.13);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.012)),
+        rgba(11,14,19,.84);
+      cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
+    }
+    .outbound-lead-result:hover {
+      transform: translateY(-1px);
+      border-color: rgba(125,211,252,.42);
+      background: linear-gradient(180deg, rgba(125,211,252,.08), rgba(255,255,255,.018)), rgba(11,14,19,.94);
+      box-shadow: 0 16px 34px rgba(0,0,0,.20);
     }
     .outbound-lead-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .score-badge { font: 10px/1 var(--font-mono); color: var(--sky); background: var(--sky-glow); border: 1px solid var(--sky-dim); padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
+    .outbound-lead-head strong { color: var(--text-primary); font-size: 14px; }
+    .score-badge { font: 10px/1 var(--font-mono); color: var(--sky); background: var(--sky-glow); border: 1px solid var(--sky-dim); padding: 5px 8px; border-radius: 999px; white-space: nowrap; text-transform: uppercase; letter-spacing: .07em; }
+    .score-badge.hot { color: var(--lime); border-color: rgba(163,230,53,.34); background: var(--lime-glow); }
+    .score-badge.warm { color: var(--amber); border-color: rgba(255,176,32,.34); background: var(--amber-glow); }
     .in-call-badge { color: var(--crimson); border-color: rgba(255,55,94,.32); background: rgba(255,55,94,.08); }
     .lead-result-meta { color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
     .lead-result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .call-floor-quick-times { display: flex; gap: 6px; flex-wrap: wrap; margin: var(--s-2) 0; }
     .call-floor-scheduled-list { display: grid; gap: 8px; margin-top: var(--s-3); }
-    .call-floor-scheduled-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: rgba(255,255,255,.025); }
+    .call-floor-scheduled-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 11px 12px; border: 1px solid rgba(148,163,184,.13); border-radius: var(--radius-lg); background: rgba(255,255,255,.025); }
     .call-floor-scheduled-item span { display: block; color: var(--text-tertiary); font: 11px/1.5 var(--font-mono); }
+    .call-floor-skeleton { display: grid; gap: 8px; }
+    .call-floor-skeleton-line {
+      height: 58px; border-radius: var(--radius-lg);
+      background: linear-gradient(90deg, rgba(255,255,255,.035), rgba(125,211,252,.10), rgba(255,255,255,.035));
+      background-size: 220% 100%; animation: shimmer 1.2s linear infinite;
+      border: 1px solid rgba(125,211,252,.08);
+    }
+    .call-floor-empty-state { border: 1px dashed rgba(125,211,252,.22); border-radius: var(--radius-lg); padding: var(--s-5); text-align: center; color: var(--text-tertiary); background: rgba(125,211,252,.04); }
+    .call-floor-empty-state strong { display: block; margin-bottom: 5px; color: var(--text-primary); font-family: var(--font-display); font-size: 17px; }
     .loading-spinner-small {
       display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.28);
       border-top-color: currentColor; border-radius: 50%; animation: spin .65s linear infinite; margin-right: 6px; vertical-align: -2px;
@@ -25420,6 +25451,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   const CALL_FLOOR_SCHEDULE_KEY = 'pbk:call-floor:scheduled:v1';
+  const CALL_FLOOR_SEARCH_LIMIT = 24;
+  const CALL_FLOOR_SEARCH_DEBOUNCE_MS = 180;
+  let callFloorSearchTimer = 0;
+  let callFloorSearchSequence = 0;
+  let callFloorLeadIndexCache = { signature: '', rows: [] };
 
   function getCallFloorLeads() {
     const live = getRuntimeLeads(PBK.state.openclawRuntime || {});
@@ -25431,43 +25467,142 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     ];
   }
 
+  function getCallFloorLeadIndex() {
+    const leads = getCallFloorLeads();
+    const first = leads[0] || {};
+    const last = leads[leads.length - 1] || {};
+    const runtimeSignature = [
+      leads.length,
+      getLeadRuntimeId(first) || getLeadPhone(first) || '',
+      first.updated_at || first.updatedAt || '',
+      getLeadRuntimeId(last) || getLeadPhone(last) || '',
+      last.updated_at || last.updatedAt || ''
+    ].join('|');
+
+    if (callFloorLeadIndexCache.signature === runtimeSignature) return callFloorLeadIndexCache.rows;
+
+    callFloorLeadIndexCache = {
+      signature: runtimeSignature,
+      rows: leads.map((lead) => {
+        const tags = getLeadTags(lead).slice(0, 3);
+        const score = Number(lead.score || lead.engagement_score || lead.engagementScore || lead.priorityScore || 0);
+        const phone = getLeadPhone(lead);
+        const motivation = lead.motivation?.summary || lead.motivation || lead.status || 'ready';
+        return {
+          lead,
+          id: getLeadRuntimeId(lead) || phone || getLeadSellerName(lead),
+          phone,
+          phoneDigits: String(phone).replace(/\D+/g, ''),
+          score,
+          scoreTone: score >= 75 ? 'hot' : score >= 50 ? 'warm' : '',
+          tags,
+          lastTouch: lead.updated_at || lead.updatedAt || lead.lastTouch || lead.last_touch || '',
+          motivation,
+          searchText: [
+            getLeadSellerName(lead),
+            phone,
+            getLeadAddress(lead),
+            tags.join(' '),
+            lead.status,
+            motivation
+          ].join(' ').toLowerCase()
+        };
+      })
+    };
+    return callFloorLeadIndexCache.rows;
+  }
+
+  function renderCallFloorSearchSkeleton(query = '') {
+    const list = document.getElementById('callFloorLeadResults');
+    if (!list) return;
+    const safeQuery = escapeHtml(query.trim());
+    list.innerHTML = `
+      <div class="call-floor-search-meta"><span>Searching ${safeQuery ? `"${safeQuery}"` : 'lead cache'}</span><span>debounced</span></div>
+      <div class="call-floor-skeleton" aria-hidden="true">
+        <span class="call-floor-skeleton-line"></span>
+        <span class="call-floor-skeleton-line"></span>
+        <span class="call-floor-skeleton-line"></span>
+      </div>
+    `;
+  }
+
   function renderCallFloorLeadResults(query = '') {
     const list = document.getElementById('callFloorLeadResults');
     if (!list) return;
-    const needle = query.trim().toLowerCase();
+    const startedAt = performance.now();
+    const rawQuery = query.trim();
+    const needle = rawQuery.toLowerCase();
     const activePhones = new Set(getRuntimeCalls(PBK.state.openclawRuntime || {}).map((call) => String(call.to || call.phone || call.from || '').replace(/\D+/g, '')));
-    const leads = getCallFloorLeads().filter((lead) => {
-      const text = [getLeadSellerName(lead), getLeadPhone(lead), getLeadAddress(lead), getLeadTags(lead).join(' '), lead.status, lead.motivation].join(' ').toLowerCase();
-      return !needle || text.includes(needle);
-    }).slice(0, 5);
+    const index = getCallFloorLeadIndex();
 
-    if (!leads.length) {
-      list.innerHTML = '<div class="outbound-lead-result"><strong>No matching leads</strong><span class="lead-result-meta">Try seller name, phone, address, or tag.</span></div>';
+    if (rawQuery.length === 1) {
+      list.innerHTML = `
+        <div class="call-floor-empty-state">
+          <strong>Keep typing</strong>
+          <span>Enter at least 2 characters to narrow the lead cache.</span>
+        </div>
+      `;
       return;
     }
 
-    list.innerHTML = leads.map((lead) => {
-      const phoneDigits = String(getLeadPhone(lead)).replace(/\D+/g, '');
-      const inCall = phoneDigits && activePhones.has(phoneDigits);
-      const score = lead.score || lead.engagement_score || lead.engagementScore || lead.priorityScore || 0;
-      const lastTouch = lead.updated_at || lead.updatedAt || lead.lastTouch || lead.last_touch || '';
-      const tags = getLeadTags(lead).slice(0, 3).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('');
+    const filtered = needle ? index.filter((row) => row.searchText.includes(needle)) : index;
+    const rows = filtered.slice(0, CALL_FLOOR_SEARCH_LIMIT);
+
+    if (!rows.length) {
+      list.innerHTML = `
+        <div class="call-floor-empty-state">
+          <strong>No matching leads</strong>
+          <span>Try seller name, phone, address, motivation, or tag.</span>
+        </div>
+      `;
+      return;
+    }
+
+    const elapsedMs = Math.max(1, Math.round(performance.now() - startedAt));
+    const meta = `
+      <div class="call-floor-search-meta">
+        <span>${needle ? `Showing ${rows.length} of ${filtered.length}` : `Ready · ${rows.length} cached leads`}</span>
+        <span>${elapsedMs}ms</span>
+      </div>
+    `;
+
+    list.innerHTML = meta + rows.map((row) => {
+      const { lead } = row;
+      const inCall = row.phoneDigits && activePhones.has(row.phoneDigits);
+      const tags = row.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('');
       return `
         <div class="outbound-lead-result">
           <div class="outbound-lead-head">
             <strong>${escapeHtml(getLeadSellerName(lead))}</strong>
-            <span class="score-badge ${inCall ? 'in-call-badge' : ''}">${inCall ? 'In call' : `Score ${escapeHtml(score)}`}</span>
+            <span class="score-badge ${inCall ? 'in-call-badge' : row.scoreTone}">${inCall ? 'In call' : `Score ${escapeHtml(row.score)}`}</span>
           </div>
-          <div class="lead-result-meta">${escapeHtml(formatPhoneForDisplay(getLeadPhone(lead)))} - ${escapeHtml(getLeadAddress(lead))}</div>
-          <div class="lead-result-meta">Last touch: ${escapeHtml(lastTouch ? formatRelativeTime(lastTouch) : 'never')} - ${escapeHtml(String(lead.motivation?.summary || lead.motivation || lead.status || 'ready'))}</div>
+          <div class="lead-result-meta">${escapeHtml(formatPhoneForDisplay(row.phone))} - ${escapeHtml(getLeadAddress(lead))}</div>
+          <div class="lead-result-meta">Last touch: ${escapeHtml(row.lastTouch ? formatRelativeTime(row.lastTouch) : 'never')} - ${escapeHtml(String(row.motivation))}</div>
           <div class="lead-result-actions">
             ${tags}
-            <button class="btn btn-primary btn-call" type="button" data-call-floor-call="${escapeHtml(getLeadRuntimeId(lead) || getLeadPhone(lead))}" ${inCall ? 'disabled' : ''}>Call</button>
-            <button class="btn btn-ghost" type="button" data-call-floor-open-lead="${escapeHtml(getLeadRuntimeId(lead) || getLeadPhone(lead))}">Open</button>
+            <button class="btn btn-primary btn-call" type="button" data-call-floor-call="${escapeHtml(row.id)}" ${inCall ? 'disabled' : ''}>Call</button>
+            <button class="btn btn-ghost" type="button" data-call-floor-open-lead="${escapeHtml(row.id)}">Open</button>
           </div>
         </div>
       `;
     }).join('');
+  }
+
+  function scheduleCallFloorSearch(query = '', options = {}) {
+    window.clearTimeout(callFloorSearchTimer);
+    const rawQuery = String(query || '').trim();
+    const sequence = ++callFloorSearchSequence;
+
+    if (options.immediate || rawQuery.length <= 1) {
+      renderCallFloorLeadResults(rawQuery);
+      return;
+    }
+
+    renderCallFloorSearchSkeleton(rawQuery);
+    callFloorSearchTimer = window.setTimeout(() => {
+      if (sequence !== callFloorSearchSequence) return;
+      window.requestAnimationFrame(() => renderCallFloorLeadResults(rawQuery));
+    }, CALL_FLOOR_SEARCH_DEBOUNCE_MS);
   }
 
   function getCallFloorSchedule() {
@@ -25500,8 +25635,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     renderCallFloorLeadResults('');
     renderCallFloorSchedule();
 
-    search?.addEventListener('input', () => renderCallFloorLeadResults(search.value));
-    page.querySelector('[data-call-floor-search]')?.addEventListener('click', () => renderCallFloorLeadResults(search?.value || ''));
+    search?.addEventListener('input', () => scheduleCallFloorSearch(search.value));
+    page.querySelector('[data-call-floor-search]')?.addEventListener('click', () => scheduleCallFloorSearch(search?.value || '', { immediate: true }));
     page.querySelectorAll('.quick-time').forEach((button) => {
       button.addEventListener('click', () => {
         const offsetSeconds = Number(button.dataset.offset || 0);
@@ -25526,7 +25661,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
       const openLead = event.target.closest('[data-call-floor-open-lead]');
       if (openLead) {
-        const lead = getCallFloorLeads().find((item) => [getLeadRuntimeId(item), getLeadPhone(item), getLeadSellerName(item)].includes(openLead.dataset.callFloorOpenLead));
+        const lead = getCallFloorLeadIndex().find((row) => row.id === openLead.dataset.callFloorOpenLead)?.lead;
         if (lead) openLeadDetail(getLeadRuntimeId(lead));
         else showPage('lead-detail');
         return;

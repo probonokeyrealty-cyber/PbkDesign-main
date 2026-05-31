@@ -91,6 +91,19 @@ import {
   startNurtureSequenceCore,
 } from './nurture-agent.mjs';
 import {
+  buildResearchAdditivesStatus,
+  buildSafetyTransparencyReport,
+  compactLongHorizonMemory as compactLongHorizonMemoryCore,
+  discoverExternalTool as discoverExternalToolCore,
+  evaluateStoppingAgent as evaluateStoppingAgentCore,
+  induceWorkflowMemory as induceWorkflowMemoryCore,
+  inferProactiveHumanState as inferProactiveHumanStateCore,
+  planDeterministicGuiAutomation as planDeterministicGuiAutomationCore,
+  planExecutionPathSearch as planExecutionPathSearchCore,
+  planMasterAgentMission as planMasterAgentMissionCore,
+  routeAcpMessage as routeAcpMessageCore,
+} from './research-additives.mjs';
+import {
   buildDeclarativeActionIntent,
   curateEpisodicMemories as curateEpisodicMemoriesCore,
   reconcileDeclarativeActionIntent,
@@ -129,7 +142,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-31-optional-tooling-health-v3';
+const BUILD_REVISION = '2026-05-31-research-additives-v1';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -5684,6 +5697,19 @@ async function ensurePbkOperationalTables(pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.pbk_research_additive_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      additive_id TEXT NOT NULL DEFAULT '',
+      tool_name TEXT NOT NULL DEFAULT '',
+      input JSONB NOT NULL DEFAULT '{}'::jsonb,
+      output JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'completed',
+      safety JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS agent_registry_status_idx
       ON public.agent_registry (tenant_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
@@ -5722,6 +5748,8 @@ async function ensurePbkOperationalTables(pool) {
       ON public.nurture_instances (tenant_id, status, next_step_at);
     CREATE INDEX IF NOT EXISTS nurture_step_logs_instance_idx
       ON public.nurture_step_logs (tenant_id, nurture_instance_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_research_additive_runs_lookup_idx
+      ON public.pbk_research_additive_runs (tenant_id, additive_id, tool_name, created_at DESC);
   `);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
@@ -33809,6 +33837,26 @@ function getLocalAgentRegistryHandlers() {
         qa: { validators: 'active', auditTable: 'pbk_qa_audit' },
       };
     },
+    'nurture-agent': async (payload = {}) => toolHandlers.consultNurtureAgent({
+      ...payload,
+      source: payload.source || 'agent-registry',
+    }),
+    'research-orchestrator': async (payload = {}) => {
+      const query = String(payload.query || payload.command || payload.goal || '').trim();
+      if (/\b(stop|halt|guard|risk|safety)\b/i.test(query)) {
+        return toolHandlers.evaluateStoppingAgent(payload);
+      }
+      if (/\b(workflow|learn|pattern|awm)\b/i.test(query)) {
+        return toolHandlers.induceWorkflowMemory(payload);
+      }
+      if (/\b(tool|api|discover|tooluniverse)\b/i.test(query)) {
+        return toolHandlers.discoverExternalTool({ ...payload, query });
+      }
+      if (/\b(memory|long|context|mem1)\b/i.test(query)) {
+        return toolHandlers.compactLongHorizonMemory(payload);
+      }
+      return toolHandlers.getResearchAdditivesStatus(payload);
+    },
   };
 }
 
@@ -39017,6 +39065,17 @@ const TOOL_RISK_METADATA = Object.freeze({
   runCliCommand: { risk: 'high', approvalRequired: true },
   connectMcpServer: { risk: 'high', approvalRequired: true },
   callMcpTool: { risk: 'high', approvalRequired: true },
+  getResearchAdditivesStatus: { risk: 'readonly', approvalRequired: false },
+  routeAcpMessage: { risk: 'medium', approvalRequired: true },
+  planExecutionPathSearch: { risk: 'readonly', approvalRequired: false },
+  induceWorkflowMemory: { risk: 'readonly', approvalRequired: false },
+  evaluateStoppingAgent: { risk: 'readonly', approvalRequired: false },
+  discoverExternalTool: { risk: 'readonly', approvalRequired: false },
+  compactLongHorizonMemory: { risk: 'readonly', approvalRequired: false },
+  inferProactiveHumanState: { risk: 'readonly', approvalRequired: false },
+  planDeterministicGuiAutomation: { risk: 'medium', approvalRequired: true },
+  planMasterAgentMission: { risk: 'readonly', approvalRequired: false },
+  getSafetyTransparencyReport: { risk: 'readonly', approvalRequired: false },
   startNurtureSequence: { risk: 'high', approvalRequired: true },
   telnyx_call: { risk: 'high', approvalRequired: true },
   telnyx_sms: { risk: 'high', approvalRequired: true },
@@ -39234,6 +39293,32 @@ function runReadonlyCliCommand(params = {}) {
       stderr: String(error?.stderr || error?.message || '').slice(0, 4000),
       error: error?.message || String(error),
     };
+  }
+}
+
+async function recordResearchAdditiveRun(additiveId, toolName, input = {}, output = {}, safety = {}) {
+  const pool = getPgPool();
+  if (!pool) return null;
+  try {
+    const result = await queryPgRows(
+      `INSERT INTO public.pbk_research_additive_runs (
+         tenant_id, additive_id, tool_name, input, output, status, safety, source, created_at
+       )
+       VALUES ('pbk',$1,$2,$3::jsonb,$4::jsonb,$5,$6::jsonb,'pbk-bridge',NOW())
+       RETURNING id, created_at`,
+      [
+        String(additiveId || '').slice(0, 120),
+        String(toolName || '').slice(0, 120),
+        JSON.stringify(input || {}),
+        JSON.stringify(compactAgentOpsPayload(output || {}, 12000)),
+        output?.ok === false ? 'failed' : 'completed',
+        JSON.stringify(safety || {}),
+      ],
+    );
+    return result.ok ? result.rows?.[0] || null : null;
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] research additive run persistence skipped:', error?.message || error);
+    return null;
   }
 }
 
@@ -39512,6 +39597,132 @@ const toolHandlers = {
   async runCliCommand(params = {}) {
     recordToolUse('runCliCommand');
     return runReadonlyCliCommand(params);
+  },
+
+  async getResearchAdditivesStatus(params = {}) {
+    recordToolUse('getResearchAdditivesStatus');
+    const result = buildResearchAdditivesStatus({
+      env: process.env,
+      now: params.now ? new Date(params.now) : new Date(),
+    });
+    void recordResearchAdditiveRun('all', 'getResearchAdditivesStatus', params, result, {
+      providerWrites: 'none',
+      approvalRequired: false,
+    });
+    return result;
+  },
+
+  async routeAcpMessage(params = {}) {
+    recordToolUse('routeAcpMessage');
+    const result = await routeAcpMessageCore(params, {
+      invokeTool: async (toolName, toolParams) => {
+        if (toolName === 'routeAcpMessage') {
+          return { ok: false, result: 'recursive_route_blocked' };
+        }
+        const guarded = await enforceOperatingModeForTool(toolName, toolParams || {});
+        if (guarded) return guarded;
+        const executed = await executeToolHandlerWithQa(toolName, toolParams || {}, 'acp-gateway');
+        return executed.result;
+      },
+    });
+    void recordResearchAdditiveRun('acp_gateway', 'routeAcpMessage', params, result, {
+      providerWrites: 'approval-gated',
+      externalAgents: true,
+    });
+    return result;
+  },
+
+  async planExecutionPathSearch(params = {}) {
+    recordToolUse('planExecutionPathSearch');
+    const result = planExecutionPathSearchCore(params);
+    void recordResearchAdditiveRun('encompass_path_search', 'planExecutionPathSearch', params, result, {
+      providerWrites: 'none',
+      advisoryOnly: true,
+    });
+    return result;
+  },
+
+  async induceWorkflowMemory(params = {}) {
+    recordToolUse('induceWorkflowMemory');
+    const result = induceWorkflowMemoryCore(params);
+    void recordResearchAdditiveRun('awm_induction', 'induceWorkflowMemory', params, result, {
+      providerWrites: 'none',
+      promoteRequiresEvidence: true,
+    });
+    return result;
+  },
+
+  async evaluateStoppingAgent(params = {}) {
+    recordToolUse('evaluateStoppingAgent');
+    const result = evaluateStoppingAgentCore(params);
+    void recordResearchAdditiveRun('stopping_agent', 'evaluateStoppingAgent', params, result, {
+      providerWrites: 'none',
+      canOverrideAva: Boolean(result?.safety?.canOverrideAva),
+    });
+    return result;
+  },
+
+  async discoverExternalTool(params = {}) {
+    recordToolUse('discoverExternalTool');
+    const result = discoverExternalToolCore(params, {
+      toolNames: Object.keys(toolHandlers),
+      env: process.env,
+    });
+    void recordResearchAdditiveRun('tool_universe', 'discoverExternalTool', params, result, {
+      providerWrites: 'none',
+      executionRequiresInvoke: true,
+    });
+    return result;
+  },
+
+  async compactLongHorizonMemory(params = {}) {
+    recordToolUse('compactLongHorizonMemory');
+    const result = compactLongHorizonMemoryCore({ ...params, env: process.env });
+    void recordResearchAdditiveRun('mem1_compact_memory', 'compactLongHorizonMemory', params, result, {
+      providerWrites: 'none',
+      modelGated: !result?.model?.mem1ModelConfigured,
+    });
+    return result;
+  },
+
+  async inferProactiveHumanState(params = {}) {
+    recordToolUse('inferProactiveHumanState');
+    const result = inferProactiveHumanStateCore({ ...params, env: process.env });
+    void recordResearchAdditiveRun('neuroskill_state_inference', 'inferProactiveHumanState', params, result, {
+      providerWrites: 'none',
+      biometricsOptInOnly: true,
+    });
+    return result;
+  },
+
+  async planDeterministicGuiAutomation(params = {}) {
+    recordToolUse('planDeterministicGuiAutomation');
+    const result = planDeterministicGuiAutomationCore(params);
+    void recordResearchAdditiveRun('autograph_gui_automation', 'planDeterministicGuiAutomation', params, result, {
+      providerWrites: 'blocked',
+      approvalRequired: true,
+    });
+    return result;
+  },
+
+  async planMasterAgentMission(params = {}) {
+    recordToolUse('planMasterAgentMission');
+    const result = planMasterAgentMissionCore({ ...params, env: process.env });
+    void recordResearchAdditiveRun('masteragent_l4_orchestration', 'planMasterAgentMission', params, result, {
+      providerWrites: 'approval-gated',
+      l4Execution: 'blocked_without_pbk_approval',
+    });
+    return result;
+  },
+
+  async getSafetyTransparencyReport(params = {}) {
+    recordToolUse('getSafetyTransparencyReport');
+    const result = buildSafetyTransparencyReport(params);
+    void recordResearchAdditiveRun('safety_transparency', 'getSafetyTransparencyReport', params, result, {
+      providerWrites: 'none',
+      documentation: 'SAFETY.md',
+    });
+    return result;
   },
 
   async startNurtureSequence(params = {}) {
@@ -50733,6 +50944,64 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/research-additives/status', '/api/ai-additives/status'])) {
+      const result = await toolHandlers.getResearchAdditivesStatus({
+        requestedBy: url.searchParams.get('requestedBy') || 'api',
+      });
+      json(response, result.ok ? 200 : 503, {
+        ...result,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/acp', '/api/research-additives/acp'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.routeAcpMessage(body);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/research-additives/run', '/api/ai-additives/run'])) {
+      const body = await readBody(request);
+      const toolName = String(body.toolName || body.additiveTool || '').trim();
+      const allowed = new Set([
+        'planExecutionPathSearch',
+        'induceWorkflowMemory',
+        'evaluateStoppingAgent',
+        'discoverExternalTool',
+        'compactLongHorizonMemory',
+        'inferProactiveHumanState',
+        'planDeterministicGuiAutomation',
+        'planMasterAgentMission',
+        'getSafetyTransparencyReport',
+      ]);
+      if (!allowed.has(toolName)) {
+        json(response, 400, {
+          ok: false,
+          result: 'unsupported_research_additive_tool',
+          allowed: [...allowed],
+        });
+        return;
+      }
+      const result = await toolHandlers[toolName](body.params || body);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        toolName,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/orchestration/smoke', '/api/agent-orchestration/smoke'])) {
       const body = await readBody(request);
       const result = await runAgentOrchestrationSmoke(body);
@@ -53769,7 +54038,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs'];
       if (!pool) {
         json(response, 200, {
           ok: false,

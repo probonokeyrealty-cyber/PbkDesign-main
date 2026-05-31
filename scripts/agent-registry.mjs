@@ -197,6 +197,36 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
         local: true,
       },
     },
+    {
+      id: 'research-orchestrator',
+      name: 'Research Orchestrator',
+      description:
+        'Coordinates PBK research additives: ACP-style interop, path search, workflow induction, compact memory, stopping-agent checks, tool discovery, and gated desktop/L4 planning.',
+      capabilities: [
+        'research_additives',
+        'agent_interop',
+        'execution_path_search',
+        'workflow_induction',
+        'tool_discovery',
+        'stopping_guardrails',
+        'compact_memory',
+        'state_inference',
+        'desktop_planning',
+        'mission_planning',
+        'safety_transparency',
+      ],
+      status: 'active',
+      endpoint: '',
+      version: 'v1.0',
+      healthCheckedAt: activeAt,
+      lastError: '',
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'rex',
+        approvalGated: true,
+        local: true,
+      },
+    },
   ];
 }
 

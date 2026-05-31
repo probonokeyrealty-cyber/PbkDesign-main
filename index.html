@@ -12217,6 +12217,401 @@
       line-height: 1;
     }
   }
+
+  /* ---- INBOX COMPOSE MODAL ---- */
+  .compose-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 960;
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: clamp(18px, 6vh, 64px) 20px 20px;
+    overflow: auto;
+    background:
+      radial-gradient(circle at 18% 12%, rgba(125, 211, 252, .13), transparent 32%),
+      radial-gradient(circle at 82% 8%, rgba(163, 230, 53, .08), transparent 28%),
+      rgba(6, 8, 11, .78);
+    backdrop-filter: blur(12px);
+  }
+  .compose-modal-backdrop.open { display: flex; animation: fadeIn .18s ease-out; }
+  .compose-modal {
+    width: min(620px, 100%);
+    max-height: calc(100dvh - 40px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(125, 211, 252, .24);
+    border-radius: 28px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.018)),
+      var(--bg-panel-elevated);
+    box-shadow: 0 26px 80px rgba(0,0,0,.62), 0 0 0 1px rgba(255,255,255,.035);
+    transform-origin: top center;
+    animation: composeModalIn .2s cubic-bezier(.2,.9,.3,1.05);
+  }
+  @keyframes composeModalIn {
+    from { opacity: 0; transform: translateY(-10px) scale(.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .compose-modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--s-4);
+    padding: 22px 24px 18px;
+    border-bottom: 1px solid var(--border-dim);
+    background:
+      linear-gradient(135deg, rgba(125, 211, 252, .09), rgba(255,255,255,.015)),
+      rgba(6,8,11,.35);
+  }
+  .compose-modal-kicker {
+    color: var(--sky);
+    font: 10px/1 var(--font-mono);
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+  }
+  .compose-modal-head h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font: 500 25px/1.1 var(--font-display);
+    letter-spacing: -.025em;
+  }
+  .compose-modal-head h3 em { color: var(--sky); font-style: italic; font-weight: 700; }
+  .compose-modal-close {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(6,8,11,.54);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .compose-modal-close:hover {
+    color: var(--text-primary);
+    border-color: var(--sky-dim);
+    background: var(--sky-glow);
+  }
+  .compose-modal-body {
+    padding: 22px 24px 18px;
+    overflow: auto;
+    display: grid;
+    gap: 18px;
+  }
+  .compose-modal-section { display: grid; gap: 8px; }
+  .compose-modal-label {
+    color: var(--text-tertiary);
+    font: 10px/1 var(--font-mono);
+    letter-spacing: .13em;
+    text-transform: uppercase;
+  }
+  .compose-modal-channels {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .compose-modal-channel {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid rgba(125,211,252,.16);
+    border-radius: 16px;
+    background: rgba(6,8,11,.46);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: 700 12px/1 var(--font-ui);
+    transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease;
+  }
+  .compose-modal-channel:hover {
+    border-color: rgba(125,211,252,.38);
+    color: var(--text-primary);
+    transform: translateY(-1px);
+  }
+  .compose-modal-channel.active {
+    border-color: var(--sky-dim);
+    color: var(--sky);
+    background: linear-gradient(180deg, rgba(125,211,252,.17), rgba(125,211,252,.055));
+    box-shadow: inset 0 0 0 1px rgba(125,211,252,.12), 0 10px 30px rgba(125,211,252,.08);
+  }
+  .compose-modal-channel svg { width: 15px; height: 15px; }
+  .compose-modal-channel .pill {
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-dim);
+    color: var(--text-tertiary);
+    font: 9px/1 var(--font-mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .compose-modal-channel.active .pill { border-color: var(--sky-dim); color: var(--text-primary); }
+  .compose-modal-recipient-wrap { position: relative; }
+  .compose-modal-input,
+  .compose-modal-message,
+  .compose-modal-schedule {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: rgba(6,8,11,.62);
+    color: var(--text-primary);
+    font: 13px/1.45 var(--font-mono);
+    padding: 12px 14px;
+  }
+  .compose-modal-input:focus,
+  .compose-modal-message:focus,
+  .compose-modal-schedule:focus {
+    outline: none;
+    border-color: var(--sky-dim);
+    box-shadow: 0 0 0 3px var(--sky-glow);
+  }
+  .compose-modal-message {
+    min-height: 134px;
+    resize: vertical;
+    font-family: var(--font-ui);
+    font-size: 14px;
+  }
+  .compose-modal-selected {
+    display: none;
+    align-items: center;
+    gap: 9px;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--sky-dim);
+    border-radius: 16px;
+    background: var(--sky-glow);
+    color: var(--sky);
+    font: 700 12px/1.25 var(--font-mono);
+  }
+  .compose-modal-selected.show { display: flex; }
+  .compose-modal-selected button {
+    margin-left: auto;
+    border: 0;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .compose-modal-selected button:hover { color: var(--crimson); }
+  .compose-modal-suggestions {
+    position: absolute;
+    z-index: 120;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    display: none;
+    max-height: 260px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid rgba(125,211,252,.25);
+    border-radius: 18px;
+    background:
+      radial-gradient(circle at 12% 0%, rgba(125,211,252,.14), transparent 40%),
+      var(--bg-panel-elevated);
+    box-shadow: 0 22px 70px rgba(0,0,0,.50);
+  }
+  .compose-modal-suggestions.open { display: grid; gap: 6px; }
+  .compose-modal-suggestion {
+    display: grid;
+    gap: 3px;
+    padding: 11px 12px;
+    border: 1px solid transparent;
+    border-radius: 13px;
+    background: rgba(255,255,255,.018);
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, transform .15s ease;
+  }
+  .compose-modal-suggestion:hover {
+    border-color: rgba(125,211,252,.30);
+    background: rgba(125,211,252,.08);
+    transform: translateY(-1px);
+  }
+  .compose-modal-suggestion strong { color: var(--text-primary); font-size: 13px; }
+  .compose-modal-suggestion span { color: var(--text-tertiary); font: 10px/1.45 var(--font-mono); overflow-wrap: anywhere; }
+  .compose-modal-empty {
+    padding: 14px;
+    color: var(--text-tertiary);
+    text-align: center;
+    font: 11px/1.45 var(--font-mono);
+  }
+  .compose-modal-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s-3);
+    color: var(--text-tertiary);
+    font: 10px/1 var(--font-mono);
+  }
+  .compose-modal-meta .over { color: var(--amber); }
+  .compose-modal-templates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .compose-modal-template,
+  .compose-modal-tool,
+  .compose-modal-cancel,
+  .compose-modal-send {
+    min-height: 36px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, color .15s ease, transform .15s ease, box-shadow .15s ease;
+  }
+  .compose-modal-template,
+  .compose-modal-tool,
+  .compose-modal-cancel {
+    border: 1px solid var(--border);
+    background: rgba(6,8,11,.48);
+    color: var(--text-secondary);
+    padding: 8px 12px;
+    font: 700 11px/1 var(--font-ui);
+  }
+  .compose-modal-template:hover,
+  .compose-modal-tool:hover,
+  .compose-modal-tool.active,
+  .compose-modal-cancel:hover {
+    border-color: var(--sky-dim);
+    color: var(--sky);
+    background: var(--sky-glow);
+  }
+  .compose-modal-tools {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-dim);
+  }
+  .compose-modal-tools-spacer { flex: 1; }
+  .compose-modal-schedule-hint {
+    color: var(--text-tertiary);
+    font: 10px/1.4 var(--font-mono);
+    text-align: right;
+  }
+  .compose-modal-emoji-pop {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    display: none;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 3px;
+    width: min(292px, calc(100vw - 48px));
+    padding: 9px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--bg-panel-elevated);
+    box-shadow: 0 18px 50px rgba(0,0,0,.50);
+  }
+  .compose-modal-emoji-pop.open { display: grid; }
+  .compose-modal-emoji-pop button {
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    cursor: pointer;
+    font-size: 20px;
+    padding: 5px 2px;
+  }
+  .compose-modal-emoji-pop button:hover { background: var(--bg-hover); }
+  .compose-modal-schedule-wrap { display: none; }
+  .compose-modal-schedule-wrap.open { display: block; }
+  .compose-modal-schedule { color-scheme: dark; }
+  .compose-modal-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--s-4);
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-dim);
+    background: rgba(6,8,11,.44);
+  }
+  .compose-modal-note {
+    color: var(--text-tertiary);
+    font: 10px/1.5 var(--font-mono);
+  }
+  .compose-modal-note strong {
+    display: inline-flex;
+    margin-right: 6px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--lime);
+    color: var(--lime);
+    background: var(--lime-glow);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .compose-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .compose-modal-send {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 106px;
+    border: 1px solid var(--sky-dim);
+    background: linear-gradient(135deg, var(--sky-deep), var(--sky-dim));
+    color: #fff;
+    padding: 9px 16px;
+    font: 800 12px/1 var(--font-ui);
+    box-shadow: 0 10px 28px rgba(125,211,252,.18);
+  }
+  .compose-modal-send:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 34px rgba(125,211,252,.26);
+  }
+  .compose-modal-send:disabled {
+    opacity: .52;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .compose-modal-send svg { width: 13px; height: 13px; }
+
+  @media (max-width: 720px) {
+    .compose-modal-backdrop {
+      align-items: stretch;
+      padding: 10px 10px calc(86px + env(safe-area-inset-bottom, 0px));
+    }
+    .compose-modal {
+      width: 100%;
+      max-height: calc(100dvh - 96px - env(safe-area-inset-bottom, 0px));
+      border-radius: 24px;
+    }
+    .compose-modal-head,
+    .compose-modal-body,
+    .compose-modal-foot {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+    .compose-modal-head h3 { font-size: 23px; }
+    .compose-modal-channels { grid-template-columns: 1fr; }
+    .compose-modal-channel { justify-content: space-between; padding-inline: 14px; }
+    .compose-modal-tools { flex-wrap: wrap; }
+    .compose-modal-tools-spacer { display: none; }
+    .compose-modal-schedule-hint { width: 100%; text-align: left; }
+    .compose-modal-foot {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    .compose-modal-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      width: 100%;
+    }
+    .compose-modal-actions button {
+      width: 100%;
+      min-height: 46px;
+    }
+  }
 </style>
 
 <!-- toast stack -->
@@ -12734,6 +13129,114 @@
   <div class="modal-actions">
     <button type="button" class="btn btn-ghost" id="confirmCancel">Cancel</button>
     <button type="button" class="btn btn-primary" id="confirmOk">Yes, go autopilot</button>
+  </div>
+</div>
+
+<!-- Unified Inbox compose modal -->
+<div class="compose-modal-backdrop" id="composeModalBackdrop" aria-hidden="true">
+  <div class="compose-modal" id="composeModal" role="dialog" aria-modal="true" aria-labelledby="composeModalTitle">
+    <div class="compose-modal-head">
+      <div>
+        <div class="compose-modal-kicker">New outbound touch</div>
+        <h3 id="composeModalTitle">Compose<em>.</em></h3>
+      </div>
+      <button type="button" class="compose-modal-close" id="composeModalClose" aria-label="Close compose modal">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="compose-modal-body">
+      <div class="compose-modal-section">
+        <label class="compose-modal-label">Channel</label>
+        <div class="compose-modal-channels" role="group" aria-label="Message channel">
+          <button type="button" class="compose-modal-channel active" data-compose-modal-channel="sms">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>SMS</span><span class="pill">Telnyx</span>
+          </button>
+          <button type="button" class="compose-modal-channel" data-compose-modal-channel="email">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+            <span>Email</span><span class="pill">Instantly</span>
+          </button>
+          <button type="button" class="compose-modal-channel" data-compose-modal-channel="call">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            <span>Call</span><span class="pill">Live</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="compose-modal-section">
+        <label class="compose-modal-label" id="cmFromLabel">From - sending number</label>
+        <div class="idpick-wrap">
+          <div class="idpick-label">
+            <span>Outbound identity</span>
+            <span class="idpick-suggest" id="cmFromSuggest">Area match</span>
+          </div>
+          <button type="button" class="idpick-btn" id="cmFromBtn" aria-haspopup="listbox" aria-expanded="false">
+            <span class="idpick-main">
+              <span class="idpick-title" id="cmFromName">Auto-select sender</span>
+              <span class="idpick-sub" id="cmFromAddr">PBK chooses the safest active route</span>
+            </span>
+            <span class="idpick-stat" id="cmFromStat">Ready</span>
+          </button>
+          <div class="idpick-menu" id="cmFromMenu" role="listbox" aria-label="Choose compose sending identity"></div>
+        </div>
+      </div>
+
+      <div class="compose-modal-section">
+        <label class="compose-modal-label" id="composeRecipientLabel">To - phone or lead name</label>
+        <div class="compose-modal-recipient-wrap">
+          <input type="text" class="compose-modal-input" id="composeRecipientInput" autocomplete="off" placeholder="Search leads or type a number" />
+          <div class="compose-modal-suggestions" id="composeRecipientSuggestions"></div>
+        </div>
+        <div class="compose-modal-selected" id="composeSelectedRecipient">
+          <span id="composeSelectedRecipientText"></span>
+          <button type="button" id="composeClearRecipient" aria-label="Clear selected recipient">&times;</button>
+        </div>
+      </div>
+
+      <div class="compose-modal-section">
+        <label class="compose-modal-label" id="composeMessageLabel">Message</label>
+        <textarea class="compose-modal-message" id="composeMessageInput" placeholder="Type your message, follow-up, or call note"></textarea>
+        <div class="compose-modal-meta">
+          <span><span id="composeCharCount">0</span> chars <span id="composeSmsMeta">- 1 SMS segment</span></span>
+          <span id="composeDeliveryEstimate">Ready when recipient and message are set</span>
+        </div>
+      </div>
+
+      <div class="compose-modal-section">
+        <label class="compose-modal-label">Quick replies</label>
+        <div class="compose-modal-templates">
+          <button type="button" class="compose-modal-template" data-compose-template="Thanks for reaching out. I can review the property and get back to you shortly. What is the best address?">Thanks - ask address</button>
+          <button type="button" class="compose-modal-template" data-compose-template="Quick question - what is your timeline for selling?">Ask timeline</button>
+          <button type="button" class="compose-modal-template" data-compose-template="What kind of condition is the house in? Any major repairs I should factor in?">Ask condition</button>
+          <button type="button" class="compose-modal-template" data-compose-template="I can put together a cash offer if that is a fit. Want me to run the numbers?">Offer cash</button>
+          <button type="button" class="compose-modal-template" data-compose-template="Happy to hop on a quick call. What time works today or tomorrow?">Schedule call</button>
+          <button type="button" class="compose-modal-template" data-compose-template="No problem, I understand. If anything changes, you have my number.">Polite no</button>
+        </div>
+      </div>
+
+      <div class="compose-modal-tools">
+        <button type="button" class="compose-modal-tool" id="composeEmojiButton">Emoji</button>
+        <div class="compose-modal-emoji-pop" id="composeEmojiPicker" aria-label="Emoji picker"></div>
+        <button type="button" class="compose-modal-tool" id="composeScheduleButton">Send later</button>
+        <span class="compose-modal-tools-spacer"></span>
+        <span class="compose-modal-schedule-hint" id="composeScheduleHint"></span>
+      </div>
+      <div class="compose-modal-schedule-wrap" id="composeScheduleWrap">
+        <input type="datetime-local" class="compose-modal-schedule" id="composeScheduleInput" />
+      </div>
+    </div>
+
+    <div class="compose-modal-foot">
+      <div class="compose-modal-note"><strong>Live</strong>Immediate sends use the bridge; scheduled sends save a dated draft.</div>
+      <div class="compose-modal-actions">
+        <button type="button" class="compose-modal-cancel" id="composeModalCancel">Cancel</button>
+        <button type="button" class="compose-modal-send" id="composeModalSend" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/></svg>
+          Send
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -14610,14 +15113,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function openInboxCompose() {
     showPage('inbox');
     setTimeout(() => {
-      const compose = document.querySelector('.page[data-page="inbox"] .compose');
-      const textarea = compose?.querySelector('textarea');
-      const restored = restoreInboxComposeDraft(compose, { notify: true });
-      textarea?.focus();
-      compose?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (!restored) saveInboxComposeDraft(compose);
+      showComposeModal({ context: getInboxContext(), notify: true });
     }, 80);
-    toast({ type: 'info', title: 'Compose ready', desc: 'Draft a SMS, email, or call note from the Inbox composer.' });
   }
 
   function showShortcutCheatSheet() {
@@ -14649,6 +15146,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     if (e.key === 'Escape') {
       e.preventDefault();
+      if (closeComposeModal()) return;
       notifPanel.classList.remove('open');
       userMenu.classList.remove('open');
       modePopover.classList.remove('open');
@@ -23000,6 +23498,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return Boolean(
       document.querySelector('.modal[data-utility-modal-id]') ||
       document.querySelector('.fleet-modal-backdrop.open') ||
+      document.querySelector('#composeModalBackdrop.open') ||
       modalBackdrop.classList.contains('open') ||
       cpModal.classList.contains('open')
     );
@@ -26030,6 +26529,639 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     localStorage.removeItem(INBOX_COMPOSE_DRAFT_KEY);
   }
 
+  const COMPOSE_MODAL_SCHEDULED_KEY = 'pbk:compose:scheduled-drafts';
+  const COMPOSE_MODAL_FALLBACK_LEADS = [
+    { id: 'lead-diane-kowalski', leadName: 'Diane Kowalski', phone: '+1 (614) 555-0142', email: 'diane.kowalski@example.com', address: '202 Cherry Ln, Columbus OH', status: 'Live call - probate', score: 94 },
+    { id: 'lead-marcus-delaney', leadName: 'Marcus Delaney', phone: '+1 (330) 555-0188', email: 'marcus.delaney@example.com', address: '14 Maple Ct, Akron OH', status: 'Pre-foreclosure', score: 82 },
+    { id: 'lead-latoya-briggs', leadName: 'Latoya Briggs', phone: '+1 (330) 555-0192', email: 'latoya.briggs@example.com', address: '8804 Waterloo, Akron OH', status: 'Probate', score: 71 },
+    { id: 'lead-kelvin-obi', leadName: 'Kelvin Obi', phone: '+1 (330) 555-0177', email: 'kelvin.obi@example.com', address: '44 Walnut Ct, Akron OH', status: 'New lead', score: 52 },
+  ];
+  const COMPOSE_MODAL_EMOJIS = ['🙂', '👍', '🙏', '🤝', '🏠', '💵', '📞', '📱', '✉️', '📅', '✅', '⭐', '🎯', '⚡', '📝', '❓'];
+  const composeModalState = {
+    channel: 'sms',
+    selectedLead: null,
+    selectedIdentityId: '',
+    scheduleOn: false,
+    wired: false,
+  };
+
+  function getComposeModalNodes() {
+    return {
+      backdrop: document.getElementById('composeModalBackdrop'),
+      modal: document.getElementById('composeModal'),
+      body: document.querySelector('#composeModal .compose-modal-body'),
+      close: document.getElementById('composeModalClose'),
+      cancel: document.getElementById('composeModalCancel'),
+      send: document.getElementById('composeModalSend'),
+      channelButtons: Array.from(document.querySelectorAll('[data-compose-modal-channel]')),
+      fromLabel: document.getElementById('cmFromLabel'),
+      fromButton: document.getElementById('cmFromBtn'),
+      fromMenu: document.getElementById('cmFromMenu'),
+      fromSuggest: document.getElementById('cmFromSuggest'),
+      recipientLabel: document.getElementById('composeRecipientLabel'),
+      recipientInput: document.getElementById('composeRecipientInput'),
+      suggestions: document.getElementById('composeRecipientSuggestions'),
+      selectedRecipient: document.getElementById('composeSelectedRecipient'),
+      selectedRecipientText: document.getElementById('composeSelectedRecipientText'),
+      clearRecipient: document.getElementById('composeClearRecipient'),
+      messageLabel: document.getElementById('composeMessageLabel'),
+      messageInput: document.getElementById('composeMessageInput'),
+      charCount: document.getElementById('composeCharCount'),
+      smsMeta: document.getElementById('composeSmsMeta'),
+      estimate: document.getElementById('composeDeliveryEstimate'),
+      emojiButton: document.getElementById('composeEmojiButton'),
+      emojiPicker: document.getElementById('composeEmojiPicker'),
+      scheduleButton: document.getElementById('composeScheduleButton'),
+      scheduleWrap: document.getElementById('composeScheduleWrap'),
+      scheduleInput: document.getElementById('composeScheduleInput'),
+      scheduleHint: document.getElementById('composeScheduleHint'),
+    };
+  }
+
+  function normalizeComposeLead(input = {}, index = 0) {
+    const seller = input.seller || {};
+    const property = input.property || {};
+    const name = input.leadName || input.name || input.sellerName || input.sender || seller.name || `Lead ${index + 1}`;
+    const phone = input.phone || input.phoneNumber || input.from || seller.phone || input.sellerPhone || '';
+    const email = input.email || seller.email || input.sellerEmail || '';
+    const address = input.address || property.address || input.propertyAddress || '';
+    const statusParts = [
+      input.status,
+      input.stage,
+      input.last,
+      input.motivation,
+      Array.isArray(input.tags) ? input.tags.slice(0, 2).join(', ') : '',
+    ].filter(Boolean);
+    const id = String(input.leadId || input.id || input.messageId || `${name}-${phone || email || address || index}`)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return {
+      id: id || `compose-lead-${index + 1}`,
+      leadId: input.leadId || input.id || id,
+      name,
+      phone,
+      email,
+      address,
+      score: Number(input.score || input.motivation_score || input.motivationScore || 0),
+      status: statusParts.join(' - ') || 'PBK lead',
+    };
+  }
+
+  function getComposeModalLeads() {
+    const runtime = PBK.state.openclawRuntime || {};
+    const runtimeLeads = [
+      ...getRealLeadImports(runtime),
+      ...(Array.isArray(runtime.leads) ? runtime.leads : []),
+      ...(Array.isArray(runtime.calls) ? runtime.calls : []),
+      ...(Array.isArray(runtime.messages) ? runtime.messages : []),
+      ...COMPOSE_MODAL_FALLBACK_LEADS,
+    ];
+    const seen = new Set();
+    return runtimeLeads
+      .map((lead, index) => normalizeComposeLead(lead, index))
+      .filter((lead) => {
+        const key = String(lead.phone || lead.email || lead.name).toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return lead.name || lead.phone || lead.email;
+      })
+      .slice(0, 40);
+  }
+
+  function getComposeModalLeadTarget(lead = composeModalState.selectedLead, channel = composeModalState.channel) {
+    if (!lead) return '';
+    return channel === 'email' ? lead.email || '' : lead.phone || '';
+  }
+
+  function setComposeModalButtonLabel() {
+    const { send } = getComposeModalNodes();
+    if (!send) return;
+    const label = composeModalState.scheduleOn
+      ? 'Schedule'
+      : composeModalState.channel === 'call'
+        ? 'Call'
+        : 'Send';
+    send.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/></svg>
+      ${label}
+    `;
+  }
+
+  function updateComposeModalMeta() {
+    const nodes = getComposeModalNodes();
+    const message = nodes.messageInput?.value || '';
+    const length = message.length;
+    if (nodes.charCount) {
+      nodes.charCount.textContent = String(length);
+      nodes.charCount.classList.toggle('over', composeModalState.channel === 'sms' && length > 160);
+    }
+    if (nodes.smsMeta) {
+      if (composeModalState.channel === 'sms') {
+        const parts = Math.max(1, Math.ceil(length / 160));
+        nodes.smsMeta.style.display = '';
+        nodes.smsMeta.textContent = `- ${parts} SMS segment${parts === 1 ? '' : 's'}`;
+      } else if (composeModalState.channel === 'call') {
+        nodes.smsMeta.style.display = '';
+        nodes.smsMeta.textContent = '- call note';
+      } else {
+        nodes.smsMeta.style.display = 'none';
+      }
+    }
+    if (nodes.estimate) {
+      const route = composeModalState.channel === 'email' ? 'Instantly' : 'Telnyx';
+      nodes.estimate.textContent = composeModalState.scheduleOn ? 'Scheduled draft' : `Routes through ${route}`;
+    }
+    setComposeModalButtonLabel();
+    updateComposeModalSendState();
+  }
+
+  function updateComposeModalSendState() {
+    const nodes = getComposeModalNodes();
+    if (!nodes.send) return;
+    const recipient = composeModalState.selectedLead
+      ? getComposeModalLeadTarget()
+      : nodes.recipientInput?.value?.trim() || '';
+    const hasRecipient = recipient.length > 2;
+    const hasMessage = (nodes.messageInput?.value || '').trim().length > 0;
+    const scheduleReady = !composeModalState.scheduleOn || Boolean(nodes.scheduleInput?.value);
+    nodes.send.disabled = !(hasRecipient && hasMessage && scheduleReady);
+  }
+
+  function setComposeModalSchedule(enabled, value = '') {
+    const nodes = getComposeModalNodes();
+    composeModalState.scheduleOn = Boolean(enabled);
+    nodes.scheduleButton?.classList.toggle('active', composeModalState.scheduleOn);
+    nodes.scheduleWrap?.classList.toggle('open', composeModalState.scheduleOn);
+    if (composeModalState.scheduleOn) {
+      if (nodes.scheduleInput && !nodes.scheduleInput.value) {
+        const date = value ? new Date(value) : new Date(Date.now() + 60 * 60 * 1000);
+        date.setSeconds(0, 0);
+        const pad = (number) => String(number).padStart(2, '0');
+        nodes.scheduleInput.value = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      }
+    } else if (nodes.scheduleInput) {
+      nodes.scheduleInput.value = '';
+    }
+    updateComposeScheduleHint();
+    updateComposeModalMeta();
+    saveComposeModalDraft();
+  }
+
+  function updateComposeScheduleHint() {
+    const nodes = getComposeModalNodes();
+    if (!nodes.scheduleHint) return;
+    if (!composeModalState.scheduleOn || !nodes.scheduleInput?.value) {
+      nodes.scheduleHint.textContent = '';
+      return;
+    }
+    const when = new Date(nodes.scheduleInput.value);
+    nodes.scheduleHint.textContent = `Scheduled for ${when.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+  }
+
+  function renderComposeModalIdentity(options = {}) {
+    const nodes = getComposeModalNodes();
+    if (!nodes.fromButton || !nodes.fromMenu) return;
+    const channel = options.channel || composeModalState.channel;
+    const type = channel === 'email' ? 'email' : 'phone';
+    const typedRecipient = nodes.recipientInput?.value || '';
+    const areaCode = getAreaCodeFromValue(options.phone || getComposeModalLeadTarget(composeModalState.selectedLead, channel) || typedRecipient);
+    const selected = options.identity
+      || (composeModalState.selectedIdentityId ? getOutboundIdentities(type).find((identity) => identity.id === composeModalState.selectedIdentityId && identity.active) : null)
+      || bestOutboundIdentityForArea(areaCode, channel);
+    composeModalState.selectedIdentityId = selected?.id || '';
+    if (nodes.fromLabel) {
+      nodes.fromLabel.textContent = channel === 'email'
+        ? 'From - sending email'
+        : channel === 'call'
+          ? 'From - calling number'
+          : 'From - sending number';
+    }
+    paintIdentityPicker('cmFrom', selected, channel);
+    if (nodes.fromSuggest) {
+      const showMatch = Boolean(areaCode && selected?.area === areaCode && type === 'phone');
+      nodes.fromSuggest.classList.toggle('show', showMatch);
+      nodes.fromSuggest.textContent = showMatch ? `${areaCode} match` : 'Area match';
+    }
+    renderIdentityMenu(nodes.fromMenu, getActiveOutboundIdentities(type), selected?.id || '');
+  }
+
+  function renderComposeSelectedRecipient() {
+    const nodes = getComposeModalNodes();
+    const lead = composeModalState.selectedLead;
+    const target = getComposeModalLeadTarget(lead);
+    if (!lead || !target) {
+      nodes.selectedRecipient?.classList.remove('show');
+      if (nodes.recipientInput) nodes.recipientInput.style.display = '';
+      return;
+    }
+    if (nodes.selectedRecipientText) {
+      nodes.selectedRecipientText.textContent = `${lead.name} - ${target}`;
+    }
+    nodes.selectedRecipient?.classList.add('show');
+    if (nodes.recipientInput) nodes.recipientInput.style.display = 'none';
+  }
+
+  function clearComposeSelectedRecipient({ focus = true } = {}) {
+    const nodes = getComposeModalNodes();
+    composeModalState.selectedLead = null;
+    nodes.selectedRecipient?.classList.remove('show');
+    if (nodes.recipientInput) {
+      nodes.recipientInput.style.display = '';
+      nodes.recipientInput.value = '';
+      if (focus) nodes.recipientInput.focus();
+    }
+    renderComposeModalIdentity();
+    updateComposeModalSendState();
+    saveComposeModalDraft();
+  }
+
+  function selectComposeModalLead(lead) {
+    const nodes = getComposeModalNodes();
+    composeModalState.selectedLead = lead;
+    if (nodes.recipientInput) nodes.recipientInput.value = '';
+    nodes.suggestions?.classList.remove('open');
+    renderComposeSelectedRecipient();
+    renderComposeModalIdentity({ phone: lead.phone });
+    updateComposeModalSendState();
+    saveComposeModalDraft();
+    nodes.messageInput?.focus({ preventScroll: true });
+  }
+
+  function renderComposeRecipientSuggestions() {
+    const nodes = getComposeModalNodes();
+    if (!nodes.suggestions || !nodes.recipientInput) return;
+    const query = nodes.recipientInput.value.trim();
+    if (!query || composeModalState.selectedLead) {
+      nodes.suggestions.classList.remove('open');
+      nodes.suggestions.innerHTML = '';
+      return;
+    }
+    const lower = query.toLowerCase();
+    const digits = query.replace(/\D+/g, '');
+    const matches = getComposeModalLeads()
+      .filter((lead) => {
+        if (composeModalState.channel === 'email' && !lead.email) return false;
+        if (composeModalState.channel !== 'email' && !lead.phone) return false;
+        return (
+          lead.name.toLowerCase().includes(lower) ||
+          lead.address.toLowerCase().includes(lower) ||
+          (lead.email || '').toLowerCase().includes(lower) ||
+          (digits.length >= 2 && String(lead.phone || '').replace(/\D+/g, '').includes(digits))
+        );
+      })
+      .slice(0, 7);
+    if (!matches.length) {
+      nodes.suggestions.innerHTML = query.length >= 2
+        ? `<div class="compose-modal-empty">No lead match. PBK can still send to <strong>${escapeHtml(query)}</strong>.</div>`
+        : '';
+      nodes.suggestions.classList.toggle('open', query.length >= 2);
+      return;
+    }
+    nodes.suggestions.innerHTML = matches.map((lead) => {
+      const target = composeModalState.channel === 'email' ? lead.email : lead.phone;
+      const score = lead.score ? `Score ${lead.score}` : lead.status;
+      return `
+        <button type="button" class="compose-modal-suggestion" data-compose-lead-id="${escapeHtml(lead.id)}">
+          <strong>${escapeHtml(lead.name)}</strong>
+          <span>${escapeHtml(target || 'No route')} - ${escapeHtml(lead.address || 'No address')} - ${escapeHtml(score || 'PBK lead')}</span>
+        </button>
+      `;
+    }).join('');
+    nodes.suggestions.classList.add('open');
+  }
+
+  function setComposeModalChannel(channel, options = {}) {
+    const safeChannel = ['sms', 'email', 'call'].includes(String(channel || '').toLowerCase())
+      ? String(channel || '').toLowerCase()
+      : 'sms';
+    const nodes = getComposeModalNodes();
+    composeModalState.channel = safeChannel;
+    nodes.channelButtons.forEach((button) => {
+      button.classList.toggle('active', button.dataset.composeModalChannel === safeChannel);
+    });
+    if (nodes.recipientLabel) {
+      nodes.recipientLabel.textContent = safeChannel === 'email' ? 'To - email or lead name' : 'To - phone or lead name';
+    }
+    if (nodes.recipientInput) {
+      nodes.recipientInput.placeholder = safeChannel === 'email'
+        ? 'Search leads or type an email'
+        : 'Search leads or type a number';
+    }
+    if (nodes.messageLabel) {
+      nodes.messageLabel.textContent = safeChannel === 'call' ? 'Call note / opener' : 'Message';
+    }
+    if (composeModalState.selectedLead && !getComposeModalLeadTarget(composeModalState.selectedLead, safeChannel)) {
+      clearComposeSelectedRecipient({ focus: false });
+    }
+    renderComposeSelectedRecipient();
+    composeModalState.selectedIdentityId = options.keepIdentity ? composeModalState.selectedIdentityId : '';
+    renderComposeModalIdentity();
+    renderComposeRecipientSuggestions();
+    updateComposeModalMeta();
+    if (options.persist !== false) saveComposeModalDraft();
+  }
+
+  function saveComposeModalDraft() {
+    const nodes = getComposeModalNodes();
+    if (!nodes.modal) return;
+    const message = nodes.messageInput?.value || '';
+    const draft = {
+      channel: composeModalState.channel,
+      identityId: composeModalState.selectedIdentityId || '',
+      recipient: nodes.recipientInput?.value || '',
+      selectedLeadId: composeModalState.selectedLead?.id || '',
+      selectedLead: composeModalState.selectedLead || null,
+      message,
+      body: message,
+      sendLater: composeModalState.scheduleOn,
+      scheduledFor: nodes.scheduleInput?.value || '',
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(INBOX_COMPOSE_DRAFT_KEY, JSON.stringify(draft));
+  }
+
+  function restoreComposeModalDraft(options = {}) {
+    const nodes = getComposeModalNodes();
+    const draft = getInboxComposeDraft();
+    if (!nodes.modal || !draft || typeof draft !== 'object') return false;
+    const hasUsefulDraft = Boolean(
+      String(draft.message || draft.body || '').trim() ||
+      String(draft.recipient || '').trim() ||
+      draft.selectedLeadId ||
+      draft.selectedLead ||
+      draft.identityId ||
+      draft.sendLater
+    );
+    setComposeModalChannel(draft.channel || 'sms', { persist: false, keepIdentity: true });
+    composeModalState.selectedIdentityId = draft.identityId || '';
+    const leads = getComposeModalLeads();
+    composeModalState.selectedLead = leads.find((lead) => lead.id === draft.selectedLeadId)
+      || (draft.selectedLead ? normalizeComposeLead(draft.selectedLead) : null);
+    if (nodes.recipientInput) nodes.recipientInput.value = draft.recipient || '';
+    if (nodes.messageInput) nodes.messageInput.value = draft.message || draft.body || '';
+    if (draft.sendLater) {
+      if (nodes.scheduleInput) nodes.scheduleInput.value = draft.scheduledFor || '';
+      setComposeModalSchedule(true, draft.scheduledFor);
+    } else {
+      setComposeModalSchedule(false);
+    }
+    renderComposeSelectedRecipient();
+    renderComposeModalIdentity();
+    updateComposeModalMeta();
+    if (options.notify && hasUsefulDraft) {
+      toast({ type: 'info', title: 'Draft restored', desc: 'Your compose modal is back where you left it.' });
+    }
+    return hasUsefulDraft;
+  }
+
+  function primeComposeModalFromContext(context = {}) {
+    const lead = normalizeComposeLead({
+      id: context.leadId || context.id || '',
+      leadName: context.leadName || context.name,
+      phone: context.phone,
+      email: context.email,
+      address: context.address,
+      status: 'Inbox context',
+    });
+    if (lead.name && (lead.phone || lead.email)) {
+      composeModalState.selectedLead = lead;
+      renderComposeSelectedRecipient();
+      renderComposeModalIdentity({ phone: lead.phone });
+    }
+  }
+
+  function resetComposeModal() {
+    const nodes = getComposeModalNodes();
+    composeModalState.selectedLead = null;
+    composeModalState.selectedIdentityId = '';
+    if (nodes.recipientInput) {
+      nodes.recipientInput.value = '';
+      nodes.recipientInput.style.display = '';
+    }
+    if (nodes.messageInput) nodes.messageInput.value = '';
+    if (nodes.suggestions) {
+      nodes.suggestions.innerHTML = '';
+      nodes.suggestions.classList.remove('open');
+    }
+    nodes.selectedRecipient?.classList.remove('show');
+    nodes.emojiPicker?.classList.remove('open');
+    setComposeModalSchedule(false);
+    setComposeModalChannel('sms', { persist: false });
+    updateComposeModalMeta();
+  }
+
+  function showComposeModal(options = {}) {
+    const nodes = getComposeModalNodes();
+    if (!nodes.backdrop || !nodes.modal) return;
+    wireInboxComposeModal();
+    nodes.backdrop.classList.add('open');
+    nodes.backdrop.setAttribute('aria-hidden', 'false');
+    const restored = restoreComposeModalDraft({ notify: options.notify });
+    if (!restored) {
+      resetComposeModal();
+      primeComposeModalFromContext(options.context || getInboxContext());
+      if (options.notify) {
+        toast({ type: 'info', title: 'Compose opened', desc: 'Pick SMS, email, or call and PBK will route it safely.' });
+      }
+    }
+    requestAnimationFrame(() => {
+      if (nodes.body) nodes.body.scrollTop = 0;
+      nodes.close?.focus({ preventScroll: true });
+    });
+  }
+
+  function closeComposeModal(options = {}) {
+    const nodes = getComposeModalNodes();
+    if (!nodes.backdrop?.classList.contains('open')) return false;
+    if (!options.skipSave) saveComposeModalDraft();
+    nodes.backdrop.classList.remove('open');
+    nodes.backdrop.setAttribute('aria-hidden', 'true');
+    nodes.suggestions?.classList.remove('open');
+    nodes.emojiPicker?.classList.remove('open');
+    closeIdentityMenus();
+    if (options.clear) resetComposeModal();
+    return true;
+  }
+
+  function getComposeModalContext() {
+    const nodes = getComposeModalNodes();
+    const lead = composeModalState.selectedLead;
+    const recipient = lead ? getComposeModalLeadTarget(lead) : nodes.recipientInput?.value?.trim() || '';
+    const base = lead
+      ? { leadId: lead.leadId || lead.id, leadName: lead.name, address: lead.address, phone: lead.phone, email: lead.email }
+      : getInboxContext();
+    return {
+      ...base,
+      phone: composeModalState.channel === 'email' ? base.phone || '' : recipient || base.phone || '',
+      email: composeModalState.channel === 'email' ? recipient || base.email || '' : base.email || '',
+      leadName: lead?.name || base.leadName || recipient || 'Selected seller',
+      address: lead?.address || base.address || 'Selected property',
+      recipient,
+    };
+  }
+
+  function queueComposeScheduledDraft() {
+    const nodes = getComposeModalNodes();
+    const existing = parseJSONSafe(localStorage.getItem(COMPOSE_MODAL_SCHEDULED_KEY), []);
+    const record = {
+      id: `scheduled-${Date.now()}`,
+      channel: composeModalState.channel,
+      identityId: composeModalState.selectedIdentityId || '',
+      context: getComposeModalContext(),
+      message: nodes.messageInput?.value || '',
+      scheduledFor: nodes.scheduleInput?.value || '',
+      createdAt: new Date().toISOString(),
+    };
+    localStorage.setItem(COMPOSE_MODAL_SCHEDULED_KEY, JSON.stringify([record, ...(Array.isArray(existing) ? existing : [])].slice(0, 25)));
+    return record;
+  }
+
+  async function sendComposeModal() {
+    const nodes = getComposeModalNodes();
+    if (!nodes.send || nodes.send.disabled) return;
+    const context = getComposeModalContext();
+    const message = nodes.messageInput?.value?.trim() || buildSmsDraft(context);
+    if (composeModalState.scheduleOn) {
+      const record = queueComposeScheduledDraft();
+      const when = record.scheduledFor
+        ? new Date(record.scheduledFor).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : 'the selected time';
+      clearInboxComposeDraft();
+      closeComposeModal({ skipSave: true, clear: true });
+      toast({ type: 'success', title: 'Scheduled draft saved', desc: `${composeModalState.channel.toUpperCase()} follow-up queued locally for ${when}.` });
+      return;
+    }
+
+    await withButtonLoading(nodes.send, composeModalState.channel === 'call' ? 'Calling...' : 'Sending...', async () => {
+      if (composeModalState.channel === 'call') {
+        await invokeRuntimeTool('telnyx_call', {
+          leadName: context.leadName,
+          address: context.address,
+          phone: context.phone || context.recipient,
+          script: message,
+          fromIdentityId: composeModalState.selectedIdentityId,
+        }, {
+          actionLabel: 'outbound calls',
+          successTitle: 'Call request complete',
+          successDesc: (response, outcome) => outcome === 'live'
+            ? `${context.leadName} is now being called through Telnyx.`
+            : `${context.leadName}'s call request was captured without claiming a live dial.`,
+          errorTitle: 'Call request failed',
+        });
+      } else {
+        await sendLeadMessageViaBridge({
+          context,
+          channel: composeModalState.channel === 'email' ? 'email' : 'sms',
+          stage: 'followup',
+          message,
+          includeActivity: true,
+          fromIdentityId: composeModalState.selectedIdentityId,
+        });
+      }
+    });
+    clearInboxComposeDraft();
+    closeComposeModal({ skipSave: true, clear: true });
+  }
+
+  function wireInboxComposeModal() {
+    const nodes = getComposeModalNodes();
+    if (!nodes.modal || composeModalState.wired) return;
+    composeModalState.wired = true;
+    if (nodes.emojiPicker) {
+      nodes.emojiPicker.innerHTML = COMPOSE_MODAL_EMOJIS.map((emoji) => `<button type="button" aria-label="Insert ${emoji}">${emoji}</button>`).join('');
+    }
+    nodes.close?.addEventListener('click', () => closeComposeModal());
+    nodes.cancel?.addEventListener('click', () => closeComposeModal());
+    nodes.backdrop?.addEventListener('click', (event) => {
+      if (event.target === nodes.backdrop) closeComposeModal();
+    });
+    nodes.channelButtons.forEach((button) => {
+      button.addEventListener('click', () => setComposeModalChannel(button.dataset.composeModalChannel));
+    });
+    nodes.fromButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      renderComposeModalIdentity();
+      toggleIdentityMenu(nodes.fromButton, nodes.fromMenu);
+    });
+    nodes.fromMenu?.addEventListener('click', (event) => {
+      const option = event.target.closest('[data-pick-id]');
+      if (!option) return;
+      const type = composeModalState.channel === 'email' ? 'email' : 'phone';
+      const identity = getOutboundIdentities(type).find((item) => item.id === option.dataset.pickId);
+      composeModalState.selectedIdentityId = identity?.id || '';
+      paintIdentityPicker('cmFrom', identity, composeModalState.channel);
+      closeIdentityMenus();
+      saveComposeModalDraft();
+      toast({ type: 'success', title: 'Compose route selected', desc: `${identity?.display || 'Sender'} - ${identity?.value || ''}` });
+    });
+    nodes.recipientInput?.addEventListener('input', () => {
+      renderComposeRecipientSuggestions();
+      renderComposeModalIdentity();
+      updateComposeModalSendState();
+      saveComposeModalDraft();
+    });
+    nodes.suggestions?.addEventListener('click', (event) => {
+      const item = event.target.closest('[data-compose-lead-id]');
+      if (!item) return;
+      const lead = getComposeModalLeads().find((candidate) => candidate.id === item.dataset.composeLeadId);
+      if (lead) selectComposeModalLead(lead);
+    });
+    nodes.clearRecipient?.addEventListener('click', () => clearComposeSelectedRecipient());
+    nodes.messageInput?.addEventListener('input', () => {
+      updateComposeModalMeta();
+      saveComposeModalDraft();
+    });
+    document.querySelectorAll('[data-compose-template]').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (!nodes.messageInput) return;
+        nodes.messageInput.value = button.dataset.composeTemplate || '';
+        nodes.messageInput.focus();
+        updateComposeModalMeta();
+        saveComposeModalDraft();
+      });
+    });
+    nodes.emojiButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      nodes.emojiPicker?.classList.toggle('open');
+    });
+    nodes.emojiPicker?.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button || !nodes.messageInput) return;
+      const emoji = button.textContent || '';
+      const start = nodes.messageInput.selectionStart || 0;
+      const end = nodes.messageInput.selectionEnd || start;
+      const value = nodes.messageInput.value || '';
+      nodes.messageInput.value = `${value.slice(0, start)}${emoji}${value.slice(end)}`;
+      nodes.messageInput.focus();
+      nodes.messageInput.setSelectionRange(start + emoji.length, start + emoji.length);
+      nodes.emojiPicker.classList.remove('open');
+      updateComposeModalMeta();
+      saveComposeModalDraft();
+    });
+    nodes.scheduleButton?.addEventListener('click', () => setComposeModalSchedule(!composeModalState.scheduleOn));
+    nodes.scheduleInput?.addEventListener('input', () => {
+      updateComposeScheduleHint();
+      updateComposeModalSendState();
+      saveComposeModalDraft();
+    });
+    nodes.send?.addEventListener('click', () => {
+      sendComposeModal().catch((error) => {
+        console.warn('[PBK] compose modal send failed', error);
+      });
+    });
+    document.addEventListener('click', (event) => {
+      if (!nodes.backdrop?.classList.contains('open')) return;
+      if (!nodes.suggestions?.contains(event.target) && event.target !== nodes.recipientInput) {
+        nodes.suggestions?.classList.remove('open');
+      }
+      if (!nodes.emojiPicker?.contains(event.target) && event.target !== nodes.emojiButton) {
+        nodes.emojiPicker?.classList.remove('open');
+      }
+    });
+    setComposeModalChannel('sms', { persist: false });
+  }
+
   function restoreInboxComposeDraft(compose, options = {}) {
     if (!compose) return false;
     const draft = getInboxComposeDraft();
@@ -26043,7 +27175,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
     composeSelectedIdentityId = draft.identityId || '';
     const textarea = getInboxComposeTextarea(compose);
-    if (textarea && !textarea.value) textarea.value = draft.body || '';
+    if (textarea && !textarea.value) textarea.value = draft.body || draft.message || '';
     renderComposeIdentityPicker({ channel });
     if (options.notify && ((draft.body || '').trim() || draft.identityId)) {
       toast({ type: 'info', title: 'Draft restored', desc: 'Your Inbox compose draft is back where you left it.' });
@@ -26123,6 +27255,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const compose = page.querySelector('.compose');
     const textarea = compose?.querySelector('textarea');
     wireComposeIdentityPicker(compose);
+    wireInboxComposeModal();
     restoreInboxComposeDraft(compose);
     textarea?.addEventListener('input', () => saveInboxComposeDraft(compose));
 

@@ -47,6 +47,7 @@ export function ParadiseLayout() {
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName?.toLowerCase();
       const typing = tagName === 'input' || tagName === 'textarea' || target?.isContentEditable;
+      const modalOpen = Boolean(document.querySelector('[role="dialog"], .modal-backdrop'));
 
       if (event.key === 'Escape') {
         setShortcutOpen(false);
@@ -55,6 +56,7 @@ export function ParadiseLayout() {
       }
 
       if (event.key === '?' && !typing) {
+        if (modalOpen) return;
         event.preventDefault();
         setShortcutOpen(true);
         return;
@@ -74,11 +76,14 @@ export function ParadiseLayout() {
 
       if (event.altKey && event.shiftKey && event.key.toLowerCase() === 'a') {
         event.preventDefault();
-        (document.querySelector('[data-approval-primary="true"]') as HTMLButtonElement | null)?.click();
+        (
+          document.querySelector('[data-approval-primary="true"]') as HTMLButtonElement | null
+        )?.click();
         return;
       }
 
       if (typing) return;
+      if (modalOpen) return;
 
       if (event.key.toLowerCase() === 'f') {
         event.preventDefault();
@@ -98,10 +103,14 @@ export function ParadiseLayout() {
         window.dispatchEvent(new CustomEvent('pbk:open-compose'));
       } else if (event.key.toLowerCase() === 'a') {
         event.preventDefault();
-        (document.querySelector('[data-approval-primary="true"]') as HTMLButtonElement | null)?.click();
+        (
+          document.querySelector('[data-approval-primary="true"]') as HTMLButtonElement | null
+        )?.click();
       } else if (event.key.toLowerCase() === 'r') {
         event.preventDefault();
-        (document.querySelector('[data-approval-secondary="true"]') as HTMLButtonElement | null)?.click();
+        (
+          document.querySelector('[data-approval-secondary="true"]') as HTMLButtonElement | null
+        )?.click();
       }
     };
 

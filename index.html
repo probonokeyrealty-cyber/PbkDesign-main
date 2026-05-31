@@ -14596,8 +14596,23 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   let gPressed = false;
   let gTimer = null;
   document.addEventListener('keydown', (e) => {
-    // Ignore when typing in input/textarea (unless it's our palette input)
     const inField = e.target.matches('input, textarea') && e.target !== cpInput;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      notifPanel.classList.remove('open');
+      userMenu.classList.remove('open');
+      modePopover.classList.remove('open');
+      closeFleetModals();
+      closeTopUtilityModal();
+      if (modalBackdrop.classList.contains('open')) {
+        modalBackdrop.classList.remove('open');
+        confirmModal.classList.remove('open');
+      }
+      return;
+    }
+
+    // Ignore when typing in input/textarea (unless it's our palette input)
     if (inField) return;
 
     // ?K / Ctrl-K
@@ -14609,16 +14624,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     if (cpModal.classList.contains('open')) return; // palette handles its own
 
-    if (e.key === 'Escape') {
-      notifPanel.classList.remove('open');
-      userMenu.classList.remove('open');
-      modePopover.classList.remove('open');
-      closeFleetModals();
-      if (modalBackdrop.classList.contains('open')) {
-        modalBackdrop.classList.remove('open');
-        confirmModal.classList.remove('open');
-      }
-    }
+    if (isModalSurfaceOpen()) return;
 
     // ? for shortcuts
     if (e.key === '?') {
@@ -22892,10 +22898,13 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   function showUtilityModal(title, bodyHtml, actionsHtml = '') {
+    const utilityModalId = `utility-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop open';
+    backdrop.dataset.utilityModalId = utilityModalId;
     const modal = document.createElement('div');
     modal.className = 'modal open';
+    modal.dataset.utilityModalId = utilityModalId;
     modal.innerHTML = `
       <h3>${escapeHtml(title)}</h3>
       <p>${bodyHtml}</p>
@@ -22914,6 +22923,24 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
     document.body.append(backdrop, modal);
     return modal;
+  }
+
+  function closeTopUtilityModal() {
+    const modals = Array.from(document.querySelectorAll('.modal[data-utility-modal-id]'));
+    const modal = modals[modals.length - 1];
+    if (!modal) return false;
+    const utilityModalId = modal.dataset.utilityModalId;
+    document.querySelectorAll(`[data-utility-modal-id="${utilityModalId}"]`).forEach((node) => node.remove());
+    return true;
+  }
+
+  function isModalSurfaceOpen() {
+    return Boolean(
+      document.querySelector('.modal[data-utility-modal-id]') ||
+      document.querySelector('.fleet-modal-backdrop.open') ||
+      modalBackdrop.classList.contains('open') ||
+      cpModal.classList.contains('open')
+    );
   }
 
   function showPbkFormModal({ title, intro = '', fields = [], submitLabel = 'Save', submitClass = 'btn-primary', validate = null, onSubmit = null }) {

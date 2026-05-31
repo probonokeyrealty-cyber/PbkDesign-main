@@ -68,6 +68,8 @@ ENV PUPPETEER_CACHE_DIR=/tmp/puppeteer
 RUN npm install --no-save --no-audit --no-fund --loglevel=error --timeout=600000 \
       @sparticuz/chromium@147.0.1 \
       @deepgram/sdk@5.1.0 \
+      @langchain/langgraph@1.3.2 \
+      @modelcontextprotocol/sdk@1.29.0 \
       @aws-sdk/client-s3@3.1056.0 \
       @aws-sdk/s3-request-presigner@3.1056.0 \
       @opentelemetry/api@1.9.1 \
@@ -108,6 +110,9 @@ COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/synthetic-edge-cases.mjs ./scripts/synthetic-edge-cases.mjs
 COPY scripts/mission-resilience.mjs ./scripts/mission-resilience.mjs
+COPY scripts/agent-teams.mjs ./scripts/agent-teams.mjs
+COPY scripts/auto-skill-learner.mjs ./scripts/auto-skill-learner.mjs
+COPY scripts/nurture-agent.mjs ./scripts/nurture-agent.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs

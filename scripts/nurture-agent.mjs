@@ -27,6 +27,62 @@ export async function ensureNurtureSchema(pool) {
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+    CREATE TABLE IF NOT EXISTS public.lead_profiles (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      external_id TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'nurture-agent',
+      status TEXT NOT NULL DEFAULT 'new',
+      stage TEXT NOT NULL DEFAULT 'warm',
+      temperature TEXT NOT NULL DEFAULT 'warm',
+      lead_name TEXT NOT NULL DEFAULT '',
+      first_name TEXT NOT NULL DEFAULT '',
+      last_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      city TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT '',
+      postal_code TEXT NOT NULL DEFAULT '',
+      owner_type TEXT NOT NULL DEFAULT '',
+      participant_role TEXT NOT NULL DEFAULT '',
+      motivation_score NUMERIC NOT NULL DEFAULT 0,
+      engagement_score NUMERIC NOT NULL DEFAULT 0,
+      dnc BOOLEAN NOT NULL DEFAULT FALSE,
+      dnc_reason TEXT NOT NULL DEFAULT '',
+      assigned_agent TEXT NOT NULL DEFAULT 'Ava',
+      raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.lead_profiles
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS external_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'nurture-agent',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new',
+      ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'warm',
+      ADD COLUMN IF NOT EXISTS temperature TEXT NOT NULL DEFAULT 'warm',
+      ADD COLUMN IF NOT EXISTS lead_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS owner_type TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS participant_role TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS motivation_score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS engagement_score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS dnc BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS dnc_reason TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS assigned_agent TEXT NOT NULL DEFAULT 'Ava',
+      ADD COLUMN IF NOT EXISTS raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.nurture_sequence_templates (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -69,6 +125,8 @@ export async function ensureNurtureSchema(pool) {
 
     CREATE INDEX IF NOT EXISTS nurture_templates_stage_idx
       ON public.nurture_sequence_templates (tenant_id, trigger_stage, is_active);
+    CREATE INDEX IF NOT EXISTS lead_profiles_stage_idx
+      ON public.lead_profiles (workspace_id, stage, updated_at DESC);
     CREATE INDEX IF NOT EXISTS nurture_instances_lead_idx
       ON public.nurture_instances (tenant_id, lead_id, status);
     CREATE INDEX IF NOT EXISTS nurture_instances_status_next_idx
@@ -99,6 +157,69 @@ export async function ensureNurtureSchema(pool) {
     ],
   );
   return { ok: true };
+}
+
+async function upsertLeadProfileFromParams(pool, params = {}) {
+  const leadId = String(params.leadId || params.lead_id || params.id || '').trim();
+  if (!leadId) return null;
+  const fullName = String(params.leadName || params.lead_name || params.name || '').trim();
+  const firstName = String(params.firstName || params.first_name || fullName.split(/\s+/)[0] || '').trim();
+  const lastName = String(params.lastName || params.last_name || fullName.split(/\s+/).slice(1).join(' ') || '').trim();
+  await pool.query(
+    `INSERT INTO public.lead_profiles (
+       id, workspace_id, external_id, source, status, stage, temperature,
+       lead_name, first_name, last_name, email, phone, address, city, state,
+       postal_code, motivation_score, engagement_score, assigned_agent, raw, created_at, updated_at
+     )
+     VALUES (
+       $1,'pbk',$2,$3,$4,$5,$6,
+       $7,$8,$9,$10,$11,$12,$13,$14,
+       $15,$16,$17,$18,$19::jsonb,NOW(),NOW()
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       external_id = COALESCE(NULLIF(EXCLUDED.external_id, ''), public.lead_profiles.external_id),
+       source = COALESCE(NULLIF(EXCLUDED.source, ''), public.lead_profiles.source),
+       status = COALESCE(NULLIF(EXCLUDED.status, ''), public.lead_profiles.status),
+       stage = COALESCE(NULLIF(EXCLUDED.stage, ''), public.lead_profiles.stage),
+       temperature = COALESCE(NULLIF(EXCLUDED.temperature, ''), public.lead_profiles.temperature),
+       lead_name = COALESCE(NULLIF(EXCLUDED.lead_name, ''), public.lead_profiles.lead_name),
+       first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), public.lead_profiles.first_name),
+       last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), public.lead_profiles.last_name),
+       email = COALESCE(NULLIF(EXCLUDED.email, ''), public.lead_profiles.email),
+       phone = COALESCE(NULLIF(EXCLUDED.phone, ''), public.lead_profiles.phone),
+       address = COALESCE(NULLIF(EXCLUDED.address, ''), public.lead_profiles.address),
+       city = COALESCE(NULLIF(EXCLUDED.city, ''), public.lead_profiles.city),
+       state = COALESCE(NULLIF(EXCLUDED.state, ''), public.lead_profiles.state),
+       postal_code = COALESCE(NULLIF(EXCLUDED.postal_code, ''), public.lead_profiles.postal_code),
+       motivation_score = GREATEST(public.lead_profiles.motivation_score, EXCLUDED.motivation_score),
+       engagement_score = GREATEST(public.lead_profiles.engagement_score, EXCLUDED.engagement_score),
+       assigned_agent = COALESCE(NULLIF(EXCLUDED.assigned_agent, ''), public.lead_profiles.assigned_agent),
+       raw = public.lead_profiles.raw || EXCLUDED.raw,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      leadId,
+      String(params.externalId || params.external_id || leadId),
+      String(params.source || 'nurture-agent'),
+      String(params.status || 'new'),
+      String(params.stage || params.temperature || 'warm'),
+      String(params.temperature || params.stage || 'warm'),
+      fullName || firstName || 'Seller',
+      firstName,
+      lastName,
+      String(params.email || ''),
+      String(params.phone || params.to || ''),
+      String(params.address || params.propertyAddress || ''),
+      String(params.city || ''),
+      String(params.state || ''),
+      String(params.postalCode || params.postal_code || params.zip || ''),
+      Number(params.motivationScore || params.motivation_score || params.score || 0),
+      Number(params.engagementScore || params.engagement_score || params.score || 0),
+      String(params.assignedAgent || params.assigned_agent || 'Ava'),
+      sqlJson({ ...params, source: params.source || 'nurture-agent' }),
+    ],
+  );
+  return loadLead(pool, leadId);
 }
 
 async function loadTemplateForLead(pool, leadId, templateId = '') {
@@ -275,6 +396,7 @@ export async function startNurtureSequenceCore(pool, params = {}, options = {}) 
   await ensureNurtureSchema(pool);
   const leadId = String(params.leadId || params.lead_id || '').trim();
   if (!leadId) return { ok: false, result: 'missing_lead_id', error: 'leadId is required.' };
+  await upsertLeadProfileFromParams(pool, { ...params, leadId }).catch(() => null);
   const template = await loadTemplateForLead(pool, leadId, params.templateId || params.template_id || '');
   if (!template) return { ok: false, result: 'template_missing', error: 'No active nurture template is available.' };
 
@@ -337,9 +459,10 @@ export async function pauseNurtureForPhoneStop(pool, params = {}) {
 
 export async function consultNurtureAgentCore(pool, params = {}) {
   if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  await ensureNurtureSchema(pool);
   const leadId = String(params.leadId || params.lead_id || '').trim();
   if (!leadId) return { ok: false, result: 'missing_lead_id' };
-  const lead = await loadLead(pool, leadId);
+  const lead = await loadLead(pool, leadId) || await upsertLeadProfileFromParams(pool, { ...params, leadId });
   if (!lead) return { ok: false, result: 'lead_missing' };
   const stage = normalizeStage(lead.stage);
   const score = Number(lead.engagement_score ?? lead.motivation_score ?? 0);

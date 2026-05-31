@@ -39220,6 +39220,43 @@ function runReadonlyCliCommand(params = {}) {
   }
 }
 
+function enrichNurtureLeadParams(params = {}) {
+  const requestedId = String(params.leadId || params.lead_id || params.id || '').trim();
+  if (!requestedId) return params;
+  const lead = (state.leadImports || []).find((item) => {
+    const ids = [
+      item.id,
+      item.leadId,
+      item.lead_id,
+      item.externalId,
+      item.external_id,
+      item.phone,
+      item.seller?.phone,
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    return ids.includes(requestedId);
+  });
+  if (!lead) return params;
+  const seller = lead.seller || {};
+  const property = lead.property || {};
+  return {
+    ...params,
+    leadId: lead.leadId || lead.lead_id || lead.id || requestedId,
+    externalId: lead.id || lead.externalId || lead.external_id || requestedId,
+    leadName: seller.name || lead.leadName || lead.lead_name || lead.name || params.leadName,
+    firstName: String(seller.name || lead.leadName || '').split(/\s+/)[0] || params.firstName,
+    email: seller.email || lead.email || params.email,
+    phone: seller.phone || lead.phone || params.phone,
+    address: property.address || lead.address || params.address,
+    city: property.city || lead.city || params.city,
+    state: property.state || lead.state || params.state,
+    postalCode: property.zip || property.postalCode || property.postal_code || lead.zip || params.postalCode,
+    stage: lead.stage || lead.temperature || params.stage || 'warm',
+    temperature: lead.temperature || lead.stage || params.temperature || 'warm',
+    score: lead.engagementScore || lead.engagement_score || lead.motivationScore || lead.score || params.score || 0,
+    source: params.source || 'bridge-state-lead-import',
+  };
+}
+
 const toolHandlers = {
   async search_leads(params = {}) {
     recordToolUse('search_leads');
@@ -39463,14 +39500,15 @@ const toolHandlers = {
   async startNurtureSequence(params = {}) {
     recordToolUse('startNurtureSequence');
     const pool = getPgPool();
-    return startNurtureSequenceCore(pool, params, {
+    const enriched = enrichNurtureLeadParams(params);
+    return startNurtureSequenceCore(pool, enriched, {
       invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
     });
   },
 
   async consultNurtureAgent(params = {}) {
     recordToolUse('consultNurtureAgent');
-    return consultNurtureAgentCore(getPgPool(), params);
+    return consultNurtureAgentCore(getPgPool(), enrichNurtureLeadParams(params));
   },
 
   async processDueNurtureSteps(params = {}) {
@@ -53692,7 +53730,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs'];
       if (!pool) {
         json(response, 200, {
           ok: false,

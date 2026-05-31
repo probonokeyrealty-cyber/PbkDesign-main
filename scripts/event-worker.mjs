@@ -166,6 +166,7 @@ async function handleEvent(event) {
         if (leadId && oldStage !== newStage && /^(warm|hot)$/i.test(newStage)) {
           const db = getPool();
           const result = await startNurtureSequenceCore(db, {
+            ...event.payload,
             leadId,
             trigger: 'lead.updated',
             source: 'event-worker',

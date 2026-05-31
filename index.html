@@ -55,6 +55,7 @@
     --font-display: 'Fraunces', 'Times New Roman', serif;
     --font-ui: 'Geist', -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+    --font-body: var(--font-ui);
 
     /* === SPACE === */
     --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
@@ -841,6 +842,33 @@
   .btn-takeover:hover { opacity: 0.92; box-shadow: 0 0 12px var(--magenta-glow); }
   .btn-amber { background: var(--amber); color: var(--bg-void); }
   .btn-amber:hover { opacity: 0.9; }
+  .btn-success {
+    background: linear-gradient(135deg, var(--lime), #84cc16);
+    color: var(--bg-void);
+    border-color: rgba(163, 230, 53, 0.82);
+    box-shadow: 0 4px 12px rgba(163, 230, 53, 0.20);
+  }
+  .btn-success:hover {
+    box-shadow: 0 8px 18px rgba(163, 230, 53, 0.28);
+    transform: translateY(-1px);
+  }
+  .btn-sky-gradient {
+    background: linear-gradient(135deg, var(--sky-deep), var(--sky-dim));
+    color: #FFFFFF;
+    border-color: rgba(125, 211, 252, 0.68);
+    box-shadow: 0 4px 14px rgba(125, 211, 252, 0.20);
+  }
+  .btn-sky-gradient:hover {
+    box-shadow: 0 8px 20px rgba(125, 211, 252, 0.28);
+    transform: translateY(-1px);
+  }
+  body:not([data-active-page="analyzer"]) .btn:focus-visible,
+  body:not([data-active-page="analyzer"]) .chip-btn:focus-visible,
+  body:not([data-active-page="analyzer"]) .icon-btn:focus-visible {
+    outline: none;
+    border-color: var(--sky-dim);
+    box-shadow: 0 0 0 3px var(--sky-glow);
+  }
 
   .badge {
     font-family: var(--font-mono); font-size: 9px;
@@ -853,12 +881,13 @@
   .badge.signed { background: var(--sky-glow); color: var(--sky); }
   .badge.closed { background: var(--lime-glow); color: var(--lime); }
   .badge.live {
-    background: var(--crimson-deep); color: var(--text-primary);
+    background: var(--crimson-glow); color: var(--crimson);
+    border: 1px solid rgba(248, 113, 113, 0.24);
     display: inline-flex; align-items: center; gap: 4px;
   }
   .badge.live::before {
     content: ''; width: 6px; height: 6px; border-radius: 50%;
-    background: var(--text-primary); animation: pulse 1s infinite;
+    background: var(--crimson); animation: pulse 1s infinite;
   }
   .badge.new { background: var(--ion-glow); color: var(--ion); }
 
@@ -1883,7 +1912,7 @@
 [data-page="dashboard"] .status-chip.new { background: var(--ion-glow); color: var(--ion); }
 [data-page="dashboard"] .status-chip.neg { background: var(--amber-glow); color: var(--amber); }
 [data-page="dashboard"] .status-chip.sent { background: rgba(232, 121, 249, 0.12); color: var(--magenta); }
-[data-page="dashboard"] .status-chip.won { background: var(--sky-glow); color: var(--sky); }
+[data-page="dashboard"] .status-chip.won { background: var(--lime-glow); color: var(--lime); }
 [data-page="dashboard"] .status-chip.cold { background: var(--bg-hover); color: var(--text-tertiary); }
 [data-page="dashboard"] .mono { font-family: var(--font-mono); color: var(--text-secondary); font-size: 12px; }
 /* ========================================================
@@ -2192,7 +2221,7 @@
       <div class="panel fade-in" style="animation-delay: 0.05s">
         <div class="panel-head">
           <div class="panel-title">Unified Inbox <span class="tt-count">— 12</span></div>
-          <button type="button" class="chip-btn" data-open-compose>Compose</button>
+          <button type="button" class="btn btn-sky-gradient" data-open-compose>+ Compose</button>
         </div>
         <div class="inbox-filters">
           <button type="button" class="chip-btn active">All</button>
@@ -2681,6 +2710,18 @@
       display: flex; flex-direction: column; overflow: hidden;
     }
     .ib-head { padding: var(--s-5) var(--s-5) var(--s-3); border-bottom: 1px solid var(--border-dim); }
+    .ib-head-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--s-3);
+    }
+    .ib-head-top .btn {
+      flex: 0 0 auto;
+      min-height: 36px;
+      padding-inline: 14px;
+      white-space: nowrap;
+    }
     .ib-head h3 {
       font-family: var(--font-display); font-weight: 400;
       font-size: 24px; letter-spacing: -0.02em; margin-bottom: 4px;
@@ -3175,7 +3216,10 @@
   <div class="inbox-layout">
     <aside class="inbox-sidebar">
       <div class="ib-head">
-        <h3>The <em>inbox</em>.</h3>
+        <div class="ib-head-top">
+          <h3>The <em>inbox</em>.</h3>
+          <button type="button" class="btn btn-sky-gradient" data-open-compose>+ Compose</button>
+        </div>
         <p>Live bridge inbox for calls, SMS, email, voicemail, approvals, and lead context.</p>
         <div class="ib-live-status" data-inbox-live-status>Waiting for live bridge sync</div>
       </div>
@@ -3461,6 +3505,11 @@
     .tag.absentee { background: var(--ion-glow); color: var(--ion); border-color: rgba(56, 189, 248, 0.3); }
     .tag.vacant { background: var(--amber-glow); color: var(--amber); border-color: rgba(255, 176, 32, 0.3); }
     .tag.pre-fc { background: var(--crimson-glow); color: var(--crimson); border-color: rgba(248, 113, 113, 0.3); }
+    .tag.hot,
+    .tag.equity { background: var(--lime-glow); color: var(--lime); border-color: rgba(163, 230, 53, 0.3); }
+    .tag.urgent { background: var(--crimson-glow); color: var(--crimson); border-color: rgba(248, 113, 113, 0.3); }
+    .tag.qualify,
+    .tag.sms-engaged { background: var(--sky-glow); color: var(--sky); border-color: rgba(125, 211, 252, 0.3); }
 
     .lead-name-cell { display: grid; gap: 5px; min-width: 160px; }
     .lead-type-badges { display: flex; gap: 5px; flex-wrap: wrap; }
@@ -5163,7 +5212,7 @@
     <div class="page-head-actions">
       <button type="button" class="btn btn-ghost">Call history</button>
       <button type="button" class="btn btn-ghost">Recordings</button>
-      <button type="button" class="btn btn-primary">Start outbound batch</button>
+      <button type="button" class="btn btn-sky-gradient">Start outbound batch</button>
     </div>
   </div>
 
@@ -20233,6 +20282,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return [lead.status, lead.motivation, lead.source].filter(Boolean).slice(0, 3);
   }
 
+  function tagToneClass(tag = '') {
+    const value = String(tag || '').toLowerCase();
+    if (/probate|estate|heir|executor|attorney/.test(value)) return 'probate';
+    if (/absentee|out of state|landlord/.test(value)) return 'absentee';
+    if (/vacant|empty/.test(value)) return 'vacant';
+    if (/foreclosure|pre.?fc|dnc/.test(value)) return 'pre-fc';
+    if (/hot|closed|winner/.test(value)) return 'hot';
+    if (/equity|money|profit/.test(value)) return 'equity';
+    if (/urgent|now|fast/.test(value)) return 'urgent';
+    if (/qualify|sms|engaged|reply/.test(value)) return 'qualify';
+    return '';
+  }
+
   function getLeadMoneyValue(lead = {}, keys = []) {
     for (const key of keys) {
       const value = key.split('.').reduce((current, part) => current?.[part], lead);
@@ -26445,7 +26507,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     list.innerHTML = meta + rows.map((row) => {
       const { lead } = row;
       const inCall = row.phoneDigits && activePhones.has(row.phoneDigits);
-      const tags = row.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('');
+      const tags = row.tags.map((tag) => `<span class="tag ${escapeHtml(tagToneClass(tag))}">${escapeHtml(tag)}</span>`).join('');
       return `
         <div class="outbound-lead-result">
           <div class="outbound-lead-head">
@@ -26456,7 +26518,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           <div class="lead-result-meta">Last touch: ${escapeHtml(row.lastTouch ? formatRelativeTime(row.lastTouch) : 'never')} - ${escapeHtml(String(row.motivation))}</div>
           <div class="lead-result-actions">
             ${tags}
-            <button class="btn btn-primary btn-call" type="button" data-call-floor-call="${escapeHtml(row.id)}" ${inCall ? 'disabled' : ''}>Call</button>
+            <button class="btn btn-success btn-call" type="button" data-call-floor-call="${escapeHtml(row.id)}" ${inCall ? 'disabled' : ''}>Call</button>
             <button class="btn btn-ghost" type="button" data-call-floor-open-lead="${escapeHtml(row.id)}">Open</button>
           </div>
         </div>

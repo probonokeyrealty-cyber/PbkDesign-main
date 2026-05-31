@@ -5399,9 +5399,222 @@ function getPgPool() {
   return __pgPool;
 }
 
+async function ensurePbkOperationalTables(pool) {
+  if (!pool) return false;
+  await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS public.agent_registry (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      capabilities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      status TEXT NOT NULL DEFAULT 'active',
+      endpoint TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      health_checked_at TIMESTAMPTZ,
+      last_error TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_qa_audit (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      tool_name TEXT NOT NULL,
+      passed BOOLEAN NOT NULL DEFAULT FALSE,
+      skipped BOOLEAN NOT NULL DEFAULT FALSE,
+      reason TEXT NOT NULL DEFAULT '',
+      validator TEXT NOT NULL DEFAULT '',
+      retry_count INT NOT NULL DEFAULT 0,
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      qa JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.event_dead_letters (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      event_id TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error TEXT NOT NULL DEFAULT '',
+      stack TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_rex_autonomy_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      run_type TEXT NOT NULL DEFAULT 'goal_discovery',
+      kpis JSONB NOT NULL DEFAULT '{}'::jsonb,
+      goals JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'complete',
+      source TEXT NOT NULL DEFAULT 'rex-autonomy',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_safety_audit (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      tool_name TEXT NOT NULL,
+      blocked BOOLEAN NOT NULL DEFAULT FALSE,
+      approval_required BOOLEAN NOT NULL DEFAULT TRUE,
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      validation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_eval_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      suite_name TEXT NOT NULL DEFAULT 'ava_canonical',
+      ok BOOLEAN NOT NULL DEFAULT FALSE,
+      total INT NOT NULL DEFAULT 0,
+      passed INT NOT NULL DEFAULT 0,
+      failed INT NOT NULL DEFAULT 0,
+      report JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.test_cases (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      source TEXT NOT NULL DEFAULT 'youtube',
+      source_url TEXT NOT NULL DEFAULT '',
+      video_id TEXT NOT NULL DEFAULT '',
+      agent_id TEXT NOT NULL DEFAULT 'ava',
+      title TEXT NOT NULL DEFAULT '',
+      transcript TEXT NOT NULL DEFAULT '',
+      assertions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      coach_memory_entries JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'ready',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_turn_latency (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      speech_final_to_reply_start_ms INT,
+      turn_completion_ms INT,
+      transcript_to_tts_ms INT,
+      reply_mode TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      ok BOOLEAN,
+      labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_observability_alerts (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      alert_type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      message TEXT NOT NULL DEFAULT '',
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_goal_trajectories (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      call_id TEXT NOT NULL DEFAULT '',
+      lead_id TEXT NOT NULL DEFAULT '',
+      event_type TEXT NOT NULL DEFAULT 'goal_inference_updated',
+      utterance TEXT NOT NULL DEFAULT '',
+      beliefs JSONB NOT NULL DEFAULT '{}'::jsonb,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_action_intents (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      idempotency_key TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      lead_id TEXT NOT NULL DEFAULT '',
+      desired_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_observed_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending_reconcile',
+      attempts INT NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_memory_curation_events (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+      delete_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      dry_run BOOLEAN NOT NULL DEFAULT TRUE,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.pbk_mission_resilience_eval_runs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ok BOOLEAN NOT NULL DEFAULT FALSE,
+      score INT NOT NULL DEFAULT 0,
+      scores JSONB NOT NULL DEFAULT '{}'::jsonb,
+      coverage JSONB NOT NULL DEFAULT '[]'::jsonb,
+      assertions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      report JSONB NOT NULL DEFAULT '{}'::jsonb,
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS agent_registry_status_idx
+      ON public.agent_registry (tenant_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
+      ON public.pbk_qa_audit (tenant_id, tool_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS event_dead_letters_type_idx
+      ON public.event_dead_letters (tenant_id, event_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_safety_audit_lookup_idx
+      ON public.pbk_safety_audit (tenant_id, tool_name, blocked, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_eval_runs_lookup_idx
+      ON public.pbk_eval_runs (tenant_id, suite_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS test_cases_tenant_status_idx
+      ON public.test_cases (tenant_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_turn_latency_lookup_idx
+      ON public.pbk_turn_latency (tenant_id, call_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_observability_alerts_lookup_idx
+      ON public.pbk_observability_alerts (tenant_id, alert_type, severity, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_goal_trajectories_lookup_idx
+      ON public.pbk_goal_trajectories (tenant_id, lead_id, call_id, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS pbk_action_intents_idempotency_idx
+      ON public.pbk_action_intents (tenant_id, idempotency_key);
+    CREATE INDEX IF NOT EXISTS pbk_memory_curation_events_lookup_idx
+      ON public.pbk_memory_curation_events (tenant_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_mission_resilience_eval_runs_lookup_idx
+      ON public.pbk_mission_resilience_eval_runs (tenant_id, ok, created_at DESC);
+  `);
+  return true;
+}
+
 async function ensurePgSchema() {
   const pool = getPgPool();
   if (!pool) return false;
+  try {
+    await ensurePbkOperationalTables(pool);
+  } catch (error) {
+    console.warn('[postgres] operational schema ensure failed', error?.message || error);
+  }
   try {
     await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;

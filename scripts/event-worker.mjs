@@ -6,6 +6,12 @@ import {
   recordEventBusBacklogMetric,
   recordLatencyMetric,
 } from './observability.mjs';
+import {
+  ensureNurtureSchema,
+  pauseNurtureForPhoneStop,
+  processDueNurtureInstances,
+  startNurtureSequenceCore,
+} from './nurture-agent.mjs';
 
 const { Pool } = pg;
 
@@ -48,6 +54,13 @@ async function ensureDeadLetterTable() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  return { ok: true };
+}
+
+async function ensureWorkerSchemas() {
+  await ensureDeadLetterTable();
+  const db = getPool();
+  if (db) await ensureNurtureSchema(db);
   return { ok: true };
 }
 
@@ -145,6 +158,33 @@ async function handleEvent(event) {
         source: event.source || 'event-worker',
       });
       break;
+    case EventTypes.LEAD_UPDATED:
+      {
+        const oldStage = String(event.payload.oldStage || event.payload.old_stage || '').toLowerCase();
+        const newStage = String(event.payload.newStage || event.payload.new_stage || event.payload.stage || '').toLowerCase();
+        const leadId = event.payload.leadId || event.payload.lead_id || event.payload.id || '';
+        if (leadId && oldStage !== newStage && /^(warm|hot)$/i.test(newStage)) {
+          const db = getPool();
+          const result = await startNurtureSequenceCore(db, {
+            leadId,
+            trigger: 'lead.updated',
+            source: 'event-worker',
+          }, {
+            invokeTool: invokeBridgeTool,
+          });
+          console.log(`[pbk-event-worker] nurture ${result.result || 'handled'} for lead ${leadId}`);
+        }
+      }
+      break;
+    case 'sms.received':
+      {
+        const db = getPool();
+        const result = await pauseNurtureForPhoneStop(db, event.payload || {});
+        if (result.paused) {
+          console.log(`[pbk-event-worker] paused ${result.paused} nurture instance(s) for lead ${result.leadId}`);
+        }
+      }
+      break;
     case EventTypes.QA_VALIDATION_FAILED:
       console.warn(`[pbk-event-worker] QA failure: ${event.payload.toolName || 'unknown'} ${event.payload.reason || ''}`);
       break;
@@ -160,9 +200,31 @@ async function handleEvent(event) {
   });
 }
 
+function startNurtureInterval() {
+  const intervalMs = Math.max(15000, Number(process.env.PBK_NURTURE_WORKER_INTERVAL_MS || 60000));
+  const run = async () => {
+    const db = getPool();
+    if (!db) return;
+    try {
+      const result = await processDueNurtureInstances(db, {
+        limit: Number(process.env.PBK_NURTURE_WORKER_BATCH_SIZE || 50),
+        invokeTool: invokeBridgeTool,
+      });
+      if (result.processed) {
+        console.log(`[pbk-event-worker] processed ${result.processed} due nurture step(s)`);
+      }
+    } catch (error) {
+      console.warn('[pbk-event-worker] nurture processing skipped:', error?.message || error);
+      incrementObservabilityCounter('event_worker_nurture_errors', 1, { error: error?.message || String(error) });
+    }
+  };
+  void run();
+  return setInterval(run, intervalMs);
+}
+
 async function main() {
-  await ensureDeadLetterTable().catch((error) => {
-    console.warn('[pbk-event-worker] dead-letter table ensure skipped:', error?.message || error);
+  await ensureWorkerSchemas().catch((error) => {
+    console.warn('[pbk-event-worker] worker schema ensure skipped:', error?.message || error);
   });
 
   const bus = createEventBus();
@@ -178,12 +240,14 @@ async function main() {
     return;
   }
 
+  const nurtureTimer = startNurtureInterval();
   await consumeEvents(handleEvent, {
     bus,
     batchSize: Number(process.env.PBK_EVENT_WORKER_BATCH_SIZE || 10),
     blockMs: Number(process.env.PBK_EVENT_WORKER_BLOCK_MS || 5000),
     deadLetterSink: recordDeadLetter,
   });
+  clearInterval(nurtureTimer);
 }
 
 process.on('SIGTERM', async () => {

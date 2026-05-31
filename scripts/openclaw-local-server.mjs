@@ -78,6 +78,19 @@ import {
   planAssistantIntent,
 } from './ava-assistant-chat.mjs';
 import {
+  listTeamWorkflowTemplates,
+  runAgentTeamWorkflow,
+} from './agent-teams.mjs';
+import {
+  runAutoSkillLearner as runAutoSkillLearnerCore,
+} from './auto-skill-learner.mjs';
+import {
+  consultNurtureAgentCore,
+  ensureNurtureSchema,
+  processDueNurtureInstances,
+  startNurtureSequenceCore,
+} from './nurture-agent.mjs';
+import {
   buildDeclarativeActionIntent,
   curateEpisodicMemories as curateEpisodicMemoriesCore,
   reconcileDeclarativeActionIntent,
@@ -5421,6 +5434,10 @@ async function ensurePbkOperationalTables(pool) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    ALTER TABLE public.agent_registry
+      ADD COLUMN IF NOT EXISTS health_endpoint TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS last_health_check TIMESTAMPTZ;
+
     CREATE TABLE IF NOT EXISTS public.pbk_qa_audit (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5580,6 +5597,90 @@ async function ensurePbkOperationalTables(pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.agent_ops (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      agent_name TEXT NOT NULL DEFAULT '',
+      session_id TEXT NOT NULL DEFAULT '',
+      step TEXT NOT NULL DEFAULT '',
+      tool_name TEXT NOT NULL DEFAULT '',
+      input JSONB NOT NULL DEFAULT '{}'::jsonb,
+      output JSONB NOT NULL DEFAULT '{}'::jsonb,
+      latency_ms INT NOT NULL DEFAULT 0,
+      success BOOLEAN NOT NULL DEFAULT FALSE,
+      error TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.generated_tools (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      name TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      input_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+      output_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+      code TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending_review',
+      risk TEXT NOT NULL DEFAULT 'medium',
+      approval_id TEXT NOT NULL DEFAULT '',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.agent_teams (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'active',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.nurture_sequence_templates (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      name TEXT NOT NULL,
+      trigger_stage TEXT NOT NULL,
+      steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.nurture_instances (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      lead_id TEXT NOT NULL,
+      template_id TEXT REFERENCES public.nurture_sequence_templates(id) ON DELETE SET NULL,
+      current_step INT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      pause_reason TEXT NOT NULL DEFAULT '',
+      next_step_at TIMESTAMPTZ,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS public.nurture_step_logs (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      nurture_instance_id TEXT REFERENCES public.nurture_instances(id) ON DELETE CASCADE,
+      lead_id TEXT NOT NULL DEFAULT '',
+      step_index INT NOT NULL DEFAULT 0,
+      channel TEXT NOT NULL DEFAULT '',
+      message_sent TEXT NOT NULL DEFAULT '',
+      sent_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error TEXT NOT NULL DEFAULT '',
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS agent_registry_status_idx
       ON public.agent_registry (tenant_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
@@ -5604,7 +5705,24 @@ async function ensurePbkOperationalTables(pool) {
       ON public.pbk_memory_curation_events (tenant_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_mission_resilience_eval_runs_lookup_idx
       ON public.pbk_mission_resilience_eval_runs (tenant_id, ok, created_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_ops_lookup_idx
+      ON public.agent_ops (tenant_id, agent_name, step, created_at DESC);
+    CREATE INDEX IF NOT EXISTS generated_tools_status_idx
+      ON public.generated_tools (tenant_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS agent_teams_status_idx
+      ON public.agent_teams (tenant_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS nurture_templates_stage_idx
+      ON public.nurture_sequence_templates (tenant_id, trigger_stage, is_active);
+    CREATE INDEX IF NOT EXISTS nurture_instances_lead_idx
+      ON public.nurture_instances (tenant_id, lead_id, status);
+    CREATE INDEX IF NOT EXISTS nurture_instances_status_next_idx
+      ON public.nurture_instances (tenant_id, status, next_step_at);
+    CREATE INDEX IF NOT EXISTS nurture_step_logs_instance_idx
+      ON public.nurture_step_logs (tenant_id, nurture_instance_id, created_at DESC);
   `);
+  await ensureNurtureSchema(pool).catch((error) => {
+    console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
+  });
   return true;
 }
 
@@ -10020,6 +10138,63 @@ async function recordPbkToolUsage(params = {}) {
     return { ok: true };
   } catch (error) {
     console.warn('[pbk-local-openclaw] PBK tool usage persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+function compactAgentOpsPayload(value, maxChars = 8000) {
+  const redact = (item, depth = 0) => {
+    if (depth > 5) return '[DEPTH_LIMIT]';
+    if (Array.isArray(item)) return item.slice(0, 30).map((entry) => redact(entry, depth + 1));
+    if (!item || typeof item !== 'object') return item;
+    const output = {};
+    for (const [key, entry] of Object.entries(item)) {
+      if (/(secret|token|authorization|password|passcode|private[_-]?key|api[_-]?key)/i.test(key)) {
+        output[key] = '[REDACTED]';
+      } else {
+        output[key] = redact(entry, depth + 1);
+      }
+    }
+    return output;
+  };
+  const redacted = redact(value && typeof value === 'object' ? value : { value });
+  const text = JSON.stringify(redacted);
+  if (text.length <= maxChars) return redacted;
+  return {
+    truncated: true,
+    preview: text.slice(0, maxChars),
+  };
+}
+
+async function recordAgentOps(params = {}) {
+  const pool = getPgPool();
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(
+      `INSERT INTO public.agent_ops (
+        id, tenant_id, agent_name, session_id, step, tool_name,
+        input, output, latency_ms, success, error, metadata, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb,$13)`,
+      [
+        params.id || `agent-ops-${Date.now()}-${Math.abs(hashString(JSON.stringify(params).slice(0, 500)))}`,
+        normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+        normalizeAgentName(params.agentName || params.agent_name || params.agent || 'PBK'),
+        String(params.sessionId || params.session_id || params.callId || params.call_id || params.leadId || params.lead_id || '').slice(0, 160),
+        String(params.step || 'tool_call').slice(0, 120),
+        String(params.toolName || params.tool_name || '').slice(0, 160),
+        JSON.stringify(compactAgentOpsPayload(params.input || {})),
+        JSON.stringify(compactAgentOpsPayload(params.output || {})),
+        Math.max(0, Math.round(toNumber(params.latencyMs ?? params.latency_ms, 0))),
+        Boolean(params.success),
+        String(params.error || '').slice(0, 1000),
+        JSON.stringify(compactAgentOpsPayload(params.metadata || {}, 4000)),
+        params.createdAt || params.created_at || isoNow(),
+      ],
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] AgentOps persistence skipped:', error?.message || error);
     return { ok: false, error: error?.message || String(error) };
   }
 }
@@ -32551,6 +32726,12 @@ const OPERATING_MODE_GATED_TOOLS = new Set([
   'sendSellerDocs',
   'pbk_call_operator',
   'skipTrace',
+  'connectMcpServer',
+  'callMcpTool',
+  'activateGeneratedTool',
+  'invokeGeneratedTool',
+  'runCliCommand',
+  'startNurtureSequence',
   'bootstrapStreakPipeline',
   'admin_restart_openclaw',
   'admin_run_away_worker',
@@ -32568,6 +32749,12 @@ const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set([
   'sendSellerDocs',
   'pbk_call_operator',
   'skipTrace',
+  'connectMcpServer',
+  'callMcpTool',
+  'activateGeneratedTool',
+  'invokeGeneratedTool',
+  'runCliCommand',
+  'startNurtureSequence',
 ]);
 
 const DIRECT_ENV_UPDATE_ALLOWLIST = new Set([
@@ -32857,6 +33044,18 @@ async function validateToolResultWithQa(toolName, params = {}, result = {}, sour
 async function executeToolHandlerWithQa(toolName, params = {}, source = 'pbk-bridge') {
   const safetyValidation = await preValidateToolSafety(toolName, params, source);
   if (safetyValidation?.blocked) {
+    void recordAgentOps({
+      agentName: params.agentName || params.agent_name || params.agent || 'PBK',
+      sessionId: params.sessionId || params.session_id || params.callId || params.leadId || '',
+      step: 'tool_call',
+      toolName,
+      input: params,
+      output: { result: 'safety_blocked', safetyValidation },
+      latencyMs: 0,
+      success: false,
+      error: 'safety_precheck_blocked',
+      metadata: { source, safetyBlocked: true },
+    });
     return {
       result: buildSafetyBlockedToolResult(toolName, safetyValidation),
       qaValidation: {
@@ -32874,13 +33073,31 @@ async function executeToolHandlerWithQa(toolName, params = {}, source = 'pbk-bri
 
   const toolStartedAt = Date.now();
   let result;
+  let caughtError = null;
   try {
     result = await withObservabilitySpan(`tool.${toolName}`, { toolName, source }, () => toolHandlers[toolName](params));
   } catch (error) {
+    caughtError = error;
     incrementObservabilityCounter('tool_call_errors', 1, { toolName, source, error: error?.message || String(error) });
     throw error;
   } finally {
-    recordLatencyMetric('tool_call_duration_ms', Date.now() - toolStartedAt, { toolName, source });
+    const latencyMs = Date.now() - toolStartedAt;
+    recordLatencyMetric('tool_call_duration_ms', latencyMs, { toolName, source });
+    void recordAgentOps({
+      agentName: params.agentName || params.agent_name || params.agent || 'PBK',
+      sessionId: params.sessionId || params.session_id || params.callId || params.leadId || '',
+      step: 'tool_call',
+      toolName,
+      input: params,
+      output: caughtError ? {} : result,
+      latencyMs,
+      success: !caughtError && result?.ok !== false,
+      error: caughtError?.message || '',
+      metadata: {
+        source,
+        safetyResult: safetyValidation?.result || '',
+      },
+    });
   }
   const qaValidation = await validateToolResultWithQa(toolName, params, result, source);
   void publishPbkEvent(EventTypes.TOOL_INVOKED, {
@@ -38770,6 +38987,239 @@ function setAnalyzerResultCache(params = {}, result = {}) {
   }
 }
 
+const TOOL_RISK_METADATA = Object.freeze({
+  analyzeDeal: { risk: 'readonly', approvalRequired: false },
+  getAgentRegistry: { risk: 'readonly', approvalRequired: false },
+  getAgentOpsMetrics: { risk: 'readonly', approvalRequired: false },
+  listTeamWorkflows: { risk: 'readonly', approvalRequired: false },
+  runAgentTeam: { risk: 'low', approvalRequired: false },
+  runTeamWorkflow: { risk: 'low', approvalRequired: false },
+  generateTool: { risk: 'medium', approvalRequired: true },
+  activateGeneratedTool: { risk: 'high', approvalRequired: true },
+  invokeGeneratedTool: { risk: 'high', approvalRequired: true },
+  runCliCommand: { risk: 'high', approvalRequired: true },
+  connectMcpServer: { risk: 'high', approvalRequired: true },
+  callMcpTool: { risk: 'high', approvalRequired: true },
+  startNurtureSequence: { risk: 'high', approvalRequired: true },
+  telnyx_call: { risk: 'high', approvalRequired: true },
+  telnyx_sms: { risk: 'high', approvalRequired: true },
+  sendColdEmail: { risk: 'high', approvalRequired: true },
+  sendDocuSign: { risk: 'high', approvalRequired: true },
+  updateCRM: { risk: 'medium', approvalRequired: true },
+});
+
+const mcpRuntimeClients = new Map();
+
+function normalizeGeneratedToolName(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_.:-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120) || `generated_tool_${Date.now()}`;
+}
+
+async function summarizeAgentOpsMetrics(params = {}) {
+  const days = Math.max(1, Math.min(30, Number(params.days || params.windowDays || 1)));
+  const rows = await queryPgRows(
+    `SELECT
+       agent_name,
+       step,
+       tool_name,
+       COUNT(*)::int AS calls,
+       COUNT(*) FILTER (WHERE success IS TRUE)::int AS successes,
+       ROUND(AVG(latency_ms))::int AS avg_latency_ms,
+       MAX(created_at) AS last_seen_at
+     FROM public.agent_ops
+     WHERE tenant_id = 'pbk'
+       AND created_at >= NOW() - ($1::int * INTERVAL '1 day')
+     GROUP BY agent_name, step, tool_name
+     ORDER BY calls DESC, last_seen_at DESC
+     LIMIT 100`,
+    [days],
+  );
+  if (!rows.ok) return rows;
+  const metrics = rows.rows.map((row) => ({
+    agentName: row.agent_name || 'PBK',
+    step: row.step || '',
+    toolName: row.tool_name || '',
+    calls: Number(row.calls || 0),
+    successes: Number(row.successes || 0),
+    successRate: row.calls ? Number(((Number(row.successes || 0) / Number(row.calls || 1)) * 100).toFixed(1)) : 0,
+    avgLatencyMs: Number(row.avg_latency_ms || 0),
+    lastSeenAt: row.last_seen_at,
+  }));
+  return {
+    ok: true,
+    result: 'live',
+    days,
+    metrics,
+  };
+}
+
+async function persistGeneratedTool(params = {}) {
+  const name = normalizeGeneratedToolName(params.name || params.toolName || params.description || '');
+  const result = await queryPgRows(
+    `INSERT INTO public.generated_tools (
+       tenant_id, name, description, input_schema, output_schema, code, status, risk, approval_id, metadata, created_at, updated_at
+     )
+     VALUES ('pbk',$1,$2,$3::jsonb,$4::jsonb,$5,$6,$7,$8,$9::jsonb,NOW(),NOW())
+     RETURNING *`,
+    [
+      name,
+      String(params.description || '').slice(0, 2000),
+      JSON.stringify(params.inputSchema || params.input_schema || {}),
+      JSON.stringify(params.outputSchema || params.output_schema || {}),
+      String(params.code || '').slice(0, 50000),
+      String(params.status || 'pending_review'),
+      String(params.risk || 'medium'),
+      String(params.approvalId || params.approval_id || ''),
+      JSON.stringify(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
+    ],
+  );
+  return result.ok ? result.rows[0] : null;
+}
+
+async function getGeneratedToolByIdOrName(idOrName = '') {
+  const key = String(idOrName || '').trim();
+  if (!key) return null;
+  const result = await queryPgRows(
+    `SELECT * FROM public.generated_tools
+     WHERE tenant_id = 'pbk' AND (id = $1 OR name = $1)
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [key],
+  );
+  return result.ok ? result.rows[0] || null : null;
+}
+
+async function connectMcpRuntimeServer(params = {}) {
+  const serverName = normalizeGeneratedToolName(params.serverName || params.name || 'mcp-server');
+  const command = String(params.command || '').trim();
+  const args = Array.isArray(params.args) ? params.args.map((arg) => String(arg)) : [];
+  if (!command) return { ok: false, result: 'missing_command', error: 'MCP server command is required.' };
+  if (!/^(npx|node|python|python3|uvx)$/i.test(command)) {
+    return { ok: false, result: 'command_not_allowed', error: `MCP command ${command} is not allowed.` };
+  }
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const transport = new StdioClientTransport({ command, args });
+  const client = new Client({ name: `pbk-${serverName}`, version: BUILD_REVISION });
+  await client.connect(transport);
+  const listed = await client.listTools();
+  const tools = Array.isArray(listed?.tools) ? listed.tools : Array.isArray(listed) ? listed : [];
+  mcpRuntimeClients.set(serverName, {
+    serverName,
+    client,
+    connectedAt: isoNow(),
+    command,
+    args,
+    tools,
+  });
+  return {
+    ok: true,
+    result: 'connected',
+    serverName,
+    tools: tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description || '',
+      inputSchema: tool.inputSchema || tool.input_schema || null,
+    })),
+  };
+}
+
+function listMcpRuntimeServers() {
+  return [...mcpRuntimeClients.values()].map((entry) => ({
+    serverName: entry.serverName,
+    connectedAt: entry.connectedAt,
+    command: entry.command,
+    args: entry.args,
+    toolCount: entry.tools?.length || 0,
+    tools: (entry.tools || []).map((tool) => ({ name: tool.name, description: tool.description || '' })),
+  }));
+}
+
+async function callMcpRuntimeTool(params = {}) {
+  const serverName = String(params.serverName || params.server || '').trim();
+  const toolName = String(params.toolName || params.tool || params.name || '').trim();
+  if (!serverName || !toolName) return { ok: false, result: 'missing_server_or_tool' };
+  const entry = mcpRuntimeClients.get(serverName);
+  if (!entry) return { ok: false, result: 'mcp_server_not_connected', serverName };
+  const toolArgs = params.arguments && typeof params.arguments === 'object'
+    ? params.arguments
+    : params.params && typeof params.params === 'object'
+      ? params.params
+      : {};
+  const result = await entry.client.callTool({ name: toolName, arguments: toolArgs });
+  return {
+    ok: true,
+    result: 'tool_called',
+    serverName,
+    toolName,
+    response: result,
+  };
+}
+
+function parseReadonlyCliCommand(command = '') {
+  const text = String(command || '').trim();
+  if (!text) return null;
+  const parts = text.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, '')) || [];
+  const base = parts[0] || '';
+  const args = parts.slice(1);
+  if (base === 'node' && args.length === 1 && ['--version', '-v'].includes(args[0])) return { file: 'node', args };
+  if (base === 'npm' && args.length === 1 && ['--version', '-v'].includes(args[0])) return { file: 'npm', args };
+  if (base === 'git') {
+    const allowed = [
+      ['status', '--short'],
+      ['status', '--porcelain'],
+      ['log', '-1', '--oneline'],
+      ['diff', '--stat'],
+    ];
+    if (allowed.some((pattern) => pattern.length === args.length && pattern.every((value, index) => value === args[index]))) {
+      return { file: 'git', args };
+    }
+  }
+  if (base === 'rg' && args.length >= 1 && args.length <= 4 && !args.some((arg) => /^-/.test(arg) && !['--files', '-n', '--glob'].includes(arg))) {
+    return { file: 'rg', args };
+  }
+  return null;
+}
+
+function runReadonlyCliCommand(params = {}) {
+  const command = String(params.command || '').trim();
+  const parsed = parseReadonlyCliCommand(command);
+  if (!parsed) {
+    return {
+      ok: false,
+      result: 'command_not_allowed',
+      error: 'Only read-only diagnostics are allowed: node --version, npm --version, git status --short, git log -1 --oneline, git diff --stat, or rg searches.',
+    };
+  }
+  const cwdRaw = String(params.cwd || params.workdir || ROOT_DIR).trim();
+  const cwd = path.resolve(cwdRaw || ROOT_DIR);
+  if (!cwd.startsWith(ROOT_DIR)) {
+    return { ok: false, result: 'cwd_not_allowed', error: 'CLI diagnostics must stay inside the PBK workspace.' };
+  }
+  try {
+    const stdout = execFileSync(parsed.file, parsed.args, {
+      cwd,
+      encoding: 'utf8',
+      timeout: Math.max(1000, Math.min(30000, Number(params.timeoutMs || params.timeout_ms || 10000))),
+      windowsHide: true,
+      maxBuffer: 1024 * 512,
+    });
+    return { ok: true, result: 'completed', command, stdout: stdout.slice(0, 12000), stderr: '' };
+  } catch (error) {
+    return {
+      ok: false,
+      result: 'failed',
+      command,
+      stdout: String(error?.stdout || '').slice(0, 12000),
+      stderr: String(error?.stderr || error?.message || '').slice(0, 4000),
+      error: error?.message || String(error),
+    };
+  }
+}
+
 const toolHandlers = {
   async search_leads(params = {}) {
     recordToolUse('search_leads');
@@ -38805,6 +39255,247 @@ const toolHandlers = {
     recordToolUse('webSearch');
     const query = params.query || params.q || params.prompt || params.text || '';
     return runLiveWebSearch(query, params);
+  },
+
+  async listTeamWorkflows() {
+    recordToolUse('listTeamWorkflows');
+    return {
+      ok: true,
+      result: 'ready',
+      workflows: listTeamWorkflowTemplates(),
+    };
+  },
+
+  async runAgentTeam(params = {}) {
+    recordToolUse('runAgentTeam');
+    return runAgentTeamWorkflow(params, {
+      strategist: async ({ role, prompt }) => askStrategistRecord({
+        situation: prompt,
+        agentName: role,
+        responseFormat: 'text',
+        temperature: 0.2,
+        maxTokens: 900,
+        source: 'agent-team-workflow',
+      }),
+    });
+  },
+
+  async runTeamWorkflow(params = {}) {
+    recordToolUse('runTeamWorkflow');
+    return toolHandlers.runAgentTeam(params);
+  },
+
+  async getToolRiskCatalog() {
+    recordToolUse('getToolRiskCatalog');
+    return {
+      ok: true,
+      result: 'ready',
+      tools: TOOL_RISK_METADATA,
+    };
+  },
+
+  async getAgentOpsMetrics(params = {}) {
+    recordToolUse('getAgentOpsMetrics');
+    return summarizeAgentOpsMetrics(params);
+  },
+
+  async getMcpServerRegistry() {
+    recordToolUse('getMcpServerRegistry');
+    return {
+      ok: true,
+      result: 'ready',
+      servers: listMcpRuntimeServers(),
+    };
+  },
+
+  async connectMcpServer(params = {}) {
+    recordToolUse('connectMcpServer');
+    return connectMcpRuntimeServer(params);
+  },
+
+  async listMcpTools(params = {}) {
+    recordToolUse('listMcpTools');
+    const serverName = String(params.serverName || params.server || '').trim();
+    const servers = listMcpRuntimeServers();
+    return {
+      ok: true,
+      result: 'ready',
+      servers: serverName ? servers.filter((server) => server.serverName === serverName) : servers,
+    };
+  },
+
+  async callMcpTool(params = {}) {
+    recordToolUse('callMcpTool');
+    return callMcpRuntimeTool(params);
+  },
+
+  async generateTool(params = {}) {
+    recordToolUse('generateTool');
+    const description = String(params.description || params.prompt || '').trim();
+    if (!description) return { ok: false, result: 'missing_description', error: 'description is required.' };
+    const name = normalizeGeneratedToolName(params.name || params.toolName || description.slice(0, 80));
+    let code = String(params.code || '').trim();
+    if (!code) {
+      const strategist = await askStrategistRecord({
+        agentName: 'Tool Generator',
+        situation: [
+          'Write a small async JavaScript function body for this PBK generated tool.',
+          'Return only the function body. The function receives params and context.',
+          'Do not import modules. Do not access filesystem. Do not execute shell commands.',
+          `Tool name: ${name}`,
+          `Description: ${description}`,
+          `Input schema: ${JSON.stringify(params.inputSchema || params.input_schema || {})}`,
+          `Output schema: ${JSON.stringify(params.outputSchema || params.output_schema || {})}`,
+        ].join('\n'),
+        responseFormat: 'text',
+        temperature: 0.1,
+        maxTokens: 900,
+        source: 'generated-tool',
+      });
+      code = String(strategist.rawAnswer || strategist.response?.answer || strategist.response?.summary || '').trim();
+    }
+    try {
+      const AsyncFunction = Object.getPrototypeOf(async function generatedToolProbe() {}).constructor;
+      // Syntax validation only. Execution remains disabled unless explicitly enabled by env.
+      new AsyncFunction('params', 'context', code);
+    } catch (error) {
+      return { ok: false, result: 'invalid_generated_code', error: error?.message || String(error), code };
+    }
+    let approval = null;
+    try {
+      approval = await toolHandlers.createApproval({
+        type: 'generated-tool',
+        leadName: name,
+        approvalAction: 'activateGeneratedTool',
+        notes: `Review generated tool "${name}" before activation.`,
+        source: 'generateTool',
+        metadata: {
+          kind: 'generated_tool',
+          toolName: name,
+          description,
+          codePreview: code.slice(0, 2000),
+        },
+      });
+    } catch {
+      approval = null;
+    }
+    const saved = await persistGeneratedTool({
+      name,
+      description,
+      inputSchema: params.inputSchema || params.input_schema || {},
+      outputSchema: params.outputSchema || params.output_schema || {},
+      code,
+      status: 'pending_review',
+      risk: params.risk || 'medium',
+      approvalId: approval?.id || '',
+      metadata: { requestedBy: params.requestedBy || params.requested_by || '', approval },
+    });
+    return {
+      ok: Boolean(saved),
+      result: saved ? 'pending_review' : 'not_persisted',
+      tool: saved,
+      approval,
+      code,
+      safety: {
+        executionDisabledByDefault: !/^(1|true|yes)$/i.test(String(process.env.PBK_GENERATED_TOOL_EXECUTION_ENABLED || '').trim()),
+      },
+    };
+  },
+
+  async activateGeneratedTool(params = {}) {
+    recordToolUse('activateGeneratedTool');
+    const tool = await getGeneratedToolByIdOrName(params.toolId || params.tool_id || params.name || params.toolName);
+    if (!tool) return { ok: false, result: 'generated_tool_not_found' };
+    const updated = await queryPgRows(
+      `UPDATE public.generated_tools
+       SET status = 'active',
+           metadata = metadata || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        tool.id,
+        JSON.stringify({
+          activatedAt: isoNow(),
+          activatedBy: params.approvedBy || params.approved_by || params.requestedBy || 'operator',
+        }),
+      ],
+    );
+    return {
+      ok: updated.ok,
+      result: updated.ok ? 'active' : 'update_failed',
+      tool: updated.rows?.[0] || tool,
+    };
+  },
+
+  async invokeGeneratedTool(params = {}) {
+    recordToolUse('invokeGeneratedTool');
+    const tool = await getGeneratedToolByIdOrName(params.toolId || params.tool_id || params.name || params.toolName);
+    if (!tool) return { ok: false, result: 'generated_tool_not_found' };
+    if (tool.status !== 'active') return { ok: false, result: 'generated_tool_not_active', status: tool.status };
+    if (!/^(1|true|yes)$/i.test(String(process.env.PBK_GENERATED_TOOL_EXECUTION_ENABLED || '').trim())) {
+      return {
+        ok: false,
+        result: 'generated_tool_execution_disabled',
+        message: 'Generated tool execution is disabled until PBK_GENERATED_TOOL_EXECUTION_ENABLED=true is set.',
+        tool: { id: tool.id, name: tool.name, status: tool.status },
+      };
+    }
+    const AsyncFunction = Object.getPrototypeOf(async function generatedToolRuntime() {}).constructor;
+    const fn = new AsyncFunction('params', 'context', tool.code);
+    const output = await fn(params.params || params.arguments || {}, {
+      tool: { id: tool.id, name: tool.name },
+      now: isoNow(),
+    });
+    return {
+      ok: true,
+      result: 'executed',
+      tool: { id: tool.id, name: tool.name },
+      output,
+    };
+  },
+
+  async runCliCommand(params = {}) {
+    recordToolUse('runCliCommand');
+    return runReadonlyCliCommand(params);
+  },
+
+  async startNurtureSequence(params = {}) {
+    recordToolUse('startNurtureSequence');
+    const pool = getPgPool();
+    return startNurtureSequenceCore(pool, params, {
+      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
+    });
+  },
+
+  async consultNurtureAgent(params = {}) {
+    recordToolUse('consultNurtureAgent');
+    return consultNurtureAgentCore(getPgPool(), params);
+  },
+
+  async processDueNurtureSteps(params = {}) {
+    recordToolUse('processDueNurtureSteps');
+    return processDueNurtureInstances(getPgPool(), {
+      limit: params.limit,
+      invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
+    });
+  },
+
+  async runAutoSkillLearner(params = {}) {
+    recordToolUse('runAutoSkillLearner');
+    return runAutoSkillLearnerCore({
+      pool: getPgPool(),
+      windowDays: params.windowDays || params.days,
+      limit: params.limit,
+      strategist: async ({ role, prompt, responseFormat }) => askStrategistRecord({
+        agentName: role || 'Auto Skill Learner',
+        situation: prompt,
+        responseFormat: responseFormat || 'json',
+        temperature: 0.1,
+        maxTokens: 900,
+        source: 'auto-skill-learner',
+      }),
+    });
   },
 
   async pbk_retrieve_closing_intelligence(params = {}) {
@@ -49903,6 +50594,22 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/discover', '/api/agent-discovery'])) {
+      const capability = url.searchParams.get('capability') || '';
+      const status = buildAgentRegistryStatus({
+        capability,
+        includeInactive: false,
+      });
+      json(response, status.ok ? 200 : 503, {
+        ok: Boolean(status.ok),
+        result: status.result,
+        capability,
+        agents: status.agents || [],
+        count: status.count || 0,
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/agents/registry/refresh', '/api/agent-registry/refresh'])) {
       const body = await readBody(request);
       const result = await syncAgentRegistryFromPg({ seed: body.seed !== false, persist: body.persist !== false });
@@ -52953,9 +53660,34 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/agentops/metrics', '/api/agent-ops/metrics'])) {
+      const result = await summarizeAgentOpsMetrics({
+        days: url.searchParams.get('days') || url.searchParams.get('windowDays') || 1,
+      });
+      json(response, result.ok ? 200 : 503, {
+        ...result,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/nurture/run-due', '/api/nurture/process-due'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.processDueNurtureSteps(body);
+      json(response, result.ok ? 200 : 202, {
+        ...result,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs'];
       if (!pool) {
         json(response, 200, {
           ok: false,

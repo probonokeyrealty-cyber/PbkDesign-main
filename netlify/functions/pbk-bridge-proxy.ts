@@ -147,8 +147,87 @@ function compactHealthPayload(payload: Record<string, any>) {
   };
 }
 
+const STATE_ARRAY_LIMITS: Record<string, number> = {
+  activity: 120,
+  adminAudit: 80,
+  adminTasks: 80,
+  agentTasks: 80,
+  analyzerRuns: 80,
+  approvals: 120,
+  brainBlogPosts: 60,
+  brainDocs: 80,
+  browserResearchJobs: 80,
+  callQaScores: 120,
+  calls: 120,
+  campaignRecords: 100,
+  campaigns: 100,
+  contracts: 120,
+  documentDeliveries: 120,
+  leadImports: 250,
+  messages: 250,
+  recordings: 120,
+  revenueActions: 120,
+  skillOutcomes: 120,
+};
+
+const OMIT_STATE_KEYS = /^(?:embedding|embeddings|vector|vectors|audioBuffer|audioBytes|base64|rawAudio|rawPayload|rawResponse)$/i;
+const HEAVY_TEXT_KEYS = /(?:body|content|html|markdown|memo|notes|raw|summary|text|transcript)$/i;
+
+function compactStateValue(value: unknown, depth = 0): unknown {
+  if (value == null) return value;
+  if (typeof value === 'string') {
+    const limit = depth <= 2 ? 5000 : 1800;
+    return value.length > limit ? `${value.slice(0, limit)}...` : value;
+  }
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const limit = depth <= 1 ? 40 : 20;
+    return value.slice(0, limit).map((item) => compactStateValue(item, depth + 1));
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (OMIT_STATE_KEYS.test(key)) continue;
+    if (typeof nested === 'string' && HEAVY_TEXT_KEYS.test(key)) {
+      const limit = depth <= 1 ? 5000 : 1800;
+      next[key] = nested.length > limit ? `${nested.slice(0, limit)}...` : nested;
+      continue;
+    }
+    next[key] = compactStateValue(nested, depth + 1);
+  }
+  return next;
+}
+
+function compactStatePayload(payload: Record<string, any>) {
+  const arrayCounts: Record<string, number> = {};
+  const compact: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(payload || {})) {
+    if (Array.isArray(value)) {
+      const limit = STATE_ARRAY_LIMITS[key] || 80;
+      arrayCounts[key] = value.length;
+      compact[key] = value.slice(0, limit).map((item) => compactStateValue(item, 1));
+      continue;
+    }
+    compact[key] = compactStateValue(value, 1);
+  }
+
+  compact.compact = true;
+  compact.compactMeta = {
+    source: 'netlify-bridge-proxy',
+    arrayCounts,
+    note: 'Large hosted bridge state compacted below Netlify response limits; use the direct bridge for full exports.',
+  };
+
+  return compact;
+}
+
 function shouldCompactHealthResponse(targetPath = '') {
   return ['/health', '/status', '/api/health', '/api/status'].includes(targetPath);
+}
+
+function shouldCompactStateResponse(targetPath = '') {
+  return ['/state', '/api/state'].includes(targetPath);
 }
 
 export const handler: Handler = async (event) => {
@@ -197,6 +276,17 @@ export const handler: Handler = async (event) => {
       try {
         const payload = JSON.parse(bytes.toString('utf8'));
         return json(compactHealthPayload(payload), response.status, {
+          'X-PBK-Bridge-Proxy': 'netlify',
+          'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
+        });
+      } catch {
+        // Fall through to the normal proxy response when upstream is not JSON.
+      }
+    }
+    if (shouldCompactStateResponse(targetPath) && isTextResponse(contentType)) {
+      try {
+        const payload = JSON.parse(bytes.toString('utf8'));
+        return json(compactStatePayload(payload), response.status, {
           'X-PBK-Bridge-Proxy': 'netlify',
           'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
         });

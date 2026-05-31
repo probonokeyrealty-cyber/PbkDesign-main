@@ -2862,6 +2862,178 @@
       min-height: 48px; max-height: 160px;
     }
     .compose textarea:focus { outline: none; border-color: var(--sky-dim); box-shadow: 0 0 0 3px var(--sky-glow); }
+    .idpick-wrap {
+      position: relative;
+      min-width: 240px;
+    }
+    .compose .idpick-wrap {
+      flex: 0 0 268px;
+    }
+    .idpick-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-2);
+      margin-bottom: 6px;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .idpick-suggest {
+      display: none;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(163,230,53,.34);
+      background: var(--lime-glow);
+      color: var(--lime);
+      letter-spacing: 0.08em;
+    }
+    .idpick-suggest.show { display: inline-flex; }
+    .idpick-btn {
+      width: 100%;
+      min-height: 46px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--s-3);
+      padding: 10px 12px;
+      border: 1px solid rgba(125,211,252,.18);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, rgba(125,211,252,.065), rgba(255,255,255,.015)),
+        rgba(6,8,11,.72);
+      color: var(--text-primary);
+      cursor: pointer;
+      text-align: left;
+      transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+    }
+    .idpick-btn:hover,
+    .idpick-btn.open {
+      border-color: rgba(125,211,252,.45);
+      background:
+        linear-gradient(180deg, rgba(125,211,252,.11), rgba(255,255,255,.018)),
+        rgba(6,8,11,.86);
+      box-shadow: 0 0 0 3px var(--sky-glow);
+    }
+    .idpick-main {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+    .idpick-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--text-primary);
+    }
+    .idpick-sub {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-tertiary);
+      font: 10px/1.35 var(--font-mono);
+    }
+    .idpick-stat {
+      color: var(--sky);
+      font: 10px/1 var(--font-mono);
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .idpick-menu {
+      position: absolute;
+      z-index: 90;
+      top: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      display: none;
+      max-height: 320px;
+      overflow: auto;
+      padding: 8px;
+      border: 1px solid rgba(125,211,252,.28);
+      border-radius: 18px;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(125,211,252,.14), transparent 35%),
+        linear-gradient(180deg, var(--bg-panel-elevated), var(--bg-console));
+      box-shadow: 0 22px 70px rgba(0,0,0,.46);
+    }
+    .idpick-menu.open { display: grid; gap: 6px; }
+    .idpick-section {
+      padding: 8px 8px 4px;
+      color: var(--text-ghost);
+      font: 9px/1 var(--font-mono);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .idpick-opt {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--s-3);
+      padding: 10px;
+      border: 1px solid transparent;
+      border-radius: 13px;
+      background: rgba(255,255,255,.018);
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .idpick-opt:hover,
+    .idpick-opt.suggested {
+      border-color: rgba(125,211,252,.30);
+      background: rgba(125,211,252,.08);
+      transform: translateY(-1px);
+    }
+    .idpick-opt .display {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      color: var(--text-primary);
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .idpick-opt .value {
+      margin-top: 2px;
+      color: var(--text-tertiary);
+      font: 10px/1.45 var(--font-mono);
+      overflow-wrap: anywhere;
+    }
+    .idpick-opt .stats {
+      display: grid;
+      gap: 4px;
+      justify-items: end;
+      color: var(--text-tertiary);
+      font: 10px/1 var(--font-mono);
+      white-space: nowrap;
+    }
+    .idpick-opt .stat.good { color: var(--lime); }
+    .idpick-opt .stat.warm { color: var(--amber); }
+    .idpick-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(125,211,252,.22);
+      color: var(--sky);
+      background: var(--sky-glow);
+      font: 9px/1 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .idpick-badge.best {
+      color: var(--lime);
+      border-color: rgba(163,230,53,.34);
+      background: var(--lime-glow);
+    }
+    .idpick-badge.warming {
+      color: var(--amber);
+      border-color: rgba(255,176,32,.34);
+      background: var(--amber-glow);
+    }
 
     @media (max-width: 900px) {
       .inbox-layout {
@@ -2956,6 +3128,10 @@
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 8px;
+      }
+      .compose .idpick-wrap {
+        grid-column: 1 / -1;
+        min-width: 0;
       }
       .compose-channels .chip-btn {
         min-height: 40px;
@@ -3143,6 +3319,20 @@
           <button type="button" class="chip-btn active">SMS</button>
           <button type="button" class="chip-btn">Email</button>
           <button type="button" class="chip-btn">Call</button>
+        </div>
+        <div class="idpick-wrap" data-compose-identity>
+          <div class="idpick-label">
+            <span id="cmpFromLabel">FROM - SENDING NUMBER</span>
+            <span class="idpick-suggest" id="cmpFromSuggest">Area match</span>
+          </div>
+          <button type="button" class="idpick-btn" id="cmpFromBtn" aria-haspopup="listbox" aria-expanded="false">
+            <span class="idpick-main">
+              <span class="idpick-title" id="cmpFromName">Auto-select sender</span>
+              <span class="idpick-sub" id="cmpFromAddr">PBK chooses the safest active route</span>
+            </span>
+            <span class="idpick-stat" id="cmpFromStat">Ready</span>
+          </button>
+          <div class="idpick-menu" id="cmpFromMenu" role="listbox" aria-label="Choose sending identity"></div>
         </div>
         <textarea placeholder="Type a reply to Diane — or hand it to Ava to send—"></textarea>
         <button type="button" class="btn btn-ghost">Ask AI</button>
@@ -4879,6 +5069,7 @@
     }
     .call-floor-box h3 { margin: 0 0 4px; font-size: 18px; letter-spacing: -.01em; }
     .call-floor-box p { margin: 0 0 var(--s-3); color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
+    .call-floor-idpick { margin: 0 0 var(--s-3); max-width: 360px; }
     .call-floor-search-row { display: flex; gap: 8px; flex-wrap: wrap; }
     .call-floor-search-row input,
     .call-floor-schedule input {
@@ -5054,6 +5245,20 @@
     <div class="call-floor-box">
       <h3>Find a lead to call</h3>
       <p>Search the live lead cache. Results show score, last touch, motivation, and call readiness.</p>
+      <div class="idpick-wrap call-floor-idpick" data-call-floor-identity>
+        <div class="idpick-label">
+          <span>CALLING FROM</span>
+          <span class="idpick-suggest" id="callFloorFromSuggest">Area match</span>
+        </div>
+        <button type="button" class="idpick-btn" id="callFloorFromBtn" aria-haspopup="listbox" aria-expanded="false">
+          <span class="idpick-main">
+            <span class="idpick-title" id="callFloorFromName">Auto-select number</span>
+            <span class="idpick-sub" id="callFloorFromAddr">PBK chooses the strongest active Telnyx route</span>
+          </span>
+          <span class="idpick-stat" id="callFloorFromStat">Ready</span>
+        </button>
+        <div class="idpick-menu" id="callFloorFromMenu" role="listbox" aria-label="Choose calling identity"></div>
+      </div>
       <div class="call-floor-search-row">
         <input id="callFloorLeadSearch" type="search" placeholder="Search by seller, phone, address, tag...">
         <button class="btn btn-primary" type="button" data-call-floor-search>Search</button>
@@ -9298,6 +9503,20 @@
         </div>
       </div>
       <aside class="cd-side">
+        <div class="cd-side-card cd-sending" data-campaign-sending-card>
+          <h4>SENDING FROM</h4>
+          <p style="font-size:11px;line-height:1.5;color:var(--text-tertiary);margin-bottom:10px;">Choose the local demo route for this campaign. Provider writes still remain approval-gated.</p>
+          <div class="idpick-wrap">
+            <button type="button" class="idpick-btn" id="cdFromBtn" aria-haspopup="listbox" aria-expanded="false">
+              <span class="idpick-main">
+                <span class="idpick-title" id="cdFromName">Auto-select sender</span>
+                <span class="idpick-sub" id="cdFromAddr">Default campaign identity</span>
+              </span>
+              <span class="idpick-stat" id="cdFromStat">Ready</span>
+            </button>
+            <div class="idpick-menu" id="cdFromMenu" role="listbox" aria-label="Choose campaign sending identity"></div>
+          </div>
+        </div>
         <div class="cd-side-card"><h4>Schedule</h4><div data-detail-schedule></div></div>
         <div class="cd-side-card"><h4>Template Preview</h4><div style="font-size:12px;color:var(--text-primary);margin-bottom:8px;font-weight:500;" data-detail-template-name></div><div class="cd-template-preview" data-detail-template></div></div>
         <div class="cd-side-card" data-detail-sequence-editor>
@@ -9649,11 +9868,162 @@
     }
     .role-row .role-chip.admin { color: var(--sky); border-color: var(--sky-dim); }
 
+    .oid-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+      flex-wrap: wrap;
+      margin: var(--s-4) 0;
+    }
+    .oid-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--s-3);
+      margin: var(--s-4) 0;
+    }
+    .oid-stat-card {
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, rgba(125,211,252,.07), rgba(255,255,255,.014)),
+        var(--bg-panel);
+      padding: var(--s-4);
+    }
+    .oid-stat-card .l {
+      color: var(--text-tertiary);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .oid-stat-card .v {
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      font-size: 24px;
+      letter-spacing: -.03em;
+    }
+    .oid-stat-card .v.good { color: var(--lime); }
+    .oid-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+    .oid-filter,
+    .oid-sync,
+    .oid-buy {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border: 1px solid var(--border-dim);
+      border-radius: 999px;
+      background: var(--bg-panel);
+      color: var(--text-secondary);
+      font: 11px/1 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color .15s ease, color .15s ease, background .15s ease;
+    }
+    .oid-filter.active,
+    .oid-filter:hover,
+    .oid-sync:hover,
+    .oid-buy:hover {
+      color: var(--sky);
+      border-color: var(--sky-dim);
+      background: var(--sky-glow);
+    }
+    .oid-table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg);
+      background: var(--bg-panel);
+    }
+    .oid-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+    .oid-table th,
+    .oid-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border-dim);
+      text-align: left;
+      vertical-align: top;
+      font-size: 12px;
+    }
+    .oid-table th {
+      color: var(--text-tertiary);
+      background: var(--bg-console);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .oid-table tr:last-child td { border-bottom: none; }
+    .oid-table tr.inactive { opacity: .48; }
+    .oid-display { color: var(--text-primary); font-weight: 700; margin-bottom: 3px; }
+    .oid-value { color: var(--text-tertiary); font: 11px/1.45 var(--font-mono); overflow-wrap: anywhere; }
+    .oid-type,
+    .oid-area {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: var(--sky);
+      border: 1px solid var(--sky-dim);
+      background: var(--sky-glow);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .oid-type.email { color: var(--magenta); border-color: rgba(244,114,182,.30); background: rgba(244,114,182,.08); }
+    .oid-perf { display: grid; gap: 6px; min-width: 180px; }
+    .oid-perf .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .oid-perf .l { color: var(--text-tertiary); font: 10px/1 var(--font-mono); }
+    .oid-perf .v { color: var(--text-secondary); font: 10px/1 var(--font-mono); }
+    .oid-perf .v.good { color: var(--lime); }
+    .oid-perf .v.warm { color: var(--amber); }
+    .oid-bar { height: 5px; overflow: hidden; border-radius: 999px; background: rgba(148,163,184,.15); }
+    .oid-bar-fill { height: 100%; border-radius: inherit; background: var(--sky); width: 0; }
+    .oid-bar-fill.good { background: var(--lime); }
+    .oid-bar-fill.warm { background: var(--amber); }
+    .oid-last { color: var(--text-tertiary); font: 11px/1 var(--font-mono); }
+    .oid-toggle {
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-void);
+      position: relative;
+      cursor: pointer;
+      margin: 0 auto;
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .oid-toggle::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+      transition: transform .15s ease, background .15s ease;
+    }
+    .oid-toggle.on {
+      border-color: rgba(163,230,53,.34);
+      background: var(--lime-glow);
+    }
+    .oid-toggle.on::after {
+      transform: translateX(18px);
+      background: var(--lime);
+    }
+
     @media (max-width: 900px) {
       .settings-layout { grid-template-columns: 1fr; }
       .settings-nav { display: none; }
       .setting-row { grid-template-columns: 1fr; gap: var(--s-3); }
       .settings-runtime-deck { grid-template-columns: 1fr; }
+      .oid-summary { grid-template-columns: 1fr; }
     }
   </style>
 
@@ -9675,6 +10045,7 @@
       <div class="settings-nav-item">Call Recording</div>
 
       <div class="group-label">Developer</div>
+      <div class="settings-nav-item" data-settings-anchor="outboundIdentities">Outbound Identities <span class="ct" id="oidNavCount">9</span></div>
       <div class="settings-nav-item" onclick="document.getElementById('settings-api-keys')?.scrollIntoView({behavior:'smooth',block:'start'})" style="cursor:pointer;">API Keys</div>
       <div class="settings-nav-item">Webhooks</div>
       <div class="settings-nav-item">Audit Log</div>
@@ -9752,6 +10123,46 @@
               <option>Custom—</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      <div class="settings-section" id="outboundIdentities">
+        <h3>Outbound <em>identities</em>.</h3>
+        <p class="section-desc">Demo sender pool for Telnyx numbers and Instantly inboxes. These controls are frontend-only until Mastra provider sync is wired.</p>
+
+        <div class="oid-summary">
+          <div class="oid-stat-card"><div class="l">Active routes</div><div class="v good" data-oid-summary="active">9</div></div>
+          <div class="oid-stat-card"><div class="l">Best answer rate</div><div class="v" data-oid-summary="answer">41%</div></div>
+          <div class="oid-stat-card"><div class="l">Email warm</div><div class="v" data-oid-summary="email">2</div></div>
+        </div>
+
+        <div class="oid-toolbar">
+          <div class="oid-filters" aria-label="Filter outbound identities">
+            <button class="oid-filter active" type="button" data-oid-filter="all">All</button>
+            <button class="oid-filter" type="button" data-oid-filter="active">Active</button>
+            <button class="oid-filter" type="button" data-oid-filter="phone">Phones</button>
+            <button class="oid-filter" type="button" data-oid-filter="email">Emails</button>
+          </div>
+          <div class="oid-filters">
+            <button class="oid-sync" type="button" id="oidSyncBtn">Sync from providers</button>
+            <button class="oid-buy" type="button" id="oidBuyBtn">Buy number</button>
+          </div>
+        </div>
+
+        <div class="oid-table-wrap">
+          <table class="oid-table">
+            <thead>
+              <tr>
+                <th>Identity</th>
+                <th>Type</th>
+                <th>Area / Warmup</th>
+                <th>Performance</th>
+                <th>Last used</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody id="oidTableBody"></tbody>
+          </table>
         </div>
       </div>
 
@@ -14988,6 +15399,156 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       return fallback;
     }
   }
+
+  const PBK_OUTBOUND_IDENTITY_DEFAULTS = [
+    { id: 'p1', type: 'phone', provider: 'telnyx', value: '+1 (614) 555-0142', display: 'Columbus Main', area: '614', state: 'OH', callsSent: 234, callsAnswered: 96, smssSent: 412, smssReplied: 64, lastUsed: '2m ago', active: true, default: true },
+    { id: 'p2', type: 'phone', provider: 'telnyx', value: '+1 (216) 555-7423', display: 'Cleveland Local', area: '216', state: 'OH', callsSent: 184, callsAnswered: 71, smssSent: 287, smssReplied: 42, lastUsed: '18m ago', active: true, default: false },
+    { id: 'p3', type: 'phone', provider: 'telnyx', value: '+1 (513) 555-3318', display: 'Cincinnati Probate', area: '513', state: 'OH', callsSent: 162, callsAnswered: 58, smssSent: 198, smssReplied: 31, lastUsed: '1h ago', active: true, default: false },
+    { id: 'p4', type: 'phone', provider: 'telnyx', value: '+1 (330) 555-2891', display: 'Akron Pipeline', area: '330', state: 'OH', callsSent: 141, callsAnswered: 47, smssSent: 174, smssReplied: 28, lastUsed: '3h ago', active: true, default: false },
+    { id: 'p5', type: 'phone', provider: 'telnyx', value: '+1 (419) 555-0208', display: 'Toledo / NW Ohio', area: '419', state: 'OH', callsSent: 89, callsAnswered: 22, smssSent: 102, smssReplied: 14, lastUsed: '6h ago', active: true, default: false },
+    { id: 'p6', type: 'phone', provider: 'telnyx', value: '+1 (440) 555-9087', display: 'Cleveland Suburbs', area: '440', state: 'OH', callsSent: 67, callsAnswered: 28, smssSent: 84, smssReplied: 18, lastUsed: '1d ago', active: false, default: false },
+    { id: 'e1', type: 'email', provider: 'instantly', value: 'jordan@probonokey.com', display: 'Jordan - Primary', area: null, state: null, emailsSent: 1247, emailsOpened: 412, emailsReplied: 38, lastUsed: '12m ago', active: true, default: true, warmup: 'warm' },
+    { id: 'e2', type: 'email', provider: 'instantly', value: 'team@pbkcapital.com', display: 'Team - Acquisitions', area: null, state: null, emailsSent: 894, emailsOpened: 276, emailsReplied: 24, lastUsed: '2h ago', active: true, default: false, warmup: 'warm' },
+    { id: 'e3', type: 'email', provider: 'instantly', value: 'offers@pbkcapital.com', display: 'Offers - Outbound', area: null, state: null, emailsSent: 412, emailsOpened: 98, emailsReplied: 7, lastUsed: '4h ago', active: true, default: false, warmup: 'warming' },
+  ];
+  const PBK_CAMPAIGN_IDENTITY_STORAGE_KEY = `pbk:${PBK_STORAGE_ENV}:campaign-sending-identity:v1`;
+  const pbkOutboundIdentityState = PBK_OUTBOUND_IDENTITY_DEFAULTS.map((identity) => ({ ...identity }));
+  window.PBK_IDENTITIES = pbkOutboundIdentityState;
+
+  function getOutboundIdentities(type = '') {
+    return pbkOutboundIdentityState.filter((identity) => !type || identity.type === type);
+  }
+
+  function getActiveOutboundIdentities(type = '') {
+    return getOutboundIdentities(type).filter((identity) => identity.active);
+  }
+  window.PBK_activeIdentities = getActiveOutboundIdentities;
+
+  function getOutboundIdentityStats(identity = {}) {
+    if (identity.type === 'phone') {
+      const answerPct = Math.round((Number(identity.callsAnswered || 0) / Math.max(1, Number(identity.callsSent || 0))) * 100);
+      const smsReplyPct = Math.round((Number(identity.smssReplied || 0) / Math.max(1, Number(identity.smssSent || 0))) * 100);
+      return { answerPct, smsReplyPct, callsSent: Number(identity.callsSent || 0), smssSent: Number(identity.smssSent || 0) };
+    }
+    const openPct = Math.round((Number(identity.emailsOpened || 0) / Math.max(1, Number(identity.emailsSent || 0))) * 100);
+    const replyPct = Math.round((Number(identity.emailsReplied || 0) / Math.max(1, Number(identity.emailsSent || 0))) * 100);
+    return { openPct, replyPct, emailsSent: Number(identity.emailsSent || 0) };
+  }
+  window.PBK_idStat = getOutboundIdentityStats;
+
+  function getAreaCodeFromValue(value = '') {
+    const digits = String(value || '').replace(/\D+/g, '');
+    if (digits.length >= 11 && digits.startsWith('1')) return digits.slice(1, 4);
+    if (digits.length >= 10) return digits.slice(0, 3);
+    return '';
+  }
+
+  function bestOutboundIdentityForArea(areaCode = '', channel = 'sms') {
+    const normalizedChannel = String(channel || '').toLowerCase();
+    if (normalizedChannel === 'email') {
+      return getActiveOutboundIdentities('email').find((identity) => identity.default) || getActiveOutboundIdentities('email')[0] || getOutboundIdentities('email')[0];
+    }
+    const pool = getActiveOutboundIdentities('phone');
+    const sameArea = areaCode ? pool.filter((identity) => identity.area === areaCode) : [];
+    const candidates = sameArea.length ? sameArea : pool;
+    return candidates.slice().sort((a, b) => {
+      const aStats = getOutboundIdentityStats(a);
+      const bStats = getOutboundIdentityStats(b);
+      const aRate = normalizedChannel === 'sms' ? aStats.smsReplyPct : aStats.answerPct;
+      const bRate = normalizedChannel === 'sms' ? bStats.smsReplyPct : bStats.answerPct;
+      return bRate - aRate;
+    })[0] || pool.find((identity) => identity.default) || pool[0] || getOutboundIdentities('phone')[0];
+  }
+  window.PBK_bestForArea = bestOutboundIdentityForArea;
+
+  function identityMetricLabel(identity = {}, channel = '') {
+    const stats = getOutboundIdentityStats(identity);
+    if (identity.type === 'phone') return String(channel || '').toLowerCase() === 'sms'
+      ? `${stats.smsReplyPct}% sms`
+      : `${stats.answerPct}% answer`;
+    return `${stats.openPct}% open`;
+  }
+
+  function identityOptionStatsHtml(identity = {}) {
+    const stats = getOutboundIdentityStats(identity);
+    if (identity.type === 'phone') {
+      const answerTone = stats.answerPct >= 35 ? 'good' : stats.answerPct >= 20 ? 'warm' : '';
+      const smsTone = stats.smsReplyPct >= 15 ? 'good' : stats.smsReplyPct >= 8 ? 'warm' : '';
+      return `<span class="stat ${answerTone}">${stats.answerPct}% ans</span><span class="stat ${smsTone}">${stats.smsReplyPct}% sms</span>`;
+    }
+    const openTone = stats.openPct >= 30 ? 'good' : stats.openPct >= 15 ? 'warm' : '';
+    const replyTone = stats.replyPct >= 5 ? 'good' : '';
+    return `<span class="stat ${openTone}">${stats.openPct}% open</span><span class="stat ${replyTone}">${stats.replyPct}% reply</span>`;
+  }
+
+  function renderIdentityOption(identity = {}, selectedId = '') {
+    const badges = [];
+    if (identity.area) badges.push(`<span class="idpick-badge">${escapeHtml(identity.area)}</span>`);
+    if (identity.default) badges.push('<span class="idpick-badge best">default</span>');
+    if (identity.warmup === 'warming') badges.push('<span class="idpick-badge warming">warming</span>');
+    if (identity.id === selectedId) badges.push('<span class="idpick-badge best">current</span>');
+    return `
+      <div class="idpick-opt ${identity.id === selectedId ? 'suggested' : ''}" data-pick-id="${escapeHtml(identity.id)}" role="option" aria-selected="${identity.id === selectedId ? 'true' : 'false'}">
+        <div class="meta">
+          <div class="display">${escapeHtml(identity.display)}${badges.join('')}</div>
+          <div class="value">${escapeHtml(identity.value)} - last used ${escapeHtml(identity.lastUsed || 'recently')}</div>
+        </div>
+        <div class="stats">${identityOptionStatsHtml(identity)}</div>
+      </div>
+    `;
+  }
+
+  function renderIdentityMenu(menu, identities = [], selectedId = '', grouped = false) {
+    if (!menu) return;
+    if (!grouped) {
+      menu.innerHTML = identities.map((identity) => renderIdentityOption(identity, selectedId)).join('');
+      return;
+    }
+    const emails = identities.filter((identity) => identity.type === 'email');
+    const phones = identities.filter((identity) => identity.type === 'phone');
+    menu.innerHTML = `
+      <div class="idpick-section">Email accounts - Instantly</div>
+      ${emails.map((identity) => renderIdentityOption(identity, selectedId)).join('')}
+      <div class="idpick-section">Phone numbers - Telnyx</div>
+      ${phones.map((identity) => renderIdentityOption(identity, selectedId)).join('')}
+    `;
+  }
+
+  function paintIdentityPicker(prefix, identity = {}, channel = '') {
+    const name = document.getElementById(`${prefix}Name`);
+    const addr = document.getElementById(`${prefix}Addr`);
+    const stat = document.getElementById(`${prefix}Stat`);
+    if (name) name.textContent = identity?.display || 'Auto-select sender';
+    if (addr) addr.textContent = identity?.value || 'PBK chooses the safest active route';
+    if (stat) stat.textContent = identity?.id ? identityMetricLabel(identity, channel) : 'Ready';
+  }
+
+  function closeIdentityMenus(except = null) {
+    document.querySelectorAll('.idpick-menu.open').forEach((menu) => {
+      if (menu === except) return;
+      menu.classList.remove('open');
+      const btn = menu.parentElement?.querySelector('.idpick-btn');
+      btn?.classList.remove('open');
+      btn?.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function toggleIdentityMenu(button, menu) {
+    if (!button || !menu) return;
+    const open = !menu.classList.contains('open');
+    closeIdentityMenus(open ? menu : null);
+    menu.classList.toggle('open', open);
+    button.classList.toggle('open', open);
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest?.('.idpick-wrap')) return;
+    closeIdentityMenus();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeIdentityMenus();
+  });
 
   function encodeAnalyzerStoragePayload(payload) {
     const envelope = {
@@ -20439,6 +21000,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const paintConversation = (active) => {
       if (active?.leadId) setActiveLeadId(active.leadId);
+      syncComposeIdentityFromInboxItem(active || {});
       if (convoTitle) {
         convoTitle.innerHTML = `
           <div class="convo-avatar">${escapeHtml(getInitial(active.leadName))}</div>
@@ -23654,6 +24216,55 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     page.querySelector('[data-detail-rex]').textContent = campaign.rex || 'Rex will add recommendations after the campaign has live provider data.';
     const pause = page.querySelector('[data-campaign-detail-action="pause"]');
     if (pause) pause.textContent = campaign.status === 'paused' ? 'Resume campaign' : 'Pause campaign';
+    renderCampaignDetailIdentityPicker(campaign);
+  }
+
+  function getCampaignIdentitySelections() {
+    return parseJSONSafe(localStorage.getItem(PBK_CAMPAIGN_IDENTITY_STORAGE_KEY), {}) || {};
+  }
+
+  function setCampaignIdentitySelection(campaignId = '', identityId = '') {
+    const selections = getCampaignIdentitySelections();
+    if (campaignId && identityId) selections[campaignId] = identityId;
+    try {
+      localStorage.setItem(PBK_CAMPAIGN_IDENTITY_STORAGE_KEY, JSON.stringify(selections));
+    } catch {}
+  }
+
+  function getDefaultIdentityForCampaign(campaign = {}) {
+    const channel = String(campaign.channel || 'email').toLowerCase();
+    if (channel === 'call' || channel === 'sms') return bestOutboundIdentityForArea('', channel);
+    return bestOutboundIdentityForArea('', 'email');
+  }
+
+  function renderCampaignDetailIdentityPicker(campaign = {}) {
+    const button = document.getElementById('cdFromBtn');
+    const menu = document.getElementById('cdFromMenu');
+    if (!button || !menu) return;
+    const selections = getCampaignIdentitySelections();
+    const selectedId = selections[campaign?.id] || '';
+    const selected = getOutboundIdentities().find((identity) => identity.id === selectedId && identity.active) || getDefaultIdentityForCampaign(campaign);
+    paintIdentityPicker('cdFrom', selected, selected?.type === 'email' ? 'email' : campaign?.channel || 'sms');
+    renderIdentityMenu(menu, getActiveOutboundIdentities(), selected?.id || '', true);
+    button.onclick = (event) => {
+      event.stopPropagation();
+      renderIdentityMenu(menu, getActiveOutboundIdentities(), selected?.id || '', true);
+      menu.querySelectorAll('[data-pick-id]').forEach((option) => {
+        option.addEventListener('click', () => {
+          const picked = getOutboundIdentities().find((identity) => identity.id === option.dataset.pickId);
+          if (!picked) return;
+          setCampaignIdentitySelection(campaign?.id || campaignUiState.selectedId, picked.id);
+          paintIdentityPicker('cdFrom', picked, picked.type === 'email' ? 'email' : 'sms');
+          closeIdentityMenus();
+          toast({
+            type: 'success',
+            title: 'Sending identity updated',
+            desc: `${picked.display} will be used for this campaign preview.`
+          });
+        });
+      });
+      toggleIdentityMenu(button, menu);
+    };
   }
 
   function campaignProviderForChannel(channel = 'email') {
@@ -25192,6 +25803,71 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  let composeSelectedIdentityId = '';
+
+  function getComposeIdentityChannel(compose) {
+    const raw = compose?.querySelector('.compose-channels .chip-btn.active')?.textContent?.trim().toLowerCase() || 'sms';
+    if (raw === 'email') return 'email';
+    if (raw === 'call') return 'call';
+    return 'sms';
+  }
+
+  function renderComposeIdentityPicker(options = {}) {
+    const page = getPageNode('inbox');
+    const compose = page?.querySelector('.compose');
+    const button = document.getElementById('cmpFromBtn');
+    const menu = document.getElementById('cmpFromMenu');
+    const label = document.getElementById('cmpFromLabel');
+    const suggest = document.getElementById('cmpFromSuggest');
+    if (!compose || !button || !menu) return;
+    const channel = options.channel || getComposeIdentityChannel(compose);
+    const type = channel === 'email' ? 'email' : 'phone';
+    const context = options.context || getInboxContext();
+    const areaCode = getAreaCodeFromValue(options.phone || context?.phone || '');
+    const picked = options.identity
+      || (composeSelectedIdentityId ? getOutboundIdentities(type).find((identity) => identity.id === composeSelectedIdentityId && identity.active) : null)
+      || bestOutboundIdentityForArea(areaCode, channel);
+    composeSelectedIdentityId = picked?.id || '';
+    if (label) label.textContent = channel === 'email' ? 'FROM - SENDING EMAIL' : 'FROM - SENDING NUMBER';
+    paintIdentityPicker('cmpFrom', picked, channel);
+    if (suggest) {
+      suggest.classList.toggle('show', Boolean(areaCode && picked?.area === areaCode && type === 'phone'));
+      suggest.textContent = areaCode && picked?.area === areaCode ? `${areaCode} match` : 'Area match';
+    }
+    renderIdentityMenu(menu, getActiveOutboundIdentities(type), picked?.id || '');
+    menu.querySelectorAll('[data-pick-id]').forEach((option) => {
+      option.addEventListener('click', () => {
+        const selected = getOutboundIdentities(type).find((identity) => identity.id === option.dataset.pickId);
+        composeSelectedIdentityId = selected?.id || '';
+        paintIdentityPicker('cmpFrom', selected, channel);
+        closeIdentityMenus();
+        toast({ type: 'success', title: 'Compose route selected', desc: `${selected?.display || 'Sender'} - ${selected?.value || ''}` });
+      });
+    });
+  }
+
+  function syncComposeIdentityFromInboxItem(item = {}) {
+    if (!getPageNode('inbox')) return;
+    const compose = getPageNode('inbox')?.querySelector('.compose');
+    if (!compose) return;
+    const channel = getComposeIdentityChannel(compose);
+    composeSelectedIdentityId = '';
+    renderComposeIdentityPicker({ channel, context: item, phone: item.phone });
+  }
+
+  function wireComposeIdentityPicker(compose) {
+    const button = document.getElementById('cmpFromBtn');
+    const menu = document.getElementById('cmpFromMenu');
+    if (!compose || !button || !menu || compose.dataset.identityWired === 'true') return;
+    compose.dataset.identityWired = 'true';
+    renderComposeIdentityPicker();
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      renderComposeIdentityPicker();
+      toggleIdentityMenu(button, menu);
+    });
+  }
+
   function wireInboxRuntime() {
     const page = getPageNode('inbox');
     if (!page || page.dataset.runtimeWired === 'true') return;
@@ -25199,6 +25875,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
     const compose = page.querySelector('.compose');
     const textarea = compose?.querySelector('textarea');
+    wireComposeIdentityPicker(compose);
 
     page.addEventListener('click', (event) => {
       if (!event.target.closest('[data-inbox-mobile-back]')) return;
@@ -25211,6 +25888,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       chip.addEventListener('click', () => {
         compose.querySelectorAll('.compose-channels .chip-btn').forEach((button) => button.classList.remove('active'));
         chip.classList.add('active');
+        composeSelectedIdentityId = '';
+        renderComposeIdentityPicker();
       });
     });
 
@@ -25627,6 +26306,42 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       : '<div class="call-floor-scheduled-item"><div><strong>No local callbacks</strong><span>Quick-pick a time, then save it here.</span></div></div>';
   }
 
+  let callFloorSelectedIdentityId = '';
+
+  function renderCallFloorIdentityPicker(options = {}) {
+    const button = document.getElementById('callFloorFromBtn');
+    const menu = document.getElementById('callFloorFromMenu');
+    const suggest = document.getElementById('callFloorFromSuggest');
+    if (!button || !menu) return;
+    const areaCode = options.areaCode || getAreaCodeFromValue(options.phone || '');
+    const selected = options.identity
+      || (callFloorSelectedIdentityId ? getOutboundIdentities('phone').find((identity) => identity.id === callFloorSelectedIdentityId && identity.active) : null)
+      || bestOutboundIdentityForArea(areaCode, 'call');
+    callFloorSelectedIdentityId = selected?.id || '';
+    paintIdentityPicker('callFloorFrom', selected, 'call');
+    if (suggest) {
+      suggest.classList.toggle('show', Boolean(areaCode && selected?.area === areaCode));
+      suggest.textContent = areaCode && selected?.area === areaCode ? `${areaCode} match` : 'Area match';
+    }
+    renderIdentityMenu(menu, getActiveOutboundIdentities('phone'), selected?.id || '');
+    menu.querySelectorAll('[data-pick-id]').forEach((option) => {
+      option.addEventListener('click', () => {
+        const picked = getOutboundIdentities('phone').find((identity) => identity.id === option.dataset.pickId);
+        callFloorSelectedIdentityId = picked?.id || '';
+        paintIdentityPicker('callFloorFrom', picked, 'call');
+        closeIdentityMenus();
+        toast({ type: 'success', title: 'Dial route selected', desc: `${picked?.display || 'Number'} - ${picked?.value || ''}` });
+      });
+    });
+  }
+
+  function suggestCallFloorIdentityForLead(lead = {}) {
+    const phone = getLeadPhone(lead);
+    const areaCode = getAreaCodeFromValue(phone);
+    callFloorSelectedIdentityId = '';
+    renderCallFloorIdentityPicker({ phone, areaCode });
+  }
+
   function wireCallFloorPolish(page) {
     if (!page || page.dataset.callFloorPolishWired === 'true') return;
     page.dataset.callFloorPolishWired = 'true';
@@ -25634,6 +26349,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const callbackTime = page.querySelector('#callFloorCallbackTime');
     renderCallFloorLeadResults('');
     renderCallFloorSchedule();
+    renderCallFloorIdentityPicker();
+
+    const fromButton = page.querySelector('#callFloorFromBtn');
+    const fromMenu = page.querySelector('#callFloorFromMenu');
+    fromButton?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      renderCallFloorIdentityPicker();
+      toggleIdentityMenu(fromButton, fromMenu);
+    });
 
     search?.addEventListener('input', () => scheduleCallFloorSearch(search.value));
     page.querySelector('[data-call-floor-search]')?.addEventListener('click', () => scheduleCallFloorSearch(search?.value || '', { immediate: true }));
@@ -25648,6 +26372,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     page.addEventListener('click', (event) => {
       const callButton = event.target.closest('[data-call-floor-call]');
       if (callButton) {
+        const lead = getCallFloorLeadIndex().find((row) => row.id === callButton.dataset.callFloorCall)?.lead;
+        if (lead) suggestCallFloorIdentityForLead(lead);
         const original = callButton.textContent;
         callButton.disabled = true;
         callButton.innerHTML = '<span class="loading-spinner-small"></span>Calling...';
@@ -25662,7 +26388,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       const openLead = event.target.closest('[data-call-floor-open-lead]');
       if (openLead) {
         const lead = getCallFloorLeadIndex().find((row) => row.id === openLead.dataset.callFloorOpenLead)?.lead;
-        if (lead) openLeadDetail(getLeadRuntimeId(lead));
+        if (lead) {
+          suggestCallFloorIdentityForLead(lead);
+          openLeadDetail(getLeadRuntimeId(lead));
+        }
         else showPage('lead-detail');
         return;
       }
@@ -26033,10 +26762,143 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  let outboundIdentityFilter = 'all';
+
+  function outboundPerfBarClass(percent = 0) {
+    if (percent >= 35) return 'good';
+    if (percent >= 20) return 'warm';
+    return '';
+  }
+
+  function renderOutboundIdentityPerformance(identity = {}) {
+    const stats = getOutboundIdentityStats(identity);
+    if (identity.type === 'phone') {
+      const answerTone = outboundPerfBarClass(stats.answerPct);
+      const smsTone = stats.smsReplyPct >= 15 ? 'good' : stats.smsReplyPct >= 8 ? 'warm' : '';
+      return `
+        <div class="oid-perf">
+          <div class="row"><span class="l">Call answer</span><span class="v ${answerTone}">${stats.answerPct}% <span style="opacity:.5;font-weight:400;">- ${stats.callsSent} calls</span></span></div>
+          <div class="oid-bar"><div class="oid-bar-fill ${answerTone}" style="width:${Math.min(100, stats.answerPct * 2)}%;"></div></div>
+          <div class="row"><span class="l">SMS reply</span><span class="v ${smsTone}">${stats.smsReplyPct}% <span style="opacity:.5;font-weight:400;">- ${stats.smssSent} sms</span></span></div>
+          <div class="oid-bar"><div class="oid-bar-fill ${smsTone}" style="width:${Math.min(100, stats.smsReplyPct * 2)}%;"></div></div>
+        </div>
+      `;
+    }
+    const openTone = stats.openPct >= 30 ? 'good' : stats.openPct >= 15 ? 'warm' : '';
+    const replyTone = stats.replyPct >= 5 ? 'good' : '';
+    return `
+      <div class="oid-perf">
+        <div class="row"><span class="l">Open rate</span><span class="v ${openTone}">${stats.openPct}% <span style="opacity:.5;font-weight:400;">- ${stats.emailsSent} emails</span></span></div>
+        <div class="oid-bar"><div class="oid-bar-fill ${openTone}" style="width:${Math.min(100, stats.openPct * 2)}%;"></div></div>
+        <div class="row"><span class="l">Reply rate</span><span class="v ${replyTone}">${stats.replyPct}%</span></div>
+        <div class="oid-bar"><div class="oid-bar-fill ${replyTone}" style="width:${Math.min(100, stats.replyPct * 10)}%;"></div></div>
+      </div>
+    `;
+  }
+
+  function renderOutboundIdentitiesSettings() {
+    const tbody = document.getElementById('oidTableBody');
+    if (!tbody) return;
+    const all = getOutboundIdentities();
+    const filtered = all.filter((identity) => {
+      if (outboundIdentityFilter === 'active') return identity.active;
+      if (outboundIdentityFilter === 'phone') return identity.type === 'phone';
+      if (outboundIdentityFilter === 'email') return identity.type === 'email';
+      return true;
+    });
+    tbody.innerHTML = filtered.map((identity) => {
+      const area = identity.type === 'phone'
+        ? `<span class="oid-area">${escapeHtml(identity.area || '-')}</span>`
+        : `<span class="oid-area" style="color:${identity.warmup === 'warming' ? 'var(--amber)' : 'var(--lime)'}">${escapeHtml(identity.warmup || 'warm')}</span>`;
+      return `
+        <tr class="${identity.active ? '' : 'inactive'}" data-oid-id="${escapeHtml(identity.id)}">
+          <td>
+            <div class="oid-display">${escapeHtml(identity.display)}${identity.default ? ' <span class="oid-area" style="color:var(--lime);margin-left:6px;">default</span>' : ''}</div>
+            <div class="oid-value">${escapeHtml(identity.value)}</div>
+          </td>
+          <td><span class="oid-type ${escapeHtml(identity.type)}">${escapeHtml(identity.provider)}</span></td>
+          <td>${area}</td>
+          <td>${renderOutboundIdentityPerformance(identity)}</td>
+          <td><span class="oid-last">${escapeHtml(identity.lastUsed || 'recently')}</span></td>
+          <td style="text-align:center;"><div class="oid-toggle ${identity.active ? 'on' : ''}" role="switch" aria-checked="${identity.active ? 'true' : 'false'}" tabindex="0" data-oid-toggle="${escapeHtml(identity.id)}"></div></td>
+        </tr>
+      `;
+    }).join('');
+    const activeCount = getActiveOutboundIdentities().length;
+    const phoneStats = getOutboundIdentities('phone').map(getOutboundIdentityStats);
+    const bestAnswer = phoneStats.reduce((max, stats) => Math.max(max, stats.answerPct || 0), 0);
+    const warmEmailCount = getOutboundIdentities('email').filter((identity) => identity.active && identity.warmup === 'warm').length;
+    document.querySelector('[data-oid-summary="active"]')?.replaceChildren(document.createTextNode(String(activeCount)));
+    document.querySelector('[data-oid-summary="answer"]')?.replaceChildren(document.createTextNode(`${bestAnswer}%`));
+    document.querySelector('[data-oid-summary="email"]')?.replaceChildren(document.createTextNode(String(warmEmailCount)));
+    document.getElementById('oidNavCount')?.replaceChildren(document.createTextNode(String(activeCount)));
+  }
+
+  function wireOutboundIdentitiesSettings(page) {
+    const table = page?.querySelector('#oidTableBody');
+    if (!page || !table || page.dataset.outboundIdentitiesWired === 'true') return;
+    page.dataset.outboundIdentitiesWired = 'true';
+    renderOutboundIdentitiesSettings();
+    page.querySelectorAll('[data-oid-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        page.querySelectorAll('[data-oid-filter]').forEach((item) => item.classList.remove('active'));
+        button.classList.add('active');
+        outboundIdentityFilter = button.dataset.oidFilter || 'all';
+        renderOutboundIdentitiesSettings();
+      });
+    });
+    page.querySelector('#oidSyncBtn')?.addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      const original = button.textContent;
+      button.disabled = true;
+      button.innerHTML = '<span class="loading-spinner-small"></span>Syncing...';
+      setTimeout(() => {
+        button.disabled = false;
+        button.textContent = original;
+        toast({ type: 'success', title: 'Sync complete (demo)', desc: 'Pulled the latest Telnyx and Instantly identities into the local preview.' });
+      }, 1000);
+    });
+    page.querySelector('#oidBuyBtn')?.addEventListener('click', () => {
+      toast({ type: 'info', title: 'Buy number queued (demo)', desc: 'Production wiring will open the Telnyx marketplace route.' });
+    });
+    page.querySelectorAll('[data-settings-anchor]').forEach((item) => {
+      item.addEventListener('click', () => {
+        const target = document.getElementById(item.dataset.settingsAnchor || '');
+        target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        page.querySelectorAll('.settings-nav-item').forEach((nav) => nav.classList.remove('active'));
+        item.classList.add('active');
+      });
+    });
+    table.addEventListener('click', (event) => {
+      const toggle = event.target.closest('[data-oid-toggle]');
+      if (!toggle) return;
+      const identity = getOutboundIdentities().find((item) => item.id === toggle.dataset.oidToggle);
+      if (!identity) return;
+      identity.active = !identity.active;
+      renderOutboundIdentitiesSettings();
+      renderComposeIdentityPicker();
+      renderCallFloorIdentityPicker();
+      renderCampaignDetailIdentityPicker(getCampaignRecords().find((item) => item.id === campaignUiState.selectedId));
+      toast({
+        type: identity.active ? 'success' : 'info',
+        title: identity.active ? 'Identity reactivated' : 'Identity paused',
+        desc: `${identity.display} - ${identity.value}`
+      });
+    });
+    table.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const toggle = event.target.closest('[data-oid-toggle]');
+      if (!toggle) return;
+      event.preventDefault();
+      toggle.click();
+    });
+  }
+
   function wireSettingsRuntime() {
     const page = getPageNode('settings');
     if (!page || page.dataset.runtimeWired === 'true') return;
     page.dataset.runtimeWired = 'true';
+    wireOutboundIdentitiesSettings(page);
 
     const dncList = page.querySelector('.dnc-list');
     dncList?.addEventListener('click', async (event) => {

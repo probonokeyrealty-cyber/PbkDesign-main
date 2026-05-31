@@ -2302,9 +2302,9 @@ function summarizeHealthComponents(components = {}) {
   };
 }
 
-function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
+async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
   const providers = runtimeMeta.providers || {};
-  const tooling = buildToolingStatus();
+  const tooling = await buildToolingStatus();
   const agentOrchestration = buildAgentOrchestrationSnapshot();
   const components = {
     bridge: {
@@ -27939,6 +27939,7 @@ async function buildToolingStatus() {
         : 'Run npm run agent:export-scenario after seeding runtime state.',
     },
     browserOs: {
+      optional: true,
       ready: Boolean(browserOsRegistry),
       registryConfigured: Boolean(browserOsRegistry),
       endpoint: browserOsRegistry?.url || browserOsRegistry?.endpoint || BROWSEROS_MCP_URL,
@@ -27947,6 +27948,7 @@ async function buildToolingStatus() {
         : `Register BrowserOS at ${BROWSEROS_MCP_URL} to give Rex browser-native research without leaving PBK.`,
     },
     browserResearch: {
+      optional: false,
       ready: existsSync(BROWSER_RESEARCH_JOBS_FILE),
       jobsSeeded: Array.isArray(researchJobs?.jobs) ? researchJobs.jobs.length : 0,
       targetsConfigured: existsSync(BROWSER_RESEARCH_TARGETS_FILE),
@@ -27955,6 +27957,7 @@ async function buildToolingStatus() {
         : 'Run npm run research:seed-browser-jobs to generate the first queue.',
     },
     propertyData: {
+      optional: true,
       ready: propertyDataReady,
       configured: propertyDataConfigured,
       localSmokePassed: Boolean(propertyDataLocalStatus?.ok),
@@ -27975,6 +27978,7 @@ async function buildToolingStatus() {
           : 'Stage HomeHarvest for structured listings and Scrapling for on-demand research before enabling provider calls.',
     },
     pipelineMemory: {
+      optional: true,
       ready: pipelineMemoryReady,
       configured: pipelineMemoryConfigured,
       candidateCount: countManifestItems(upgradeManifest, 'pipelineMemory'),
@@ -27985,6 +27989,7 @@ async function buildToolingStatus() {
           : 'Add a pipeline-memory CRM connector only as a supporting source, not a PBK CRM replacement.',
     },
     voiceFallback: {
+      optional: true,
       ready: voiceFallbackReady,
       configured: voiceFallbackConfigured,
       candidateCount: countManifestItems(upgradeManifest, 'voiceFallback'),
@@ -27995,6 +28000,7 @@ async function buildToolingStatus() {
           : 'Stage a local TTS fallback only after the primary Telnyx/Deepgram voice path is stable.',
     },
     desktopCopilot: {
+      optional: true,
       ready: desktopCopilotReady,
       configured: desktopCopilotConfigured,
       candidateCount: countManifestItems(upgradeManifest, 'desktopCopilot'),
@@ -28040,14 +28046,22 @@ async function buildToolingStatus() {
 
   const toolingEntries = Object.entries(sections);
   const readyCount = toolingEntries.filter(([, value]) => Boolean(value.ready)).length;
+  const requiredToolingEntries = toolingEntries.filter(([, value]) => !value.optional);
+  const optionalToolingEntries = toolingEntries.filter(([, value]) => Boolean(value.optional));
+  const requiredReadyCount = requiredToolingEntries.filter(([, value]) => Boolean(value.ready)).length;
+  const optionalReadyCount = optionalToolingEntries.filter(([, value]) => Boolean(value.ready)).length;
 
   return {
     ...sections,
     summary: {
       readyCount,
       totalCount: toolingEntries.length,
+      requiredReadyCount,
+      requiredCount: requiredToolingEntries.length,
+      optionalReadyCount,
+      optionalCount: optionalToolingEntries.length,
       metricsUrl,
-      note: `${readyCount}/${toolingEntries.length} advanced tooling surfaces are repo-ready.`,
+      note: `${requiredReadyCount}/${requiredToolingEntries.length} core tooling surfaces are repo-ready; ${optionalReadyCount}/${optionalToolingEntries.length} optional add-ons are enabled.`,
     },
   };
 }
@@ -50492,7 +50506,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && matchesPath(pathname, ['/', '/health', '/status', '/api/health', '/api/status'])) {
       const runtimeMeta = getRuntimeMeta();
-      const commandCenterHealth = buildCommandCenterHealthSnapshot(runtimeMeta);
+      const commandCenterHealth = await buildCommandCenterHealthSnapshot(runtimeMeta);
       json(response, 200, {
         ok: true,
         status: commandCenterHealth.status,

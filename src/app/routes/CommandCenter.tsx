@@ -32,7 +32,8 @@ function mapCallStatus(status: unknown): LiveCallState['status'] {
   if (normalized === 'live' || normalized === 'connected') return 'connected';
   if (normalized === 'dialing' || normalized === 'queued') return 'dialing';
   if (normalized === 'hold' || normalized === 'on-hold') return 'on-hold';
-  if (normalized === 'ended' || normalized === 'completed' || normalized === 'failed') return 'ended';
+  if (normalized === 'ended' || normalized === 'completed' || normalized === 'failed')
+    return 'ended';
   return 'idle';
 }
 
@@ -74,16 +75,21 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
   if (!call) return undefined;
   const rawSentiment = toNumber(call.sentiment);
   const sentiment =
-    rawSentiment == null ? null : rawSentiment <= 1 ? Math.round(rawSentiment * 100) : Math.round(rawSentiment);
+    rawSentiment == null
+      ? null
+      : rawSentiment <= 1
+        ? Math.round(rawSentiment * 100)
+        : Math.round(rawSentiment);
   const transcript = Array.isArray(call.transcript)
-    ? call.transcript.map(mapTranscriptLine).filter(Boolean) as TranscriptLine[]
+    ? (call.transcript.map(mapTranscriptLine).filter(Boolean) as TranscriptLine[])
     : [];
 
   return {
     callId: String(call.id || call.callId || ''),
     dealId: call.dealId ? String(call.dealId) : null,
     status: mapCallStatus(call.status),
-    agentMode: String(call.agentMode || call.mode || 'autopilot') === 'human' ? 'human' : 'autopilot',
+    agentMode:
+      String(call.agentMode || call.mode || 'autopilot') === 'human' ? 'human' : 'autopilot',
     caller: {
       name: call.leadName ? String(call.leadName) : null,
       phone: call.phone ? String(call.phone) : null,
@@ -107,16 +113,29 @@ export function CommandCenter() {
   const leadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
   const activity = Array.isArray(snapshot?.activity) ? snapshot.activity.slice(0, 8) : [];
   const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
-  const runtimeProviders = ((snapshot?.status?.providers || {}) as Record<string, Record<string, unknown>>);
+  const runtimeProviders = (snapshot?.status?.providers || {}) as Record<
+    string,
+    Record<string, unknown>
+  >;
   const webSearchStatus = runtimeProviders.webSearch || {};
   const webSearchNeuralOutput = (webSearchStatus.neuralOutput || {}) as Record<string, unknown>;
   const webSearchLiveReady = Boolean(webSearchStatus.liveReady);
-  const webSearchFallbackProvider = String(webSearchStatus.fallbackProvider || 'pbk_brain').replace(/_/g, ' ');
-  const webSearchPrimaryProvider = String(webSearchStatus.primaryProvider || (webSearchLiveReady ? 'tavily' : webSearchFallbackProvider)).replace(/_/g, ' ');
-  const webSearchMissing = Array.isArray(webSearchStatus.missing) ? webSearchStatus.missing.map(String).filter(Boolean) : [];
+  const webSearchFallbackProvider = String(webSearchStatus.fallbackProvider || 'pbk_brain').replace(
+    /_/g,
+    ' '
+  );
+  const webSearchPrimaryProvider = String(
+    webSearchStatus.primaryProvider || (webSearchLiveReady ? 'tavily' : webSearchFallbackProvider)
+  ).replace(/_/g, ' ');
+  const webSearchMissing = Array.isArray(webSearchStatus.missing)
+    ? webSearchStatus.missing.map(String).filter(Boolean)
+    : [];
   const activeCall = mapRuntimeCall(
-    calls.find((call) => ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(String(call.status || '').toLowerCase()))
-      || calls[0],
+    calls.find((call) =>
+      ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(
+        String(call.status || '').toLowerCase()
+      )
+    ) || calls[0]
   );
 
   useEffect(() => {
@@ -145,25 +164,58 @@ export function CommandCenter() {
     }
   }, [activeCall?.callId, activeCall?.status, activeCall?.caller.name, activeCall?.caller.phone]);
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
+  const toolingCoreReady =
+    toNumber(toolingSummary.requiredReadyCount, toNumber(toolingSummary.readyCount, 0)) || 0;
+  const toolingCoreTotal =
+    toNumber(toolingSummary.requiredCount, toNumber(toolingSummary.totalCount, 0)) || 0;
+  const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount, 0) || 0;
+  const toolingOptionalTotal = toNumber(toolingSummary.optionalCount, 0) || 0;
   const toolingHighlights = [
     { label: 'Meta-Agent', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
     { label: 'BrowserOS Agent', meta: tooling?.browserOs as Record<string, unknown> | undefined },
-    { label: 'Browser Research', meta: tooling?.browserResearch as Record<string, unknown> | undefined },
+    {
+      label: 'Browser Research',
+      meta: tooling?.browserResearch as Record<string, unknown> | undefined,
+    },
     { label: 'Property Data', meta: tooling?.propertyData as Record<string, unknown> | undefined },
-    { label: 'Pipeline Memory', meta: tooling?.pipelineMemory as Record<string, unknown> | undefined },
-    { label: 'Voice Fallback', meta: tooling?.voiceFallback as Record<string, unknown> | undefined },
+    {
+      label: 'Pipeline Memory',
+      meta: tooling?.pipelineMemory as Record<string, unknown> | undefined,
+    },
+    {
+      label: 'Voice Fallback',
+      meta: tooling?.voiceFallback as Record<string, unknown> | undefined,
+    },
     { label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
   ];
 
   const kpis = [
     { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
     { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
-    { label: 'Approvals Needed', value: String(approvals.filter((item) => item.status === 'pending').length), hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting` },
-    { label: 'Deals in Pipeline', value: String((snapshot?.contracts || []).length), hint: 'prepared, sent, or signed contracts' },
-    { label: 'Tooling Ready', value: `${String(toolingSummary.readyCount || 0)}/${String(toolingSummary.totalCount || 0)}`, hint: 'advanced systems available in repo' },
+    {
+      label: 'Approvals Needed',
+      value: String(approvals.filter((item) => item.status === 'pending').length),
+      hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting`,
+    },
+    {
+      label: 'Deals in Pipeline',
+      value: String((snapshot?.contracts || []).length),
+      hint: 'prepared, sent, or signed contracts',
+    },
+    {
+      label: 'Tooling Ready',
+      value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
+      hint: toolingOptionalTotal
+        ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional add-ons enabled`
+        : 'advanced systems available in repo',
+    },
   ];
 
-  const runRuntimeAction = async (key: string, successMessage: string, action: () => Promise<void>) => {
+  const runRuntimeAction = async (
+    key: string,
+    successMessage: string,
+    action: () => Promise<void>
+  ) => {
     setPendingAction(key);
     setActionStatus('');
     try {
@@ -184,13 +236,20 @@ export function CommandCenter() {
       const result = await fetchWebSearchStatusRequest();
       const status = (result.status || {}) as Record<string, unknown>;
       const neuralOutput = (status.neuralOutput || {}) as Record<string, unknown>;
-      const provider = String(status.primaryProvider || webSearchPrimaryProvider).replace(/_/g, ' ');
+      const provider = String(status.primaryProvider || webSearchPrimaryProvider).replace(
+        /_/g,
+        ' '
+      );
       const liveLabel = status.liveReady ? 'live Tavily' : 'fallback';
       const spikeVersion = String(neuralOutput.spikeVersion || 'pbk-web-search-spikes-v1');
-      setActionStatus(`Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`);
+      setActionStatus(
+        `Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`
+      );
       await refresh().catch(() => null);
     } catch (nextError) {
-      setActionStatus(nextError instanceof Error ? nextError.message : 'Web-search status probe failed.');
+      setActionStatus(
+        nextError instanceof Error ? nextError.message : 'Web-search status probe failed.'
+      );
     } finally {
       setPendingAction('');
     }
@@ -213,11 +272,7 @@ export function CommandCenter() {
             aria-hidden="true"
             className={[
               'h-2 w-2 rounded-full',
-              loading
-                ? 'bg-sky-400 animate-pulse'
-                : error
-                  ? 'bg-amber-400'
-                  : 'bg-emerald-400',
+              loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
             ].join(' ')}
           />
           {loading ? 'Syncing runtime' : error ? 'Bridge offline' : 'Bridge sync healthy'}
@@ -253,24 +308,36 @@ export function CommandCenter() {
             state={activeCall}
             onTakeOver={(state) => {
               const callId = state.callId || '';
-              void runRuntimeAction(`call:${callId}:takeover`, 'Human takeover sent to the bridge.', async () => {
-                if (callId) await controlRuntimeCall(callId, 'takeover');
-                navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
-              });
+              void runRuntimeAction(
+                `call:${callId}:takeover`,
+                'Human takeover sent to the bridge.',
+                async () => {
+                  if (callId) await controlRuntimeCall(callId, 'takeover');
+                  navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+                }
+              );
             }}
             onMute={(state) => {
               const callId = state.callId || '';
               if (!callId) return;
-              void runRuntimeAction(`call:${callId}:mute`, 'Ava mute command sent to the bridge.', async () => {
-                await controlRuntimeCall(callId, 'mute');
-              });
+              void runRuntimeAction(
+                `call:${callId}:mute`,
+                'Ava mute command sent to the bridge.',
+                async () => {
+                  await controlRuntimeCall(callId, 'mute');
+                }
+              );
             }}
             onEnd={(state) => {
               const callId = state.callId || '';
               if (!callId) return;
-              void runRuntimeAction(`call:${callId}:end`, 'Call end command sent to the bridge.', async () => {
-                await controlRuntimeCall(callId, 'end');
-              });
+              void runRuntimeAction(
+                `call:${callId}:end`,
+                'Call end command sent to the bridge.',
+                async () => {
+                  await controlRuntimeCall(callId, 'end');
+                }
+              );
             }}
           />
 
@@ -280,7 +347,9 @@ export function CommandCenter() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-100">Admin Activity</h2>
-                <p className="text-xs text-slate-500">Approval-backed infrastructure changes from Rex.</p>
+                <p className="text-xs text-slate-500">
+                  Approval-backed infrastructure changes from Rex.
+                </p>
               </div>
             </div>
             <div className="mt-3 space-y-2">
@@ -297,7 +366,9 @@ export function CommandCenter() {
                       {formatRuntimeStatus(task.status)}
                     </div>
                   </div>
-                  <div className="mt-2 text-xs text-slate-400">{String(task.summary || task.command || 'Administrative action')}</div>
+                  <div className="mt-2 text-xs text-slate-400">
+                    {String(task.summary || task.command || 'Administrative action')}
+                  </div>
                   {String(task.status || '').toLowerCase() === 'pending' && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
@@ -306,9 +377,13 @@ export function CommandCenter() {
                         onClick={() => {
                           const taskId = String(task.id || '');
                           if (!taskId) return;
-                          void runRuntimeAction(`admin:${taskId}:approved`, 'Admin task approved and replayed through Rex.', async () => {
-                            await updateAdminTaskDecision(taskId, 'approved');
-                          });
+                          void runRuntimeAction(
+                            `admin:${taskId}:approved`,
+                            'Admin task approved and replayed through Rex.',
+                            async () => {
+                              await updateAdminTaskDecision(taskId, 'approved');
+                            }
+                          );
                         }}
                         className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
                       >
@@ -320,9 +395,13 @@ export function CommandCenter() {
                         onClick={() => {
                           const taskId = String(task.id || '');
                           if (!taskId) return;
-                          void runRuntimeAction(`admin:${taskId}:rejected`, 'Admin task declined.', async () => {
-                            await updateAdminTaskDecision(taskId, 'rejected');
-                          });
+                          void runRuntimeAction(
+                            `admin:${taskId}:rejected`,
+                            'Admin task declined.',
+                            async () => {
+                              await updateAdminTaskDecision(taskId, 'rejected');
+                            }
+                          );
                         }}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
@@ -344,7 +423,9 @@ export function CommandCenter() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-100">Web Search Cognition</h2>
-                <p className="text-xs text-slate-500">Live data status for Ava/Rex spikes, facts, and fallback telemetry.</p>
+                <p className="text-xs text-slate-500">
+                  Live data status for Ava/Rex spikes, facts, and fallback telemetry.
+                </p>
               </div>
               <span
                 className={[
@@ -366,24 +447,42 @@ export function CommandCenter() {
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Provider Path</div>
-                <div className="mt-1 text-sm font-semibold capitalize text-slate-100">{webSearchPrimaryProvider}</div>
-                <div className="mt-1 text-xs text-slate-500">{String(webSearchStatus.mode || 'waiting for bridge status')}</div>
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                  Provider Path
+                </div>
+                <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
+                  {webSearchPrimaryProvider}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {String(webSearchStatus.mode || 'waiting for bridge status')}
+                </div>
               </div>
               <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Neural Contract</div>
-                <div className="mt-1 text-sm font-semibold text-slate-100">{String(webSearchNeuralOutput.spikeVersion || 'pbk-web-search-spikes-v1')}</div>
+                <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                  Neural Contract
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-100">
+                  {String(webSearchNeuralOutput.spikeVersion || 'pbk-web-search-spikes-v1')}
+                </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {webSearchNeuralOutput.exposesSymbolicFacts === false ? 'Spikes only' : 'Spikes + symbolic facts'}
+                  {webSearchNeuralOutput.exposesSymbolicFacts === false
+                    ? 'Spikes only'
+                    : 'Spikes + symbolic facts'}
                 </div>
               </div>
             </div>
             <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-              {String(webSearchStatus.note || 'Waiting for the bridge to report web-search cognition status.')}
+              {String(
+                webSearchStatus.note ||
+                  'Waiting for the bridge to report web-search cognition status.'
+              )}
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <div className="text-[11px] text-slate-500">
-                Log event: <span className="text-slate-300">{String(webSearchStatus.logEvent || 'pbk_web_search_provider')}</span>
+                Log event:{' '}
+                <span className="text-slate-300">
+                  {String(webSearchStatus.logEvent || 'pbk_web_search_provider')}
+                </span>
                 {!webSearchLiveReady && (
                   <span> / Missing: {webSearchMissing.join(', ') || 'PBK_TAVILY_API_KEY'}</span>
                 )}
@@ -405,10 +504,12 @@ export function CommandCenter() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-100">Tooling Readiness</h2>
-                <p className="text-xs text-slate-500">Research, monitoring, and meta-agent support systems.</p>
+                <p className="text-xs text-slate-500">
+                  Research, monitoring, and meta-agent support systems.
+                </p>
               </div>
               <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                {String(toolingSummary.readyCount || 0)}/{String(toolingSummary.totalCount || 0)}
+                {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
               </div>
             </div>
             <div className="mt-3 space-y-2">
@@ -439,7 +540,9 @@ export function CommandCenter() {
                         {ready ? 'Ready' : 'Needs setup'}
                       </span>
                     </div>
-                    <div className="mt-2 break-words text-xs text-slate-400">{String(item.meta?.note || 'Waiting on bridge status.')}</div>
+                    <div className="mt-2 break-words text-xs text-slate-400">
+                      {String(item.meta?.note || 'Waiting on bridge status.')}
+                    </div>
                   </div>
                 );
               })}
@@ -462,12 +565,23 @@ export function CommandCenter() {
                   className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-medium text-slate-100">{String(item.actor || 'System')}</div>
-                    <div className="text-[10px] text-slate-500" title={item.at || item.createdAt ? new Date(String(item.at || item.createdAt)).toLocaleString() : 'Current session'}>
+                    <div className="text-xs font-medium text-slate-100">
+                      {String(item.actor || 'System')}
+                    </div>
+                    <div
+                      className="text-[10px] text-slate-500"
+                      title={
+                        item.at || item.createdAt
+                          ? new Date(String(item.at || item.createdAt)).toLocaleString()
+                          : 'Current session'
+                      }
+                    >
                       {formatRelative(String(item.at || item.createdAt || ''))}
                     </div>
                   </div>
-                  <div className="mt-2 text-xs text-slate-300">{String(item.text || 'Runtime event')}</div>
+                  <div className="mt-2 text-xs text-slate-300">
+                    {String(item.text || 'Runtime event')}
+                  </div>
                   <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
                     {String(item.category || 'INFO')}
                   </div>
@@ -485,57 +599,77 @@ export function CommandCenter() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
-                <p className="text-xs text-slate-500">Items Ava/Rex need you to approve before sending.</p>
+                <p className="text-xs text-slate-500">
+                  Items Ava/Rex need you to approve before sending.
+                </p>
               </div>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {approvals.filter((item) => item.status === 'pending').slice(0, 6).map((approval) => (
-                <div
-                  key={String(approval.id)}
-                  className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
-                >
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                    {String(approval.type || 'approval')}
+              {approvals
+                .filter((item) => item.status === 'pending')
+                .slice(0, 6)
+                .map((approval) => (
+                  <div
+                    key={String(approval.id)}
+                    className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
+                  >
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+                      {String(approval.type || 'approval')}
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-slate-100">
+                      {String(approval.leadName || approval.address || 'PBK approval')}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {String(approval.address || 'No address recorded')}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        data-approval-primary="true"
+                        disabled={pendingAction === `approval:${String(approval.id)}:approved`}
+                        onClick={() => {
+                          const approvalId = String(approval.id || '');
+                          if (!approvalId) return;
+                          void runRuntimeAction(
+                            `approval:${approvalId}:approved`,
+                            'Approved. Ava can continue.',
+                            async () => {
+                              await updateApprovalDecision(approvalId, 'approved');
+                            }
+                          );
+                        }}
+                        className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        data-approval-secondary="true"
+                        disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
+                        onClick={() => {
+                          const approvalId = String(approval.id || '');
+                          if (!approvalId) return;
+                          const rejectionStatus =
+                            String(approval.type || '').toLowerCase() === 'contract'
+                              ? 'needs-revision'
+                              : 'rejected';
+                          void runRuntimeAction(
+                            `approval:${approvalId}:rejected`,
+                            'Decision sent to Ava.',
+                            async () => {
+                              await updateApprovalDecision(approvalId, rejectionStatus);
+                            }
+                          );
+                        }}
+                        className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {String(approval.type || '').toLowerCase() === 'contract'
+                          ? 'Needs Revision'
+                          : 'Decline'}
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-2 text-sm font-semibold text-slate-100">
-                    {String(approval.leadName || approval.address || 'PBK approval')}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-400">{String(approval.address || 'No address recorded')}</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      data-approval-primary="true"
-                      disabled={pendingAction === `approval:${String(approval.id)}:approved`}
-                      onClick={() => {
-                        const approvalId = String(approval.id || '');
-                        if (!approvalId) return;
-                        void runRuntimeAction(`approval:${approvalId}:approved`, 'Approved. Ava can continue.', async () => {
-                          await updateApprovalDecision(approvalId, 'approved');
-                        });
-                      }}
-                      className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      data-approval-secondary="true"
-                      disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
-                      onClick={() => {
-                        const approvalId = String(approval.id || '');
-                        if (!approvalId) return;
-                        const rejectionStatus = String(approval.type || '').toLowerCase() === 'contract' ? 'needs-revision' : 'rejected';
-                        void runRuntimeAction(`approval:${approvalId}:rejected`, 'Decision sent to Ava.', async () => {
-                          await updateApprovalDecision(approvalId, rejectionStatus);
-                        });
-                      }}
-                      className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {String(approval.type || '').toLowerCase() === 'contract' ? 'Needs Revision' : 'Decline'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                ))}
               {!approvals.filter((item) => item.status === 'pending').length && (
                 <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
                   No pending approvals right now.

@@ -31788,11 +31788,22 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     if (!tooling || typeof tooling !== 'object') return '';
     const summary = tooling.summary || {};
     const bits = [];
-    if (summary.totalCount) {
+    const coreReady = Number(summary.requiredReadyCount ?? summary.readyCount ?? 0);
+    const coreTotal = Number(summary.requiredCount ?? summary.totalCount ?? 0);
+    const optionalReady = Number(summary.optionalReadyCount || 0);
+    const optionalTotal = Number(summary.optionalCount || 0);
+    if (coreTotal) {
+      bits.push(`Core tooling ${coreReady}/${coreTotal} ready`);
+    } else if (summary.totalCount) {
       bits.push(`Tooling ${Number(summary.readyCount || 0)}/${Number(summary.totalCount || 0)} ready`);
+    }
+    if (optionalTotal) {
+      bits.push(`Optional add-ons ${optionalReady}/${optionalTotal} enabled`);
     }
     if (tooling.browserOs?.ready) {
       bits.push('BrowserOS registered');
+    } else if (tooling.browserOs?.optional) {
+      bits.push('BrowserOS optional');
     }
     if (tooling.metaAgent?.scenarioLeads) {
       bits.push(`Meta-agent ${Number(tooling.metaAgent.scenarioLeads || 0)} leads exported`);
@@ -32281,8 +32292,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const tooling = PBK.state.openclawTooling || {};
     const adminTasks = Array.isArray(snapshot.adminTasks) ? snapshot.adminTasks.filter((task) => task.status === 'pending') : [];
     const documentsDeliveredToday = Number(quotas?.docs?.deliveredToday || 0);
-    const toolingReady = Number(tooling?.summary?.readyCount || 0);
-    const toolingTotal = Number(tooling?.summary?.totalCount || 0);
+    const toolingReady = Number(tooling?.summary?.requiredReadyCount ?? tooling?.summary?.readyCount ?? 0);
+    const toolingTotal = Number(tooling?.summary?.requiredCount ?? tooling?.summary?.totalCount ?? 0);
+    const optionalReady = Number(tooling?.summary?.optionalReadyCount || 0);
+    const optionalTotal = Number(tooling?.summary?.optionalCount || 0);
+    const optionalNote = optionalTotal ? ` Optional add-ons ${optionalReady}/${optionalTotal} enabled.` : '';
 
     return {
       ...summary,
@@ -32294,7 +32308,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       },
         workflow: {
           ...summary.workflow,
-          note: `${summary.workflow.note} ${adminTasks.length ? `Admin queue ${adminTasks.length} pending.` : 'No admin backlog right now.'} ${toolingTotal ? `Tooling ${toolingReady}/${toolingTotal} ready.` : ''}`.trim()
+          note: `${summary.workflow.note} ${adminTasks.length ? `Admin queue ${adminTasks.length} pending.` : 'No admin backlog right now.'} ${toolingTotal ? `Core tooling ${toolingReady}/${toolingTotal} ready.${optionalNote}` : ''}`.trim()
         },
         next: {
           ...summary.next,

@@ -35,6 +35,11 @@ function describeTooling(meta: Record<string, unknown> | undefined) {
   return 'Needs setup';
 }
 
+function toNumber(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 function formatRuntimeStatus(status: unknown) {
   const normalized = String(status || 'pending').toLowerCase();
   if (normalized === 'provider_missing') return 'Provider key missing';
@@ -72,6 +77,16 @@ export function Settings() {
   const runtimeProviders = (status.providers || {}) as Record<string, Record<string, unknown>>;
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
+  const toolingCoreReady = toNumber(
+    toolingSummary.requiredReadyCount,
+    toNumber(toolingSummary.readyCount)
+  );
+  const toolingCoreTotal = toNumber(
+    toolingSummary.requiredCount,
+    toNumber(toolingSummary.totalCount, toolingCards.length)
+  );
+  const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount);
+  const toolingOptionalTotal = toNumber(toolingSummary.optionalCount);
 
   const providerCards = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
@@ -79,17 +94,61 @@ export function Settings() {
     { id: 'docs', label: 'Document Sends', meta: quotas?.docs },
   ];
   const toolingCards = [
-    { id: 'meta-agent', label: 'Meta-Agent Lab', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
-    { id: 'browser-os', label: 'BrowserOS Agent', meta: tooling?.browserOs as Record<string, unknown> | undefined },
-    { id: 'browser-research', label: 'Browser Research', meta: tooling?.browserResearch as Record<string, unknown> | undefined },
-    { id: 'property-data', label: 'Property Data Layer', meta: tooling?.propertyData as Record<string, unknown> | undefined },
-    { id: 'pipeline-memory', label: 'Pipeline Memory', meta: tooling?.pipelineMemory as Record<string, unknown> | undefined },
-    { id: 'voice-fallback', label: 'Voice Fallback', meta: tooling?.voiceFallback as Record<string, unknown> | undefined },
-    { id: 'desktop-copilot', label: 'Desktop Copilot', meta: tooling?.desktopCopilot as Record<string, unknown> | undefined },
-    { id: 'context7', label: 'Context7 MCP', meta: tooling?.context7 as Record<string, unknown> | undefined },
-    { id: 'workflow-ops', label: 'Workflow Ops', meta: tooling?.workflowOps as Record<string, unknown> | undefined },
-    { id: 'observability', label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
-    { id: 'github', label: 'GitHub Verify', meta: tooling?.github as Record<string, unknown> | undefined },
+    {
+      id: 'meta-agent',
+      label: 'Meta-Agent Lab',
+      meta: tooling?.metaAgent as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'browser-os',
+      label: 'BrowserOS Agent',
+      meta: tooling?.browserOs as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'browser-research',
+      label: 'Browser Research',
+      meta: tooling?.browserResearch as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'property-data',
+      label: 'Property Data Layer',
+      meta: tooling?.propertyData as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'pipeline-memory',
+      label: 'Pipeline Memory',
+      meta: tooling?.pipelineMemory as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'voice-fallback',
+      label: 'Voice Fallback',
+      meta: tooling?.voiceFallback as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'desktop-copilot',
+      label: 'Desktop Copilot',
+      meta: tooling?.desktopCopilot as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'context7',
+      label: 'Context7 MCP',
+      meta: tooling?.context7 as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'workflow-ops',
+      label: 'Workflow Ops',
+      meta: tooling?.workflowOps as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'observability',
+      label: 'Observability',
+      meta: tooling?.observability as Record<string, unknown> | undefined,
+    },
+    {
+      id: 'github',
+      label: 'GitHub Verify',
+      meta: tooling?.github as Record<string, unknown> | undefined,
+    },
   ];
 
   const decideAdminTask = async (task: Record<string, unknown>, status: string) => {
@@ -101,7 +160,9 @@ export function Settings() {
     try {
       await updateAdminTaskDecision(taskId, status);
       await refresh().catch(() => null);
-      setActionStatus(status === 'approved' ? 'Admin task approved and executed.' : 'Admin task declined.');
+      setActionStatus(
+        status === 'approved' ? 'Admin task approved and executed.' : 'Admin task declined.'
+      );
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Admin task update failed.');
     } finally {
@@ -126,11 +187,7 @@ export function Settings() {
             aria-hidden="true"
             className={[
               'h-2 w-2 rounded-full',
-              loading
-                ? 'bg-sky-400 animate-pulse'
-                : error
-                  ? 'bg-amber-400'
-                  : 'bg-emerald-400',
+              loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
             ].join(' ')}
           />
           {loading
@@ -178,11 +235,15 @@ export function Settings() {
           <div>
             <h2 className="text-sm font-semibold text-slate-100">Agent Tools</h2>
             <p className="mt-1 text-xs text-slate-500">
-              Repo-level systems that support research, observability, workflow health, and future agent training.
+              Repo-level systems that support research, observability, workflow health, and future
+              agent training.
             </p>
           </div>
           <div className="text-xs text-slate-500">
-            {String(toolingSummary.readyCount || 0)}/{String(toolingSummary.totalCount || toolingCards.length)} ready
+            {String(toolingCoreReady)}/{String(toolingCoreTotal)} core ready
+            {toolingOptionalTotal
+              ? ` · ${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional enabled`
+              : ''}
           </div>
         </div>
 
@@ -212,7 +273,10 @@ export function Settings() {
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-          Metrics endpoint: <span className="text-slate-200">{String(toolingSummary.metricsUrl || 'waiting for bridge connection')}</span>
+          Metrics endpoint:{' '}
+          <span className="text-slate-200">
+            {String(toolingSummary.metricsUrl || 'waiting for bridge connection')}
+          </span>
         </div>
       </section>
 
@@ -220,7 +284,9 @@ export function Settings() {
         <section className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
           <div className="border-b border-slate-800 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-100">Admin Approvals Needed</h2>
-            <p className="mt-1 text-xs text-slate-500">Test mode and approval-backed infrastructure changes queued by Rex.</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Test mode and approval-backed infrastructure changes queued by Rex.
+            </p>
           </div>
           <div className="divide-y divide-slate-800">
             {adminTasks.map((task) => (
@@ -229,8 +295,12 @@ export function Settings() {
                 className="grid grid-cols-1 gap-2 px-4 py-4 text-sm text-slate-200 md:grid-cols-[1fr_auto]"
               >
                 <div>
-                  <div className="font-medium text-slate-100">{String(task.provider || 'admin')} / {String(task.action || 'review')}</div>
-                  <div className="mt-1 text-xs text-slate-400">{String(task.summary || task.command || 'Administrative action')}</div>
+                  <div className="font-medium text-slate-100">
+                    {String(task.provider || 'admin')} / {String(task.action || 'review')}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    {String(task.summary || task.command || 'Administrative action')}
+                  </div>
                   {String(task.status || '').toLowerCase() === 'pending' && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
@@ -269,16 +339,28 @@ export function Settings() {
           <h2 className="text-sm font-semibold text-slate-100">Safety Controls</h2>
           <div className="mt-3 space-y-3 text-sm">
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Approvals</div>
-              <div className="mt-1 text-slate-100">{String(status.pendingApprovals || 0)} offer / outbound approvals pending</div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Approvals
+              </div>
+              <div className="mt-1 text-slate-100">
+                {String(status.pendingApprovals || 0)} offer / outbound approvals pending
+              </div>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Admin Queue</div>
-              <div className="mt-1 text-slate-100">{String(status.pendingAdminTasks || 0)} admin changes still require review</div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Admin Queue
+              </div>
+              <div className="mt-1 text-slate-100">
+                {String(status.pendingAdminTasks || 0)} admin changes still require review
+              </div>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Document Sends</div>
-              <div className="mt-1 text-slate-100">{String(status.documentDeliveries || 0)} seller document sends tracked in the bridge</div>
+              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Document Sends
+              </div>
+              <div className="mt-1 text-slate-100">
+                {String(status.documentDeliveries || 0)} seller document sends tracked in the bridge
+              </div>
             </div>
           </div>
         </section>

@@ -102,6 +102,7 @@ import {
   planExecutionPathSearch as planExecutionPathSearchCore,
   planMasterAgentMission as planMasterAgentMissionCore,
   routeAcpMessage as routeAcpMessageCore,
+  runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore,
 } from './research-additives.mjs';
 import {
   buildDeclarativeActionIntent,
@@ -142,7 +143,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-31-research-additives-v1';
+const BUILD_REVISION = '2026-05-31-unified-additive-intelligence-v2';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -33843,6 +33844,9 @@ function getLocalAgentRegistryHandlers() {
     }),
     'research-orchestrator': async (payload = {}) => {
       const query = String(payload.query || payload.command || payload.goal || '').trim();
+      if (/\b(sync|unified|frontier|all additives|whole system|robust|fusion)\b/i.test(query)) {
+        return toolHandlers.runUnifiedAdditiveIntelligence(payload);
+      }
       if (/\b(stop|halt|guard|risk|safety)\b/i.test(query)) {
         return toolHandlers.evaluateStoppingAgent(payload);
       }
@@ -33855,7 +33859,7 @@ function getLocalAgentRegistryHandlers() {
       if (/\b(memory|long|context|mem1)\b/i.test(query)) {
         return toolHandlers.compactLongHorizonMemory(payload);
       }
-      return toolHandlers.getResearchAdditivesStatus(payload);
+      return toolHandlers.runUnifiedAdditiveIntelligence(payload);
     },
   };
 }
@@ -39075,6 +39079,7 @@ const TOOL_RISK_METADATA = Object.freeze({
   inferProactiveHumanState: { risk: 'readonly', approvalRequired: false },
   planDeterministicGuiAutomation: { risk: 'medium', approvalRequired: true },
   planMasterAgentMission: { risk: 'readonly', approvalRequired: false },
+  runUnifiedAdditiveIntelligence: { risk: 'readonly', approvalRequired: false },
   getSafetyTransparencyReport: { risk: 'readonly', approvalRequired: false },
   startNurtureSequence: { risk: 'high', approvalRequired: true },
   telnyx_call: { risk: 'high', approvalRequired: true },
@@ -39711,6 +39716,26 @@ const toolHandlers = {
     void recordResearchAdditiveRun('masteragent_l4_orchestration', 'planMasterAgentMission', params, result, {
       providerWrites: 'approval-gated',
       l4Execution: 'blocked_without_pbk_approval',
+    });
+    return result;
+  },
+
+  async runUnifiedAdditiveIntelligence(params = {}) {
+    recordToolUse('runUnifiedAdditiveIntelligence');
+    const result = await runUnifiedAdditiveIntelligenceCore(
+      {
+        ...params,
+        env: process.env,
+      },
+      {
+        env: process.env,
+        toolNames: Object.keys(toolHandlers),
+      },
+    );
+    void recordResearchAdditiveRun('unified_frontier_fusion', 'runUnifiedAdditiveIntelligence', params, result, {
+      providerWrites: 'none',
+      approvalGatesPreserved: true,
+      allAdditivesSynced: true,
     });
     return result;
   },
@@ -44379,6 +44404,16 @@ const toolHandlers = {
         },
         source: params.source || 'agent-console-read-only',
       });
+    } else if (/\b(frontier|additive|all additives|unified intelligence|whole system|research orchestrator|masteragent|mem1|neuroskill|tooluniverse|encompass|awm|stopping agent|autograph|acp)\b/i.test(intentCommand)) {
+      routedTo = 'runUnifiedAdditiveIntelligence';
+      response = await toolHandlers.runUnifiedAdditiveIntelligence({
+        ...params,
+        command,
+        query: intentCommand,
+        goal: intentCommand || command,
+        context,
+        source: params.source || 'agent-console-frontier-fusion',
+      });
     } else if (
       toolFirstDetected?.required
       && !explicitCrmWriteIntent
@@ -46440,6 +46475,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let toolResult = null;
   let qa = null;
   let safety = null;
+  let additiveIntelligence = null;
 
   if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
     const execution = await executeToolHandlerWithQa('analyzeDeal', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
@@ -46476,6 +46512,31 @@ async function handleInternalAvaAssistantChatRequest(request) {
       `Nurture Agent recommends ${recommendation.channel || 'sms'} ${recommendation.urgency || 'now'}.`,
       recommendation.reason ? `Reason: ${recommendation.reason}` : '',
       'I can queue an approval-gated sequence when you confirm.',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'runUnifiedAdditiveIntelligence') {
+    const execution = await executeToolHandlerWithQa(
+      'runUnifiedAdditiveIntelligence',
+      {
+        ...(assistantPlan.toolPlan.params || {}),
+        sessionId,
+        leadId: assistantContextSession.leadId || '',
+        source: 'ava-assistant-chat',
+      },
+      'ava-assistant-chat',
+    );
+    toolResult = execution.result;
+    additiveIntelligence = toolResult;
+    qa = execution.qaValidation?.qa || null;
+    safety = execution.safetyValidation || null;
+    const nextAction = toolResult?.nextAction || {};
+    const coverage = toolResult?.coverage || {};
+    answer = [
+      `Unified intelligence is synced across ${coverage.used || 10}/${coverage.total || 10} additives.`,
+      nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '',
+      nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '',
+      'Provider writes, desktop actions, and contracts still stay approval-gated.',
     ]
       .filter(Boolean)
       .join(' ');
@@ -46527,6 +46588,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       assistantAction: assistantPlan.action || 'answered',
       toolPlan: assistantPlan.toolPlan || null,
       toolResult,
+      additiveIntelligence,
       qa,
       safety,
     },
@@ -50981,6 +51043,7 @@ const server = createServer(async (request, response) => {
         'inferProactiveHumanState',
         'planDeterministicGuiAutomation',
         'planMasterAgentMission',
+        'runUnifiedAdditiveIntelligence',
         'getSafetyTransparencyReport',
       ]);
       if (!allowed.has(toolName)) {

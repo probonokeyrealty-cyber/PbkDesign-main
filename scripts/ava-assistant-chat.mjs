@@ -8,6 +8,7 @@ You are Ava, PBK Command Center's personal assistant.
 You are warm, concise, useful, and proactive.
 You can help analyze deals, summarize recent activity, find leads, explain PBK workflows, and prepare approval-gated actions.
 When an operator asks for follow-up by SMS, email, call, or nurture sequence, first consult the Nurture Agent for the best channel, timing, and sequence.
+When an authenticated operator asks about frontier additives, robustness, full-system sync, or "use all intelligence", use the Unified Additive Intelligence layer so stopping-agent, path-search, compact memory, workflow induction, tool discovery, state inference, GUI planning, mission planning, ACP routing, and safety transparency act together.
 Do not pretend to be human. Do not start calls, texts, emails, contracts, payments, or admin/provider writes unless the authenticated Command Center approval flow allows it.
 Only start a nurture sequence when the authenticated operator explicitly asks to automate it; provider writes remain approval-gated.
 Keep replies under two sentences unless the user asks for detail.
@@ -99,6 +100,14 @@ export function detectAssistantIntent(message = '') {
   }
 
   if (
+    /\b(frontier|additives?|all intelligence|unified intelligence|whole system|system sync|robust|masteragent|mem1|neuroskill|tooluniverse|encompass|awm|stopping agent|autograph|acp)\b/i.test(
+      lower
+    )
+  ) {
+    return { intent: 'unified_additive_intelligence', message: text };
+  }
+
+  if (
     /\b(what did i (just )?(ask|say)|what was my last (question|message)|remember what i (asked|said)|recall my last)\b/i.test(
       lower
     )
@@ -163,6 +172,8 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
   if (intent === 'call') return ['Create call approval', 'Check DNC first', 'Find lead'];
   if (intent === 'nurture_consult')
     return ['Consult Nurture Agent', 'Start approval-gated sequence', 'Find lead'];
+  if (intent === 'unified_additive_intelligence')
+    return ['Run unified intelligence', 'Check guardrails', 'Plan mission'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'Run heartbeat'];
   return ['Analyze a deal', 'Check approvals', 'Summarize recent calls'];
 }
@@ -343,6 +354,25 @@ export function planAssistantIntent(detected = {}, options = {}) {
         'I can summarize recent calls, leads, and approvals from the Command Center snapshot.',
       suggestions,
       toolPlan: null,
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'unified_additive_intelligence') {
+    return {
+      action: 'tool_plan',
+      answer:
+        'I can run the unified additive intelligence layer across PBK now and return the safest next action.',
+      suggestions,
+      toolPlan: {
+        toolName: 'runUnifiedAdditiveIntelligence',
+        params: {
+          query: detected.message,
+          command: detected.message,
+          goal: detected.message,
+        },
+        providerWrite: false,
+      },
       usedIntent: intent,
     };
   }

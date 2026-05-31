@@ -26,6 +26,13 @@ const callIntent = detectAssistantIntent('Call 614-555-0199 for me now.');
 assert.equal(callIntent.intent, 'call', 'Assistant should detect call requests.');
 assert.equal(callIntent.phone, '6145550199', 'Assistant should normalize phone numbers.');
 
+const additiveIntent = detectAssistantIntent('Use all frontier additives and sync the whole system intelligence.');
+assert.equal(
+  additiveIntent.intent,
+  'unified_additive_intelligence',
+  'Assistant should detect unified additive intelligence requests.'
+);
+
 const publicCallPlan = planAssistantIntent(callIntent, { publicMode: true });
 assert.equal(publicCallPlan.action, 'blocked_public_provider_write', 'Public assistant chat must not place calls.');
 assert.match(publicCallPlan.answer, /public chat.*will not start calls/i, 'Public call block should explain the safety boundary.');
@@ -56,6 +63,15 @@ assert.equal(internalAnalyzePlan.toolPlan?.params?.address, '202 Cherry Ln', 'De
 const internalCallPlan = planAssistantIntent(callIntent, { publicMode: false, authenticated: true });
 assert.equal(internalCallPlan.action, 'approval_required', 'Authenticated call requests should still stay approval-gated.');
 assert.equal(internalCallPlan.toolPlan?.toolName, 'telnyx_call', 'Call requests should map to the Telnyx call tool only as an approval-gated plan.');
+
+const additivePlan = planAssistantIntent(additiveIntent, { publicMode: false, authenticated: true });
+assert.equal(additivePlan.action, 'tool_plan', 'Authenticated additive requests should produce a safe tool plan.');
+assert.equal(
+  additivePlan.toolPlan?.toolName,
+  'runUnifiedAdditiveIntelligence',
+  'Unified additive requests should route to runUnifiedAdditiveIntelligence.'
+);
+assert.equal(additivePlan.toolPlan?.providerWrite, false, 'Unified additive intelligence should stay readonly.');
 
 const prompt = buildAssistantPrompt({
   history: [

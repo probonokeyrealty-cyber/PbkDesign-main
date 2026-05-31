@@ -14,13 +14,16 @@ import {
   planExecutionPathSearch,
   planMasterAgentMission,
   routeAcpMessage,
+  runUnifiedAdditiveIntelligence,
 } from './research-additives.mjs';
 import { buildDefaultAgentRegistry, findAgentsByCapability } from './agent-registry.mjs';
 
 const status = buildResearchAdditivesStatus({ env: {}, now: new Date('2026-05-31T12:00:00Z') });
 assert.equal(status.ok, true);
 assert.equal(status.summary.total, 10, 'all ten frontier additives should be represented.');
-assert(status.summary.ready >= 5, 'PBK-native additive adapters should be ready without new signups.');
+assert.equal(status.summary.ready, 10, 'all frontier additives should have a PBK-native ready adapter.');
+assert.equal(status.summary.nativeReady, 10, 'all frontier additives should be native-ready today.');
+assert(status.summary.providerUpgradesPending >= 4, 'provider/model upgrades should be tracked separately from native readiness.');
 
 const registry = buildDefaultAgentRegistry({ now: 1780000000000 });
 assert(
@@ -104,9 +107,27 @@ const safety = buildSafetyTransparencyReport();
 assert.equal(safety.document, 'SAFETY.md');
 assert(readFileSync(resolve('SAFETY.md'), 'utf8').includes('PBK Command Center Safety'));
 
+const unified = await runUnifiedAdditiveIntelligence(
+  {
+    query: 'Use all intelligence to decide whether to SMS, call, or pause. Seller says this feels like a scam.',
+    transcript: 'Seller says this feels like a scam and asks for proof.',
+    bant: { timeline: 'soon' },
+  },
+  { env: {}, toolNames: ['consultNurtureAgent', 'analyzeDeal', 'runAgentTeam'] }
+);
+assert.equal(unified.result, 'unified_intelligence_ready');
+assert.equal(unified.coverage.total, 10);
+assert.equal(unified.coverage.used, 10);
+assert.equal(unified.sync.stoppingFeedsPathSearch, true);
+assert.equal(unified.sync.toolDiscoveryFeedsNextAction, true);
+assert(unified.modules.pathSearch.selected, 'unified intelligence should include selected path search output.');
+assert(unified.modules.discovery.matches.length > 0, 'unified intelligence should include tool discovery matches.');
+assert(unified.nextAction.action, 'unified intelligence should return an operator next action.');
+
 const bridge = readFileSync(resolve('scripts/openclaw-local-server.mjs'), 'utf8');
 const dockerfile = readFileSync(resolve('Dockerfile.openclaw'), 'utf8');
 assert.match(bridge, /getResearchAdditivesStatus/, 'bridge should expose research-additive status tool.');
+assert.match(bridge, /runUnifiedAdditiveIntelligence/, 'bridge should expose unified additive intelligence tool.');
 assert.match(bridge, /\/api\/research-additives\/status/, 'bridge should expose research-additive status endpoint.');
 assert.match(bridge, /pbk_research_additive_runs/, 'bridge should persist research additive run audit rows.');
 assert.match(dockerfile, /COPY scripts\/research-additives\.mjs/, 'Render image should copy research additive module.');
@@ -114,7 +135,8 @@ assert.match(dockerfile, /COPY scripts\/research-additives\.mjs/, 'Render image 
 console.log('[research-additives-smoke] ok', {
   total: status.summary.total,
   ready: status.summary.ready,
-  gated: status.summary.gated,
+  providerUpgradesPending: status.summary.providerUpgradesPending,
   selectedPath: pathSearch.selected.id,
   discoveredTool: discovery.matches[0].toolName,
+  unifiedNextAction: unified.nextAction.action,
 });

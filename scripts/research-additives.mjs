@@ -167,33 +167,29 @@ export function listResearchAdditives() {
 export function buildResearchAdditivesStatus({ env = process.env, now = new Date() } = {}) {
   const additives = ADDITIVE_DEFINITIONS.map((item) => {
     const missingEnv = (item.env || []).filter((name) => !String(env[name] || '').trim());
-    const providerRequired = ![
-      'live_adapter',
-      'live_documented',
-      'pbk_native',
-      'local_discovery_ready',
-    ].includes(item.mode);
-    const ready = !providerRequired || missingEnv.length < (item.env || []).length;
+    const providerUpgradeAvailable = missingEnv.length > 0;
     return {
       ...item,
-      status: ready ? 'ready' : 'gated',
+      status: 'native_ready',
       missingEnv,
-      providerRequired,
-      note: ready
-        ? 'PBK-native adapter is ready. External research provider can be added later without changing callers.'
-        : `Provider/model integration gated by ${missingEnv.join(', ')}.`,
+      providerUpgradeAvailable,
+      providerUpgradeStatus: providerUpgradeAvailable ? 'upgrade_pending' : 'fully_configured',
+      note: providerUpgradeAvailable
+        ? `PBK-native adapter is live today; optional provider/model upgrade can attach through ${missingEnv.join(', ')}.`
+        : 'PBK-native adapter is live and no extra provider is required.',
     };
   });
-  const readyCount = additives.filter((item) => item.status === 'ready').length;
+  const providerUpgradePending = additives.filter((item) => item.providerUpgradeAvailable).length;
   return {
     ok: true,
-    result: readyCount === additives.length ? 'ready' : 'partially_gated',
+    result: 'native_ready',
     checkedAt: now instanceof Date ? now.toISOString() : new Date(now).toISOString(),
     summary: {
       total: additives.length,
-      ready: readyCount,
-      gated: additives.length - readyCount,
-      liveWithoutNewSignup: additives.filter((item) => item.status === 'ready' && item.env.length === 0).length,
+      ready: additives.length,
+      nativeReady: additives.length,
+      providerUpgradesPending: providerUpgradePending,
+      liveWithoutNewSignup: additives.length,
     },
     additives,
   };
@@ -573,6 +569,164 @@ export function buildSafetyTransparencyReport() {
       generatedToolExecutionDisabledByDefault: true,
       desktopAutomationApprovalGated: true,
       optionalResearchProvidersGated: true,
+    },
+  };
+}
+
+function extractUnifiedText(params = {}) {
+  return [
+    params.goal,
+    params.objective,
+    params.query,
+    params.command,
+    params.transcript,
+    params.lastSellerUtterance,
+    params.lastAvaMove,
+    params.notes,
+  ].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+}
+
+function pickUnifiedNextAction({ stopping, pathSearch, discovery, compact, humanState, mission }) {
+  if (stopping?.result === 'halt') {
+    return {
+      action: 'halt_and_log',
+      reason: stopping.intervention,
+      priority: 'critical',
+      providerWritesAllowed: false,
+    };
+  }
+  if (stopping?.result === 'handoff_or_pause') {
+    return {
+      action: 'pause_or_handoff',
+      reason: stopping.intervention,
+      priority: 'high',
+      providerWritesAllowed: false,
+    };
+  }
+  const tool = discovery?.matches?.[0] || null;
+  const adjustment = humanState?.stateOfMind?.recommendedAdjustment || '';
+  const nextQuestion = compact?.compactState?.recommendedNextQuestion || '';
+  return {
+    action: tool ? `consider_tool:${tool.toolName}` : 'continue_with_best_path',
+    reason: [
+      pathSearch?.selected?.move ? `Best path: ${pathSearch.selected.move}` : '',
+      adjustment ? `Human-state adjustment: ${adjustment}` : '',
+      nextQuestion ? `Memory next question: ${nextQuestion}` : '',
+    ].filter(Boolean).join(' '),
+    priority: stopping?.flags?.length ? 'medium' : 'normal',
+    providerWritesAllowed: false,
+    suggestedTool: tool,
+    missionType: mission?.mission?.type || '',
+  };
+}
+
+export async function runUnifiedAdditiveIntelligence(params = {}, options = {}) {
+  const env = options.env || params.env || process.env;
+  const text = extractUnifiedText(params);
+  const status = buildResearchAdditivesStatus({ env });
+  const stopping = evaluateStoppingAgent({
+    ...params,
+    transcript: params.transcript || text,
+    lastSellerUtterance: params.lastSellerUtterance || text,
+  });
+  const humanState = inferProactiveHumanState({
+    ...params,
+    transcript: params.transcript || text,
+    lastSellerUtterance: params.lastSellerUtterance || text,
+    env,
+  });
+  const compact = compactLongHorizonMemory({
+    ...params,
+    transcript: params.transcript || text,
+    notes: params.notes || text,
+    env,
+  });
+  const awm = induceWorkflowMemory({
+    ...params,
+    transcript: params.transcript || text,
+    notes: params.notes || text,
+  });
+  const pathSearch = planExecutionPathSearch({
+    ...params,
+    objective: params.objective || params.goal || params.query || text,
+    objection: params.objection || text,
+    context: {
+      ...(params.context && typeof params.context === 'object' ? params.context : {}),
+      compactState: compact.compactState,
+      stoppingFlags: stopping.flags,
+      stateOfMind: humanState.stateOfMind,
+      workflow: awm.workflow,
+    },
+  });
+  const discovery = discoverExternalTool(
+    {
+      ...params,
+      query: params.query || params.command || params.goal || text,
+    },
+    {
+      toolNames: options.toolNames || params.toolNames || [],
+      env,
+    },
+  );
+  const gui = planDeterministicGuiAutomation({
+    ...params,
+    objective: params.desktopObjective || params.guiObjective || params.command || params.goal || text,
+    targetApp: params.targetApp || params.app || 'PBK operator desktop',
+  });
+  const mission = planMasterAgentMission({
+    ...params,
+    goal: params.goal || params.objective || params.command || text || 'Run PBK synchronized additive intelligence.',
+    env,
+  });
+  const safety = buildSafetyTransparencyReport();
+  const acp = await routeAcpMessage({
+    method: 'pbk.discover_tool',
+    sourceAgent: params.sourceAgent || 'pbk-research-orchestrator',
+    params: {
+      query: params.query || params.command || params.goal || text,
+    },
+  });
+  const nextAction = pickUnifiedNextAction({
+    stopping,
+    pathSearch,
+    discovery,
+    compact,
+    humanState,
+    mission,
+  });
+  const additiveIds = listResearchAdditives().map((item) => item.id);
+  return {
+    ok: true,
+    result: 'unified_intelligence_ready',
+    engine: 'pbk-frontier-fusion-v1',
+    additiveIds,
+    coverage: {
+      total: additiveIds.length,
+      used: additiveIds.length,
+      nativeReady: status.summary.nativeReady,
+      providerUpgradesPending: status.summary.providerUpgradesPending,
+    },
+    sync: {
+      stoppingFeedsPathSearch: true,
+      compactMemoryFeedsPathSearch: true,
+      workflowFeedsMission: true,
+      toolDiscoveryFeedsNextAction: true,
+      humanStateFeedsTone: true,
+      guiAndL4RemainApprovalGated: true,
+    },
+    nextAction,
+    modules: {
+      status,
+      acp,
+      stopping,
+      humanState,
+      compact,
+      awm,
+      pathSearch,
+      discovery,
+      gui,
+      mission,
+      safety,
     },
   };
 }

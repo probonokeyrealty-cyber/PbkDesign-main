@@ -50600,12 +50600,17 @@ const server = createServer(async (request, response) => {
         capability,
         includeInactive: false,
       });
+      const discoveredAgents = Array.isArray(status.matches) && status.matches.length
+        ? status.matches
+        : Array.isArray(status.registry?.agents)
+          ? status.registry.agents
+          : [];
       json(response, status.ok ? 200 : 503, {
         ok: Boolean(status.ok),
         result: status.result,
         capability,
-        agents: status.agents || [],
-        count: status.count || 0,
+        agents: discoveredAgents,
+        count: discoveredAgents.length,
       });
       return;
     }

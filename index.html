@@ -14563,8 +14563,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     setTimeout(() => {
       const compose = document.querySelector('.page[data-page="inbox"] .compose');
       const textarea = compose?.querySelector('textarea');
+      const restored = restoreInboxComposeDraft(compose, { notify: true });
       textarea?.focus();
       compose?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!restored) saveInboxComposeDraft(compose);
     }, 80);
     toast({ type: 'info', title: 'Compose ready', desc: 'Draft a SMS, email, or call note from the Inbox composer.' });
   }
@@ -25912,7 +25914,53 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     });
   }
 
+  const INBOX_COMPOSE_DRAFT_KEY = 'pbk:compose:draft';
   let composeSelectedIdentityId = '';
+
+  function getInboxComposeTextarea(compose) {
+    return compose?.querySelector('textarea') || null;
+  }
+
+  function getInboxComposeDraft() {
+    return parseJSONSafe(localStorage.getItem(INBOX_COMPOSE_DRAFT_KEY), null);
+  }
+
+  function saveInboxComposeDraft(compose) {
+    if (!compose) return;
+    const textarea = getInboxComposeTextarea(compose);
+    const draft = {
+      channel: getComposeIdentityChannel(compose),
+      identityId: composeSelectedIdentityId || '',
+      body: textarea?.value || '',
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(INBOX_COMPOSE_DRAFT_KEY, JSON.stringify(draft));
+  }
+
+  function clearInboxComposeDraft() {
+    localStorage.removeItem(INBOX_COMPOSE_DRAFT_KEY);
+  }
+
+  function restoreInboxComposeDraft(compose, options = {}) {
+    if (!compose) return false;
+    const draft = getInboxComposeDraft();
+    if (!draft || typeof draft !== 'object') return false;
+    const channel = ['sms', 'email', 'call'].includes(String(draft.channel || '').toLowerCase())
+      ? String(draft.channel || '').toLowerCase()
+      : 'sms';
+    compose.querySelectorAll('.compose-channels .chip-btn').forEach((button) => {
+      const label = button.textContent.trim().toLowerCase();
+      button.classList.toggle('active', label === channel);
+    });
+    composeSelectedIdentityId = draft.identityId || '';
+    const textarea = getInboxComposeTextarea(compose);
+    if (textarea && !textarea.value) textarea.value = draft.body || '';
+    renderComposeIdentityPicker({ channel });
+    if (options.notify && ((draft.body || '').trim() || draft.identityId)) {
+      toast({ type: 'info', title: 'Draft restored', desc: 'Your Inbox compose draft is back where you left it.' });
+    }
+    return true;
+  }
 
   function getComposeIdentityChannel(compose) {
     const raw = compose?.querySelector('.compose-channels .chip-btn.active')?.textContent?.trim().toLowerCase() || 'sms';
@@ -25949,6 +25997,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         const selected = getOutboundIdentities(type).find((identity) => identity.id === option.dataset.pickId);
         composeSelectedIdentityId = selected?.id || '';
         paintIdentityPicker('cmpFrom', selected, channel);
+        saveInboxComposeDraft(compose);
         closeIdentityMenus();
         toast({ type: 'success', title: 'Compose route selected', desc: `${selected?.display || 'Sender'} - ${selected?.value || ''}` });
       });
@@ -25985,6 +26034,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const compose = page.querySelector('.compose');
     const textarea = compose?.querySelector('textarea');
     wireComposeIdentityPicker(compose);
+    restoreInboxComposeDraft(compose);
+    textarea?.addEventListener('input', () => saveInboxComposeDraft(compose));
 
     page.addEventListener('click', (event) => {
       if (!event.target.closest('[data-inbox-mobile-back]')) return;
@@ -25999,6 +26050,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         chip.classList.add('active');
         composeSelectedIdentityId = '';
         renderComposeIdentityPicker();
+        saveInboxComposeDraft(compose);
       });
     });
 
@@ -26018,6 +26070,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           includeActivity: true
         });
         if (textarea) textarea.value = draft;
+        saveInboxComposeDraft(compose);
         toast({
           type: 'success',
           title: 'Draft ready',
@@ -26042,6 +26095,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
               : `${context.leadName}'s call request was captured without claiming a live dial.`,
             errorTitle: 'Inbox call failed'
           });
+          clearInboxComposeDraft();
+          if (textarea) textarea.value = '';
         } else if (channel === 'email') {
           const response = await sendLeadMessageViaBridge({
             context,
@@ -26050,7 +26105,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             message: body,
             includeActivity: true
           });
-          if (response && textarea) textarea.value = '';
+          if (response && textarea) {
+            textarea.value = '';
+            clearInboxComposeDraft();
+          }
         } else {
           const response = await sendLeadMessageViaBridge({
             context,
@@ -26059,7 +26117,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
             message: body,
             includeActivity: true
           });
-          if (response && textarea) textarea.value = '';
+          if (response && textarea) {
+            textarea.value = '';
+            clearInboxComposeDraft();
+          }
         }
       }
     });

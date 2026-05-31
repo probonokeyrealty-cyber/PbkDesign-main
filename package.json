@@ -114,7 +114,12 @@
     "desktop:install": "npm --prefix ./electron-desktop install",
     "desktop:pack": "npm --prefix ./electron-desktop run pack",
     "desktop:dist": "npm --prefix ./electron-desktop run dist",
-    "skills:auto-learn": "node ./scripts/auto-skill-learner.mjs"
+    "skills:auto-learn": "node ./scripts/auto-skill-learner.mjs",
+    "lint": "eslint \"scripts/{agent-registry,ava-assistant-chat,nurture-agent,agent-teams,auto-skill-learner}.mjs\" \"scripts/tool-handlers/**/*.mjs\" --cache",
+    "format": "prettier --write \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
+    "format:check": "prettier --check \"**/*.{js,mjs,ts,tsx,json,md,css}\"",
+    "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config ./jest.config.mjs",
+    "prepare": "husky"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1056.0",
@@ -197,8 +202,18 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
     "@vitejs/plugin-react": "4.7.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.6",
+    "husky": "^9.1.7",
+    "jest": "^30.4.2",
+    "lint-staged": "^17.0.6",
     "openclaw-cli": "^0.7.2",
+    "prettier": "^3.8.3",
     "tailwindcss": "4.1.12",
     "vite": "^6.4.2"
   },

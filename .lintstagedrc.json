@@ -1,0 +1,9 @@
+{
+  "src/**/*.{js,mjs,ts,tsx}": ["eslint --fix", "prettier --write"],
+  "scripts/tool-handlers/**/*.{js,mjs,ts,tsx}": ["eslint --fix", "prettier --write"],
+  "scripts/{agent-registry,ava-assistant-chat,nurture-agent,agent-teams,auto-skill-learner}.mjs": [
+    "eslint --fix"
+  ],
+  "./*.{js,mjs,ts,tsx}": ["eslint --fix"],
+  "*.{json,md,css}": ["prettier --write"]
+}

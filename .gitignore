@@ -11,6 +11,7 @@ PBK_React_Preview_Code_*/
 PBK_React_Preview_Code_*.zip
 
 *.log
+.eslintcache
 *.tmp
 *.bak
 *.swp

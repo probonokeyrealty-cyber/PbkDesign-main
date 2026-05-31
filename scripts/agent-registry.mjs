@@ -7,13 +7,18 @@ const REQUIRED_AGENT_IDS = [
   'script-rotator',
   'bant-enforcer',
   'qa-agent',
+  'nurture-agent',
 ];
 
 function uniqueStrings(values = []) {
-  return Array.from(new Set((Array.isArray(values) ? values : [values])
-    .flatMap((value) => Array.isArray(value) ? value : [value])
-    .map((value) => String(value || '').trim())
-    .filter(Boolean)));
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [values])
+        .flatMap((value) => (Array.isArray(value) ? value : [value]))
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 export function normalizeAgentRegistryId(value = '') {
@@ -31,7 +36,16 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
       id: 'ava',
       name: 'Ava',
       description: 'Primary PBK acquisition closer and voice supervisor.',
-      capabilities: ['voice', 'negotiation', 'closing', 'bant', 'path_locking', 'rag', 'memory_retrieval', 'turn_coordination'],
+      capabilities: [
+        'voice',
+        'negotiation',
+        'closing',
+        'bant',
+        'path_locking',
+        'rag',
+        'memory_retrieval',
+        'turn_coordination',
+      ],
       status: 'active',
       endpoint: '',
       version: 'v2.1',
@@ -42,8 +56,18 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
     {
       id: 'rex',
       name: 'Rex',
-      description: 'PBK strategist, research, autonomous goals, proactive triggers, revenue alignment, and memory agent.',
-      capabilities: ['strategy', 'research', 'revenue_alignment', 'autonomous_goal_setting', 'proactive_triggers', 'market_intel', 'rex_decisions', 'memory_synthesis'],
+      description:
+        'PBK strategist, research, autonomous goals, proactive triggers, revenue alignment, and memory agent.',
+      capabilities: [
+        'strategy',
+        'research',
+        'revenue_alignment',
+        'autonomous_goal_setting',
+        'proactive_triggers',
+        'market_intel',
+        'rex_decisions',
+        'memory_synthesis',
+      ],
       status: 'active',
       endpoint: '',
       version: 'v3.0',
@@ -55,7 +79,13 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
       id: 'hermes',
       name: 'Hermes',
       description: 'Suggest-only analyst lane for transcript, feedback, and pattern diagnosis.',
-      capabilities: ['analysis', 'suggestions', 'feedback_review', 'risk_review', 'pattern_detection'],
+      capabilities: [
+        'analysis',
+        'suggestions',
+        'feedback_review',
+        'risk_review',
+        'pattern_detection',
+      ],
       status: 'active',
       endpoint: '',
       version: 'v1.0',
@@ -66,7 +96,8 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
     {
       id: 'call-analyzer',
       name: 'Call Analyzer',
-      description: 'Reviews Ava call transcripts, scores quality, tags failures, and proposes improvements.',
+      description:
+        'Reviews Ava call transcripts, scores quality, tags failures, and proposes improvements.',
       capabilities: ['analysis', 'post_call', 'quality_scoring', 'failure_tags', 'coaching'],
       status: 'active',
       endpoint: '',
@@ -90,8 +121,17 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
     {
       id: 'script-rotator',
       name: 'Script Rotator',
-      description: 'Selects and rotates scripts, trust builders, objections, and war-manual lines using sentiment, objection history, and measured outcomes.',
-      capabilities: ['script_management', 'context_aware_rotation', 'ab_testing', 'objection_handling', 'trust_builders', 'war_manual', 'anti_repeat'],
+      description:
+        'Selects and rotates scripts, trust builders, objections, and war-manual lines using sentiment, objection history, and measured outcomes.',
+      capabilities: [
+        'script_management',
+        'context_aware_rotation',
+        'ab_testing',
+        'objection_handling',
+        'trust_builders',
+        'war_manual',
+        'anti_repeat',
+      ],
       status: 'active',
       endpoint: '',
       version: 'v1.0',
@@ -102,8 +142,15 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
     {
       id: 'bant-enforcer',
       name: 'BANT Enforcer',
-      description: 'Tracks budget, authority, need, timeline, urgency, and call qualification completeness.',
-      capabilities: ['qualification', 'bant', 'goal_inference', 'clarifying_questions', 'path_locking'],
+      description:
+        'Tracks budget, authority, need, timeline, urgency, and call qualification completeness.',
+      capabilities: [
+        'qualification',
+        'bant',
+        'goal_inference',
+        'clarifying_questions',
+        'path_locking',
+      ],
       status: 'active',
       endpoint: '',
       version: 'v1.0',
@@ -123,6 +170,33 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
       lastError: '',
       metadata: { orchestrationRole: 'worker', supervisor: 'rex', local: true },
     },
+    {
+      id: 'nurture-agent',
+      name: 'Nurture Agent',
+      description:
+        'Recommends and manages approval-gated SMS, email, and call follow-up sequences for warm and hot leads.',
+      capabilities: [
+        'nurture',
+        'campaigns',
+        'follow_up',
+        'sms',
+        'email',
+        'calling',
+        'scheduling',
+        'reply_handling',
+      ],
+      status: 'active',
+      endpoint: '',
+      version: 'v1.0',
+      healthCheckedAt: activeAt,
+      lastError: '',
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'ava',
+        approvalGated: true,
+        local: true,
+      },
+    },
   ];
 }
 
@@ -134,7 +208,9 @@ export function normalizeAgentRegistryRecord(record = {}) {
     name: String(record.name || id || '').trim(),
     description: String(record.description || '').trim(),
     capabilities: uniqueStrings(record.capabilities || []),
-    status: String(record.status || 'active').trim().toLowerCase(),
+    status: String(record.status || 'active')
+      .trim()
+      .toLowerCase(),
     endpoint: String(record.endpoint || '').trim(),
     version: String(record.version || '').trim(),
     healthCheckedAt: record.healthCheckedAt || record.health_checked_at || '',
@@ -176,8 +252,14 @@ export function mergeAgentRegistryRecords(existing = [], defaults = buildDefault
   return [...merged.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function findAgentsByCapability(registry = [], capability = '', { includeInactive = false } = {}) {
-  const wanted = String(capability || '').trim().toLowerCase();
+export function findAgentsByCapability(
+  registry = [],
+  capability = '',
+  { includeInactive = false } = {}
+) {
+  const wanted = String(capability || '')
+    .trim()
+    .toLowerCase();
   if (!wanted) return [];
   return (Array.isArray(registry) ? registry : [])
     .map(normalizeAgentRegistryRecord)
@@ -185,11 +267,16 @@ export function findAgentsByCapability(registry = [], capability = '', { include
     .filter((agent) => agent.capabilities.map((item) => item.toLowerCase()).includes(wanted));
 }
 
-export function buildAgentRegistrySnapshot(registry = [], { requiredIds = REQUIRED_AGENT_IDS } = {}) {
+export function buildAgentRegistrySnapshot(
+  registry = [],
+  { requiredIds = REQUIRED_AGENT_IDS } = {}
+) {
   const agents = mergeAgentRegistryRecords(registry, []);
   const ids = new Set(agents.map((agent) => agent.id));
   const missing = requiredIds.filter((id) => !ids.has(id));
-  const degraded = agents.filter((agent) => !['active', 'standby'].includes(String(agent.status || '').toLowerCase()));
+  const degraded = agents.filter(
+    (agent) => !['active', 'standby'].includes(String(agent.status || '').toLowerCase())
+  );
   const capabilities = uniqueStrings(agents.flatMap((agent) => agent.capabilities || [])).sort();
   return {
     ok: missing.length === 0 && degraded.length === 0,
@@ -218,11 +305,13 @@ export async function invokeRegisteredAgent(agent = {}, payload = {}, options = 
   }
   if (!normalized.endpoint) {
     const handler = options.localHandlers?.[normalized.id];
-    if (typeof handler !== 'function') throw new Error(`No local handler registered for agent ${normalized.id}.`);
+    if (typeof handler !== 'function')
+      throw new Error(`No local handler registered for agent ${normalized.id}.`);
     return handler(payload, normalized);
   }
   const fetchImpl = options.fetchImpl || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('fetch is not available for remote agent invocation.');
+  if (typeof fetchImpl !== 'function')
+    throw new Error('fetch is not available for remote agent invocation.');
   const timeoutMs = Math.max(1000, Number(options.timeoutMs || 5000));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

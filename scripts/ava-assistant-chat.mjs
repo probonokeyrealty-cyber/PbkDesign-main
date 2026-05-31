@@ -7,7 +7,9 @@ export const ASSISTANT_SYSTEM_PROMPT = `
 You are Ava, PBK Command Center's personal assistant.
 You are warm, concise, useful, and proactive.
 You can help analyze deals, summarize recent activity, find leads, explain PBK workflows, and prepare approval-gated actions.
+When an operator asks for follow-up by SMS, email, call, or nurture sequence, first consult the Nurture Agent for the best channel, timing, and sequence.
 Do not pretend to be human. Do not start calls, texts, emails, contracts, payments, or admin/provider writes unless the authenticated Command Center approval flow allows it.
+Only start a nurture sequence when the authenticated operator explicitly asks to automate it; provider writes remain approval-gated.
 Keep replies under two sentences unless the user asks for detail.
 `.trim();
 
@@ -40,7 +42,8 @@ export function normalizeAssistantSession(session = {}) {
       .slice(-MAX_ASSISTANT_HISTORY),
     leadId: cleanText(session?.leadId || session?.lead_id || '', 120),
     userId: cleanText(session?.userId || session?.user_id || '', 120),
-    toolResults: session?.toolResults && typeof session.toolResults === 'object' ? session.toolResults : {},
+    toolResults:
+      session?.toolResults && typeof session.toolResults === 'object' ? session.toolResults : {},
   };
 }
 
@@ -65,17 +68,23 @@ export function appendAssistantMessage(session = {}, role = 'user', content = ''
 
 function extractAddress(message = '') {
   const text = String(message || '');
-  const match = text.match(/\b\d{1,7}\s+[A-Za-z0-9.'#\-\s]+?\s(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Lane|Ln|Drive|Dr|Way|Court|Ct|Circle|Cir|Place|Pl|Trail|Trl)\b/i);
+  const match = text.match(
+    /\b\d{1,7}\s+[A-Za-z0-9.'#\-\s]+?\s(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Lane|Ln|Drive|Dr|Way|Court|Ct|Circle|Cir|Place|Pl|Trail|Trl)\b/i
+  );
   return match ? cleanText(match[0], 220) : '';
 }
 
 function extractPhone(message = '') {
-  const match = String(message || '').match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/);
+  const match = String(message || '').match(
+    /(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/
+  );
   return match ? match[0].replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') : '';
 }
 
 function extractLeadQuery(message = '') {
-  const match = String(message || '').match(/\b(?:find|show|get|lookup|look up)\s+(?:lead|seller|contact)\s+(?:named|called|with)?\s*"?([^".,?]+)"?/i);
+  const match = String(message || '').match(
+    /\b(?:find|show|get|lookup|look up)\s+(?:lead|seller|contact)\s+(?:named|called|with)?\s*"?([^".,?]+)"?/i
+  );
   return cleanText(match?.[1] || '', 120);
 }
 
@@ -89,7 +98,11 @@ export function detectAssistantIntent(message = '') {
     return { intent: 'help', message: text };
   }
 
-  if (/\b(what did i (just )?(ask|say)|what was my last (question|message)|remember what i (asked|said)|recall my last)\b/i.test(lower)) {
+  if (
+    /\b(what did i (just )?(ask|say)|what was my last (question|message)|remember what i (asked|said)|recall my last)\b/i.test(
+      lower
+    )
+  ) {
     return { intent: 'session_recall', message: text };
   }
 
@@ -101,11 +114,19 @@ export function detectAssistantIntent(message = '') {
     return { intent: 'call', message: text, phone };
   }
 
-  if (/\b(pending\s+)?approvals?|approval status|contracts? pending|offers? pending|what'?s waiting\b/i.test(lower)) {
+  if (
+    /\b(pending\s+)?approvals?|approval status|contracts? pending|offers? pending|what'?s waiting\b/i.test(
+      lower
+    )
+  ) {
     return { intent: 'approvals', message: text };
   }
 
-  if (/\b(summarize|summary|recap|catch me up)\b.*\b(calls?|leads?|deals?|approvals?|activity)\b/i.test(lower)) {
+  if (
+    /\b(summarize|summary|recap|catch me up)\b.*\b(calls?|leads?|deals?|approvals?|activity)\b/i.test(
+      lower
+    )
+  ) {
     return { intent: 'summary', message: text };
   }
 
@@ -119,13 +140,16 @@ export function detectAssistantIntent(message = '') {
 
 export function buildAssistantSuggestions(intent = 'general', { publicMode = true } = {}) {
   if (publicMode) {
-    if (intent === 'analyze_deal') return ['Share property details', 'Ask how PBK reviews offers', 'Request a callback'];
-    if (intent === 'call') return ['Share callback info', 'Explain the callback process', 'Ask a PBK question'];
+    if (intent === 'analyze_deal')
+      return ['Share property details', 'Ask how PBK reviews offers', 'Request a callback'];
+    if (intent === 'call')
+      return ['Share callback info', 'Explain the callback process', 'Ask a PBK question'];
     return ['Ask how PBK works', 'Share a property address', 'Request a callback'];
   }
 
   if (intent === 'analyze_deal') return ['Run deal analysis', 'Check comps', 'Prepare approval'];
-  if (intent === 'approvals') return ['View pending approvals', 'Run heartbeat', 'Open approval board'];
+  if (intent === 'approvals')
+    return ['View pending approvals', 'Run heartbeat', 'Open approval board'];
   if (intent === 'call') return ['Create call approval', 'Check DNC first', 'Find lead'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'Run heartbeat'];
   return ['Analyze a deal', 'Check approvals', 'Summarize recent calls'];
@@ -140,7 +164,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (publicMode && intent === 'call') {
     return {
       action: 'blocked_public_provider_write',
-      answer: 'I can save callback info, but public chat will not start calls, texts, emails, contracts, or other provider writes. Share the property details and best contact info, and the PBK team can review it.',
+      answer:
+        'I can save callback info, but public chat will not start calls, texts, emails, contracts, or other provider writes. Share the property details and best contact info, and the PBK team can review it.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -150,7 +175,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (publicMode && ['approvals', 'lead_lookup', 'summary'].includes(intent)) {
     return {
       action: 'blocked_public_private_data',
-      answer: 'That information lives inside the authenticated PBK Command Center. Open the Command Center to review approvals, leads, calls, and private deal activity.',
+      answer:
+        'That information lives inside the authenticated PBK Command Center. Open the Command Center to review approvals, leads, calls, and private deal activity.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -160,7 +186,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (publicMode && intent === 'help') {
     return {
       action: 'public_help',
-      answer: 'I can answer PBK process questions or save property/contact details for the team. Calls, texts, emails, contracts, and private approval data stay inside the approval-gated Command Center.',
+      answer:
+        'I can answer PBK process questions or save property/contact details for the team. Calls, texts, emails, contracts, and private approval data stay inside the approval-gated Command Center.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -171,10 +198,13 @@ export function planAssistantIntent(detected = {}, options = {}) {
     const session = normalizeAssistantSession(options.session || {});
     const lastUserTurn = [...session.history]
       .reverse()
-      .find((turn) =>
-        turn.role === 'user'
-        && turn.content
-        && !/\b(what did i (just )?(ask|say)|what was my last (question|message)|remember what i (asked|said)|recall my last)\b/i.test(turn.content)
+      .find(
+        (turn) =>
+          turn.role === 'user' &&
+          turn.content &&
+          !/\b(what did i (just )?(ask|say)|what was my last (question|message)|remember what i (asked|said)|recall my last)\b/i.test(
+            turn.content
+          )
       );
     return {
       action: 'session_recall',
@@ -190,7 +220,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (!publicMode && !authenticated) {
     return {
       action: 'authentication_required',
-      answer: 'Please authenticate in the PBK Command Center before I access private tools or deal data.',
+      answer:
+        'Please authenticate in the PBK Command Center before I access private tools or deal data.',
       suggestions: ['Sign in', 'Use public chat safely'],
       toolPlan: null,
       usedIntent: intent,
@@ -266,7 +297,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
   if (!publicMode && intent === 'summary') {
     return {
       action: 'summary_plan',
-      answer: 'I can summarize recent calls, leads, and approvals from the Command Center snapshot.',
+      answer:
+        'I can summarize recent calls, leads, and approvals from the Command Center snapshot.',
       suggestions,
       toolPlan: null,
       usedIntent: intent,

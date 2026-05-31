@@ -1,0 +1,10 @@
+dist
+node_modules
+public
+coverage
+.netlify
+.pbk-local
+labs/meta-agent/generated
+ops/browser-research/generated-jobs.json
+*.html
+docker-build.log

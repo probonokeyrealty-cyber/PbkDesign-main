@@ -129,7 +129,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-31-tech-debt-nurture-agent-v1';
+const BUILD_REVISION = '2026-05-31-tech-debt-nurture-agent-v2';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -46196,12 +46196,17 @@ async function handleInternalAvaAssistantChatRequest(request) {
   const sessionId = getPublicAvaAssistantSessionId(request, body);
   const priorAssistantSession = await readPublicAvaAssistantSession(sessionId);
   const assistantIntent = detectAssistantIntent(text);
+  const assistantContextSession = {
+    ...priorAssistantSession,
+    leadId: body.leadId || body.lead_id || priorAssistantSession?.leadId || priorAssistantSession?.lead_id || '',
+  };
   const assistantPlan = planAssistantIntent(assistantIntent, {
     publicMode: false,
     authenticated: true,
-    session: priorAssistantSession,
+    session: assistantContextSession,
+    leadId: assistantContextSession.leadId,
   });
-  let assistantSession = appendAssistantMessage(priorAssistantSession, 'user', text, {
+  let assistantSession = appendAssistantMessage(assistantContextSession, 'user', text, {
     source: body.source || 'command-center-assistant',
     intent: assistantIntent.intent,
   });
@@ -46232,6 +46237,23 @@ async function handleInternalAvaAssistantChatRequest(request) {
       result: 'approval_summary',
       pendingApprovals: getPendingRuntimeApprovals(state.approvals || []).length,
     };
+  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'consultNurtureAgent') {
+    const execution = await executeToolHandlerWithQa(
+      'consultNurtureAgent',
+      assistantPlan.toolPlan.params || {},
+      'ava-assistant-chat',
+    );
+    toolResult = execution.result;
+    qa = execution.qaValidation?.qa || null;
+    safety = execution.safetyValidation || null;
+    const recommendation = toolResult?.recommendation || {};
+    answer = [
+      `Nurture Agent recommends ${recommendation.channel || 'sms'} ${recommendation.urgency || 'now'}.`,
+      recommendation.reason ? `Reason: ${recommendation.reason}` : '',
+      'I can queue an approval-gated sequence when you confirm.',
+    ]
+      .filter(Boolean)
+      .join(' ');
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'findLead') {
     const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
     answer = lead

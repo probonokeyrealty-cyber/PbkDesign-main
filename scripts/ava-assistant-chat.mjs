@@ -110,6 +110,16 @@ export function detectAssistantIntent(message = '') {
     return { intent: 'analyze_deal', message: text, address };
   }
 
+  if (
+    /\b(nurture|follow[\s-]?up|reach out|send (?:a )?(?:sms|text|email)|text this lead|email this lead|should i (?:sms|text|email|call)|best (?:channel|follow[\s-]?up))\b/i.test(
+      lower
+    )
+  ) {
+    const channelMatch = lower.match(/\b(sms|text|email|call)\b/i);
+    const requestedChannel = channelMatch?.[1] === 'text' ? 'sms' : channelMatch?.[1] || '';
+    return { intent: 'nurture_consult', message: text, requestedChannel };
+  }
+
   if (/\b(call|dial|ring)\b/i.test(lower) && phone) {
     return { intent: 'call', message: text, phone };
   }
@@ -151,6 +161,8 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
   if (intent === 'approvals')
     return ['View pending approvals', 'Run heartbeat', 'Open approval board'];
   if (intent === 'call') return ['Create call approval', 'Check DNC first', 'Find lead'];
+  if (intent === 'nurture_consult')
+    return ['Consult Nurture Agent', 'Start approval-gated sequence', 'Find lead'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'Run heartbeat'];
   return ['Analyze a deal', 'Check approvals', 'Summarize recent calls'];
 }
@@ -275,6 +287,36 @@ export function planAssistantIntent(detected = {}, options = {}) {
         params: { to: detected.phone },
         providerWrite: true,
         approvalRequired: true,
+      },
+      usedIntent: intent,
+    };
+  }
+
+  if (!publicMode && intent === 'nurture_consult') {
+    const session = normalizeAssistantSession(options.session || {});
+    const leadId = cleanText(options.leadId || detected.leadId || session.leadId || '', 120);
+    if (!leadId) {
+      return {
+        action: 'missing_required_info',
+        answer:
+          'Pick a lead first, then I can consult the Nurture Agent on whether SMS, email, or a call is best.',
+        suggestions,
+        toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    return {
+      action: 'tool_plan',
+      answer: 'I can consult the Nurture Agent for the best follow-up channel and timing.',
+      suggestions,
+      toolPlan: {
+        toolName: 'consultNurtureAgent',
+        params: {
+          leadId,
+          userRequest: detected.message,
+          requestedChannel: detected.requestedChannel || '',
+        },
+        providerWrite: false,
       },
       usedIntent: intent,
     };

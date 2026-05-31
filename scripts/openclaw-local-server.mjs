@@ -1053,6 +1053,15 @@ const BROWSER_RESEARCH_TARGETS_FILE = path.join(ROOT_DIR, 'ops', 'browser-resear
 const UPGRADE_INTEGRATIONS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'pbk-upgrade-integrations.json');
 const PROPERTY_DATA_LOCAL_STATUS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'local-property-data-status.json');
 const PROPERTY_DATA_ADAPTER_SCRIPT = path.join(ROOT_DIR, 'scripts', 'property-data-adapter.mjs');
+const PROPERTY_DATA_VENV_DIR = path.join(ROOT_DIR, '.venv');
+const PROPERTY_DATA_PYTHON_CANDIDATES = [
+  path.join(PROPERTY_DATA_VENV_DIR, 'bin', 'python'),
+  path.join(PROPERTY_DATA_VENV_DIR, 'Scripts', 'python.exe'),
+];
+const PROPERTY_DATA_SCRAPLING_CANDIDATES = [
+  path.join(PROPERTY_DATA_VENV_DIR, 'bin', 'scrapling'),
+  path.join(PROPERTY_DATA_VENV_DIR, 'Scripts', 'scrapling.exe'),
+];
 const MCP_REGISTRY_FILE = path.join(ROOT_DIR, 'mcp-servers', 'registry.example.json');
 const MCP_RESEARCH_CANDIDATES_FILE = path.join(ROOT_DIR, 'mcp-servers', 'research-candidates.example.json');
 const N8N_TOOLING_WORKFLOW_FILE = path.join(ROOT_DIR, 'n8n-lite', 'tooling-health-check.json');
@@ -27463,12 +27472,18 @@ async function buildToolingStatus() {
   const mcpServers = mcpRegistry?.mcpServers || {};
   const candidateMcpServers = mcpResearchCandidates?.mcpServers || {};
   const browserOsRegistry = mcpServers.browseros || mcpServers.browserOs || null;
+  const propertyDataVenvReady =
+    PROPERTY_DATA_PYTHON_CANDIDATES.some((candidate) => existsSync(candidate)) &&
+    PROPERTY_DATA_SCRAPLING_CANDIDATES.some((candidate) => existsSync(candidate)) &&
+    existsSync(PROPERTY_DATA_ADAPTER_SCRIPT);
   const propertyDataConfigured =
     existsSync(UPGRADE_INTEGRATIONS_FILE) ||
     Boolean(propertyDataLocalStatus) ||
+    propertyDataVenvReady ||
     Boolean(candidateMcpServers.scrapling || candidateMcpServers.homeharvest);
   const propertyDataReady =
     Boolean(propertyDataLocalStatus?.ok) ||
+    propertyDataVenvReady ||
     hasAnyEnv(['PBK_HOMEHARVEST_ENABLED', 'PBK_HOMEHARVEST_ENDPOINT']) ||
     hasAnyEnv(['PBK_SCRAPLING_MCP_URL', 'PBK_SCRAPLING_ENDPOINT']);
   const pipelineMemoryConfigured =
@@ -27519,6 +27534,7 @@ async function buildToolingStatus() {
       configured: propertyDataConfigured,
       localSmokePassed: Boolean(propertyDataLocalStatus?.ok),
       localSmokeAt: propertyDataLocalStatus?.generatedAt || null,
+      bridgeVenvReady: propertyDataVenvReady,
       packages: propertyDataLocalStatus?.packages || null,
       registryConfigured: Boolean(candidateMcpServers.scrapling || candidateMcpServers.homeharvest),
       targetsConfigured: existsSync(BROWSER_RESEARCH_TARGETS_FILE),
@@ -27526,6 +27542,8 @@ async function buildToolingStatus() {
       note: propertyDataReady
         ? (propertyDataLocalStatus?.ok
             ? 'HomeHarvest and Scrapling are installed and smoke-tested locally. Supabase/Rex production wiring is still gated.'
+            : propertyDataVenvReady
+              ? 'HomeHarvest and Scrapling are installed in the bridge venv. Provider usage remains source-rule and review gated.'
             : 'Property data providers are connected for lead/comps enrichment.')
         : propertyDataConfigured
           ? 'HomeHarvest and Scrapling are staged as setup-gated candidates. Install and env wiring are still required.'

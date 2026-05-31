@@ -68,10 +68,11 @@ const additivePlan = planAssistantIntent(additiveIntent, { publicMode: false, au
 assert.equal(additivePlan.action, 'tool_plan', 'Authenticated additive requests should produce a safe tool plan.');
 assert.equal(
   additivePlan.toolPlan?.toolName,
-  'runUnifiedAdditiveIntelligence',
-  'Unified additive requests should route to runUnifiedAdditiveIntelligence.'
+  'runProviderAugmentedAdditiveIntelligence',
+  'Unified additive requests should route to provider-aware additive intelligence.'
 );
 assert.equal(additivePlan.toolPlan?.providerWrite, false, 'Unified additive intelligence should stay readonly.');
+assert.equal(additivePlan.toolPlan?.params?.liveProbe, true, 'Provider-aware additive intelligence should check configured providers.');
 
 const prompt = buildAssistantPrompt({
   history: [

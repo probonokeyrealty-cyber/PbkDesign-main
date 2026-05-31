@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+
 const ADDITIVE_DEFINITIONS = Object.freeze([
   {
     id: 'acp_gateway',
@@ -91,6 +93,79 @@ const ADDITIVE_DEFINITIONS = Object.freeze([
   },
 ]);
 
+const PROVIDER_CONNECTORS = Object.freeze([
+  {
+    additiveId: 'acp_gateway',
+    providerId: 'external-acp-gateway',
+    label: 'External ACP Gateway',
+    endpointEnv: ['PBK_ACP_ENDPOINT'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'encompass_path_search',
+    providerId: 'encompass-search-service',
+    label: 'EnCompass Search Service',
+    endpointEnv: ['PBK_ENCOMPASS_ENDPOINT'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'tool_universe',
+    providerId: 'tooluniverse',
+    label: 'ToolUniverse Provider',
+    endpointEnv: ['PBK_TOOLUNIVERSE_ENDPOINT'],
+    tokenEnv: ['PBK_TOOLUNIVERSE_TOKEN', 'HF_TOKEN', 'HUGGINGFACE_API_TOKEN'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'awm_induction',
+    providerId: 'awm-service',
+    label: 'Agent Workflow Memory Service',
+    endpointEnv: ['PBK_AWM_ENDPOINT'],
+    modelPathEnv: ['PBK_AWM_MODEL_PATH'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'stopping_agent',
+    providerId: 'stopping-agent-model',
+    label: 'Learned Stopping Agent Model',
+    endpointEnv: ['PBK_STOPPING_AGENT_ENDPOINT'],
+    modelPathEnv: ['PBK_STOPPING_AGENT_MODEL_PATH'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'mem1_compact_memory',
+    providerId: 'mem1',
+    label: 'MEM1 Constant-Memory Provider',
+    endpointEnv: ['PBK_MEM1_ENDPOINT'],
+    modelPathEnv: ['PBK_MEM1_MODEL_PATH'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'neuroskill_state_inference',
+    providerId: 'neuroskill',
+    label: 'NeuroSkill State Provider',
+    endpointEnv: ['PBK_NEUROSKILL_ENDPOINT'],
+    tokenEnv: ['PBK_NEUROSKILL_TOKEN'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'autograph_gui_automation',
+    providerId: 'autograph-sidecar',
+    label: 'AutoGraph / Desktop Sidecar Provider',
+    endpointEnv: ['PBK_AUTOGRAPH_ENDPOINT'],
+    tokenEnv: ['PBK_SIDECAR_TOKEN'],
+    healthPath: 'health',
+  },
+  {
+    additiveId: 'masteragent_l4_orchestration',
+    providerId: 'masteragent',
+    label: 'MasterAgent L4 Provider',
+    endpointEnv: ['PBK_MASTERAGENT_ENDPOINT'],
+    tokenEnv: ['PBK_MASTERAGENT_TOKEN'],
+    healthPath: 'health',
+  },
+]);
+
 const TOOL_ALIASES = Object.freeze([
   {
     toolName: 'analyzeDeal',
@@ -149,6 +224,117 @@ function includesAny(text = '', patterns = []) {
   return patterns.some((pattern) => lower.includes(String(pattern || '').toLowerCase()));
 }
 
+function firstConfiguredEnv(names = [], env = {}) {
+  for (const name of names || []) {
+    const value = String(env[name] || '').trim();
+    if (value) return { name, value };
+  }
+  return { name: '', value: '' };
+}
+
+function sanitizeEndpoint(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return raw.replace(/[?#].*$/, '').slice(0, 240);
+  }
+}
+
+function boolParam(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return /^(1|true|yes|on)$/i.test(String(value));
+}
+
+function buildProviderBaseCheck(connector = {}, env = {}) {
+  const endpoint = firstConfiguredEnv(connector.endpointEnv || [], env);
+  const modelPath = firstConfiguredEnv(connector.modelPathEnv || [], env);
+  const token = firstConfiguredEnv(connector.tokenEnv || [], env);
+  const configured = Boolean(endpoint.value || modelPath.value);
+  const modelReady = modelPath.value ? existsSync(modelPath.value) : false;
+  const status = !configured
+    ? 'native_only_no_external_provider'
+    : modelPath.value && !modelReady
+      ? 'model_path_missing'
+      : modelPath.value && modelReady
+        ? 'local_model_ready'
+        : 'endpoint_configured_unverified';
+  return {
+    additiveId: connector.additiveId,
+    providerId: connector.providerId,
+    label: connector.label,
+    configured,
+    ready: modelReady,
+    status,
+    endpointEnv: endpoint.name,
+    endpoint: sanitizeEndpoint(endpoint.value),
+    modelPathEnv: modelPath.name,
+    modelPathConfigured: Boolean(modelPath.value),
+    tokenEnv: token.name,
+    tokenConfigured: Boolean(token.value),
+    latencyMs: 0,
+    response: {},
+    error: '',
+    safety: {
+      advisoryOnly: true,
+      providerWritesAllowed: false,
+      approvalRequiredForExecution: true,
+    },
+  };
+}
+
+async function probeEndpointHealth(check = {}, connector = {}, timeoutMs = 2500) {
+  if (!check.endpoint || typeof fetch !== 'function') return check;
+  const start = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const base = check.endpoint.endsWith('/') ? check.endpoint : `${check.endpoint}/`;
+    const healthPath = String(connector.healthPath || 'health').replace(/^\/+/, '');
+    const url = new URL(healthPath, base).toString();
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json, text/plain;q=0.8, */*;q=0.5' },
+      signal: controller.signal,
+    });
+    const bodyText = (await response.text()).slice(0, 2000);
+    let body = bodyText;
+    try {
+      body = bodyText ? JSON.parse(bodyText) : {};
+    } catch {
+      // Text health responses are fine; keep the bounded string.
+    }
+    return {
+      ...check,
+      ready: response.ok,
+      status: response.ok ? 'external_provider_ready' : 'external_provider_unhealthy',
+      latencyMs: Date.now() - start,
+      response: {
+        status: response.status,
+        ok: response.ok,
+        body,
+      },
+      error: response.ok ? '' : `Provider health returned HTTP ${response.status}.`,
+    };
+  } catch (error) {
+    return {
+      ...check,
+      ready: false,
+      status: error?.name === 'AbortError' ? 'external_provider_timeout' : 'external_provider_error',
+      latencyMs: Date.now() - start,
+      error: error?.message || String(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function scoreAlias(query = '', alias) {
   const lower = String(query || '').toLowerCase();
   return (alias.intents || []).reduce((score, intent) => {
@@ -192,6 +378,40 @@ export function buildResearchAdditivesStatus({ env = process.env, now = new Date
       liveWithoutNewSignup: additives.length,
     },
     additives,
+  };
+}
+
+export async function checkResearchAdditiveProviders(params = {}, options = {}) {
+  const env = options.env || params.env || process.env;
+  const liveProbe = boolParam(params.liveProbe ?? options.liveProbe, false);
+  const timeoutMs = Math.max(500, Math.min(10000, Number(params.timeoutMs || options.timeoutMs || 2500)));
+  const baseChecks = PROVIDER_CONNECTORS.map((connector) => buildProviderBaseCheck(connector, env));
+  const providers = await Promise.all(
+    baseChecks.map(async (check) => {
+      if (!liveProbe || !check.endpoint) return check;
+      const connector = PROVIDER_CONNECTORS.find((item) => item.providerId === check.providerId) || {};
+      return probeEndpointHealth(check, connector, timeoutMs);
+    }),
+  );
+  const configured = providers.filter((item) => item.configured).length;
+  const ready = providers.filter((item) => item.ready).length;
+  const unhealthy = providers.filter((item) => item.configured && !item.ready).length;
+  const unconfigured = providers.filter((item) => !item.configured).length;
+  return {
+    ok: true,
+    result: 'provider_matrix_checked',
+    checkedAt: new Date().toISOString(),
+    liveProbe,
+    summary: {
+      total: providers.length,
+      configured,
+      ready,
+      unhealthy,
+      unconfigured,
+      nativeFallbackReady: true,
+      externalWritesAllowed: false,
+    },
+    providers,
   };
 }
 
@@ -624,6 +844,14 @@ export async function runUnifiedAdditiveIntelligence(params = {}, options = {}) 
   const env = options.env || params.env || process.env;
   const text = extractUnifiedText(params);
   const status = buildResearchAdditivesStatus({ env });
+  const providerChecks = await checkResearchAdditiveProviders(
+    {
+      liveProbe: boolParam(params.liveProbe ?? options.liveProbe, false),
+      timeoutMs: params.timeoutMs || options.timeoutMs,
+      env,
+    },
+    { env },
+  );
   const stopping = evaluateStoppingAgent({
     ...params,
     transcript: params.transcript || text,
@@ -705,6 +933,8 @@ export async function runUnifiedAdditiveIntelligence(params = {}, options = {}) 
       used: additiveIds.length,
       nativeReady: status.summary.nativeReady,
       providerUpgradesPending: status.summary.providerUpgradesPending,
+      providerConfigured: providerChecks.summary.configured,
+      providerReady: providerChecks.summary.ready,
     },
     sync: {
       stoppingFeedsPathSearch: true,
@@ -713,10 +943,25 @@ export async function runUnifiedAdditiveIntelligence(params = {}, options = {}) 
       toolDiscoveryFeedsNextAction: true,
       humanStateFeedsTone: true,
       guiAndL4RemainApprovalGated: true,
+      providersAdvisoryOnly: true,
+    },
+    providerAugmentation: {
+      mode: 'native_first_provider_aware',
+      liveProbe: providerChecks.liveProbe,
+      configured: providerChecks.summary.configured,
+      ready: providerChecks.summary.ready,
+      unhealthy: providerChecks.summary.unhealthy,
+      advisoryOnly: true,
+      providerWritesAllowed: false,
+      note:
+        providerChecks.summary.configured > 0
+          ? 'Configured frontier providers are checked and may enrich planning, but PBK native guardrails stay authoritative.'
+          : 'No optional frontier providers are configured; PBK native intelligence remains the active production path.',
     },
     nextAction,
     modules: {
       status,
+      providerChecks,
       acp,
       stopping,
       humanState,
@@ -729,4 +974,17 @@ export async function runUnifiedAdditiveIntelligence(params = {}, options = {}) 
       safety,
     },
   };
+}
+
+export async function runProviderAugmentedAdditiveIntelligence(params = {}, options = {}) {
+  return runUnifiedAdditiveIntelligence(
+    {
+      ...params,
+      liveProbe: params.liveProbe ?? true,
+    },
+    {
+      ...options,
+      liveProbe: options.liveProbe ?? true,
+    },
+  );
 }

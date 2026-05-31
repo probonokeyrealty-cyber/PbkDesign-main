@@ -93,6 +93,7 @@ import {
 import {
   buildResearchAdditivesStatus,
   buildSafetyTransparencyReport,
+  checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore,
   compactLongHorizonMemory as compactLongHorizonMemoryCore,
   discoverExternalTool as discoverExternalToolCore,
   evaluateStoppingAgent as evaluateStoppingAgentCore,
@@ -102,6 +103,7 @@ import {
   planExecutionPathSearch as planExecutionPathSearchCore,
   planMasterAgentMission as planMasterAgentMissionCore,
   routeAcpMessage as routeAcpMessageCore,
+  runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore,
   runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore,
 } from './research-additives.mjs';
 import {
@@ -143,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-31-unified-additive-intelligence-v2';
+const BUILD_REVISION = '2026-05-31-provider-augmented-additives-v3';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -5711,6 +5713,25 @@ async function ensurePbkOperationalTables(pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS public.pbk_research_additive_provider_checks (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      additive_id TEXT NOT NULL DEFAULT '',
+      provider_id TEXT NOT NULL DEFAULT '',
+      configured BOOLEAN NOT NULL DEFAULT FALSE,
+      ready BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT '',
+      endpoint_env TEXT NOT NULL DEFAULT '',
+      endpoint TEXT NOT NULL DEFAULT '',
+      latency_ms INT NOT NULL DEFAULT 0,
+      response JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'pbk-bridge',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_research_additive_provider_checks ENABLE ROW LEVEL SECURITY;
+
     CREATE INDEX IF NOT EXISTS agent_registry_status_idx
       ON public.agent_registry (tenant_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
@@ -5751,6 +5772,8 @@ async function ensurePbkOperationalTables(pool) {
       ON public.nurture_step_logs (tenant_id, nurture_instance_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_research_additive_runs_lookup_idx
       ON public.pbk_research_additive_runs (tenant_id, additive_id, tool_name, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_research_additive_provider_checks_lookup_idx
+      ON public.pbk_research_additive_provider_checks (tenant_id, additive_id, provider_id, created_at DESC);
   `);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
@@ -33845,7 +33868,7 @@ function getLocalAgentRegistryHandlers() {
     'research-orchestrator': async (payload = {}) => {
       const query = String(payload.query || payload.command || payload.goal || '').trim();
       if (/\b(sync|unified|frontier|all additives|whole system|robust|fusion)\b/i.test(query)) {
-        return toolHandlers.runUnifiedAdditiveIntelligence(payload);
+        return toolHandlers.runProviderAugmentedAdditiveIntelligence(payload);
       }
       if (/\b(stop|halt|guard|risk|safety)\b/i.test(query)) {
         return toolHandlers.evaluateStoppingAgent(payload);
@@ -33859,7 +33882,7 @@ function getLocalAgentRegistryHandlers() {
       if (/\b(memory|long|context|mem1)\b/i.test(query)) {
         return toolHandlers.compactLongHorizonMemory(payload);
       }
-      return toolHandlers.runUnifiedAdditiveIntelligence(payload);
+      return toolHandlers.runProviderAugmentedAdditiveIntelligence(payload);
     },
   };
 }
@@ -39080,6 +39103,8 @@ const TOOL_RISK_METADATA = Object.freeze({
   planDeterministicGuiAutomation: { risk: 'medium', approvalRequired: true },
   planMasterAgentMission: { risk: 'readonly', approvalRequired: false },
   runUnifiedAdditiveIntelligence: { risk: 'readonly', approvalRequired: false },
+  runProviderAugmentedAdditiveIntelligence: { risk: 'readonly', approvalRequired: false },
+  checkResearchAdditiveProviders: { risk: 'readonly', approvalRequired: false },
   getSafetyTransparencyReport: { risk: 'readonly', approvalRequired: false },
   startNurtureSequence: { risk: 'high', approvalRequired: true },
   telnyx_call: { risk: 'high', approvalRequired: true },
@@ -39325,6 +39350,42 @@ async function recordResearchAdditiveRun(additiveId, toolName, input = {}, outpu
     console.warn('[pbk-local-openclaw] research additive run persistence skipped:', error?.message || error);
     return null;
   }
+}
+
+async function recordResearchAdditiveProviderChecks(providerChecks = {}, source = 'pbk-bridge') {
+  const pool = getPgPool();
+  const providers = Array.isArray(providerChecks.providers) ? providerChecks.providers : [];
+  if (!pool || providers.length === 0) return [];
+  const saved = [];
+  for (const provider of providers) {
+    try {
+      const result = await queryPgRows(
+        `INSERT INTO public.pbk_research_additive_provider_checks (
+           tenant_id, additive_id, provider_id, configured, ready, status, endpoint_env, endpoint,
+           latency_ms, response, error, source, created_at
+         )
+         VALUES ('pbk',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,NOW())
+         RETURNING id, created_at`,
+        [
+          String(provider.additiveId || '').slice(0, 120),
+          String(provider.providerId || '').slice(0, 120),
+          Boolean(provider.configured),
+          Boolean(provider.ready),
+          String(provider.status || '').slice(0, 120),
+          String(provider.endpointEnv || '').slice(0, 120),
+          String(provider.endpoint || '').slice(0, 500),
+          Number(provider.latencyMs || 0),
+          JSON.stringify(compactAgentOpsPayload(provider.response || {}, 4000)),
+          String(provider.error || '').slice(0, 1000),
+          String(source || 'pbk-bridge').slice(0, 120),
+        ],
+      );
+      if (result.ok && result.rows?.[0]) saved.push(result.rows[0]);
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] research provider check persistence skipped:', error?.message || error);
+    }
+  }
+  return saved;
 }
 
 function enrichNurtureLeadParams(params = {}) {
@@ -39617,6 +39678,28 @@ const toolHandlers = {
     return result;
   },
 
+  async checkResearchAdditiveProviders(params = {}) {
+    recordToolUse('checkResearchAdditiveProviders');
+    const result = await checkResearchAdditiveProvidersCore(
+      {
+        ...params,
+        env: process.env,
+        liveProbe: params.liveProbe ?? true,
+      },
+      {
+        env: process.env,
+        liveProbe: params.liveProbe ?? true,
+        timeoutMs: params.timeoutMs,
+      },
+    );
+    void recordResearchAdditiveProviderChecks(result, params.source || 'checkResearchAdditiveProviders');
+    void recordResearchAdditiveRun('provider_matrix', 'checkResearchAdditiveProviders', params, result, {
+      providerWrites: 'none',
+      advisoryOnly: true,
+    });
+    return result;
+  },
+
   async routeAcpMessage(params = {}) {
     recordToolUse('routeAcpMessage');
     const result = await routeAcpMessageCore(params, {
@@ -39737,6 +39820,32 @@ const toolHandlers = {
       approvalGatesPreserved: true,
       allAdditivesSynced: true,
     });
+    void recordResearchAdditiveProviderChecks(result?.modules?.providerChecks, 'runUnifiedAdditiveIntelligence');
+    return result;
+  },
+
+  async runProviderAugmentedAdditiveIntelligence(params = {}) {
+    recordToolUse('runProviderAugmentedAdditiveIntelligence');
+    const result = await runProviderAugmentedAdditiveIntelligenceCore(
+      {
+        ...params,
+        env: process.env,
+        liveProbe: params.liveProbe ?? true,
+      },
+      {
+        env: process.env,
+        toolNames: Object.keys(toolHandlers),
+        liveProbe: params.liveProbe ?? true,
+        timeoutMs: params.timeoutMs,
+      },
+    );
+    void recordResearchAdditiveRun('provider_augmented_frontier_fusion', 'runProviderAugmentedAdditiveIntelligence', params, result, {
+      providerWrites: 'none',
+      approvalGatesPreserved: true,
+      allAdditivesSynced: true,
+      providerHealthChecked: true,
+    });
+    void recordResearchAdditiveProviderChecks(result?.modules?.providerChecks, 'runProviderAugmentedAdditiveIntelligence');
     return result;
   },
 
@@ -44405,12 +44514,13 @@ const toolHandlers = {
         source: params.source || 'agent-console-read-only',
       });
     } else if (/\b(frontier|additive|all additives|unified intelligence|whole system|research orchestrator|masteragent|mem1|neuroskill|tooluniverse|encompass|awm|stopping agent|autograph|acp)\b/i.test(intentCommand)) {
-      routedTo = 'runUnifiedAdditiveIntelligence';
-      response = await toolHandlers.runUnifiedAdditiveIntelligence({
+      routedTo = 'runProviderAugmentedAdditiveIntelligence';
+      response = await toolHandlers.runProviderAugmentedAdditiveIntelligence({
         ...params,
         command,
         query: intentCommand,
         goal: intentCommand || command,
+        liveProbe: params.liveProbe ?? true,
         context,
         source: params.source || 'agent-console-frontier-fusion',
       });
@@ -46515,9 +46625,13 @@ async function handleInternalAvaAssistantChatRequest(request) {
     ]
       .filter(Boolean)
       .join(' ');
-  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'runUnifiedAdditiveIntelligence') {
+  } else if (
+    assistantPlan.action === 'tool_plan'
+    && ['runUnifiedAdditiveIntelligence', 'runProviderAugmentedAdditiveIntelligence'].includes(assistantPlan.toolPlan?.toolName)
+  ) {
+    const additiveToolName = assistantPlan.toolPlan.toolName;
     const execution = await executeToolHandlerWithQa(
-      'runUnifiedAdditiveIntelligence',
+      additiveToolName,
       {
         ...(assistantPlan.toolPlan.params || {}),
         sessionId,
@@ -46532,8 +46646,12 @@ async function handleInternalAvaAssistantChatRequest(request) {
     safety = execution.safetyValidation || null;
     const nextAction = toolResult?.nextAction || {};
     const coverage = toolResult?.coverage || {};
+    const providerAugmentation = toolResult?.providerAugmentation || {};
     answer = [
       `Unified intelligence is synced across ${coverage.used || 10}/${coverage.total || 10} additives.`,
+      providerAugmentation.ready !== undefined
+        ? `Provider check: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK-native fallback is active.`
+        : '',
       nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '',
       nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '',
       'Provider writes, desktop actions, and contracts still stay approval-gated.',
@@ -51019,6 +51137,25 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/research-additives/providers', '/api/ai-additives/providers'])) {
+      const body = request.method === 'POST' ? await readBody(request) : {};
+      const result = await toolHandlers.checkResearchAdditiveProviders({
+        ...body,
+        liveProbe: request.method === 'POST'
+          ? body.liveProbe ?? true
+          : url.searchParams.get('liveProbe') ?? true,
+        requestedBy: body.requestedBy || url.searchParams.get('requestedBy') || 'api',
+        source: 'research-additives-provider-api',
+      });
+      json(response, result.ok ? 200 : 503, {
+        ...result,
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/acp', '/api/research-additives/acp'])) {
       const body = await readBody(request);
       const result = await toolHandlers.routeAcpMessage(body);
@@ -51044,6 +51181,8 @@ const server = createServer(async (request, response) => {
         'planDeterministicGuiAutomation',
         'planMasterAgentMission',
         'runUnifiedAdditiveIntelligence',
+        'runProviderAugmentedAdditiveIntelligence',
+        'checkResearchAdditiveProviders',
         'getSafetyTransparencyReport',
       ]);
       if (!allowed.has(toolName)) {
@@ -54101,7 +54240,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
       if (!pool) {
         json(response, 200, {
           ok: false,

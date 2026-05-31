@@ -5,6 +5,7 @@ import {
   buildAcpEnvelope,
   buildResearchAdditivesStatus,
   buildSafetyTransparencyReport,
+  checkResearchAdditiveProviders,
   compactLongHorizonMemory,
   discoverExternalTool,
   evaluateStoppingAgent,
@@ -14,6 +15,7 @@ import {
   planExecutionPathSearch,
   planMasterAgentMission,
   routeAcpMessage,
+  runProviderAugmentedAdditiveIntelligence,
   runUnifiedAdditiveIntelligence,
 } from './research-additives.mjs';
 import { buildDefaultAgentRegistry, findAgentsByCapability } from './agent-registry.mjs';
@@ -24,6 +26,13 @@ assert.equal(status.summary.total, 10, 'all ten frontier additives should be rep
 assert.equal(status.summary.ready, 10, 'all frontier additives should have a PBK-native ready adapter.');
 assert.equal(status.summary.nativeReady, 10, 'all frontier additives should be native-ready today.');
 assert(status.summary.providerUpgradesPending >= 4, 'provider/model upgrades should be tracked separately from native readiness.');
+
+const providerChecks = await checkResearchAdditiveProviders({ liveProbe: false }, { env: {} });
+assert.equal(providerChecks.ok, true);
+assert.equal(providerChecks.result, 'provider_matrix_checked');
+assert.equal(providerChecks.summary.nativeFallbackReady, true);
+assert.equal(providerChecks.summary.configured, 0);
+assert(providerChecks.providers.length >= 8, 'provider connector matrix should cover optional frontier upgrades.');
 
 const registry = buildDefaultAgentRegistry({ now: 1780000000000 });
 assert(
@@ -118,18 +127,36 @@ const unified = await runUnifiedAdditiveIntelligence(
 assert.equal(unified.result, 'unified_intelligence_ready');
 assert.equal(unified.coverage.total, 10);
 assert.equal(unified.coverage.used, 10);
+assert.equal(unified.providerAugmentation.mode, 'native_first_provider_aware');
+assert.equal(unified.providerAugmentation.providerWritesAllowed, false);
 assert.equal(unified.sync.stoppingFeedsPathSearch, true);
 assert.equal(unified.sync.toolDiscoveryFeedsNextAction, true);
+assert.equal(unified.sync.providersAdvisoryOnly, true);
 assert(unified.modules.pathSearch.selected, 'unified intelligence should include selected path search output.');
 assert(unified.modules.discovery.matches.length > 0, 'unified intelligence should include tool discovery matches.');
+assert(unified.modules.providerChecks.providers.length > 0, 'unified intelligence should include provider health matrix.');
 assert(unified.nextAction.action, 'unified intelligence should return an operator next action.');
+
+const providerAugmented = await runProviderAugmentedAdditiveIntelligence(
+  {
+    query: 'Upgrade the whole PBK intelligence stack but keep provider writes blocked.',
+    transcript: 'Seller is cautious and needs proof.',
+    liveProbe: false,
+  },
+  { env: {}, toolNames: ['consultNurtureAgent', 'analyzeDeal'] }
+);
+assert.equal(providerAugmented.result, 'unified_intelligence_ready');
+assert.equal(providerAugmented.providerAugmentation.advisoryOnly, true);
 
 const bridge = readFileSync(resolve('scripts/openclaw-local-server.mjs'), 'utf8');
 const dockerfile = readFileSync(resolve('Dockerfile.openclaw'), 'utf8');
 assert.match(bridge, /getResearchAdditivesStatus/, 'bridge should expose research-additive status tool.');
 assert.match(bridge, /runUnifiedAdditiveIntelligence/, 'bridge should expose unified additive intelligence tool.');
+assert.match(bridge, /runProviderAugmentedAdditiveIntelligence/, 'bridge should expose provider-augmented additive intelligence tool.');
+assert.match(bridge, /checkResearchAdditiveProviders/, 'bridge should expose provider health checks.');
 assert.match(bridge, /\/api\/research-additives\/status/, 'bridge should expose research-additive status endpoint.');
 assert.match(bridge, /pbk_research_additive_runs/, 'bridge should persist research additive run audit rows.');
+assert.match(bridge, /pbk_research_additive_provider_checks/, 'bridge should persist provider check audit rows.');
 assert.match(dockerfile, /COPY scripts\/research-additives\.mjs/, 'Render image should copy research additive module.');
 
 console.log('[research-additives-smoke] ok', {

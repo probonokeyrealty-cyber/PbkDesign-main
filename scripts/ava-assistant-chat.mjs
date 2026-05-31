@@ -365,11 +365,12 @@ export function planAssistantIntent(detected = {}, options = {}) {
         'I can run the unified additive intelligence layer across PBK now and return the safest next action.',
       suggestions,
       toolPlan: {
-        toolName: 'runUnifiedAdditiveIntelligence',
+        toolName: 'runProviderAugmentedAdditiveIntelligence',
         params: {
           query: detected.message,
           command: detected.message,
           goal: detected.message,
+          liveProbe: true,
         },
         providerWrite: false,
       },

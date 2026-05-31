@@ -2071,6 +2071,7 @@ function getTelnyxProviderMeta() {
 
   return {
     configured: Boolean(TELNYX_API_KEY),
+    ready: voiceReady,
     fromNumberConfigured,
     effectiveFromNumber,
     connectionIdConfigured: Boolean(TELNYX_CONNECTION_ID),

@@ -5029,6 +5029,19 @@ function normalizeAgentRosterId(value = '') {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+function getAgentRosterQualityScore(agent = {}) {
+  const status = String(agent.status || '').toLowerCase();
+  let score = 0;
+  if (agent.registry?.source === 'agent_registry' || Array.isArray(agent.capabilities)) score += 80;
+  if (status === 'active') score += 30;
+  if (status === 'standby') score += 15;
+  if (Array.isArray(agent.skills) && agent.skills.length) score += 10;
+  if (Array.isArray(agent.requiredTools) && agent.requiredTools.length) score += 8;
+  if (agent.description || agent.role) score += 5;
+  if (agent.lastSeen || agent.healthCheckedAt || agent.health_checked_at) score += 4;
+  return score;
+}
+
 function mergeAgentRosterRecord(existing = {}, required = {}) {
   return {
     ...required,
@@ -5047,19 +5060,39 @@ function mergeAgentRosterRecord(existing = {}, required = {}) {
   };
 }
 
+function mergeDuplicateAgentRosterRecord(existing = {}, incoming = {}) {
+  const incomingPreferred = getAgentRosterQualityScore(incoming) >= getAgentRosterQualityScore(existing);
+  const primary = incomingPreferred ? incoming : existing;
+  const fallback = incomingPreferred ? existing : incoming;
+  return mergeAgentRosterRecord({
+    ...primary,
+    skills: Array.isArray(primary.skills) && primary.skills.length ? primary.skills : (fallback.skills || []),
+    requiredTools: Array.isArray(primary.requiredTools) && primary.requiredTools.length ? primary.requiredTools : (fallback.requiredTools || []),
+    supervises: normalizeStringList(primary.supervises || fallback.supervises || []),
+    lastSeen: primary.lastSeen || primary.healthCheckedAt || primary.health_checked_at || fallback.lastSeen,
+  }, fallback);
+}
+
 function ensureRequiredAgentRoster(agents = []) {
-  const current = Array.isArray(agents) ? [...agents] : [];
+  const byId = new Map();
+  for (const agent of Array.isArray(agents) ? agents : []) {
+    const id = normalizeAgentRosterId(agent.id || agent.agentId || agent.name);
+    if (!id) continue;
+    const normalized = { ...agent, id };
+    const existing = byId.get(id);
+    byId.set(id, existing ? mergeDuplicateAgentRosterRecord(existing, normalized) : normalized);
+  }
   const required = buildDefaultAgentFleet();
   for (const requiredAgent of required) {
     const requiredId = normalizeAgentRosterId(requiredAgent.id || requiredAgent.name);
-    const index = current.findIndex((agent) => normalizeAgentRosterId(agent.id || agent.name) === requiredId);
-    if (index === -1) {
-      current.push(requiredAgent);
+    const existing = byId.get(requiredId);
+    if (!existing) {
+      byId.set(requiredId, requiredAgent);
     } else {
-      current[index] = mergeAgentRosterRecord(current[index], requiredAgent);
+      byId.set(requiredId, mergeAgentRosterRecord(existing, requiredAgent));
     }
   }
-  return current;
+  return [...byId.values()];
 }
 
 function buildDefaultAgentFleet() {
@@ -44139,6 +44172,8 @@ function buildStateSnapshot(options = {}) {
   const runtimeMeta = getRuntimeMeta();
   const compact = options.compact === true;
   const list = (items, limit = 120) => limitSnapshotArray(items, limit, compact);
+  const agentOrchestration = buildAgentOrchestrationSnapshot();
+  const snapshotAgents = Array.isArray(state.agents) ? state.agents : buildDefaultAgentFleet();
   return {
     status: {
       ...state.status,
@@ -44222,8 +44257,8 @@ function buildStateSnapshot(options = {}) {
     campaignSuppressions: list(state.campaignSuppressions || [], 160),
     campaignLeadSources: getCampaignLeadSourceOptions(),
     campaignExecutions: list(state.campaignExecutions || [], 120),
-    agents: Array.isArray(state.agents) ? state.agents : buildDefaultAgentFleet(),
-    agentOrchestration: buildAgentOrchestrationSnapshot(),
+    agents: list(snapshotAgents, 120),
+    agentOrchestration,
     agentTasks: list(state.agentTasks || [], 120),
     agentDecisions: list(state.agentDecisions || [], 120),
     callEmotions: list(state.callEmotions || [], 120),

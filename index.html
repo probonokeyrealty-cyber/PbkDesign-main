@@ -17379,7 +17379,25 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     },
   ];
 
-  const fleetUiState = { selected: 'ava' };
+  const FLEET_CANONICAL_AGENT_ORDER = [
+    'ava',
+    'rex',
+    'hermes',
+    'call-analyzer',
+    'prosody-tuner',
+    'script-rotator',
+    'bant-enforcer',
+    'qa-agent',
+  ];
+
+  const fleetUiState = {
+    selected: 'ava',
+    source: {
+      rawCount: 0,
+      acceptedCount: 0,
+      duplicateCount: 0,
+    },
+  };
 
   function showFleetOutcome(outcome, title, desc) {
     if (typeof toastOutcome === 'function') {
@@ -17462,14 +17480,101 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return /Max|Nora|Zed|pause applied by PBK dashboard|config(?:ure)? applied by PBK dashboard|Spanish acquisitions|Outbound SMS|Ava skill inheritance|sandbox calls|demo|fixture/i.test(demoText);
   }
 
+  function isFleetAgentRecord(agent = {}) {
+    if (!agent || typeof agent !== 'object' || Array.isArray(agent)) return false;
+    const id = String(agent.id || agent.agentId || agent.slug || '').trim();
+    const name = String(agent.name || agent.agentName || '').trim();
+    if (!id && !name) return false;
+    if (/^\d+$/.test(id) && !name) return false;
+    const surface = [
+      id,
+      name,
+      agent.role,
+      agent.description,
+      agent.orchestrationRole,
+      agent.registry?.source,
+      ...(Array.isArray(agent.capabilities) ? agent.capabilities : []),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /\b(agent|ava|rex|hermes|closer|analysis|qa|bant|prosody|script|voice|strategy|worker|supervisor|registry)\b/.test(surface);
+  }
+
+  function collectFleetAgentRecords(snapshot = PBK.state.openclawRuntime || {}) {
+    const sources = [
+      snapshot?.agentRegistry?.agents,
+      snapshot?.registry?.agents,
+      snapshot?.status?.agentRegistry?.agents,
+      snapshot?.agentOrchestration?.agents,
+      snapshot?.agents,
+    ];
+    for (const source of sources) {
+      if (!Array.isArray(source)) continue;
+      const records = source.filter(isFleetAgentRecord);
+      if (records.length) return records;
+    }
+    return [];
+  }
+
+  function getFleetAgentQualityScore(agent = {}) {
+    const id = String(agent.id || '').toLowerCase();
+    let score = 0;
+    if (FLEET_CANONICAL_AGENT_ORDER.includes(id)) score += 30;
+    if (agent.registry?.source === 'agent_registry' || Array.isArray(agent.capabilities)) score += 80;
+    if (String(agent.status || '').toLowerCase() === 'active') score += 30;
+    if (Array.isArray(agent.skills) && agent.skills.length) score += 12;
+    if (Array.isArray(agent.tools) && agent.tools.length) score += 8;
+    if (agent.description) score += 6;
+    if (agent.healthCheckedAt || agent.health_checked_at) score += 5;
+    return score;
+  }
+
+  function mergeFleetAgentRecord(existing = {}, incoming = {}) {
+    const incomingPreferred = getFleetAgentQualityScore(incoming) >= getFleetAgentQualityScore(existing);
+    const primary = incomingPreferred ? incoming : existing;
+    const fallback = incomingPreferred ? existing : incoming;
+    return sanitizeFleetAgentForProduction({
+      ...fallback,
+      ...primary,
+      skills: Array.isArray(primary.skills) && primary.skills.length ? primary.skills : (fallback.skills || []),
+      stream: Array.isArray(primary.stream) && primary.stream.length ? primary.stream : (fallback.stream || []),
+      knowledge: Array.isArray(primary.knowledge) && primary.knowledge.length ? primary.knowledge : (fallback.knowledge || []),
+      tools: Array.isArray(primary.tools) && primary.tools.length ? primary.tools : (fallback.tools || []),
+      lastSeen: primary.lastSeen || primary.healthCheckedAt || primary.health_checked_at || fallback.lastSeen,
+    });
+  }
+
   function getFleetAgents() {
-    const runtimeAgents = Array.isArray(PBK.state.openclawRuntime?.agents) ? PBK.state.openclawRuntime.agents : [];
-    if (runtimeAgents.length) {
-      const byId = new Map(FLEET_AGENT_SEED.map((agent) => [agent.id, agent]));
-      return runtimeAgents.map((agent) => ({
-        ...(byId.get(agent.id) || {}),
-        ...sanitizeFleetAgentForProduction(agent),
-      })).filter((agent) => agent.id && !isSeededFleetExample(agent));
+    const runtimeAgents = collectFleetAgentRecords();
+    const seedById = new Map(FLEET_AGENT_SEED.map((agent) => [agent.id, agent]));
+    const byId = new Map();
+    runtimeAgents.forEach((agent) => {
+      const rawId = agent.id || agent.agentId || agent.slug || agent.name || 'agent';
+      const id = normalizeControlText(String(rawId)).replace(/\s+/g, '-').toLowerCase();
+      const seeded = seedById.get(id) || {};
+      const normalized = sanitizeFleetAgentForProduction({
+        ...seeded,
+        ...agent,
+        id,
+      });
+      if (!normalized.id || isSeededFleetExample(normalized)) return;
+      const existing = byId.get(normalized.id);
+      byId.set(normalized.id, existing ? mergeFleetAgentRecord(existing, normalized) : normalized);
+    });
+    const agents = Array.from(byId.values()).sort((a, b) => {
+      const ai = FLEET_CANONICAL_AGENT_ORDER.indexOf(String(a.id || '').toLowerCase());
+      const bi = FLEET_CANONICAL_AGENT_ORDER.indexOf(String(b.id || '').toLowerCase());
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    fleetUiState.source = {
+      rawCount: runtimeAgents.length,
+      acceptedCount: agents.length,
+      duplicateCount: Math.max(0, runtimeAgents.length - agents.length),
+    };
+    if (agents.length) {
+      if (!agents.some((agent) => agent.id === fleetUiState.selected)) {
+        fleetUiState.selected = agents[0].id;
+      }
+      return agents;
     }
     return [];
   }
@@ -17490,14 +17595,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const building = agents.filter((agent) => ['building', 'deploying'].includes(agent.status)).length;
     const proven = agents.flatMap((agent) => agent.skills || []).filter((skill) => skill.level === 'proven').length;
     const evolving = agents.flatMap((agent) => agent.skills || []).filter((skill) => skill.level !== 'proven').length;
+    const source = fleetUiState.source || {};
+    const sourceNote = source.duplicateCount
+      ? `${source.duplicateCount} duplicate runtime rows collapsed`
+      : 'canonical registry records';
     const tag = document.getElementById('fleetTag');
     if (tag) {
       tag.textContent = agents.length
-        ? `Agent Fleet - ${agents.length} live agent${agents.length === 1 ? '' : 's'} - ${active} active - ${building} building`
+        ? `Agent Fleet - ${agents.length} verified agent${agents.length === 1 ? '' : 's'} - ${active} active - ${building} building`
         : 'Agent Fleet - no live agents loaded';
     }
     node.innerHTML = [
-      ['Active agents', active, 'calls, campaigns, or research'],
+      ['Verified agents', agents.length, sourceNote],
       ['Proven skills', proven, 'eligible for transfer'],
       ['Evolving skills', evolving, 'need evidence or approval'],
       ['Approval mode', 'ON', 'no silent behavior changes'],

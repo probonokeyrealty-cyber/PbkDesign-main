@@ -57,6 +57,26 @@ function guardProcessPipe(stream) {
 guardProcessPipe(process.stdout);
 guardProcessPipe(process.stderr);
 
+function installRecoverableProcessErrorGuards() {
+  process.on('uncaughtException', (error) => {
+    if (isRecoverablePipeError(error)) {
+      scheduleSidecarReconnect();
+      return;
+    }
+    throw error;
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    if (isRecoverablePipeError(reason)) {
+      scheduleSidecarReconnect();
+      return;
+    }
+    safeWarn('[pbk-ava-desktop] unhandled rejection:', reason?.message || reason);
+  });
+}
+
+installRecoverableProcessErrorGuards();
+
 function safeWarn(...args) {
   try {
     console.warn(...args);

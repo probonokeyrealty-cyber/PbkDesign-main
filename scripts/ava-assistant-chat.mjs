@@ -126,7 +126,13 @@ export function detectAssistantIntent(message = '') {
   ) {
     const channelMatch = lower.match(/\b(sms|text|email|call)\b/i);
     const requestedChannel = channelMatch?.[1] === 'text' ? 'sms' : channelMatch?.[1] || '';
-    return { intent: 'nurture_consult', message: text, requestedChannel };
+    const explicitStart = /\b(start|launch|activate|automate|queue|schedule|run|turn\s+on|set\s+up)\b.*\b(nurture|follow[\s-]?up|sequence|campaign)\b/i.test(lower)
+      || /\b(nurture|follow[\s-]?up)\b.*\b(start|launch|activate|automate|queue|schedule|run|sequence|campaign)\b/i.test(lower);
+    return {
+      intent: explicitStart ? 'nurture_start' : 'nurture_consult',
+      message: text,
+      requestedChannel,
+    };
   }
 
   if (/\b(call|dial|ring)\b/i.test(lower) && phone) {
@@ -172,6 +178,8 @@ export function buildAssistantSuggestions(intent = 'general', { publicMode = tru
   if (intent === 'call') return ['Create call approval', 'Check DNC first', 'Find lead'];
   if (intent === 'nurture_consult')
     return ['Consult Nurture Agent', 'Start approval-gated sequence', 'Find lead'];
+  if (intent === 'nurture_start')
+    return ['Queue nurture approval', 'Consult timing first', 'Find lead'];
   if (intent === 'unified_additive_intelligence')
     return ['Run unified intelligence', 'Check guardrails', 'Plan mission'];
   if (intent === 'summary') return ['Summarize calls', 'Show hot leads', 'Run heartbeat'];
@@ -295,7 +303,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
       suggestions,
       toolPlan: {
         toolName: 'telnyx_call',
-        params: { to: detected.phone },
+        params: { to: detected.phone, forceApproval: true },
         providerWrite: true,
         approvalRequired: true,
       },
@@ -303,7 +311,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     };
   }
 
-  if (!publicMode && intent === 'nurture_consult') {
+  if (!publicMode && ['nurture_consult', 'nurture_start'].includes(intent)) {
     const session = normalizeAssistantSession(options.session || {});
     const leadId = cleanText(options.leadId || detected.leadId || session.leadId || '', 120);
     if (!leadId) {
@@ -313,6 +321,25 @@ export function planAssistantIntent(detected = {}, options = {}) {
           'Pick a lead first, then I can consult the Nurture Agent on whether SMS, email, or a call is best.',
         suggestions,
         toolPlan: null,
+        usedIntent: intent,
+      };
+    }
+    if (intent === 'nurture_start') {
+      return {
+        action: 'approval_required',
+        answer: 'I can queue the nurture sequence for approval now. Provider sends still remain approval-gated.',
+        suggestions,
+        toolPlan: {
+          toolName: 'startNurtureSequence',
+          params: {
+            leadId,
+            userRequest: detected.message,
+            requestedChannel: detected.requestedChannel || '',
+            forceApproval: true,
+          },
+          providerWrite: true,
+          approvalRequired: true,
+        },
         usedIntent: intent,
       };
     }

@@ -63,6 +63,18 @@ assert.equal(internalAnalyzePlan.toolPlan?.params?.address, '202 Cherry Ln', 'De
 const internalCallPlan = planAssistantIntent(callIntent, { publicMode: false, authenticated: true });
 assert.equal(internalCallPlan.action, 'approval_required', 'Authenticated call requests should still stay approval-gated.');
 assert.equal(internalCallPlan.toolPlan?.toolName, 'telnyx_call', 'Call requests should map to the Telnyx call tool only as an approval-gated plan.');
+assert.equal(internalCallPlan.toolPlan?.params?.forceApproval, true, 'Assistant call requests should force approval even if autopilot is enabled.');
+
+const nurtureStartIntent = detectAssistantIntent('Start a nurture sequence for this lead tonight.');
+assert.equal(nurtureStartIntent.intent, 'nurture_start', 'Assistant should distinguish explicit nurture automation from read-only consultation.');
+const nurtureStartPlan = planAssistantIntent(nurtureStartIntent, {
+  publicMode: false,
+  authenticated: true,
+  leadId: 'smoke-lead-1',
+});
+assert.equal(nurtureStartPlan.action, 'approval_required', 'Starting nurture from chat should be approval-gated.');
+assert.equal(nurtureStartPlan.toolPlan?.toolName, 'startNurtureSequence', 'Explicit nurture starts should route to the sequence starter.');
+assert.equal(nurtureStartPlan.toolPlan?.params?.forceApproval, true, 'Nurture starts should force the approval guard.');
 
 const additivePlan = planAssistantIntent(additiveIntent, { publicMode: false, authenticated: true });
 assert.equal(additivePlan.action, 'tool_plan', 'Authenticated additive requests should produce a safe tool plan.');

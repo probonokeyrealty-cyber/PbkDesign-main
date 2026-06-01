@@ -107,6 +107,8 @@ assert.match(electronPackage, /"ws"/, 'Electron sidecar should depend on ws for 
 assert.match(electronMain, /connectDesktopSidecar/, 'Electron main process should connect the desktop sidecar.');
 assert.match(electronMain, /isRecoverablePipeError/, 'Electron sidecar should classify broken pipe errors as recoverable.');
 assert.match(electronMain, /safeWarn/, 'Electron sidecar should log socket errors without crashing on closed stdio pipes.');
+assert.match(electronMain, /installRecoverableProcessErrorGuards/, 'Electron sidecar should install main-process recoverable error guards.');
+assert.match(electronMain, /uncaughtException/, 'Electron sidecar should suppress recoverable broken-pipe uncaught exceptions.');
 assert.match(electronMain, /sidecarSocket\?\.terminate/, 'Electron sidecar should terminate and reconnect after socket errors.');
 assert.match(rootPackage, /test:desktop-sidecar/, 'root package should expose the desktop sidecar smoke test.');
 

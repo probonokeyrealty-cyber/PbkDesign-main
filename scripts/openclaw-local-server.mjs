@@ -33040,7 +33040,10 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     };
   }
   const mode = getRuntimeOperatingMode();
-  if (mode === 'autopilot') return null;
+  const approvalReplayId = String(params.approvalId || params.approval_id || '').trim();
+  const forceApproval = Boolean(params.forceApproval === true || params.force_approval === true);
+  if (mode === 'autopilot' && !forceApproval) return null;
+  if (approvalReplayId && isApprovalApproved(approvalReplayId)) return null;
 
   const label = toolName.replace(/_/g, ' ');
   const safetyValidation = await preValidateToolSafety(toolName, params, 'operating-mode-guard');
@@ -33089,6 +33092,7 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       ...(params.metadata && typeof params.metadata === 'object' ? params.metadata : {}),
       kind: 'provider_action',
       requestedTool: toolName,
+      forceApproval,
       safetyValidation,
       executionParams: buildProviderActionReplayParams(params || {}),
     },
@@ -46724,6 +46728,28 @@ async function handleInternalAvaAssistantChatRequest(request) {
     ]
       .filter(Boolean)
       .join(' ');
+  } else if (
+    assistantPlan.action === 'approval_required'
+    && ['telnyx_call', 'startNurtureSequence'].includes(assistantPlan.toolPlan?.toolName)
+  ) {
+    const approvalToolName = assistantPlan.toolPlan.toolName;
+    toolResult = await invokeToolWithOperatingGuard(approvalToolName, {
+      ...(assistantPlan.toolPlan.params || {}),
+      actor: 'Ava Assistant',
+      source: 'ava-assistant-chat',
+      forceApproval: true,
+    });
+    const approvalId = toolResult?.approval?.id || toolResult?.approvalId || '';
+    const queued = ['queued_for_approval', 'approval_required'].includes(String(toolResult?.result || toolResult?.outcome || '').toLowerCase());
+    if (approvalToolName === 'startNurtureSequence') {
+      answer = queued
+        ? `I queued the approval-gated nurture sequence${approvalId ? ` (${approvalId})` : ''}. Nothing will send until the approval path releases it.`
+        : `I could not queue that approval-gated nurture sequence yet. ${toolResult?.message || ''}`.trim();
+    } else {
+      answer = queued
+        ? `I queued the approval-gated call request${approvalId ? ` (${approvalId})` : ''}. Ava will not dial until the approval path releases it.`
+        : `I could not queue that approval-gated call request yet. ${toolResult?.message || ''}`.trim();
+    }
   } else if (
     assistantPlan.action === 'tool_plan'
     && ['runUnifiedAdditiveIntelligence', 'runProviderAugmentedAdditiveIntelligence'].includes(assistantPlan.toolPlan?.toolName)

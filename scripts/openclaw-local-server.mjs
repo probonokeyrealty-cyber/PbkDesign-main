@@ -5887,6 +5887,20 @@ async function ensurePgSchema() {
       UNIQUE (workspace_id, agent_id, name)
     );
 
+    ALTER TABLE public.skills
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'self-learned',
+      ADD COLUMN IF NOT EXISTS level TEXT NOT NULL DEFAULT 'candidate',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS confidence NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS evidence TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.skill_usage (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
       workspace_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5902,6 +5916,20 @@ async function ensurePgSchema() {
       used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE public.skill_usage
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS skill_id TEXT REFERENCES public.skills(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS skill_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS agent_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS outcome TEXT NOT NULL DEFAULT 'unknown',
+      ADD COLUMN IF NOT EXISTS success BOOLEAN,
+      ADD COLUMN IF NOT EXISTS confidence NUMERIC,
+      ADD COLUMN IF NOT EXISTS profit_margin NUMERIC,
+      ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
     CREATE TABLE IF NOT EXISTS public.ava_learning_sessions (
       id TEXT PRIMARY KEY,
@@ -8358,7 +8386,7 @@ async function seedAvaWarManualRuntimeKnowledgeToPg(pool) {
         confidence, evidence, metadata, created_at, updated_at
       )
       VALUES ($1,'pbk','ava','Ava',$2,'war_manual',$3,'active',$4,$5,$6::jsonb,NOW(),NOW())
-      ON CONFLICT (workspace_id, agent_id, name) DO UPDATE SET
+      ON CONFLICT (id) DO UPDATE SET
         source = EXCLUDED.source,
         level = EXCLUDED.level,
         status = EXCLUDED.status,
@@ -8643,7 +8671,7 @@ async function seedMemoryAnalyticsStateToPg() {
           confidence, evidence, metadata, created_at, updated_at
         )
         VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW(),NOW())
-        ON CONFLICT (workspace_id, agent_id, name) DO UPDATE SET
+        ON CONFLICT (id) DO UPDATE SET
           source = EXCLUDED.source,
           level = EXCLUDED.level,
           status = EXCLUDED.status,
@@ -54311,7 +54339,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
       if (!pool) {
         json(response, 200, {
           ok: false,

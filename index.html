@@ -19042,11 +19042,33 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     `;
   }
 
+  function normalizeFleetToolRow(entry) {
+    if (Array.isArray(entry)) {
+      return {
+        tool: String(entry[0] || 'tool'),
+        status: String(entry[1] || 'ready'),
+      };
+    }
+    if (entry && typeof entry === 'object') {
+      return {
+        tool: String(entry.tool || entry.name || entry.id || entry.label || 'tool'),
+        status: String(entry.status || entry.state || entry.result || entry.readiness || 'ready'),
+      };
+    }
+    return {
+      tool: String(entry || 'tool'),
+      status: 'ready',
+    };
+  }
+
   function renderFleetPaneTools(agent) {
     const node = document.getElementById('fleetPaneTools');
     if (!node) return;
+    const toolRows = (Array.isArray(agent.tools) && agent.tools.length ? agent.tools : agent.requiredTools || [])
+      .map(normalizeFleetToolRow)
+      .filter((item) => item.tool);
     node.innerHTML = `
-      ${(agent.tools || []).map(([tool, status]) => `<div class="fleet-tool-row"><span>${escapeHtml(tool)}</span><strong>${escapeHtml(status)}</strong></div>`).join('')}
+      ${toolRows.map(({ tool, status }) => `<div class="fleet-tool-row"><span>${escapeHtml(tool)}</span><strong>${escapeHtml(status)}</strong></div>`).join('')}
       <div class="fleet-knowledge-card">
         <h4>Guardrails</h4>
         <p>Max offer: MAO ceiling. Required: DNC pre-check, calling hours, provider readiness, and approval before dangerous provider writes or personality/prompt changes.</p>

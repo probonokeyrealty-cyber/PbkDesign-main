@@ -105,6 +105,9 @@ assert.match(bridge, /async sidecarCommand/, 'bridge should expose sidecarComman
 assert.match(bridge, /pendingSidecarCommands/, 'bridge should correlate sidecar command results.');
 assert.match(electronPackage, /"ws"/, 'Electron sidecar should depend on ws for bridge connectivity.');
 assert.match(electronMain, /connectDesktopSidecar/, 'Electron main process should connect the desktop sidecar.');
+assert.match(electronMain, /isRecoverablePipeError/, 'Electron sidecar should classify broken pipe errors as recoverable.');
+assert.match(electronMain, /safeWarn/, 'Electron sidecar should log socket errors without crashing on closed stdio pipes.');
+assert.match(electronMain, /sidecarSocket\?\.terminate/, 'Electron sidecar should terminate and reconnect after socket errors.');
 assert.match(rootPackage, /test:desktop-sidecar/, 'root package should expose the desktop sidecar smoke test.');
 
 console.log('[desktop-sidecar-smoke] ok', {

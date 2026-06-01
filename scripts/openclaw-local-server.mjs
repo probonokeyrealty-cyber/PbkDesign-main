@@ -13328,6 +13328,47 @@ function buildAvaSellerListeningLabel(params = {}) {
   return `So ${phrase} is the piece I should pay attention to.`;
 }
 
+function normalizeAvaSellerHookFingerprint(value = '') {
+  return sanitizeAvaSpokenOutput(value || '')
+    .toLowerCase()
+    .replace(/\b3[-\s]?way\b/g, 'three way')
+    .replace(/\bthree[-\s]?way\b/g, 'three way')
+    .replace(/\bthree way\b/g, 'threeway')
+    .replace(/\b(?:right now|quick|really|just|please)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function avaSellerHookAlreadyCovered(text = '', hook = '') {
+  const cleanFingerprint = normalizeAvaSellerHookFingerprint(text);
+  const hookFingerprint = normalizeAvaSellerHookFingerprint(hook);
+  return Boolean(
+    cleanFingerprint
+    && hookFingerprint
+    && cleanFingerprint.includes(hookFingerprint)
+  );
+}
+
+function moveCoveredAvaSellerHookToEnd(text = '', hook = '') {
+  const clean = sanitizeAvaSpokenOutput(text || '').replace(/\s+/g, ' ').trim();
+  const cleanHook = sanitizeAvaSpokenOutput(hook || '').replace(/\s+/g, ' ').trim();
+  const hookFingerprint = normalizeAvaSellerHookFingerprint(cleanHook);
+  if (!clean || !cleanHook || !hookFingerprint) return clean;
+  const sentences = clean.match(/[^.!?]+[.!?]?/g) || [clean];
+  const body = sentences
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .filter((sentence) => !normalizeAvaSellerHookFingerprint(sentence).includes(hookFingerprint))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const question = /[?]\s*$/.test(cleanHook) ? cleanHook : `${cleanHook}?`;
+  if (!body) return question;
+  const separator = /[.!?]\s*$/.test(body) ? ' ' : '. ';
+  return `${body}${separator}${question}`.replace(/\s+/g, ' ').trim();
+}
+
 function ensureAvaSellerReplyHook(text = '', options = {}) {
   const clean = sanitizeAvaSpokenOutput(text || '', options.fallback || '').replace(/\s+/g, ' ').trim();
   if (!clean) return '';
@@ -13344,6 +13385,7 @@ function ensureAvaSellerReplyHook(text = '', options = {}) {
       || 'What would make this feel like the right next step for you?',
   );
   if (!hook) return clean;
+  if (avaSellerHookAlreadyCovered(clean, hook)) return moveCoveredAvaSellerHookToEnd(clean, hook);
   const separator = /[.!?]\s*$/.test(clean) ? ' ' : '. ';
   return `${clean}${separator}${/[?]\s*$/.test(hook) ? hook : `${hook}?`}`.replace(/\s+/g, ' ').trim();
 }

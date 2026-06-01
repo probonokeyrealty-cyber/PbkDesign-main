@@ -34,6 +34,41 @@ let sidecarStartedAt = new Date().toISOString();
 let sidecarLastBridgeMessageAt = '';
 let sidecarWatchers = new Map();
 
+function isRecoverablePipeError(error) {
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || error || '');
+  return code === 'EPIPE' || /EPIPE|broken pipe/i.test(message);
+}
+
+function guardProcessPipe(stream) {
+  if (!stream?.on || stream.__pbkPipeGuardInstalled) return;
+  stream.__pbkPipeGuardInstalled = true;
+  stream.on('error', (error) => {
+    // Electron on Windows can surface stdout/stderr EPIPE as an uncaught main-process error.
+    // Treat only broken log pipes as recoverable; the sidecar socket will reconnect separately.
+    if (!isRecoverablePipeError(error)) {
+      try {
+        stream.write(`[pbk-ava-desktop] process stream error: ${error?.message || error}\n`);
+      } catch {}
+    }
+  });
+}
+
+guardProcessPipe(process.stdout);
+guardProcessPipe(process.stderr);
+
+function safeWarn(...args) {
+  try {
+    console.warn(...args);
+  } catch (error) {
+    if (!isRecoverablePipeError(error)) {
+      try {
+        process.stderr.write(`[pbk-ava-desktop] log failed: ${error?.message || error}\n`);
+      } catch {}
+    }
+  }
+}
+
 function createTrayIcon() {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
@@ -98,8 +133,13 @@ function getSidecarAllowedRoots() {
 
 function sendSidecarMessage(message) {
   if (!sidecarSocket || sidecarSocket.readyState !== WebSocket.OPEN) return false;
-  sidecarSocket.send(JSON.stringify(message));
-  return true;
+  try {
+    sidecarSocket.send(JSON.stringify(message));
+    return true;
+  } catch (error) {
+    if (!isRecoverablePipeError(error)) safeWarn('[pbk-ava-desktop] sidecar send failed:', error?.message || error);
+    return false;
+  }
 }
 
 function buildLocalSidecarStatus(connected = false) {
@@ -170,6 +210,12 @@ function watchFolderForSidecar(command) {
   });
   sidecarWatchers.set(watcherId, watcher);
   return { watcherId, status: 'watching' };
+}
+
+function scheduleSidecarReconnect() {
+  if (app.isQuitting || !SIDECAR_ENABLED) return;
+  if (sidecarReconnectTimer) clearTimeout(sidecarReconnectTimer);
+  sidecarReconnectTimer = setTimeout(connectDesktopSidecar, 5000);
 }
 
 async function handleSidecarCommand(rawCommand) {
@@ -248,18 +294,22 @@ function connectDesktopSidecar() {
     });
   });
   sidecarSocket.on('message', (raw) => {
-    sidecarLastBridgeMessageAt = new Date().toISOString();
-    const message = JSON.parse(String(raw || '{}'));
-    if (message.type === 'sidecar.command' || message.type === 'command') {
-      void handleSidecarCommand(message.payload || message);
+    try {
+      sidecarLastBridgeMessageAt = new Date().toISOString();
+      const message = JSON.parse(String(raw || '{}'));
+      if (message.type === 'sidecar.command' || message.type === 'command') {
+        void handleSidecarCommand(message.payload || message);
+      }
+    } catch (error) {
+      safeWarn('[pbk-ava-desktop] ignored malformed sidecar message:', error?.message || error);
     }
   });
   sidecarSocket.on('close', () => {
-    if (sidecarReconnectTimer) clearTimeout(sidecarReconnectTimer);
-    sidecarReconnectTimer = setTimeout(connectDesktopSidecar, 5000);
+    scheduleSidecarReconnect();
   });
   sidecarSocket.on('error', (error) => {
-    console.warn('[pbk-ava-desktop] sidecar socket error:', error?.message || error);
+    safeWarn('[pbk-ava-desktop] sidecar socket error:', error?.message || error);
+    try { sidecarSocket?.terminate?.(); } catch {}
   });
 }
 
@@ -292,7 +342,7 @@ app.whenReady().then(() => {
   connectDesktopSidecar();
   const registered = globalShortcut.register(HOTKEY, () => dispatchVoiceEvent('pbk-desktop-start-voice'));
   if (!registered) {
-    console.warn(`[pbk-ava-desktop] hotkey registration failed: ${HOTKEY}`);
+    safeWarn(`[pbk-ava-desktop] hotkey registration failed: ${HOTKEY}`);
   }
 });
 

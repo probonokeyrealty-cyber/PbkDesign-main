@@ -540,9 +540,12 @@ const checks = [
     name: 'Agent Fleet defaults are honest runtime records, not fake live/demo activity',
     ok: /function buildDefaultAgentFleet/.test(bridge)
       && /activity:\s*'Waiting for approved PBK work.'/.test(defaultAgentFleetBlock)
+      && /Ready for approval-gated offer recap, seller follow-up, and contract delivery skills/.test(defaultAgentFleetBlock)
       && /Ready for approved Rex research and strategist proposals/.test(defaultAgentFleetBlock)
       && /status:\s*'idle'/.test(defaultAgentFleetBlock)
-      && !/id:\s*'max'|id:\s*'nora'|id:\s*'zed'|Diane Kowalski|Probate Warm-up Q2|On call with Diane|Spanish acquisitions|Outbound SMS/i.test(defaultAgentFleetBlock),
+      && /id:\s*'max'/.test(defaultAgentFleetBlock)
+      && /role:\s*'Closer and contract handoff'/.test(defaultAgentFleetBlock)
+      && !/id:\s*'nora'|id:\s*'zed'|Diane Kowalski|Probate Warm-up Q2|On call with Diane|Spanish acquisitions|Outbound SMS/i.test(defaultAgentFleetBlock),
   },
   {
     name: 'Agent orchestration exposes Ava supervisor with Rex and Hermes workers',
@@ -550,7 +553,7 @@ const checks = [
       && /function buildAgentHealthProbe/.test(bridge)
       && /function ensureRequiredAgentRoster/.test(bridge)
       && /orchestrationRole:\s*'supervisor'/.test(defaultAgentFleetBlock)
-      && /supervises:\s*\[\s*'rex',\s*'hermes'\s*\]/.test(defaultAgentFleetBlock)
+      && /supervises:\s*\[\s*'max',\s*'rex',\s*'hermes'\s*\]/.test(defaultAgentFleetBlock)
       && /id:\s*'hermes'/.test(defaultAgentFleetBlock)
       && /supervisor:\s*'ava'/.test(defaultAgentFleetBlock)
       && /\/api\/agents\/orchestration/.test(bridge)

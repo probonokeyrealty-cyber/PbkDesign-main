@@ -252,6 +252,106 @@ function boolParam(value, fallback = false) {
   return /^(1|true|yes|on)$/i.test(String(value));
 }
 
+function firstFiniteNumber(values = [], fallback = 0) {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+}
+
+function estimateTokens(text = '') {
+  return Math.max(0, Math.ceil(String(text || '').length / 4));
+}
+
+function normalizeConversationTurns(params = {}, text = '') {
+  if (Array.isArray(params.turns)) {
+    return params.turns
+      .map((turn, index) => {
+        const value = typeof turn === 'string'
+          ? turn
+          : (turn?.text || turn?.body || turn?.transcript || turn?.content || '');
+        return {
+          index,
+          speaker: typeof turn === 'object' ? String(turn.speaker || turn.role || '').trim() : '',
+          text: String(value || '').trim(),
+        };
+      })
+      .filter((turn) => turn.text);
+  }
+  return String(text || '')
+    .split(/\r?\n+/)
+    .map((line, index) => ({ index, speaker: '', text: line.trim() }))
+    .filter((turn) => turn.text);
+}
+
+function parseCompactMemoryConfig(params = {}, env = {}) {
+  const config = params.config && typeof params.config === 'object' ? params.config : {};
+  return {
+    memoryWindow: Math.round(clamp(firstFiniteNumber([
+      params.memory_window,
+      params.memoryWindow,
+      config.memory_window,
+      config.memoryWindow,
+      env.PBK_COMPACT_MEMORY_WINDOW,
+    ], 20), 4, 80)),
+    minRetentionTokens: Math.round(clamp(firstFiniteNumber([
+      params.min_retention_tokens,
+      params.minRetentionTokens,
+      config.min_retention_tokens,
+      config.minRetentionTokens,
+      env.PBK_COMPACT_MIN_RETENTION_TOKENS,
+    ], 512), 128, 4096)),
+    compactionTriggerTurns: Math.round(clamp(firstFiniteNumber([
+      params.compaction_trigger_turns,
+      params.compactionTriggerTurns,
+      config.compaction_trigger_turns,
+      config.compactionTriggerTurns,
+      env.PBK_COMPACT_TRIGGER_TURNS,
+    ], 8), 3, 50)),
+    bantRequired: boolParam(
+      params.bant_required ?? params.bantRequired ?? config.bant_required ?? config.bantRequired ?? env.PBK_COMPACT_BANT_REQUIRED,
+      true,
+    ),
+    emotionRequired: boolParam(
+      params.emotion_required ?? params.emotionRequired ?? config.emotion_required ?? config.emotionRequired ?? env.PBK_COMPACT_EMOTION_REQUIRED,
+      true,
+    ),
+  };
+}
+
+function normalizeCompactEmotion(params = {}, text = '') {
+  const source = params.emotionState || params.emotion || params.currentEmotion || {};
+  const dominant = String(
+    source.dominant
+      || source.dominantEmotion
+      || source.emotion
+      || source.sentiment
+      || params.sentiment
+      || '',
+  ).trim().toLowerCase();
+  const intensities = {
+    joy: clamp(source.joy ?? source.happy ?? (dominant === 'joy' ? source.intensity : 0), 0, 1),
+    sadness: clamp(source.sadness ?? (dominant === 'sadness' ? source.intensity : 0), 0, 1),
+    anger: clamp(source.anger ?? source.frustration ?? (dominant === 'anger' ? source.intensity : 0), 0, 1),
+    fear: clamp(source.fear ?? source.anxiety ?? (dominant === 'fear' ? source.intensity : 0), 0, 1),
+  };
+  const inferredDominant = dominant
+    || Object.entries(intensities).sort((left, right) => right[1] - left[1])[0]?.[0]
+    || (includesAny(text, ['scam', 'lawyer', 'attorney', 'stop']) ? 'fear' : 'neutral');
+  const inferredIntensity = clamp(source.intensity ?? intensities[inferredDominant] ?? 0, 0, 1);
+  return {
+    dominant: inferredDominant || 'neutral',
+    intensity: Number(inferredIntensity.toFixed(2)),
+    signals: unique([
+      includesAny(text, ['overwhelmed', 'stressed', 'busy']) && 'overwhelmed_or_busy',
+      includesAny(text, ['scam', 'fake', 'proof', 'legit', 'trust']) && 'trust_gap',
+      includesAny(text, ['attorney', 'lawyer', 'stop calling']) && 'legal_or_stop_signal',
+    ]),
+    ...intensities,
+  };
+}
+
 function buildProviderBaseCheck(connector = {}, env = {}) {
   const endpoint = firstConfiguredEnv(connector.endpointEnv || [], env);
   const modelPath = firstConfiguredEnv(connector.modelPathEnv || [], env);
@@ -638,36 +738,79 @@ export function discoverExternalTool(params = {}, options = {}) {
 }
 
 export function compactLongHorizonMemory(params = {}) {
+  const env = params.env || process.env;
   const text = String(params.transcript || params.notes || '').trim();
+  const turns = normalizeConversationTurns(params, text);
+  const retention = parseCompactMemoryConfig(params, env);
   const bant = params.bant && typeof params.bant === 'object' ? params.bant : {};
+  const emotion = normalizeCompactEmotion(params, text);
+  const turnCount = Math.max(
+    Number(params.turnCount || params.turn_count || 0) || 0,
+    turns.length,
+  );
+  const retainedTurns = turns.slice(-retention.memoryWindow);
+  const estimatedTokens = estimateTokens(text || turns.map((turn) => turn.text).join('\n'));
+  const mem1Path = String(env.PBK_MEM1_MODEL_PATH || '').trim();
+  const mem1Endpoint = String(env.PBK_MEM1_ENDPOINT || '').trim();
   const facts = unique([
     bant.budget && `budget:${bant.budget}`,
     bant.authority && `authority:${bant.authority}`,
     bant.need && `need:${bant.need}`,
     bant.timeline && `timeline:${bant.timeline}`,
+    bant.decisionMaker && `decision_maker:${bant.decisionMaker}`,
+    bant.motivation && `motivation:${bant.motivation}`,
+    emotion.dominant && `emotion:${emotion.dominant}`,
+    emotion.intensity > 0 && `emotion_intensity:${emotion.intensity}`,
     includesAny(text, ['probate', 'estate']) && 'context:probate',
     includesAny(text, ['tenant', 'renter']) && 'context:tenant',
     includesAny(text, ['repair', 'roof', 'foundation']) && 'context:repairs',
     includesAny(text, ['scam', 'trust', 'proof']) && 'trust:needs_proof',
+    includesAny(text, ['spouse', 'wife', 'husband', 'brother', 'sister', 'partner']) && 'authority:other_decision_maker_possible',
+    includesAny(text, ['call me later', 'tomorrow', 'next week', 'at 6', 'after work']) && 'open_loop:callback_timing',
+    includesAny(text, ['too low', 'low offer', 'worth more', 'zillow']) && 'objection:price',
   ]);
   const openLoops = [];
   if (!bant.authority) openLoops.push('Confirm decision authority.');
   if (!bant.timeline) openLoops.push('Confirm seller timeline.');
   if (!bant.budget) openLoops.push('Confirm price expectation or debt pressure.');
+  if (includesAny(text, ['scam', 'fake', 'proof', 'legit', 'trust'])) openLoops.push('Send seller-safe proof before asking for commitment.');
+  if (includesAny(text, ['spouse', 'wife', 'husband', 'brother', 'sister', 'partner'])) openLoops.push('Confirm all decision makers are aligned.');
+  if (includesAny(text, ['call me later', 'tomorrow', 'next week', 'after work'])) openLoops.push('Schedule exact callback time and pause aggressive follow-up.');
+  const protectedFields = unique([
+    retention.bantRequired && 'bant',
+    retention.emotionRequired && 'emotion',
+    'openLoops',
+    'latestTurns',
+    'sellerModel',
+  ]);
   return {
     ok: true,
     result: 'compact_state_ready',
     engine: 'pbk-mem1-lite',
     compactState: {
       sellerModel: facts.slice(0, 12),
-      openLoops,
+      bant,
+      emotion,
+      openLoops: unique(openLoops),
+      retainedTurns: retainedTurns.map((turn) => ({
+        speaker: turn.speaker,
+        text: turn.text.slice(0, 500),
+      })),
       recommendedNextQuestion: openLoops[0] || 'Confirm the next step and preferred follow-up channel.',
-      memoryBudgetTokens: 450,
+      memoryBudgetTokens: retention.minRetentionTokens,
       sourceLength: text.length,
+      estimatedTokens,
+      shouldCompact: turnCount >= retention.compactionTriggerTurns || estimatedTokens >= retention.minRetentionTokens,
+      retentionPolicy: retention,
+      protectedFields,
     },
     model: {
-      mem1ModelConfigured: Boolean(String((params.env || process.env).PBK_MEM1_MODEL_PATH || '').trim()),
-      note: 'Compact state is live. RL-trained MEM1 replacement remains gated until a trained model path is configured.',
+      mem1ModelConfigured: Boolean(mem1Path || mem1Endpoint),
+      mem1ModelPathConfigured: Boolean(mem1Path),
+      mem1ModelReady: Boolean(mem1Path && existsSync(mem1Path)),
+      mem1EndpointConfigured: Boolean(mem1Endpoint),
+      trainingRequired: !(mem1Path && existsSync(mem1Path)),
+      note: 'PBK native compact state is live. RL-trained MEM1 remains gated until PBK_MEM1_MODEL_PATH points to a trained local model or PBK_MEM1_ENDPOINT is explicitly configured.',
     },
   };
 }

@@ -84,10 +84,17 @@ assert.equal(discovery.matches[0].toolName, 'consultNurtureAgent');
 const compact = compactLongHorizonMemory({
   transcript: 'Seller inherited the house, needs proof we are real, and wants to close soon.',
   bant: { timeline: 'soon' },
+  emotion: { dominant: 'fear', intensity: 0.62 },
   env: {},
 });
 assert.equal(compact.result, 'compact_state_ready');
 assert(compact.compactState.openLoops.includes('Confirm decision authority.'));
+assert.equal(compact.compactState.bant.timeline, 'soon');
+assert.equal(compact.compactState.emotion.dominant, 'fear');
+assert(compact.compactState.retentionPolicy.memoryWindow >= 20);
+assert(compact.compactState.retentionPolicy.minRetentionTokens >= 512);
+assert(compact.compactState.protectedFields.includes('bant'));
+assert.equal(compact.model.mem1ModelConfigured, false);
 
 const humanState = inferProactiveHumanState({
   transcript: 'I am overwhelmed and busy, can you explain this later?',

@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-05-31-provider-augmented-additives-v3';
+const BUILD_REVISION = '2026-06-01-ava-memory-command-intelligence-v1';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -18988,6 +18988,19 @@ function buildAvaCallArchitectureContext(params = {}) {
     goalInference,
     probeDepth: session.probeDepth || session.pathProbeTurnCount || pathDecision.probeTurnCount || 0,
   });
+  const architectureTurnCount = Number(params.turnCount || params.turn_count || session.turnCount || (Array.isArray(session.transcript) ? session.transcript.length : 0) || 0);
+  const longHorizonMemory = compactLongHorizonMemoryCore({
+    transcript: intelligenceTranscript || rawTranscript,
+    notes: bestContext.bestTranscript || '',
+    bant,
+    emotion: normalizeEmotionState(params.emotionState || params.emotion || params.currentEmotion || session.emotionState || contextCall.emotionState || contextCall.emotion, params.sentiment),
+    turnCount: architectureTurnCount,
+    memoryWindow: 20,
+    minRetentionTokens: 512,
+    bantRequired: true,
+    emotionRequired: true,
+    env: process.env,
+  });
   return {
     schemaVersion: 'pbk-ava-call-intelligence-v1',
     enabled: getAvaCallIntelligenceSettings().enabled,
@@ -19012,6 +19025,11 @@ function buildAvaCallArchitectureContext(params = {}) {
     activeListening,
     fullIntelligence,
     scripts,
+    longHorizonMemory,
+    memory: {
+      longHorizon: longHorizonMemory?.compactState || null,
+      mem1: longHorizonMemory?.model || null,
+    },
     rexOversight: {
       recentCallAnalyses: recentAnalyses,
       recentRevenueActions,
@@ -19939,6 +19957,7 @@ async function synthesizeClosingAnswerWithDeepSeek({ context = {}, playbook = {}
 }
 
 async function buildAvaConversationIntelligence(params = {}) {
+  const sessionContext = params.session || {};
   const baseContext = params.suppressLeadContext === true
     ? {
       leadId: '',
@@ -19979,7 +19998,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     ? await scoreCallQualityRecord({ ...params, transcript: params.transcript || query, createRexDecision: params.createRexDecision })
     : null;
   const pathDecision = architecture.pathDecision || {};
-  const goalInference = architecture.goalInference || session.goalInference || {};
+  const goalInference = architecture.goalInference || sessionContext.goalInference || {};
   const warManual = architecture.warManual || {};
   const callerRole = architecture.callerRole || pathDecision.callerRole || detectAvaCallerRole({ ...params, ...context, query, transcript: params.transcript || query });
   const masterProbe = architecture.masterProbe || pathDecision.masterProbe || buildAvaMasterProbe({
@@ -20067,6 +20086,7 @@ async function buildAvaConversationIntelligence(params = {}) {
     reaction,
     prosody: reaction.prosody,
     architecture,
+    longHorizonMemory: architecture.longHorizonMemory || null,
     scriptRotation: architecture.scripts,
     bant: architecture.bant,
     toolRouter: architecture.toolRouter,
@@ -47855,7 +47875,7 @@ function looksLikeDashboardOperatorCommand(text = '') {
   const clean = String(text || '').trim();
   if (!clean) return false;
   if (/\b(hi|hello),?\s+(this is a test|i want to sell|the roof needs work)\b/i.test(clean)) return false;
-  return /\b(search|find|show|open|pull|analyze|analyse|run|comps|mao|arv|call|dial|text|sms|email|send|prepare|contract|docusign|docu sign|update|mark|create|add lead|delete|void|status|remember|recall|schedule|book)\b/i.test(clean);
+  return /\b(search|find|show|open|pull|analyze|analyse|run|start|launch|activate|queue|trigger|comps|mao|arv|call|dial|text|sms|email|send|prepare|contract|docusign|docu sign|update|mark|create|add lead|delete|void|status|remember|recall|schedule|book|nurture|follow[-\s]?up|sequence|campaign|approval|approve|reject)\b/i.test(clean);
 }
 
 function buildAvaCommandFlowReply(commandResult = {}, fallbackReply = '') {

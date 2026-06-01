@@ -1,10 +1,12 @@
 import { fileURLToPath } from 'node:url';
+import { compactLongHorizonMemory } from './research-additives.mjs';
 
 const BASE_URL = String(process.env.PBK_HOSTED_BRIDGE_URL || process.env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com')
   .trim()
   .replace(/\/+$/g, '');
 const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
 const STRICT = process.argv.includes('--strict');
+const MEMORY_STATS = process.argv.includes('--memory-stats');
 const TARGET_SCORE = Math.max(1, Math.min(100, Number(process.env.PBK_INTELLIGENCE_TARGET_SCORE || 90)));
 
 export function clampScore(value) {
@@ -146,6 +148,68 @@ function getLatestTranscriptEvidence(messages = {}) {
     latestStatus: latest.status || '',
     deepgramModel: latest.payload?.deepgram?.model || latest.payload?.mediaFormat?.encoding || '',
     fallbackActive: Boolean(latest.payload?.deepgram?.fallbackActive),
+  };
+}
+
+function pickLatestTranscriptMessage(messages = {}) {
+  return getTranscriptionMessages(messages)[0] || {};
+}
+
+function extractBantFromDiagnosticPayload(payload = {}) {
+  const candidates = [
+    payload?.architecture?.bant?.known,
+    payload?.bant?.known,
+    payload?.bant,
+    payload?.pipeline?.bant,
+    payload?.callState?.bant,
+    payload?.state?.bant,
+  ];
+  return candidates.find((item) => item && typeof item === 'object') || {};
+}
+
+function getTranscriptTextForMemory(message = {}) {
+  if (String(message.body || '').trim()) return String(message.body || '').trim();
+  if (Array.isArray(message.payload?.transcript)) {
+    return message.payload.transcript
+      .map((item) => item?.text || item?.transcript || '')
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+  }
+  return '';
+}
+
+export function buildMemoryStats(data = {}) {
+  const messages = data.messages || {};
+  const latest = pickLatestTranscriptMessage(messages);
+  const transcriptMessages = getTranscriptionMessages(messages);
+  const transcript = getTranscriptTextForMemory(latest);
+  const compact = compactLongHorizonMemory({
+    transcript,
+    bant: extractBantFromDiagnosticPayload(latest.payload || {}),
+    emotion: latest.payload?.emotion || latest.payload?.emotionState || latest.payload?.sentiment || {},
+    turnCount: latest.payload?.turnCount || latest.payload?.transcript?.length || transcriptMessages.length,
+    env: process.env,
+  });
+  return {
+    ok: true,
+    result: 'memory_stats_ready',
+    baseUrl: BASE_URL,
+    transcriptCount: transcriptMessages.length,
+    latestMessageId: latest.id || latest.messageId || '',
+    latestTranscriptChars: transcript.length,
+    compact: compact.compactState,
+    model: compact.model,
+    requestStatus: data.requestStatus || {},
+    missingCritical: compact.compactState?.openLoops || [],
+    diagnosticQuestions: [
+      'What exact fact did Ava forget?',
+      'How many turns into the call did the miss happen?',
+      'Was it a BANT item, objection, personal detail, or callback/open loop?',
+    ],
+    recommendation: compact.compactState?.shouldCompact
+      ? 'Compaction is active. Review protectedFields and openLoops; if Ava still forgets BANT/emotion facts after 50-100 calls, train the gated local MEM1 model.'
+      : 'Current transcript is under compaction threshold. Keep collecting call turns; BANT/emotion/open loops are still explicitly protected.',
   };
 }
 
@@ -758,6 +822,14 @@ async function collectProductionInputs() {
 
 async function main() {
   const inputs = await collectProductionInputs();
+  if (MEMORY_STATS) {
+    const output = buildMemoryStats(inputs);
+    console.log(JSON.stringify(output, null, 2));
+    if (STRICT && (!output.ok || Object.values(inputs.requestStatus).some((status) => status.ok === false))) {
+      process.exit(1);
+    }
+    return;
+  }
   const scorecard = buildIntelligenceScorecard(inputs, { baseUrl: BASE_URL });
   const privateFailures = Object.entries(inputs.requestStatus)
     .filter(([, status]) => status.ok === false)

@@ -794,6 +794,7 @@ const checks = [
       && /pbk-emotional-transition-regressor-v1/.test(emotionWorldModelTrainer)
       && /buildEmotionWorldModelTrainingState/.test(bridge)
       && /'--input'/.test(bridge)
+      && /COPY scripts\/train-emotion-world-model\.mjs/.test(dockerfileOpenclaw)
       && /--export-onnx/.test(emotionWorldModelTrainingSmoke)
       && /blocked_missing_dependencies/.test(emotionWorldModelTrainingSmoke)
       && /emotion-world-model-dataset\.jsonl/.test(emotionWorldModelTrainer)

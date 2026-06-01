@@ -117,6 +117,8 @@ COPY scripts/agent-teams.mjs ./scripts/agent-teams.mjs
 COPY scripts/auto-skill-learner.mjs ./scripts/auto-skill-learner.mjs
 COPY scripts/nurture-agent.mjs ./scripts/nurture-agent.mjs
 COPY scripts/research-additives.mjs ./scripts/research-additives.mjs
+COPY scripts/train-emotion-world-model.mjs ./scripts/train-emotion-world-model.mjs
+COPY scripts/train_emotion_world_model_onnx.py ./scripts/train_emotion_world_model_onnx.py
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs

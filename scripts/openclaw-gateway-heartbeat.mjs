@@ -42,6 +42,8 @@ const PROBE_TIMEOUT_MS = Math.max(
 );
 const ONCE = process.argv.includes('--once')
   || /^(1|true|yes)$/i.test(String(process.env.PBK_OPENCLAW_GATEWAY_HEARTBEAT_ONCE || '').trim());
+const SKILL_STATS = process.argv.includes('--skill-stats');
+const RUN_AUTO_SKILL_LEARNER = process.argv.includes('--run-auto-skill-learner');
 
 function getArgValue(name) {
   const index = process.argv.indexOf(name);
@@ -87,6 +89,76 @@ function redactUrl(value = '') {
   } catch {
     return String(value || '').replace(/(token|api_key|apikey|key|auth|authorization)=([^&\s]+)/gi, '$1=[redacted]');
   }
+}
+
+async function requestBridgeJson(pathname = '', options = {}) {
+  if (!BRIDGE_API_KEY) {
+    throw new Error('PBK_BRIDGE_API_KEY is required for bridge diagnostics.');
+  }
+  const response = await fetch(`${BRIDGE_URL}${pathname}`, {
+    method: options.method || 'GET',
+    headers: {
+      Authorization: `Bearer ${BRIDGE_API_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.error || body?.message || `Bridge returned ${response.status}`);
+  }
+  return body;
+}
+
+async function getSkillStats() {
+  const body = await requestBridgeJson('/api/skills/outcomes');
+  const skills = Array.isArray(body.skills) ? body.skills : [];
+  const active = skills.filter((skill) => String(skill.status || '').toLowerCase() === 'active').length;
+  const candidates = skills.filter((skill) => /candidate|testing|pending/i.test(`${skill.status || ''} ${skill.level || ''}`)).length;
+  const uses = skills.reduce((sum, skill) => sum + Number(skill.uses || 0), 0);
+  const wins = skills.reduce((sum, skill) => sum + Number(skill.wins || 0), 0);
+  const highConfidence = skills.filter((skill) => Number(skill.confidence || 0) >= 80).length;
+  return {
+    ok: true,
+    result: 'skill_stats_ready',
+    source: body.source || body.result || 'bridge',
+    total: skills.length,
+    active,
+    candidates,
+    highConfidence,
+    uses,
+    wins,
+    successRate: uses > 0 ? Number((wins / uses).toFixed(3)) : 0,
+    note: uses > 0
+      ? 'Skill learner has measured usage to evaluate.'
+      : 'Skills are loaded, but measured usage is still zero. Run live calls and record outcomes before auto-promotion.',
+  };
+}
+
+async function runAutoSkillLearnerCommand() {
+  const params = {
+    lookbackDays: Number(getArgValue('--lookback-days') || getArgValue('--days') || 7),
+    minSuccesses: Number(getArgValue('--min-successes') || getArgValue('--min-success-count') || 3),
+    minSuccessRate: Number(getArgValue('--min-success-rate') || 0.8),
+    limit: Number(getArgValue('--limit') || 10),
+  };
+  const body = await requestBridgeJson('/invoke', {
+    method: 'POST',
+    body: {
+      toolName: 'runAutoSkillLearner',
+      params,
+    },
+  });
+  return {
+    ok: Boolean(body.ok && body.result?.ok),
+    result: body.result?.result || 'auto_skill_learner_invoked',
+    params,
+    boostedCount: Number(body.result?.boostedCount || 0),
+    createdCount: Number(body.result?.createdCount || 0),
+    boosted: body.result?.boosted || [],
+    created: body.result?.created || [],
+  };
 }
 
 async function probeHttp() {
@@ -249,6 +321,20 @@ async function sendHeartbeat() {
 }
 
 async function main() {
+  if (SKILL_STATS || RUN_AUTO_SKILL_LEARNER) {
+    try {
+      const result = SKILL_STATS ? await getSkillStats() : await runAutoSkillLearnerCommand();
+      console.log(JSON.stringify({ checkedAt: new Date().toISOString(), ...result }, null, 2));
+    } catch (error) {
+      console.error(JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        ok: false,
+        error: error?.message || String(error),
+      }, null, 2));
+      process.exitCode = 1;
+    }
+    return;
+  }
   do {
     try {
       const result = await sendHeartbeat();

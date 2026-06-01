@@ -792,6 +792,8 @@ const checks = [
       && /emotion_world_model_training_pipeline_ready/.test(emotionWorldModelTrainingSmoke)
       && /emotion_world_model_training_ready/.test(emotionWorldModelTrainer)
       && /pbk-emotional-transition-regressor-v1/.test(emotionWorldModelTrainer)
+      && /buildEmotionWorldModelTrainingState/.test(bridge)
+      && /'--input'/.test(bridge)
       && /--export-onnx/.test(emotionWorldModelTrainingSmoke)
       && /blocked_missing_dependencies/.test(emotionWorldModelTrainingSmoke)
       && /emotion-world-model-dataset\.jsonl/.test(emotionWorldModelTrainer)
@@ -1008,7 +1010,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix)|31-(?:tech-debt-nurture-agent-v2|agent-tooling-nurture-auto-skill-v1|optional-tooling-health-v3|research-additives-v1|unified-additive-intelligence-v2|provider-augmented-additives-v3))'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-(?:05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix)|31-(?:tech-debt-nurture-agent-v2|agent-tooling-nurture-auto-skill-v1|optional-tooling-health-v3|research-additives-v1|unified-additive-intelligence-v2|provider-augmented-additives-v3))|06-01-(?:ava-memory-command-intelligence-v1|skill-emotion-learning-v1))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)

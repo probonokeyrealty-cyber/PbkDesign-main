@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-ava-memory-command-intelligence-v1';
+const BUILD_REVISION = '2026-06-01-skill-emotion-learning-v1';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -35182,6 +35182,60 @@ async function getEmotionWorldModelTrainingReadiness(params = {}) {
   };
 }
 
+function normalizeEmotionTrainingDecision(row = {}) {
+  return {
+    id: String(row.id || `decision-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    actionType: row.actionType || row.action_type || row.actionTypeName || row.action || '',
+    emotionState: row.emotionState || row.emotion_state || row.context?.emotionState || row.context?.emotion_state || {},
+    outcome: row.outcome || {},
+    reward: Number.isFinite(Number(row.reward)) ? Number(row.reward) : null,
+    source: row.source || 'pbk-bridge',
+    trainingReady: row.trainingReady ?? row.training_ready ?? true,
+  };
+}
+
+async function buildEmotionWorldModelTrainingState(params = {}) {
+  const tenantId = normalizeTenantId(params.tenantId || params.tenant_id);
+  const limit = Math.max(10, Math.min(5000, Number(params.limit || params.sampleLimit || params.sample_limit || 1000)));
+  const result = await queryPgRows(
+    `SELECT
+       id,
+       action_type AS "actionType",
+       emotion_state AS "emotionState",
+       outcome,
+       reward,
+       source,
+       training_ready AS "trainingReady"
+     FROM public.pbk_agent_decisions
+     WHERE tenant_id = $1
+       AND training_ready IS TRUE
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [tenantId, limit],
+  );
+  const pgDecisions = result.ok ? (result.rows || []).map(normalizeEmotionTrainingDecision) : [];
+  const fallbackDecisions = (Array.isArray(state.agentDecisions) ? state.agentDecisions : [])
+    .filter((decision) => decision.trainingReady !== false && decision.training_ready !== false)
+    .map(normalizeEmotionTrainingDecision);
+  const agentDecisions = pgDecisions.length ? pgDecisions : fallbackDecisions;
+  const trainingDir = path.join(RUNTIME_DIR, 'emotion-world-model-training');
+  await mkdir(trainingDir, { recursive: true });
+  const inputPath = path.join(trainingDir, `state-${Date.now()}.json`);
+  await writeFile(inputPath, JSON.stringify({
+    generatedAt: isoNow(),
+    tenantId,
+    source: pgDecisions.length ? 'postgres:pbk_agent_decisions' : 'bridge-state:agentDecisions',
+    agentDecisions,
+  }, null, 2));
+  return {
+    ok: true,
+    inputPath,
+    sampleCount: agentDecisions.length,
+    source: pgDecisions.length ? 'postgres' : 'bridge_state',
+    db: { ok: result.ok, reason: result.reason, error: result.error || '' },
+  };
+}
+
 async function runEmotionWorldModelExportJob(params = {}) {
   const enabled = params.enabled ?? params.force ?? EMOTION_WORLD_MODEL_RETRAIN_ENABLED;
   if (!enabled) {
@@ -35197,7 +35251,15 @@ async function runEmotionWorldModelExportJob(params = {}) {
     };
   }
   try {
-    const stdout = execFileSync(process.execPath, ['./scripts/train-emotion-world-model.mjs', '--export-onnx'], {
+    const trainingState = await buildEmotionWorldModelTrainingState(params);
+    const stdout = execFileSync(process.execPath, [
+      './scripts/train-emotion-world-model.mjs',
+      '--input',
+      trainingState.inputPath,
+      '--min-samples',
+      String(readiness.minSamples),
+      '--export-onnx',
+    ], {
       cwd: ROOT_DIR,
       env: process.env,
       encoding: 'utf8',
@@ -35218,6 +35280,7 @@ async function runEmotionWorldModelExportJob(params = {}) {
       result: 'emotion_world_model_export_checked',
       readiness,
       manifest,
+      trainingState,
       stdoutTail: stdout.slice(-2000),
     };
   } catch (error) {
@@ -40008,7 +40071,9 @@ const toolHandlers = {
     recordToolUse('runAutoSkillLearner');
     return runAutoSkillLearnerCore({
       pool: getPgPool(),
-      windowDays: params.windowDays || params.days,
+      windowDays: params.windowDays || params.lookbackDays || params.days,
+      minSuccessCount: params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes,
+      minSuccessRate: params.minSuccessRate || params.min_success_rate,
       limit: params.limit,
       strategist: async ({ role, prompt, responseFormat }) => askStrategistRecord({
         agentName: role || 'Auto Skill Learner',

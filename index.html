@@ -1203,6 +1203,11 @@
       <span class="rail-badge sky">+</span>
       <span class="rail-tooltip">Memory & Analytics</span>
     </div>
+    <div class="rail-item" data-page="skillrepo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7l9 4 9-4-9-4Z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
+      <span class="rail-badge amber">4</span>
+      <span class="rail-tooltip">Skill Repo</span>
+    </div>
 
     <div class="rail-item" data-page="campaigns">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
@@ -4805,6 +4810,32 @@
     .fleet-field input, .fleet-field select, .fleet-field textarea { min-height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-void); color: var(--text-primary); padding: 10px 12px; font: 13px/1.4 var(--font-body); }
     .fleet-field textarea { min-height: 112px; resize: vertical; }
     .fleet-modal-foot { padding: var(--s-5); border-top: 1px solid var(--border-dim); display: flex; gap: var(--s-2); justify-content: flex-end; flex-wrap: wrap; }
+    .fleet-sync-strip {
+      margin: 0 0 var(--s-4);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+      padding: var(--s-3) var(--s-4);
+      border: 1px solid var(--sky-dim);
+      border-radius: var(--radius-lg);
+      background:
+        radial-gradient(circle at 8% 30%, var(--sky-glow), transparent 34%),
+        linear-gradient(135deg, rgba(125, 211, 252, .10), rgba(163, 230, 53, .045));
+      box-shadow: 0 18px 60px rgba(2, 132, 199, .08);
+    }
+    .fleet-sync-strip strong {
+      display: block;
+      margin-top: 3px;
+      color: var(--text-primary);
+      font: 13px/1.45 var(--font-ui);
+    }
+    .fleet-sync-k {
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--sky);
+    }
     .fleet-transfer-list { display: grid; gap: 8px; }
     .fleet-transfer-agent {
       display: flex; align-items: center; gap: 10px;
@@ -4832,6 +4863,8 @@
       .fleet-actions { width: 100%; display: grid; grid-template-columns: 1fr; }
       .fleet-actions .btn { width: 100%; min-height: 44px; justify-content: center; }
       .fleet-shell { gap: var(--s-4); }
+      .fleet-sync-strip { display: grid; grid-template-columns: 1fr; }
+      .fleet-sync-strip .chip-btn { min-height: 44px; justify-content: center; }
       .fleet-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .fleet-grid { grid-template-columns: 1fr; }
       .fleet-card { padding: var(--s-3); }
@@ -4887,9 +4920,18 @@
       </div>
       <div class="fleet-actions">
         <button type="button" class="btn btn-ghost" id="fleetSkillsLibBtn">Skills library</button>
+        <button type="button" class="btn btn-ghost" id="fleetSkillRepoBtn">Skill Repo</button>
         <button type="button" class="btn btn-ghost" id="fleetKnowledgeBtn">Knowledge sources</button>
         <button type="button" class="btn btn-primary" id="deployAgentBtn">+ Deploy new agent</button>
       </div>
+    </div>
+
+    <div class="fleet-sync-strip" id="fleetSyncStrip" aria-live="polite">
+      <div>
+        <span class="fleet-sync-k">Skill operating layer</span>
+        <strong>Ava + Max skill routes are approval-gated and ready for on-demand or auto-suggest use.</strong>
+      </div>
+      <button type="button" class="chip-btn" data-fleet-open-skillrepo>Open SkillRepo</button>
     </div>
 
     <div class="fleet-shell">
@@ -8877,6 +8919,641 @@
 </section>
 
 <!-- ======================================================
+     PAGE - SKILL REPO (human-in-the-loop skill operating layer)
+     ====================================================== -->
+<section class="page" data-page="skillrepo">
+  <style>
+    .page[data-page="fleet"].active,
+    .page[data-page="skillrepo"].active {
+      opacity: 1 !important;
+      transform: none !important;
+      animation: none !important;
+    }
+
+    .page[data-page="fleet"].active :where(button, input, textarea, select, label, .btn, .chip-btn),
+    .page[data-page="skillrepo"].active :where(button, input, textarea, select, label, .btn, .chip-btn) {
+      visibility: visible !important;
+    }
+
+    [data-page="skillrepo"] .skillrepo-page {
+      min-height: 100%;
+      padding: var(--s-6);
+      background:
+        radial-gradient(circle at 8% 6%, rgba(125, 211, 252, .10), transparent 34%),
+        radial-gradient(circle at 92% 4%, rgba(232, 121, 249, .08), transparent 30%);
+    }
+    [data-page="skillrepo"] .skillrepo-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: var(--s-4);
+      margin-bottom: var(--s-4);
+    }
+    [data-page="skillrepo"] .skillrepo-head .page-head {
+      padding: 0;
+      margin: 0;
+      min-width: 0;
+    }
+    [data-page="skillrepo"] .skillrepo-head h2 { margin-bottom: 6px; }
+    [data-page="skillrepo"] .skillrepo-actions {
+      display: flex;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    [data-page="skillrepo"] .skillrepo-health {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin-bottom: var(--s-4);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg);
+      background: var(--border-dim);
+      overflow: hidden;
+    }
+    [data-page="skillrepo"] .skillrepo-health-card {
+      min-width: 0;
+      padding: var(--s-4);
+      background: linear-gradient(180deg, var(--bg-panel), rgba(10, 15, 24, .92));
+    }
+    [data-page="skillrepo"] .skillrepo-health-card .k {
+      margin-bottom: 7px;
+      font: 9px/1.2 var(--font-mono);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+    [data-page="skillrepo"] .skillrepo-health-card .v {
+      font: 500 25px/1 var(--font-display);
+      color: var(--text-primary);
+      letter-spacing: -.03em;
+    }
+    [data-page="skillrepo"] .skillrepo-health-card .v.sky { color: var(--sky); }
+    [data-page="skillrepo"] .skillrepo-health-card .v.lime { color: var(--lime); }
+    [data-page="skillrepo"] .skillrepo-health-card .v.amber { color: var(--amber); }
+    [data-page="skillrepo"] .skillrepo-health-card .m {
+      margin-top: 6px;
+      font: 10px/1.4 var(--font-mono);
+      color: var(--text-tertiary);
+      overflow-wrap: anywhere;
+    }
+    [data-page="skillrepo"] .skillrepo-shell {
+      display: grid;
+      grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+      gap: var(--s-4);
+      align-items: start;
+    }
+    [data-page="skillrepo"] .skillrepo-queue,
+    [data-page="skillrepo"] .skillrepo-detail {
+      min-width: 0;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-xl);
+      background: rgba(17, 21, 28, .94);
+      box-shadow: 0 22px 80px rgba(0, 0, 0, .18);
+      overflow: hidden;
+    }
+    [data-page="skillrepo"] .skillrepo-queue {
+      position: sticky;
+      top: var(--s-5);
+      display: flex;
+      flex-direction: column;
+      max-height: min(76dvh, 820px);
+    }
+    [data-page="skillrepo"] .skillrepo-queue-top {
+      padding: var(--s-3);
+      border-bottom: 1px solid var(--border-dim);
+      background: var(--bg-console);
+    }
+    [data-page="skillrepo"] .skillrepo-compose-btn {
+      width: 100%;
+      min-height: 44px;
+      justify-content: center;
+      border-style: dashed;
+    }
+    [data-page="skillrepo"] .skillrepo-filters {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: var(--s-3);
+      border-bottom: 1px solid var(--border-dim);
+    }
+    [data-page="skillrepo"] .skillrepo-filter {
+      flex: 1 1 auto;
+      min-height: 34px;
+      border: 1px solid var(--border-dim);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-filter.active {
+      border-color: var(--sky-dim);
+      background: var(--sky-glow);
+      color: var(--sky);
+    }
+    [data-page="skillrepo"] .skillrepo-list { overflow: auto; }
+    [data-page="skillrepo"] .skillrepo-card {
+      display: block;
+      width: 100%;
+      padding: var(--s-3) var(--s-4);
+      border: 0;
+      border-bottom: 1px solid var(--border-dim);
+      border-left: 3px solid transparent;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background .14s ease, border-color .14s ease;
+    }
+    [data-page="skillrepo"] .skillrepo-card:hover { background: rgba(255, 255, 255, .025); }
+    [data-page="skillrepo"] .skillrepo-card.active {
+      border-left-color: var(--sky);
+      background: var(--sky-glow);
+    }
+    [data-page="skillrepo"] .skillrepo-card-r1 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+    }
+    [data-page="skillrepo"] .skillrepo-card-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: 700 14px/1.3 var(--font-ui);
+      color: var(--text-primary);
+    }
+    [data-page="skillrepo"] .skillrepo-conf,
+    [data-page="skillrepo"] .skillrepo-status {
+      flex: 0 0 auto;
+      border-radius: 4px;
+      padding: 3px 7px;
+      font: 9px/1 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-conf { color: var(--sky); background: var(--sky-glow); }
+    [data-page="skillrepo"] .skillrepo-conf.high { color: var(--lime); background: var(--lime-glow); }
+    [data-page="skillrepo"] .skillrepo-conf.low { color: var(--amber); background: var(--amber-glow); }
+    [data-page="skillrepo"] .skillrepo-status.pending { color: var(--amber); background: var(--amber-glow); }
+    [data-page="skillrepo"] .skillrepo-status.testing { color: var(--sky); background: var(--sky-glow); }
+    [data-page="skillrepo"] .skillrepo-status.approved { color: var(--lime); background: var(--lime-glow); }
+    [data-page="skillrepo"] .skillrepo-status.rejected { color: var(--crimson); background: var(--crimson-glow); }
+    [data-page="skillrepo"] .skillrepo-card-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 7px;
+      font: 10px/1.4 var(--font-mono);
+      color: var(--text-tertiary);
+    }
+    [data-page="skillrepo"] .skillrepo-card-meta strong { color: var(--magenta); }
+    [data-page="skillrepo"] .skillrepo-card-copy {
+      color: var(--text-secondary);
+      font: 12px/1.5 var(--font-ui);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    [data-page="skillrepo"] .skillrepo-detail-head {
+      padding: var(--s-5);
+      border-bottom: 1px solid var(--border-dim);
+      background:
+        radial-gradient(circle at 0 0, var(--sky-glow), transparent 38%),
+        var(--bg-console);
+    }
+    [data-page="skillrepo"] .skillrepo-eyebrow {
+      margin-bottom: 8px;
+      color: var(--sky);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-eyebrow::before { content: "> "; }
+    [data-page="skillrepo"] .skillrepo-title {
+      margin: 0 0 8px;
+      color: var(--text-primary);
+      font: 400 clamp(28px, 4vw, 42px)/1.04 var(--font-display);
+      letter-spacing: -.025em;
+    }
+    [data-page="skillrepo"] .skillrepo-title em {
+      color: var(--sky);
+      font-style: italic;
+      font-weight: 600;
+    }
+    [data-page="skillrepo"] .skillrepo-meta {
+      display: flex;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+      color: var(--text-tertiary);
+      font: 11px/1.5 var(--font-mono);
+    }
+    [data-page="skillrepo"] .skillrepo-meta strong { color: var(--text-primary); }
+    [data-page="skillrepo"] .skillrepo-body {
+      padding: var(--s-5);
+      display: grid;
+      gap: var(--s-4);
+    }
+    [data-page="skillrepo"] .skillrepo-section {
+      min-width: 0;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius-lg);
+      background: rgba(6, 8, 11, .52);
+      overflow: hidden;
+    }
+    [data-page="skillrepo"] .skillrepo-section h3 {
+      margin: 0;
+      padding: var(--s-3) var(--s-4);
+      border-bottom: 1px solid var(--border-dim);
+      color: var(--text-tertiary);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-section h3::before { content: "> "; color: var(--sky); }
+    [data-page="skillrepo"] .skillrepo-section-body {
+      padding: var(--s-4);
+      color: var(--text-secondary);
+      font: 13px/1.65 var(--font-ui);
+    }
+    [data-page="skillrepo"] .skillrepo-metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: var(--s-3);
+    }
+    [data-page="skillrepo"] .skillrepo-metric {
+      padding: var(--s-3);
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius);
+      background: var(--bg-panel);
+    }
+    [data-page="skillrepo"] .skillrepo-metric .l {
+      color: var(--text-tertiary);
+      font: 9px/1.2 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-metric .v {
+      margin-top: 6px;
+      color: var(--text-primary);
+      font: 500 23px/1 var(--font-display);
+    }
+    [data-page="skillrepo"] .skillrepo-metric .v.lime { color: var(--lime); }
+    [data-page="skillrepo"] .skillrepo-metric .v.amber { color: var(--amber); }
+    [data-page="skillrepo"] .skillrepo-diff {
+      background: var(--bg-console);
+      border-radius: var(--radius);
+      overflow: hidden;
+      font: 11px/1.65 var(--font-mono);
+    }
+    [data-page="skillrepo"] .skillrepo-diff-line {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 10px;
+      padding: 2px var(--s-3);
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    [data-page="skillrepo"] .skillrepo-diff-line.add { color: var(--lime); background: rgba(163, 230, 53, .06); }
+    [data-page="skillrepo"] .skillrepo-diff-line.del { color: var(--crimson); background: var(--crimson-glow); text-decoration: line-through; }
+    [data-page="skillrepo"] .skillrepo-diff-line .ln { color: var(--text-ghost); text-align: right; }
+    [data-page="skillrepo"] .skillrepo-actions-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--s-3);
+      flex-wrap: wrap;
+      padding: var(--s-4) var(--s-5);
+      border-top: 1px solid var(--border-dim);
+      background: var(--bg-console);
+    }
+    [data-page="skillrepo"] .skillrepo-action-note {
+      color: var(--text-tertiary);
+      font: 11px/1.5 var(--font-mono);
+      max-width: 460px;
+    }
+    [data-page="skillrepo"] .skillrepo-action-buttons {
+      display: flex;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    [data-page="skillrepo"] .skillrepo-compose { display: none; }
+    [data-page="skillrepo"] .skillrepo-compose.active { display: block; }
+    [data-page="skillrepo"] .skillrepo-detail-view.hidden { display: none; }
+    [data-page="skillrepo"] .skillrepo-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius);
+      background: var(--bg-void);
+      margin-bottom: var(--s-4);
+    }
+    [data-page="skillrepo"] .skillrepo-tab {
+      min-height: 40px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font: 11px/1 var(--font-mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-tab.active {
+      background: var(--bg-panel-elevated);
+      color: var(--sky);
+    }
+    [data-page="skillrepo"] .skillrepo-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--s-3);
+    }
+    [data-page="skillrepo"] .skillrepo-field {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      min-width: 0;
+    }
+    [data-page="skillrepo"] .skillrepo-field.full { grid-column: 1 / -1; }
+    [data-page="skillrepo"] .skillrepo-field label {
+      color: var(--text-tertiary);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-field input,
+    [data-page="skillrepo"] .skillrepo-field textarea,
+    [data-page="skillrepo"] .skillrepo-field select {
+      min-height: 44px;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius);
+      background: var(--bg-void);
+      color: var(--text-primary);
+      padding: 10px 12px;
+      font: 13px/1.45 var(--font-ui);
+    }
+    [data-page="skillrepo"] .skillrepo-field textarea {
+      min-height: 130px;
+      resize: vertical;
+    }
+    [data-page="skillrepo"] .skillrepo-help {
+      color: var(--text-tertiary);
+      font: 10px/1.5 var(--font-mono);
+    }
+    [data-page="skillrepo"] .skillrepo-pane { display: none; }
+    [data-page="skillrepo"] .skillrepo-pane.active { display: block; }
+    [data-page="skillrepo"] .skillrepo-drop {
+      display: grid;
+      place-items: center;
+      min-height: 160px;
+      padding: var(--s-6);
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--bg-void);
+      color: var(--text-secondary);
+      text-align: center;
+      cursor: pointer;
+    }
+    [data-page="skillrepo"] .skillrepo-drop:hover,
+    [data-page="skillrepo"] .skillrepo-drop.dragover {
+      border-color: var(--sky-dim);
+      background: var(--sky-glow);
+      color: var(--sky);
+    }
+    [data-page="skillrepo"] .skillrepo-rights {
+      margin-top: var(--s-3);
+      padding: var(--s-3);
+      border: 1px solid rgba(255, 176, 32, .34);
+      border-radius: var(--radius);
+      background: var(--amber-glow);
+      color: var(--text-secondary);
+      font: 12px/1.55 var(--font-ui);
+    }
+    [data-page="skillrepo"] .skillrepo-rights strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--amber);
+      font: 10px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    [data-page="skillrepo"] .skillrepo-targets {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--s-2);
+    }
+    [data-page="skillrepo"] .skillrepo-target {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      padding: 10px;
+      border: 1px solid var(--border-dim);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.025);
+      color: var(--text-secondary);
+      font: 12px/1.4 var(--font-ui);
+    }
+    [data-page="skillrepo"] .skillrepo-target input {
+      margin-top: 2px;
+      accent-color: var(--sky);
+    }
+    [data-page="skillrepo"] .skillrepo-target strong {
+      display: block;
+      color: var(--text-primary);
+      font-size: 13px;
+    }
+    [data-page="skillrepo"] .skillrepo-preview {
+      display: none;
+      margin-top: var(--s-4);
+    }
+    [data-page="skillrepo"] .skillrepo-preview.active { display: block; }
+    [data-page="skillrepo"] .skillrepo-empty {
+      padding: var(--s-8);
+      text-align: center;
+      color: var(--text-tertiary);
+      font: 12px/1.6 var(--font-mono);
+    }
+    @media (max-width: 1180px) {
+      [data-page="skillrepo"] .skillrepo-shell { grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-queue { position: static; max-height: none; }
+      [data-page="skillrepo"] .skillrepo-list { max-height: 420px; }
+    }
+    @media (max-width: 720px) {
+      [data-page="skillrepo"] .skillrepo-page { padding: var(--s-4) var(--s-3) calc(92px + env(safe-area-inset-bottom)); }
+      [data-page="skillrepo"] .skillrepo-head { display: grid; grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-actions { display: grid; grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-actions .btn { width: 100%; min-height: 44px; justify-content: center; }
+      [data-page="skillrepo"] .skillrepo-health { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      [data-page="skillrepo"] .skillrepo-form-grid,
+      [data-page="skillrepo"] .skillrepo-targets { grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-tabs { grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      [data-page="skillrepo"] .skillrepo-actions-bar { display: grid; grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-action-buttons { display: grid; grid-template-columns: 1fr; }
+      [data-page="skillrepo"] .skillrepo-action-buttons .btn { width: 100%; min-height: 44px; justify-content: center; }
+    }
+    @media (max-width: 380px) {
+      [data-page="skillrepo"] .skillrepo-health,
+      [data-page="skillrepo"] .skillrepo-metric-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+
+  <div class="skillrepo-page">
+    <div class="skillrepo-head">
+      <div class="page-head">
+        <div class="ph-tag" data-skillrepo-tag>Skill Repo - syncing Supabase skills, Rex approvals, Ava and Max targets</div>
+        <h2>The <em>skill repo</em>.</h2>
+        <p>Compose, import, review, and route skills into Ava, Max, Rex, and the wider PBK agent fleet. Nothing changes live until the approval path accepts it.</p>
+      </div>
+      <div class="skillrepo-actions">
+        <button type="button" class="btn btn-ghost" data-skillrepo-action="refresh">Refresh live</button>
+        <button type="button" class="btn btn-ghost" data-skillrepo-action="fleet">Open Agent Fleet</button>
+        <button type="button" class="btn btn-primary" data-skillrepo-action="compose">+ Compose skill</button>
+      </div>
+    </div>
+
+    <div class="skillrepo-health" data-skillrepo-health>
+      <div class="skillrepo-health-card"><div class="k">Supabase skills</div><div class="v sky">--</div><div class="m">waiting for bridge</div></div>
+      <div class="skillrepo-health-card"><div class="k">Target agents</div><div class="v">Ava + Max</div><div class="m">approval-gated</div></div>
+      <div class="skillrepo-health-card"><div class="k">Pending review</div><div class="v amber">--</div><div class="m">candidate queue</div></div>
+      <div class="skillrepo-health-card"><div class="k">Activation mode</div><div class="v lime">Safe</div><div class="m">on-demand or auto-suggest</div></div>
+    </div>
+
+    <div class="skillrepo-shell">
+      <aside class="skillrepo-queue">
+        <div class="skillrepo-queue-top">
+          <button type="button" class="btn btn-ghost skillrepo-compose-btn" data-skillrepo-action="compose">+ Compose new skill</button>
+        </div>
+        <div class="skillrepo-filters" role="tablist" aria-label="SkillRepo filters">
+          <button type="button" class="skillrepo-filter active" data-skillrepo-filter="all">All</button>
+          <button type="button" class="skillrepo-filter" data-skillrepo-filter="pending">Pending</button>
+          <button type="button" class="skillrepo-filter" data-skillrepo-filter="testing">Testing</button>
+          <button type="button" class="skillrepo-filter" data-skillrepo-filter="approved">Approved</button>
+        </div>
+        <div class="skillrepo-list" data-skillrepo-list aria-live="polite"></div>
+      </aside>
+
+      <section class="skillrepo-detail">
+        <div class="skillrepo-detail-view" data-skillrepo-detail></div>
+
+        <form class="skillrepo-compose" data-skillrepo-compose>
+          <div class="skillrepo-detail-head">
+            <div class="skillrepo-eyebrow">Compose new skill</div>
+            <h3 class="skillrepo-title">Author an <em>agent skill</em>.</h3>
+            <div class="skillrepo-meta">
+              <span>Input -&gt; AI engine -&gt; preview -&gt; Rex approval -&gt; Ava/Max rollout</span>
+            </div>
+          </div>
+          <div class="skillrepo-body">
+            <div class="skillrepo-tabs">
+              <button type="button" class="skillrepo-tab active" data-skillrepo-mode="manual">Manual prompt</button>
+              <button type="button" class="skillrepo-tab" data-skillrepo-mode="upload">Upload file</button>
+              <button type="button" class="skillrepo-tab" data-skillrepo-mode="youtube">YouTube URL</button>
+            </div>
+
+            <div class="skillrepo-form-grid">
+              <div class="skillrepo-field">
+                <label for="skillRepoName">Skill name</label>
+                <input id="skillRepoName" name="skillName" placeholder="Probate pacing v2" required>
+              </div>
+              <div class="skillrepo-field">
+                <label for="skillRepoEngine">AI engine</label>
+                <select id="skillRepoEngine" name="engine">
+                  <option value="configured">Configured production engine</option>
+                  <option value="deepseek">DeepSeek lane</option>
+                  <option value="openai">OpenAI lane</option>
+                  <option value="claude">Claude lane</option>
+                </select>
+              </div>
+              <div class="skillrepo-field">
+                <label for="skillRepoActivationMode">Activation mode</label>
+                <select id="skillRepoActivationMode" name="activationMode">
+                  <option value="on_demand">On-demand only</option>
+                  <option value="auto_suggest">Auto-suggest after approval</option>
+                  <option value="auto_low_risk">Auto-apply low-risk after approval</option>
+                </select>
+              </div>
+              <div class="skillrepo-field">
+                <label for="skillRepoFocus">Contextual focus</label>
+                <input id="skillRepoFocus" name="focus" placeholder="Objections, probate, price anchoring, follow-up">
+              </div>
+              <div class="skillrepo-field full">
+                <label>Target agents</label>
+                <div class="skillrepo-targets" data-skillrepo-targets>
+                  <label class="skillrepo-target"><input type="checkbox" name="targetAgents" value="ava" checked><span><strong>Ava</strong>Voice closer and acquisition supervisor</span></label>
+                  <label class="skillrepo-target"><input type="checkbox" name="targetAgents" value="max" checked><span><strong>Max</strong>Direct closer and contract follow-through lane</span></label>
+                  <label class="skillrepo-target"><input type="checkbox" name="targetAgents" value="rex"><span><strong>Rex</strong>Research, evidence, and approval strategy</span></label>
+                </div>
+              </div>
+            </div>
+
+            <div class="skillrepo-pane active" data-skillrepo-pane="manual">
+              <div class="skillrepo-field full">
+                <label for="skillRepoManual">Skill prompt or operating rule</label>
+                <textarea id="skillRepoManual" name="manualText" placeholder="When a seller says they need to think, Ava should lower the commitment, ask what would need to be true, and schedule a precise follow-up."></textarea>
+                <div class="skillrepo-help">Plain English is fine. PBK structures it into trigger, response, guardrail, test plan, and rollout mode.</div>
+              </div>
+            </div>
+
+            <div class="skillrepo-pane" data-skillrepo-pane="upload">
+              <input id="skillRepoUpload" type="file" hidden accept=".txt,.md,.srt,.vtt,.csv,.json,.docx,.pdf">
+              <div class="skillrepo-drop" data-skillrepo-drop>
+                <div>
+                  <strong>Drop a prompt, transcript, notes, or playbook here</strong>
+                  <div class="skillrepo-help" data-skillrepo-file-label>.txt, .md, .srt, .vtt, .csv, .json, .docx, or .pdf</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="skillrepo-pane" data-skillrepo-pane="youtube">
+              <div class="skillrepo-form-grid">
+                <div class="skillrepo-field full">
+                  <label for="skillRepoYoutube">YouTube URL</label>
+                  <input id="skillRepoYoutube" name="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
+                  <div class="skillrepo-help">Production can fetch captions/transcripts through the approved backend lane; this UI stores the source and queues a reviewable skill draft.</div>
+                </div>
+                <div class="skillrepo-field">
+                  <label for="skillRepoStart">Start time</label>
+                  <input id="skillRepoStart" name="startTime" placeholder="0:00">
+                </div>
+                <div class="skillrepo-field">
+                  <label for="skillRepoEnd">End time</label>
+                  <input id="skillRepoEnd" name="endTime" placeholder="end">
+                </div>
+              </div>
+              <label class="skillrepo-rights">
+                <strong>Source rights</strong>
+                <input type="checkbox" id="skillRepoRights" name="rightsOk">
+                I confirm PBK has rights, permission, or a fair-use internal review basis for this source. PBK will extract principles, not copy protected wording verbatim.
+              </label>
+            </div>
+
+            <div class="skillrepo-actions-bar">
+              <div class="skillrepo-action-note">Generation creates a reviewable draft only. Submission queues Rex approval before Ava, Max, or any fleet agent can use it.</div>
+              <div class="skillrepo-action-buttons">
+                <button type="button" class="btn btn-ghost" data-skillrepo-action="cancel-compose">Cancel</button>
+                <button type="button" class="btn btn-primary" data-skillrepo-action="generate">Generate skill draft</button>
+              </div>
+            </div>
+
+            <div class="skillrepo-preview" data-skillrepo-preview></div>
+          </div>
+        </form>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================
      PAGE - OUTREACH CAMPAIGNS
      ====================================================== -->
 <section class="page" data-page="campaigns">
@@ -12749,6 +13426,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7"/><path d="M4.9 4.9l5 5M14.1 14.1l5 5M19.1 4.9l-5 5M9.9 14.1l-5 5"/></svg>
       <span>Memory</span>
     </div>
+    <div class="mob-sheet-item" data-page="skillrepo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7l9 4 9-4-9-4Z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
+      <span>Skill Repo</span>
+    </div>
     <div class="mob-sheet-item" data-page="campaigns">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
       <span>Campaigns</span>
@@ -13092,6 +13773,7 @@
       <div class="cp-item" data-nav="analyzer" data-keywords="analyzer deal mao"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg></div><span class="cp-label">Deal Analyzer</span></div>
       <div class="cp-item" data-nav="agent" data-keywords="agent ava console ai thought stream tools"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div><span class="cp-label">Ava Agent Console</span></div>
       <div class="cp-item" data-nav="fleet" data-keywords="agent fleet ava max rex skills ai closers"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/></svg></div><span class="cp-label">Agent Fleet</span></div>
+      <div class="cp-item" data-nav="skillrepo" data-keywords="skill repo skills compose upload youtube ava max rex approval"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 3 7l9 4 9-4-9-4Z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg></div><span class="cp-label">Skill Repo</span><span class="cp-sub">Ava + Max skills</span></div>
       <div class="cp-item" data-nav="calls" data-keywords="calls live floor"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07"/></svg></div><span class="cp-label">Live Calls</span></div>
       <div class="cp-item" data-nav="campaigns" data-keywords="campaigns outreach instantly telnyx email call sms"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg></div><span class="cp-label">Outreach Campaigns</span></div>
       <div class="cp-item" data-nav="brain" data-keywords="brain research knowledge rex"><div class="cp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v1a3 3 0 0 0-3 3v2a3 3 0 0 0 1 2.24V17a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-2.76A3 3 0 0 0 19 12v-2a3 3 0 0 0-3-3V6a4 4 0 0 0-4-4z"/></svg></div><span class="cp-label">The Brain — Research</span></div>
@@ -13839,6 +14521,7 @@
     automations: 'Automations',
     analytics: 'Analytics',
     campaigns: 'Outreach Campaigns',
+    skillrepo: 'Skill Repo',
     'campaign-detail': 'Campaign Detail',
     brain: 'The Brain — Research',
     memory: 'Memory & Analytics',
@@ -13863,6 +14546,9 @@
     '/agent': 'agent',
     '/agent-console': 'agent',
     '/fleet': 'fleet',
+    '/skillrepo': 'skillrepo',
+    '/skill-repo': 'skillrepo',
+    '/skills': 'skillrepo',
     '/calls': 'calls',
     '/live-calls': 'calls',
     '/contracts': 'contracts',
@@ -16858,10 +17544,17 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function getOpenClawConfig() {
     const storedConfig = parseJSONSafe(localStorage.getItem(OPENCLAW_STORAGE_KEY), {});
+    const legacyApiKey = String(
+      storedConfig.apiKey
+        || localStorage.getItem('pbk_bridge_api_key')
+        || localStorage.getItem('PBK_BRIDGE_API_KEY')
+        || sessionStorage.getItem('pbk_bridge_api_key')
+        || ''
+    ).trim();
     const localPreview = DEFAULT_OPENCLAW_ENDPOINT === normalizeOpenClawEndpoint(window.location.origin)
       && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost');
     const storedEndpoint = normalizeOpenClawEndpoint(storedConfig.endpoint || '');
-    const storedApiKey = String(storedConfig.apiKey || '').trim();
+    const storedApiKey = legacyApiKey;
     const shouldUseLocalProxy = localPreview && storedEndpoint && storedEndpoint !== DEFAULT_OPENCLAW_ENDPOINT && !storedApiKey;
 
     return sanitizeOpenClawConfig({
@@ -16877,7 +17570,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         : '',
       lastCheckedAt: 0,
       runtimeMeta: {},
-      ...(shouldUseLocalProxy ? {} : storedConfig)
+      ...(shouldUseLocalProxy ? {} : storedConfig),
+      apiKey: legacyApiKey
     });
   }
 
@@ -17936,6 +18630,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   const FLEET_CANONICAL_AGENT_ORDER = [
     'ava',
+    'max',
     'rex',
     'hermes',
     'call-analyzer',
@@ -18023,7 +18718,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   function isSeededFleetExample(agent = {}) {
     const id = String(agent.id || '').toLowerCase();
-    if (['ava', 'rex'].includes(id)) return false;
+    if (['ava', 'max', 'rex'].includes(id)) return false;
     const demoText = [
       agent.name,
       agent.role,
@@ -18032,7 +18727,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       ...(Array.isArray(agent.stream) ? agent.stream.flat() : []),
       ...(Array.isArray(agent.skills) ? agent.skills.map((skill) => `${skill.name || ''} ${skill.evidence || ''}`) : [])
     ].join(' ');
-    return /Max|Nora|Zed|pause applied by PBK dashboard|config(?:ure)? applied by PBK dashboard|Spanish acquisitions|Outbound SMS|Ava skill inheritance|sandbox calls|demo|fixture/i.test(demoText);
+    return /Nora|Zed|pause applied by PBK dashboard|config(?:ure)? applied by PBK dashboard|Spanish acquisitions|Outbound SMS|Ava skill inheritance|sandbox calls|demo|fixture/i.test(demoText);
   }
 
   function isFleetAgentRecord(agent = {}) {
@@ -18421,7 +19116,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     modal.dataset.sourceAgent = agent.id;
     modal.dataset.skillName = skillName;
     if (title) title.textContent = `Transfer "${skillName || 'Selected skill'}"`;
-    if (meta) meta.textContent = `Source: ${agent.name}. Choose target agents, then PBK will show a local transfer confirmation.`;
+    if (meta) meta.textContent = `Source: ${agent.name}. Choose target agents, then PBK will queue an approval-gated skill route.`;
     if (versioned) versioned.checked = true;
 
     list.innerHTML = recipients.map((candidate) => `
@@ -18437,16 +19132,34 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       confirm.disabled = selected.length === 0;
     };
     list.onchange = sync;
-    confirm.onclick = () => {
+    confirm.onclick = async () => {
       const selected = Array.from(list.querySelectorAll('input:checked'));
-      const names = selected.map((input) => input.dataset.agentName || input.value);
       const isVersioned = versioned?.checked !== false;
-      closeFleetModals();
-      toast({
-        type: 'success',
-        title: 'Skill transferred',
-        desc: `'${skillName || 'Selected skill'}' copied to ${names.join(', ')}${isVersioned ? ' (versioned)' : ''}.`
-      });
+      const previousText = confirm.textContent;
+      confirm.disabled = true;
+      confirm.textContent = 'Queueing...';
+      try {
+        for (const input of selected) {
+          await queueFleetProposal({
+            tool: 'transfer_skill',
+            params: {
+              sourceAgentId: agent.id,
+              sourceAgentName: agent.name,
+              targetAgentId: input.value,
+              targetAgentName: input.dataset.agentName || input.value,
+              skill: skillName || 'Selected skill',
+              versioned: isVersioned,
+              activationMode: 'on_demand',
+            },
+            title: `${skillName || 'Selected skill'} route queued for ${input.dataset.agentName || input.value}`,
+            rationale: 'Skill transfers can change seller behavior, so PBK routes them through Rex review and the approval board before Ava, Max, or another agent can use them.',
+          });
+        }
+        closeFleetModals();
+      } finally {
+        confirm.textContent = previousText || 'Queue transfer';
+        sync();
+      }
     };
     sync();
     openFleetModal('fleetSkillTransferModal');
@@ -18594,6 +19307,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       renderFleetSkillsLibrary();
       openFleetModal('fleetSkillsModal');
     });
+    document.getElementById('fleetSkillRepoBtn')?.addEventListener('click', () => {
+      showPage('skillrepo');
+      renderSkillRepoExperience();
+      loadSkillRepoRuntime({ silent: true }).catch(() => null);
+    });
+    page.querySelectorAll('[data-fleet-open-skillrepo]').forEach((button) => {
+      button.addEventListener('click', () => {
+        showPage('skillrepo');
+        renderSkillRepoExperience();
+        loadSkillRepoRuntime({ silent: true }).catch(() => null);
+      });
+    });
     document.getElementById('fleetKnowledgeBtn')?.addEventListener('click', () => {
       showPage('brain');
       showFleetOutcome('local_view_only', 'Knowledge sources opened', 'Brain is the source library. Agent Fleet turns reviewed knowledge into candidate skills.');
@@ -18629,6 +19354,635 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   wireAgentFleet();
+
+  // =========================================================
+  // SKILL REPO - review, compose, and route skills to agents
+  // =========================================================
+  const SKILL_REPO_SEED = [
+    {
+      id: 'seed-probate-pacing',
+      name: 'Probate pacing',
+      agentId: 'ava',
+      agentName: 'Ava',
+      source: 'Rex research + call outcomes',
+      status: 'pending',
+      confidence: 87,
+      targets: ['ava', 'max'],
+      activationMode: 'auto_suggest',
+      rationale: 'Slow down probate calls after empathy labels, add a two-second pause, then ask one burden-removal question before price.',
+      metrics: [['Sandbox', '12'], ['Hang-up', '8%', 'lime'], ['Empathy', '0.84', 'lime'], ['Soak', '24h', 'amber']],
+      diff: ['- pace: normal', '+ pace: slow_after_empathy', '+ pauseMs: 2000', '+ nextQuestion: burden removal before number'],
+      audit: ['Rex proposed from call analysis.', 'Queued for founder review.'],
+    },
+    {
+      id: 'seed-max-contract-delivery',
+      name: 'Contract delivery v2',
+      agentId: 'max',
+      agentName: 'Max',
+      source: 'Max self-programmed from signed deals',
+      status: 'approved',
+      confidence: 96,
+      targets: ['max', 'ava'],
+      activationMode: 'on_demand',
+      rationale: 'When a seller says yes verbally, Max uses a calm recap, confirms the email/phone, and sends the contract with a clear next step.',
+      metrics: [['Uses', '14'], ['Sign rate', '96%', 'lime'], ['Avg fee', '$11.5k', 'lime'], ['Rollback', 'ready']],
+      diff: ['+ recap: price, close date, no repairs', '+ send_contract_after_confirmation: true', '+ fallback: schedule human review if confused'],
+      audit: ['Max promoted after 14 deals.', 'Auto-transferred to Ava as on-demand language.'],
+    },
+    {
+      id: 'seed-question-reframe',
+      name: 'Question-reframe close',
+      agentId: 'ava',
+      agentName: 'Ava',
+      source: 'Manual / YouTube-ready composer',
+      status: 'testing',
+      confidence: 62,
+      targets: ['ava'],
+      activationMode: 'on_demand',
+      rationale: 'Turns "let me think" into a smaller commitment: what would need to be true for this to feel safe?',
+      metrics: [['Sandbox', '8'], ['Reply lift', '22%', 'lime'], ['Silence risk', 'low'], ['Review', 'Rex']],
+      diff: ['+ trigger: let me think', '+ response: what would need to be true?', '+ schedule: precise callback if not ready'],
+      audit: ['Ava discovered the phrase.', 'Rex requested more evidence.'],
+    },
+  ];
+
+  const skillRepoState = {
+    filter: 'all',
+    selectedId: 'seed-probate-pacing',
+    mode: 'manual',
+    liveSkills: [],
+    agents: [],
+    localCandidates: [],
+    source: 'local',
+    loading: false,
+    draft: null,
+    uploadFileName: '',
+    uploadText: '',
+  };
+
+  function skillRepoSlug(value = '') {
+    return String(value || 'skill')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      || 'skill';
+  }
+
+  function skillRepoCamel(value = '') {
+    const slug = skillRepoSlug(value);
+    return slug.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
+  }
+
+  function skillRepoToast(outcome, title, desc) {
+    if (typeof toastOutcome === 'function') {
+      toastOutcome({ outcome, title, desc });
+      return;
+    }
+    toast({ type: outcome === 'unavailable' ? 'error' : outcome === 'queued_for_approval' ? 'warning' : 'success', title, desc });
+  }
+
+  function normalizeSkillRepoStatus(skill = {}) {
+    const text = `${skill.status || ''} ${skill.level || ''}`.toLowerCase();
+    if (/reject|retire|disabled/.test(text)) return 'rejected';
+    if (/test|experiment|evolving/.test(text)) return 'testing';
+    if (/proven|approved|active|promoted/.test(text) && Number(skill.confidence || 0) >= 80) return 'approved';
+    return 'pending';
+  }
+
+  function normalizeSkillRepoCandidate(skill = {}) {
+    const agentId = normalizeControlText(skill.agentId || skill.agent_id || skill.agentName || skill.agent_name || 'ava').replace(/\s+/g, '-').toLowerCase();
+    const confidence = Math.max(0, Math.min(100, Number(skill.confidence || 0)));
+    const name = skill.name || skill.skillName || skill.skill_name || 'Unnamed skill';
+    const status = normalizeSkillRepoStatus(skill);
+    return {
+      id: skill.id || `live-${agentId}-${skillRepoSlug(name)}`,
+      name,
+      agentId,
+      agentName: skill.agentName || skill.agent_name || agentId.toUpperCase(),
+      source: skill.source || 'Supabase skill outcome',
+      status,
+      confidence,
+      targets: [agentId],
+      activationMode: status === 'approved' ? 'on_demand' : 'auto_suggest',
+      rationale: skill.evidence || `Live skill from ${skill.agentName || agentId}. Confidence and usage data are loaded from the PBK bridge.`,
+      metrics: [
+        ['Uses', String(skill.uses || 0)],
+        ['Wins', String(skill.wins || 0), Number(skill.wins || 0) ? 'lime' : ''],
+        ['Losses', String(skill.losses || 0), Number(skill.losses || 0) ? 'amber' : ''],
+        ['Confidence', `${confidence}%`, confidence >= 85 ? 'lime' : confidence >= 60 ? 'amber' : ''],
+      ],
+      diff: [
+        `+ skill: ${name}`,
+        `+ agent: ${skill.agentName || agentId}`,
+        `+ source: ${skill.source || 'supabase'}`,
+        `+ level: ${skill.level || 'candidate'}`,
+      ],
+      audit: [
+        skill.updatedAt ? `Updated ${formatRelativeTime(skill.updatedAt)}.` : 'Loaded from bridge state.',
+        skill.lastUsedAt ? `Last used ${formatRelativeTime(skill.lastUsedAt)}.` : 'Awaiting measured usage.',
+      ],
+    };
+  }
+
+  function getSkillRepoAgents() {
+    const runtime = PBK.state.openclawRuntime || {};
+    const pools = [
+      runtime.agents,
+      runtime.agentRegistry?.agents,
+      runtime.registry?.agents,
+      runtime.status?.agentRegistry?.agents,
+    ].filter(Array.isArray);
+    const byId = new Map();
+    ['ava', 'max', 'rex'].forEach((id) => {
+      const seed = (typeof FLEET_AGENT_SEED !== 'undefined' ? FLEET_AGENT_SEED : []).find((agent) => agent.id === id);
+      byId.set(id, seed || {
+        id,
+        name: id === 'ava' ? 'Ava' : id === 'max' ? 'Max' : 'Rex',
+        role: id === 'rex' ? 'Research and approval strategy' : id === 'max' ? 'Closer' : 'Acquisitions closer',
+        status: 'approval-gated',
+      });
+    });
+    pools.flat().forEach((agent) => {
+      if (!agent || typeof agent !== 'object') return;
+      const id = normalizeControlText(agent.id || agent.agentId || agent.name || '').replace(/\s+/g, '-').toLowerCase();
+      if (!id) return;
+      byId.set(id, { ...(byId.get(id) || {}), ...agent, id });
+    });
+    return Array.from(byId.values());
+  }
+
+  function getSkillRepoCandidates() {
+    const live = skillRepoState.liveSkills.map(normalizeSkillRepoCandidate);
+    const merged = [...skillRepoState.localCandidates, ...live, ...SKILL_REPO_SEED];
+    const byId = new Map();
+    merged.forEach((candidate) => {
+      if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
+    });
+    return Array.from(byId.values());
+  }
+
+  function getVisibleSkillRepoCandidates() {
+    const candidates = getSkillRepoCandidates();
+    if (skillRepoState.filter === 'all') return candidates;
+    return candidates.filter((candidate) => candidate.status === skillRepoState.filter);
+  }
+
+  function renderSkillRepoHealth() {
+    const node = document.querySelector('[data-skillrepo-health]');
+    if (!node) return;
+    const candidates = getSkillRepoCandidates();
+    const pending = candidates.filter((candidate) => candidate.status === 'pending').length;
+    const approved = candidates.filter((candidate) => candidate.status === 'approved').length;
+    const source = skillRepoState.source || 'local';
+    node.innerHTML = [
+      ['Supabase skills', skillRepoState.liveSkills.length || '--', source === 'supabase' ? 'live skills table' : source, 'sky'],
+      ['Target agents', getSkillRepoAgents().length, 'Ava + Max always selectable', ''],
+      ['Pending review', pending, 'approval-gated candidate queue', 'amber'],
+      ['Approved skills', approved, 'on-demand or auto-suggest only', 'lime'],
+    ].map(([k, v, m, tone]) => `
+      <div class="skillrepo-health-card">
+        <div class="k">${escapeHtml(k)}</div>
+        <div class="v ${escapeHtml(tone)}">${escapeHtml(v)}</div>
+        <div class="m">${escapeHtml(m)}</div>
+      </div>
+    `).join('');
+    const tag = document.querySelector('[data-skillrepo-tag]');
+    if (tag) {
+      tag.textContent = `Skill Repo - ${candidates.length} skills - ${pending} pending - source: ${source}`;
+    }
+  }
+
+  function renderSkillRepoList() {
+    const node = document.querySelector('[data-skillrepo-list]');
+    if (!node) return;
+    const candidates = getVisibleSkillRepoCandidates();
+    if (!candidates.length) {
+      node.innerHTML = '<div class="skillrepo-empty">No skills match this filter. Compose a skill or refresh live outcomes.</div>';
+      return;
+    }
+    node.innerHTML = candidates.map((candidate) => {
+      const confClass = candidate.confidence >= 85 ? 'high' : candidate.confidence < 65 ? 'low' : '';
+      return `
+        <button type="button" class="skillrepo-card ${candidate.id === skillRepoState.selectedId ? 'active' : ''}" data-skillrepo-id="${escapeHtml(candidate.id)}">
+          <span class="skillrepo-card-r1">
+            <span class="skillrepo-card-title">${escapeHtml(candidate.name)}</span>
+            <span class="skillrepo-conf ${confClass}">${Number(candidate.confidence || 0)}%</span>
+          </span>
+          <span class="skillrepo-card-meta">
+            <strong>${escapeHtml(candidate.agentName || candidate.agentId || 'Agent')}</strong>
+            <span>${escapeHtml(candidate.source || 'source')}</span>
+            <span class="skillrepo-status ${escapeHtml(candidate.status)}">${escapeHtml(candidate.status)}</span>
+          </span>
+          <span class="skillrepo-card-copy">${escapeHtml(candidate.rationale || '')}</span>
+        </button>
+      `;
+    }).join('');
+  }
+
+  function skillRepoDiffLines(lines = []) {
+    return `<div class="skillrepo-diff">${lines.map((line, index) => {
+      const text = String(line || '');
+      const cls = text.trim().startsWith('+') ? 'add' : text.trim().startsWith('-') ? 'del' : '';
+      return `<div class="skillrepo-diff-line ${cls}"><span class="ln">${index + 1}</span><span>${escapeHtml(text)}</span></div>`;
+    }).join('')}</div>`;
+  }
+
+  function renderSkillRepoDetail() {
+    const detail = document.querySelector('[data-skillrepo-detail]');
+    const composer = document.querySelector('[data-skillrepo-compose]');
+    if (!detail) return;
+    const candidate = getSkillRepoCandidates().find((item) => item.id === skillRepoState.selectedId) || getSkillRepoCandidates()[0];
+    if (!candidate) {
+      detail.innerHTML = '<div class="skillrepo-empty">No skill selected. Compose or refresh the repository.</div>';
+      return;
+    }
+    skillRepoState.selectedId = candidate.id;
+    detail.classList.remove('hidden');
+    composer?.classList.remove('active');
+    const targetNames = (candidate.targets || []).map((id) => getSkillRepoAgents().find((agent) => agent.id === id)?.name || id).join(', ') || candidate.agentName || 'Ava';
+    detail.innerHTML = `
+      <div class="skillrepo-detail-head">
+        <div class="skillrepo-eyebrow">Skill candidate - ${escapeHtml(candidate.status)}</div>
+        <h3 class="skillrepo-title">${escapeHtml(candidate.name).replace(/\b(v\d+|Pacing|Close|Delivery)\b/g, '<em>$1</em>')}</h3>
+        <div class="skillrepo-meta">
+          <span>Source <strong>${escapeHtml(candidate.source)}</strong></span>
+          <span>Owner <strong>${escapeHtml(candidate.agentName || candidate.agentId || 'Agent')}</strong></span>
+          <span>Targets <strong>${escapeHtml(targetNames)}</strong></span>
+          <span>Mode <strong>${escapeHtml(String(candidate.activationMode || 'on_demand').replace(/_/g, ' '))}</strong></span>
+        </div>
+      </div>
+      <div class="skillrepo-body">
+        <article class="skillrepo-section"><h3>Rationale</h3><div class="skillrepo-section-body">${escapeHtml(candidate.rationale || '')}</div></article>
+        <article class="skillrepo-section"><h3>Evidence</h3><div class="skillrepo-section-body"><div class="skillrepo-metric-grid">
+          ${(candidate.metrics || []).map(([label, value, tone]) => `<div class="skillrepo-metric"><div class="l">${escapeHtml(label)}</div><div class="v ${escapeHtml(tone || '')}">${escapeHtml(value)}</div></div>`).join('')}
+        </div></div></article>
+        <article class="skillrepo-section"><h3>Structured prompt diff</h3><div class="skillrepo-section-body">${skillRepoDiffLines(candidate.diff || [])}</div></article>
+        <article class="skillrepo-section"><h3>Audit trail</h3><div class="skillrepo-section-body">${(candidate.audit || []).map((item) => `<p>${escapeHtml(item)}</p>`).join('')}</div></article>
+      </div>
+      <div class="skillrepo-actions-bar">
+        <div class="skillrepo-action-note">Approving queues Rex and the approval board. Runtime behavior stays unchanged until the approval is applied.</div>
+        <div class="skillrepo-action-buttons">
+          <button type="button" class="btn btn-ghost" data-skillrepo-action="edit">Edit prompt</button>
+          <button type="button" class="btn btn-ghost" data-skillrepo-action="reject">Reject</button>
+          <button type="button" class="btn btn-primary" data-skillrepo-action="approve">Approve / queue rollout</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSkillRepoExperience() {
+    if (!document.querySelector('.page[data-page="skillrepo"]')) return;
+    renderSkillRepoHealth();
+    renderSkillRepoList();
+    renderSkillRepoDetail();
+  }
+
+  async function loadSkillRepoRuntime({ silent = true } = {}) {
+    if (skillRepoState.loading) return;
+    skillRepoState.loading = true;
+    try {
+      const [skills, fleet] = await Promise.all([
+        requestOpenClawApi('/api/skills/outcomes', { timeout: 14000 }).catch((error) => ({ ok: false, error })),
+        requestOpenClawApi('/api/agents/fleet', { timeout: 14000 }).catch((error) => ({ ok: false, error })),
+      ]);
+      if (Array.isArray(skills?.skills)) {
+        skillRepoState.liveSkills = skills.skills.slice(0, 40);
+        skillRepoState.source = skills.source || skills.result || 'bridge';
+      }
+      if (Array.isArray(fleet?.agents)) {
+        skillRepoState.agents = fleet.agents;
+        const runtime = PBK.state.openclawRuntime || {};
+        PBK.state.openclawRuntime = { ...runtime, agents: fleet.agents };
+      }
+      if (!silent) skillRepoToast('live', 'SkillRepo refreshed', 'Supabase skill outcomes and Agent Fleet records were refreshed.');
+    } catch (error) {
+      if (!silent) skillRepoToast('unavailable', 'SkillRepo refresh failed', error?.message || 'Bridge did not return skill outcomes.');
+    } finally {
+      skillRepoState.loading = false;
+      renderSkillRepoExperience();
+      renderAgentFleetExperience();
+    }
+  }
+
+  function showSkillRepoComposer() {
+    document.querySelector('[data-skillrepo-detail]')?.classList.add('hidden');
+    document.querySelector('[data-skillrepo-compose]')?.classList.add('active');
+    document.querySelector('[data-skillrepo-preview]')?.classList.remove('active');
+  }
+
+  function hideSkillRepoComposer() {
+    document.querySelector('[data-skillrepo-compose]')?.classList.remove('active');
+    document.querySelector('[data-skillrepo-detail]')?.classList.remove('hidden');
+  }
+
+  function setSkillRepoMode(mode = 'manual') {
+    skillRepoState.mode = mode;
+    document.querySelectorAll('[data-skillrepo-mode]').forEach((tab) => tab.classList.toggle('active', tab.dataset.skillrepoMode === mode));
+    document.querySelectorAll('[data-skillrepo-pane]').forEach((pane) => pane.classList.toggle('active', pane.dataset.skillrepoPane === mode));
+  }
+
+  function readSkillRepoForm() {
+    const form = document.querySelector('[data-skillrepo-compose]');
+    const data = form ? new FormData(form) : new FormData();
+    const name = String(data.get('skillName') || '').trim();
+    const manualText = String(data.get('manualText') || '').trim();
+    const youtubeUrl = String(data.get('youtubeUrl') || '').trim();
+    const targets = data.getAll('targetAgents').map(String);
+    return {
+      name,
+      engine: String(data.get('engine') || 'configured'),
+      focus: String(data.get('focus') || '').trim(),
+      activationMode: String(data.get('activationMode') || 'on_demand'),
+      mode: skillRepoState.mode,
+      manualText,
+      youtubeUrl,
+      startTime: String(data.get('startTime') || '').trim(),
+      endTime: String(data.get('endTime') || '').trim(),
+      rightsOk: Boolean(data.get('rightsOk')),
+      targets: targets.length ? targets : ['ava'],
+      sourceText: skillRepoState.mode === 'manual' ? manualText : skillRepoState.mode === 'upload' ? skillRepoState.uploadText : youtubeUrl,
+    };
+  }
+
+  function buildSkillRepoDraft() {
+    const form = readSkillRepoForm();
+    if (!form.name) {
+      skillRepoToast('unavailable', 'Skill name required', 'Name the skill before generating a draft.');
+      return null;
+    }
+    if (form.mode === 'youtube' && !form.rightsOk) {
+      skillRepoToast('unavailable', 'Source rights not confirmed', 'Check the source-rights box before extracting a third-party video.');
+      return null;
+    }
+    if (form.mode === 'manual' && !form.manualText) {
+      skillRepoToast('unavailable', 'Prompt required', 'Describe the behavior this skill should teach Ava, Max, or Rex.');
+      return null;
+    }
+    const id = `draft-${Date.now()}-${skillRepoSlug(form.name)}`;
+    const identifier = skillRepoCamel(form.name);
+    const sourceLabel = form.mode === 'youtube'
+      ? `YouTube ${form.youtubeUrl || ''}`.trim()
+      : form.mode === 'upload'
+        ? `Upload ${skillRepoState.uploadFileName || 'file'}`
+        : 'Manual prompt';
+    return {
+      id,
+      name: form.name,
+      agentId: form.targets[0] || 'ava',
+      agentName: getSkillRepoAgents().find((agent) => agent.id === (form.targets[0] || 'ava'))?.name || 'Ava',
+      source: sourceLabel,
+      status: 'pending',
+      confidence: 50,
+      targets: form.targets,
+      activationMode: form.activationMode,
+      engine: form.engine,
+      rationale: `Generated from ${sourceLabel}. Focus: ${form.focus || 'general seller conversation'}. Proposed as a reviewable PBK skill before agent rollout.`,
+      metrics: [['Evidence', 'needed'], ['Sandbox', '25', 'amber'], ['Targets', form.targets.length], ['Mode', form.activationMode.replace(/_/g, ' ')]],
+      diff: [
+        `+ export const ${identifier} = {`,
+        `+   name: "${form.name}",`,
+        `+   trigger: "${form.focus || 'seller objection or opportunity'}",`,
+        `+   targets: ${JSON.stringify(form.targets)},`,
+        `+   activationMode: "${form.activationMode}",`,
+        `+   responseRule: "Use the extracted principle naturally; do not repeat source wording verbatim.",`,
+        `+   guardrail: "Approval-gated; no offers, contracts, or provider writes without PBK approval.",`,
+        '+ };',
+      ],
+      audit: [`Draft generated in SkillRepo by UI.`, `Source: ${sourceLabel}.`, `Engine lane: ${form.engine}.`],
+      sourcePayload: form,
+    };
+  }
+
+  function renderSkillRepoDraftPreview(draft) {
+    const preview = document.querySelector('[data-skillrepo-preview]');
+    if (!preview || !draft) return;
+    const sourceText = String(draft.sourcePayload?.sourceText || '').slice(0, 700);
+    preview.classList.add('active');
+    preview.innerHTML = `
+      <article class="skillrepo-section"><h3>Source preview</h3><div class="skillrepo-section-body">${escapeHtml(sourceText || draft.source)}</div></article>
+      <article class="skillrepo-section"><h3>Engine-structured skill</h3><div class="skillrepo-section-body">${escapeHtml(draft.rationale)}</div></article>
+      <article class="skillrepo-section"><h3>Generated skill file</h3><div class="skillrepo-section-body">${skillRepoDiffLines(draft.diff)}</div></article>
+      <div class="skillrepo-actions-bar">
+        <div class="skillrepo-action-note">Submitting saves source context to the Brain lane when possible and queues a Rex approval proposal for the target agents.</div>
+        <div class="skillrepo-action-buttons">
+          <button type="button" class="btn btn-ghost" data-skillrepo-action="generate">Regenerate</button>
+          <button type="button" class="btn btn-primary" data-skillrepo-action="submit-draft">Submit to review queue</button>
+        </div>
+      </div>
+    `;
+  }
+
+  async function persistSkillRepoSourceToBrain(draft) {
+    const payload = draft?.sourcePayload || {};
+    const tags = ['skillrepo', 'skill-candidate', ...(draft.targets || [])];
+    if (payload.mode === 'youtube' && payload.youtubeUrl) {
+      await requestOpenClawApi('/api/brain/ingest', {
+        method: 'POST',
+        body: {
+          title: draft.name,
+          source: payload.youtubeUrl,
+          sourceUrl: payload.youtubeUrl,
+          url: payload.youtubeUrl,
+          kind: 'video',
+          topic: 'Agent Skills',
+          summary: draft.rationale,
+          tags,
+          requestedBy: 'SkillRepo UI',
+        },
+        timeout: 45000,
+      }).catch(() => null);
+    }
+    return requestOpenClawApi('/api/brain/blog', {
+      method: 'POST',
+      body: {
+        title: `Skill candidate - ${draft.name}`,
+        source: draft.source,
+        sourceName: 'SkillRepo',
+        sourceUrl: payload.youtubeUrl || '',
+        sourceType: payload.mode || 'manual',
+        topic: 'Agent Skills',
+        content: payload.sourceText || draft.rationale,
+        summary: draft.rationale,
+        tags,
+        requestedBy: 'SkillRepo UI',
+        metadata: {
+          skillId: draft.id,
+          targets: draft.targets,
+          activationMode: draft.activationMode,
+          engine: draft.engine,
+        },
+      },
+      timeout: 15000,
+    }).catch(() => null);
+  }
+
+  async function queueSkillRepoProposal(candidate, action = 'ab_test_skill') {
+    const target = (candidate.targets || [candidate.agentId || 'ava'])[0] || 'ava';
+    const payload = {
+      action,
+      tool: action,
+      skill: candidate.name,
+      sourceAgentId: candidate.agentId || target,
+      targetAgentId: target,
+      targetAgentIds: candidate.targets || [target],
+      activationMode: candidate.activationMode || 'on_demand',
+      source: candidate.source,
+      rationale: candidate.rationale,
+      skillDraft: {
+        id: candidate.id,
+        name: candidate.name,
+        diff: candidate.diff,
+        metrics: candidate.metrics,
+        audit: candidate.audit,
+      },
+      actor: 'SkillRepo UI',
+      requestApproval: true,
+    };
+    return requestOpenClawApi(`/api/agents/${encodeURIComponent(candidate.agentId || target)}/skills`, {
+      method: 'POST',
+      body: payload,
+      timeout: 15000,
+    });
+  }
+
+  async function submitSkillRepoDraft() {
+    const draft = skillRepoState.draft || buildSkillRepoDraft();
+    if (!draft) return;
+    skillRepoState.localCandidates.unshift(draft);
+    skillRepoState.selectedId = draft.id;
+    hideSkillRepoComposer();
+    renderSkillRepoExperience();
+    try {
+      await persistSkillRepoSourceToBrain(draft);
+      const response = await queueSkillRepoProposal(draft, 'ab_test_skill');
+      skillRepoToast(getRuntimeOutcome(response, 'queued_for_approval'), 'Skill queued for approval', response?.verbiage || `${draft.name} is now in Rex review for Ava/Max rollout.`);
+    } catch (error) {
+      skillRepoToast('unavailable', 'Skill saved locally', error?.message || 'Bridge queue failed, but the draft is visible in this browser session.');
+    }
+  }
+
+  async function handleSkillRepoAction(action, event) {
+    if (action === 'refresh') {
+      await loadSkillRepoRuntime({ silent: false });
+      return;
+    }
+    if (action === 'fleet') {
+      showPage('fleet');
+      return;
+    }
+    if (action === 'compose') {
+      showSkillRepoComposer();
+      return;
+    }
+    if (action === 'cancel-compose') {
+      hideSkillRepoComposer();
+      return;
+    }
+    if (action === 'generate') {
+      const draft = buildSkillRepoDraft();
+      if (!draft) return;
+      skillRepoState.draft = draft;
+      renderSkillRepoDraftPreview(draft);
+      return;
+    }
+    if (action === 'submit-draft') {
+      await submitSkillRepoDraft();
+      return;
+    }
+    const candidate = getSkillRepoCandidates().find((item) => item.id === skillRepoState.selectedId);
+    if (!candidate) return;
+    if (action === 'approve') {
+      try {
+        const response = await queueSkillRepoProposal(candidate, candidate.status === 'approved' ? 'promote_skill' : 'ab_test_skill');
+        skillRepoToast(getRuntimeOutcome(response, 'queued_for_approval'), 'Rollout queued', response?.verbiage || `${candidate.name} queued for approval.`);
+      } catch (error) {
+        skillRepoToast('unavailable', 'Rollout not queued', error?.message || 'Bridge did not accept the skill proposal.');
+      }
+      return;
+    }
+    if (action === 'reject') {
+      candidate.status = 'rejected';
+      candidate.audit = [...(candidate.audit || []), 'Rejected in SkillRepo UI.'];
+      renderSkillRepoExperience();
+      skillRepoToast('live', 'Skill rejected', `${candidate.name} moved out of the active review queue.`);
+      return;
+    }
+    if (action === 'edit') {
+      showSkillRepoComposer();
+      const name = document.getElementById('skillRepoName');
+      const manual = document.getElementById('skillRepoManual');
+      if (name) name.value = candidate.name;
+      if (manual) manual.value = candidate.rationale || '';
+      setSkillRepoMode('manual');
+      event?.preventDefault?.();
+    }
+  }
+
+  function wireSkillRepo() {
+    const page = document.querySelector('.page[data-page="skillrepo"]');
+    if (!page || page.dataset.skillRepoWired === 'true') return;
+    page.dataset.skillRepoWired = 'true';
+    page.addEventListener('click', async (event) => {
+      const filter = event.target.closest('[data-skillrepo-filter]');
+      if (filter) {
+        skillRepoState.filter = filter.dataset.skillrepoFilter || 'all';
+        page.querySelectorAll('[data-skillrepo-filter]').forEach((node) => node.classList.toggle('active', node === filter));
+        renderSkillRepoList();
+        return;
+      }
+      const card = event.target.closest('[data-skillrepo-id]');
+      if (card) {
+        skillRepoState.selectedId = card.dataset.skillrepoId;
+        renderSkillRepoExperience();
+        return;
+      }
+      const mode = event.target.closest('[data-skillrepo-mode]');
+      if (mode) {
+        setSkillRepoMode(mode.dataset.skillrepoMode || 'manual');
+        return;
+      }
+      const action = event.target.closest('[data-skillrepo-action]')?.dataset.skillrepoAction;
+      if (action) {
+        event.preventDefault();
+        await handleSkillRepoAction(action, event);
+      }
+    });
+    const drop = page.querySelector('[data-skillrepo-drop]');
+    const upload = document.getElementById('skillRepoUpload');
+    drop?.addEventListener('click', () => upload?.click());
+    drop?.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      drop.classList.add('dragover');
+    });
+    drop?.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+    drop?.addEventListener('drop', async (event) => {
+      event.preventDefault();
+      drop.classList.remove('dragover');
+      const file = event.dataTransfer?.files?.[0];
+      if (file) await readSkillRepoFile(file);
+    });
+    upload?.addEventListener('change', async () => {
+      const file = upload.files?.[0];
+      if (file) await readSkillRepoFile(file);
+    });
+    renderSkillRepoExperience();
+  }
+
+  async function readSkillRepoFile(file) {
+    skillRepoState.uploadFileName = file.name;
+    try {
+      skillRepoState.uploadText = await file.text();
+    } catch {
+      skillRepoState.uploadText = `File selected: ${file.name}. Production parser will extract text server-side if needed.`;
+    }
+    const label = document.querySelector('[data-skillrepo-file-label]');
+    if (label) label.textContent = `${file.name} - ${Math.round(file.size / 1024)}KB selected`;
+  }
+
+  wireSkillRepo();
+  setTimeout(() => {
+    loadSkillRepoRuntime({ silent: true }).catch(() => null);
+  }, 250);
 
   function money(value) {
     return typeof fmt === 'function' ? fmt(Number(value || 0)) : new Intl.NumberFormat('en-US', {
@@ -22039,6 +23393,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     applyLeadScoringWeightsToRows(snapshot.leadScoringWeights || PBK.state.leadScoringWeights || {});
     renderCampaignsExperience(snapshot);
     renderAgentFleetExperience();
+    renderSkillRepoExperience();
 
     const lastActivity = getRealRuntimeActivity(snapshot)[0] || null;
     if (lastActivity?.text) {
@@ -29974,11 +31329,14 @@ Authority close: "What matters most to your seller: number, timeline, or certain
         toastOutcome({ outcome: 'local_view_only', title: 'Opened Activity Log', desc: 'Use the activity log for the full audit trail. Timeline filtering is local until memory endpoints are live.' });
         return;
       }
-      if (action === 'fleet' || action === 'skills') {
+      if (action === 'fleet') {
         showPage('fleet');
-        setTimeout(() => {
-          if (action === 'skills') document.getElementById('fleetSkillsLibBtn')?.click();
-        }, 80);
+        return;
+      }
+      if (action === 'skills') {
+        showPage('skillrepo');
+        renderSkillRepoExperience();
+        loadSkillRepoRuntime({ silent: true }).catch(() => null);
         return;
       }
       if (action === 'raw') {
@@ -30029,6 +31387,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     wireLeadBulkControls();
     wireCampaignsControls();
     wireMemoryAnalyticsControls();
+    wireSkillRepo();
     wireAutomationsControls();
     wireAnalyticsControls();
     wireBrainApiButton();

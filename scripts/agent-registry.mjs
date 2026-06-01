@@ -1,5 +1,6 @@
 const REQUIRED_AGENT_IDS = [
   'ava',
+  'max',
   'rex',
   'hermes',
   'call-analyzer',
@@ -51,7 +52,28 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
       version: 'v2.1',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'supervisor', supervises: ['rex', 'hermes'], local: true },
+      metadata: { orchestrationRole: 'supervisor', supervises: ['max', 'rex', 'hermes'], local: true },
+    },
+    {
+      id: 'max',
+      name: 'Max',
+      description:
+        'PBK closer and contract handoff agent for offer recap, seller follow-up, and approval-gated contract delivery.',
+      capabilities: [
+        'closing',
+        'contract_handoff',
+        'offer_recap',
+        'seller_follow_up',
+        'sms',
+        'calling',
+        'skill_execution',
+      ],
+      status: 'active',
+      endpoint: '',
+      version: 'v1.4',
+      healthCheckedAt: activeAt,
+      lastError: '',
+      metadata: { orchestrationRole: 'worker', supervisor: 'ava', approvalGated: true, local: true },
     },
     {
       id: 'rex',

@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-skill-emotion-learning-v1';
+const BUILD_REVISION = '2026-06-01-skill-emotion-learning-v2';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -16707,6 +16707,113 @@ async function runEmotionWorldModelProvider(params = {}, currentEmotion = {}) {
   }
 }
 
+function readNativeEmotionWorldModel(params = {}) {
+  const configuredPath = String(
+    params.modelPath
+      || params.model_path
+      || process.env.PBK_EMOTION_WORLD_MODEL_PATH
+      || '',
+  ).trim();
+  const candidates = [
+    configuredPath,
+    path.join(ROOT_DIR, 'models', 'emotion-world-model', 'emotion-world-model.json'),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const modelPath = path.isAbsolute(candidate) ? candidate : path.resolve(ROOT_DIR, candidate);
+      if (!existsSync(modelPath)) continue;
+      const model = JSON.parse(readFileSync(modelPath, 'utf8'));
+      if (!model || typeof model !== 'object' || !model.actionProfiles) {
+        return { ok: false, reason: 'native_model_invalid', modelPath };
+      }
+      return { ok: true, model, modelPath };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: 'native_model_read_failed',
+        error: error?.message || String(error),
+      };
+    }
+  }
+  return { ok: false, reason: 'native_model_not_found' };
+}
+
+function selectNativeEmotionWorldModelProfile(model = {}, params = {}) {
+  const profiles = plainObject(model.actionProfiles);
+  const actionType = String(params.actionType || params.action_type || '').trim().toLowerCase();
+  const candidates = [
+    actionType,
+    slugify(actionType).replace(/-/g, '_'),
+    slugify(actionType),
+  ].filter(Boolean);
+  for (const key of candidates) {
+    const profile = plainObject(profiles[key]);
+    if (Number(profile.count || 0) > 0) {
+      return { profile, matchedKey: key };
+    }
+  }
+  const globalProfile = plainObject(model.globalProfile);
+  if (Number(globalProfile.count || 0) > 0) {
+    return { profile: globalProfile, matchedKey: 'global' };
+  }
+  return { profile: null, matchedKey: '' };
+}
+
+function applyNativeEmotionWorldModelProfile(currentEmotion = {}, profile = {}) {
+  const meanDelta = plainObject(profile.meanDelta);
+  const meanNextEmotion = plainObject(profile.meanNextEmotion);
+  const next = {};
+  let hasDelta = false;
+  for (const key of EMOTION_KEYS) {
+    const delta = Number(meanDelta[key]);
+    if (Number.isFinite(delta)) {
+      next[key] = Math.max(0, Number(currentEmotion[key] || 0) + delta);
+      hasDelta = true;
+    }
+  }
+  if (!hasDelta) {
+    for (const key of EMOTION_KEYS) {
+      const value = Number(meanNextEmotion[key]);
+      next[key] = Number.isFinite(value) ? Math.max(0, value) : Number(currentEmotion[key] || 0);
+    }
+  }
+  return normalizeEmotionState(next);
+}
+
+function runNativeEmotionWorldModelProvider(params = {}, currentEmotion = {}) {
+  const nativeModel = readNativeEmotionWorldModel(params);
+  if (!nativeModel.ok) return nativeModel;
+  const { profile, matchedKey } = selectNativeEmotionWorldModelProfile(nativeModel.model, params);
+  if (!profile) {
+    return {
+      ok: false,
+      reason: 'native_model_no_matching_profile',
+      model: nativeModel.model?.modelId || '',
+      modelPath: nativeModel.modelPath,
+    };
+  }
+  const sampleCount = Number(profile.count || nativeModel.model.sampleCount || 0);
+  const nextEmotion = applyNativeEmotionWorldModelProfile(currentEmotion, profile);
+  const fragile = ['sadness', 'anger', 'fear'].includes(currentEmotion.dominant) && Number(currentEmotion.intensity || 0) >= 0.45;
+  return {
+    ok: true,
+    prediction: {
+      ok: true,
+      result: 'emotion_prediction',
+      model: nativeModel.model.modelId || 'pbk-emotion-world-model-native',
+      modelProvider: 'native_trained_model',
+      fallback: false,
+      modelPath: nativeModel.modelPath,
+      matchedProfile: matchedKey,
+      sampleCount,
+      currentEmotion,
+      nextEmotion,
+      policyHint: fragile ? 'de_escalate_before_offer' : 'proceed_with_calibrated_question',
+      confidence: Math.max(0.52, Math.min(0.9, 0.52 + Math.log10(sampleCount + 1) * 0.18)),
+    },
+  };
+}
+
 function buildHeuristicEmotionTransition(params = {}, currentEmotion = {}, fallbackReason = 'world_model_not_configured') {
   const normalizedCurrentEmotion = currentEmotion?.dominant
     ? currentEmotion
@@ -16753,7 +16860,13 @@ async function predictEmotionTransition(params = {}) {
   const currentEmotion = normalizeEmotionState(params.currentEmotion || params.emotionState || params.emotion);
   const worldModel = await runEmotionWorldModelProvider(params, currentEmotion);
   if (worldModel.ok) return worldModel.prediction;
-  return buildHeuristicEmotionTransition(params, currentEmotion, worldModel.reason || 'world_model_unavailable');
+  const nativeModel = runNativeEmotionWorldModelProvider(params, currentEmotion);
+  if (nativeModel.ok) return nativeModel.prediction;
+  return buildHeuristicEmotionTransition(
+    params,
+    currentEmotion,
+    nativeModel.reason || worldModel.reason || 'world_model_unavailable',
+  );
 }
 
 function normalizeEmotionalPolicyVariants(variants = []) {

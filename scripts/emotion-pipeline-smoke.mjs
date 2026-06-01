@@ -131,8 +131,15 @@ async function main() {
     assert(predicted.body.ok === true, 'Emotion prediction did not return ok=true.');
     assert(predicted.body.prediction?.nextEmotion?.sadness < memory.body.memory.emotionState.sadness, 'Empathy prediction did not reduce sadness.');
     assert(predicted.body.prediction?.policyHint === 'de_escalate_before_offer', 'Emotion prediction did not recommend de-escalation before offer.');
-    assert(predicted.body.prediction?.modelProvider === 'heuristic_fallback', 'Emotion prediction did not expose heuristic fallback provider metadata.');
-    assert(predicted.body.prediction?.fallbackReason === 'world_model_not_configured', 'Emotion prediction did not expose why the world model fallback was used.');
+    assert(
+      ['native_trained_model', 'heuristic_fallback'].includes(predicted.body.prediction?.modelProvider),
+      'Emotion prediction did not expose native or fallback provider metadata.',
+    );
+    if (predicted.body.prediction?.modelProvider === 'heuristic_fallback') {
+      assert(predicted.body.prediction?.fallbackReason, 'Emotion prediction did not expose why the fallback was used.');
+    } else {
+      assert(predicted.body.prediction?.matchedProfile, 'Native emotion prediction did not expose the matched model profile.');
+    }
 
     const experiment = await jsonFetch('/api/emotion/policies/experiments', {
       method: 'POST',

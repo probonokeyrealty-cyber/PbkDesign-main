@@ -18647,6 +18647,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       acceptedCount: 0,
       duplicateCount: 0,
     },
+    snnWorkers: [],
+    selectedLeadId: '',
+    dealPreview: null,
+    previewLoading: false,
   };
 
   function showFleetOutcome(outcome, title, desc) {
@@ -18833,6 +18837,120 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     return getFleetAgents().find((agent) => agent.id === id) || getFleetAgents()[0];
   }
 
+  function normalizeFleetAgentId(value = '') {
+    return normalizeControlText(value || 'agent').replace(/\s+/g, '-').toLowerCase();
+  }
+
+  function getFleetLeadOptions() {
+    const runtime = PBK.state.openclawRuntime || {};
+    const pools = [
+      runtime.leadImports,
+      runtime.leads,
+      runtime.state?.leadImports,
+      runtime.status?.leadImports,
+    ].filter(Array.isArray);
+    const leads = pools.flat().filter((lead) => lead && typeof lead === 'object');
+    const byId = new Map();
+    leads.forEach((lead, index) => {
+      const id = String(lead.id || lead.leadId || lead.lead_id || lead.phone || lead.address || `lead-${index}`).trim();
+      if (!id || byId.has(id)) return;
+      byId.set(id, lead);
+    });
+    return Array.from(byId.values()).slice(0, 25);
+  }
+
+  function getFleetLeadId(lead = {}, index = 0) {
+    return String(lead.id || lead.leadId || lead.lead_id || lead.phone || lead.address || `lead-${index}`).trim();
+  }
+
+  function getFleetLeadLabel(lead = {}) {
+    return [
+      lead.name || lead.ownerName || lead.sellerName || lead.fullName || 'Unnamed lead',
+      lead.address || lead.propertyAddress || lead.property_address || '',
+    ].filter(Boolean).join(' - ');
+  }
+
+  function getFleetSelectedLead() {
+    const leads = getFleetLeadOptions();
+    if (!fleetUiState.selectedLeadId && leads[0]) {
+      fleetUiState.selectedLeadId = getFleetLeadId(leads[0], 0);
+    }
+    return leads.find((lead, index) => getFleetLeadId(lead, index) === fleetUiState.selectedLeadId) || leads[0] || null;
+  }
+
+  function getFleetSnnWorker(agent = {}) {
+    const agentId = normalizeFleetAgentId(agent.id || agent.name);
+    return (fleetUiState.snnWorkers || []).find((worker) => {
+      const workerId = normalizeFleetAgentId(worker.agentId || worker.id || worker.name || worker.agentName);
+      return workerId === agentId || normalizeFleetAgentId(worker.name || '') === agentId;
+    }) || null;
+  }
+
+  function formatFleetPreviewAction(action = '') {
+    return String(action || 'inspect_lead_profile').replace(/_/g, ' ');
+  }
+
+  async function refreshFleetSnnWorkerStatus({ silent = true } = {}) {
+    try {
+      const response = await PBK.openclaw.invoke('getSnnWorkerStatus', {});
+      const result = response?.result || response || {};
+      fleetUiState.snnWorkers = Array.isArray(result.workers) ? result.workers : [];
+      renderFleetDetail(fleetUiState.selected);
+      if (!silent) showFleetOutcome('live', 'SNN worker status refreshed', `${fleetUiState.snnWorkers.length} bridge worker records loaded.`);
+    } catch (error) {
+      console.warn('[PBK AgentFleet] SNN worker status unavailable', error);
+      if (!silent) showFleetOutcome('unavailable', 'SNN worker status unavailable', error?.message || 'Bridge did not return worker status.');
+    }
+  }
+
+  async function previewFleetAgentDealContext(button = null) {
+    const agent = getFleetAgent(fleetUiState.selected);
+    const lead = getFleetSelectedLead();
+    if (!agent) return;
+    if (!lead) {
+      showFleetOutcome('unavailable', 'No lead selected', 'Load a bridge lead before asking an agent for a deal-context preview.');
+      return;
+    }
+    const previousText = button?.textContent || '';
+    fleetUiState.previewLoading = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Previewing...';
+    }
+    try {
+      const response = await invokeRuntimeTool('previewAgentDealContext', {
+        agentId: agent.id,
+        agentName: agent.name,
+        leadId: getFleetLeadId(lead),
+        leadName: lead.name || lead.ownerName || lead.sellerName || lead.fullName || '',
+        address: lead.address || lead.propertyAddress || lead.property_address || '',
+        phone: lead.phone || lead.phoneNumber || lead.phone_number || '',
+        email: lead.email || '',
+        selectedPath: lead.selectedPath || lead.selected_path || lead.path || '',
+      }, {
+        actionLabel: 'Preview agent deal context',
+        successTitle: 'Deal context preview ready',
+        successDesc: 'Read-only agent preview returned from the bridge. No provider write was performed.',
+        errorTitle: 'Deal context preview failed',
+        tag: 'agent-fleet',
+      });
+      const result = response?.result || response || {};
+      if (result && typeof result === 'object') {
+        fleetUiState.dealPreview = result;
+      }
+    } catch (error) {
+      console.warn('[PBK AgentFleet] deal context preview failed', error);
+      showFleetOutcome('unavailable', 'Preview failed', error?.message || 'Agent deal context preview could not reach the bridge.');
+    } finally {
+      fleetUiState.previewLoading = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = previousText || `Preview ${agent.name}`;
+      }
+      renderFleetPaneSkills(agent);
+    }
+  }
+
   function fleetStatusLabel(status = '') {
     return String(status || 'idle').replace(/_/g, ' ');
   }
@@ -18997,7 +19115,36 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   function renderFleetPaneSkills(agent) {
     const node = document.getElementById('fleetPaneSkills');
     if (!node) return;
+    const leads = getFleetLeadOptions();
+    const selectedLead = getFleetSelectedLead();
+    const selectedLeadId = selectedLead ? getFleetLeadId(selectedLead) : '';
+    const worker = getFleetSnnWorker(agent);
+    const preview = fleetUiState.dealPreview;
     node.innerHTML = `
+      <div class="fleet-knowledge-card">
+        <h4>Deal context preview</h4>
+        <p>Read-only preview of how ${escapeHtml(agent.name)} would handle a live lead. Provider writes stay blocked and approval-gated.</p>
+        <div class="fleet-tool-row"><span>Bridge SNN worker status</span><strong>${escapeHtml(worker?.status || worker?.result || 'waiting')}</strong></div>
+        <div class="fleet-mini-input">
+          <select id="fleetDealPreviewLead">
+            ${leads.length ? leads.map((lead, index) => {
+              const id = getFleetLeadId(lead, index);
+              return `<option value="${escapeHtml(id)}" ${id === selectedLeadId ? 'selected' : ''}>${escapeHtml(getFleetLeadLabel(lead))}</option>`;
+            }).join('') : '<option value="">No bridge leads loaded yet</option>'}
+          </select>
+          <button class="chip-btn" type="button" data-fleet-action="preview_deal_context" data-agent="${escapeHtml(agent.id)}" ${leads.length ? '' : 'disabled'}>${fleetUiState.previewLoading ? 'Previewing...' : `Preview ${escapeHtml(agent.name)}`}</button>
+        </div>
+        ${preview ? `
+          <div class="fleet-knowledge-card" style="margin-top: var(--s-3);">
+            <h4>${escapeHtml(formatFleetPreviewAction(preview.recommendedAction))} - ${Math.round(Number(preview.confidence || 0))}% confidence</h4>
+            <p>${escapeHtml(preview.summary || 'Bridge returned an agent deal-context preview.')}</p>
+            <div class="fleet-tool-row"><span>Mode</span><strong>${escapeHtml(preview.writeMode || 'read_only')}</strong></div>
+            <div class="fleet-tool-row"><span>BANT</span><strong>${escapeHtml(preview.bant?.complete ? 'complete' : `missing ${(preview.bant?.missing || []).join(', ') || 'fields'}`)}</strong></div>
+            <div class="fleet-tool-row"><span>Safety</span><strong>${escapeHtml((preview.requiredApprovals || []).length ? preview.requiredApprovals.join(', ') : 'no provider write')}</strong></div>
+            ${Array.isArray(preview.reasoning) && preview.reasoning.length ? `<p class="note">${escapeHtml(preview.reasoning.slice(0, 3).join(' '))}</p>` : ''}
+          </div>
+        ` : ''}
+      </div>
       ${(agent.skills || []).map((skill) => `
         <div class="fleet-skill-card">
           <h4>${escapeHtml(skill.name)}</h4>
@@ -19316,6 +19463,10 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       if (actionButton) {
         event.preventDefault();
         event.stopPropagation();
+        if (actionButton.dataset.fleetAction === 'preview_deal_context') {
+          await previewFleetAgentDealContext(actionButton);
+          return;
+        }
         await handleFleetAction(actionButton.dataset.fleetAction, actionButton.dataset.agent || fleetUiState.selected, {
           skill: actionButton.dataset.skill || '',
           button: actionButton,
@@ -19324,6 +19475,16 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       }
       if (card) renderFleetDetail(card.dataset.fleetAgent);
     });
+
+    page.addEventListener('change', (event) => {
+      const leadSelect = event.target.closest('#fleetDealPreviewLead');
+      if (!leadSelect) return;
+      fleetUiState.selectedLeadId = leadSelect.value;
+      fleetUiState.dealPreview = null;
+      renderFleetPaneSkills(getFleetAgent(fleetUiState.selected));
+    });
+
+    refreshFleetSnnWorkerStatus({ silent: true }).catch(() => null);
 
     document.getElementById('fleetSkillsLibBtn')?.addEventListener('click', () => {
       renderFleetSkillsLibrary();

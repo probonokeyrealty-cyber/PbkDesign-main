@@ -46,6 +46,7 @@ export function RightPanel({
         </div>
         <button
           onClick={onClose}
+          aria-label="Close panel"
           className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-slate-800"
         >
           <X size={16} />

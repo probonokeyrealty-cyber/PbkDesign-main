@@ -341,10 +341,11 @@ export function AgentFleet() {
         const bridgeAgents = Array.isArray(raw.agents)
           ? (raw.agents as Array<Record<string, unknown>>)
           : [];
-        setAgents((prev) => mergeAgentStatuses(prev, bridgeAgents));
+        const merged = mergeAgentStatuses(agents, bridgeAgents);
+        setAgents(merged);
         setBridgeConnected(true);
-        // Flush any transfers that were queued while bridge was offline
-        flushTransferQueue(agents).catch((err: unknown) => {
+        // Flush transfers queued while bridge was offline, using the freshly merged agent list.
+        flushTransferQueue(merged).catch((err: unknown) => {
           console.warn('[AgentFleet] Failed to flush transfer queue after bridge reconnect:', err);
         });
       })

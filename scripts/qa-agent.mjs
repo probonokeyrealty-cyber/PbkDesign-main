@@ -201,12 +201,15 @@ export function validateQaToolResult(toolName, result = {}) {
   const normalizedToolName = String(toolName || '').trim();
   const validator = QA_VALIDATORS[normalizedToolName];
   if (!validator) {
+    if (normalizedToolName) {
+      console.warn(`[qa-agent] No validator registered for tool "${normalizedToolName}". Add one to QA_VALIDATORS to enable proof checking.`);
+    }
     return {
       ok: true,
       skipped: true,
       validator: 'none',
       reason: 'no_validator_registered',
-      details: {},
+      details: { toolName: normalizedToolName },
     };
   }
   return validator(result || {});

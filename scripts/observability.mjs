@@ -185,7 +185,10 @@ async function tryStartOpenTelemetry(serviceName) {
 export async function initializeObservability(options = {}) {
   const serviceName = String(options.serviceName || process.env.OTEL_SERVICE_NAME || process.env.PBK_OBSERVABILITY_SERVICE_NAME || 'pbk-bridge').trim() || 'pbk-bridge';
   state.serviceName = serviceName;
-  state.enabled = envBool('PBK_OBSERVABILITY_ENABLED', Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT));
+  // Enable when explicitly set, when an OTLP endpoint is configured, or when
+  // running on Render where OTEL_EXPORTER_OTLP_ENDPOINT should be wired via env.
+  const isHosted = Boolean(process.env.RENDER || process.env.FLY_APP_NAME);
+  state.enabled = envBool('PBK_OBSERVABILITY_ENABLED', Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT) || isHosted);
   state.alertsEnabled = envBool('PBK_OBSERVABILITY_ALERTS_ENABLED', true);
   if (state.initialized) return getObservabilityStatus();
   state.initialized = true;

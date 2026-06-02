@@ -253,12 +253,21 @@ export const handler: Handler = async (event) => {
     ? Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8')
     : undefined;
 
+  const PROXY_TIMEOUT_MS = Math.max(
+    5000,
+    Math.min(25000, Number(process.env.PBK_BRIDGE_PROXY_TIMEOUT_MS || 20000)),
+  );
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => abortController.abort(), PROXY_TIMEOUT_MS);
+
   try {
     const response = await fetch(targetUrl, {
       method: event.httpMethod,
       headers: buildRequestHeaders(event, requestId),
       body,
+      signal: abortController.signal,
     });
+    clearTimeout(timeoutHandle);
 
     const responseHeaders: Record<string, string> = {
       ...CORS_HEADERS,
@@ -303,15 +312,17 @@ export const handler: Handler = async (event) => {
       isBase64Encoded: !textResponse,
     };
   } catch (error) {
+    clearTimeout(timeoutHandle);
+    const timedOut = error instanceof Error && error.name === 'AbortError';
     return json(
       {
         ok: false,
-        error: 'PBK bridge proxy could not reach the hosted bridge.',
-        message: error instanceof Error ? error.message : 'Unknown bridge proxy error',
+        error: timedOut ? 'PBK bridge proxy timed out.' : 'PBK bridge proxy could not reach the hosted bridge.',
+        message: timedOut ? `Bridge did not respond within ${PROXY_TIMEOUT_MS}ms.` : (error instanceof Error ? error.message : 'Unknown bridge proxy error'),
         target: targetPath,
         requestId,
       },
-      502,
+      timedOut ? 504 : 502,
       { 'X-Request-ID': requestId },
     );
   }

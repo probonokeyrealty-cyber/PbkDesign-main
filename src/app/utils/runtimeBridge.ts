@@ -15,20 +15,124 @@ const DEFAULT_HOSTED_BRIDGE_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com
 let avaSnnWorker: Worker | null = null;
 let rexSnnWorker: Worker | null = null;
 
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    avaSnnWorker?.terminate();
+    rexSnnWorker?.terminate();
+    avaSnnWorker = null;
+    rexSnnWorker = null;
+  });
+}
+
+export type ApprovalRecord = {
+  id: string;
+  type?: string;
+  status?: string;
+  leadId?: string;
+  leadName?: string;
+  address?: string;
+  offerPrice?: number;
+  mao?: number;
+  notes?: string;
+  actor?: string;
+  createdAt?: string;
+  actedAt?: string;
+};
+
+export type ActivityRecord = {
+  id: string;
+  type?: string;
+  leadId?: string;
+  leadName?: string;
+  address?: string;
+  summary?: string;
+  createdAt?: string;
+};
+
+export type BrainDoc = {
+  id: string;
+  title?: string;
+  source?: string;
+  kind?: string;
+  topic?: string;
+  excerpt?: string;
+  summary?: string;
+  tags?: string[];
+  createdAt?: string;
+};
+
+export type LeadImport = {
+  id: string;
+  source?: string;
+  status?: string;
+  createdAt?: string;
+};
+
+export type AnalyzerRun = {
+  id: string;
+  address?: string;
+  type?: string;
+  arv?: number;
+  mao?: number;
+  targetOffer?: number;
+  repairs?: number;
+  summary?: string;
+  createdAt?: string;
+};
+
+export type CallRecord = {
+  id: string;
+  leadId?: string;
+  leadName?: string;
+  to?: string;
+  from?: string;
+  status?: string;
+  createdAt?: string;
+};
+
+export type MessageRecord = {
+  id: string;
+  leadId?: string;
+  leadName?: string;
+  to?: string;
+  body?: string;
+  status?: string;
+  createdAt?: string;
+};
+
+export type ContractRecord = {
+  id: string;
+  leadName?: string;
+  address?: string;
+  amount?: number;
+  status?: string;
+  envelopeId?: string;
+  createdAt?: string;
+};
+
+export type AdminTask = {
+  id: string;
+  command?: string;
+  provider?: string;
+  status?: string;
+  actor?: string;
+  createdAt?: string;
+};
+
 export type RuntimeSnapshot = {
   status?: Record<string, unknown>;
-  approvals?: Array<Record<string, unknown>>;
-  activity?: Array<Record<string, unknown>>;
-  brainDocs?: Array<Record<string, unknown>>;
-  leadImports?: Array<Record<string, unknown>>;
-  analyzerRuns?: Array<Record<string, unknown>>;
-  calls?: Array<Record<string, unknown>>;
-  messages?: Array<Record<string, unknown>>;
-  contracts?: Array<Record<string, unknown>>;
+  approvals?: ApprovalRecord[];
+  activity?: ActivityRecord[];
+  brainDocs?: BrainDoc[];
+  leadImports?: LeadImport[];
+  analyzerRuns?: AnalyzerRun[];
+  calls?: CallRecord[];
+  messages?: MessageRecord[];
+  contracts?: ContractRecord[];
   documentDeliveries?: Array<Record<string, unknown>>;
   callQaScores?: Array<Record<string, unknown>>;
   skillOutcomes?: Array<Record<string, unknown>>;
-  adminTasks?: Array<Record<string, unknown>>;
+  adminTasks?: AdminTask[];
   adminAudit?: Array<Record<string, unknown>>;
 };
 

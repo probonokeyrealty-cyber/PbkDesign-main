@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DealData, PBKPath } from '../types';
 import { RepairCalculator } from './RepairCalculator';
 import { LandAnalysis } from './LandAnalysis';
@@ -50,16 +51,31 @@ export function AnalyzerTab({
     });
   };
 
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
   const arv = deal.arv || calculateARV(deal.comps);
   const analyzeReadiness = getAnalyzeReadiness(deal);
   const analyzeCtaLabel = analyzeReadiness.ready && deal.isAnalyzed ? 'Open Call Mode ->' : 'Analyze Deal ->';
-  const handleAnalyzeCta = () => {
+  const handleAnalyzeCta = async () => {
     if (analyzeReadiness.ready && deal.isAnalyzed) {
       onOpenCallMode(selectedPath);
       return;
     }
-
-    onAnalyze();
+    setIsAnalyzing(true);
+    try {
+      await onAnalyze();
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+  const handleSendToAgent = async () => {
+    setIsSending(true);
+    try {
+      await onSendToAgent();
+    } finally {
+      setIsSending(false);
+    }
   };
   const verdictTone =
     deal.verdict === 'green'
@@ -495,15 +511,17 @@ export function AnalyzerTab({
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <button
           onClick={handleAnalyzeCta}
-          className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md"
+          disabled={isAnalyzing}
+          className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md disabled:opacity-60 disabled:cursor-wait"
         >
-          {analyzeCtaLabel}
+          {isAnalyzing ? 'Analyzing…' : analyzeCtaLabel}
         </button>
         <button
-          onClick={onSendToAgent}
-          className="w-full px-4 py-3 rounded-full border border-blue-200 bg-blue-50 text-[13px] font-semibold text-blue-700 transition-all hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+          onClick={handleSendToAgent}
+          disabled={isSending}
+          className="w-full px-4 py-3 rounded-full border border-blue-200 bg-blue-50 text-[13px] font-semibold text-blue-700 transition-all hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 disabled:opacity-60 disabled:cursor-wait"
         >
-          Send to Agent
+          {isSending ? 'Sending…' : 'Send to Agent'}
         </button>
       </div>
       {analyzeStatus && (

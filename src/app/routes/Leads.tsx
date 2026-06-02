@@ -297,6 +297,7 @@ export function Leads() {
   const [editForm, setEditForm] = useState<LeadFormState | null>(null);
   const [contractForm, setContractForm] = useState<ContractFormState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
   const [displayLimit, setDisplayLimit] = useState(40);
 
@@ -364,6 +365,7 @@ export function Leads() {
 
   const reloadLeadDetail = async () => {
     if (!selectedLeadId) return;
+    setReloading(true);
     setDetailStatus('Refreshing lead detail...');
     try {
       const [fullResponse, callResponse] = await Promise.all([
@@ -378,6 +380,8 @@ export function Leads() {
       setDetailStatus(
         nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.'
       );
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -717,9 +721,10 @@ export function Leads() {
                   <button
                     type="button"
                     onClick={reloadLeadDetail}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200"
+                    disabled={reloading}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200 disabled:cursor-wait disabled:opacity-60"
                   >
-                    <RefreshCw size={14} /> Refresh
+                    <RefreshCw size={14} /> {reloading ? 'Refreshing…' : 'Refresh'}
                   </button>
                   <button
                     type="button"
@@ -1047,7 +1052,7 @@ export function Leads() {
                 onClick={saveLead}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
-                <Save size={15} /> Save Changes
+                {saving ? 'Saving…' : <><Save size={15} /> Save Changes</>}
               </button>
             </div>
           </div>
@@ -1226,7 +1231,7 @@ export function Leads() {
                 onClick={sendContract}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
-                <Send size={15} /> Send via DocuSign
+                {saving ? 'Sending…' : <><Send size={15} /> Send via DocuSign</>}
               </button>
             </div>
           </div>

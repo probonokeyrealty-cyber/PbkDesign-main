@@ -284,8 +284,8 @@ export function DealScoring({ deal }: DealScoringProps) {
             </div>
           </div>
           <div className="space-y-1">
-            {dealKillers.map((killer, i) => (
-              <div key={i} className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 border-l-3 border-red-500 rounded px-2.5 py-1.5">
+            {dealKillers.map((killer) => (
+              <div key={killer} className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 border-l-3 border-red-500 rounded px-2.5 py-1.5">
                 <span className="text-red-500 text-[10px] mt-0.5">⚠</span>
                 <span className="text-[11px] text-red-800 dark:text-red-300">{killer}</span>
               </div>
@@ -304,8 +304,8 @@ export function DealScoring({ deal }: DealScoringProps) {
             </div>
           </div>
           <div className="space-y-1">
-            {strengths.map((strength, i) => (
-              <div key={i} className="flex items-start gap-2 bg-green-50 dark:bg-green-900/20 border-l-3 border-green-500 rounded px-2.5 py-1.5">
+            {strengths.map((strength) => (
+              <div key={strength} className="flex items-start gap-2 bg-green-50 dark:bg-green-900/20 border-l-3 border-green-500 rounded px-2.5 py-1.5">
                 <span className="text-green-500 text-[10px] mt-0.5">✓</span>
                 <span className="text-[11px] text-green-800 dark:text-green-300">{strength}</span>
               </div>

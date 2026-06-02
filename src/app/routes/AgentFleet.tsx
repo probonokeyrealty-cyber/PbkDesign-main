@@ -333,8 +333,8 @@ function SkillTransferModal({
             <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
               Transfer history
             </div>
-            {skill.transferHistory.map((h, i) => (
-              <div key={i} className="flex items-center gap-2 text-[11px] text-slate-400 py-0.5">
+            {skill.transferHistory.map((h) => (
+              <div key={h.at} className="flex items-center gap-2 text-[11px] text-slate-400 py-0.5">
                 <span className="text-slate-500">{new Date(h.at).toLocaleDateString()}</span>
                 <span>→ {h.toNames.join(', ')}</span>
                 {h.versioned && (

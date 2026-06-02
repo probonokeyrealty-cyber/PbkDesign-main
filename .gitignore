@@ -1,6 +1,11 @@
 node_modules/
 dist/
 .venv/
+
+# Local env files — never commit real secrets
+.env
+.env.local
+.env.*.local
 .netlify/
 .tmp/
 .pbk-local/

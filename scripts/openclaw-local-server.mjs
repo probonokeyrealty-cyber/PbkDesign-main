@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-live-call-learning-repair-v1';
+const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v2';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -19932,6 +19932,68 @@ async function persistSkillUsageToPg(record = {}) {
   return result.ok;
 }
 
+function normalizeSkillUsageRestRows(record = {}) {
+  const skillName = String(record.skillName || '').trim();
+  if (!skillName) return null;
+  const agentId = normalizeAgentId(record.agentName || 'ava') || 'ava';
+  const skillId = String(record.skillId || record.skill_id || `skill-${agentId}-${slugify(skillName).slice(0, 80)}`).trim();
+  const createdAt = record.createdAt || record.created_at || isoNow();
+  const metadata = {
+    ...(record.metadata || {}),
+    sourceOutcomeTable: 'pbk_skill_outcomes',
+    outcomeId: record.id || '',
+    callId: record.callId || '',
+    leadId: record.leadId || '',
+    dealClosed: Boolean(record.dealClosed),
+    supabaseRestFallback: true,
+  };
+  return {
+    skill: {
+      id: skillId,
+      workspace_id: 'pbk',
+      agent_id: agentId,
+      agent_name: normalizeAgentName(record.agentName || 'Ava'),
+      name: skillName,
+      source: 'skill_outcome',
+      level: 'measured',
+      status: 'active',
+      confidence: Math.max(0.35, Math.min(0.8, Number(record.metadata?.confidence || 0.55))),
+      evidence: `Measured from live PBK call ${record.callId || ''}`.trim(),
+      metadata: {
+        source: 'recordSkillOutcome',
+        createdFromOutcomeId: record.id || '',
+        liveCallLearning: true,
+        supabaseRestFallback: true,
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    },
+    usage: {
+      id: record.id,
+      workspace_id: 'pbk',
+      skill_id: skillId,
+      skill_name: skillName,
+      agent_id: agentId,
+      agent_name: normalizeAgentName(record.agentName || 'Ava'),
+      outcome: record.outcomeLabel || (record.success === true ? 'success' : record.success === false ? 'miss' : 'observed'),
+      success: typeof record.success === 'boolean' ? record.success : null,
+      confidence: record.metadata?.confidence === undefined ? null : Number(record.metadata.confidence),
+      profit_margin: record.metadata?.profitMargin === undefined ? null : Number(record.metadata.profitMargin),
+      metadata,
+      used_at: createdAt,
+      created_at: createdAt,
+    },
+  };
+}
+
+async function persistSkillUsageToSupabaseRest(record = {}) {
+  const rows = normalizeSkillUsageRestRows(record);
+  if (!rows) return false;
+  const skill = await upsertSupabaseRestRows('skills', rows.skill, 'id');
+  const usage = await upsertSupabaseRestRows('skill_usage', rows.usage, 'id');
+  return Boolean(skill && usage);
+}
+
 function summarizeSkillOutcomes(skillName = '', version = '') {
   const normalizedSkill = String(skillName || '').trim().toLowerCase();
   const normalizedVersion = String(version || '').trim().toLowerCase();
@@ -20039,10 +20101,12 @@ async function recordSkillOutcomeRecord(params = {}) {
   if (!Array.isArray(state.skillOutcomes)) state.skillOutcomes = [];
   upsertById(state, 'skillOutcomes', record);
   const postgres = await persistSkillOutcomeToPg(record);
-  const usage = await persistSkillUsageToPg({
+  const usageRecord = {
     ...record,
     skillId: params.skillId || params.skill_id || '',
-  });
+  };
+  const usage = await persistSkillUsageToPg(usageRecord);
+  const supabaseRestUsage = usage ? false : await persistSkillUsageToSupabaseRest(usageRecord);
   let scriptTest = null;
   if (params.testId && record.version) {
     scriptTest = await scriptTestRecord({
@@ -20067,7 +20131,20 @@ async function recordSkillOutcomeRecord(params = {}) {
     target: context.leadName || context.address || record.callId || skillName,
   }));
   await persistState(state);
-  return { ok: true, result: 'skill_outcome_recorded', outcome: record, summary: summarizeSkillOutcomes(skillName, record.version), autopilot, scriptTest, storage: { localState: true, postgres, skillUsage: usage } };
+  return {
+    ok: true,
+    result: 'skill_outcome_recorded',
+    outcome: record,
+    summary: summarizeSkillOutcomes(skillName, record.version),
+    autopilot,
+    scriptTest,
+    storage: {
+      localState: true,
+      postgres,
+      skillUsage: usage,
+      supabaseRestUsage,
+    },
+  };
 }
 
 function countAuthorityProbePhrases(text = '') {

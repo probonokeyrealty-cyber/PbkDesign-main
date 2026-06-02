@@ -24,10 +24,13 @@ services:
       # without changing dashboard/API auth.
       - key: PBK_SIDECAR_TOKEN
         sync: false
-      # Postgres connection string. Use Render's "Add From Database" pattern
-      # against the pbk-openclaw-db service so this is wired automatically.
+      # Postgres connection string. Keep this wired through Render's native
+      # database reference so the bridge doesn't depend on a manually pasted
+      # internal hostname that can go stale.
       - key: PBK_DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: pbk-openclaw-db
+          property: connectionString
       # Public base URL of THIS service. Used to build provider webhook URLs
       # (Telnyx call events, DocuSign envelope status, etc.) that point back here.
       - key: PBK_PUBLIC_BASE_URL
@@ -330,7 +333,9 @@ services:
       - key: PBK_EVENT_WORKER_BLOCK_MS
         value: "5000"
       - key: PBK_DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: pbk-openclaw-db
+          property: connectionString
       - key: PBK_PUBLIC_BASE_URL
         value: https://pbk-openclaw-bridge.onrender.com
       - key: PBK_EVENT_WORKER_BRIDGE_URL

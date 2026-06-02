@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v2';
+const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v3';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -36166,6 +36166,106 @@ function normalizeSkillOutcome(row = {}) {
   };
 }
 
+async function fetchSkillOutcomesFromSupabaseRest() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return {
+      ok: false,
+      reason: 'supabase_rest_not_configured',
+      rows: [],
+    };
+  }
+  const base = SUPABASE_URL.replace(/\/+$/g, '');
+  const headers = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  };
+  try {
+    const [skillsResponse, usageResponse] = await Promise.all([
+      fetch(`${base}/rest/v1/skills?select=id,agent_id,agent_name,name,source,level,status,confidence,evidence,updated_at&workspace_id=eq.pbk&order=confidence.desc&limit=100`, { headers }),
+      fetch(`${base}/rest/v1/skill_usage?select=id,skill_id,skill_name,agent_id,agent_name,success,used_at&workspace_id=eq.pbk&order=used_at.desc&limit=1000`, { headers }),
+    ]);
+    if (!skillsResponse.ok || !usageResponse.ok) {
+      const details = await Promise.all([
+        skillsResponse.text().catch(() => ''),
+        usageResponse.text().catch(() => ''),
+      ]);
+      return {
+        ok: false,
+        reason: 'supabase_rest_failed',
+        rows: [],
+        error: `skills=${skillsResponse.status} usage=${usageResponse.status}`,
+        details: details.map((text) => text.slice(0, 180)),
+      };
+    }
+    const skills = await skillsResponse.json().catch(() => []);
+    const usage = await usageResponse.json().catch(() => []);
+    const stats = new Map();
+    for (const row of Array.isArray(usage) ? usage : []) {
+      const key = String(row.skill_id || `${row.agent_id || 'agent'}:${row.skill_name || ''}`).trim();
+      if (!key) continue;
+      const current = stats.get(key) || {
+        uses: 0,
+        wins: 0,
+        losses: 0,
+        lastUsedAt: '',
+        skillName: row.skill_name || '',
+        agentId: row.agent_id || '',
+        agentName: row.agent_name || '',
+      };
+      current.uses += 1;
+      if (row.success === true) current.wins += 1;
+      if (row.success === false) current.losses += 1;
+      const usedAt = String(row.used_at || '');
+      if (usedAt && (!current.lastUsedAt || usedAt > current.lastUsedAt)) current.lastUsedAt = usedAt;
+      stats.set(key, current);
+    }
+    const rows = (Array.isArray(skills) ? skills : []).map((skill) => {
+      const stat = stats.get(String(skill.id || '').trim())
+        || stats.get(`${skill.agent_id || 'agent'}:${skill.name || ''}`)
+        || {};
+      return {
+        ...skill,
+        agentId: skill.agent_id,
+        agentName: skill.agent_name,
+        uses: stat.uses || 0,
+        wins: stat.wins || 0,
+        losses: stat.losses || 0,
+        lastUsedAt: stat.lastUsedAt || '',
+        updatedAt: skill.updated_at,
+      };
+    });
+    for (const [key, stat] of stats.entries()) {
+      if (rows.some((row) => String(row.id || '') === key || `${row.agent_id || 'agent'}:${row.name || ''}` === key)) continue;
+      rows.push({
+        id: key,
+        agentId: stat.agentId,
+        agentName: stat.agentName || stat.agentId || 'Agent',
+        name: stat.skillName || key,
+        source: 'skill_usage',
+        level: 'measured',
+        status: 'active',
+        confidence: stat.uses ? Math.min(95, Math.round((stat.wins / stat.uses) * 100)) : 50,
+        uses: stat.uses,
+        wins: stat.wins,
+        losses: stat.losses,
+        lastUsedAt: stat.lastUsedAt,
+      });
+    }
+    return {
+      ok: true,
+      reason: 'supabase_rest',
+      rows,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'supabase_rest_error',
+      rows: [],
+      error: error?.message || String(error),
+    };
+  }
+}
+
 async function buildSkillOutcomes() {
   const result = await queryPgRows(`
     SELECT
@@ -36194,6 +36294,19 @@ async function buildSkillOutcomes() {
   `);
   const fallback = flattenBridgeSkills().map(normalizeSkillOutcome);
   if (!result.ok || !result.rows.length) {
+    const rest = await fetchSkillOutcomesFromSupabaseRest();
+    if (rest.ok && rest.rows.length) {
+      return {
+        ok: true,
+        result: 'live',
+        source: result.ok ? 'supabase-rest-empty-pg' : 'supabase-rest-pg-unavailable',
+        generatedAt: isoNow(),
+        skills: rest.rows.map(normalizeSkillOutcome),
+        warning: result.ok
+          ? ''
+          : `Direct Postgres is unavailable (${result.error || result.reason}); reading measured skill usage through Supabase REST.`,
+      };
+    }
     return {
       ok: true,
       result: result.ok ? 'local_view_only' : 'local_view_only',

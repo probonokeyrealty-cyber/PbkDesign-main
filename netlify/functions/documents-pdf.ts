@@ -163,7 +163,7 @@ async function launchBrowserWithRetry(): Promise<Browser> {
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
         executablePath: localChromePath || (await chromium.executablePath()),
-        headless: 'new' as never,
+        headless: true,
       });
     } catch (error) {
       lastError = error;
@@ -280,7 +280,7 @@ async function generatePdf(payload: DocumentRequest, requestUrl: string) {
     const masterPackageUrl = buildMasterPackageUrl(requestUrl, payload);
 
     if (masterPackageUrl) {
-      await page.goto(masterPackageUrl, { waitUntil: 'networkidle0', timeout: 45000 });
+      await page.goto(masterPackageUrl, { waitUntil: 'networkidle0', timeout: 20000 });
       await page.emulateMediaType('print');
       await page.evaluate(() => document.fonts?.ready);
       await sleep(500);

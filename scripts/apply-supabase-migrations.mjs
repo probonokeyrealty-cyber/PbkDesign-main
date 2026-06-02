@@ -26,6 +26,13 @@ const pool = new Pool({
 });
 
 async function main() {
+  try {
+    await readdir(migrationsDir);
+  } catch {
+    console.error(`Migrations directory not found: ${migrationsDir}\nCreate supabase/migrations/ or point rootDir at the correct location.`);
+    process.exit(1);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.pbk_schema_migrations (
       migration_name TEXT PRIMARY KEY,

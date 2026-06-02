@@ -649,5 +649,8 @@ export async function sendDealToAgent(deal: DealData, options: { agentDealContex
     message: `Analyzer synced ${deal.address || 'deal'} to the runtime for ${deal.selectedPath || 'cash'} follow-up. Agent context includes ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script.`,
     deal,
     agentDealContext,
+  }).catch((err: unknown) => {
+    console.warn('[PBK] sendDealToAgent: bridge updateCRM call failed — the bridge may not handle this tool yet.', err);
+    return null;
   });
 }

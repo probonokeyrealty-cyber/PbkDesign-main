@@ -250,6 +250,23 @@ const QA_VALIDATORS = {
   pbk_list_agents(result = {}) {
     return QA_VALIDATORS.listAgents(result);
   },
+
+  getBrainState(result = {}) {
+    const providerFailure = validateProviderOk('getBrainState', result);
+    if (providerFailure) return providerFailure;
+    const hasReadableOutput = hasAnyPath(result, [
+      'answer',
+      'summary',
+      'readableSummary',
+      'state.status.agent',
+      'brainDocs',
+      'docs',
+    ]);
+    if (hasReadableOutput || result.ok === true) {
+      return qaPass('getBrainState', { readOnly: true, grounded: hasReadableOutput });
+    }
+    return qaFail('getBrainState', 'missing_brain_state_output');
+  },
 };
 
 export function sanitizeQaPayload(value, depth = 0) {

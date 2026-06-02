@@ -3,11 +3,18 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
-const devBridgeTarget =
+const configuredDevBridgeTarget =
   process.env.PBK_DEV_BRIDGE_URL ||
   process.env.PBK_BRIDGE_URL ||
-  process.env.PBK_HOSTED_BRIDGE_URL ||
+  process.env.PBK_HOSTED_BRIDGE_URL
+
+const devBridgeTarget =
+  configuredDevBridgeTarget ||
   'http://127.0.0.1:8788'
+
+if (!configuredDevBridgeTarget && process.env.NODE_ENV !== 'production') {
+  console.warn('[PBK Vite] No bridge URL configured; dev proxy defaults to http://127.0.0.1:8788.')
+}
 
 const devBridgeApiKey =
   process.env.PBK_DEV_BRIDGE_API_KEY ||

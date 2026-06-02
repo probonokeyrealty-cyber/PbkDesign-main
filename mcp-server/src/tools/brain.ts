@@ -402,6 +402,43 @@ const ScriptTestInput = z
   })
   .strict();
 
+const TestSkillInput = z
+  .object({
+    tenantId: z.string().optional(),
+    skillName: z.string().min(1),
+    skillSource: z.string().optional(),
+    agentId: z.string().optional(),
+    agentName: z.string().optional(),
+    scenario: z.string().min(1),
+    prompt: z.string().optional(),
+    transcript: z.string().optional(),
+    text: z.string().optional(),
+    objectionType: z.string().optional(),
+    requestedBy: z.string().optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+const UpdateCrmInput = z
+  .object({
+    leadId: z.string().optional(),
+    target: z.string().optional(),
+    leadName: z.string().optional(),
+    address: z.string().optional(),
+    email: z.string().optional(),
+    phone: z.string().optional(),
+    stage: z.string().optional(),
+    status: z.string().optional(),
+    message: z.string().optional(),
+    notes: z.string().optional(),
+    lead: z.record(z.unknown()).optional(),
+    transition: z.record(z.unknown()).optional(),
+    deal: z.record(z.unknown()).optional(),
+    agentDealContext: z.record(z.unknown()).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .passthrough();
+
 const OutcomeAnalyzerInput = z
   .object({
     tenantId: z.string().optional(),
@@ -861,6 +898,64 @@ Returns:
     async (params) => {
       try {
         const result = await bridgeInvoke("pbk_script_test", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_test_skill",
+    {
+      title: "Test an Agent Fleet skill",
+      description: "Evaluate a proposed or transferred skill against a scenario without promoting it. Returns the existing script-test evidence gate so operators can keep skill changes measurable.",
+      inputSchema: TestSkillInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("pbk_test_skill", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_update_crm",
+    {
+      title: "Update PBK CRM record",
+      description: "Route a lead/deal CRM update through the bridge updateCRM handler so CRM writes stay approval-aware and visible in PBK activity.",
+      inputSchema: UpdateCrmInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("updateCRM", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

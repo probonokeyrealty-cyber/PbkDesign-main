@@ -27,7 +27,18 @@ async function main() {
   assert.equal(brokenContract.ok, false, 'sendDocuSign without delivery proof should fail QA.');
   assert.match(brokenContract.reason, /missing_delivery_proof|provider_reported_failure/);
 
-  const unknown = validateQaToolResult('getBrainState', { ok: true });
+  const brainState = validateQaToolResult('getBrainState', { ok: true, answer: 'PBK brain is available.' });
+  assert.equal(brainState.ok, true, 'getBrainState should pass as a known read-only tool.');
+  assert.equal(brainState.skipped, false, 'getBrainState should have a registered QA validator.');
+
+  const originalWarn = console.warn;
+  let unknown;
+  try {
+    console.warn = () => {};
+    unknown = validateQaToolResult('unregisteredReadOnlyTool', { ok: true });
+  } finally {
+    console.warn = originalWarn;
+  }
   assert.equal(unknown.ok, true, 'unknown/read-only tools should not block the bridge.');
   assert.equal(unknown.skipped, true, 'unknown/read-only tools should be marked skipped.');
 

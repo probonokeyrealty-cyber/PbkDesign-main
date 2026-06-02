@@ -165,7 +165,11 @@ function getHostPBK(): Record<string, unknown> | null {
   const candidates = [window.parent, window.opener].filter(Boolean);
   for (const candidate of candidates) {
     try {
-      if (candidate && candidate !== window && (candidate as Window & { PBK?: Record<string, unknown> }).PBK) {
+      if (
+        candidate &&
+        candidate !== window &&
+        (candidate as Window & { PBK?: Record<string, unknown> }).PBK
+      ) {
         return (candidate as Window & { PBK?: Record<string, unknown> }).PBK || null;
       }
     } catch {
@@ -198,10 +202,7 @@ function getStorageEnvironment() {
 
 function readRuntimeConfigFromStorage(): RuntimeConfig | null {
   if (typeof window === 'undefined') return null;
-  const keys = [
-    `pbk:${getStorageEnvironment()}:openclaw-config`,
-    'pbk-openclaw-config',
-  ];
+  const keys = [`pbk:${getStorageEnvironment()}:openclaw-config`, 'pbk-openclaw-config'];
   for (const key of keys) {
     try {
       const raw = window.localStorage.getItem(key);
@@ -216,11 +217,9 @@ function readRuntimeConfigFromStorage(): RuntimeConfig | null {
 }
 
 function getEnvRuntimeConfig(): RuntimeConfig | null {
-  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+  const env = import.meta.env || {};
   const endpoint =
-    env.VITE_PBK_BRIDGE_URL ||
-    env.VITE_PBK_OPENCLAW_URL ||
-    env.VITE_PBK_OPENCLAW_ENDPOINT;
+    env.VITE_PBK_BRIDGE_URL || env.VITE_PBK_OPENCLAW_URL || env.VITE_PBK_OPENCLAW_ENDPOINT;
   if (!endpoint) return null;
 
   return {
@@ -231,16 +230,22 @@ function getEnvRuntimeConfig(): RuntimeConfig | null {
 
 export function getRuntimeConfig(): RuntimeConfig {
   const hostPBK = getHostPBK();
-  const fromHost = typeof hostPBK?.openclaw === 'object' && typeof (hostPBK.openclaw as { getConfig?: () => RuntimeConfig }).getConfig === 'function'
-    ? (hostPBK.openclaw as { getConfig: () => RuntimeConfig }).getConfig()
-    : null;
+  const fromHost =
+    typeof hostPBK?.openclaw === 'object' &&
+    typeof (hostPBK.openclaw as { getConfig?: () => RuntimeConfig }).getConfig === 'function'
+      ? (hostPBK.openclaw as { getConfig: () => RuntimeConfig }).getConfig()
+      : null;
 
   if (fromHost?.endpoint) return fromHost;
 
   const stored = readRuntimeConfigFromStorage();
   if (stored?.endpoint) {
     const localFallback = buildLocalBridgeFallback();
-    if (localFallback && !stored.apiKey && String(stored.endpoint) !== String(localFallback.endpoint)) {
+    if (
+      localFallback &&
+      !stored.apiKey &&
+      String(stored.endpoint) !== String(localFallback.endpoint)
+    ) {
       return localFallback;
     }
     return stored;
@@ -253,9 +258,28 @@ export function getRuntimeConfig(): RuntimeConfig {
   if (envConfig?.endpoint) return envConfig;
 
   return {
-    endpoint: DEFAULT_HOSTED_BRIDGE_ENDPOINT || window.location.origin,
+    endpoint:
+      DEFAULT_HOSTED_BRIDGE_ENDPOINT ||
+      (typeof window !== 'undefined' ? window.location.origin : ''),
     apiKey: '',
   };
+}
+
+function isAuthOptionalRuntimePath(path = '') {
+  const normalized = `/${String(path || '').replace(/^\/+/, '')}`;
+  return (
+    ['/health', '/status', '/api/health', '/api/status'].includes(normalized) ||
+    normalized.startsWith('/api/public/')
+  );
+}
+
+function assertRuntimeAuthConfigured(path = '') {
+  if (isAuthOptionalRuntimePath(path)) return;
+  const config = getRuntimeConfig();
+  if (config.apiKey) return;
+  throw new Error(
+    'PBK bridge API key is not configured. Open Settings and save PBK_BRIDGE_API_KEY before running protected Command Center actions.'
+  );
 }
 
 function getWebSearchSnnWorkers() {
@@ -277,7 +301,9 @@ function injectWebSearchCognition(result: SearchCognitionResult) {
   return {
     injected: injectedCount > 0,
     injectedCount,
-    agents: workers.map((worker) => (worker as Worker & { pbkAgentId?: string }).pbkAgentId || 'unknown'),
+    agents: workers.map(
+      (worker) => (worker as Worker & { pbkAgentId?: string }).pbkAgentId || 'unknown'
+    ),
   };
 }
 
@@ -322,8 +348,10 @@ export async function bridgeRequest<T = unknown>({
   body,
   keepalive,
 }: BridgeRequestOptions): Promise<T> {
+  assertRuntimeAuthConfigured(path);
   const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
-  const canKeepalive = method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
+  const canKeepalive =
+    method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const requestUrl = buildUrl(path);
   const init = {
     method,
@@ -349,7 +377,7 @@ export async function bridgeRequest<T = unknown>({
     throw new Error(
       typeof parsed === 'object' && parsed && 'error' in (parsed as Record<string, unknown>)
         ? String((parsed as Record<string, unknown>).error)
-        : `Bridge request failed (${response.status})`,
+        : `Bridge request failed (${response.status})`
     );
   }
 
@@ -367,7 +395,10 @@ function buildHostedRuntimeFallbackUrl(url = '') {
   try {
     const current = new URL(url, window.location.href);
     if (current.origin !== window.location.origin) return '';
-    return new URL(`${current.pathname}${current.search}`, `${DEFAULT_HOSTED_BRIDGE_ENDPOINT}/`).toString();
+    return new URL(
+      `${current.pathname}${current.search}`,
+      `${DEFAULT_HOSTED_BRIDGE_ENDPOINT}/`
+    ).toString();
   } catch {
     return '';
   }
@@ -376,11 +407,17 @@ function buildHostedRuntimeFallbackUrl(url = '') {
 async function shouldRetryRuntimeViaHosted(response: Response, url = '') {
   if (!buildHostedRuntimeFallbackUrl(url)) return false;
   if (response.status !== 503) return false;
-  const text = await response.clone().text().catch(() => '');
+  const text = await response
+    .clone()
+    .text()
+    .catch(() => '');
   return /usage_exceeded/i.test(text) || /Usage exceeded/i.test(text);
 }
 
-export async function invokeRuntimeTool<T = unknown>(toolName: string, params: Record<string, unknown> = {}) {
+export async function invokeRuntimeTool<T = unknown>(
+  toolName: string,
+  params: Record<string, unknown> = {}
+) {
   return bridgeRequest<T>({
     method: 'POST',
     path: '/invoke',
@@ -405,11 +442,13 @@ export async function fetchRuntimeToolingStatus() {
   const controller = new AbortController();
   const handle = setTimeout(() => controller.abort(), 10_000);
   const timeout$ = new Promise<never>((_, reject) =>
-    controller.signal.addEventListener('abort', () => reject(new Error('tooling_status_timeout'))),
+    controller.signal.addEventListener('abort', () => reject(new Error('tooling_status_timeout')))
   );
   try {
     const response = await Promise.race([
-      bridgeRequest<{ ok: boolean; tooling: RuntimeToolingStatus }>({ path: '/api/tooling/status' }),
+      bridgeRequest<{ ok: boolean; tooling: RuntimeToolingStatus }>({
+        path: '/api/tooling/status',
+      }),
       timeout$,
     ]);
     return (response as { ok: boolean; tooling: RuntimeToolingStatus }).tooling || {};
@@ -422,7 +461,10 @@ export function getSnnWorkerStatus(): { ava: boolean; rex: boolean } {
   return { ava: avaSnnWorker !== null, rex: rexSnnWorker !== null };
 }
 
-export async function postRuntimeEvent<T = Record<string, unknown>>(eventType: string, payload: Record<string, unknown>) {
+export async function postRuntimeEvent<T = Record<string, unknown>>(
+  eventType: string,
+  payload: Record<string, unknown>
+) {
   return bridgeRequest<T>({
     method: 'POST',
     path: '/events',
@@ -454,7 +496,11 @@ export async function updateAdminTaskDecision(taskId: string, status: string) {
   });
 }
 
-export async function controlRuntimeCall(callId: string, action: string, extra: Record<string, unknown> = {}) {
+export async function controlRuntimeCall(
+  callId: string,
+  action: string,
+  extra: Record<string, unknown> = {}
+) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: `/api/calls/${encodeURIComponent(callId)}/action`,
@@ -638,10 +684,15 @@ export async function syncDealAnalysis(deal: DealData) {
   return invokeRuntimeTool<Record<string, unknown>>('analyzeDeal', buildAnalyzePayload(deal));
 }
 
-export async function sendDealToAgent(deal: DealData, options: { agentDealContext?: AgentDealContext } = {}) {
-  const agentDealContext = options.agentDealContext || buildAgentDealContext(deal, {
-    requestedBy: 'Analyzer runtime bridge',
-  });
+export async function sendDealToAgent(
+  deal: DealData,
+  options: { agentDealContext?: AgentDealContext } = {}
+) {
+  const agentDealContext =
+    options.agentDealContext ||
+    buildAgentDealContext(deal, {
+      requestedBy: 'Analyzer runtime bridge',
+    });
   return invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
     target: deal.address || deal.sellerName || 'deal',
     leadId: deal.address || deal.sellerPhone || deal.sellerEmail || 'manual-deal',

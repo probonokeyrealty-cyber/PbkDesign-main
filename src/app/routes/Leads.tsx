@@ -121,7 +121,8 @@ function getProperty(lead: BridgeRecord): BridgeRecord {
 
 function getCallContext(lead: BridgeRecord): BridgeRecord {
   const primary = lead.callContext && typeof lead.callContext === 'object' ? lead.callContext : {};
-  const fallback = lead.call_context && typeof lead.call_context === 'object' ? lead.call_context : {};
+  const fallback =
+    lead.call_context && typeof lead.call_context === 'object' ? lead.call_context : {};
   return { ...(fallback as BridgeRecord), ...(primary as BridgeRecord) };
 }
 
@@ -153,7 +154,11 @@ function getLeadScore(lead: BridgeRecord) {
 function getLeadTags(lead: BridgeRecord) {
   if (Array.isArray(lead.tags)) return lead.tags.map(String).filter(Boolean).slice(0, 3);
   const raw = text(lead.tags || lead.source || 'runtime');
-  return raw.split(',').map((item) => item.trim()).filter(Boolean).slice(0, 3);
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function getLeadFinancial(lead: BridgeRecord, key: 'arv' | 'mao') {
@@ -183,11 +188,21 @@ function normalizePath(value: unknown, lead?: BridgeRecord): CanonicalPath {
 
   if (raw.includes('rbp') || raw.includes('retail')) return 'rbp';
   if (raw.includes('creative') || /\bcf\b/.test(raw) || raw.includes('seller finance')) return 'cf';
-  if (raw.includes('mortgage') || raw.includes('subject') || /\bmt\b/.test(raw) || raw.includes('subto')) return 'mt';
+  if (
+    raw.includes('mortgage') ||
+    raw.includes('subject') ||
+    /\bmt\b/.test(raw) ||
+    raw.includes('subto')
+  )
+    return 'mt';
   if (raw.includes('land') || raw.includes('parcel') || raw.includes('lot')) return 'land';
 
   const property = getProperty(lead || {});
-  if (/land|parcel|lot/i.test([property.propertyType, property.type, property.address].filter(Boolean).join(' '))) {
+  if (
+    /land|parcel|lot/i.test(
+      [property.propertyType, property.type, property.address].filter(Boolean).join(' ')
+    )
+  ) {
     return 'land';
   }
 
@@ -204,7 +219,10 @@ function formFromLead(lead: BridgeRecord): LeadFormState {
     phone: text(lead.phone || seller.phone),
     email: text(lead.email || seller.email),
     address: text(lead.address || property.address),
-    propertyType: text(lead.property_type || property.propertyType || property.type, 'Single Family'),
+    propertyType: text(
+      lead.property_type || property.propertyType || property.type,
+      'Single Family'
+    ),
     motivation: text(lead.motivation_score || lead.motivationScore || lead.score || ''),
     tags: Array.isArray(lead.tags) ? lead.tags.map(String).join(', ') : text(lead.tags),
     notes: text(lead.notes),
@@ -216,12 +234,17 @@ function formFromLead(lead: BridgeRecord): LeadFormState {
   };
 }
 
-function contractFormFromLead(lead: BridgeRecord, lastCall?: BridgeRecord | null): ContractFormState {
+function contractFormFromLead(
+  lead: BridgeRecord,
+  lastCall?: BridgeRecord | null
+): ContractFormState {
   const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
   const callContext = getCallContext(lead);
   const property = getProperty(lead);
-  const motivation = lead.motivation && typeof lead.motivation === 'object' ? lead.motivation as BridgeRecord : {};
-  const lastOffer = lastCall?.last_offer || lastCall?.lastOffer || callContext.last_offer || callContext.lastOffer;
+  const motivation =
+    lead.motivation && typeof lead.motivation === 'object' ? (lead.motivation as BridgeRecord) : {};
+  const lastOffer =
+    lastCall?.last_offer || lastCall?.lastOffer || callContext.last_offer || callContext.lastOffer;
   const sellerName = getSellerName(lead);
   const sellerEmail = getLeadEmail(lead);
   return {
@@ -240,16 +263,12 @@ function contractFormFromLead(lead: BridgeRecord, lastCall?: BridgeRecord | null
 }
 
 function unwrapLeadResponse(response: BridgeRecord): BridgeRecord {
-  return (response.lead && typeof response.lead === 'object' ? response.lead : response) as BridgeRecord;
+  return (
+    response.lead && typeof response.lead === 'object' ? response.lead : response
+  ) as BridgeRecord;
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="space-y-1.5 text-xs text-slate-400">
       <span className="font-medium text-slate-300">{label}</span>
@@ -261,11 +280,14 @@ function Field({
 const inputClass =
   'w-full rounded-xl border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20';
 
-const softPanelClass = 'rounded-2xl border border-slate-800 bg-slate-950/95 shadow-[0_18px_60px_rgba(2,6,23,0.22)]';
+const softPanelClass =
+  'rounded-2xl border border-slate-800 bg-slate-950/95 shadow-[0_18px_60px_rgba(2,6,23,0.22)]';
 
 export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
-  const leads = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports as BridgeRecord[] : [];
+  const leads = Array.isArray(snapshot?.leadImports)
+    ? (snapshot.leadImports as BridgeRecord[])
+    : [];
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [leadDetail, setLeadDetail] = useState<BridgeRecord | null>(null);
   const [lastCall, setLastCall] = useState<BridgeRecord | null>(null);
@@ -280,17 +302,27 @@ export function Leads() {
 
   const selectedLead = useMemo(
     () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
-    [leads, selectedLeadId],
+    [leads, selectedLeadId]
   );
   const visibleLeads = useMemo(() => leads.slice(0, displayLimit), [displayLimit, leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
   const leadActivity = Array.isArray(activeLead?.activity)
-    ? activeLead.activity as BridgeRecord[]
+    ? (activeLead.activity as BridgeRecord[])
     : Array.isArray(snapshot?.activity)
       ? (snapshot.activity as BridgeRecord[]).filter((item) => {
-          const haystack = [item.leadId, item.leadName, item.target, item.text].filter(Boolean).join(' ').toLowerCase();
-          return haystack.includes(activeLeadId.toLowerCase()) || haystack.includes(getLeadAddress(activeLead || {}).toLowerCase().split(',')[0]);
+          const haystack = [item.leadId, item.leadName, item.target, item.text]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return (
+            haystack.includes(activeLeadId.toLowerCase()) ||
+            haystack.includes(
+              getLeadAddress(activeLead || {})
+                .toLowerCase()
+                .split(',')[0]
+            )
+          );
         })
       : [];
 
@@ -317,7 +349,11 @@ export function Leads() {
         if (cancelled) return;
         setLeadDetail(selectedLead || null);
         setLastCall(null);
-        setDetailStatus(nextError instanceof Error ? `Bridge detail unavailable: ${nextError.message}` : 'Bridge detail unavailable.');
+        setDetailStatus(
+          nextError instanceof Error
+            ? `Bridge detail unavailable: ${nextError.message}`
+            : 'Bridge detail unavailable.'
+        );
       }
     };
     void loadDetail();
@@ -339,7 +375,9 @@ export function Leads() {
       setDetailStatus('Lead refreshed.');
       await refresh().catch(() => null);
     } catch (nextError) {
-      setDetailStatus(nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.');
+      setDetailStatus(
+        nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.'
+      );
     }
   };
 
@@ -362,7 +400,16 @@ export function Leads() {
     try {
       let bant: BridgeRecord = {};
       if (editForm.bant.trim()) {
-        bant = JSON.parse(editForm.bant);
+        try {
+          bant = JSON.parse(editForm.bant);
+        } catch (error) {
+          setDetailStatus(
+            error instanceof Error
+              ? `Invalid BANT JSON: ${error.message}`
+              : 'Invalid BANT JSON. Please check the field syntax.'
+          );
+          return;
+        }
       }
       const response = await patchLeadRequest(activeLeadId, {
         name: editForm.name,
@@ -386,7 +433,9 @@ export function Leads() {
       setDetailStatus('Lead saved to bridge.');
       await refresh().catch(() => null);
     } catch (nextError) {
-      setDetailStatus(nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.');
+      setDetailStatus(
+        nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.'
+      );
     } finally {
       setSaving(false);
     }
@@ -402,11 +451,37 @@ export function Leads() {
     setContractStatus('Preparing path-aware contract request...');
     try {
       const signers = [
-        { roleName: 'Signer1', recipientId: '1', routingOrder: '1', name: 'Probono Key Realty', email: 'info@probonokeyrealty.com' },
-        { roleName: 'Signer2', recipientId: '2', routingOrder: '2', name: contractForm.slot2Name || 'Probono Key Realty', email: contractForm.slot2Email || 'info@probonokeyrealty.com' },
-        { roleName: 'Signer3', recipientId: '3', routingOrder: '3', name: contractForm.seller1Name || 'Seller 1', email: contractForm.seller1Email },
+        {
+          roleName: 'Signer1',
+          recipientId: '1',
+          routingOrder: '1',
+          name: 'Probono Key Realty',
+          email: 'info@probonokeyrealty.com',
+        },
+        {
+          roleName: 'Signer2',
+          recipientId: '2',
+          routingOrder: '2',
+          name: contractForm.slot2Name || 'Probono Key Realty',
+          email: contractForm.slot2Email || 'info@probonokeyrealty.com',
+        },
+        {
+          roleName: 'Signer3',
+          recipientId: '3',
+          routingOrder: '3',
+          name: contractForm.seller1Name || 'Seller 1',
+          email: contractForm.seller1Email,
+        },
         ...(contractForm.seller2Email
-          ? [{ roleName: 'Signer4', recipientId: '4', routingOrder: '4', name: contractForm.seller2Name || 'Seller 2', email: contractForm.seller2Email }]
+          ? [
+              {
+                roleName: 'Signer4',
+                recipientId: '4',
+                routingOrder: '4',
+                name: contractForm.seller2Name || 'Seller 2',
+                email: contractForm.seller2Email,
+              },
+            ]
           : []),
       ];
       const response = await sendLeadContractRequest({
@@ -424,18 +499,25 @@ export function Leads() {
         signers,
         source: 'lead-detail',
       });
-      const contract = response.contract && typeof response.contract === 'object' ? response.contract as BridgeRecord : {};
-      const result = String(response.result || response.outcome || contract.status || '').toLowerCase();
+      const contract =
+        response.contract && typeof response.contract === 'object'
+          ? (response.contract as BridgeRecord)
+          : {};
+      const result = String(
+        response.result || response.outcome || contract.status || ''
+      ).toLowerCase();
       setContractStatus(
         result === 'queued_for_approval'
           ? 'Queued for approval. Ava can continue after approval.'
           : response.ok === false
             ? text(response.error, 'Contract request failed.')
-            : 'Contract request captured. Activity is attached to this lead.',
+            : 'Contract request captured. Activity is attached to this lead.'
       );
       await Promise.all([reloadLeadDetail(), refresh().catch(() => null)]);
     } catch (nextError) {
-      setContractStatus(nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.');
+      setContractStatus(
+        nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.'
+      );
     } finally {
       setSaving(false);
     }
@@ -458,7 +540,9 @@ export function Leads() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[420px_1fr]">
         <section className={`${softPanelClass} overflow-hidden`}>
           <div className="border-b border-slate-800 px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Pipeline leads</div>
+            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              Pipeline leads
+            </div>
             <div className="mt-1 text-sm text-slate-300">Tap a lead to load detail.</div>
           </div>
           <div className="leads-mobile-cards">
@@ -483,15 +567,30 @@ export function Leads() {
                 >
                   <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-base font-semibold text-slate-100">{sellerName}</span>
-                    <span className="mt-1 block text-xs text-slate-400">{getLeadAddress(lead)}</span>
+                    <span className="block text-base font-semibold text-slate-100">
+                      {sellerName}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-400">
+                      {getLeadAddress(lead)}
+                    </span>
                     <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
-                      <span>ARV <strong className="text-slate-100">{getLeadFinancial(lead, 'arv')}</strong></span>
-                      <span>MAO <strong className="text-slate-100">{getLeadFinancial(lead, 'mao')}</strong></span>
+                      <span>
+                        ARV{' '}
+                        <strong className="text-slate-100">{getLeadFinancial(lead, 'arv')}</strong>
+                      </span>
+                      <span>
+                        MAO{' '}
+                        <strong className="text-slate-100">{getLeadFinancial(lead, 'mao')}</strong>
+                      </span>
                     </span>
                     <span className="mt-3 flex flex-wrap gap-1.5">
                       {getLeadTags(lead).map((tag) => (
-                        <span key={tag} className="rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400">{tag}</span>
+                        <span
+                          key={tag}
+                          className="rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-400"
+                        >
+                          {tag}
+                        </span>
                       ))}
                     </span>
                     <span className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">
@@ -508,7 +607,11 @@ export function Leads() {
                       className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950"
                       onClick={(event) => {
                         event.stopPropagation();
-                        showUiToast({ tone: 'info', title: 'Call queued (demo)', desc: `${sellerName} stays selected. No provider call was made.` });
+                        showUiToast({
+                          tone: 'info',
+                          title: 'Call queued (demo)',
+                          desc: `${sellerName} stays selected. No provider call was made.`,
+                        });
                       }}
                     >
                       Call
@@ -542,7 +645,9 @@ export function Leads() {
                       {getLeadAddress(lead)}
                     </span>
                     <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                      <span>{getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}</span>
+                      <span>
+                        {getLeadPhone(lead) || getLeadEmail(lead) || 'No contact captured'}
+                      </span>
                       <span>Source: {text(lead.source, 'manual')}</span>
                     </span>
                   </span>
@@ -586,13 +691,26 @@ export function Leads() {
                       {getSellerName(activeLead)}
                     </h2>
                     <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-300">
-                      {PATH_LABELS[normalizePath(activeLead.selected_path || activeLead.selectedPath, activeLead)]}
+                      {
+                        PATH_LABELS[
+                          normalizePath(
+                            activeLead.selected_path || activeLead.selectedPath,
+                            activeLead
+                          )
+                        ]
+                      }
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-slate-400">{getLeadAddress(activeLead)}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                    <span className="inline-flex items-center gap-1"><Phone size={13} />{getLeadPhone(activeLead) || 'No phone'}</span>
-                    <span className="inline-flex items-center gap-1"><Mail size={13} />{getLeadEmail(activeLead) || 'No email'}</span>
+                    <span className="inline-flex items-center gap-1">
+                      <Phone size={13} />
+                      {getLeadPhone(activeLead) || 'No phone'}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <Mail size={13} />
+                      {getLeadEmail(activeLead) || 'No email'}
+                    </span>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -628,26 +746,47 @@ export function Leads() {
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Last offer</div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                    Last offer
+                  </div>
                   <div className="mt-2 text-lg font-semibold text-slate-100">
-                    {money(lastCall?.last_offer || getCallContext(activeLead).last_offer || getCallContext(activeLead).lastOffer)}
+                    {money(
+                      lastCall?.last_offer ||
+                        getCallContext(activeLead).last_offer ||
+                        getCallContext(activeLead).lastOffer
+                    )}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Sentiment</div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                    Sentiment
+                  </div>
                   <div className="mt-2 text-lg font-semibold text-slate-100">
                     {text(lastCall?.sentiment || getCallContext(activeLead).sentiment, 'No data')}
                   </div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Template</div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                    Template
+                  </div>
                   <div className="mt-2 truncate text-sm font-semibold text-slate-100">
-                    {TEMPLATE_NAMES[normalizePath(activeLead.selected_path || activeLead.selectedPath, activeLead)]}
+                    {
+                      TEMPLATE_NAMES[
+                        normalizePath(
+                          activeLead.selected_path || activeLead.selectedPath,
+                          activeLead
+                        )
+                      ]
+                    }
                   </div>
                 </div>
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Lead ID</div>
-                  <div className="mt-2 truncate text-sm font-semibold text-slate-100">{activeLeadId}</div>
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                    Lead ID
+                  </div>
+                  <div className="mt-2 truncate text-sm font-semibold text-slate-100">
+                    {activeLeadId}
+                  </div>
                 </div>
               </div>
 
@@ -655,8 +794,12 @@ export function Leads() {
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold text-slate-100">Activity for this lead</h3>
-                      <p className="text-xs text-slate-500">Documents, email sends, calls, and CRM edits attach here.</p>
+                      <h3 className="text-sm font-semibold text-slate-100">
+                        Activity for this lead
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Documents, email sends, calls, and CRM edits attach here.
+                      </p>
                     </div>
                   </div>
                   <div className="mt-3 space-y-2">
@@ -666,18 +809,25 @@ export function Leads() {
                         className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-xs font-medium text-slate-200">{text(item.actor, 'System')}</div>
+                          <div className="text-xs font-medium text-slate-200">
+                            {text(item.actor, 'System')}
+                          </div>
                           <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
                             {text(item.category, 'Activity')} - {text(item.status, 'saved')}
                           </div>
                         </div>
-                        <div className="mt-2 text-xs leading-relaxed text-slate-400">{text(item.text, 'Runtime activity')}</div>
-                        <div className="mt-1 text-[11px] text-slate-600">{formatDate(item.at || item.createdAt)}</div>
+                        <div className="mt-2 text-xs leading-relaxed text-slate-400">
+                          {text(item.text, 'Runtime activity')}
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-600">
+                          {formatDate(item.at || item.createdAt)}
+                        </div>
                       </div>
                     ))}
                     {!leadActivity.length && (
                       <div className="rounded-xl border border-dashed border-slate-800 px-3 py-5 text-center text-xs text-slate-500">
-                        No lead-specific activity yet. PDF and contract actions will appear after they are captured.
+                        No lead-specific activity yet. PDF and contract actions will appear after
+                        they are captured.
                       </div>
                     )}
                   </div>
@@ -687,20 +837,32 @@ export function Leads() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-semibold text-slate-100">Live Call Details</h3>
-                      <p className="text-xs text-slate-500">Latest transcript, sentiment, and offer memory.</p>
+                      <p className="text-xs text-slate-500">
+                        Latest transcript, sentiment, and offer memory.
+                      </p>
                     </div>
                     <span className="rounded-full border border-slate-700 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                      {lastCall?.call ? text((lastCall.call as BridgeRecord).status, 'Call ended') : 'No active call'}
+                      {lastCall?.call
+                        ? text((lastCall.call as BridgeRecord).status, 'Call ended')
+                        : 'No active call'}
                     </span>
                   </div>
                   <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-xs leading-relaxed text-slate-300">
-                    {text(lastCall?.summary || getCallContext(activeLead).summary, 'No recent call summary captured yet.')}
+                    {text(
+                      lastCall?.summary || getCallContext(activeLead).summary,
+                      'No recent call summary captured yet.'
+                    )}
                   </div>
                   <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
                     {Array.isArray(lastCall?.transcript) && lastCall.transcript.length ? (
                       (lastCall.transcript as BridgeRecord[]).slice(-8).map((line, index) => (
-                        <div key={text(line.id, `transcript-${index}`)} className="rounded-lg bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
-                          <span className="font-semibold text-slate-300">{text(line.speaker, 'Lead')}: </span>
+                        <div
+                          key={text(line.id, `transcript-${index}`)}
+                          className="rounded-lg bg-slate-950/60 px-3 py-2 text-xs text-slate-400"
+                        >
+                          <span className="font-semibold text-slate-300">
+                            {text(line.speaker, 'Lead')}:{' '}
+                          </span>
                           {text(line.text || line.body)}
                         </div>
                       ))
@@ -723,56 +885,168 @@ export function Leads() {
 
       {editOpen && editForm && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-          <div className={`${softPanelClass} flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden`}>
+          <div
+            className={`${softPanelClass} flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden`}
+          >
             <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-100">Edit Lead</h3>
-                <p className="text-xs text-slate-500">Correct CRM facts, BANT+, and Ava call memory.</p>
+                <p className="text-xs text-slate-500">
+                  Correct CRM facts, BANT+, and Ava call memory.
+                </p>
               </div>
-              <button type="button" onClick={() => setEditOpen(false)} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
+              >
                 <X size={18} />
               </button>
             </div>
             <div className="overflow-y-auto p-4">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <Field label="Full name"><input className={inputClass} value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} /></Field>
-                <Field label="Phone"><input className={inputClass} value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} /></Field>
-                <Field label="Email"><input className={inputClass} value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} /></Field>
-                <Field label="Property address"><input className={inputClass} value={editForm.address} onChange={(event) => setEditForm({ ...editForm, address: event.target.value })} /></Field>
+                <Field label="Full name">
+                  <input
+                    className={inputClass}
+                    value={editForm.name}
+                    onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
+                  />
+                </Field>
+                <Field label="Phone">
+                  <input
+                    className={inputClass}
+                    value={editForm.phone}
+                    onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })}
+                  />
+                </Field>
+                <Field label="Email">
+                  <input
+                    className={inputClass}
+                    value={editForm.email}
+                    onChange={(event) => setEditForm({ ...editForm, email: event.target.value })}
+                  />
+                </Field>
+                <Field label="Property address">
+                  <input
+                    className={inputClass}
+                    value={editForm.address}
+                    onChange={(event) => setEditForm({ ...editForm, address: event.target.value })}
+                  />
+                </Field>
                 <Field label="Property type">
-                  <select className={inputClass} value={editForm.propertyType} onChange={(event) => setEditForm({ ...editForm, propertyType: event.target.value })}>
-                    {PROPERTY_TYPES.map((item) => <option key={item}>{item}</option>)}
+                  <select
+                    className={inputClass}
+                    value={editForm.propertyType}
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, propertyType: event.target.value })
+                    }
+                  >
+                    {PROPERTY_TYPES.map((item) => (
+                      <option key={item}>{item}</option>
+                    ))}
                   </select>
                 </Field>
                 <Field label="Selected path">
-                  <select className={inputClass} value={editForm.selectedPath} onChange={(event) => setEditForm({ ...editForm, selectedPath: event.target.value as CanonicalPath })}>
-                    {(Object.keys(PATH_LABELS) as CanonicalPath[]).map((path) => <option key={path} value={path}>{PATH_LABELS[path]}</option>)}
+                  <select
+                    className={inputClass}
+                    value={editForm.selectedPath}
+                    onChange={(event) =>
+                      setEditForm({
+                        ...editForm,
+                        selectedPath: event.target.value as CanonicalPath,
+                      })
+                    }
+                  >
+                    {(Object.keys(PATH_LABELS) as CanonicalPath[]).map((path) => (
+                      <option key={path} value={path}>
+                        {PATH_LABELS[path]}
+                      </option>
+                    ))}
                   </select>
                 </Field>
-                <Field label="Motivation score"><input className={inputClass} type="number" min="1" max="10" value={editForm.motivation} onChange={(event) => setEditForm({ ...editForm, motivation: event.target.value })} /></Field>
-                <Field label="Tags"><input className={inputClass} value={editForm.tags} onChange={(event) => setEditForm({ ...editForm, tags: event.target.value })} /></Field>
-                <Field label="Last offer"><input className={inputClass} type="number" value={editForm.lastOffer} onChange={(event) => setEditForm({ ...editForm, lastOffer: event.target.value })} /></Field>
-                <Field label="Sentiment"><input className={inputClass} type="number" min="0" max="1" step="0.01" value={editForm.sentiment} onChange={(event) => setEditForm({ ...editForm, sentiment: event.target.value })} /></Field>
+                <Field label="Motivation score">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={editForm.motivation}
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, motivation: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Tags">
+                  <input
+                    className={inputClass}
+                    value={editForm.tags}
+                    onChange={(event) => setEditForm({ ...editForm, tags: event.target.value })}
+                  />
+                </Field>
+                <Field label="Last offer">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    value={editForm.lastOffer}
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, lastOffer: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Sentiment">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={editForm.sentiment}
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, sentiment: event.target.value })
+                    }
+                  />
+                </Field>
               </div>
               <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <Field label="Notes">
-                  <textarea className={`${inputClass} min-h-28 resize-y`} value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} />
+                  <textarea
+                    className={`${inputClass} min-h-28 resize-y`}
+                    value={editForm.notes}
+                    onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })}
+                  />
                 </Field>
                 <Field label="Call summary">
-                  <textarea className={`${inputClass} min-h-28 resize-y`} value={editForm.summary} onChange={(event) => setEditForm({ ...editForm, summary: event.target.value })} />
+                  <textarea
+                    className={`${inputClass} min-h-28 resize-y`}
+                    value={editForm.summary}
+                    onChange={(event) => setEditForm({ ...editForm, summary: event.target.value })}
+                  />
                 </Field>
               </div>
               <div className="mt-3">
                 <Field label="BANT+ JSON">
-                  <textarea className={`${inputClass} min-h-40 resize-y font-mono text-xs`} value={editForm.bant} onChange={(event) => setEditForm({ ...editForm, bant: event.target.value })} />
+                  <textarea
+                    className={`${inputClass} min-h-40 resize-y font-mono text-xs`}
+                    value={editForm.bant}
+                    onChange={(event) => setEditForm({ ...editForm, bant: event.target.value })}
+                  />
                 </Field>
               </div>
             </div>
             <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setEditOpen(false)} className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500">
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
                 Cancel
               </button>
-              <button type="button" disabled={saving} onClick={saveLead} className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={saveLead}
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
                 <Save size={15} /> Save Changes
               </button>
             </div>
@@ -782,20 +1056,30 @@ export function Leads() {
 
       {contractOpen && contractForm && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-          <div className={`${softPanelClass} flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden`}>
+          <div
+            className={`${softPanelClass} flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden`}
+          >
             <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-4">
               <div>
                 <h3 className="text-lg font-semibold text-slate-100">Send Contract</h3>
-                <p className="text-xs text-slate-500">Path-aware DocuSign routing with fixed signer order.</p>
+                <p className="text-xs text-slate-500">
+                  Path-aware DocuSign routing with fixed signer order.
+                </p>
               </div>
-              <button type="button" onClick={() => setContractOpen(false)} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100">
+              <button
+                type="button"
+                onClick={() => setContractOpen(false)}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
+              >
                 <X size={18} />
               </button>
             </div>
             <div className="overflow-y-auto p-4">
               <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-100">
                 <div className="font-semibold">{PATH_LABELS[contractForm.path]} selected</div>
-                <div className="mt-1">Template: <span className="font-mono">{contractForm.templateName}</span></div>
+                <div className="mt-1">
+                  Template: <span className="font-mono">{contractForm.templateName}</span>
+                </div>
               </div>
               <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="Path">
@@ -812,36 +1096,136 @@ export function Leads() {
                       });
                     }}
                   >
-                    {(Object.keys(PATH_LABELS) as CanonicalPath[]).map((path) => <option key={path} value={path}>{PATH_LABELS[path]}</option>)}
+                    {(Object.keys(PATH_LABELS) as CanonicalPath[]).map((path) => (
+                      <option key={path} value={path}>
+                        {PATH_LABELS[path]}
+                      </option>
+                    ))}
                   </select>
                 </Field>
-                <Field label="Template"><input className={`${inputClass} font-mono`} readOnly value={contractForm.templateName} /></Field>
-                <Field label="1. Buyer Signer 1"><input className={inputClass} readOnly value="Probono Key Realty" /></Field>
-                <Field label="Signer 1 email"><input className={inputClass} readOnly value="info@probonokeyrealty.com" /></Field>
-                <Field label="2. Buyer Signer 2 / RBP Manager"><input className={inputClass} value={contractForm.slot2Name} onChange={(event) => setContractForm({ ...contractForm, slot2Name: event.target.value })} /></Field>
-                <Field label="Signer 2 email"><input className={inputClass} value={contractForm.slot2Email} onChange={(event) => setContractForm({ ...contractForm, slot2Email: event.target.value })} /></Field>
-                <Field label="3. Seller 1 name"><input className={inputClass} value={contractForm.seller1Name} onChange={(event) => setContractForm({ ...contractForm, seller1Name: event.target.value })} /></Field>
-                <Field label="Seller 1 email"><input className={inputClass} value={contractForm.seller1Email} onChange={(event) => setContractForm({ ...contractForm, seller1Email: event.target.value })} /></Field>
-                <Field label="4. Seller 2 name"><input className={inputClass} value={contractForm.seller2Name} onChange={(event) => setContractForm({ ...contractForm, seller2Name: event.target.value })} /></Field>
-                <Field label="Seller 2 email"><input className={inputClass} value={contractForm.seller2Email} onChange={(event) => setContractForm({ ...contractForm, seller2Email: event.target.value })} /></Field>
-                <Field label="Offer amount"><input className={inputClass} type="number" value={contractForm.amount} onChange={(event) => setContractForm({ ...contractForm, amount: event.target.value })} /></Field>
-                <Field label="Timeline"><input className={inputClass} value={contractForm.timeline} onChange={(event) => setContractForm({ ...contractForm, timeline: event.target.value })} /></Field>
+                <Field label="Template">
+                  <input
+                    className={`${inputClass} font-mono`}
+                    readOnly
+                    value={contractForm.templateName}
+                  />
+                </Field>
+                <Field label="1. Buyer Signer 1">
+                  <input className={inputClass} readOnly value="Probono Key Realty" />
+                </Field>
+                <Field label="Signer 1 email">
+                  <input className={inputClass} readOnly value="info@probonokeyrealty.com" />
+                </Field>
+                <Field label="2. Buyer Signer 2 / RBP Manager">
+                  <input
+                    className={inputClass}
+                    value={contractForm.slot2Name}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, slot2Name: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Signer 2 email">
+                  <input
+                    className={inputClass}
+                    value={contractForm.slot2Email}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, slot2Email: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="3. Seller 1 name">
+                  <input
+                    className={inputClass}
+                    value={contractForm.seller1Name}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, seller1Name: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Seller 1 email">
+                  <input
+                    className={inputClass}
+                    value={contractForm.seller1Email}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, seller1Email: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="4. Seller 2 name">
+                  <input
+                    className={inputClass}
+                    value={contractForm.seller2Name}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, seller2Name: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Seller 2 email">
+                  <input
+                    className={inputClass}
+                    value={contractForm.seller2Email}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, seller2Email: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Offer amount">
+                  <input
+                    className={inputClass}
+                    type="number"
+                    value={contractForm.amount}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, amount: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Timeline">
+                  <input
+                    className={inputClass}
+                    value={contractForm.timeline}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, timeline: event.target.value })
+                    }
+                  />
+                </Field>
               </div>
               <div className="mt-3">
-                <Field label="Internal notes"><textarea className={`${inputClass} min-h-24 resize-y`} value={contractForm.notes} onChange={(event) => setContractForm({ ...contractForm, notes: event.target.value })} /></Field>
+                <Field label="Internal notes">
+                  <textarea
+                    className={`${inputClass} min-h-24 resize-y`}
+                    value={contractForm.notes}
+                    onChange={(event) =>
+                      setContractForm({ ...contractForm, notes: event.target.value })
+                    }
+                  />
+                </Field>
               </div>
               {contractStatus && (
                 <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-xs text-slate-300">
-                  {contractStatus.includes('failed') || contractStatus.includes('required') ? <AlertCircle size={15} className="mt-0.5 text-amber-300" /> : <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />}
+                  {contractStatus.includes('failed') || contractStatus.includes('required') ? (
+                    <AlertCircle size={15} className="mt-0.5 text-amber-300" />
+                  ) : (
+                    <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
+                  )}
                   <span>{contractStatus}</span>
                 </div>
               )}
             </div>
             <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setContractOpen(false)} className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500">
+              <button
+                type="button"
+                onClick={() => setContractOpen(false)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
                 Cancel
               </button>
-              <button type="button" disabled={saving} onClick={sendContract} className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={sendContract}
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
                 <Send size={15} /> Send via DocuSign
               </button>
             </div>

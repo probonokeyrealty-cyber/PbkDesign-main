@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, X, Zap } from 'lucide-react';
 import { showUiToast } from '../utils/uiFeedback';
-import { fetchRuntimeToolingStatus, getSnnWorkerStatus, invokeRuntimeTool } from '../utils/runtimeBridge';
+import {
+  fetchRuntimeToolingStatus,
+  getSnnWorkerStatus,
+  invokeRuntimeTool,
+} from '../utils/runtimeBridge';
 import { AGENT_REGISTRY, type RegistryAgent } from '../utils/agentRegistry';
 
 type AgentSkill = {
@@ -29,19 +33,49 @@ type PendingTransfer = {
 
 const AGENT_SKILLS: Record<string, AgentSkill[]> = {
   ava: [
-    { name: 'Tactical Empathy', source: 'Voss - NSTD', confidence: 94, usage: '187x', success: '71%' },
+    {
+      name: 'Tactical Empathy',
+      source: 'Voss - NSTD',
+      confidence: 94,
+      usage: '187x',
+      success: '71%',
+    },
     { name: 'Mirroring', source: 'Audiobook', confidence: 88, usage: '142x', success: '68%' },
-    { name: 'Ackerman Negotiation v3', source: 'self-programmed', confidence: 71, usage: '23x', success: '52%' },
+    {
+      name: 'Ackerman Negotiation v3',
+      source: 'self-programmed',
+      confidence: 71,
+      usage: '23x',
+      success: '52%',
+    },
     { name: 'Silence Hold', source: '48 Laws - ch 28', confidence: 28, usage: '0x', success: '-' },
   ],
   rex: [
-    { name: 'Revenue Gap Scan', source: 'PBK runtime', confidence: 91, usage: '42x', success: '76%' },
+    {
+      name: 'Revenue Gap Scan',
+      source: 'PBK runtime',
+      confidence: 91,
+      usage: '42x',
+      success: '76%',
+    },
   ],
   max: [
-    { name: 'Pattern Tagging', source: 'call outcomes', confidence: 84, usage: '66x', success: '61%' },
+    {
+      name: 'Pattern Tagging',
+      source: 'call outcomes',
+      confidence: 84,
+      usage: '66x',
+      success: '61%',
+    },
   ],
   'prosody-tuner': [
-    { name: 'Calm Downshift', source: 'voice trials', confidence: 79, usage: '51x', success: '58%' },
+    {
+      name: 'Calm Downshift',
+      source: 'voice trials',
+      confidence: 79,
+      usage: '51x',
+      success: '58%',
+    },
   ],
 };
 
@@ -57,7 +91,7 @@ function buildFleetAgents(): FleetAgent[] {
 
 function mergeAgentStatuses(
   agents: FleetAgent[],
-  bridgeAgents: Array<Record<string, unknown>>,
+  bridgeAgents: Array<Record<string, unknown>>
 ): FleetAgent[] {
   const byId = new Map(agents.map((a) => [a.id, a]));
   for (const ba of bridgeAgents) {
@@ -65,7 +99,9 @@ function mergeAgentStatuses(
     const existing = byId.get(id);
     if (existing) {
       const s = String(ba.status || existing.status).toLowerCase();
-      existing.status = (['active', 'standby', 'inactive'].includes(s) ? s : existing.status) as FleetAgent['status'];
+      existing.status = (
+        ['active', 'standby', 'inactive'].includes(s) ? s : existing.status
+      ) as FleetAgent['status'];
     }
   }
   return [...byId.values()];
@@ -94,7 +130,13 @@ async function flushTransferQueue(agents: FleetAgent[]) {
         title: 'Queued transfer sent',
         desc: `'${transfer.skillName}' delivered to ${toNames}`,
       });
-    } catch {
+    } catch (error) {
+      console.warn('[PBK AgentFleet] queued skill transfer retry failed', {
+        skillName: transfer.skillName,
+        fromAgentId: transfer.fromAgentId,
+        toAgentIds: transfer.toAgentIds,
+        error: error instanceof Error ? error.message : String(error),
+      });
       transfer.retries += 1;
       if (transfer.retries >= 3) {
         const idx = pendingTransferQueue.indexOf(transfer);
@@ -119,7 +161,13 @@ interface SkillTransferModalProps {
   onTransfer: (targetAgentIds: string[], versioned: boolean) => Promise<void>;
 }
 
-function SkillTransferModal({ skill, currentAgentId, agents, onClose, onTransfer }: SkillTransferModalProps) {
+function SkillTransferModal({
+  skill,
+  currentAgentId,
+  agents,
+  onClose,
+  onTransfer,
+}: SkillTransferModalProps) {
   const targets = agents.filter((a) => a.id !== currentAgentId);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [versioned, setVersioned] = useState(true);
@@ -147,7 +195,9 @@ function SkillTransferModal({ skill, currentAgentId, agents, onClose, onTransfer
           <div>
             <div className="modal-kicker">Skill transfer</div>
             <h3>{skill.name}</h3>
-            <p>{skill.source} — {skill.confidence}% confidence</p>
+            <p>
+              {skill.source} — {skill.confidence}% confidence
+            </p>
           </div>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             <X size={18} />
@@ -169,7 +219,9 @@ function SkillTransferModal({ skill, currentAgentId, agents, onClose, onTransfer
                   <span className="block text-sm font-semibold text-slate-100">{agent.name}</span>
                   <span className="block text-xs text-slate-500">{agent.role}</span>
                 </span>
-                <span className="transfer-check" aria-hidden="true">{checked && <Check size={14} />}</span>
+                <span className="transfer-check" aria-hidden="true">
+                  {checked && <Check size={14} />}
+                </span>
               </button>
             );
           })}
@@ -178,7 +230,9 @@ function SkillTransferModal({ skill, currentAgentId, agents, onClose, onTransfer
         <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-sky-500/20 bg-sky-500/10 px-3 py-3 text-sm text-sky-100">
           <span>
             <span className="block font-semibold">Version this skill</span>
-            <span className="text-xs text-sky-200/75">Keeps rollback path and outcome history separate.</span>
+            <span className="text-xs text-sky-200/75">
+              Keeps rollback path and outcome history separate.
+            </span>
           </span>
           <input
             type="checkbox"
@@ -190,12 +244,16 @@ function SkillTransferModal({ skill, currentAgentId, agents, onClose, onTransfer
 
         {skill.transferHistory && skill.transferHistory.length > 0 && (
           <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
-            <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Transfer history</div>
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+              Transfer history
+            </div>
             {skill.transferHistory.map((h, i) => (
               <div key={i} className="flex items-center gap-2 text-[11px] text-slate-400 py-0.5">
                 <span className="text-slate-500">{new Date(h.at).toLocaleDateString()}</span>
                 <span>→ {h.toNames.join(', ')}</span>
-                {h.versioned && <span className="rounded bg-sky-500/20 px-1 text-sky-300">versioned</span>}
+                {h.versioned && (
+                  <span className="rounded bg-sky-500/20 px-1 text-sky-300">versioned</span>
+                )}
               </div>
             ))}
           </div>
@@ -206,7 +264,9 @@ function SkillTransferModal({ skill, currentAgentId, agents, onClose, onTransfer
             {selectedIds.length} target agent{selectedIds.length === 1 ? '' : 's'} selected
           </span>
           <div className="flex gap-2">
-            <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn-secondary" onClick={onClose}>
+              Cancel
+            </button>
             <button
               type="button"
               className="btn-primary"
@@ -247,8 +307,17 @@ function TestSkillPanel({
         scenario: scenario.trim(),
       });
       setResult(String(res?.result ?? res?.response ?? res?.output ?? JSON.stringify(res)));
-    } catch {
-      setResult('Bridge unavailable — cannot run live test right now.');
+    } catch (error) {
+      console.warn('[PBK AgentFleet] skill test failed', {
+        skillName: skill.name,
+        agentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setResult(
+        error instanceof Error
+          ? error.message
+          : 'Bridge unavailable - cannot run live test right now.'
+      );
     } finally {
       setTesting(false);
     }
@@ -281,9 +350,7 @@ function TestSkillPanel({
           {testing ? <Loader2 size={11} className="animate-spin" /> : null}
           {testing ? 'Testing…' : 'Run test'}
         </button>
-        {result && (
-          <p className="min-w-0 text-xs text-slate-400 leading-relaxed">{result}</p>
-        )}
+        {result && <p className="min-w-0 text-xs text-slate-400 leading-relaxed">{result}</p>}
       </div>
     </div>
   );
@@ -298,7 +365,9 @@ function ExamplePanel({ skill, agent }: { skill: AgentSkill; agent: FleetAgent }
         <p className="text-slate-300">{skill.source}</p>
       </div>
       <div>
-        <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Agent capabilities</div>
+        <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">
+          Agent capabilities
+        </div>
         <div className="flex flex-wrap gap-1">
           {relevant.map((cap) => (
             <span
@@ -326,7 +395,10 @@ export function AgentFleet() {
   const [selectedSkill, setSelectedSkill] = useState<AgentSkill | null>(null);
   const [expandedExample, setExpandedExample] = useState<string | null>(null);
   const [testingSkill, setTestingSkill] = useState<string | null>(null);
-  const [snnStatus, setSnnStatus] = useState<{ ava: boolean; rex: boolean }>({ ava: false, rex: false });
+  const [snnStatus, setSnnStatus] = useState<{ ava: boolean; rex: boolean }>({
+    ava: false,
+    rex: false,
+  });
 
   useEffect(() => {
     setSnnStatus(getSnnWorkerStatus());
@@ -341,10 +413,24 @@ export function AgentFleet() {
         const bridgeAgents = Array.isArray(raw.agents)
           ? (raw.agents as Array<Record<string, unknown>>)
           : [];
-        setAgents((prev) => mergeAgentStatuses(prev, bridgeAgents));
+        setAgents((prev) => {
+          const merged = mergeAgentStatuses(prev, bridgeAgents);
+          flushTransferQueue(merged).catch((error) => {
+            console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
+            if (!cancelled) {
+              showUiToast({
+                tone: 'warning',
+                title: 'Transfer retry failed',
+                desc:
+                  error instanceof Error
+                    ? error.message
+                    : 'Queued skill transfer could not reach the bridge.',
+              });
+            }
+          });
+          return merged;
+        });
         setBridgeConnected(true);
-        // Flush any transfers that were queued while bridge was offline
-        flushTransferQueue(agents).catch(() => undefined);
       })
       .catch(() => {
         if (!cancelled) {
@@ -356,13 +442,14 @@ export function AgentFleet() {
           });
         }
       });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const activeAgent = useMemo(
     () => agents.find((a) => a.id === activeAgentId) ?? agents[0],
-    [activeAgentId, agents],
+    [activeAgentId, agents]
   );
 
   const handleTransfer = async (targetAgentIds: string[], versioned: boolean) => {
@@ -401,7 +488,7 @@ export function AgentFleet() {
               };
             }),
           };
-        }),
+        })
       );
       showUiToast({
         tone: 'success',
@@ -451,7 +538,11 @@ export function AgentFleet() {
             </span>
           )}
           <div className={statusBadgeClass}>
-            {bridgeConnected === null ? 'Connecting…' : bridgeConnected ? 'Bridge live' : 'Bridge offline'}
+            {bridgeConnected === null
+              ? 'Connecting…'
+              : bridgeConnected
+                ? 'Bridge live'
+                : 'Bridge offline'}
           </div>
         </div>
       </div>
@@ -479,16 +570,19 @@ export function AgentFleet() {
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="block text-sm font-semibold text-slate-100">{agent.name}</span>
-                    {(agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex)
-                      ? <Zap size={10} className="text-sky-400" aria-label="SNN active" />
-                      : null}
+                    {(agent.id === 'ava' && snnStatus.ava) ||
+                    (agent.id === 'rex' && snnStatus.rex) ? (
+                      <Zap size={10} className="text-sky-400" aria-label="SNN active" />
+                    ) : null}
                   </span>
                   <span className="block truncate text-xs text-slate-500">{agent.role}</span>
                 </span>
                 <span
                   className={[
                     'rounded-full border px-2 py-0.5 text-[10px] uppercase',
-                    agent.status === 'active' ? 'border-emerald-700/50 text-emerald-400' : 'border-slate-700 text-slate-400',
+                    agent.status === 'active'
+                      ? 'border-emerald-700/50 text-emerald-400'
+                      : 'border-slate-700 text-slate-400',
                   ].join(' ')}
                 >
                   {agent.status}
@@ -502,10 +596,14 @@ export function AgentFleet() {
         <section className="rounded-2xl border border-slate-800 bg-slate-950">
           <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-4 py-4">
             <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Detail panel</div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                Detail panel
+              </div>
               <h2 className="mt-1 text-2xl font-semibold text-slate-100">{activeAgent.name}</h2>
               <p className="text-sm text-slate-400">{activeAgent.role}</p>
-              <p className="mt-1 text-xs text-slate-500 leading-relaxed">{activeAgent.description}</p>
+              <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                {activeAgent.description}
+              </p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-2">
               <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
@@ -582,7 +680,8 @@ export function AgentFleet() {
                             Used <span className="font-semibold text-slate-100">{skill.usage}</span>
                           </div>
                           <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
-                            Success <span className="font-semibold text-lime-300">{skill.success}</span>
+                            Success{' '}
+                            <span className="font-semibold text-lime-300">{skill.success}</span>
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">

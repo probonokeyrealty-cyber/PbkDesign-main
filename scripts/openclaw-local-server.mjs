@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-02-direct-postgres-health-v6';
+const BUILD_REVISION = '2026-06-02-bridge-ui-regression-fixes-v7';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -882,6 +882,7 @@ const TOOL_NAMES = [
   'sendNegotiationApproval',
   'pbkSendNegotiationApproval',
   'avaOverrideOffer',
+  'pbk_test_skill',
   'pbk_script_test',
   'scriptTest',
   'pbk_outcome_analyzer',
@@ -24675,6 +24676,44 @@ async function scriptTestRecord(params = {}) {
   return { ok: true, result: 'script_test_report', tests };
 }
 
+async function skillScenarioTestRecord(params = {}) {
+  const skillName = String(params.skillName || params.skill_name || params.name || '').trim();
+  const agentId = String(params.agentId || params.agent_id || params.agentName || params.agent_name || 'ava').trim();
+  const scenario = sanitizeAvaSpokenOutput(
+    params.scenario || params.prompt || params.transcript || params.text || '',
+    '',
+  ).slice(0, 1200);
+
+  if (!skillName) {
+    return { ok: false, result: 'invalid_request', error: 'pbk_test_skill requires skillName.' };
+  }
+  if (!scenario) {
+    return { ok: false, result: 'invalid_request', error: 'pbk_test_skill requires a scenario to evaluate.' };
+  }
+
+  const report = await scriptTestRecord({
+    action: 'report',
+    tenantId: params.tenantId || params.tenant_id || 'pbk',
+    objectionType: params.objectionType || params.objection_type || skillName,
+    limit: 5,
+  });
+  const evidenceCount = Array.isArray(report?.tests) ? report.tests.length : 0;
+
+  return {
+    ok: true,
+    result: 'skill_test_preview',
+    writeMode: 'read_only',
+    agentId,
+    skillName,
+    skillSource: String(params.skillSource || params.skill_source || '').trim(),
+    scenario,
+    response: `${agentId || 'Ava'} can evaluate "${skillName}" against this scenario. ${evidenceCount ? `${evidenceCount} related script-test record(s) were found.` : 'No measured script-test record exists yet, so this should stay in review until sandbox/live outcomes are captured.'}`,
+    recommendedNextAction: 'Create or attach a pbk_script_test quality gate before promoting this skill to production.',
+    evidence: report?.tests || [],
+    bridgeTool: 'pbk_script_test',
+  };
+}
+
 async function persistOutcomeReportToPg(report = {}) {
   const pool = getPgPool();
   if (!pool || !report.id) return false;
@@ -41318,6 +41357,11 @@ const toolHandlers = {
     return avaOverrideOfferRecord(params);
   },
 
+  async pbk_test_skill(params = {}) {
+    recordToolUse('pbk_test_skill');
+    return skillScenarioTestRecord(params);
+  },
+
   async pbk_script_test(params = {}) {
     recordToolUse('pbk_script_test');
     return scriptTestRecord(params);
@@ -46499,11 +46543,9 @@ function buildStateSnapshot(options = {}) {
 function json(response, statusCode, payload) {
   const body = Buffer.from(JSON.stringify(payload, null, 2));
   const headers = {
+    ...getResponseCorsHeaders(response),
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
-    Vary: 'Accept-Encoding',
+    Vary: 'Origin, Accept-Encoding',
   };
   if (response.pbkAcceptsGzip && body.length >= 2048) {
     const compressed = gzipSync(body);
@@ -46524,22 +46566,57 @@ function json(response, statusCode, payload) {
 
 function sendText(response, statusCode, body, contentType = 'text/plain; charset=utf-8') {
   response.writeHead(statusCode, {
+    ...getResponseCorsHeaders(response),
     'Content-Type': contentType,
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
   });
   response.end(body);
 }
 
 function sendBinary(response, statusCode, body, headers = {}) {
   response.writeHead(statusCode, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
+    ...getResponseCorsHeaders(response),
     ...headers,
   });
   response.end(body);
+}
+
+const BRIDGE_DEFAULT_ALLOWED_ORIGINS = [
+  'https://pbkcommandcenter.netlify.app',
+  'https://pbk-openclaw-bridge.onrender.com',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+  `http://${HOST}:${PORT}`,
+];
+
+function getBridgeAllowedOrigins() {
+  const configured = String(process.env.PBK_ALLOWED_ORIGINS || process.env.PBK_CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return new Set([...BRIDGE_DEFAULT_ALLOWED_ORIGINS, ...configured]);
+}
+
+function buildBridgeCorsHeaders(request) {
+  const headers = {
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID',
+    Vary: 'Origin',
+  };
+  const origin = String(request?.headers?.origin || '').trim();
+  if (origin && getBridgeAllowedOrigins().has(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  return headers;
+}
+
+function getResponseCorsHeaders(response) {
+  return response?.pbkCorsHeaders || {
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID',
+    Vary: 'Origin',
+  };
 }
 
 const COMMAND_CENTER_APP_PATHS = new Set([
@@ -46593,12 +46670,10 @@ function sendPublicStaticFile(response, filePath, contentType) {
   }
   const body = readFileSync(filePath);
   const headers = {
+    ...getResponseCorsHeaders(response),
     'Content-Type': contentType,
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
     'Cache-Control': 'public, max-age=60',
-    Vary: 'Accept-Encoding',
+    Vary: 'Origin, Accept-Encoding',
   };
   if (response.pbkAcceptsGzip && body.length >= 2048) {
     const compressed = gzipSync(body);
@@ -46894,9 +46969,7 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
   }
 
   response.writeHead(200, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
+    ...getResponseCorsHeaders(response),
     'Content-Type': 'audio/mpeg',
     'Cache-Control': 'no-store',
     'Transfer-Encoding': 'chunked',
@@ -51763,14 +51836,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
 
 const server = createServer(async (request, response) => {
   response.pbkAcceptsGzip = /\bgzip\b/i.test(String(request.headers['accept-encoding'] || ''));
+  response.pbkCorsHeaders = buildBridgeCorsHeaders(request);
   const url = new URL(request.url || '/', `http://${request.headers.host || `${HOST}:${PORT}`}`);
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
 
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature',
+      ...response.pbkCorsHeaders,
       'Access-Control-Max-Age': '86400',
     });
     response.end();
@@ -52133,10 +52205,8 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && matchesPath(pathname, ['/api/public/ava-chat', '/public/ava-chat'])) {
       const result = await handlePublicAvaChatRequest(request);
       response.writeHead(result.statusCode || 200, {
+        ...getResponseCorsHeaders(response),
         'Content-Type': 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST,OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Public-Ava-Key, X-Public-Key',
         ...(result.headers || {}),
       });
       response.end(JSON.stringify(result.body || {}));
@@ -54232,7 +54302,7 @@ const server = createServer(async (request, response) => {
         || ['text', 'markdown', 'md'].includes(String(url.searchParams.get('format') || '').toLowerCase());
       if (wantsText) {
         response.writeHead(200, {
-          'Access-Control-Allow-Origin': '*',
+          ...getResponseCorsHeaders(response),
           'Content-Type': 'text/plain; charset=utf-8',
           'Cache-Control': 'no-store',
         });

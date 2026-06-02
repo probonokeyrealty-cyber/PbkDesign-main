@@ -54,6 +54,14 @@ function getRequestId(event: Parameters<Handler>[0]) {
     || `pbk-documents-pdf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function buildRequestUrl(event: Parameters<Handler>[0]) {
+  const host = getHeader(event, 'x-forwarded-host') || getHeader(event, 'host');
+  const proto = getHeader(event, 'x-forwarded-proto') || 'https';
+  const path = event.path || '/api/documents/pdf';
+  if (!host) return `https://pbkcommandcenter.netlify.app${path}`;
+  return `${proto}://${host}${path}`;
+}
+
 function pdfEscape(value: string) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -333,7 +341,7 @@ export const handler: Handler = async (event) => {
 
   try {
     const payload = JSON.parse(event.body || '{}') as DocumentRequest;
-    const requestUrl = event.rawUrl || `https://${event.headers.host || 'pbkcommandcenter.netlify.app'}${event.path || '/api/documents/pdf'}`;
+    const requestUrl = buildRequestUrl(event);
     let pdf: Buffer | Uint8Array;
     let fallbackRenderer = false;
     try {

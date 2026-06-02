@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -26,6 +26,13 @@ const pool = new Pool({
 });
 
 async function main() {
+  const migrationStat = await stat(migrationsDir).catch(() => null);
+  if (!migrationStat?.isDirectory()) {
+    console.error(`Supabase migrations directory not found: ${migrationsDir}`);
+    process.exitCode = 1;
+    return;
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS public.pbk_schema_migrations (
       migration_name TEXT PRIMARY KEY,

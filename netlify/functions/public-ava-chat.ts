@@ -26,20 +26,45 @@ type RateBucket = {
 };
 
 const rateBuckets = new Map<string, RateBucket>();
+let missingPublicKeyWarned = false;
 
 const corsHeaders = {
   'Cache-Control': 'no-store',
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type, X-Public-Ava-Key, X-Public-Key, X-Request-ID',
   'Access-Control-Allow-Methods': 'POST,OPTIONS',
 };
 
-function json(payload: unknown, statusCode = 200, headers: Record<string, string> = {}) {
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://pbkcommandcenter.netlify.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+];
+
+function getAllowedOrigins() {
+  const configured = String(process.env.PBK_ALLOWED_ORIGINS || process.env.PBK_CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]);
+}
+
+function buildCorsHeaders(event?: Parameters<Handler>[0]) {
+  const headers: Record<string, string> = { ...corsHeaders, Vary: 'Origin' };
+  const origin = event ? getHeader(event, 'origin') : '';
+  if (origin && getAllowedOrigins().has(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  return headers;
+}
+
+function json(payload: unknown, statusCode = 200, headers: Record<string, string> = {}, event?: Parameters<Handler>[0]) {
   return {
     statusCode,
     headers: {
       'Content-Type': 'application/json',
-      ...corsHeaders,
+      ...buildCorsHeaders(event),
       ...headers,
     },
     body: JSON.stringify(payload),
@@ -101,7 +126,7 @@ export const handler: Handler = async (event) => {
     return {
       statusCode: 204,
       headers: {
-        ...corsHeaders,
+        ...buildCorsHeaders(event),
         'X-Request-ID': requestId,
       },
       body: '',
@@ -109,7 +134,25 @@ export const handler: Handler = async (event) => {
   }
 
   if (event.httpMethod !== 'POST') {
-    return json({ ok: false, error: 'Method not allowed' }, 405, { 'X-Request-ID': requestId });
+    return json({ ok: false, error: 'Method not allowed' }, 405, { 'X-Request-ID': requestId }, event);
+  }
+
+  if (!PUBLIC_AVA_CHAT_KEY) {
+    if (!missingPublicKeyWarned) {
+      console.error('PBK public Ava chat is not configured: set PUBLIC_AVA_CHAT_KEY or PBK_PUBLIC_AVA_CHAT_KEY.');
+      missingPublicKeyWarned = true;
+    }
+    return json(
+      {
+        ok: false,
+        error: 'PUBLIC_AVA_CHAT_KEY is not configured.',
+        message: 'Public Ava chat is disabled until the Netlify function has a bridge public chat key.',
+        requestId,
+      },
+      503,
+      { 'X-Request-ID': requestId },
+      event,
+    );
   }
 
   const rateLimit = checkRateLimit(event);
@@ -134,6 +177,7 @@ export const handler: Handler = async (event) => {
         ...rateLimitHeaders,
         'Retry-After': String(rateLimit.retryAfterSeconds),
       },
+      event,
     );
   }
 
@@ -141,7 +185,7 @@ export const handler: Handler = async (event) => {
   try {
     body = JSON.parse(event.body || '{}');
   } catch {
-    return json({ ok: false, error: 'Invalid JSON body', requestId }, 400, rateLimitHeaders);
+    return json({ ok: false, error: 'Invalid JSON body', requestId }, 400, rateLimitHeaders, event);
   }
 
   try {
@@ -150,7 +194,7 @@ export const handler: Handler = async (event) => {
       headers: {
         'Content-Type': 'application/json',
         'X-Request-ID': requestId,
-        ...(PUBLIC_AVA_CHAT_KEY ? { 'X-Public-Ava-Key': PUBLIC_AVA_CHAT_KEY } : {}),
+        'X-Public-Ava-Key': PUBLIC_AVA_CHAT_KEY,
       },
       body: JSON.stringify({
         ...body,
@@ -166,7 +210,7 @@ export const handler: Handler = async (event) => {
     return json(payload, response.status, {
       ...rateLimitHeaders,
       'X-PBK-Bridge': BRIDGE_URL,
-    });
+    }, event);
   } catch (error) {
     return json(
       {
@@ -177,6 +221,7 @@ export const handler: Handler = async (event) => {
       },
       502,
       rateLimitHeaders,
+      event,
     );
   }
 };

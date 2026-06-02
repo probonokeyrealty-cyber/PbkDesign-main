@@ -21,6 +21,10 @@ const agentDealContextPath = resolve(root, 'src/app/utils/agentDealContext.ts');
 const scriptPanelPath = resolve(root, 'src/app/components/ScriptPanel.tsx');
 const runtimeBridgePath = resolve(root, 'src/app/utils/runtimeBridge.ts');
 const commandCenterPath = resolve(root, 'src/app/routes/CommandCenter.tsx');
+const agentFleetPath = resolve(root, 'src/app/routes/AgentFleet.tsx');
+const mcpBrainPath = resolve(root, 'mcp-server/src/tools/brain.ts');
+const applySupabaseMigrationsPath = resolve(root, 'scripts/apply-supabase-migrations.mjs');
+const viteConfigPath = resolve(root, 'vite.config.ts');
 const renderConfigPath = resolve(root, 'render.yaml');
 const netlifyConfigPath = resolve(root, 'netlify.toml');
 const netlifyPublicAvaFunctionPath = resolve(root, 'netlify/functions/public-ava-chat.ts');
@@ -49,6 +53,10 @@ const agentDealContext = existsSync(agentDealContextPath) ? readFileSync(agentDe
 const scriptPanel = existsSync(scriptPanelPath) ? readFileSync(scriptPanelPath, 'utf8') : '';
 const runtimeBridge = existsSync(runtimeBridgePath) ? readFileSync(runtimeBridgePath, 'utf8') : '';
 const commandCenter = existsSync(commandCenterPath) ? readFileSync(commandCenterPath, 'utf8') : '';
+const agentFleet = existsSync(agentFleetPath) ? readFileSync(agentFleetPath, 'utf8') : '';
+const mcpBrain = existsSync(mcpBrainPath) ? readFileSync(mcpBrainPath, 'utf8') : '';
+const applySupabaseMigrations = existsSync(applySupabaseMigrationsPath) ? readFileSync(applySupabaseMigrationsPath, 'utf8') : '';
+const viteConfig = existsSync(viteConfigPath) ? readFileSync(viteConfigPath, 'utf8') : '';
 const renderConfig = existsSync(renderConfigPath) ? readFileSync(renderConfigPath, 'utf8') : '';
 const netlifyConfig = existsSync(netlifyConfigPath) ? readFileSync(netlifyConfigPath, 'utf8') : '';
 const netlifyPublicAvaFunction = existsSync(netlifyPublicAvaFunctionPath) ? readFileSync(netlifyPublicAvaFunctionPath, 'utf8') : '';
@@ -537,6 +545,25 @@ const checks = [
       && /sourceSurface:\s*'agent-fleet'/.test(index),
   },
   {
+    name: 'Agent Fleet skill testing and CRM updates are registered across UI, MCP, and bridge',
+    ok: /invokeRuntimeTool<Record<string, unknown>>\('pbk_test_skill'/.test(agentFleet)
+      && /async pbk_test_skill\(params = \{\}\)/.test(bridge)
+      && /function skillScenarioTestRecord/.test(bridge)
+      && /'pbk_test_skill'/.test(bridge)
+      && /"pbk_test_skill"/.test(mcpBrain)
+      && /bridgeInvoke\("pbk_test_skill"/.test(mcpBrain)
+      && /"pbk_update_crm"/.test(mcpBrain)
+      && /bridgeInvoke\("updateCRM"/.test(mcpBrain)
+      && /async updateCRM\(params = \{\}\)/.test(bridge),
+  },
+  {
+    name: 'Agent Fleet transfer retries log bridge failures instead of swallowing them',
+    ok: /queued skill transfer retry failed/.test(agentFleet)
+      && /queued skill transfer flush failed/.test(agentFleet)
+      && /Transfer retry failed/.test(agentFleet)
+      && !/flushTransferQueue\(agents\)\.catch\(\(\) => undefined\)/.test(agentFleet),
+  },
+  {
     name: 'Agent Fleet defaults are honest runtime records, not fake live/demo activity',
     ok: /function buildDefaultAgentFleet/.test(bridge)
       && /activity:\s*'Waiting for approved PBK work.'/.test(defaultAgentFleetBlock)
@@ -1023,7 +1050,7 @@ const checks = [
   },
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
-    ok: /BUILD_REVISION = '2026-(?:05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix)|31-(?:tech-debt-nurture-agent-v2|agent-tooling-nurture-auto-skill-v1|optional-tooling-health-v3|research-additives-v1|unified-additive-intelligence-v2|provider-augmented-additives-v3))|06-01-(?:ava-memory-command-intelligence-v1|skill-emotion-learning-v1|skill-emotion-learning-v2|live-call-learning-repair-v1|live-call-learning-supabase-fallback-v2|live-call-learning-supabase-fallback-v3|live-call-learning-supabase-fallback-v4|live-call-learning-supabase-fallback-v5)|06-02-direct-postgres-health-v6)'/.test(bridge)
+    ok: /BUILD_REVISION = '2026-(?:05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix)|31-(?:tech-debt-nurture-agent-v2|agent-tooling-nurture-auto-skill-v1|optional-tooling-health-v3|research-additives-v1|unified-additive-intelligence-v2|provider-augmented-additives-v3))|06-01-(?:ava-memory-command-intelligence-v1|skill-emotion-learning-v1|skill-emotion-learning-v2|live-call-learning-repair-v1|live-call-learning-supabase-fallback-v2|live-call-learning-supabase-fallback-v3|live-call-learning-supabase-fallback-v4|live-call-learning-supabase-fallback-v5)|06-02-(?:direct-postgres-health-v6|bridge-ui-regression-fixes-v7))'/.test(bridge)
       && /function recordAvaSpokenOutputDiagnostics/.test(bridge)
       && /lastAvaSpokenOutput/.test(bridge)
       && /\/api\/voice\/status/.test(bridge)
@@ -1490,6 +1517,25 @@ const checks = [
       && /responseHeaders\['X-Request-ID'\]\s*=/.test(netlifyBridgeProxyFunction),
   },
   {
+    name: 'Netlify and bridge CORS use an allow-list instead of wildcard access',
+    ok: /function buildCorsHeaders/.test(netlifyBridgeProxyFunction)
+      && /function buildCorsHeaders/.test(netlifyPublicAvaFunction)
+      && /function buildBridgeCorsHeaders/.test(bridge)
+      && /PBK_ALLOWED_ORIGINS/.test(netlifyBridgeProxyFunction)
+      && /PBK_ALLOWED_ORIGINS/.test(netlifyPublicAvaFunction)
+      && /PBK_ALLOWED_ORIGINS/.test(bridge)
+      && !/Access-Control-Allow-Origin['"]?\s*:\s*['"]\*/.test(netlifyBridgeProxyFunction)
+      && !/Access-Control-Allow-Origin['"]?\s*:\s*['"]\*/.test(netlifyPublicAvaFunction)
+      && !/Access-Control-Allow-Origin['"]?\s*:\s*['"]\*/.test(bridge),
+  },
+  {
+    name: 'Public Ava chat fails closed when its bridge public key is missing',
+    ok: /PUBLIC_AVA_CHAT_KEY is not configured/.test(netlifyPublicAvaFunction)
+      && /missingPublicKeyWarned/.test(netlifyPublicAvaFunction)
+      && /503/.test(netlifyPublicAvaFunction)
+      && /'X-Public-Ava-Key': PUBLIC_AVA_CHAT_KEY/.test(netlifyPublicAvaFunction),
+  },
+  {
     name: 'Hosted settings include a safe clear-key action for stale bridge sessions',
     ok: /data-plugin-action="clear-key"/.test(index)
       && /action === 'clear-key'/.test(index)
@@ -1502,6 +1548,18 @@ const checks = [
     ok: /export\s+const\s+handler/.test(netlifyDocumentsPdfFunction)
       && /from\s*=\s*"\/api\/documents\/pdf"/.test(netlifyConfig)
       && /to\s*=\s*"\/\.netlify\/functions\/documents-pdf"/.test(netlifyConfig),
+  },
+  {
+    name: 'PDF generation and local config fail loudly on invalid runtime assumptions',
+    ok: /function buildRequestUrl/.test(netlifyDocumentsPdfFunction)
+      && !/event\.rawUrl/.test(netlifyDocumentsPdfFunction)
+      && /Invalid BANT JSON/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8'))
+      && /assertRuntimeAuthConfigured/.test(runtimeBridge)
+      && /PBK bridge API key is not configured/.test(runtimeBridge)
+      && !/as unknown as \{ env/.test(runtimeBridge)
+      && /No bridge URL configured/.test(viteConfig)
+      && /stat\(migrationsDir\)/.test(applySupabaseMigrations)
+      && /Supabase migrations directory not found/.test(applySupabaseMigrations),
   },
   {
     name: 'Netlify hosted app proxies operational bridge routes through same-origin functions',

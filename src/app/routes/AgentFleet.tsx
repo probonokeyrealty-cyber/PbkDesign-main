@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, X, Zap } from 'lucide-react';
 import { showUiToast } from '../utils/uiFeedback';
 import {
+  fetchRuntimeState,
   fetchRuntimeToolingStatus,
   getSnnWorkerStatus,
   invokeRuntimeTool,
@@ -29,6 +30,62 @@ type PendingTransfer = {
   versioned: boolean;
   queuedAt: string;
   retries: number;
+};
+
+type RuntimeLeadOption = {
+  id?: string;
+  leadId?: string;
+  leadName?: string;
+  name?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  seller?: { name?: string; phone?: string; email?: string };
+  property?: { address?: string };
+  selectedPath?: string;
+  selected_path?: string;
+};
+
+type BridgeSnnWorker = {
+  agentId?: string;
+  name?: string;
+  status?: string;
+  ready?: boolean;
+  lastActive?: string;
+  currentTask?: string;
+  note?: string;
+  spikeSources?: Array<{ name?: string; count?: number; ready?: boolean }>;
+};
+
+type AgentDealPreview = {
+  result?: string;
+  writeMode?: string;
+  summary?: string;
+  recommendedAction?: string;
+  confidence?: number;
+  requiredApprovals?: string[];
+  reasoning?: string[];
+  selectedPath?: string;
+  lead?: {
+    leadId?: string;
+    leadName?: string;
+    address?: string;
+    found?: boolean;
+  };
+  bant?: {
+    complete?: boolean;
+    missing?: string[];
+  };
+  analyzer?: {
+    found?: boolean;
+    arv?: number;
+    mao?: number;
+    targetOffer?: number;
+    repairs?: number;
+  };
+  safety?: {
+    note?: string;
+  };
 };
 
 const AGENT_SKILLS: Record<string, AgentSkill[]> = {
@@ -105,6 +162,35 @@ function mergeAgentStatuses(
     }
   }
   return [...byId.values()];
+}
+
+function normalizeFleetAgentId(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function getLeadOptionId(lead: RuntimeLeadOption) {
+  return String(lead.leadId || lead.id || lead.phone || lead.address || '').trim();
+}
+
+function getLeadOptionLabel(lead: RuntimeLeadOption) {
+  const name = lead.leadName || lead.name || lead.seller?.name || 'Unknown seller';
+  const address = lead.address || lead.property?.address || 'Unknown property';
+  return `${name} - ${address}`;
+}
+
+function getBridgeSnnWorkerForAgent(workers: BridgeSnnWorker[], agentId = '') {
+  const normalized = normalizeFleetAgentId(agentId);
+  return workers.find(
+    (worker) => normalizeFleetAgentId(worker.agentId || worker.name || '') === normalized
+  );
+}
+
+function formatAgentPreviewAction(value = '') {
+  return String(value || 'inspect_lead_profile').replace(/_/g, ' ');
 }
 
 async function flushTransferQueue(agents: FleetAgent[]) {
@@ -399,10 +485,42 @@ export function AgentFleet() {
     ava: false,
     rex: false,
   });
+  const [bridgeSnnWorkers, setBridgeSnnWorkers] = useState<BridgeSnnWorker[]>([]);
+  const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
+  const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     setSnnStatus(getSnnWorkerStatus());
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.allSettled([
+      invokeRuntimeTool<{ workers?: BridgeSnnWorker[] }>('getSnnWorkerStatus', {}),
+      fetchRuntimeState(),
+    ]).then(([snnResult, stateResult]) => {
+      if (cancelled) return;
+      if (snnResult.status === 'fulfilled') {
+        setBridgeSnnWorkers(Array.isArray(snnResult.value.workers) ? snnResult.value.workers : []);
+      } else {
+        console.warn('[PBK AgentFleet] SNN worker status unavailable', snnResult.reason);
+      }
+      if (stateResult.status === 'fulfilled') {
+        const leads = Array.isArray(stateResult.value.leadImports)
+          ? (stateResult.value.leadImports as RuntimeLeadOption[])
+          : [];
+        setLeadOptions(leads.slice(0, 25));
+        if (!selectedLeadId && leads[0]) setSelectedLeadId(getLeadOptionId(leads[0]));
+      } else {
+        console.warn('[PBK AgentFleet] lead context options unavailable', stateResult.reason);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLeadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -451,6 +569,51 @@ export function AgentFleet() {
     () => agents.find((a) => a.id === activeAgentId) ?? agents[0],
     [activeAgentId, agents]
   );
+  const selectedLead = useMemo(
+    () => leadOptions.find((lead) => getLeadOptionId(lead) === selectedLeadId) || null,
+    [leadOptions, selectedLeadId]
+  );
+
+  useEffect(() => {
+    setDealPreview(null);
+  }, [activeAgentId, selectedLeadId]);
+
+  const handlePreviewAgentDealContext = async () => {
+    if (!selectedLead) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Select a lead',
+        desc: 'Choose a live lead before previewing agent behavior.',
+      });
+      return;
+    }
+    setPreviewLoading(true);
+    try {
+      const result = await invokeRuntimeTool<AgentDealPreview>('previewAgentDealContext', {
+        agentId: activeAgent.id,
+        agentName: activeAgent.name,
+        leadId: getLeadOptionId(selectedLead),
+        leadName: selectedLead.leadName || selectedLead.name || selectedLead.seller?.name || '',
+        address: selectedLead.address || selectedLead.property?.address || '',
+        phone: selectedLead.phone || selectedLead.seller?.phone || '',
+        email: selectedLead.email || selectedLead.seller?.email || '',
+        selectedPath: selectedLead.selectedPath || selectedLead.selected_path || '',
+      });
+      setDealPreview(result);
+    } catch (error) {
+      console.warn('[PBK AgentFleet] deal context preview failed', error);
+      showUiToast({
+        tone: 'error',
+        title: 'Preview failed',
+        desc:
+          error instanceof Error
+            ? error.message
+            : 'Agent deal context preview could not reach the bridge.',
+      });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const handleTransfer = async (targetAgentIds: string[], versioned: boolean) => {
     if (!selectedSkill) return;
@@ -554,41 +717,52 @@ export function AgentFleet() {
             Agents ({agents.length})
           </div>
           <div className="space-y-1.5">
-            {agents.map((agent) => (
-              <button
-                key={agent.id}
-                type="button"
-                onClick={() => setActiveAgentId(agent.id)}
-                className={[
-                  'flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition',
-                  activeAgent.id === agent.id
-                    ? 'border-sky-500/40 bg-sky-500/10'
-                    : 'border-slate-800 bg-slate-900/70 hover:border-slate-700',
-                ].join(' ')}
-              >
-                <span className="agent-avatar shrink-0">{agent.initial}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5">
-                    <span className="block text-sm font-semibold text-slate-100">{agent.name}</span>
-                    {(agent.id === 'ava' && snnStatus.ava) ||
-                    (agent.id === 'rex' && snnStatus.rex) ? (
-                      <Zap size={10} className="text-sky-400" aria-label="SNN active" />
-                    ) : null}
-                  </span>
-                  <span className="block truncate text-xs text-slate-500">{agent.role}</span>
-                </span>
-                <span
+            {agents.map((agent) => {
+              const bridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, agent.id);
+              const localSnnActive =
+                (agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex);
+              return (
+                <button
+                  key={agent.id}
+                  type="button"
+                  onClick={() => setActiveAgentId(agent.id)}
                   className={[
-                    'rounded-full border px-2 py-0.5 text-[10px] uppercase',
-                    agent.status === 'active'
-                      ? 'border-emerald-700/50 text-emerald-400'
-                      : 'border-slate-700 text-slate-400',
+                    'flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition',
+                    activeAgent.id === agent.id
+                      ? 'border-sky-500/40 bg-sky-500/10'
+                      : 'border-slate-800 bg-slate-900/70 hover:border-slate-700',
                   ].join(' ')}
                 >
-                  {agent.status}
-                </span>
-              </button>
-            ))}
+                  <span className="agent-avatar shrink-0">{agent.initial}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="block text-sm font-semibold text-slate-100">
+                        {agent.name}
+                      </span>
+                      {localSnnActive || bridgeWorker?.ready ? (
+                        <Zap size={10} className="text-sky-400" aria-label="SNN active" />
+                      ) : null}
+                    </span>
+                    <span className="block truncate text-xs text-slate-500">{agent.role}</span>
+                    {bridgeWorker && (
+                      <span className="mt-1 block truncate text-[10px] uppercase tracking-wide text-sky-300/80">
+                        SNN {bridgeWorker.status || 'ready'}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={[
+                      'rounded-full border px-2 py-0.5 text-[10px] uppercase',
+                      agent.status === 'active'
+                        ? 'border-emerald-700/50 text-emerald-400'
+                        : 'border-slate-700 text-slate-400',
+                    ].join(' ')}
+                  >
+                    {agent.status}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -633,6 +807,100 @@ export function AgentFleet() {
                 {cap.replace(/_/g, ' ')}
               </span>
             ))}
+          </div>
+
+          <div className="border-b border-slate-800 px-4 py-4">
+            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                  Deal context preview
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Read-only preview of how {activeAgent.name} would handle a live lead. Provider
+                  writes stay blocked.
+                </p>
+                <select
+                  className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
+                  value={selectedLeadId}
+                  onChange={(event) => setSelectedLeadId(event.target.value)}
+                >
+                  {leadOptions.length ? (
+                    leadOptions.map((lead) => (
+                      <option key={getLeadOptionId(lead)} value={getLeadOptionId(lead)}>
+                        {getLeadOptionLabel(lead)}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No bridge leads loaded yet</option>
+                  )}
+                </select>
+              </div>
+              <button
+                type="button"
+                className="btn-primary flex min-h-10 items-center justify-center gap-2"
+                disabled={!selectedLead || previewLoading}
+                onClick={handlePreviewAgentDealContext}
+              >
+                {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
+              </button>
+            </div>
+            {dealPreview && (
+              <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-sky-300">
+                      {dealPreview.writeMode || 'read_only'} /{' '}
+                      {dealPreview.result || 'agent_deal_context_preview'}
+                    </div>
+                    <h3 className="mt-1 text-sm font-semibold text-slate-100">
+                      {formatAgentPreviewAction(dealPreview.recommendedAction)}
+                    </h3>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                      {dealPreview.summary}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-200">
+                    {Math.round(Number(dealPreview.confidence || 0))}% confidence
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">BANT</div>
+                    <div className="text-xs text-slate-300">
+                      {dealPreview.bant?.complete
+                        ? 'Complete'
+                        : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                      Analyzer
+                    </div>
+                    <div className="text-xs text-slate-300">
+                      {dealPreview.analyzer?.found
+                        ? `MAO ${dealPreview.analyzer.mao || '-'}`
+                        : 'Numbers not found'}
+                    </div>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Safety</div>
+                    <div className="text-xs text-slate-300">
+                      {dealPreview.requiredApprovals?.length
+                        ? `Approval: ${dealPreview.requiredApprovals.join(', ')}`
+                        : 'No provider write'}
+                    </div>
+                  </div>
+                </div>
+                {dealPreview.reasoning?.length ? (
+                  <ul className="mt-3 space-y-1 text-xs text-slate-500">
+                    {dealPreview.reasoning.slice(0, 5).map((reason) => (
+                      <li key={reason}>- {reason}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
           </div>
 
           {/* Skills */}

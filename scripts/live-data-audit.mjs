@@ -635,13 +635,29 @@ const checks = [
     name: 'Agent Fleet skill testing and CRM updates are registered across UI, MCP, and bridge',
     ok:
       /invokeRuntimeTool<Record<string, unknown>>\('pbk_test_skill'/.test(agentFleet) &&
+      /invokeRuntimeTool<\{ workers\?: BridgeSnnWorker\[\] \}>\('getSnnWorkerStatus'/.test(
+        agentFleet
+      ) &&
+      /invokeRuntimeTool<AgentDealPreview>\('previewAgentDealContext'/.test(agentFleet) &&
       /async pbk_test_skill\(params = \{\}\)/.test(bridge) &&
+      /async getSnnWorkerStatus\(params = \{\}\)/.test(bridge) &&
+      /async previewAgentDealContext\(params = \{\}\)/.test(bridge) &&
       /function skillScenarioTestRecord/.test(bridge) &&
+      /function buildSnnWorkerStatusSnapshot/.test(bridge) &&
+      /function buildAgentDealContextPreview/.test(bridge) &&
       /'pbk_test_skill'/.test(bridge) &&
-      /"pbk_test_skill"/.test(mcpBrain) &&
-      /bridgeInvoke\("pbk_test_skill"/.test(mcpBrain) &&
-      /"pbk_update_crm"/.test(mcpBrain) &&
-      /bridgeInvoke\("updateCRM"/.test(mcpBrain) &&
+      /'getSnnWorkerStatus'/.test(bridge) &&
+      /'previewAgentDealContext'/.test(bridge) &&
+      /\/api\/agents\/snn-status/.test(bridge) &&
+      /\/api\/agents\/deal-context\/preview/.test(bridge) &&
+      /['"]pbk_test_skill['"]/.test(mcpBrain) &&
+      /bridgeInvoke\(['"]pbk_test_skill['"]/.test(mcpBrain) &&
+      /['"]pbk_update_crm['"]/.test(mcpBrain) &&
+      /bridgeInvoke\(['"]updateCRM['"]/.test(mcpBrain) &&
+      /['"]pbk_get_snn_worker_status['"]/.test(mcpBrain) &&
+      /bridgeInvoke\(['"]getSnnWorkerStatus['"]/.test(mcpBrain) &&
+      /['"]pbk_preview_agent_deal_context['"]/.test(mcpBrain) &&
+      /bridgeInvoke\(['"]previewAgentDealContext['"]/.test(mcpBrain) &&
       /async updateCRM\(params = \{\}\)/.test(bridge),
   },
   {
@@ -1183,7 +1199,7 @@ const checks = [
   {
     name: 'Live voice diagnostics expose hearing, last spoken output, and compact loading',
     ok:
-      /BUILD_REVISION = '2026-(?:05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix)|31-(?:tech-debt-nurture-agent-v2|agent-tooling-nurture-auto-skill-v1|optional-tooling-health-v3|research-additives-v1|unified-additive-intelligence-v2|provider-augmented-additives-v3))|06-01-(?:ava-memory-command-intelligence-v1|skill-emotion-learning-v1|skill-emotion-learning-v2|live-call-learning-repair-v1|live-call-learning-supabase-fallback-v2|live-call-learning-supabase-fallback-v3|live-call-learning-supabase-fallback-v4|live-call-learning-supabase-fallback-v5)|06-02-(?:direct-postgres-health-v6|bridge-ui-regression-fixes-v7))'/.test(
+      /BUILD_REVISION = '2026-(?:05-(?:25-(?:ava-call-repair-hardening|war-manual-live-call-intelligence)|26-(?:active-listening-call-flow|live-call-diagnostic-loop)|27-(?:ava-turn-taking-hardening|ava-role-probing-guardrails|ava-full-intelligence-context|ava-live-quality-inline|ava-context-resolver|ava-recording-rag-memory|ava-recording-rag-memory-db|ava-recording-rag-memory-db-check|ava-recording-rag-memory-db-apply|ava-war-manual-runtime-activation|ava-live-behavior-hardening|ava-rex-live-behavior-hardening)|28-(?:ava-rex-conversation-hardening|ava-rex-deepseek-hardening|approval-controls-visibility|ava-phone-real-world-hardening|approval-controls-real-counts|ava-legacy-context-sanitizer|ava-live-state-cleanup|ava-authority-yes-progression|ava-latest-turn-agent-tts-trace|ava-live-turn-coordinator|ava-sales-intelligence-turn-trace|ava-security-fail-closed|ava-full-intelligence-call-gap-fix)|31-(?:tech-debt-nurture-agent-v2|agent-tooling-nurture-auto-skill-v1|optional-tooling-health-v3|research-additives-v1|unified-additive-intelligence-v2|provider-augmented-additives-v3))|06-01-(?:ava-memory-command-intelligence-v1|skill-emotion-learning-v1|skill-emotion-learning-v2|live-call-learning-repair-v1|live-call-learning-supabase-fallback-v2|live-call-learning-supabase-fallback-v3|live-call-learning-supabase-fallback-v4|live-call-learning-supabase-fallback-v5)|06-02-(?:direct-postgres-health-v6|bridge-ui-regression-fixes-v7|agent-fleet-context-preview-v8))'/.test(
         bridge
       ) &&
       /function recordAvaSpokenOutputDiagnostics/.test(bridge) &&
@@ -1580,7 +1596,7 @@ const checks = [
       /Live Brain RAG knowledge/.test(bridge) &&
       /answerBrainQuery\(state,\s*cleanQuery\)/.test(bridge) &&
       /queryPbkKnowledgeRecords/.test(bridge) &&
-      /withTimeout\(retrieveLiveBrainKnowledge/.test(bridge),
+      /withTimeout\(\s*retrieveLiveBrainKnowledge/.test(bridge),
   },
   {
     name: 'Ava GOOD-style goal inference tracks multiple seller goals and uncertainty every turn',

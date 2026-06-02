@@ -338,7 +338,7 @@ export function Leads() {
       try {
         const [fullResponse, callResponse] = await Promise.all([
           fetchLeadFullRequest(selectedLeadId),
-          fetchLeadLastCallRequest(selectedLeadId).catch(() => null),
+          fetchLeadLastCallRequest(selectedLeadId).catch((err) => { console.warn('[PBK] Last-call fetch failed (non-critical):', err); return null; }),
         ]);
         if (cancelled) return;
         const lead = unwrapLeadResponse(fullResponse);
@@ -368,12 +368,12 @@ export function Leads() {
     try {
       const [fullResponse, callResponse] = await Promise.all([
         fetchLeadFullRequest(selectedLeadId),
-        fetchLeadLastCallRequest(selectedLeadId).catch(() => null),
+        fetchLeadLastCallRequest(selectedLeadId).catch((err) => { console.warn('[PBK] Last-call fetch failed (non-critical):', err); return null; }),
       ]);
       setLeadDetail(unwrapLeadResponse(fullResponse));
       setLastCall(callResponse as BridgeRecord | null);
       setDetailStatus('Lead refreshed.');
-      await refresh().catch(() => null);
+      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after lead reload:', err); return null; });
     } catch (nextError) {
       setDetailStatus(
         nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.'
@@ -431,7 +431,7 @@ export function Leads() {
       setLeadDetail(lead);
       setEditOpen(false);
       setDetailStatus('Lead saved to bridge.');
-      await refresh().catch(() => null);
+      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after lead save:', err); return null; });
     } catch (nextError) {
       setDetailStatus(
         nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.'
@@ -513,7 +513,7 @@ export function Leads() {
             ? text(response.error, 'Contract request failed.')
             : 'Contract request captured. Activity is attached to this lead.'
       );
-      await Promise.all([reloadLeadDetail(), refresh().catch(() => null)]);
+      await Promise.all([reloadLeadDetail(), refresh().catch((err) => { console.warn('[PBK] State refresh failed after contract send:', err); return null; })]);
     } catch (nextError) {
       setContractStatus(
         nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.'

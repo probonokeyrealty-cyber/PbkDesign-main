@@ -159,7 +159,7 @@ export function Settings() {
     setActionStatus('');
     try {
       await updateAdminTaskDecision(taskId, status);
-      await refresh().catch(() => null);
+      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after admin task decision:', err); return null; });
       setActionStatus(
         status === 'approved' ? 'Admin task approved and executed.' : 'Admin task declined.'
       );

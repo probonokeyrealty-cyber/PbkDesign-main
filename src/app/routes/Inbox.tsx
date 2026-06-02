@@ -338,7 +338,7 @@ export function Inbox() {
     setActionStatus('');
     try {
       await updateApprovalDecision(approvalId, status);
-      await refresh().catch(() => null);
+      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after approval decision:', err); return null; });
       setActionStatus(status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.');
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Approval update failed.');

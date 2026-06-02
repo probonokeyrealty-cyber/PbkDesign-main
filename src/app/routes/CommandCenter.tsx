@@ -220,7 +220,7 @@ export function CommandCenter() {
     setActionStatus('');
     try {
       await action();
-      await refresh().catch(() => null);
+      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after runtime action:', err); return null; });
       setActionStatus(successMessage);
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Runtime action failed.');
@@ -245,7 +245,7 @@ export function CommandCenter() {
       setActionStatus(
         `Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`
       );
-      await refresh().catch(() => null);
+      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after web-search probe:', err); return null; });
     } catch (nextError) {
       setActionStatus(
         nextError instanceof Error ? nextError.message : 'Web-search status probe failed.'

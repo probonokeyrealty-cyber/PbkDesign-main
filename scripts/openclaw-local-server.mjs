@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v3';
+const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v4';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -36266,6 +36266,98 @@ async function fetchSkillOutcomesFromSupabaseRest() {
   }
 }
 
+async function runAutoSkillLearnerSupabaseRest(params = {}, pgError = '') {
+  const minSuccessCount = Math.max(1, Number(
+    params.minSuccessCount
+      || params.minSuccesses
+      || params.min_success_count
+      || params.min_successes
+      || 5,
+  ));
+  const minSuccessRate = Math.max(0, Math.min(1, Number(params.minSuccessRate || params.min_success_rate || 0.8)));
+  const confidenceIncrement = Math.max(0.01, Math.min(0.2, Number(params.confidenceIncrement || 0.05)));
+  const maxConfidence = Math.max(0.1, Math.min(0.99, Number(params.maxConfidence || 0.95)));
+  const limit = Math.max(1, Math.min(50, Number(params.limit || 10)));
+  const rest = await fetchSkillOutcomesFromSupabaseRest();
+  if (!rest.ok) {
+    return {
+      ok: false,
+      result: 'postgres_unavailable_supabase_rest_failed',
+      error: pgError || rest.error || rest.reason || 'Postgres and Supabase REST skill reads are unavailable.',
+      pgError,
+      supabaseRest: rest,
+    };
+  }
+  const boosted = [];
+  for (const skill of rest.rows.map(normalizeSkillOutcome)) {
+    if (boosted.length >= limit) break;
+    const uses = Number(skill.uses || 0);
+    const wins = Number(skill.wins || 0);
+    const rate = uses ? wins / uses : 0;
+    if (wins < minSuccessCount || rate < minSuccessRate) continue;
+    const currentConfidence = Number(skill.confidence || 0) > 1
+      ? Number(skill.confidence || 0) / 100
+      : Number(skill.confidence || 0);
+    const nextConfidence = Math.min(maxConfidence, Math.max(0.05, currentConfidence) + confidenceIncrement);
+    const updatedAt = isoNow();
+    const ok = await upsertSupabaseRestRows('skills', {
+      id: skill.id,
+      workspace_id: 'pbk',
+      agent_id: normalizeAgentId(skill.agentId || skill.agentName || 'ava') || 'ava',
+      agent_name: normalizeAgentName(skill.agentName || 'Ava'),
+      name: skill.name || skill.skillName || 'Measured Skill',
+      source: skill.source || 'skill_usage',
+      level: skill.level || 'measured',
+      status: skill.status || 'active',
+      confidence: nextConfidence,
+      evidence: skill.evidence || `Boosted from ${uses} measured PBK skill uses.`,
+      metadata: {
+        autoLearner: {
+          provider: 'supabase-rest-fallback',
+          boostedAt: updatedAt,
+          successRate: rate,
+          uses,
+          wins,
+          pgError,
+        },
+      },
+      updated_at: updatedAt,
+    }, 'id');
+    if (ok) {
+      boosted.push({
+        id: skill.id,
+        name: skill.name,
+        confidence: nextConfidence,
+        previousConfidence: currentConfidence,
+        uses,
+        wins,
+        successRate: Number(rate.toFixed(3)),
+        source: 'supabase-rest-fallback',
+      });
+    }
+  }
+  if (boosted.length) {
+    addActivity(state, makeActivity({
+      actor: 'Rex Skill Learner',
+      category: 'BRAIN',
+      status: 'success',
+      text: `Boosted ${boosted.length} measured skill${boosted.length === 1 ? '' : 's'} through Supabase fallback.`,
+      target: 'SkillRepo',
+    }));
+    await persistState(state);
+  }
+  return {
+    ok: true,
+    result: 'supabase_rest_fallback',
+    boostedCount: boosted.length,
+    createdCount: 0,
+    boosted,
+    created: [],
+    thresholds: { minSuccessCount, minSuccessRate, maxConfidence, confidenceIncrement },
+    warning: pgError ? `Direct Postgres was unavailable (${pgError}); used Supabase REST fallback.` : '',
+  };
+}
+
 async function buildSkillOutcomes() {
   const result = await queryPgRows(`
     SELECT
@@ -40564,7 +40656,7 @@ const toolHandlers = {
 
   async runAutoSkillLearner(params = {}) {
     recordToolUse('runAutoSkillLearner');
-    return runAutoSkillLearnerCore({
+    const result = await runAutoSkillLearnerCore({
       pool: getPgPool(),
       windowDays: params.windowDays || params.lookbackDays || params.days,
       minSuccessCount: params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes,
@@ -40579,6 +40671,10 @@ const toolHandlers = {
         source: 'auto-skill-learner',
       }),
     });
+    if (result?.ok === false) {
+      return runAutoSkillLearnerSupabaseRest(params, result.error || result.reason || '');
+    }
+    return result;
   },
 
   async pbk_retrieve_closing_intelligence(params = {}) {

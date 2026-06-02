@@ -19830,6 +19830,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
 
   async function loadSkillRepoRuntime({ silent = true } = {}) {
     if (skillRepoState.loading) return;
+    const config = getOpenClawConfig();
+    if (openClawNeedsBridgeApiKey(config, '/api/skills/outcomes')) {
+      skillRepoState.liveSkills = [];
+      skillRepoState.agents = [];
+      skillRepoState.source = 'bridge_key_required';
+      renderSkillRepoExperience();
+      renderAgentFleetExperience();
+      if (!silent) {
+        skillRepoToast('unavailable', 'PBK Bridge key required', 'Save the private bridge key in Settings to load live skill outcomes and Agent Fleet records.');
+      }
+      return;
+    }
     skillRepoState.loading = true;
     try {
       const [skills, fleet] = await Promise.all([

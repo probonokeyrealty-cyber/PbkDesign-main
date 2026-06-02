@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v5';
+const BUILD_REVISION = '2026-06-02-direct-postgres-health-v6';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -1861,6 +1861,10 @@ function getRuntimeWarnings() {
   if (IS_HOSTED && STATE_BACKEND !== 'postgres') {
     warnings.push('Hosted bridge is still using file-backed state. Set PBK_DATABASE_URL.');
   }
+  const pgHealth = getPostgresHealthMeta();
+  if (IS_HOSTED && DATABASE_URL && pgHealth.ready !== true) {
+    warnings.push(`PBK_DATABASE_URL is configured but unreachable: ${pgHealth.error || pgHealth.status}. Update the Render/Supabase Postgres connection string.`);
+  }
   if (IS_HOSTED && !REDIS_ENABLED) {
     warnings.push('PBK_REDIS_URL is not active; hosted multi-instance call state will not be shared.');
   }
@@ -2222,11 +2226,14 @@ function recordElevenLabsValidation({ ok = false, status = 0, error = '', voiceI
 
 function getRuntimeMeta() {
   const warnings = getRuntimeWarnings();
+  const postgresHealth = getPostgresHealthMeta();
   return {
     mode: RUNTIME_MODE,
     hosted: IS_HOSTED,
     authRequired: Boolean(BRIDGE_API_KEY),
-    stateBackend: STATE_BACKEND,
+    stateBackend: postgresHealth.stateBackend || STATE_BACKEND,
+    configuredStateBackend: STATE_BACKEND,
+    postgresHealth,
     productionReady: !IS_HOSTED || warnings.length === 0,
     providers: {
       openclawGateway: getOpenClawGatewayHealthComponent(),
@@ -2320,6 +2327,7 @@ function summarizeHealthComponents(components = {}) {
 
 async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) {
   const providers = runtimeMeta.providers || {};
+  const postgresHealth = runtimeMeta.postgresHealth || getPostgresHealthMeta();
   const tooling = await buildToolingStatus();
   const agentOrchestration = buildAgentOrchestrationSnapshot();
   const components = {
@@ -2335,13 +2343,16 @@ async function buildCommandCenterHealthSnapshot(runtimeMeta = getRuntimeMeta()) 
     openclawGateway: getOpenClawGatewayHealthComponent(),
     postgres: {
       label: 'Postgres state backend',
-      status: STATE_BACKEND === 'postgres' ? 'up' : 'file_mode',
-      ready: STATE_BACKEND === 'postgres',
-      configured: true,
+      status: postgresHealth.ready === true ? 'up' : (postgresHealth.status || (STATE_BACKEND === 'postgres' ? 'postgres_unavailable' : 'file_mode')),
+      ready: postgresHealth.ready === true,
+      configured: Boolean(postgresHealth.configured),
       optional: !IS_HOSTED,
-      note: STATE_BACKEND === 'postgres'
+      note: postgresHealth.note || (STATE_BACKEND === 'postgres'
         ? 'Hosted bridge is using Postgres-backed runtime state.'
-        : 'Local bridge is using file-backed state; hosted production should report postgres.',
+        : 'Local bridge is using file-backed state; hosted production should report postgres.'),
+      host: postgresHealth.host || '',
+      staleRenderHost: Boolean(postgresHealth.staleRenderHost),
+      error: postgresHealth.error || '',
     },
     telnyx: summarizeProviderComponent(providers.telnyx, {
       label: 'Telnyx phone/SMS',
@@ -5442,6 +5453,73 @@ let pgSchemaPersistenceWarned = false;
 let stateDbLoadWarned = false;
 let stateDbPersistWarned = false;
 let callEmbeddingsSchemaLastError = null;
+let postgresHealth = {
+  configured: Boolean(DATABASE_URL),
+  ready: !DATABASE_URL,
+  status: DATABASE_URL ? 'unknown' : 'file_mode',
+  checkedAt: null,
+  lastOkAt: null,
+  lastErrorAt: null,
+  error: '',
+};
+
+function getDatabaseUrlHost() {
+  try {
+    return DATABASE_URL ? new URL(DATABASE_URL).hostname : '';
+  } catch {
+    return '';
+  }
+}
+
+function markPostgresHealth(ok, error = '') {
+  if (!DATABASE_URL) {
+    postgresHealth = {
+      configured: false,
+      ready: false,
+      status: 'file_mode',
+      checkedAt: isoNow(),
+      lastOkAt: null,
+      lastErrorAt: null,
+      error: '',
+    };
+    return postgresHealth;
+  }
+  postgresHealth = {
+    ...postgresHealth,
+    configured: true,
+    ready: Boolean(ok),
+    status: ok ? 'up' : 'postgres_unavailable',
+    checkedAt: isoNow(),
+    lastOkAt: ok ? isoNow() : postgresHealth.lastOkAt,
+    lastErrorAt: ok ? postgresHealth.lastErrorAt : isoNow(),
+    error: ok ? '' : String(error || 'Postgres connection failed.').slice(0, 500),
+  };
+  return postgresHealth;
+}
+
+function getPostgresHealthMeta() {
+  const host = getDatabaseUrlHost();
+  const staleRenderHost = /^dpg-d7ncn8navr4c73fh3ba0-a(?:\.|$)/i.test(host);
+  return {
+    configured: Boolean(DATABASE_URL),
+    ready: DATABASE_URL ? postgresHealth.ready === true : false,
+    status: DATABASE_URL ? (postgresHealth.status || 'unknown') : 'file_mode',
+    stateBackend: DATABASE_URL
+      ? (postgresHealth.ready === true ? 'postgres' : 'postgres_unavailable')
+      : 'file',
+    host,
+    staleRenderHost,
+    checkedAt: postgresHealth.checkedAt,
+    lastOkAt: postgresHealth.lastOkAt,
+    lastErrorAt: postgresHealth.lastErrorAt,
+    error: postgresHealth.error,
+    note: DATABASE_URL
+      ? (postgresHealth.ready === true
+        ? 'Direct Postgres state backend is reachable.'
+        : 'Direct Postgres is configured but unreachable; runtime falls back where supported and durable feature tables may be degraded.')
+      : 'PBK_DATABASE_URL is not configured; runtime is file-backed.',
+  };
+}
 
 function getPgPool() {
   if (__pgPool) return __pgPool;
@@ -5457,6 +5535,7 @@ function getPgPool() {
   });
   __pgPool.on('error', (err) => {
     console.error('[pbk-local-openclaw] pg pool error:', err && err.message ? err.message : err);
+    markPostgresHealth(false, err?.message || err);
   });
   return __pgPool;
 }
@@ -5812,10 +5891,14 @@ async function ensurePbkOperationalTables(pool) {
 
 async function ensurePgSchema() {
   const pool = getPgPool();
-  if (!pool) return false;
+  if (!pool) {
+    markPostgresHealth(false, 'PBK_DATABASE_URL is not configured.');
+    return false;
+  }
   try {
     await ensurePbkOperationalTables(pool);
   } catch (error) {
+    markPostgresHealth(false, error?.message || error);
     console.warn('[postgres] operational schema ensure failed', error?.message || error);
   }
   try {
@@ -7722,8 +7805,10 @@ async function ensurePgSchema() {
     await ensureAvaWarManualRuntimeSchema(pool);
     await seedAvaWarManualRuntimeKnowledgeToPg(pool);
     await seedAvaMasterclassKnowledgeToPg(pool);
+    markPostgresHealth(true);
     return true;
   } catch (error) {
+    markPostgresHealth(false, error?.message || error);
     const embeddingsReady = await ensureCallEmbeddingsSchema(pool).catch((schemaError) => {
       callEmbeddingsSchemaLastError = schemaError?.message || String(schemaError);
       return false;
@@ -8738,8 +8823,10 @@ async function loadStateFromDb() {
   if (!pool) return null;
   try {
     const result = await pool.query("SELECT data FROM bridge_state WHERE id = 'singleton' LIMIT 1");
+    markPostgresHealth(true);
     return result.rows[0]?.data || null;
   } catch (error) {
+    markPostgresHealth(false, error?.message || error);
     if (!stateDbLoadWarned) {
       console.warn('[pbk-local-openclaw] postgres state load unavailable; using runtime fallback:', error?.message || error);
       stateDbLoadWarned = true;
@@ -8865,8 +8952,10 @@ async function persistStateToDb(nextState) {
       [JSON.stringify(nextState)],
     );
     await persistActivityLogRecords(nextState.activity || []);
+    markPostgresHealth(true);
     return true;
   } catch (error) {
+    markPostgresHealth(false, error?.message || error);
     if (!stateDbPersistWarned) {
       console.warn('[pbk-local-openclaw] postgres state persist unavailable; writing runtime fallback:', error?.message || error);
       stateDbPersistWarned = true;
@@ -35124,8 +35213,10 @@ async function queryPgRows(sql = '', params = []) {
   }
   try {
     const result = await pool.query(sql, params);
+    markPostgresHealth(true);
     return { ok: true, reason: 'live', rows: result.rows || [] };
   } catch (error) {
+    markPostgresHealth(false, error?.message || error);
     return {
       ok: false,
       reason: 'query_failed',
@@ -51769,6 +51860,8 @@ const server = createServer(async (request, response) => {
           elevenLabsTts: getElevenLabsProviderMeta().ready,
           authRequired: runtimeMeta.authRequired,
           stateBackend: runtimeMeta.stateBackend,
+          configuredStateBackend: runtimeMeta.configuredStateBackend,
+          postgresHealth: runtimeMeta.postgresHealth,
           productionReady: runtimeMeta.productionReady,
           hosted: runtimeMeta.hosted,
           mode: runtimeMeta.mode,

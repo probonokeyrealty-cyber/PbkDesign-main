@@ -387,7 +387,7 @@ export function CommandCenter() {
                         }}
                         className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Approve
+                        {pendingAction === `admin:${String(task.id)}:approved` ? '…' : 'Approve'}
                       </button>
                       <button
                         type="button"
@@ -405,7 +405,7 @@ export function CommandCenter() {
                         }}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Decline
+                        {pendingAction === `admin:${String(task.id)}:rejected` ? '…' : 'Decline'}
                       </button>
                     </div>
                   )}
@@ -640,7 +640,7 @@ export function CommandCenter() {
                         }}
                         className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Approve
+                        {pendingAction === `approval:${String(approval.id)}:approved` ? '…' : 'Approve'}
                       </button>
                       <button
                         type="button"
@@ -663,9 +663,11 @@ export function CommandCenter() {
                         }}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
-                        {String(approval.type || '').toLowerCase() === 'contract'
-                          ? 'Needs Revision'
-                          : 'Decline'}
+                        {pendingAction === `approval:${String(approval.id)}:rejected`
+                          ? '…'
+                          : String(approval.type || '').toLowerCase() === 'contract'
+                            ? 'Needs Revision'
+                            : 'Decline'}
                       </button>
                     </div>
                   </div>

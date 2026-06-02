@@ -63,6 +63,8 @@ export function RightPanel({
           <button
             onClick={onGenerate}
             disabled={!readiness.ready}
+            title={!readiness.ready ? readiness.message : undefined}
+            aria-describedby={!readiness.ready ? 'pdf-readiness-hint' : undefined}
             className={`w-full rounded-xl px-3 py-2.5 text-left text-[12px] font-semibold transition-all flex items-center gap-2 ${
               readiness.ready
                 ? 'bg-white text-slate-950 hover:bg-blue-50'
@@ -72,6 +74,11 @@ export function RightPanel({
             <Send size={14} />
             Generate Master PDF
           </button>
+          {!readiness.ready && (
+            <p id="pdf-readiness-hint" className="mt-1.5 px-1 text-[10px] leading-4 text-white/50">
+              {readiness.message}
+            </p>
+          )}
           <button
             onClick={onPreview}
             className="w-full rounded-xl border border-white/12 bg-white/8 px-3 py-2.5 text-left text-[12px] font-medium text-white/90 hover:bg-white/12 transition-all flex items-center gap-2"

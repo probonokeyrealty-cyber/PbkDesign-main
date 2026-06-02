@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v4';
+const BUILD_REVISION = '2026-06-01-live-call-learning-supabase-fallback-v5';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -40656,25 +40656,29 @@ const toolHandlers = {
 
   async runAutoSkillLearner(params = {}) {
     recordToolUse('runAutoSkillLearner');
-    const result = await runAutoSkillLearnerCore({
-      pool: getPgPool(),
-      windowDays: params.windowDays || params.lookbackDays || params.days,
-      minSuccessCount: params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes,
-      minSuccessRate: params.minSuccessRate || params.min_success_rate,
-      limit: params.limit,
-      strategist: async ({ role, prompt, responseFormat }) => askStrategistRecord({
-        agentName: role || 'Auto Skill Learner',
-        situation: prompt,
-        responseFormat: responseFormat || 'json',
-        temperature: 0.1,
-        maxTokens: 900,
-        source: 'auto-skill-learner',
-      }),
-    });
-    if (result?.ok === false) {
-      return runAutoSkillLearnerSupabaseRest(params, result.error || result.reason || '');
+    try {
+      const result = await runAutoSkillLearnerCore({
+        pool: getPgPool(),
+        windowDays: params.windowDays || params.lookbackDays || params.days,
+        minSuccessCount: params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes,
+        minSuccessRate: params.minSuccessRate || params.min_success_rate,
+        limit: params.limit,
+        strategist: async ({ role, prompt, responseFormat }) => askStrategistRecord({
+          agentName: role || 'Auto Skill Learner',
+          situation: prompt,
+          responseFormat: responseFormat || 'json',
+          temperature: 0.1,
+          maxTokens: 900,
+          source: 'auto-skill-learner',
+        }),
+      });
+      if (result?.ok === false) {
+        return runAutoSkillLearnerSupabaseRest(params, result.error || result.reason || '');
+      }
+      return result;
+    } catch (error) {
+      return runAutoSkillLearnerSupabaseRest(params, error?.message || String(error));
     }
-    return result;
   },
 
   async pbk_retrieve_closing_intelligence(params = {}) {

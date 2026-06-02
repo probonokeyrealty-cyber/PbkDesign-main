@@ -87,6 +87,26 @@ const GetStateInput = z
   })
   .strict();
 
+const ListAgentsInput = z
+  .object({
+    capability: z.string().optional().describe("Filter to agents that have this capability (e.g. 'negotiation', 'closing')."),
+    includeInactive: z.boolean().optional().describe("Include standby/inactive agents. Defaults false."),
+  })
+  .strict();
+
+const TransferAgentSkillInput = z
+  .object({
+    skillName: z.string().min(1).describe("Name of the skill to transfer."),
+    skillSource: z.string().optional().describe("Source reference for the skill (book, training set, etc.)."),
+    fromAgentId: z.string().min(1).describe("ID of the agent donating the skill."),
+    toAgentIds: z.array(z.string().min(1)).min(1).describe("IDs of the agents receiving the skill."),
+    versioned: z.boolean().optional().describe("If true, creates a versioned copy with rollback path. Recommended."),
+    confidence: z.number().min(0).max(1).optional().describe("Initial confidence score for transferred skill."),
+    requestedBy: z.string().optional().describe("Actor label for bridge activity."),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const LaunchBrowserResearchInput = z
   .object({
     query: z.string().min(1).describe("Natural-language browser research request, URL, or listing/property prompt for BrowserOS."),
@@ -1244,6 +1264,83 @@ Returns:
         return {
           content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
           structuredContent: out,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_list_agents",
+    {
+      title: "List PBK agent registry",
+      description: `Return the live PBK agent registry — ids, roles, capabilities, versions, and orchestration hierarchy. Useful for capability-matching, skill transfer targeting, and fleet health checks.
+
+Args:
+  - capability (string, optional): Filter to agents with this capability (e.g. 'negotiation', 'closing').
+  - includeInactive (boolean): Include standby/inactive agents. Defaults false.
+
+Returns:
+  { ok, agents: [...], count, capabilities: [...], snapshot: { ok, result, required, degraded } }`,
+      inputSchema: ListAgentsInput.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("listAgents", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_transfer_agent_skill",
+    {
+      title: "Transfer skill between agents",
+      description: `Copy a proven skill from one PBK agent to one or more target agents. Optionally creates a versioned copy with rollback path. The bridge records the transfer event, updates memory, and queues approval if the target agent is approval-gated.
+
+Args:
+  - skillName (string, required): The skill label, e.g. "Tactical Empathy".
+  - skillSource (string): Reference: book, dataset, self-programmed, etc.
+  - fromAgentId (string, required): Donor agent (e.g. 'ava').
+  - toAgentIds (string[], required): Recipient agent IDs.
+  - versioned (boolean): Creates rollback snapshot. Recommended true.
+  - confidence (number 0-1): Initial confidence on the receiving end.
+  - requestedBy (string): Actor label for audit trail.
+
+Returns:
+  { ok, transferId, from, to, skillName, versioned, queuedApprovals: [...] }`,
+      inputSchema: TransferAgentSkillInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("transferAgentSkill", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
         };
       } catch (error) {
         return {

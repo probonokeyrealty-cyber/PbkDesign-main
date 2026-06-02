@@ -224,6 +224,32 @@ const QA_VALIDATORS = {
   rememberPersonalFact(result = {}) {
     return QA_VALIDATORS.addPbkMemory(result);
   },
+
+  transferAgentSkill(result = {}) {
+    const providerFailure = validateProviderOk('transferAgentSkill', result);
+    if (providerFailure) return providerFailure;
+    const transferred = hasAnyPath(result, ['transferId', 'transfer_id', 'id'])
+      || result.transferred === true
+      || result.ok === true;
+    if (transferred) return qaPass('transferAgentSkill', { transferProof: true });
+    return qaFail('transferAgentSkill', 'missing_transfer_proof');
+  },
+
+  pbk_transfer_agent_skill(result = {}) {
+    return QA_VALIDATORS.transferAgentSkill(result);
+  },
+
+  listAgents(result = {}) {
+    const providerFailure = validateProviderOk('listAgents', result);
+    if (providerFailure) return providerFailure;
+    if (Array.isArray(result.agents)) return qaPass('listAgents', { count: result.agents.length });
+    if (result.ok === true) return qaPass('listAgents', { empty: true });
+    return qaFail('listAgents', 'missing_agent_list');
+  },
+
+  pbk_list_agents(result = {}) {
+    return QA_VALIDATORS.listAgents(result);
+  },
 };
 
 export function sanitizeQaPayload(value, depth = 0) {

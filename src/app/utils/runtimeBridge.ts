@@ -402,10 +402,24 @@ export async function fetchRuntimeQuotas() {
 }
 
 export async function fetchRuntimeToolingStatus() {
-  const response = await bridgeRequest<{ ok: boolean; tooling: RuntimeToolingStatus }>({
-    path: '/api/tooling/status',
-  });
-  return response.tooling || {};
+  const controller = new AbortController();
+  const handle = setTimeout(() => controller.abort(), 10_000);
+  const timeout$ = new Promise<never>((_, reject) =>
+    controller.signal.addEventListener('abort', () => reject(new Error('tooling_status_timeout'))),
+  );
+  try {
+    const response = await Promise.race([
+      bridgeRequest<{ ok: boolean; tooling: RuntimeToolingStatus }>({ path: '/api/tooling/status' }),
+      timeout$,
+    ]);
+    return (response as { ok: boolean; tooling: RuntimeToolingStatus }).tooling || {};
+  } finally {
+    clearTimeout(handle);
+  }
+}
+
+export function getSnnWorkerStatus(): { ava: boolean; rex: boolean } {
+  return { ava: avaSnnWorker !== null, rex: rexSnnWorker !== null };
 }
 
 export async function postRuntimeEvent<T = Record<string, unknown>>(eventType: string, payload: Record<string, unknown>) {

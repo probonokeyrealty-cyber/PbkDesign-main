@@ -145,7 +145,7 @@ httpsGlobalAgent.maxFreeSockets = OUTBOUND_MAX_FREE_SOCKETS;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
-const BUILD_REVISION = '2026-06-01-skill-emotion-learning-v2';
+const BUILD_REVISION = '2026-06-01-live-call-learning-repair-v1';
 const PBK_AVA_FULL_INTELLIGENCE_REVISION = '2026-05-27-ava-full-intelligence-context-v1';
 const PBK_INTELLIGENCE_MODE = String(process.env.PBK_INTELLIGENCE_MODE || 'full').trim().toLowerCase() || 'full';
 
@@ -19845,6 +19845,93 @@ async function persistSkillOutcomeToPg(record = {}) {
   return result.ok;
 }
 
+async function ensureSkillRecordForUsage(record = {}) {
+  const skillName = String(record.skillName || '').trim();
+  if (!skillName) return '';
+  const agentId = normalizeAgentId(record.agentName || 'ava') || 'ava';
+  const existing = await queryPgRows(
+    `SELECT id
+     FROM public.skills
+     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+       AND LOWER(name) = LOWER($1)
+       AND LOWER(COALESCE(agent_id, '')) = LOWER($2)
+     ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+     LIMIT 1`,
+    [skillName, agentId],
+  );
+  if (existing.ok && existing.rows?.[0]?.id) return existing.rows[0].id;
+  const id = `skill-${agentId}-${slugify(skillName).slice(0, 80)}`;
+  const inserted = await queryPgRows(
+    `INSERT INTO public.skills (
+       id, workspace_id, agent_id, agent_name, name, source, level, status,
+       confidence, evidence, metadata, created_at, updated_at
+     )
+     VALUES ($1,'pbk',$2,$3,$4,'skill_outcome','measured','active',$5,$6,$7::jsonb,NOW(),NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       confidence = GREATEST(public.skills.confidence, EXCLUDED.confidence),
+       evidence = COALESCE(NULLIF(public.skills.evidence, ''), EXCLUDED.evidence),
+       metadata = public.skills.metadata || EXCLUDED.metadata,
+       updated_at = NOW()
+     RETURNING id`,
+    [
+      id,
+      agentId,
+      normalizeAgentName(record.agentName || 'Ava'),
+      skillName,
+      Math.max(0.35, Math.min(0.8, Number(record.metadata?.confidence || 0.55))),
+      `Measured from live PBK call ${record.callId || ''}`.trim(),
+      JSON.stringify({
+        source: 'recordSkillOutcome',
+        createdFromOutcomeId: record.id || '',
+        liveCallLearning: true,
+      }),
+    ],
+  );
+  return inserted.ok ? (inserted.rows?.[0]?.id || id) : '';
+}
+
+async function persistSkillUsageToPg(record = {}) {
+  const skillName = String(record.skillName || '').trim();
+  if (!skillName) return false;
+  const agentId = normalizeAgentId(record.agentName || 'ava') || 'ava';
+  const skillId = String(record.skillId || record.skill_id || await ensureSkillRecordForUsage(record) || '').trim();
+  const result = await queryPgRows(
+    `INSERT INTO public.skill_usage (
+       id, workspace_id, skill_id, skill_name, agent_id, agent_name, outcome,
+       success, confidence, profit_margin, metadata, used_at, created_at
+     )
+     VALUES ($1,'pbk',$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+     ON CONFLICT (id) DO UPDATE SET
+       skill_id = COALESCE(NULLIF(EXCLUDED.skill_id, ''), public.skill_usage.skill_id),
+       outcome = EXCLUDED.outcome,
+       success = EXCLUDED.success,
+       confidence = EXCLUDED.confidence,
+       metadata = public.skill_usage.metadata || EXCLUDED.metadata`,
+    [
+      record.id,
+      skillId,
+      skillName,
+      agentId,
+      normalizeAgentName(record.agentName || 'Ava'),
+      record.outcomeLabel || (record.success === true ? 'success' : record.success === false ? 'miss' : 'observed'),
+      typeof record.success === 'boolean' ? record.success : null,
+      record.metadata?.confidence === undefined ? null : Number(record.metadata.confidence),
+      record.metadata?.profitMargin === undefined ? null : Number(record.metadata.profitMargin),
+      JSON.stringify({
+        ...(record.metadata || {}),
+        sourceOutcomeTable: 'pbk_skill_outcomes',
+        outcomeId: record.id,
+        callId: record.callId || '',
+        leadId: record.leadId || '',
+        dealClosed: Boolean(record.dealClosed),
+      }),
+      record.createdAt || isoNow(),
+      record.createdAt || isoNow(),
+    ],
+  );
+  return result.ok;
+}
+
 function summarizeSkillOutcomes(skillName = '', version = '') {
   const normalizedSkill = String(skillName || '').trim().toLowerCase();
   const normalizedVersion = String(version || '').trim().toLowerCase();
@@ -19952,6 +20039,10 @@ async function recordSkillOutcomeRecord(params = {}) {
   if (!Array.isArray(state.skillOutcomes)) state.skillOutcomes = [];
   upsertById(state, 'skillOutcomes', record);
   const postgres = await persistSkillOutcomeToPg(record);
+  const usage = await persistSkillUsageToPg({
+    ...record,
+    skillId: params.skillId || params.skill_id || '',
+  });
   let scriptTest = null;
   if (params.testId && record.version) {
     scriptTest = await scriptTestRecord({
@@ -19976,7 +20067,108 @@ async function recordSkillOutcomeRecord(params = {}) {
     target: context.leadName || context.address || record.callId || skillName,
   }));
   await persistState(state);
-  return { ok: true, result: 'skill_outcome_recorded', outcome: record, summary: summarizeSkillOutcomes(skillName, record.version), autopilot, scriptTest, storage: { localState: true, postgres } };
+  return { ok: true, result: 'skill_outcome_recorded', outcome: record, summary: summarizeSkillOutcomes(skillName, record.version), autopilot, scriptTest, storage: { localState: true, postgres, skillUsage: usage } };
+}
+
+function countAuthorityProbePhrases(text = '') {
+  const normalized = normalizeTelnyxRepairTranscript(text);
+  const matches = normalized.match(/\b(are you able to make decisions|able to make decisions on the property|are you the owner|owner or the person helping make the decision|authorized to make decisions|property owner or real estate agent)\b/g);
+  return matches ? matches.length : 0;
+}
+
+function hasAuthorityConfirmationPhrase(text = '') {
+  return isAffirmativeAvaAuthorityAnswer(text)
+    || /\b(i can make a decision|i can make decisions|i make the decisions|right offer|i am the owner|i own it)\b/i.test(normalizeTelnyxRepairTranscript(text));
+}
+
+async function recordPostCallLearningFromTranscript({ session = {}, contextCall = null, message = {}, transcriptText = '', reason = '' } = {}) {
+  const transcript = String(transcriptText || '').replace(/\s+/g, ' ').trim();
+  const callId = message.callId || session.callId || contextCall?.id || '';
+  if (!callId || transcript.length < 40) return { ok: false, skipped: true, result: 'weak_post_call_transcript' };
+  const leadId = message.leadId || contextCall?.leadId || session.leadId || '';
+  const qa = await scoreCallQualityRecord({
+    callId,
+    leadId,
+    transcript,
+    source: 'telnyx-deepgram-finalize-inline',
+    createRexDecision: true,
+    metadata: {
+      reason,
+      streamId: session.streamId || '',
+      inlineLearning: true,
+    },
+  }).catch((error) => ({ ok: false, error: error?.message || String(error) }));
+
+  const authorityProbeCount = countAuthorityProbePhrases(transcript);
+  const authorityConfirmed = hasAuthorityConfirmationPhrase(transcript) || Boolean(session.authorityConfirmed || session.decisionMakerConfirmed);
+  const repeatedAuthorityAfterConfirmation = authorityConfirmed && authorityProbeCount > 1;
+  const outcomes = [];
+  if (authorityConfirmed || authorityProbeCount) {
+    outcomes.push(await recordSkillOutcomeRecord({
+      skillName: 'Authority confirmation handling',
+      agentName: 'Ava',
+      callId,
+      leadId,
+      success: repeatedAuthorityAfterConfirmation ? false : authorityConfirmed,
+      outcomeLabel: repeatedAuthorityAfterConfirmation
+        ? 'repeated authority probe after seller confirmed decision authority'
+        : authorityConfirmed
+          ? 'authority confirmed and advanced'
+          : 'authority probe observed',
+      transcript,
+      metadata: {
+        authorityProbeCount,
+        authorityConfirmed,
+        repeatedAuthorityAfterConfirmation,
+        source: 'post_call_inline_learning',
+        confidence: repeatedAuthorityAfterConfirmation ? 0.42 : 0.72,
+      },
+      autopilot: true,
+    }).catch((error) => ({ ok: false, error: error?.message || String(error), skillName: 'Authority confirmation handling' })));
+  }
+
+  const selectedPath = normalizePbkDealPath(session.selectedPath || contextCall?.selectedPath || contextCall?.path || '', '');
+  if (selectedPath) {
+    outcomes.push(await recordSkillOutcomeRecord({
+      skillName: `${selectedPath} path qualification`,
+      agentName: 'Ava',
+      callId,
+      leadId,
+      success: repeatedAuthorityAfterConfirmation ? false : transcript.length >= 250 ? true : null,
+      outcomeLabel: repeatedAuthorityAfterConfirmation
+        ? 'path lock degraded by repeated authority probe'
+        : transcript.length >= 250
+          ? 'path selected with enough transcript context'
+          : 'path selected with short transcript',
+      transcript,
+      metadata: {
+        selectedPath,
+        pathLocked: Boolean(session.pathLocked || contextCall?.pathLocked),
+        transcriptChars: transcript.length,
+        source: 'post_call_inline_learning',
+        confidence: transcript.length >= 250 ? 0.68 : 0.52,
+      },
+      autopilot: true,
+    }).catch((error) => ({ ok: false, error: error?.message || String(error), skillName: `${selectedPath} path qualification` })));
+  }
+
+  recordCallTrace('post_call_learning_completed', {
+    callId,
+    leadId,
+    result: 'post_call_learning_completed',
+    stage: 'postCallLearning',
+    score: qa?.score?.score ?? null,
+    authorityProbeCount,
+    authorityConfirmed,
+    repeatedAuthorityAfterConfirmation,
+    outcomes: outcomes.map((item) => ({
+      ok: item?.ok,
+      result: item?.result || item?.error || '',
+      skillName: item?.outcome?.skillName || item?.skillName || '',
+      success: item?.outcome?.success,
+    })),
+  });
+  return { ok: true, result: 'post_call_learning_completed', qa, outcomes };
 }
 
 async function requestHumanHandoffRecord(params = {}) {
@@ -48877,8 +49069,11 @@ function isAffirmativeAvaAuthorityAnswer(transcript = '') {
   const clean = normalizeTelnyxRepairTranscript(transcript);
   if (!clean) return false;
   if (/^(yes|yeah|yep|yup|correct|right|sure|i can|yes i can|yeah i can|yep i can|i am|that'?s me|that is me|owner|seller)$/i.test(clean)) return true;
+  if (/\b(i|yes|yeah|yep|yup)\b.{0,24}\b(can|able to|authorized to|have authority to)\b.{0,24}\b(make|sign|decide|approve)\b.{0,24}\b(decision|decisions|offer|contract|paperwork)\b/i.test(clean)) return true;
+  if (/\b(i|we)\b.{0,16}\b(make|decide|approve)\b.{0,16}\b(the )?(decision|decisions)\b/i.test(clean)) return true;
+  if (/\bright offer\b/i.test(clean) && /\b(i can|yes|yeah|yep|decision|decisions|owner)\b/i.test(clean)) return true;
   const words = clean.split(/\s+/).filter(Boolean);
-  return words.length <= 8
+  return words.length <= 18
     && /\b(yes|yeah|yep|yup|i can|i am|i'm able|i make the decisions|i make decisions|i'm the owner|i am the owner|i own it|my property)\b/i.test(clean);
 }
 
@@ -50150,6 +50345,21 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         streamId: session.streamId,
         reason,
       }, 'telnyx-deepgram-finalize').catch(() => null);
+      void recordPostCallLearningFromTranscript({
+        session,
+        contextCall,
+        message,
+        transcriptText,
+        reason,
+      }).catch((error) => {
+        recordCallTrace('post_call_learning_failed', {
+          ...session,
+          status: 'warning',
+          result: 'post_call_learning_failed',
+          error: error?.message || String(error),
+          stage: 'postCallLearning',
+        });
+      });
     }
 
     if (contextCall) {

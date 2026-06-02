@@ -188,7 +188,6 @@ function buildLocalBridgeFallback() {
     // Keep local browser traffic on the Vite origin so the dev proxy can
     // attach the private bridge API key without exposing it to frontend JS.
     endpoint: window.location.origin,
-    apiKey: '',
   };
 }
 
@@ -222,10 +221,8 @@ function getEnvRuntimeConfig(): RuntimeConfig | null {
     env.VITE_PBK_BRIDGE_URL || env.VITE_PBK_OPENCLAW_URL || env.VITE_PBK_OPENCLAW_ENDPOINT;
   if (!endpoint) return null;
 
-  return {
-    endpoint,
-    apiKey: env.VITE_PBK_BRIDGE_API_KEY || env.VITE_PBK_OPENCLAW_API_KEY || '',
-  };
+  const apiKey = env.VITE_PBK_BRIDGE_API_KEY || env.VITE_PBK_OPENCLAW_API_KEY;
+  return apiKey ? { endpoint, apiKey } : { endpoint };
 }
 
 export function getRuntimeConfig(): RuntimeConfig {
@@ -261,7 +258,6 @@ export function getRuntimeConfig(): RuntimeConfig {
     endpoint:
       DEFAULT_HOSTED_BRIDGE_ENDPOINT ||
       (typeof window !== 'undefined' ? window.location.origin : ''),
-    apiKey: '',
   };
 }
 

@@ -1002,8 +1002,8 @@ Returns:
   server.registerTool(
     "pbk_learn_from_chat",
     {
-      title: "Teach Ava/Rex from conversation",
-      description: `Capture conversational learning for Ava/Rex. Routine lead, call, objection, seller-preference, and deal lessons do not require a passcode. Strategic/core PBK doctrine, pricing rules, policy, script, contract-default, identity, or compliance updates are stored as pending unless the protected admin passcode is supplied.`,
+      title: "Teach Ava/Rex from conversation (alias for pbk_learn)",
+      description: `Alias for pbk_learn. Capture conversational learning for Ava/Rex. Routine lead, call, objection, seller-preference, and deal lessons do not require a passcode. Strategic/core PBK doctrine, pricing rules, policy, script, contract-default, identity, or compliance updates are stored as pending unless the protected admin passcode is supplied.`,
       inputSchema: PbkLearnFromChatInput.shape,
       annotations: {
         readOnlyHint: false,
@@ -1014,7 +1014,7 @@ Returns:
     },
     async (params) => {
       try {
-        const result = await bridgeInvoke("pbk_learn_from_chat", params);
+        const result = await bridgeInvoke("pbk_learn", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

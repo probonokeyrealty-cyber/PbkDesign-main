@@ -179,6 +179,51 @@ const QA_VALIDATORS = {
   recording_capture(result = {}) {
     return QA_VALIDATORS.uploadToS3(result);
   },
+
+  sendNegotiationApproval(result = {}) {
+    const providerFailure = validateProviderOk('sendNegotiationApproval', result);
+    if (providerFailure) return providerFailure;
+    const queued = hasAnyPath(result, [
+      'approvalId',
+      'approval_id',
+      'approval.id',
+      'id',
+    ]);
+    if (queued) return qaPass('sendNegotiationApproval', { approvalProof: true });
+    return qaFail('sendNegotiationApproval', 'missing_approval_proof');
+  },
+
+  avaOverrideOffer(result = {}) {
+    const providerFailure = validateProviderOk('avaOverrideOffer', result);
+    if (providerFailure) return providerFailure;
+    const finalOffer = Number(result.finalOffer ?? result.offer ?? 0);
+    const recorded = hasAnyPath(result, ['offerOverrideId', 'offer_override_id', 'overrideId', 'id'])
+      || (Number.isFinite(finalOffer) && finalOffer > 0);
+    if (recorded) return qaPass('avaOverrideOffer', { overrideProof: true });
+    return qaFail('avaOverrideOffer', 'missing_override_proof');
+  },
+
+  launchBrowserResearch(result = {}) {
+    const providerFailure = validateProviderOk('launchBrowserResearch', result);
+    if (providerFailure) return providerFailure;
+    const launched = hasAnyPath(result, ['jobId', 'job_id', 'job.id', 'answer', 'research.id']);
+    if (launched) return qaPass('launchBrowserResearch', { jobProof: true });
+    return qaFail('launchBrowserResearch', 'missing_job_proof');
+  },
+
+  addPbkMemory(result = {}) {
+    const providerFailure = validateProviderOk('addPbkMemory', result);
+    if (providerFailure) return providerFailure;
+    const stored = hasAnyPath(result, ['memoryId', 'memory_id', 'memory.id', 'id'])
+      || result.stored === true
+      || result.saved === true;
+    if (stored) return qaPass('addPbkMemory', { memoryProof: true });
+    return qaFail('addPbkMemory', 'missing_memory_proof');
+  },
+
+  rememberPersonalFact(result = {}) {
+    return QA_VALIDATORS.addPbkMemory(result);
+  },
 };
 
 export function sanitizeQaPayload(value, depth = 0) {

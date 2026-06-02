@@ -333,7 +333,9 @@ export const handler: Handler = async (event) => {
 
   try {
     const payload = JSON.parse(event.body || '{}') as DocumentRequest;
-    const requestUrl = event.rawUrl || `https://${event.headers.host || 'pbkcommandcenter.netlify.app'}${event.path || '/api/documents/pdf'}`;
+    const rawUrl = (event as unknown as { rawUrl?: string }).rawUrl;
+    const host = event.headers['x-forwarded-host'] || event.headers['host'] || 'pbkcommandcenter.netlify.app';
+    const requestUrl = rawUrl || `https://${host}${event.path || '/api/documents/pdf'}`;
     let pdf: Buffer | Uint8Array;
     let fallbackRenderer = false;
     try {

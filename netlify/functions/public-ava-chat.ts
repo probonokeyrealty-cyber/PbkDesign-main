@@ -12,6 +12,10 @@ const PUBLIC_AVA_CHAT_KEY = String(
     || '',
 ).trim();
 
+if (!PUBLIC_AVA_CHAT_KEY) {
+  console.warn('[PBK] PUBLIC_AVA_CHAT_KEY is not set. Requests to the bridge will be sent unauthenticated and may be rejected. Set PUBLIC_AVA_CHAT_KEY or PBK_PUBLIC_AVA_CHAT_KEY in your Netlify environment.');
+}
+
 const PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_WINDOW_MS = Number(
   process.env.PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000,
 );

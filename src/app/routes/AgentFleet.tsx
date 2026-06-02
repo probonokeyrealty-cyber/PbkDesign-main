@@ -344,7 +344,9 @@ export function AgentFleet() {
         setAgents((prev) => mergeAgentStatuses(prev, bridgeAgents));
         setBridgeConnected(true);
         // Flush any transfers that were queued while bridge was offline
-        flushTransferQueue(agents).catch(() => undefined);
+        flushTransferQueue(agents).catch((err: unknown) => {
+          console.warn('[AgentFleet] Failed to flush transfer queue after bridge reconnect:', err);
+        });
       })
       .catch(() => {
         if (!cancelled) {

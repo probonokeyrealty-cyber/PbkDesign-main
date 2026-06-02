@@ -6,22 +6,47 @@ const BRIDGE_URL = String(
     || 'https://pbk-openclaw-bridge.onrender.com',
 ).replace(/\/+$/g, '');
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': [
-    'Authorization',
-    'Content-Type',
-    'Idempotency-Key',
-    'X-Idempotency-Key',
-    'X-PBK-Team-Token',
-    'X-PBK-Webhook-Secret',
-    'X-Webhook-Secret',
-    'X-PBK-Signature',
-    'X-Request-ID',
-  ].join(', '),
-  'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-  'Access-Control-Max-Age': '86400',
-};
+const CORS_ALLOW_HEADERS = [
+  'Authorization',
+  'Content-Type',
+  'Idempotency-Key',
+  'X-Idempotency-Key',
+  'X-PBK-Team-Token',
+  'X-PBK-Webhook-Secret',
+  'X-Webhook-Secret',
+  'X-PBK-Signature',
+  'X-Request-ID',
+].join(', ');
+
+const CORS_ALLOW_METHODS = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';
+
+const EXTRA_ALLOWED_ORIGINS: string[] = (process.env.PBK_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function resolveAllowedOrigin(origin: string): string {
+  if (!origin) return '';
+  if (EXTRA_ALLOWED_ORIGINS.includes(origin)) return origin;
+  // Same Netlify site (branch deploys, deploy previews)
+  if (/^https:\/\/[a-z0-9-]+--pbkcommandcenter\.netlify\.app$/.test(origin)) return origin;
+  // Known production domains
+  if (/^https:\/\/(www\.)?pbkcommandcenter\.(com|netlify\.app)$/.test(origin)) return origin;
+  // Local dev
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+  return '';
+}
+
+function buildCorsHeaders(origin: string): Record<string, string> {
+  const allowed = resolveAllowedOrigin(origin);
+  return {
+    'Access-Control-Allow-Origin': allowed || 'https://pbkcommandcenter.netlify.app',
+    'Access-Control-Allow-Headers': CORS_ALLOW_HEADERS,
+    'Access-Control-Allow-Methods': CORS_ALLOW_METHODS,
+    'Access-Control-Max-Age': '86400',
+    ...(allowed ? { 'Vary': 'Origin' } : {}),
+  };
+}
 
 const FORWARDED_REQUEST_HEADERS = new Set([
   'accept',
@@ -47,11 +72,11 @@ const FORWARDED_RESPONSE_HEADERS = new Set([
   'x-request-id',
 ]);
 
-function json(payload: unknown, statusCode = 200, extraHeaders: Record<string, string> = {}) {
+function json(payload: unknown, statusCode = 200, extraHeaders: Record<string, string> = {}, origin = '') {
   return {
     statusCode,
     headers: {
-      ...CORS_HEADERS,
+      ...buildCorsHeaders(origin),
       'Cache-Control': 'no-store',
       'Content-Type': 'application/json',
       ...extraHeaders,
@@ -232,12 +257,14 @@ function shouldCompactStateResponse(targetPath = '') {
 
 export const handler: Handler = async (event) => {
   const requestId = getRequestId(event);
+  const origin = getHeader(event, 'origin');
+  const corsHeaders = buildCorsHeaders(origin);
 
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 204,
       headers: {
-        ...CORS_HEADERS,
+        ...corsHeaders,
         'X-Request-ID': requestId,
       },
       body: '',
@@ -270,7 +297,7 @@ export const handler: Handler = async (event) => {
     clearTimeout(timeoutHandle);
 
     const responseHeaders: Record<string, string> = {
-      ...CORS_HEADERS,
+      ...corsHeaders,
       'Cache-Control': response.headers.get('cache-control') || 'no-store',
       'X-PBK-Bridge-Proxy': 'netlify',
     };
@@ -287,7 +314,7 @@ export const handler: Handler = async (event) => {
         return json(compactHealthPayload(payload), response.status, {
           'X-PBK-Bridge-Proxy': 'netlify',
           'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
-        });
+        }, origin);
       } catch {
         // Fall through to the normal proxy response when upstream is not JSON.
       }
@@ -298,7 +325,7 @@ export const handler: Handler = async (event) => {
         return json(compactStatePayload(payload), response.status, {
           'X-PBK-Bridge-Proxy': 'netlify',
           'X-Request-ID': responseHeaders['X-Request-ID'] || requestId,
-        });
+        }, origin);
       } catch {
         // Fall through to the normal proxy response when upstream is not JSON.
       }
@@ -324,6 +351,7 @@ export const handler: Handler = async (event) => {
       },
       timedOut ? 504 : 502,
       { 'X-Request-ID': requestId },
+      origin,
     );
   }
 };

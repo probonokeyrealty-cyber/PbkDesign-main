@@ -216,17 +216,18 @@ function readRuntimeConfigFromStorage(): RuntimeConfig | null {
 }
 
 function getEnvRuntimeConfig(): RuntimeConfig | null {
-  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+  const env = (import.meta.env as Record<string, string | undefined>) ?? {};
   const endpoint =
-    env.VITE_PBK_BRIDGE_URL ||
-    env.VITE_PBK_OPENCLAW_URL ||
-    env.VITE_PBK_OPENCLAW_ENDPOINT;
+    env['VITE_PBK_BRIDGE_URL'] ||
+    env['VITE_PBK_OPENCLAW_URL'] ||
+    env['VITE_PBK_OPENCLAW_ENDPOINT'];
   if (!endpoint) return null;
 
-  return {
-    endpoint,
-    apiKey: env.VITE_PBK_BRIDGE_API_KEY || env.VITE_PBK_OPENCLAW_API_KEY || '',
-  };
+  const apiKey = env['VITE_PBK_BRIDGE_API_KEY'] || env['VITE_PBK_OPENCLAW_API_KEY'] || '';
+  if (!apiKey && typeof console !== 'undefined') {
+    console.warn('[PBK] Bridge API key not set. Set VITE_PBK_BRIDGE_API_KEY or VITE_PBK_OPENCLAW_API_KEY to avoid 401 errors.');
+  }
+  return { endpoint, apiKey };
 }
 
 export function getRuntimeConfig(): RuntimeConfig {

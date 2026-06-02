@@ -115,6 +115,17 @@ const LaunchBrowserResearchInput = z
   })
   .strict();
 
+const TestSkillInput = z
+  .object({
+    skillName: z.string().min(1).describe("Name of the agent skill to test."),
+    skillSource: z.string().optional().describe("Source reference for the skill (book, training set, etc.)."),
+    agentId: z.string().min(1).describe("ID of the agent that owns this skill."),
+    scenario: z.string().min(1).describe("Natural-language scenario to test the skill against (e.g. seller objection, negotiation context)."),
+    requestedBy: z.string().optional().describe("Actor label for bridge activity."),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const AddPbkMemoryInput = z
   .object({
     tenantId: z.string().optional(),
@@ -1375,6 +1386,45 @@ Returns:
     async (params) => {
       try {
         const result = await bridgeInvoke("launchBrowserResearch", params);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          structuredContent: result as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: formatBridgeError(error) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "pbk_test_skill",
+    {
+      title: "Test an agent skill against a scenario",
+      description: `Run a live skill test for an agent by submitting a natural-language scenario to the bridge. Useful for validating negotiation, objection-handling, or closing skills before deploying them in production calls.
+
+Args:
+  - skillName (string, required): Name of the skill to test.
+  - skillSource (string, optional): Source reference (book, training set, etc.).
+  - agentId (string, required): ID of the agent that owns the skill.
+  - scenario (string, required): Natural-language test scenario, e.g. "Seller insists property is worth $200k. We're at $120k."
+  - requestedBy (string, optional): Actor label for bridge activity.
+
+Returns:
+  { ok, result, response, output, agentId, skillName, scenario, createdAt }`,
+      inputSchema: TestSkillInput.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (params) => {
+      try {
+        const result = await bridgeInvoke("testSkill", params);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           structuredContent: result as Record<string, unknown>,

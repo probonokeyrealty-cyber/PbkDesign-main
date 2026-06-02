@@ -362,7 +362,13 @@ export function Leads() {
     try {
       let bant: BridgeRecord = {};
       if (editForm.bant.trim()) {
-        bant = JSON.parse(editForm.bant);
+        try {
+          bant = JSON.parse(editForm.bant);
+        } catch {
+          setSaving(false);
+          setDetailStatus('Save failed: BANT field contains invalid JSON. Please check the syntax and try again.');
+          return;
+        }
       }
       const response = await patchLeadRequest(activeLeadId, {
         name: editForm.name,

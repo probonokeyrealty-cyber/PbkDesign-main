@@ -1,3 +1,4 @@
+import { getStore } from '@netlify/blobs';
 import type { Handler } from '@netlify/functions';
 
 const BRIDGE_URL = String(
@@ -25,7 +26,6 @@ type RateBucket = {
   resetAt: number;
 };
 
-const rateBuckets = new Map<string, RateBucket>();
 let missingPublicKeyWarned = false;
 
 const corsHeaders = {
@@ -93,20 +93,33 @@ function getClientKey(event: Parameters<Handler>[0]) {
   return `ip:${ip}`;
 }
 
-function checkRateLimit(event: Parameters<Handler>[0]) {
+async function checkRateLimit(event: Parameters<Handler>[0]) {
   const now = Date.now();
   const key = getClientKey(event);
-  const existing = rateBuckets.get(key);
-  const bucket = existing && existing.resetAt > now
-    ? existing
-    : { count: 0, resetAt: now + PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_WINDOW_MS };
-  bucket.count += 1;
-  rateBuckets.set(key, bucket);
+  const store = getStore({ name: 'pbk-ava-rate-limits', consistency: 'strong' });
 
-  if (rateBuckets.size > 10000) {
-    for (const [bucketKey, value] of rateBuckets.entries()) {
-      if (value.resetAt <= now) rateBuckets.delete(bucketKey);
-    }
+  let bucket: RateBucket;
+  try {
+    const existing = await store.get(key, { type: 'json' }) as RateBucket | null;
+    bucket = existing && existing.resetAt > now
+      ? existing
+      : { count: 0, resetAt: now + PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_WINDOW_MS };
+  } catch (err) {
+    console.warn('[PBK] Rate limit blob read failed; allowing request:', err);
+    return {
+      allowed: true,
+      remaining: PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_MAX,
+      retryAfterSeconds: 0,
+      resetAt: now + PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_WINDOW_MS,
+    };
+  }
+
+  bucket.count += 1;
+
+  try {
+    await store.setJSON(key, bucket);
+  } catch (err) {
+    console.warn('[PBK] Rate limit blob write failed; using in-flight count:', err);
   }
 
   const remaining = Math.max(0, PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_MAX - bucket.count);
@@ -155,7 +168,7 @@ export const handler: Handler = async (event) => {
     );
   }
 
-  const rateLimit = checkRateLimit(event);
+  const rateLimit = await checkRateLimit(event);
   const rateLimitHeaders = {
     'X-Request-ID': requestId,
     'X-RateLimit-Limit': String(PBK_PUBLIC_AVA_NETLIFY_RATE_LIMIT_MAX),

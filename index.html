@@ -18891,6 +18891,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   }
 
   async function refreshFleetSnnWorkerStatus({ silent = true } = {}) {
+    const config = getOpenClawConfig();
+    if (openClawNeedsBridgeApiKey(config, '/invoke', 'POST')) {
+      fleetUiState.snnWorkers = [];
+      renderFleetDetail(fleetUiState.selected);
+      return;
+    }
     try {
       const response = await PBK.openclaw.invoke('getSnnWorkerStatus', {});
       const result = response?.result || response || {};
@@ -18898,7 +18904,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       renderFleetDetail(fleetUiState.selected);
       if (!silent) showFleetOutcome('live', 'SNN worker status refreshed', `${fleetUiState.snnWorkers.length} bridge worker records loaded.`);
     } catch (error) {
-      console.warn('[PBK AgentFleet] SNN worker status unavailable', error);
+      if (!silent || error?.code !== 'PBK_BRIDGE_AUTH_REQUIRED') {
+        console.warn('[PBK AgentFleet] SNN worker status unavailable', error);
+      }
       if (!silent) showFleetOutcome('unavailable', 'SNN worker status unavailable', error?.message || 'Bridge did not return worker status.');
     }
   }
@@ -34320,6 +34328,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function fetchOpenClawQuotas(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config, '/api/quotas');
 
     const candidates = [
       `${base}/api/quotas`,
@@ -34347,6 +34356,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function fetchOpenClawToolingStatus(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config, '/api/tooling/status');
 
     const candidates = [
       `${base}/api/tooling/status`,
@@ -34374,6 +34384,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function fetchOpenClawGatewayStatus(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config, '/api/gateway/status');
 
     const candidates = [
       `${base}/api/gateway/status?force=0`,
@@ -34401,6 +34412,7 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   async function fetchOpenClawSlackHealth(config = getOpenClawConfig()) {
     const base = normalizeOpenClawEndpoint(config.endpoint);
     if (!base) throw new Error('OpenClaw is not configured yet.');
+    assertOpenClawAuthReady(config, '/api/slack/health');
 
     const candidates = [
       `${base}/api/slack/health?force=1`,
@@ -35007,18 +35019,19 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     try {
     const config = getOpenClawConfig();
     const health = await probeOpenClaw(config).catch(() => null);
-    const authRequired = Boolean(health?.runtimeMeta?.authRequired);
-    const hasApiKey = Boolean(String(config.apiKey || '').trim());
+    const syncConfig = health?.runtimeMeta
+      ? sanitizeOpenClawConfig({ ...config, runtimeMeta: health.runtimeMeta })
+      : config;
 
-    if (authRequired && !hasApiKey) {
+    if (openClawNeedsBridgeApiKey(syncConfig, '/state')) {
       openClawPollFailures = 0;
       const connected = saveOpenClawConfig({
-        ...config,
+        ...syncConfig,
         status: 'saved',
         lastCheckedAt: Date.now(),
         lastMessage: 'Bridge health ok — add the API key to enable live state sync.',
         runtimeMeta: health?.runtimeMeta || sanitizeOpenClawRuntimeMeta({
-          ...(config.runtimeMeta || {}),
+          ...(syncConfig.runtimeMeta || {}),
           lastSyncAt: new Date().toISOString()
         })
       });
@@ -35029,11 +35042,11 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
 
     const [snapshot, quotas, tooling, gatewayStatus, slackHealth] = await Promise.all([
-      fetchOpenClawState(config),
-      fetchOpenClawQuotas(config).catch(() => null),
-      fetchOpenClawToolingStatus(config).catch(() => null),
-      fetchOpenClawGatewayStatus(config).catch(() => null),
-      fetchOpenClawSlackHealth(config).catch(() => null)
+      fetchOpenClawState(syncConfig),
+      fetchOpenClawQuotas(syncConfig).catch(() => null),
+      fetchOpenClawToolingStatus(syncConfig).catch(() => null),
+      fetchOpenClawGatewayStatus(syncConfig).catch(() => null),
+      fetchOpenClawSlackHealth(syncConfig).catch(() => null)
     ]);
     openClawPollFailures = 0;
     PBK.state.openclawQuotas = quotas;
@@ -35044,12 +35057,12 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     }
     renderOpenClawState(snapshot);
     const connected = saveOpenClawConfig({
-      ...config,
+      ...syncConfig,
       status: 'connected',
       lastCheckedAt: Date.now(),
       lastMessage: `Live sync ok — updated ${formatRuntimeTime(snapshot?.status?.lastUpdatedAt)}`,
       runtimeMeta: health?.runtimeMeta || sanitizeOpenClawRuntimeMeta({
-        ...(config.runtimeMeta || {}),
+        ...(syncConfig.runtimeMeta || {}),
         lastSyncAt: new Date().toISOString()
       })
       });
@@ -36004,7 +36017,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
   const initialOpenClawConfig = getOpenClawConfig();
   if (initialOpenClawConfig.endpoint) {
     syncOpenClawState({ silent: false }).catch((error) => {
-      console.error('Initial OpenClaw state sync failed', error);
+      if (error?.code !== 'PBK_BRIDGE_AUTH_REQUIRED') {
+        console.error('Initial OpenClaw state sync failed', error);
+      }
       reflectOpenClawUI(initialOpenClawConfig);
     });
     startOpenClawPolling({ immediate: false });

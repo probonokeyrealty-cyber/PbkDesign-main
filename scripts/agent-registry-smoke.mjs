@@ -14,6 +14,7 @@ async function main() {
 
   for (const required of [
     'ava',
+    'max',
     'rex',
     'hermes',
     'call-analyzer',
@@ -88,6 +89,11 @@ async function main() {
   assert.equal(localResult.handledBy, 'call-analyzer');
 
   const invocationSmokeHandlers = {
+    max: async (payload) => ({
+      ok: true,
+      result: 'max_contract_handoff_ready',
+      leadId: payload.leadId,
+    }),
     'script-rotator': async (payload) => ({
       ok: true,
       result: 'script_rotation_selected',

@@ -454,6 +454,9 @@ const ANALYZE_DEAL_RATE_LIMIT_MAX = Math.max(3, Number(process.env.PBK_ANALYZE_D
 const ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS = Math.max(10_000, Number(process.env.PBK_ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS || 60_000));
 const analyzeDealRateBuckets = new Map();
 const EXTERNAL_WEBHOOK_SECRET = String(process.env.PBK_EXTERNAL_WEBHOOK_SECRET || '').trim();
+const LOCAL_CALLBACK_URL = String(process.env.PBK_LOCAL_CALLBACK_URL || '').trim().replace(/\/+$/g, '');
+const LOCAL_CALLBACK_TOKEN = String(process.env.PBK_LOCAL_CALLBACK_TOKEN || '').trim();
+const LOCAL_CALLBACK_TIMEOUT_MS = Math.max(1000, Math.min(10 * 60 * 1000, Number(process.env.PBK_LOCAL_CALLBACK_TIMEOUT_MS || 5 * 60 * 1000)));
 const PBK_API_DEPRECATION_POLICY = Object.freeze({
   current: 'v1',
   legacyAliasesSupported: true,
@@ -2768,7 +2771,7 @@ function getTotpEnrollmentPayload() {
 
 function requiresTotpForPath(pathname = '') {
   if (!TOTP_REQUIRED) return false;
-  return pathname.startsWith('/api/admin') || matchesPath(pathname, ['/api/operator/call', '/api/ava/call-operator', '/api/safety/kill-switch', '/api/provider-writes/kill-switch', '/api/admin/request', '/api/admin/route']);
+  return pathname.startsWith('/api/admin') || matchesPath(pathname, ['/api/operator/call', '/api/ava/call-operator', '/api/safety/kill-switch', '/api/provider-writes/kill-switch', '/api/admin/request', '/api/admin/route', '/api/local-callback/trigger', '/api/v1/local-callback/trigger']);
 }
 
 function enforceTotp(request, response, pathname = '') {
@@ -33554,6 +33557,27 @@ function getLocalAgentRegistryHandlers() {
         actor: payload.actor || 'Agent Registry',
         source: payload.source || 'agent-registry',
       }),
+    max: async (payload = {}) => {
+      const query = String(payload.query || payload.command || payload.transcript || '').trim();
+      const closing = await toolHandlers.retrieveClosingIntelligence({
+        ...payload,
+        query: query || 'Prepare an approval-safe offer recap and contract handoff for this seller.',
+        selectedPath: payload.selectedPath || payload.path || 'cash',
+        seller_type: payload.seller_type || payload.sellerType || 'seller',
+        stage: payload.stage || 'contract_handoff',
+        source: payload.source || 'agent-registry',
+      });
+      return {
+        ok: closing?.ok !== false,
+        result: 'max_contract_handoff_ready',
+        writeMode: 'approval_gated',
+        closing,
+        safety: {
+          approvalGate: true,
+          providerWrites: 'blocked_until_operator_approval',
+        },
+      };
+    },
     rex: async (payload = {}) =>
       toolHandlers.getBrainState({
         ...payload,
@@ -45701,7 +45725,7 @@ function getBridgeAllowedOrigins() {
 function buildBridgeCorsHeaders(request) {
   const headers = {
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
     Vary: 'Origin',
   };
   const origin = String(request?.headers?.origin || '').trim();
@@ -45715,7 +45739,7 @@ function getResponseCorsHeaders(response) {
   return (
     response?.pbkCorsHeaders || {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key, X-Idempotency-Key, X-PBK-Webhook-Secret, X-Webhook-Secret, X-PBK-Signature, X-Public-Ava-Key, X-Public-Key, X-Request-ID, X-PBK-TOTP, X-OTP, X-PBK-Local-Callback-Token',
       Vary: 'Origin',
     }
   );
@@ -46182,6 +46206,134 @@ async function readBody(request) {
     return JSON.parse(raw);
   } catch {
     return { raw };
+  }
+}
+
+function buildLocalCallbackEndpoint(pathname = '/trigger') {
+  if (!LOCAL_CALLBACK_URL) return '';
+  const parsed = new URL(LOCAL_CALLBACK_URL);
+  const cleanBasePath = parsed.pathname.replace(/\/+$/g, '');
+  const basePath = cleanBasePath.replace(/\/(?:trigger|health)$/i, '');
+  parsed.pathname = `${basePath}${String(pathname || '/trigger').startsWith('/') ? pathname : `/${pathname}`}`;
+  return parsed.toString();
+}
+
+function getLocalCallbackUrlMeta() {
+  if (!LOCAL_CALLBACK_URL) return null;
+  try {
+    const parsed = new URL(LOCAL_CALLBACK_URL);
+    return {
+      origin: parsed.origin,
+      path: parsed.pathname || '/',
+    };
+  } catch {
+    return {
+      origin: '',
+      path: '',
+      invalid: true,
+    };
+  }
+}
+
+function buildLocalCallbackStatus() {
+  const urlMeta = getLocalCallbackUrlMeta();
+  return {
+    configured: Boolean(LOCAL_CALLBACK_URL && LOCAL_CALLBACK_TOKEN && !urlMeta?.invalid),
+    urlConfigured: Boolean(LOCAL_CALLBACK_URL),
+    tokenConfigured: Boolean(LOCAL_CALLBACK_TOKEN),
+    timeoutMs: LOCAL_CALLBACK_TIMEOUT_MS,
+    url: urlMeta,
+    requiredHeader: 'X-PBK-Local-Callback-Token',
+    triggerRoute: '/api/local-callback/trigger',
+    healthRoute: '/api/local-callback/status',
+  };
+}
+
+async function readFetchJsonOrText(fetchResponse) {
+  const text = await fetchResponse.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text.slice(0, 4000) };
+  }
+}
+
+async function probeLocalCallbackHealth() {
+  const status = buildLocalCallbackStatus();
+  if (!status.configured) {
+    return {
+      ok: false,
+      code: 'local_callback_not_configured',
+      status,
+    };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.min(LOCAL_CALLBACK_TIMEOUT_MS, 5000));
+  try {
+    const callbackResponse = await fetch(buildLocalCallbackEndpoint('/health'), {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    const payload = await readFetchJsonOrText(callbackResponse);
+    return {
+      ok: callbackResponse.ok && payload?.ok !== false,
+      statusCode: callbackResponse.status,
+      callback: payload,
+      status,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: error?.name === 'AbortError' ? 'local_callback_timeout' : 'local_callback_unreachable',
+      error: error?.message || String(error),
+      status,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function invokeLocalCallback(body = {}) {
+  const status = buildLocalCallbackStatus();
+  if (!status.configured) {
+    return {
+      ok: false,
+      statusCode: 503,
+      code: 'local_callback_not_configured',
+      error: 'Set PBK_LOCAL_CALLBACK_URL and PBK_LOCAL_CALLBACK_TOKEN on the bridge before triggering a local callback.',
+      status,
+    };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOCAL_CALLBACK_TIMEOUT_MS);
+  try {
+    const callbackResponse = await fetch(buildLocalCallbackEndpoint('/trigger'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-PBK-Local-Callback-Token': LOCAL_CALLBACK_TOKEN,
+      },
+      body: JSON.stringify(body || {}),
+      signal: controller.signal,
+    });
+    const payload = await readFetchJsonOrText(callbackResponse);
+    return {
+      ok: callbackResponse.ok && payload?.ok !== false,
+      statusCode: callbackResponse.status,
+      callback: payload,
+      status,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      statusCode: error?.name === 'AbortError' ? 504 : 502,
+      code: error?.name === 'AbortError' ? 'local_callback_timeout' : 'local_callback_unreachable',
+      error: error?.message || String(error),
+      status,
+    };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -51344,6 +51496,31 @@ const server = createServer(async (request, response) => {
         runtime: runtimeMeta,
         tools: TOOL_NAMES,
       });
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/local-callback/status', '/api/v1/local-callback/status'])) {
+      const probe = /^(1|true|yes)$/i.test(String(url.searchParams.get('probe') || '').trim());
+      const status = buildLocalCallbackStatus();
+      const probeResult = probe ? await probeLocalCallbackHealth() : null;
+      json(response, status.configured ? 200 : 503, {
+        ok: Boolean(status.configured),
+        status,
+        probe: probeResult,
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/local-callback/trigger', '/api/v1/local-callback/trigger'])) {
+      const body = await readBody(request);
+      const result = await invokeLocalCallback({
+        action: body.action || body.name || '',
+        args: Array.isArray(body.args) ? body.args : [],
+        dryRun: Boolean(body.dryRun),
+        requestedBy: body.requestedBy || body.actor || 'pbk-bridge',
+        requestId: body.requestId || request.headers['x-request-id'] || randomUUID(),
+      });
+      json(response, result.ok ? 200 : result.statusCode || 502, result);
       return;
     }
 

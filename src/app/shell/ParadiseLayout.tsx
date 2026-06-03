@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
 import { UiToastHost } from '../components/UiToastHost';
 import { applyPbkTheme, readPbkPrefs, savePbkPrefs } from '../utils/uiPrefs';
@@ -145,7 +146,9 @@ export function ParadiseLayout() {
         <FavoritesBar />
         <main className="relative overflow-auto bg-slate-900">
           {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
       <ShortcutCheatSheet open={shortcutOpen} onClose={() => setShortcutOpen(false)} />

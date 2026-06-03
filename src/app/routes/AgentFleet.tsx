@@ -254,7 +254,7 @@ function SkillTransferModal({
   onClose,
   onTransfer,
 }: SkillTransferModalProps) {
-  const targets = agents.filter((a) => a.id !== currentAgentId);
+  const targets = useMemo(() => agents.filter((a) => a.id !== currentAgentId), [agents, currentAgentId]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [versioned, setVersioned] = useState(true);
   const [transferring, setTransferring] = useState(false);

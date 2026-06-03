@@ -12,7 +12,7 @@ import {
 } from './pbk-brain-lib.mjs';
 
 const args = parseArgs();
-const inputPath = resolveCliPath(args.input || args.i || 'C:\\Users\\Dell\\Downloads\\conversations.json');
+const inputPath = resolveCliPath(args.input || args.i);
 const outputDir = resolveCliPath(args.output || args.o || DEFAULT_BRAIN_DIR);
 const dims = Number(args.dims || DEFAULT_VECTOR_DIMS);
 const includeThink = Boolean(args['include-think']);

@@ -33,7 +33,10 @@ assert(/<a[^>]+href=\{metricsUrl\}/s.test(settings), 'Settings metrics URL shoul
 assert(/class DealViewErrorBoundary/.test(dealView), 'Deal View should wrap the engine in an error boundary.');
 assert(/componentDidCatch|getDerivedStateFromError/.test(dealView), 'Deal View error boundary should catch render failures.');
 assert(/<App engineOnly/.test(dealView), 'Deal View should mount App in engine-only mode.');
-assert(/engineOnly/.test(app) && /!\s*engineOnly\s*&&\s*<TopBar/s.test(app), 'App should suppress its internal TopBar in engine-only mode.');
+assert(
+  /engineOnly/.test(app) && /!\s*engineOnly\s*&&\s*\(?\s*<TopBar/s.test(app),
+  'App should suppress its internal TopBar in engine-only mode.',
+);
 
 assert(/useRuntimeSnapshot/.test(shellTopbar), 'Shell topbar should read runtime state.');
 assert(/updateRuntimeSettingsRequest/.test(shellTopbar), 'Shell topbar autopilot toggle should persist to the bridge.');

@@ -32,7 +32,10 @@ for (const [label, source] of [
 
 assert(/export async function startLeadCallRequest/.test(runtimeBridge), 'runtimeBridge should expose a typed lead call request helper.');
 assert(/invokeRuntimeTool<Record<string, unknown>>\('telnyx_call'/.test(runtimeBridge), 'Lead calls should invoke the telnyx_call tool through the bridge.');
-assert(/useMemo\(\s*\(\) => Array\.isArray\(snapshot\?\.leadImports\)/s.test(leads), 'Leads should memoize snapshot-derived lead records.');
+assert(
+  /useMemo\(\s*\(\) => \(?\s*Array\.isArray\(snapshot\?\.leadImports\)/s.test(leads),
+  'Leads should memoize snapshot-derived lead records.',
+);
 assert(/validateLeadForCall/.test(leads), 'Leads should validate call contact data before invoking Telnyx.');
 assert(/validateContractBeforeSend/.test(leads), 'Leads should validate contract contact data before sending.');
 assert(/contractConfirmOpen/.test(leads), 'Contract send should require an irreversible-action confirmation.');

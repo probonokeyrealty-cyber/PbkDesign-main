@@ -8,7 +8,7 @@ interface LandAnalysisProps {
 }
 
 export function LandAnalysis({ deal, onDealChange }: LandAnalysisProps) {
-  const handleInputChange = (field: keyof DealData, value: any) => {
+  const handleInputChange = (field: keyof DealData, value: DealData[keyof DealData]) => {
     onDealChange({ [field]: value });
   };
 

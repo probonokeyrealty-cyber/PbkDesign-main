@@ -134,9 +134,6 @@ export type MessageRecord = {
   unread?: boolean;
   isUnread?: boolean;
   createdAt?: string;
-  channel?: string;
-  address?: string;
-  at?: string;
 };
 
 export type ContractRecord = {

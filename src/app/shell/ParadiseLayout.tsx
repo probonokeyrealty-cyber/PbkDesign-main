@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
@@ -209,7 +209,15 @@ export function ParadiseLayout() {
         <main className="relative overflow-auto bg-slate-900">
           {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
           <ErrorBoundary>
-            <Outlet />
+            <Suspense
+              fallback={
+                <div className="grid min-h-[280px] place-items-center text-sm text-slate-400">
+                  Loading...
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>

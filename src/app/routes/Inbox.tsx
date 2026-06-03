@@ -265,8 +265,12 @@ function ComposeModal({
         request.path === '/api/messages'
           ? await scheduleMessageRequest(request.body)
           : await sendMessageRequest(request.body);
+      const responseMessage =
+        response.message && typeof response.message === 'object'
+          ? (response.message as Record<string, unknown>)
+          : {};
       const result = String(
-        response.result || response.outcome || response.message?.status || ''
+        response.result || response.outcome || responseMessage.status || ''
       ).toLowerCase();
       const scheduled = request.path === '/api/messages' || result === 'scheduled';
       showUiToast({
@@ -860,7 +864,7 @@ export function Inbox() {
                           'Message'
                       )}
                     </div>
-                    {message.subject && (
+                    {Boolean(message.subject) && (
                       <div className="mt-1 text-xs font-medium text-slate-300">
                         {String(message.subject)}
                       </div>
@@ -884,7 +888,7 @@ export function Inbox() {
                         {formatRelativeTime(timestamp)}
                       </div>
                     )}
-                    {(message.scheduledFor || message.sendAt) && (
+                    {Boolean(message.scheduledFor || message.sendAt) && (
                       <div className="mt-1 text-[11px] text-slate-400">
                         {formatDateTime(message.scheduledFor || message.sendAt)}
                       </div>

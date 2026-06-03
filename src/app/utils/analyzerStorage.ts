@@ -50,7 +50,7 @@ function decodeAnalyzerStoragePayload<T>(raw: string | null, fallback: T): T {
 }
 
 function sanitizeAnalyzerDealForPersistentStorage(deal: Partial<DealData>) {
-  const clone = JSON.parse(JSON.stringify(deal || {})) as Partial<DealData> & {
+  const clone = JSON.parse(JSON.stringify(deal || {})) as Omit<Partial<DealData>, 'repairs'> & {
     repairs?: Record<string, unknown>;
     repairsMid?: unknown;
   };
@@ -72,7 +72,7 @@ function sanitizeAnalyzerPayloadForLocalStorage(payload: unknown): unknown {
         return {
           ...item,
           dealData: sanitizeAnalyzerDealForPersistentStorage(
-            (item as { dealData?: Partial<DealData> }).dealData || {},
+            (item as { dealData?: Partial<DealData> }).dealData || {}
           ),
         };
       }
@@ -82,31 +82,51 @@ function sanitizeAnalyzerPayloadForLocalStorage(payload: unknown): unknown {
   if ('deal' in payload) {
     return {
       ...payload,
-      deal: sanitizeAnalyzerDealForPersistentStorage((payload as { deal?: Partial<DealData> }).deal || {}),
+      deal: sanitizeAnalyzerDealForPersistentStorage(
+        (payload as { deal?: Partial<DealData> }).deal || {}
+      ),
     };
   }
   return sanitizeAnalyzerDealForPersistentStorage(payload as Partial<DealData>);
 }
 
 function storageGet(store: Storage, key: string): string | null {
-  try { return store.getItem(key); } catch { return null; }
+  try {
+    return store.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
 function storageSet(store: Storage, key: string, value: string): void {
-  try { store.setItem(key, value); } catch (err) { console.warn('[PBK] Storage write blocked (private mode?):', err); }
+  try {
+    store.setItem(key, value);
+  } catch (err) {
+    console.warn('[PBK] Storage write blocked (private mode?):', err);
+  }
 }
 
 function storageDel(store: Storage, key: string): void {
-  try { store.removeItem(key); } catch { /* ignore — read-only or private mode */ }
+  try {
+    store.removeItem(key);
+  } catch {
+    /* ignore — read-only or private mode */
+  }
 }
 
 export function readAnalyzerStorage<T>(key: string, fallback: T): T {
-  return decodeAnalyzerStoragePayload(storageGet(sessionStorage, `${key}:session`), fallback)
-    || decodeAnalyzerStoragePayload(storageGet(localStorage, key), fallback);
+  return (
+    decodeAnalyzerStoragePayload(storageGet(sessionStorage, `${key}:session`), fallback) ||
+    decodeAnalyzerStoragePayload(storageGet(localStorage, key), fallback)
+  );
 }
 
 export function writeAnalyzerStorage(key: string, payload: unknown) {
-  storageSet(localStorage, key, encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload)));
+  storageSet(
+    localStorage,
+    key,
+    encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload))
+  );
   storageSet(sessionStorage, `${key}:session`, encodeAnalyzerStoragePayload(payload));
 }
 

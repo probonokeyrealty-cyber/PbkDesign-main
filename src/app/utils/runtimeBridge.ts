@@ -47,6 +47,10 @@ export type ActivityRecord = {
   address?: string;
   summary?: string;
   createdAt?: string;
+  at?: string;
+  actor?: string;
+  text?: string;
+  category?: string;
 };
 
 export type BrainDoc = {
@@ -98,6 +102,9 @@ export type MessageRecord = {
   body?: string;
   status?: string;
   createdAt?: string;
+  channel?: string;
+  address?: string;
+  at?: string;
 };
 
 export type ContractRecord = {
@@ -117,6 +124,8 @@ export type AdminTask = {
   status?: string;
   actor?: string;
   createdAt?: string;
+  action?: string;
+  summary?: string;
 };
 
 export type RuntimeSnapshot = {
@@ -151,6 +160,10 @@ export type RuntimeToolingStatus = {
   observability?: Record<string, unknown>;
   github?: Record<string, unknown>;
   summary?: Record<string, unknown>;
+  propertyData?: Record<string, unknown>;
+  pipelineMemory?: Record<string, unknown>;
+  voiceFallback?: Record<string, unknown>;
+  desktopCopilot?: Record<string, unknown>;
 };
 
 type BridgeRequestOptions = {

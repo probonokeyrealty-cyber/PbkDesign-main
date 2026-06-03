@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { Check, ChevronDown, Copy, Download } from 'lucide-react';
 import { DealData, PBKPath } from '../types';
 import {
@@ -29,8 +29,7 @@ interface CallScriptSectionsProps {
 const ACCENT_CLASSES: Record<NonNullable<CallScriptSection['accent']>, string> = {
   amber:
     'border-amber-200 bg-amber-50/70 text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/10 dark:text-amber-300',
-  blue:
-    'border-blue-200 bg-blue-50/70 text-blue-800 dark:border-blue-800/60 dark:bg-blue-900/10 dark:text-blue-300',
+  blue: 'border-blue-200 bg-blue-50/70 text-blue-800 dark:border-blue-800/60 dark:bg-blue-900/10 dark:text-blue-300',
   green:
     'border-emerald-200 bg-emerald-50/70 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-900/10 dark:text-emerald-300',
   purple:
@@ -54,9 +53,14 @@ function buildPlaceholderValues(deal: DealData, activePath: PBKPath): Record<str
   const activeTerm = activePath === 'cf' ? cfTerm : 30;
   const marketPayment = calculateMarketPiti(agreedPrice || deal.price || 0);
   const existingPayment = calculateSubjectToPiti(mtBalance, mtRate, agreedPrice || deal.price || 0);
-  const monthlyInterest = calculateMonthlyInterestOnly(Math.max(0, agreedPrice - activeDown), activeRate);
-  const builderPays = activePath === 'rbp-land' ? agreedPrice : deal.builderTotal || deal.maoRBP || 0;
-  const offerToSeller = activePath === 'rbp-land' ? agreedPrice : deal.offer || agreedPrice || deal.mao60 || 0;
+  const monthlyInterest = calculateMonthlyInterestOnly(
+    Math.max(0, agreedPrice - activeDown),
+    activeRate
+  );
+  const builderPays =
+    activePath === 'rbp-land' ? agreedPrice : deal.builderTotal || deal.maoRBP || 0;
+  const offerToSeller =
+    activePath === 'rbp-land' ? agreedPrice : deal.offer || agreedPrice || deal.mao60 || 0;
   const timeline = deal.timeline || '30 days';
   const earnest = deal.earnestDeposit || 'Delivered within 3 business days';
 
@@ -87,11 +91,8 @@ function buildPlaceholderValues(deal: DealData, activePath: PBKPath): Record<str
   };
 }
 
-function renderHighlightedScript(
-  script: string,
-  placeholderValues: Record<string, string>,
-) {
-  const nodes: Array<string | JSX.Element> = [];
+function renderHighlightedScript(script: string, placeholderValues: Record<string, string>) {
+  const nodes: Array<string | ReactElement> = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let keyIndex = 0;
@@ -112,7 +113,7 @@ function renderHighlightedScript(
         className="rounded-md bg-amber-100 px-1.5 py-0.5 font-mono text-[0.95em] text-amber-900 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-100 dark:ring-amber-800/70"
       >
         {rawToken}
-      </span>,
+      </span>
     );
 
     lastIndex = match.index + rawToken.length;
@@ -209,7 +210,7 @@ export function CallScriptSections({
 }: CallScriptSectionsProps) {
   const placeholderValues = useMemo(
     () => buildPlaceholderValues(deal, activePath),
-    [deal, activePath],
+    [deal, activePath]
   );
   const defaultOpenState = useMemo(
     () =>
@@ -217,7 +218,7 @@ export function CallScriptSections({
         acc[section.id] = Boolean(section.defaultOpen);
         return acc;
       }, {}),
-    [sections],
+    [sections]
   );
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(defaultOpenState);
   const [copiedId, setCopiedId] = useState<string | null>(null);

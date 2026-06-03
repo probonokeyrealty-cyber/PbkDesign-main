@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client"]
   },
   "include": ["src/app/**/*.ts", "src/app/**/*.tsx"],
   "exclude": ["node_modules", "dist"]

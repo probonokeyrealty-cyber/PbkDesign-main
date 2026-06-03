@@ -117,11 +117,11 @@ function calculateCoCMetrics(inputs: CoCInputs, activePath: 'cf' | 'mt'): CoCMet
   const annualGross = clampNumber(inputs.rent) * 12;
   const vacancyLoss = annualGross * (clampNumber(inputs.vacancyPct) / 100);
   const operatingExpenses = annualGross * (clampNumber(inputs.expensePct) / 100);
-  const noi = (annualGross - vacancyLoss) - operatingExpenses;
+  const noi = annualGross - vacancyLoss - operatingExpenses;
   const annualDebt = pmt * 12;
   const cashflow = noi - annualDebt;
   const equityInvested = downPayment + clampNumber(inputs.closingCosts);
-  const dscr = pmt > 0 ? (noi / 12) / pmt : 0;
+  const dscr = pmt > 0 ? noi / 12 / pmt : 0;
 
   return {
     downPayment,
@@ -149,12 +149,9 @@ function solveMaxCoCPrice(inputs: CoCInputs, activePath: 'cf' | 'mt') {
       {
         ...inputs,
         price: mid,
-        mtLoanBalance:
-          activePath === 'mt' && inputs.mtLoanBalance > 0
-            ? inputs.mtLoanBalance
-            : 0,
+        mtLoanBalance: activePath === 'mt' && inputs.mtLoanBalance > 0 ? inputs.mtLoanBalance : 0,
       },
-      activePath,
+      activePath
     );
 
     if (test.coc >= inputs.targetCoc) lo = mid;
@@ -190,7 +187,8 @@ function runMathCheck(inputs: CoCInputs, metrics: CoCMetrics, activePath: 'cf' |
 
   const remainingDebt = inputs.price - metrics.downPayment;
   if (remainingDebt <= 0) failures.push('Price minus down/upfront cash must stay above $0.');
-  if (metrics.equityInvested <= 0) failures.push('Equity invested must be above $0 so CoC has a valid denominator.');
+  if (metrics.equityInvested <= 0)
+    failures.push('Equity invested must be above $0 so CoC has a valid denominator.');
   if (inputs.rent > 0 && metrics.pmt > inputs.rent) {
     failures.push('Monthly payment is higher than gross monthly rent.');
   }
@@ -198,7 +196,8 @@ function runMathCheck(inputs: CoCInputs, metrics: CoCMetrics, activePath: 'cf' |
     failures.push('MT purchase price must be higher than the existing loan balance.');
   }
   if (inputs.rent <= 0) warnings.push('Gross rent is missing, so rent coverage cannot be checked.');
-  if (inputs.price <= 0) warnings.push('Purchase price is missing, so cap rate and max price are placeholders.');
+  if (inputs.price <= 0)
+    warnings.push('Purchase price is missing, so cap rate and max price are placeholders.');
   if (inputs.targetCoc <= 0) warnings.push('Target CoC is missing, so reverse solver cannot run.');
 
   if (failures.length > 0) return { tone: 'fail', messages: failures };
@@ -210,21 +209,24 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
   const [inputs, setInputs] = useState(() => buildInitialInputs(deal, activePath));
   const [suggestedMaxPrice, setSuggestedMaxPrice] = useState<number | null>(null);
   const [mathCheck, setMathCheck] = useState<MathCheck | null>(null);
-  const seed = useMemo(() => buildInitialInputs(deal, activePath), [
-    activePath,
-    deal.agreedPrice,
-    deal.price,
-    deal.rent,
-    deal.balance,
-    deal.rate,
-    deal.cfDownPayment,
-    deal.cfRate,
-    deal.cfTerm,
-    deal.mtUpfront,
-    deal.mtBalanceConfirm,
-    deal.mtRateConfirm,
-    deal.underwriting?.targetCocPct,
-  ]);
+  const seed = useMemo(
+    () => buildInitialInputs(deal, activePath),
+    [
+      activePath,
+      deal.agreedPrice,
+      deal.price,
+      deal.rent,
+      deal.balance,
+      deal.rate,
+      deal.cfDownPayment,
+      deal.cfRate,
+      deal.cfTerm,
+      deal.mtUpfront,
+      deal.mtBalanceConfirm,
+      deal.mtRateConfirm,
+      deal.underwriting?.targetCocPct,
+    ]
+  );
   const seedKey = JSON.stringify(seed);
 
   useEffect(() => {
@@ -260,9 +262,19 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
       inputs.rent,
       deal.balance || 0,
       inputs.rate || deal.rate || 0,
-      deal.mao60 || 0,
+      deal.mao60 || 0
     );
-  }, [activePath, deal.arv, deal.balance, deal.mao60, deal.price, deal.rate, inputs.price, inputs.rate, inputs.rent]);
+  }, [
+    activePath,
+    deal.arv,
+    deal.balance,
+    deal.mao60,
+    deal.price,
+    deal.rate,
+    inputs.price,
+    inputs.rate,
+    inputs.rent,
+  ]);
 
   useEffect(() => {
     const next = {
@@ -309,11 +321,15 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
     }
 
     if ('term' in changed && activePath === 'cf') updates.cfTerm = Math.round(next.term);
-    if ('mtLoanBalance' in changed && activePath === 'mt') updates.mtBalanceConfirm = roundMoney(next.mtLoanBalance);
+    if ('mtLoanBalance' in changed && activePath === 'mt')
+      updates.mtBalanceConfirm = roundMoney(next.mtLoanBalance);
 
     if ('targetCoc' in changed) {
       updates.underwriting = {
-        ...deal.underwriting,
+        maoCashPct: deal.underwriting?.maoCashPct ?? 70,
+        maoRbpPct: deal.underwriting?.maoRbpPct ?? 80,
+        maoRepairPct: deal.underwriting?.maoRepairPct ?? 100,
+        assignFeePct: deal.underwriting?.assignFeePct ?? 10,
         targetCocPct: Math.round(next.targetCoc),
       };
     }
@@ -358,11 +374,13 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
               {pathLabel} investor math
             </h4>
             <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
-              Live CoC, cap rate, NOI, payment, and cash flow. Inputs sync with the current deal so the tracker,
-              scripts, and path packet stay on the same terms.
+              Live CoC, cap rate, NOI, payment, and cash flow. Inputs sync with the current deal so
+              the tracker, scripts, and path packet stay on the same terms.
             </p>
           </div>
-          <div className={`rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] ${status.tone}`}>
+          <div
+            className={`rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] ${status.tone}`}
+          >
             {status.label}
           </div>
         </div>
@@ -370,7 +388,12 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
 
       <div className="space-y-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <InputField label="Purchase Price" value={inputs.price} prefix="$" onChange={(value) => updateInputs({ price: value })} />
+          <InputField
+            label="Purchase Price"
+            value={inputs.price}
+            prefix="$"
+            onChange={(value) => updateInputs({ price: value })}
+          />
           <InputField
             label={activePath === 'cf' ? 'Down Payment' : 'Upfront Cash'}
             value={inputs.downPct}
@@ -378,7 +401,13 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
             step={0.1}
             onChange={(value) => updateInputs({ downPct: value })}
           />
-          <InputField label="Interest Rate" value={inputs.rate} suffix="%" step={0.125} onChange={(value) => updateInputs({ rate: value })} />
+          <InputField
+            label="Interest Rate"
+            value={inputs.rate}
+            suffix="%"
+            step={0.125}
+            onChange={(value) => updateInputs({ rate: value })}
+          />
           <InputField
             label="Loan Term"
             value={inputs.term}
@@ -386,10 +415,32 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
             selectOptions={termOptions}
             onChange={(value) => updateInputs({ term: value })}
           />
-          <InputField label="Gross Monthly Rent" value={inputs.rent} prefix="$" onChange={(value) => updateInputs({ rent: value })} />
-          <InputField label="Vacancy" value={inputs.vacancyPct} suffix="%" step={0.5} onChange={(value) => updateInputs({ vacancyPct: value })} />
-          <InputField label="Operating Expenses" value={inputs.expensePct} suffix="%" step={0.5} onChange={(value) => updateInputs({ expensePct: value })} />
-          <InputField label="Closing Costs" value={inputs.closingCosts} prefix="$" onChange={(value) => updateInputs({ closingCosts: value })} />
+          <InputField
+            label="Gross Monthly Rent"
+            value={inputs.rent}
+            prefix="$"
+            onChange={(value) => updateInputs({ rent: value })}
+          />
+          <InputField
+            label="Vacancy"
+            value={inputs.vacancyPct}
+            suffix="%"
+            step={0.5}
+            onChange={(value) => updateInputs({ vacancyPct: value })}
+          />
+          <InputField
+            label="Operating Expenses"
+            value={inputs.expensePct}
+            suffix="%"
+            step={0.5}
+            onChange={(value) => updateInputs({ expensePct: value })}
+          />
+          <InputField
+            label="Closing Costs"
+            value={inputs.closingCosts}
+            prefix="$"
+            onChange={(value) => updateInputs({ closingCosts: value })}
+          />
           {activePath === 'mt' ? (
             <InputField
               label="Existing Loan Balance"
@@ -401,8 +452,18 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <MetricCard icon={Percent} label="Cash-on-Cash" value={formatPercent(metrics.coc)} note={`Target ${inputs.targetCoc}%+`} />
-          <MetricCard icon={TrendingUp} label="Cap Rate" value={formatPercent(metrics.cap)} note="NOI / purchase price" />
+          <MetricCard
+            icon={Percent}
+            label="Cash-on-Cash"
+            value={formatPercent(metrics.coc)}
+            note={`Target ${inputs.targetCoc}%+`}
+          />
+          <MetricCard
+            icon={TrendingUp}
+            label="Cap Rate"
+            value={formatPercent(metrics.cap)}
+            note="NOI / purchase price"
+          />
           <MetricCard
             icon={Landmark}
             label="Monthly P&I"
@@ -415,8 +476,16 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
             note={`${formatCurrency(monthlyCashflow)}/mo after debt`}
             tone={metrics.cashflow >= 0 ? 'positive' : 'negative'}
           />
-          <MetricCard label="Equity Invested" value={formatCurrency(Math.round(metrics.equityInvested))} note="Down/upfront + closing" />
-          <MetricCard label="NOI (annual)" value={formatCurrency(Math.round(metrics.noi))} note="Rent - vacancy - expenses" />
+          <MetricCard
+            label="Equity Invested"
+            value={formatCurrency(Math.round(metrics.equityInvested))}
+            note="Down/upfront + closing"
+          />
+          <MetricCard
+            label="NOI (annual)"
+            value={formatCurrency(Math.round(metrics.noi))}
+            note="Rent - vacancy - expenses"
+          />
         </div>
 
         <div className="grid gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950/60 lg:grid-cols-[1fr_auto_auto_1fr]">
@@ -455,8 +524,14 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
         {mathCheck ? <MathCheckPanel check={mathCheck} /> : null}
 
         <div className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-950/40 md:grid-cols-4">
-          <SummaryField label={activePath === 'cf' ? 'Down Payment $' : 'Upfront Cash $'} value={formatCurrency(Math.round(metrics.downPayment))} />
-          <SummaryField label="Loan Used In Calc" value={formatCurrency(Math.round(metrics.loanAmount))} />
+          <SummaryField
+            label={activePath === 'cf' ? 'Down Payment $' : 'Upfront Cash $'}
+            value={formatCurrency(Math.round(metrics.downPayment))}
+          />
+          <SummaryField
+            label="Loan Used In Calc"
+            value={formatCurrency(Math.round(metrics.loanAmount))}
+          />
           <SummaryField label="DSCR" value={metrics.pmt > 0 ? metrics.dscr.toFixed(2) : '-'} />
           <button
             type="button"
@@ -474,11 +549,35 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
               Creative Finance Snapshot
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <SummaryField label="Market PITI" value={`${formatCurrency(cfSummary.marketPiti)}/mo`} />
-              <SummaryField label="Sub-To PITI" value={cfSummary.subjectToPiti > 0 ? `${formatCurrency(cfSummary.subjectToPiti)}/mo` : '-'} />
+              <SummaryField
+                label="Market PITI"
+                value={`${formatCurrency(cfSummary.marketPiti)}/mo`}
+              />
+              <SummaryField
+                label="Sub-To PITI"
+                value={
+                  cfSummary.subjectToPiti > 0
+                    ? `${formatCurrency(cfSummary.subjectToPiti)}/mo`
+                    : '-'
+                }
+              />
               <SummaryField label="Creative Max" value={formatCurrency(cfSummary.creativeMax)} />
-              <SummaryField label="Market CF" value={cfSummary.marketCashflow !== null ? `${formatCurrency(cfSummary.marketCashflow)}/mo` : '-'} />
-              <SummaryField label="Carry CF" value={cfSummary.carryCashflow !== null ? `${formatCurrency(cfSummary.carryCashflow)}/mo` : '-'} />
+              <SummaryField
+                label="Market CF"
+                value={
+                  cfSummary.marketCashflow !== null
+                    ? `${formatCurrency(cfSummary.marketCashflow)}/mo`
+                    : '-'
+                }
+              />
+              <SummaryField
+                label="Carry CF"
+                value={
+                  cfSummary.carryCashflow !== null
+                    ? `${formatCurrency(cfSummary.carryCashflow)}/mo`
+                    : '-'
+                }
+              />
               <SummaryField label="Deal Rating" value={cfSummary.dealRating} />
             </div>
           </div>

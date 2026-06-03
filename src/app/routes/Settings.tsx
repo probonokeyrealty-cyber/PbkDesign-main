@@ -81,12 +81,6 @@ export function Settings() {
     toolingSummary.requiredReadyCount,
     toNumber(toolingSummary.readyCount)
   );
-  const toolingCoreTotal = toNumber(
-    toolingSummary.requiredCount,
-    toNumber(toolingSummary.totalCount, toolingCards.length)
-  );
-  const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount);
-  const toolingOptionalTotal = toNumber(toolingSummary.optionalCount);
 
   const providerCards = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
@@ -151,6 +145,13 @@ export function Settings() {
     },
   ];
 
+  const toolingCoreTotal = toNumber(
+    toolingSummary.requiredCount,
+    toNumber(toolingSummary.totalCount, toolingCards.length)
+  );
+  const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount);
+  const toolingOptionalTotal = toNumber(toolingSummary.optionalCount);
+
   const decideAdminTask = async (task: Record<string, unknown>, status: string) => {
     const taskId = String(task.id || '');
     if (!taskId) return;
@@ -159,7 +160,10 @@ export function Settings() {
     setActionStatus('');
     try {
       await updateAdminTaskDecision(taskId, status);
-      await refresh().catch((err) => { console.warn('[PBK] State refresh failed after admin task decision:', err); return null; });
+      await refresh().catch((err) => {
+        console.warn('[PBK] State refresh failed after admin task decision:', err);
+        return null;
+      });
       setActionStatus(
         status === 'approved' ? 'Admin task approved and executed.' : 'Admin task declined.'
       );

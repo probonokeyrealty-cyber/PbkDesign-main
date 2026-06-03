@@ -75,20 +75,52 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
   const projectedAssignment = grossSpread > 0 ? Math.round(grossSpread * (assignmentPct / 100)) : 0;
   const dealZone =
     !agreed || !deal.mao60
-      ? { label: 'Incomplete', tone: 'slate' as TrackerTone, note: 'Confirm the agreed number to classify the deal.' }
+      ? {
+          label: 'Incomplete',
+          tone: 'slate' as TrackerTone,
+          note: 'Confirm the agreed number to classify the deal.',
+        }
       : agreed <= deal.mao60
-        ? { label: 'Strong', tone: 'green' as TrackerTone, note: 'Inside MAO Cash. Strong negotiating position.' }
+        ? {
+            label: 'Strong',
+            tone: 'green' as TrackerTone,
+            note: 'Inside MAO Cash. Strong negotiating position.',
+          }
         : agreed <= maoCeiling
-          ? { label: 'Acceptable', tone: 'amber' as TrackerTone, note: 'Inside the 10% stretch band. Stay disciplined.' }
-          : { label: 'Pass', tone: 'red' as TrackerTone, note: 'Above the 10% cash ceiling. Re-negotiate or walk.' };
+          ? {
+              label: 'Acceptable',
+              tone: 'amber' as TrackerTone,
+              note: 'Inside the 10% stretch band. Stay disciplined.',
+            }
+          : {
+              label: 'Pass',
+              tone: 'red' as TrackerTone,
+              note: 'Above the 10% cash ceiling. Re-negotiate or walk.',
+            };
   const verdict =
     deal.verdict === 'green'
-      ? { label: 'Go', tone: 'green' as TrackerTone, note: 'The deal is clearing the current PBK bar.' }
+      ? {
+          label: 'Go',
+          tone: 'green' as TrackerTone,
+          note: 'The deal is clearing the current PBK bar.',
+        }
       : deal.verdict === 'yellow'
-        ? { label: 'Review', tone: 'amber' as TrackerTone, note: 'Numbers are workable, but the margin is thin.' }
+        ? {
+            label: 'Review',
+            tone: 'amber' as TrackerTone,
+            note: 'Numbers are workable, but the margin is thin.',
+          }
         : deal.verdict === 'red'
-          ? { label: 'Pass', tone: 'red' as TrackerTone, note: 'Current pricing is outside the safer range.' }
-          : { label: 'Not analyzed', tone: 'slate' as TrackerTone, note: 'Enter pricing and comps to score the deal.' };
+          ? {
+              label: 'Pass',
+              tone: 'red' as TrackerTone,
+              note: 'Current pricing is outside the safer range.',
+            }
+          : {
+              label: 'Not analyzed',
+              tone: 'slate' as TrackerTone,
+              note: 'Enter pricing and comps to score the deal.',
+            };
   const cashSpreadSummary = formatSpread(cashSpread, deal.mao60, 'MAO Cash');
   const rbpSpreadSummary = formatSpread(rbpSpread, deal.maoRBP, 'MAO RBP');
 
@@ -96,26 +128,74 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
     activePath === 'cf'
       ? deal.cfMonthlyPayment && deal.rent
         ? deal.rent - deal.cfMonthlyPayment > 0
-          ? { label: 'CF Works', tone: 'green' as TrackerTone, note: 'Projected rent covers the proposed CF payment.' }
-          : { label: 'CF Tight', tone: 'amber' as TrackerTone, note: 'Terms need to improve for comfortable monthly spread.' }
-        : { label: 'CF Pending', tone: 'slate' as TrackerTone, note: 'Confirm CF terms to rate this path.' }
+          ? {
+              label: 'CF Works',
+              tone: 'green' as TrackerTone,
+              note: 'Projected rent covers the proposed CF payment.',
+            }
+          : {
+              label: 'CF Tight',
+              tone: 'amber' as TrackerTone,
+              note: 'Terms need to improve for comfortable monthly spread.',
+            }
+        : {
+            label: 'CF Pending',
+            tone: 'slate' as TrackerTone,
+            note: 'Confirm CF terms to rate this path.',
+          }
       : activePath === 'mt'
         ? deal.mtRateConfirm || deal.rate
           ? (deal.mtRateConfirm || deal.rate) < 5.5
-            ? { label: 'MT Advantage', tone: 'green' as TrackerTone, note: 'Existing debt is meaningfully better than market financing.' }
-            : { label: 'MT Review', tone: 'amber' as TrackerTone, note: 'The structure may still work, but the rate is less compelling.' }
-          : { label: 'MT Pending', tone: 'slate' as TrackerTone, note: 'Confirm the existing loan rate and balance.' }
+            ? {
+                label: 'MT Advantage',
+                tone: 'green' as TrackerTone,
+                note: 'Existing debt is meaningfully better than market financing.',
+              }
+            : {
+                label: 'MT Review',
+                tone: 'amber' as TrackerTone,
+                note: 'The structure may still work, but the rate is less compelling.',
+              }
+          : {
+              label: 'MT Pending',
+              tone: 'slate' as TrackerTone,
+              note: 'Confirm the existing loan rate and balance.',
+            }
         : activePath === 'rbp' || activePath === 'rbp-land'
           ? rbpSpread !== null
             ? rbpSpread >= 0
-              ? { label: 'RBP Works', tone: 'green' as TrackerTone, note: 'The agreed number still fits under MAO RBP.' }
-              : { label: 'RBP Stretch', tone: 'amber' as TrackerTone, note: 'The RBP path needs a lower price or stronger buyer upside.' }
-            : { label: 'RBP Pending', tone: 'slate' as TrackerTone, note: 'Confirm the agreed number to compare against MAO RBP.' }
+              ? {
+                  label: 'RBP Works',
+                  tone: 'green' as TrackerTone,
+                  note: 'The agreed number still fits under MAO RBP.',
+                }
+              : {
+                  label: 'RBP Stretch',
+                  tone: 'amber' as TrackerTone,
+                  note: 'The RBP path needs a lower price or stronger buyer upside.',
+                }
+            : {
+                label: 'RBP Pending',
+                tone: 'slate' as TrackerTone,
+                note: 'Confirm the agreed number to compare against MAO RBP.',
+              }
           : cashSpread !== null
             ? cashSpread >= 0
-              ? { label: 'Cash Works', tone: 'green' as TrackerTone, note: 'The agreed number is inside MAO Cash.' }
-              : { label: 'Cash Over', tone: 'red' as TrackerTone, note: 'The agreed number is above MAO Cash.' }
-            : { label: 'Cash Pending', tone: 'slate' as TrackerTone, note: 'Confirm the agreed number to compare against MAO Cash.' };
+              ? {
+                  label: 'Cash Works',
+                  tone: 'green' as TrackerTone,
+                  note: 'The agreed number is inside MAO Cash.',
+                }
+              : {
+                  label: 'Cash Over',
+                  tone: 'red' as TrackerTone,
+                  note: 'The agreed number is above MAO Cash.',
+                }
+            : {
+                label: 'Cash Pending',
+                tone: 'slate' as TrackerTone,
+                note: 'Confirm the agreed number to compare against MAO Cash.',
+              };
 
   const stats = [
     {
@@ -143,7 +223,7 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
       icon: Activity,
       label: 'Agreed / Anchor',
       value: agreed > 0 ? formatCurrency(agreed) : '-',
-      tone: agreed > 0 ? 'slate' : 'amber',
+      tone: (agreed > 0 ? 'slate' : 'amber') as TrackerTone,
       subtext: 'Live call price',
     },
     {
@@ -181,7 +261,7 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
     {
       label: 'RBP Gain vs Cash',
       value: rbpGain !== null ? formatCurrency(rbpGain) : '-',
-      tone: rbpGain !== null && rbpGain > 0 ? 'green' : 'slate',
+      tone: (rbpGain !== null && rbpGain > 0 ? 'green' : 'slate') as TrackerTone,
     },
     {
       label: 'Assignment Fee %',
@@ -238,7 +318,8 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
             value: deal.investorROI ? `${deal.investorROI.toFixed(1)}%` : '-',
           },
           {
-            label: activePath === 'cf' ? 'CF Payment' : activePath === 'mt' ? 'MT Payment' : 'Timeline',
+            label:
+              activePath === 'cf' ? 'CF Payment' : activePath === 'mt' ? 'MT Payment' : 'Timeline',
             value:
               activePath === 'cf'
                 ? deal.cfMonthlyPayment
@@ -275,7 +356,9 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
       <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-          <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">Live Deal Tracker</h3>
+          <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
+            Live Deal Tracker
+          </h3>
         </div>
 
         <div className="grid grid-cols-2 xl:grid-cols-6 gap-3 mb-3">
@@ -294,8 +377,12 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
                     {stat.label}
                   </div>
                 </div>
-                <div className={`text-[15px] font-bold mb-0.5 ${getToneClasses(stat.tone)}`}>{stat.value}</div>
-                <div className="text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed">{stat.subtext}</div>
+                <div className={`text-[15px] font-bold mb-0.5 ${getToneClasses(stat.tone)}`}>
+                  {stat.value}
+                </div>
+                <div className="text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed">
+                  {stat.subtext}
+                </div>
               </div>
             );
           })}
@@ -310,7 +397,11 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
               {referenceRows.map((row) => (
                 <div key={row.label} className="flex items-center justify-between gap-3">
                   <span className="text-[11px] text-gray-600 dark:text-gray-400">{row.label}</span>
-                  <span className={`text-[11.5px] font-semibold text-right ${getToneClasses(row.tone)}`}>{row.value}</span>
+                  <span
+                    className={`text-[11.5px] font-semibold text-right ${getToneClasses(row.tone)}`}
+                  >
+                    {row.value}
+                  </span>
                 </div>
               ))}
             </div>
@@ -324,7 +415,11 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
               {viabilityRows.map((row) => (
                 <div key={row.label} className="flex items-center justify-between gap-3">
                   <span className="text-[11px] text-gray-600 dark:text-gray-400">{row.label}</span>
-                  <span className={`text-[11.5px] font-semibold text-right ${getToneClasses(row.tone)}`}>{row.value}</span>
+                  <span
+                    className={`text-[11.5px] font-semibold text-right ${getToneClasses(row.tone)}`}
+                  >
+                    {row.value}
+                  </span>
                 </div>
               ))}
             </div>
@@ -339,7 +434,9 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="w-1 h-3 bg-green-500 rounded-sm"></div>
-            <h3 className="text-[10px] font-bold uppercase tracking-wide text-green-400">Decision Snapshot</h3>
+            <h3 className="text-[10px] font-bold uppercase tracking-wide text-green-400">
+              Decision Snapshot
+            </h3>
           </div>
           <div
             className={`px-2.5 py-1 rounded-full text-[9px] font-bold ${
@@ -358,34 +455,52 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="bg-gray-50 dark:bg-white/5 rounded-lg p-3 border border-gray-200 dark:border-white/10">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Decision</div>
+            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+              Decision
+            </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Path Verdict</span>
-                <span className={`text-[11.5px] font-semibold ${getToneClasses(pathVerdict.tone)}`}>{pathVerdict.label}</span>
+                <span className={`text-[11.5px] font-semibold ${getToneClasses(pathVerdict.tone)}`}>
+                  {pathVerdict.label}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Deal Zone</span>
-                <span className={`text-[11.5px] font-semibold ${getToneClasses(dealZone.tone)}`}>{dealZone.label}</span>
+                <span className={`text-[11.5px] font-semibold ${getToneClasses(dealZone.tone)}`}>
+                  {dealZone.label}
+                </span>
               </div>
-              <div className="text-[10px] text-gray-600 dark:text-gray-300 leading-relaxed">{verdict.note}</div>
+              <div className="text-[10px] text-gray-600 dark:text-gray-300 leading-relaxed">
+                {verdict.note}
+              </div>
             </div>
           </div>
 
           <div className="bg-gray-50 dark:bg-white/5 rounded-lg p-3 border border-gray-200 dark:border-white/10">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Offer Math</div>
+            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+              Offer Math
+            </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Anchor Price</span>
-                <span className="text-[11.5px] font-semibold text-gray-900 dark:text-white">{agreed > 0 ? formatCurrency(agreed) : '-'}</span>
+                <span className="text-[11.5px] font-semibold text-gray-900 dark:text-white">
+                  {agreed > 0 ? formatCurrency(agreed) : '-'}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10.5px] text-gray-600 dark:text-gray-400">Cash Spread</span>
-                <span className={`text-[11.5px] font-semibold ${getToneClasses(cashSpreadSummary.tone)}`}>{cashSpreadSummary.label}</span>
+                <span
+                  className={`text-[11.5px] font-semibold ${getToneClasses(cashSpreadSummary.tone)}`}
+                >
+                  {cashSpreadSummary.label}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10.5px] text-gray-600 dark:text-gray-400">RBP Gain</span>
-                <span className={`text-[11.5px] font-semibold ${getToneClasses(rbpGain !== null && rbpGain > 0 ? 'green' : 'slate')}`}>
+                <span
+                  className={`text-[11.5px] font-semibold ${getToneClasses(rbpGain !== null && rbpGain > 0 ? 'green' : 'slate')}`}
+                >
                   {rbpGain !== null ? formatCurrency(rbpGain) : '-'}
                 </span>
               </div>
@@ -393,12 +508,18 @@ export function LiveDealTrackerPanel({ deal, activePath }: LiveDealTrackerPanelP
           </div>
 
           <div className="bg-gray-50 dark:bg-white/5 rounded-lg p-3 border border-gray-200 dark:border-white/10">
-            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Investor Benchmarks</div>
+            <div className="text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+              Investor Benchmarks
+            </div>
             <div className="space-y-2">
               {investorRows.map((row) => (
                 <div key={row.label} className="flex items-center justify-between gap-3">
-                  <span className="text-[10.5px] text-gray-600 dark:text-gray-400">{row.label}</span>
-                  <span className="text-[11.5px] font-semibold text-gray-900 dark:text-white text-right">{row.value}</span>
+                  <span className="text-[10.5px] text-gray-600 dark:text-gray-400">
+                    {row.label}
+                  </span>
+                  <span className="text-[11.5px] font-semibold text-gray-900 dark:text-white text-right">
+                    {row.value}
+                  </span>
                 </div>
               ))}
             </div>

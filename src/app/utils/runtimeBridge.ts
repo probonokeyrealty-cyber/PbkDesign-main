@@ -349,16 +349,24 @@ export async function bridgeRequest<T = unknown>({
   const canKeepalive =
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const requestUrl = buildUrl(path);
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), 15_000);
   const init = {
     method,
     headers: buildHeaders(body !== undefined && method !== 'GET'),
     body: serializedBody,
     keepalive: keepalive ?? canKeepalive,
+    signal: timeoutController.signal,
   };
-  let response = await fetch(requestUrl, init);
-  if (await shouldRetryRuntimeViaHosted(response, requestUrl)) {
-    const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
-    if (fallbackUrl) response = await fetch(fallbackUrl, init);
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, init);
+    if (await shouldRetryRuntimeViaHosted(response, requestUrl)) {
+      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
+      if (fallbackUrl) response = await fetch(fallbackUrl, init);
+    }
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const text = await response.text();

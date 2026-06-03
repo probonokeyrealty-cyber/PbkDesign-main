@@ -17,10 +17,35 @@ function npmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
-function scriptAction(scriptName, description, timeoutMs = DEFAULT_TIMEOUT_MS) {
+function npmCliPath() {
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ]
+    .map((candidate) => String(candidate || '').trim())
+    .filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
+function npmScriptInvocation(scriptName) {
+  const cliPath = process.platform === 'win32' ? npmCliPath() : null;
+  if (cliPath) {
+    return {
+      command: process.execPath,
+      args: [cliPath, 'run', scriptName],
+    };
+  }
   return {
     command: npmCommand(),
     args: ['run', scriptName],
+  };
+}
+
+function scriptAction(scriptName, description, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const invocation = npmScriptInvocation(scriptName);
+  return {
+    command: invocation.command,
+    args: invocation.args,
     description,
     timeoutMs,
   };
@@ -201,12 +226,27 @@ export async function runLocalCallbackAction(actionName, action = {}) {
   let stdout = Buffer.alloc(0);
   let stderr = Buffer.alloc(0);
   return await new Promise((resolve) => {
-    const child = spawn(action.command, action.args, {
-      cwd: action.cwd || ROOT_DIR,
-      env: process.env,
-      shell: false,
-      windowsHide: true,
-    });
+    let child;
+    try {
+      child = spawn(action.command, action.args, {
+        cwd: action.cwd || ROOT_DIR,
+        env: process.env,
+        shell: false,
+        windowsHide: true,
+      });
+    } catch (error) {
+      resolve({
+        ok: false,
+        action: actionName,
+        code: 'spawn_failed',
+        error: error?.message || String(error),
+        exitCode: null,
+        stdout: stdout.toString('utf8'),
+        stderr: stderr.toString('utf8'),
+        durationMs: Date.now() - startedAt,
+      });
+      return;
+    }
     let settled = false;
     const timeout = setTimeout(() => {
       if (settled) return;

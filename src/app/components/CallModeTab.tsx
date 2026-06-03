@@ -349,6 +349,7 @@ export function CallModeTab({
         </div>
 
         <textarea
+          aria-label="Call notes"
           value={callNotes}
           onChange={(event) => {
             setCallNotes(event.target.value);

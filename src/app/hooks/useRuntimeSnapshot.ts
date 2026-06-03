@@ -39,7 +39,8 @@ export function useRuntimeSnapshot(pollMs = 5000) {
       return nextSnapshot;
     } catch (nextError) {
       failuresRef.current += 1;
-      const message = nextError instanceof Error ? nextError.message : 'Could not load PBK runtime.';
+      const message =
+        nextError instanceof Error ? nextError.message : 'Could not load PBK runtime.';
       if (!hasHydratedRef.current || failuresRef.current >= 4) {
         setError(message);
       } else {
@@ -55,7 +56,19 @@ export function useRuntimeSnapshot(pollMs = 5000) {
   useEffect(() => {
     let cancelled = false;
     const getNextDelay = () => {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return Math.max(60000, pollMs);
+      if (typeof navigator !== 'undefined' && navigator.onLine === false)
+        return Math.max(60000, pollMs);
+      // Respect Save-Data / metered connections (Network Information API, Chrome/Android only).
+      const conn =
+        typeof navigator !== 'undefined'
+          ? (
+              navigator as Navigator & {
+                connection?: { saveData?: boolean; effectiveType?: string };
+              }
+            ).connection
+          : undefined;
+      if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g')
+        return Math.max(60000, pollMs);
       if (typeof document !== 'undefined' && document.hidden) return Math.max(60000, pollMs);
       if (!failuresRef.current) return pollMs;
       return Math.min(60000, Math.round(pollMs * Math.pow(1.6, failuresRef.current)));

@@ -46,6 +46,7 @@ export function RightPanel({
         </div>
         <button
           onClick={onClose}
+          aria-label="Close panel"
           className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-slate-800"
         >
           <X size={16} />
@@ -56,13 +57,13 @@ export function RightPanel({
         <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/55 mb-1.5">
           Actions
         </div>
-        <div className="text-[15px] font-semibold tracking-tight mb-2">
-          Deal Actions
-        </div>
+        <div className="text-[15px] font-semibold tracking-tight mb-2">Deal Actions</div>
         <div className="space-y-2">
           <button
             onClick={onGenerate}
             disabled={!readiness.ready}
+            title={!readiness.ready ? readiness.message : undefined}
+            aria-describedby={!readiness.ready ? 'pdf-readiness-hint' : undefined}
             className={`w-full rounded-xl px-3 py-2.5 text-left text-[12px] font-semibold transition-all flex items-center gap-2 ${
               readiness.ready
                 ? 'bg-white text-slate-950 hover:bg-blue-50'
@@ -72,6 +73,11 @@ export function RightPanel({
             <Send size={14} />
             Generate Master PDF
           </button>
+          {!readiness.ready && (
+            <p id="pdf-readiness-hint" className="mt-1.5 px-1 text-[10px] leading-4 text-white/50">
+              {readiness.message}
+            </p>
+          )}
           <button
             onClick={onPreview}
             className="w-full rounded-xl border border-white/12 bg-white/8 px-3 py-2.5 text-left text-[12px] font-medium text-white/90 hover:bg-white/12 transition-all flex items-center gap-2"
@@ -147,23 +153,33 @@ export function RightPanel({
 
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 dark:bg-slate-900">
-            <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">ARV</span>
-            <strong className="text-[12px] text-gray-900 dark:text-gray-100">{formatCurrency(deal.arv)}</strong>
+            <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              ARV
+            </span>
+            <strong className="text-[12px] text-gray-900 dark:text-gray-100">
+              {formatCurrency(deal.arv)}
+            </strong>
           </div>
           <div className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 dark:bg-slate-900">
             <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {isLand ? 'Builder Total' : 'MAO Cash'}
             </span>
-            <strong className="text-[12px] text-gray-900 dark:text-gray-100">{formatCurrency(primaryValue)}</strong>
+            <strong className="text-[12px] text-gray-900 dark:text-gray-100">
+              {formatCurrency(primaryValue)}
+            </strong>
           </div>
           <div className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 dark:bg-slate-900">
             <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {isLand ? 'Offer' : 'MAO RBP'}
             </span>
-            <strong className="text-[12px] text-gray-900 dark:text-gray-100">{formatCurrency(secondaryValue)}</strong>
+            <strong className="text-[12px] text-gray-900 dark:text-gray-100">
+              {formatCurrency(secondaryValue)}
+            </strong>
           </div>
           <div className="flex items-center justify-between rounded-xl bg-gray-50 px-3 py-2 dark:bg-slate-900">
-            <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Verdict</span>
+            <span className="text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Verdict
+            </span>
             <strong
               className={`text-[12px] ${
                 deal.verdict === 'green'
@@ -175,7 +191,13 @@ export function RightPanel({
                       : 'text-gray-500 dark:text-gray-400'
               }`}
             >
-              {deal.verdict === 'green' ? 'Go' : deal.verdict === 'yellow' ? 'Review' : deal.verdict === 'red' ? 'Pass' : 'Not analyzed'}
+              {deal.verdict === 'green'
+                ? 'Go'
+                : deal.verdict === 'yellow'
+                  ? 'Review'
+                  : deal.verdict === 'red'
+                    ? 'Pass'
+                    : 'Not analyzed'}
             </strong>
           </div>
         </div>

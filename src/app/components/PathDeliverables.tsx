@@ -1,12 +1,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { DealData, PBKPath, QuickDocumentType } from '../types';
 import { Clipboard, Copy, Eye, FileText, Printer, Send } from 'lucide-react';
-import {
-  PBKBranding,
-  buildDocumentSet,
-  getPathLabel,
-  getPdfReadiness,
-} from '../utils/pbk';
+import { PBKBranding, buildDocumentSet, getPathLabel, getPdfReadiness } from '../utils/pbk';
 import { DocumentPdfPanel } from './DocumentPdfPanel';
 
 interface PathDeliverablesProps {
@@ -82,14 +77,18 @@ export function PathDeliverables({
       ...deal,
       selectedPath,
     }),
-    [deal, selectedPath],
+    [deal, selectedPath]
   );
   const generatedDocuments = useMemo(
     () => buildDocumentSet(documentDeal, branding),
-    [documentDeal, branding],
+    [documentDeal, branding]
   );
-  const [editableDocuments, setEditableDocuments] = useState<Record<QuickDocumentType, string>>(generatedDocuments);
-  const [selectedDocuments, setSelectedDocuments] = useState<QuickDocumentType[]>(['seller', 'loi']);
+  const [editableDocuments, setEditableDocuments] =
+    useState<Record<QuickDocumentType, string>>(generatedDocuments);
+  const [selectedDocuments, setSelectedDocuments] = useState<QuickDocumentType[]>([
+    'seller',
+    'loi',
+  ]);
   const [senderProfile, setSenderProfile] = useState<'warm' | 'cold'>('warm');
   const readiness = getPdfReadiness(documentDeal);
 
@@ -122,7 +121,7 @@ export function PathDeliverables({
     setSelectedDocuments((prev) =>
       prev.includes(documentType)
         ? prev.filter((item) => item !== documentType)
-        : [...prev, documentType],
+        : [...prev, documentType]
     );
   };
 
@@ -140,8 +139,9 @@ export function PathDeliverables({
                   Path Deliverables Workspace
                 </div>
                 <div className="mt-1 max-w-3xl text-[12px] leading-5 text-gray-500 dark:text-gray-400">
-                  The Figma shell stays intact here, but the content is now driven by the PBK path, live call inputs,
-                  and the master package export adapter instead of the old demo templates.
+                  The Figma shell stays intact here, but the content is now driven by the PBK path,
+                  live call inputs, and the master package export adapter instead of the old demo
+                  templates.
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -165,7 +165,8 @@ export function PathDeliverables({
                   Operational Templates
                 </div>
                 <div className="mt-1 text-[11.5px] leading-5 text-gray-500 dark:text-gray-400">
-                  These are add-on prep docs for your team. They live alongside the existing PBK package editor and do not change the locked PDF pipeline.
+                  These are add-on prep docs for your team. They live alongside the existing PBK
+                  package editor and do not change the locked PDF pipeline.
                 </div>
               </div>
             </div>
@@ -187,7 +188,9 @@ export function PathDeliverables({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-[12px] font-semibold">{card.title}</div>
-                        <div className="mt-1 text-[10.5px] leading-5 opacity-80">{card.subtitle}</div>
+                        <div className="mt-1 text-[10.5px] leading-5 opacity-80">
+                          {card.subtitle}
+                        </div>
                       </div>
                       <div className="rounded-xl bg-white/70 dark:bg-slate-900/60 p-2">
                         <Icon size={16} />
@@ -206,7 +209,8 @@ export function PathDeliverables({
                   Document Templates
                 </div>
                 <div className="text-[11.5px] text-gray-500 dark:text-gray-400">
-                  Review or edit the live PBK documents below before previewing or printing the premium package.
+                  Review or edit the live PBK documents below before previewing or printing the
+                  premium package.
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -244,13 +248,14 @@ export function PathDeliverables({
                 ))}
               </div>
               <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[10.5px] text-gray-600 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-400">
-                Click inside the document below to refine wording before you export. The Master PDF still uses the locked PBK
-                path logic and master template.
+                Click inside the document below to refine wording before you export. The Master PDF
+                still uses the locked PBK path logic and master template.
               </div>
             </div>
 
             <div className="p-4">
               <textarea
+                aria-label={`Edit ${activeDocument} document`}
                 value={editableDocuments[activeDocument]}
                 onChange={(event) => handleDocumentEdit(activeDocument, event.target.value)}
                 className="min-h-[520px] w-full resize-y rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 font-mono text-[11.5px] leading-6 text-gray-800 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-100"
@@ -264,9 +269,7 @@ export function PathDeliverables({
             <div className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/55 mb-2">
               Export
             </div>
-            <div className="text-[16px] font-semibold tracking-tight mb-2">
-              Master Deal PDF
-            </div>
+            <div className="text-[16px] font-semibold tracking-tight mb-2">Master Deal PDF</div>
             <div className="rounded-xl bg-white/8 px-3 py-2 text-[10.5px] leading-5 text-white/76">
               {exportStatus}
             </div>
@@ -297,11 +300,21 @@ export function PathDeliverables({
               Send Seller Documents
             </div>
             <div className="mt-2 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-              Choose the exact docs to send and whether this should come from the warm business inbox or the cold outreach profile.
+              Choose the exact docs to send and whether this should come from the warm business
+              inbox or the cold outreach profile.
             </div>
 
             <div className="mt-3 grid gap-2">
-              {(['seller', 'loi', 'email', 'purchaseAgreement', 'assignmentContract', 'sellerQuestionnaire'] as QuickDocumentType[]).map((documentType) => (
+              {(
+                [
+                  'seller',
+                  'loi',
+                  'email',
+                  'purchaseAgreement',
+                  'assignmentContract',
+                  'sellerQuestionnaire',
+                ] as QuickDocumentType[]
+              ).map((documentType) => (
                 <label
                   key={documentType}
                   className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-700 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-200"
@@ -382,14 +395,23 @@ export function PathDeliverables({
               <div className="flex items-center gap-3">
                 <div className="h-12 w-24 overflow-hidden rounded-xl border border-gray-200 bg-white flex items-center justify-center dark:border-slate-700 dark:bg-slate-950">
                   {branding.logoDataUrl ? (
-                    <img src={branding.logoDataUrl} alt="Company logo" className="max-h-10 max-w-20 object-contain" />
+                    <img
+                      src={branding.logoDataUrl}
+                      alt="Company logo"
+                      className="max-h-10 max-w-20 object-contain"
+                    />
                   ) : (
                     <span className="text-[10px] text-gray-400">No logo</span>
                   )}
                 </div>
                 <label className="inline-flex cursor-pointer items-center rounded-xl border border-gray-200 bg-white px-3 py-2 text-[11px] font-semibold text-gray-700 transition-all hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-200 dark:hover:bg-slate-800">
                   Upload Logo
-                  <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleLogoUpload}
+                  />
                 </label>
               </div>
             </div>
@@ -401,7 +423,9 @@ export function PathDeliverables({
               <input
                 type="text"
                 value={branding.companyName}
-                onChange={(event) => onBrandingChange({ ...branding, companyName: event.target.value })}
+                onChange={(event) =>
+                  onBrandingChange({ ...branding, companyName: event.target.value })
+                }
                 placeholder="Your Company Name"
                 className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-900 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-100"
               />
@@ -417,8 +441,9 @@ export function PathDeliverables({
               {documentLabels[activeDocument]}
             </div>
             <div className="mt-3 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-              The editor updates live from PBK deal state. Preview and print still run through the locked master package
-              flow, so the numbers and path logic stay consistent with the original system.
+              The editor updates live from PBK deal state. Preview and print still run through the
+              locked master package flow, so the numbers and path logic stay consistent with the
+              original system.
             </div>
           </div>
         </div>

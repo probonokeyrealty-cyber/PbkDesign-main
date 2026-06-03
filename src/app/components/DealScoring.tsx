@@ -14,10 +14,10 @@ export function DealScoring({ deal }: DealScoringProps) {
     // Price vs ARV (30 points)
     if (deal.price > 0 && deal.arv > 0) {
       const priceRatio = deal.price / deal.arv;
-      if (priceRatio <= 0.70) {
+      if (priceRatio <= 0.7) {
         score += 30;
         factors.push('Excellent price point (≤70% ARV)');
-      } else if (priceRatio <= 0.80) {
+      } else if (priceRatio <= 0.8) {
         score += 25;
         factors.push('Good price point (70-80% ARV)');
       } else if (priceRatio <= 0.88) {
@@ -94,7 +94,8 @@ export function DealScoring({ deal }: DealScoringProps) {
 
     // Cash Flow Potential (10 points)
     if (deal.rent > 0 && deal.balance > 0 && deal.rate > 0) {
-      const monthlyPayment = (deal.balance * (deal.rate / 100 / 12)) / (1 - Math.pow(1 + (deal.rate / 100 / 12), -360));
+      const monthlyPayment =
+        (deal.balance * (deal.rate / 100 / 12)) / (1 - Math.pow(1 + deal.rate / 100 / 12, -360));
       const cashFlow = deal.rent - monthlyPayment - 300; // 300 for expenses
       if (cashFlow > 300) {
         score += 10;
@@ -153,7 +154,7 @@ export function DealScoring({ deal }: DealScoringProps) {
 
   // Identify deal strengths
   const strengths = [];
-  if (deal.price > 0 && deal.arv > 0 && deal.price <= deal.arv * 0.70) {
+  if (deal.price > 0 && deal.arv > 0 && deal.price <= deal.arv * 0.7) {
     strengths.push('Price at or below 70% ARV - excellent margin');
   }
   if (deal.dom >= 90) {
@@ -165,7 +166,11 @@ export function DealScoring({ deal }: DealScoringProps) {
   if (deal.balance > 0 && deal.rate < 6) {
     strengths.push('Low interest rate - great for Sub-To');
   }
-  if (deal.type === 'land' && deal.builderTotal > 0 && (deal.builderTotal - deal.offer) / deal.builderTotal >= 0.20) {
+  if (
+    deal.type === 'land' &&
+    deal.builderTotal > 0 &&
+    (deal.builderTotal - deal.offer) / deal.builderTotal >= 0.2
+  ) {
     strengths.push('20%+ spread on land deal');
   }
 
@@ -207,9 +212,7 @@ export function DealScoring({ deal }: DealScoringProps) {
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center">
-                <div className={`text-2xl font-extrabold ${getScoreColor(score)}`}>
-                  {score}
-                </div>
+                <div className={`text-2xl font-extrabold ${getScoreColor(score)}`}>{score}</div>
                 <div className="text-[9px] font-semibold text-gray-500 dark:text-gray-400">
                   / 100
                 </div>
@@ -217,12 +220,17 @@ export function DealScoring({ deal }: DealScoringProps) {
             </div>
           </div>
           <div className="text-center mt-1">
-            <div className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
-              score >= 80 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-              score >= 60 ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
-              score >= 40 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-              'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-            }`}>
+            <div
+              className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                score >= 80
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                  : score >= 60
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                    : score >= 40
+                      ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
+                      : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+              }`}
+            >
               Grade: {getScoreGrade(score)}
             </div>
           </div>
@@ -240,34 +248,39 @@ export function DealScoring({ deal }: DealScoringProps) {
             <div className="text-[12px] text-blue-900 dark:text-blue-100 leading-relaxed">
               {score >= 80 ? (
                 <>
-                  <strong>STRONG DEAL - PROCEED WITH CONFIDENCE</strong><br />
-                  This property scores in the top tier. Multiple profit pathways available. 
-                  Move quickly to secure before other investors.
+                  <strong>STRONG DEAL - PROCEED WITH CONFIDENCE</strong>
+                  <br />
+                  This property scores in the top tier. Multiple profit pathways available. Move
+                  quickly to secure before other investors.
                 </>
               ) : score >= 60 ? (
                 <>
-                  <strong>Go - Worth Pursuing</strong><br />
-                  Solid fundamentals with good profit potential. Review strategy options 
-                  and present offer within 24-48 hours.
+                  <strong>Go - Worth Pursuing</strong>
+                  <br />
+                  Solid fundamentals with good profit potential. Review strategy options and present
+                  offer within 24-48 hours.
                 </>
               ) : score >= 40 ? (
                 <>
-                  <strong>Review - Negotiate Hard</strong><br />
-                  Deal has potential but needs better terms. Focus on price reduction 
-                  or creative finance to improve margins.
+                  <strong>Review - Negotiate Hard</strong>
+                  <br />
+                  Deal has potential but needs better terms. Focus on price reduction or creative
+                  finance to improve margins.
                 </>
               ) : (
                 <>
-                  <strong>WEAK DEAL - PASS OR LOWBALL</strong><br />
-                  Multiple red flags present. Only proceed with significant price 
-                  concessions or unique opportunity factors.
+                  <strong>WEAK DEAL - PASS OR LOWBALL</strong>
+                  <br />
+                  Multiple red flags present. Only proceed with significant price concessions or
+                  unique opportunity factors.
                 </>
               )}
             </div>
           </div>
 
           <div className="text-[10px] text-gray-600 dark:text-gray-400">
-            Confidence Level: <strong className={getScoreColor(score)}>
+            Confidence Level:{' '}
+            <strong className={getScoreColor(score)}>
               {score >= 80 ? 'Very High' : score >= 60 ? 'High' : score >= 40 ? 'Moderate' : 'Low'}
             </strong>
           </div>
@@ -284,8 +297,11 @@ export function DealScoring({ deal }: DealScoringProps) {
             </div>
           </div>
           <div className="space-y-1">
-            {dealKillers.map((killer, i) => (
-              <div key={i} className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 border-l-3 border-red-500 rounded px-2.5 py-1.5">
+            {dealKillers.map((killer) => (
+              <div
+                key={killer}
+                className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 border-l-3 border-red-500 rounded px-2.5 py-1.5"
+              >
                 <span className="text-red-500 text-[10px] mt-0.5">⚠</span>
                 <span className="text-[11px] text-red-800 dark:text-red-300">{killer}</span>
               </div>
@@ -304,8 +320,11 @@ export function DealScoring({ deal }: DealScoringProps) {
             </div>
           </div>
           <div className="space-y-1">
-            {strengths.map((strength, i) => (
-              <div key={i} className="flex items-start gap-2 bg-green-50 dark:bg-green-900/20 border-l-3 border-green-500 rounded px-2.5 py-1.5">
+            {strengths.map((strength) => (
+              <div
+                key={strength}
+                className="flex items-start gap-2 bg-green-50 dark:bg-green-900/20 border-l-3 border-green-500 rounded px-2.5 py-1.5"
+              >
                 <span className="text-green-500 text-[10px] mt-0.5">✓</span>
                 <span className="text-[11px] text-green-800 dark:text-green-300">{strength}</span>
               </div>

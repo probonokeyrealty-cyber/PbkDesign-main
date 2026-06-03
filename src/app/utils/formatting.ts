@@ -18,7 +18,7 @@ export const formatDate = (date?: Date | string): string => {
   return d.toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
-    year: 'numeric'
+    year: 'numeric',
   });
 };
 
@@ -26,7 +26,7 @@ export const formatNumber = (n: number, decimals: number = 0): string => {
   if (!n || isNaN(n)) return '0';
   return n.toLocaleString('en-US', {
     minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
+    maximumFractionDigits: decimals,
   });
 };
 
@@ -67,13 +67,16 @@ export const sanitizeLegacyCopy = (text: string): string => {
     ['â†’', '->'],
   ];
 
-  return replacements
-    .reduce((result, [from, to]) => result.split(from).join(to), text)
-    .replace(/â€™/g, "'")
-    .replace(/â€œ|â€/g, '"')
-    .replace(/â€“|â€”/g, '-')
-    .replace(/â†’/g, '->')
-    .replace(/âœ…|ðŸ“ž|ðŸŽ¯|ðŸ“Š|ðŸ“ˆ|ðŸŒ³|ðŸ‘¤|ðŸ¤|ðŸ“§|ðŸ“‹/g, '')
-    .replace(/ðŸ›‘/g, 'Pass')
-    .replace(/âš ï¸/g, 'Warning');
+  return (
+    replacements
+      .reduce((result, [from, to]) => result.split(from).join(to), text)
+      .replace(/â€™/g, "'")
+      .replace(/â€œ|â€/g, '"')
+      .replace(/â€“|â€”/g, '-')
+      .replace(/â†’/g, '->')
+      .replace(/âœ…|ðŸ“ž|ðŸŽ¯|ðŸ“Š|ðŸ“ˆ|ðŸŒ³|ðŸ‘¤|ðŸ¤|ðŸ“§|ðŸ“‹/g, '')
+      .replace(/ðŸ›‘/g, 'Pass')
+      // eslint-disable-next-line no-irregular-whitespace
+      .replace(/âš ï¸/g, 'Warning')
+  );
 };

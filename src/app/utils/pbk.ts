@@ -109,7 +109,9 @@ export function getDefaultSelectedPath(deal: Pick<DealData, 'type' | 'contact'>)
   return 'cash';
 }
 
-export function normalizeSelectedPath(deal: Pick<DealData, 'type' | 'contact' | 'selectedPath'>): PBKPath {
+export function normalizeSelectedPath(
+  deal: Pick<DealData, 'type' | 'contact' | 'selectedPath'>
+): PBKPath {
   const selectedPath = deal.selectedPath || getDefaultSelectedPath(deal);
 
   if (deal.type === 'land') {
@@ -120,7 +122,11 @@ export function normalizeSelectedPath(deal: Pick<DealData, 'type' | 'contact' | 
     return getDefaultSelectedPath(deal);
   }
 
-  if (selectedPath === 'land-owner' || selectedPath === 'land-agent' || selectedPath === 'rbp-land') {
+  if (
+    selectedPath === 'land-owner' ||
+    selectedPath === 'land-agent' ||
+    selectedPath === 'rbp-land'
+  ) {
     return 'cash';
   }
 
@@ -167,14 +173,18 @@ export function getPathLabel(path: PBKPath): string {
   return labels[path];
 }
 
-export function getLiveInputPath(path: PBKPath): 'cash' | 'creative_finance' | 'subject_to' | 'rbp' | 'land' {
+export function getLiveInputPath(
+  path: PBKPath
+): 'cash' | 'creative_finance' | 'subject_to' | 'rbp' | 'land' {
   if (path === 'cf') return 'creative_finance';
   if (path === 'mt') return 'subject_to';
   if (isLandPath(path)) return 'land';
-  return path;
+  return path as 'cash' | 'rbp';
 }
 
-export function getMasterPackagePath(deal: Pick<DealData, 'type' | 'contact' | 'selectedPath'>): string {
+export function getMasterPackagePath(
+  deal: Pick<DealData, 'type' | 'contact' | 'selectedPath'>
+): string {
   const path = normalizeSelectedPath(deal);
 
   if (path === 'cash') {
@@ -187,13 +197,16 @@ export function getMasterPackagePath(deal: Pick<DealData, 'type' | 'contact' | '
   if (path === 'cf') return 'cf';
   if (path === 'mt') return 'mt';
   if (path === 'rbp') return 'rbp';
-  if (path === 'rbp-land' || path === 'land-owner' || path === 'land-agent') return 'cash-realtor-land';
+  if (path === 'rbp-land' || path === 'land-owner' || path === 'land-agent')
+    return 'cash-realtor-land';
 
   return 'cash';
 }
 
 function getAgreedPrice(deal: DealData): number {
-  return valueOrZero(deal.agreedPrice) || valueOrZero(deal.rbpPriceConfirm) || valueOrZero(deal.price);
+  return (
+    valueOrZero(deal.agreedPrice) || valueOrZero(deal.rbpPriceConfirm) || valueOrZero(deal.price)
+  );
 }
 
 function getEarnest(deal: DealData): string {
@@ -248,10 +261,12 @@ function buildDocContext(deal: DealData): PBKDocContext {
   const selectedPath = normalizeSelectedPath(deal);
   const agreedPrice = getAgreedPrice(deal);
   const propertyType = deal.type === 'land' ? 'Land' : 'House';
-  const cfDownPayment = valueOrZero(deal.cfDownPayment) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
+  const cfDownPayment =
+    valueOrZero(deal.cfDownPayment) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
   const cfRate = valueOrZero(deal.cfRate) || valueOrZero(deal.rate);
   const cfTerm = valueOrZero(deal.cfTerm) || 30;
-  const mtUpfront = valueOrZero(deal.mtUpfront) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
+  const mtUpfront =
+    valueOrZero(deal.mtUpfront) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
   const mtBalance = valueOrZero(deal.mtBalanceConfirm) || valueOrZero(deal.balance);
   const mtRate = valueOrZero(deal.mtRateConfirm) || valueOrZero(deal.rate);
   const cfLoan = Math.max(0, agreedPrice - cfDownPayment);
@@ -259,10 +274,16 @@ function buildDocContext(deal: DealData): PBKDocContext {
   const mtMonthlyRate = mtRate > 0 ? mtRate / 100 / 12 : 0;
   const mtMonthlyPayment =
     mtBalance > 0 && mtMonthlyRate > 0
-      ? Math.round(mtBalance * ((mtMonthlyRate * Math.pow(1 + mtMonthlyRate, 360)) / (Math.pow(1 + mtMonthlyRate, 360) - 1)))
+      ? Math.round(
+          mtBalance *
+            ((mtMonthlyRate * Math.pow(1 + mtMonthlyRate, 360)) /
+              (Math.pow(1 + mtMonthlyRate, 360) - 1))
+        )
       : 0;
-  const monthlyPayment = selectedPath === 'mt' ? mtMonthlyPayment : selectedPath === 'cf' ? cfMonthlyPayment : 0;
-  const monthlySpread = monthlyPayment > 0 ? Math.round(valueOrZero(deal.rent) - monthlyPayment) : 0;
+  const monthlyPayment =
+    selectedPath === 'mt' ? mtMonthlyPayment : selectedPath === 'cf' ? cfMonthlyPayment : 0;
+  const monthlySpread =
+    monthlyPayment > 0 ? Math.round(valueOrZero(deal.rent) - monthlyPayment) : 0;
   const cashAlternative = valueOrZero(deal.rbpCashAlternative);
   const lotSize = getLotSize(deal);
   const sellerCosts = getSellerCosts(deal, selectedPath);
@@ -311,38 +332,66 @@ function buildDocContext(deal: DealData): PBKDocContext {
   ];
 
   if (selectedPath === 'cash') {
-    offerLines.push(`Structure: All-cash, as-is, no financing contingency. Close in ${nonEmpty(deal.timeline) || 'Missing timeline'}.`);
+    offerLines.push(
+      `Structure: All-cash, as-is, no financing contingency. Close in ${nonEmpty(deal.timeline) || 'Missing timeline'}.`
+    );
   } else if (selectedPath === 'rbp') {
-    offerLines.push('Structure: Retail Buyer Program - buyer uses conventional/FHA/VA financing. Seller pays no costs.');
+    offerLines.push(
+      'Structure: Retail Buyer Program - buyer uses conventional/FHA/VA financing. Seller pays no costs.'
+    );
     offerLines.push(`Seller Costs: ${sellerCosts}`);
-    offerLines.push(`Cash Alternative: ${cashAlternative > 0 ? formatCurrency(cashAlternative) : 'Missing cash alternative'}`);
+    offerLines.push(
+      `Cash Alternative: ${cashAlternative > 0 ? formatCurrency(cashAlternative) : 'Missing cash alternative'}`
+    );
   } else if (selectedPath === 'cf') {
-    offerLines.push(`Purchase Price: ${agreedPrice > 0 ? formatCurrency(agreedPrice) : 'Missing agreed price'}`);
+    offerLines.push(
+      `Purchase Price: ${agreedPrice > 0 ? formatCurrency(agreedPrice) : 'Missing agreed price'}`
+    );
     offerLines.push(
       `Down Payment: ${
         cfDownPayment > 0
           ? `${formatCurrency(cfDownPayment)}${agreedPrice > 0 ? ` (${((cfDownPayment / agreedPrice) * 100).toFixed(1)}%)` : ''}`
           : 'Missing down payment'
-      }`,
+      }`
     );
-    offerLines.push(`Interest Rate: ${cfRate > 0 ? `${cfRate.toFixed(2)}%` : 'Missing interest rate'}`);
+    offerLines.push(
+      `Interest Rate: ${cfRate > 0 ? `${cfRate.toFixed(2)}%` : 'Missing interest rate'}`
+    );
     offerLines.push(`Loan Term: ${cfTerm > 0 ? `${cfTerm} years` : 'Missing loan term'}`);
     offerLines.push(`Balloon Term: ${cfTerm > 0 ? `${cfTerm} years` : 'Missing balloon term'}`);
-    offerLines.push(`Monthly Interest-Only Payment: ${monthlyPayment > 0 ? `${formatCurrency(monthlyPayment)}/mo` : 'Missing monthly interest-only payment'}`);
+    offerLines.push(
+      `Monthly Interest-Only Payment: ${monthlyPayment > 0 ? `${formatCurrency(monthlyPayment)}/mo` : 'Missing monthly interest-only payment'}`
+    );
     offerLines.push(`Structure: ${getCfTypeLabel(deal.cfType)}`);
   } else if (selectedPath === 'mt') {
-    offerLines.push(`Purchase Price: ${agreedPrice > 0 ? formatCurrency(agreedPrice) : 'Missing agreed price'}`);
-    offerLines.push(`Upfront Cash to Seller: ${mtUpfront > 0 ? formatCurrency(mtUpfront) : 'Missing upfront cash'}`);
-    offerLines.push(`Assume Existing Loan Balance: ${mtBalance > 0 ? formatCurrency(mtBalance) : 'Missing existing loan balance'}`);
-    offerLines.push(`Existing Interest Rate: ${mtRate > 0 ? `${mtRate.toFixed(2)}%` : 'Missing existing rate'}`);
-    offerLines.push(`Monthly Payment (PITI est.): ${monthlyPayment > 0 ? `${formatCurrency(monthlyPayment)}/mo` : 'Missing monthly payment'}`);
+    offerLines.push(
+      `Purchase Price: ${agreedPrice > 0 ? formatCurrency(agreedPrice) : 'Missing agreed price'}`
+    );
+    offerLines.push(
+      `Upfront Cash to Seller: ${mtUpfront > 0 ? formatCurrency(mtUpfront) : 'Missing upfront cash'}`
+    );
+    offerLines.push(
+      `Assume Existing Loan Balance: ${mtBalance > 0 ? formatCurrency(mtBalance) : 'Missing existing loan balance'}`
+    );
+    offerLines.push(
+      `Existing Interest Rate: ${mtRate > 0 ? `${mtRate.toFixed(2)}%` : 'Missing existing rate'}`
+    );
+    offerLines.push(
+      `Monthly Payment (PITI est.): ${monthlyPayment > 0 ? `${formatCurrency(monthlyPayment)}/mo` : 'Missing monthly payment'}`
+    );
     offerLines.push(`Structure: ${getMtTypeLabel(deal.mtType)}`);
   } else {
     offerLines.push(`Lot Size: ${lotSize || 'Missing lot size'}`);
-    offerLines.push(`Offer to Seller: ${agreedPrice > 0 ? formatCurrency(agreedPrice) : 'Missing offer'}`);
+    offerLines.push(
+      `Offer to Seller: ${agreedPrice > 0 ? formatCurrency(agreedPrice) : 'Missing offer'}`
+    );
     if (selectedPath === 'rbp-land') {
-      offerLines.push(`Builder Pays: ${valueOrZero(deal.builderTotal) > 0 ? formatCurrency(valueOrZero(deal.builderTotal)) : 'Missing builder value'}`);
-      offerLines.push(`Cash Alternative: ${cashAlternative > 0 ? formatCurrency(cashAlternative) : 'Missing cash alternative'}`);
+      offerLines.push(
+        `Builder Pays: ${valueOrZero(deal.builderTotal) > 0 ? formatCurrency(valueOrZero(deal.builderTotal)) : 'Missing builder value'}`
+      );
+      offerLines.push(
+        `Cash Alternative: ${cashAlternative > 0 ? formatCurrency(cashAlternative) : 'Missing cash alternative'}`
+      );
     }
   }
 
@@ -380,7 +429,9 @@ function buildDocContext(deal: DealData): PBKDocContext {
 }
 
 function getComparableLines(deal: DealData): string[] {
-  const comps = [deal.comps.A, deal.comps.B, deal.comps.C].filter((comp) => comp.address || comp.price > 0 || comp.date);
+  const comps = [deal.comps.A, deal.comps.B, deal.comps.C].filter(
+    (comp) => comp.address || comp.price > 0 || comp.date
+  );
 
   if (!comps.length) {
     return ['Comparable Sales', 'No comparable sales entered yet.'];
@@ -390,7 +441,7 @@ function getComparableLines(deal: DealData): string[] {
     'Comparable Sales',
     ...comps.map(
       (comp, index) =>
-        `${index + 1}. ${comp.address || 'Comp'} | ${formatCurrency(valueOrZero(comp.price))} | ${nonEmpty(comp.date) || 'Date not entered'}`,
+        `${index + 1}. ${comp.address || 'Comp'} | ${formatCurrency(valueOrZero(comp.price))} | ${nonEmpty(comp.date) || 'Date not entered'}`
     ),
   ];
 }
@@ -403,7 +454,11 @@ function getOfferStructureLines(doc: PBKDocContext, heading?: string): string[] 
 
 function getConditionLines(doc: PBKDocContext): string[] {
   if (doc.propertyType !== 'House') return [];
-  return ['Condition Notes', `Condition: ${doc.condition}`, `Repair Estimate: ${formatCurrency(doc.repairBudget)}`];
+  return [
+    'Condition Notes',
+    `Condition: ${doc.condition}`,
+    `Repair Estimate: ${formatCurrency(doc.repairBudget)}`,
+  ];
 }
 
 function getWarningLines(doc: PBKDocContext): string[] {
@@ -416,7 +471,8 @@ export function getPdfReadiness(deal: DealData): PBKReadiness {
 
   if (!normalizeSelectedPath(deal)) missing.push('selected path');
   if (!nonEmpty(deal.sellerName)) missing.push('seller name');
-  if (!nonEmpty(deal.sellerEmail) || !nonEmpty(deal.sellerEmail).includes('@')) missing.push('valid seller email');
+  if (!nonEmpty(deal.sellerEmail) || !nonEmpty(deal.sellerEmail).includes('@'))
+    missing.push('valid seller email');
   if (getAgreedPrice(deal) <= 0) missing.push('agreed price');
   if (!nonEmpty(deal.timeline)) missing.push('close timeline');
 
@@ -438,7 +494,8 @@ export function getAnalyzeReadiness(deal: DealData): PBKAnalyzeReadiness {
     Boolean(getLotSize(deal)) ||
     valueOrZero(parseFloat(nonEmpty(deal.lotSize))) > 0 ||
     valueOrZero(deal.landLotSizeSqFt) > 0;
-  const hasLandPriceBasis = valueOrZero(deal.builderPrice) > 0 || valueOrZero(deal.landPriceSqFt) > 0;
+  const hasLandPriceBasis =
+    valueOrZero(deal.builderPrice) > 0 || valueOrZero(deal.landPriceSqFt) > 0;
 
   if (!hasAddress) missing.push('property address');
 
@@ -549,7 +606,7 @@ export function getLiveCallSupport(deal: DealData, pathOverride?: PBKPath): PBKL
         label: `Structure: ${getCfTypeLabel(deal.cfType)}`,
         complete: Boolean(nonEmpty(deal.cfType)),
         confirmed: isConfirmedTerm(deal, 'cfType'),
-      },
+      }
     );
   } else if (selectedPath === 'mt') {
     checklist.push(
@@ -576,7 +633,7 @@ export function getLiveCallSupport(deal: DealData, pathOverride?: PBKPath): PBKL
         label: `Structure: ${getMtTypeLabel(deal.mtType)}`,
         complete: Boolean(nonEmpty(deal.mtType)),
         confirmed: isConfirmedTerm(deal, 'mtType'),
-      },
+      }
     );
   } else if (selectedPath === 'rbp') {
     checklist.push(
@@ -589,9 +646,13 @@ export function getLiveCallSupport(deal: DealData, pathOverride?: PBKPath): PBKL
       {
         id: 'rbpCashAlternative',
         label: `Cash alternative: ${valueOrZero(deal.rbpCashAlternative) > 0 ? formatCurrency(valueOrZero(deal.rbpCashAlternative)) : '[confirm backup cash]'}`,
-        complete: hasMeaningfulNumber(valueOrZero(deal.rbpCashAlternative), deal, 'rbpCashAlternative'),
+        complete: hasMeaningfulNumber(
+          valueOrZero(deal.rbpCashAlternative),
+          deal,
+          'rbpCashAlternative'
+        ),
         confirmed: isConfirmedTerm(deal, 'rbpCashAlternative'),
-      },
+      }
     );
   }
 
@@ -606,7 +667,8 @@ export function getLiveCallSupport(deal: DealData, pathOverride?: PBKPath): PBKL
   } else if (readiness.ready) {
     bannerTone = 'info';
     bannerTitle = 'Documents are ready, phone check recommended';
-    bannerMessage = 'Docs can be generated now. Phone verification is still a recommended final capture step.';
+    bannerMessage =
+      'Docs can be generated now. Phone verification is still a recommended final capture step.';
   } else if (phoneStatus !== 'verified') {
     bannerMessage += ' Phone verification stays a recommended soft check before you send docs.';
   }
@@ -635,15 +697,20 @@ function getPathNarrative(path: PBKPath): string {
     cf: 'Higher headline number through structured terms and monthly spread.',
     mt: 'Preserve the existing loan while solving the seller’s debt or timing problem.',
     rbp: 'Highest likely seller price with a retail-buyer disposition plan and a cash backup.',
-    'land-owner': 'Builder / developer assignment path built around lot value and a fast land close.',
-    'land-agent': 'Land assignment structure coordinated through the listing side and a builder buyer.',
+    'land-owner':
+      'Builder / developer assignment path built around lot value and a fast land close.',
+    'land-agent':
+      'Land assignment structure coordinated through the listing side and a builder buyer.',
     'rbp-land': 'Land backup path built around builder value with a cleaner fallback number.',
   };
 
   return copy[path];
 }
 
-export function buildSellerGuideText(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): string {
+export function buildSellerGuideText(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): string {
   const doc = buildDocContext(deal);
   const lines = [
     branding.companyName || DEFAULT_COMPANY,
@@ -704,7 +771,10 @@ export function buildLOIText(deal: DealData, branding: PBKBranding = DEFAULT_BRA
   return sanitizeLegacyCopy(lines.join('\n'));
 }
 
-export function buildPathPackageText(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): string {
+export function buildPathPackageText(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): string {
   const doc = buildDocContext(deal);
   const today = formatDate();
   const lines = [
@@ -729,7 +799,11 @@ export function buildPathPackageText(deal: DealData, branding: PBKBranding = DEF
   ];
 
   if (doc.propertyType === 'House') {
-    const maoAfterRepairs = calculateMAO.afterRepairs(valueOrZero(deal.arv), valueOrZero(deal.repairs.mid), valueOrZero(deal.fee) || 8000);
+    const maoAfterRepairs = calculateMAO.afterRepairs(
+      valueOrZero(deal.arv),
+      valueOrZero(deal.repairs.mid),
+      valueOrZero(deal.fee) || 8000
+    );
     lines.push(`Repairs: ${formatCurrency(doc.repairBudget)}`);
     lines.push(`MAO After Repairs: ${formatCurrency(maoAfterRepairs)}`);
   } else {
@@ -766,7 +840,10 @@ export function buildPathPackageText(deal: DealData, branding: PBKBranding = DEF
   return sanitizeLegacyCopy(lines.join('\n'));
 }
 
-export function buildNextStepsText(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): string {
+export function buildNextStepsText(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): string {
   const doc = buildDocContext(deal);
   const pathSpecificNext: Record<PBKPath, string[]> = {
     cash: [
@@ -824,7 +901,9 @@ export function buildNextStepsText(deal: DealData, branding: PBKBranding = DEFAU
     '',
     `Close Timeline: ${doc.timeline || 'Confirm timeline before sending package'}`,
     `Earnest Deposit: ${doc.earnestDeposit}`,
-    nonEmpty(deal.notes) ? `Notes: ${nonEmpty(deal.notes)}` : 'Notes: Add any seller-specific call notes here before sending.',
+    nonEmpty(deal.notes)
+      ? `Notes: ${nonEmpty(deal.notes)}`
+      : 'Notes: Add any seller-specific call notes here before sending.',
   ];
 
   const warningLines = getWarningLines(doc);
@@ -856,7 +935,10 @@ function getPathExecutionSummary(doc: PBKDocContext): string {
   return `Cash execution with as-is positioning, ${doc.timeline || 'TBD timeline'}, and earnest deposit ${doc.earnestDeposit}.`;
 }
 
-export function buildPurchaseAgreementText(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): string {
+export function buildPurchaseAgreementText(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): string {
   const doc = buildDocContext(deal);
   const lines = [
     branding.companyName || DEFAULT_COMPANY,
@@ -887,7 +969,10 @@ export function buildPurchaseAgreementText(deal: DealData, branding: PBKBranding
   return sanitizeLegacyCopy(lines.filter(Boolean).join('\n'));
 }
 
-export function buildAssignmentContractText(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): string {
+export function buildAssignmentContractText(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): string {
   const doc = buildDocContext(deal);
   const assignmentFee = valueOrZero(deal.fee) || 8000;
   const lines = [
@@ -919,7 +1004,10 @@ export function buildAssignmentContractText(deal: DealData, branding: PBKBrandin
   return sanitizeLegacyCopy(lines.filter(Boolean).join('\n'));
 }
 
-export function buildSellerQuestionnaireText(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): string {
+export function buildSellerQuestionnaireText(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): string {
   const doc = buildDocContext(deal);
   const lines = [
     branding.companyName || DEFAULT_COMPANY,
@@ -948,7 +1036,10 @@ export function buildSellerQuestionnaireText(deal: DealData, branding: PBKBrandi
   return sanitizeLegacyCopy(lines.filter(Boolean).join('\n'));
 }
 
-export function buildDocumentSet(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING): Record<QuickDocumentType, string> {
+export function buildDocumentSet(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING
+): Record<QuickDocumentType, string> {
   return {
     report: buildPathPackageText(deal, branding),
     seller: buildSellerGuideText(deal, branding),
@@ -960,7 +1051,11 @@ export function buildDocumentSet(deal: DealData, branding: PBKBranding = DEFAULT
   };
 }
 
-export function buildMasterPackageParams(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING, printMode = false): string {
+export function buildMasterPackageParams(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING,
+  printMode = false
+): string {
   const selectedPath = normalizeSelectedPath(deal);
   const masterPath = getMasterPackagePath(deal);
   const agreedPrice = getAgreedPrice(deal);
@@ -970,10 +1065,12 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   const repairs = valueOrZero(deal.repairs.mid);
   const fee = valueOrZero(deal.fee) || 8000;
   const maoAfter = calculateMAO.afterRepairs(arv, repairs, fee);
-  const cfDownPayment = valueOrZero(deal.cfDownPayment) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
+  const cfDownPayment =
+    valueOrZero(deal.cfDownPayment) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
   const cfRate = valueOrZero(deal.cfRate) || valueOrZero(deal.rate);
   const cfTerm = valueOrZero(deal.cfTerm) || 30;
-  const mtUpfront = valueOrZero(deal.mtUpfront) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
+  const mtUpfront =
+    valueOrZero(deal.mtUpfront) || (agreedPrice > 0 ? Math.round(agreedPrice * 0.04) : 0);
   const mtBalance = valueOrZero(deal.mtBalanceConfirm) || valueOrZero(deal.balance);
   const mtRate = valueOrZero(deal.mtRateConfirm) || valueOrZero(deal.rate);
   const cfLoan = Math.max(0, agreedPrice - cfDownPayment);
@@ -981,12 +1078,22 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   const mtMonthlyRate = mtRate > 0 ? mtRate / 100 / 12 : 0;
   const mtMonthlyPayment =
     mtBalance > 0 && mtMonthlyRate > 0
-      ? Math.round(mtBalance * ((mtMonthlyRate * Math.pow(1 + mtMonthlyRate, 360)) / (Math.pow(1 + mtMonthlyRate, 360) - 1)))
+      ? Math.round(
+          mtBalance *
+            ((mtMonthlyRate * Math.pow(1 + mtMonthlyRate, 360)) /
+              (Math.pow(1 + mtMonthlyRate, 360) - 1))
+        )
       : 0;
-  const monthlyPayment = selectedPath === 'mt' ? mtMonthlyPayment : selectedPath === 'cf' ? cfMonthlyPayment : 0;
+  const monthlyPayment =
+    selectedPath === 'mt' ? mtMonthlyPayment : selectedPath === 'cf' ? cfMonthlyPayment : 0;
   const closingCostsEst = Math.round(agreedPrice * 0.02);
-  const entryCost = (selectedPath === 'mt' ? mtUpfront : selectedPath === 'cf' ? cfDownPayment : 0) + closingCostsEst;
-  const monthlySpread = selectedPath === 'cf' || selectedPath === 'mt' ? Math.round(valueOrZero(deal.rent) - monthlyPayment) : 0;
+  const entryCost =
+    (selectedPath === 'mt' ? mtUpfront : selectedPath === 'cf' ? cfDownPayment : 0) +
+    closingCostsEst;
+  const monthlySpread =
+    selectedPath === 'cf' || selectedPath === 'mt'
+      ? Math.round(valueOrZero(deal.rent) - monthlyPayment)
+      : 0;
   const lotSize = getLotSize(deal);
   const sellerCosts = getSellerCosts(deal, selectedPath);
   const cashAlternative = valueOrZero(deal.rbpCashAlternative);
@@ -1028,7 +1135,15 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   params.set('cfType', nonEmpty(deal.cfType) || 'carry');
   params.set('cfTypeLabel', getCfTypeLabel(deal.cfType));
   params.set('downPayment', String(selectedPath === 'mt' ? mtUpfront : cfDownPayment));
-  params.set('downPaymentPercent', String(agreedPrice > 0 ? Math.round(((selectedPath === 'mt' ? mtUpfront : cfDownPayment) / agreedPrice) * 1000) / 10 : 0));
+  params.set(
+    'downPaymentPercent',
+    String(
+      agreedPrice > 0
+        ? Math.round(((selectedPath === 'mt' ? mtUpfront : cfDownPayment) / agreedPrice) * 1000) /
+            10
+        : 0
+    )
+  );
   params.set('interestRate', String(selectedPath === 'mt' ? mtRate : cfRate));
   params.set('loanTerm', String(cfTerm));
   params.set('balloonTerm', String(cfTerm));
@@ -1042,7 +1157,14 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   params.set('loanBalance', String(mtBalance));
   params.set('existingLoanBalance', String(mtBalance));
   params.set('existingRate', String(mtRate));
-  params.set('loanTreatment', selectedPath === 'mt' ? getMtTypeLabel(deal.mtType) : selectedPath === 'cf' ? getCfTypeLabel(deal.cfType) : '');
+  params.set(
+    'loanTreatment',
+    selectedPath === 'mt'
+      ? getMtTypeLabel(deal.mtType)
+      : selectedPath === 'cf'
+        ? getCfTypeLabel(deal.cfType)
+        : ''
+  );
   params.set('monthlyInterestOnlyPayment', String(selectedPath === 'cf' ? cfMonthlyPayment : 0));
   params.set('monthlyPiti', String(selectedPath === 'mt' ? mtMonthlyPayment : 0));
   params.set('monthlyPayment', String(monthlyPayment));
@@ -1051,8 +1173,14 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   params.set('cashAlternative', String(cashAlternative));
   params.set('lotSize', lotSize);
   params.set('lotSizeConfirmed', lotSize);
-  params.set('offerToSeller', String(isLandPath(selectedPath) ? valueOrZero(deal.offer) || agreedPrice : agreedPrice));
-  params.set('builderPays', String(selectedPath === 'rbp-land' ? valueOrZero(deal.builderTotal) : 0));
+  params.set(
+    'offerToSeller',
+    String(isLandPath(selectedPath) ? valueOrZero(deal.offer) || agreedPrice : agreedPrice)
+  );
+  params.set(
+    'builderPays',
+    String(selectedPath === 'rbp-land' ? valueOrZero(deal.builderTotal) : 0)
+  );
   params.set('closeTimeline', timeline);
   params.set('agreedPriceRaw', String(agreedPrice || ''));
   params.set('downPaymentRaw', String(selectedPath === 'mt' ? mtUpfront : cfDownPayment));
@@ -1073,7 +1201,10 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   params.set('netTraditional', String(Math.round(arv * 0.91)));
   params.set('netPbkPath', String(agreedPrice));
   params.set('netAdvantage', String(Math.abs(Math.round(arv * 0.91) - agreedPrice)));
-  params.set('netToPbk', String(Math.max(0, (selectedPath === 'cash' ? maoCash : maoRbp) - agreedPrice)));
+  params.set(
+    'netToPbk',
+    String(Math.max(0, (selectedPath === 'cash' ? maoCash : maoRbp) - agreedPrice))
+  );
   params.set('commissionEst', String(Math.round(arv * 0.06)));
   params.set('closingCostsEst', String(closingCostsEst));
   params.set('carryingCosts', String(Math.round(arv * 0.01)));
@@ -1085,7 +1216,16 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   params.set('score', `${valueOrZero(deal.motivationScore) || 3}/5`);
   params.set('level', getMotivationLabel(deal));
   params.set('analystName', 'PBK Underwriting');
-  params.set('equityPosition', arv > 0 ? (arv - agreedPrice > arv * 0.2 ? 'Strong' : arv - agreedPrice > 0 ? 'Moderate' : 'Low') : 'Unknown');
+  params.set(
+    'equityPosition',
+    arv > 0
+      ? arv - agreedPrice > arv * 0.2
+        ? 'Strong'
+        : arv - agreedPrice > 0
+          ? 'Moderate'
+          : 'Low'
+      : 'Unknown'
+  );
   params.set('domHistory', `${valueOrZero(deal.dom)} days`);
   params.set('assessment', valueOrZero(deal.dom) > 60 || repairs > 15000 ? 'Motivated' : 'Stable');
   params.set('titleRisk', 'Low');
@@ -1105,7 +1245,11 @@ export function buildMasterPackageParams(deal: DealData, branding: PBKBranding =
   return params.toString();
 }
 
-export function openMasterPackageWindow(deal: DealData, branding: PBKBranding = DEFAULT_BRANDING, printMode = false): Window | null {
+export function openMasterPackageWindow(
+  deal: DealData,
+  branding: PBKBranding = DEFAULT_BRANDING,
+  printMode = false
+): Window | null {
   const query = buildMasterPackageParams(deal, branding, printMode);
   return window.open(`/PBK_Master_Deal_Package.html?${query}`, '_blank', 'noopener');
 }

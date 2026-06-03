@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
@@ -214,27 +214,30 @@ export function CommandCenter() {
     { label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
   ];
 
-  const kpis = [
-    { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
-    { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
-    {
-      label: 'Approvals Needed',
-      value: String(approvals.filter((item) => item.status === 'pending').length),
-      hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting`,
-    },
-    {
-      label: 'Deals in Pipeline',
-      value: String((snapshot?.contracts || []).length),
-      hint: 'prepared, sent, or signed contracts',
-    },
-    {
-      label: 'Tooling Ready',
-      value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
-      hint: toolingOptionalTotal
-        ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional add-ons enabled`
-        : 'advanced systems available in repo',
-    },
-  ];
+  const kpis = useMemo(
+    () => [
+      { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
+      { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
+      {
+        label: 'Approvals Needed',
+        value: String(approvals.filter((item) => item.status === 'pending').length),
+        hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting`,
+      },
+      {
+        label: 'Deals in Pipeline',
+        value: String((snapshot?.contracts || []).length),
+        hint: 'prepared, sent, or signed contracts',
+      },
+      {
+        label: 'Tooling Ready',
+        value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
+        hint: toolingOptionalTotal
+          ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional add-ons enabled`
+          : 'advanced systems available in repo',
+      },
+    ],
+    [snapshot, tooling]
+  );
 
   const runRuntimeAction = async (
     key: string,
@@ -245,7 +248,10 @@ export function CommandCenter() {
     setActionStatus('');
     try {
       await action();
-      await refresh().catch(() => null);
+      await refresh().catch((err) => {
+        console.warn('[PBK] State refresh failed after runtime action:', err);
+        return null;
+      });
       setActionStatus(successMessage);
     } catch (nextError) {
       setActionStatus(nextError instanceof Error ? nextError.message : 'Runtime action failed.');
@@ -272,7 +278,10 @@ export function CommandCenter() {
       setActionStatus(
         `Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`
       );
-      await refresh().catch(() => null);
+      await refresh().catch((err) => {
+        console.warn('[PBK] State refresh failed after web-search probe:', err);
+        return null;
+      });
     } catch (nextError) {
       const message =
         nextError instanceof Error ? nextError.message : 'Web-search status probe failed.';
@@ -436,7 +445,7 @@ export function CommandCenter() {
                         onClick={() => confirmAdminDecision(task, 'approved')}
                         className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Approve
+                        {pendingAction === `admin:${String(task.id)}:approved` ? '…' : 'Approve'}
                       </button>
                       <button
                         type="button"
@@ -444,7 +453,7 @@ export function CommandCenter() {
                         onClick={() => confirmAdminDecision(task, 'rejected')}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Decline
+                        {pendingAction === `admin:${String(task.id)}:rejected` ? '…' : 'Decline'}
                       </button>
                     </div>
                   )}
@@ -694,7 +703,9 @@ export function CommandCenter() {
                         }}
                         className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Approve
+                        {pendingAction === `approval:${String(approval.id)}:approved`
+                          ? '…'
+                          : 'Approve'}
                       </button>
                       <button
                         type="button"
@@ -717,9 +728,11 @@ export function CommandCenter() {
                         }}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
-                        {String(approval.type || '').toLowerCase() === 'contract'
-                          ? 'Needs Revision'
-                          : 'Decline'}
+                        {pendingAction === `approval:${String(approval.id)}:rejected`
+                          ? '…'
+                          : String(approval.type || '').toLowerCase() === 'contract'
+                            ? 'Needs Revision'
+                            : 'Decline'}
                       </button>
                     </div>
                   </div>

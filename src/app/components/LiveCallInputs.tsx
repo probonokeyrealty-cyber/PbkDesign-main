@@ -63,7 +63,7 @@ const BANNER_TONE_CLASSES = {
 function resolveCanonicalPath(
   selectedPath: LiveInputPath,
   deal: Pick<DealData, 'type' | 'contact'>,
-  explicitPath?: PBKPath,
+  explicitPath?: PBKPath
 ): PBKPath {
   if (explicitPath) return explicitPath;
   if (selectedPath === 'creative_finance') return 'cf';
@@ -128,7 +128,7 @@ export function LiveCallInputs({
       ...deal,
       selectedPath: effectiveCanonicalPath,
     },
-    effectiveCanonicalPath,
+    effectiveCanonicalPath
   );
   const confirmedCount = liveCallSupport.checklist.filter((item) => item.confirmed).length;
   const completedCount = liveCallSupport.checklist.filter((item) => item.complete).length;
@@ -136,7 +136,7 @@ export function LiveCallInputs({
   const handleChange = <K extends keyof DealData>(
     field: K,
     value: DealData[K],
-    confirmKey?: string,
+    confirmKey?: string
   ) => {
     const updates: Partial<DealData> = {
       [field]: value,
@@ -292,6 +292,7 @@ export function LiveCallInputs({
             </label>
             <input
               type="text"
+              autoComplete="name"
               value={deal.sellerName || ''}
               onChange={(e) => handleChange('sellerName', e.target.value, 'sellerName')}
               placeholder="John Smith"
@@ -306,6 +307,7 @@ export function LiveCallInputs({
             </label>
             <input
               type="email"
+              autoComplete="email"
               value={deal.sellerEmail || ''}
               onChange={(e) => handleChange('sellerEmail', e.target.value)}
               placeholder="john@example.com"
@@ -319,12 +321,15 @@ export function LiveCallInputs({
                 <Phone size={12} />
                 Phone <span className="text-red-500">*</span>
               </label>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${phoneStatusTone}`}>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${phoneStatusTone}`}
+              >
                 {getPhoneStatusLabel(liveCallSupport.phoneStatus)}
               </span>
             </div>
             <input
               type="tel"
+              autoComplete="tel"
               value={deal.sellerPhone || ''}
               onChange={(e) => handlePhoneChange(e.target.value)}
               placeholder="(555) 123-4567"
@@ -335,6 +340,7 @@ export function LiveCallInputs({
                 type="button"
                 onClick={handleVerifyPhone}
                 disabled={!(deal.sellerPhone || '').trim()}
+                title={!(deal.sellerPhone || '').trim() ? 'Enter a phone number first' : undefined}
                 className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition-all disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-900/15 dark:text-emerald-300"
               >
                 <ShieldCheck size={12} />
@@ -396,7 +402,9 @@ export function LiveCallInputs({
               <input
                 type="number"
                 value={deal.agreedPrice || ''}
-                onChange={(e) => handleChange('agreedPrice', parseFloat(e.target.value) || 0, 'agreedPrice')}
+                onChange={(e) =>
+                  handleChange('agreedPrice', parseFloat(e.target.value) || 0, 'agreedPrice')
+                }
                 placeholder={deal.price > 0 ? String(deal.price) : '250000'}
                 className="w-full pl-6 pr-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               />
@@ -475,7 +483,9 @@ export function LiveCallInputs({
                 <input
                   type="number"
                   value={deal.cfDownPayment || ''}
-                  onChange={(e) => handleChange('cfDownPayment', parseFloat(e.target.value) || 0, 'cfDownPayment')}
+                  onChange={(e) =>
+                    handleChange('cfDownPayment', parseFloat(e.target.value) || 0, 'cfDownPayment')
+                  }
                   placeholder="0"
                   className="w-full pl-6 pr-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 />
@@ -537,7 +547,9 @@ export function LiveCallInputs({
               </label>
               <select
                 value={deal.cfType || 'carry'}
-                onChange={(e) => handleChange('cfType', e.target.value as DealData['cfType'], 'cfType')}
+                onChange={(e) =>
+                  handleChange('cfType', e.target.value as DealData['cfType'], 'cfType')
+                }
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               >
                 <option value="carry">Seller Carry Note</option>
@@ -571,7 +583,9 @@ export function LiveCallInputs({
                 <input
                   type="number"
                   value={deal.mtUpfront || ''}
-                  onChange={(e) => handleChange('mtUpfront', parseFloat(e.target.value) || 0, 'mtUpfront')}
+                  onChange={(e) =>
+                    handleChange('mtUpfront', parseFloat(e.target.value) || 0, 'mtUpfront')
+                  }
                   placeholder="0"
                   className="w-full pl-6 pr-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 />
@@ -594,7 +608,11 @@ export function LiveCallInputs({
                   type="number"
                   value={deal.mtBalanceConfirm || ''}
                   onChange={(e) =>
-                    handleChange('mtBalanceConfirm', parseFloat(e.target.value) || 0, 'mtBalanceConfirm')
+                    handleChange(
+                      'mtBalanceConfirm',
+                      parseFloat(e.target.value) || 0,
+                      'mtBalanceConfirm'
+                    )
                   }
                   placeholder="0"
                   className="w-full pl-6 pr-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
@@ -636,7 +654,9 @@ export function LiveCallInputs({
               </label>
               <select
                 value={deal.mtType || 'subto'}
-                onChange={(e) => handleChange('mtType', e.target.value as DealData['mtType'], 'mtType')}
+                onChange={(e) =>
+                  handleChange('mtType', e.target.value as DealData['mtType'], 'mtType')
+                }
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               >
                 <option value="subto">Subject-To (loan stays in seller name)</option>
@@ -671,7 +691,11 @@ export function LiveCallInputs({
                   type="number"
                   value={deal.rbpPriceConfirm || ''}
                   onChange={(e) =>
-                    handleChange('rbpPriceConfirm', parseFloat(e.target.value) || 0, 'rbpPriceConfirm')
+                    handleChange(
+                      'rbpPriceConfirm',
+                      parseFloat(e.target.value) || 0,
+                      'rbpPriceConfirm'
+                    )
                   }
                   placeholder="0"
                   className="w-full pl-6 pr-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
@@ -694,7 +718,9 @@ export function LiveCallInputs({
                 onChange={(e) => handleChange('rbpBuyerType', e.target.value, 'rbpBuyerType')}
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               >
-                <option value="retail">Pre-qualified retail buyer (FHA, VA, or conventional)</option>
+                <option value="retail">
+                  Pre-qualified retail buyer (FHA, VA, or conventional)
+                </option>
                 <option value="fha">FHA buyer (3.5% min down)</option>
                 <option value="va">VA buyer (0% down, veteran/military)</option>
                 <option value="usda">USDA buyer (0% down, qualifying area)</option>
@@ -737,7 +763,11 @@ export function LiveCallInputs({
                   type="number"
                   value={deal.rbpCashAlternative || ''}
                   onChange={(e) =>
-                    handleChange('rbpCashAlternative', parseFloat(e.target.value) || 0, 'rbpCashAlternative')
+                    handleChange(
+                      'rbpCashAlternative',
+                      parseFloat(e.target.value) || 0,
+                      'rbpCashAlternative'
+                    )
                   }
                   placeholder="0"
                   className="w-full pl-6 pr-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
@@ -767,7 +797,9 @@ export function LiveCallInputs({
               </label>
               <select
                 value={deal.cashAsIs || 'yes'}
-                onChange={(e) => handleChange('cashAsIs', e.target.value as DealData['cashAsIs'], 'cashAsIs')}
+                onChange={(e) =>
+                  handleChange('cashAsIs', e.target.value as DealData['cashAsIs'], 'cashAsIs')
+                }
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               >
                 <option value="yes">Yes - all-cash, no contingencies</option>
@@ -788,7 +820,11 @@ export function LiveCallInputs({
               <select
                 value={deal.cashClosePeriod || '21'}
                 onChange={(e) =>
-                  handleChange('cashClosePeriod', e.target.value as DealData['cashClosePeriod'], 'cashClosePeriod')
+                  handleChange(
+                    'cashClosePeriod',
+                    e.target.value as DealData['cashClosePeriod'],
+                    'cashClosePeriod'
+                  )
                 }
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               >
@@ -821,7 +857,9 @@ export function LiveCallInputs({
               <input
                 type="text"
                 value={deal.landLotSizeConfirm || ''}
-                onChange={(e) => handleChange('landLotSizeConfirm', e.target.value, 'landLotSizeConfirm')}
+                onChange={(e) =>
+                  handleChange('landLotSizeConfirm', e.target.value, 'landLotSizeConfirm')
+                }
                 placeholder="0.25 acres"
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               />
@@ -842,7 +880,9 @@ export function LiveCallInputs({
                 onChange={(e) => handleChange('landBuyerType', e.target.value, 'landBuyerType')}
                 className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               >
-                <option value="retail">Pre-qualified retail buyer (FHA, VA, or conventional)</option>
+                <option value="retail">
+                  Pre-qualified retail buyer (FHA, VA, or conventional)
+                </option>
                 <option value="builder">Builder / developer buyer</option>
                 <option value="fha">FHA buyer</option>
                 <option value="conv">Conventional buyer</option>
@@ -863,7 +903,9 @@ export function LiveCallInputs({
                 <input
                   type="text"
                   value={deal.landSellerCosts || ''}
-                  onChange={(e) => handleChange('landSellerCosts', e.target.value, 'landSellerCosts')}
+                  onChange={(e) =>
+                    handleChange('landSellerCosts', e.target.value, 'landSellerCosts')
+                  }
                   placeholder="$0 - all fees, commissions & closing costs covered"
                   className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                 />
@@ -1037,8 +1079,8 @@ export function LiveCallInputs({
 
             {selectedPath === 'creative_finance' && deal.cfDownPayment ? (
               <div>
-                <strong>Down Payment:</strong> ${deal.cfDownPayment.toLocaleString()} @ {deal.cfRate}% /{' '}
-                {deal.cfTerm}yr
+                <strong>Down Payment:</strong> ${deal.cfDownPayment.toLocaleString()} @{' '}
+                {deal.cfRate}% / {deal.cfTerm}yr
               </div>
             ) : null}
             {selectedPath === 'subject_to' && deal.mtUpfront !== undefined ? (

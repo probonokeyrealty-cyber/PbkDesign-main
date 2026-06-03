@@ -1,11 +1,4 @@
-export type PBKPath =
-  | 'cash'
-  | 'cf'
-  | 'mt'
-  | 'rbp'
-  | 'land-owner'
-  | 'land-agent'
-  | 'rbp-land';
+export type PBKPath = 'cash' | 'cf' | 'mt' | 'rbp' | 'land-owner' | 'land-agent' | 'rbp-land';
 
 export type QuickDocumentType =
   | 'report'
@@ -38,6 +31,7 @@ export interface DealData {
   dom: number;
   selectedPath?: PBKPath;
   isAnalyzed?: boolean;
+  leadId?: string;
 
   // Seller Information (for PDFs)
   sellerName?: string;

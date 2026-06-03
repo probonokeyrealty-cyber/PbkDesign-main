@@ -25,12 +25,7 @@ export class AppError extends Error {
   timestamp: Date;
   context?: any;
 
-  constructor(
-    type: ErrorType,
-    userMessage: string,
-    technicalMessage?: string,
-    context?: any
-  ) {
+  constructor(type: ErrorType, userMessage: string, technicalMessage?: string, context?: any) {
     super(technicalMessage || userMessage);
     this.type = type;
     this.userMessage = userMessage;
@@ -45,7 +40,7 @@ export class AppError extends Error {
  * Safe localStorage operations with error handling
  */
 export const safeLocalStorage = {
-  getItem: <T,>(key: string, defaultValue: T): T => {
+  getItem: <T>(key: string, defaultValue: T): T => {
     try {
       const item = localStorage.getItem(key);
       if (item === null) return defaultValue;
@@ -161,7 +156,7 @@ export const logError = (error: Error | AppError, context?: any): void => {
   };
 
   // Log to console in development
-  if (process.env.NODE_ENV === 'development') {
+  if (import.meta.env.DEV) {
     console.group('🔴 Error Logged');
     console.error('Message:', error.message);
     console.error('Stack:', error.stack);
@@ -176,7 +171,7 @@ export const logError = (error: Error | AppError, context?: any): void => {
 /**
  * Try-catch wrapper for async operations
  */
-export const tryCatch = async <T,>(
+export const tryCatch = async <T>(
   operation: () => Promise<T>,
   errorType: ErrorType,
   userMessage: string
@@ -200,7 +195,7 @@ export const tryCatch = async <T,>(
 /**
  * Retry operation with exponential backoff
  */
-export const retryOperation = async <T,>(
+export const retryOperation = async <T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
   baseDelay: number = 1000
@@ -216,7 +211,7 @@ export const retryOperation = async <T,>(
       if (attempt < maxRetries - 1) {
         // Exponential backoff: 1s, 2s, 4s, etc.
         const delay = baseDelay * Math.pow(2, attempt);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }
@@ -231,7 +226,7 @@ export const debounce = <T extends (...args: any[]) => any>(
   func: T,
   wait: number
 ): ((...args: Parameters<T>) => void) => {
-  let timeout: NodeJS.Timeout | null = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
 
   return (...args: Parameters<T>) => {
     if (timeout) clearTimeout(timeout);

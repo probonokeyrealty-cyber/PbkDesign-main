@@ -1,4 +1,5 @@
 import type { DealData } from '../types';
+import type { PBKBranding } from '../utils/pbk';
 
 export interface PBKAnalyzerStatePayload {
   deal?: Partial<DealData>;
@@ -13,10 +14,10 @@ export interface PBKAnalyzerBridgeApi {
   getSelectedPath: () => DealData['selectedPath'];
   getAgentDealContext: () => unknown;
   getPdfReadiness: (deal?: Partial<DealData>) => unknown;
-  getDocumentSet: (deal?: Partial<DealData>, branding?: unknown) => unknown;
+  getDocumentSet: (deal?: Partial<DealData>, branding?: Partial<PBKBranding>) => unknown;
   buildMasterPackageQuery: (options?: {
     deal?: Partial<DealData>;
-    branding?: unknown;
+    branding?: Partial<PBKBranding>;
     printMode?: boolean;
   }) => URLSearchParams | string;
   setState: (payload: PBKAnalyzerStatePayload) => void;

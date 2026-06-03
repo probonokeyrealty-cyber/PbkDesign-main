@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DealData, PBKPath } from '../types';
 import { RepairCalculator } from './RepairCalculator';
 import { LandAnalysis } from './LandAnalysis';
@@ -50,16 +51,32 @@ export function AnalyzerTab({
     });
   };
 
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
   const arv = deal.arv || calculateARV(deal.comps);
   const analyzeReadiness = getAnalyzeReadiness(deal);
-  const analyzeCtaLabel = analyzeReadiness.ready && deal.isAnalyzed ? 'Open Call Mode ->' : 'Analyze Deal ->';
-  const handleAnalyzeCta = () => {
+  const analyzeCtaLabel =
+    analyzeReadiness.ready && deal.isAnalyzed ? 'Open Call Mode ->' : 'Analyze Deal ->';
+  const handleAnalyzeCta = async () => {
     if (analyzeReadiness.ready && deal.isAnalyzed) {
       onOpenCallMode(selectedPath);
       return;
     }
-
-    onAnalyze();
+    setIsAnalyzing(true);
+    try {
+      await onAnalyze();
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+  const handleSendToAgent = async () => {
+    setIsSending(true);
+    try {
+      await onSendToAgent();
+    } finally {
+      setIsSending(false);
+    }
   };
   const verdictTone =
     deal.verdict === 'green'
@@ -180,6 +197,7 @@ export function AnalyzerTab({
             </div>
             <input
               type="number"
+              aria-label="List price in dollars"
               value={deal.price || ''}
               onChange={(e) => handleInputChange('price', parseFloat(e.target.value) || 0)}
               placeholder="250000"
@@ -192,6 +210,7 @@ export function AnalyzerTab({
             </div>
             <input
               type="number"
+              aria-label="Bedrooms"
               value={deal.beds || ''}
               onChange={(e) => handleInputChange('beds', parseFloat(e.target.value) || 0)}
               placeholder="3"
@@ -204,6 +223,7 @@ export function AnalyzerTab({
             </div>
             <input
               type="number"
+              aria-label="Bathrooms"
               value={deal.baths || ''}
               onChange={(e) => handleInputChange('baths', parseFloat(e.target.value) || 0)}
               placeholder="2"
@@ -217,6 +237,7 @@ export function AnalyzerTab({
               </div>
               <input
                 type="number"
+                aria-label="Square footage"
                 value={deal.sqft || ''}
                 onChange={(e) => handleInputChange('sqft', parseFloat(e.target.value) || 0)}
                 placeholder="1500"
@@ -231,6 +252,7 @@ export function AnalyzerTab({
               <input
                 type="number"
                 step="0.01"
+                aria-label="Lot size in acres"
                 value={deal.lotSize || ''}
                 onChange={(e) => handleInputChange('lotSize', e.target.value)}
                 placeholder="0.25"
@@ -244,6 +266,7 @@ export function AnalyzerTab({
             </div>
             <input
               type="number"
+              aria-label="Year built"
               value={deal.year || ''}
               onChange={(e) => handleInputChange('year', parseFloat(e.target.value) || 0)}
               placeholder="1985"
@@ -256,6 +279,7 @@ export function AnalyzerTab({
             </div>
             <input
               type="number"
+              aria-label="Days on market"
               value={deal.dom || ''}
               onChange={(e) => handleInputChange('dom', parseFloat(e.target.value) || 0)}
               placeholder="0"
@@ -278,13 +302,19 @@ export function AnalyzerTab({
             <div className="space-y-2">
               <div className="flex items-start gap-2">
                 <div className="flex-1">
-                  <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
+                  <label
+                    htmlFor="deal-arv"
+                    className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1"
+                  >
                     ARV
-                    <small className="block text-[10px] text-gray-400">Auto from comps, editable when underwriting overrides it</small>
+                    <small className="block text-[10px] text-gray-400">
+                      Auto from comps, editable when underwriting overrides it
+                    </small>
                   </label>
                 </div>
                 <div className="w-32">
                   <input
+                    id="deal-arv"
                     type="number"
                     value={arv || ''}
                     onChange={(e) => handleInputChange('arv', parseFloat(e.target.value) || 0)}
@@ -297,14 +327,20 @@ export function AnalyzerTab({
 
               <div className="flex items-start gap-2">
                 <div className="flex-1">
-                  <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
+                  <label
+                    htmlFor="deal-rent"
+                    className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1"
+                  >
                     Monthly rent estimate
-                    <small className="block text-[10px] text-gray-400">Check Zillow rent estimate tab</small>
+                    <small className="block text-[10px] text-gray-400">
+                      Check Zillow rent estimate tab
+                    </small>
                   </label>
                 </div>
                 <div className="relative w-32">
                   <span className="absolute left-2 top-2 text-[12px] text-gray-500">$</span>
                   <input
+                    id="deal-rent"
                     type="number"
                     value={deal.rent || ''}
                     onChange={(e) => handleInputChange('rent', parseFloat(e.target.value) || 0)}
@@ -316,14 +352,20 @@ export function AnalyzerTab({
 
               <div className="flex items-start gap-2">
                 <div className="flex-1">
-                  <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
+                  <label
+                    htmlFor="deal-balance"
+                    className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1"
+                  >
                     Seller mortgage balance
-                    <small className="block text-[10px] text-gray-400">For sub-2 / creative finance</small>
+                    <small className="block text-[10px] text-gray-400">
+                      For sub-2 / creative finance
+                    </small>
                   </label>
                 </div>
                 <div className="relative w-32">
                   <span className="absolute left-2 top-2 text-[12px] text-gray-500">$</span>
                   <input
+                    id="deal-balance"
                     type="number"
                     value={deal.balance || ''}
                     onChange={(e) => handleInputChange('balance', parseFloat(e.target.value) || 0)}
@@ -335,13 +377,19 @@ export function AnalyzerTab({
 
               <div className="flex items-start gap-2">
                 <div className="flex-1">
-                  <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
+                  <label
+                    htmlFor="deal-rate"
+                    className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1"
+                  >
                     Seller interest rate
-                    <small className="block text-[10px] text-gray-400">If sub-2 or assumable target</small>
+                    <small className="block text-[10px] text-gray-400">
+                      If sub-2 or assumable target
+                    </small>
                   </label>
                 </div>
                 <div className="relative w-32">
                   <input
+                    id="deal-rate"
                     type="number"
                     step="0.1"
                     value={deal.rate || ''}
@@ -355,7 +403,10 @@ export function AnalyzerTab({
 
               <div className="flex items-start gap-2">
                 <div className="flex-1">
-                  <label className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1">
+                  <label
+                    htmlFor="deal-fee"
+                    className="block text-[12px] text-gray-600 dark:text-gray-400 mb-1"
+                  >
                     <span className="inline-flex items-center gap-1.5">
                       Your assignment fee
                       <HelpTooltip text="Your wholesale fee - the difference between your contract price and what you assign it to your buyer for. Default $10,000; adjust based on deal margin." />
@@ -365,6 +416,7 @@ export function AnalyzerTab({
                 <div className="relative w-32">
                   <span className="absolute left-2 top-2 text-[12px] text-gray-500">$</span>
                   <input
+                    id="deal-fee"
                     type="number"
                     value={deal.fee || ''}
                     onChange={(e) => handleInputChange('fee', parseFloat(e.target.value) || 0)}
@@ -396,21 +448,30 @@ export function AnalyzerTab({
               key={comp}
               className="flex items-center gap-2 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg p-2"
             >
-              <span className="text-[11px] font-bold text-blue-500 text-center w-6">{comp}</span>
+              <span
+                className="text-[11px] font-bold text-blue-500 text-center w-6"
+                aria-hidden="true"
+              >
+                {comp}
+              </span>
               <input
                 type="text"
                 inputMode="text"
                 enterKeyHint="next"
                 autoComplete="street-address"
+                aria-label={`Comp ${comp} address`}
                 value={deal.comps[comp].address}
                 onChange={(e) => handleCompChange(comp, 'address', e.target.value)}
                 placeholder="123 Main St, City, MI"
                 className="flex-1 h-7 px-2 border border-gray-200 dark:border-slate-700 rounded bg-white dark:bg-slate-800 text-[11.5px] text-gray-900 dark:text-gray-100 outline-none focus:border-blue-500 transition-all"
               />
               <div className="flex items-center bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded px-2 h-7">
-                <span className="text-[11.5px] text-gray-500">$</span>
+                <span className="text-[11.5px] text-gray-500" aria-hidden="true">
+                  $
+                </span>
                 <input
                   type="number"
+                  aria-label={`Comp ${comp} sold price`}
                   value={deal.comps[comp].price || ''}
                   onChange={(e) => handleCompChange(comp, 'price', parseFloat(e.target.value) || 0)}
                   placeholder="0"
@@ -419,6 +480,7 @@ export function AnalyzerTab({
               </div>
               <input
                 type="text"
+                aria-label={`Comp ${comp} sold date`}
                 value={deal.comps[comp].date}
                 onChange={(e) => handleCompChange(comp, 'date', e.target.value)}
                 placeholder="Jan 2025"
@@ -437,7 +499,9 @@ export function AnalyzerTab({
         <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
-            <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">Key Numbers</h3>
+            <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
+              Key Numbers
+            </h3>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
@@ -480,15 +544,17 @@ export function AnalyzerTab({
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <button
           onClick={handleAnalyzeCta}
-          className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md"
+          disabled={isAnalyzing}
+          className="w-full px-4 py-3 rounded-full bg-gradient-to-r from-black to-gray-800 dark:from-slate-700 dark:to-slate-600 text-white text-[13px] font-semibold hover:opacity-90 transition-all shadow-md disabled:opacity-60 disabled:cursor-wait"
         >
-          {analyzeCtaLabel}
+          {isAnalyzing ? 'Analyzing…' : analyzeCtaLabel}
         </button>
         <button
-          onClick={onSendToAgent}
-          className="w-full px-4 py-3 rounded-full border border-blue-200 bg-blue-50 text-[13px] font-semibold text-blue-700 transition-all hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+          onClick={handleSendToAgent}
+          disabled={isSending}
+          className="w-full px-4 py-3 rounded-full border border-blue-200 bg-blue-50 text-[13px] font-semibold text-blue-700 transition-all hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 disabled:opacity-60 disabled:cursor-wait"
         >
-          Send to Agent
+          {isSending ? 'Sending…' : 'Send to Agent'}
         </button>
       </div>
       {analyzeStatus && (

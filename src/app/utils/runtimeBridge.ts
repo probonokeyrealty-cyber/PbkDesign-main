@@ -55,6 +55,10 @@ export type ActivityRecord = {
   address?: string;
   summary?: string;
   createdAt?: string;
+  at?: string;
+  actor?: string;
+  text?: string;
+  category?: string;
 };
 
 export type BrainDoc = {
@@ -130,6 +134,9 @@ export type MessageRecord = {
   unread?: boolean;
   isUnread?: boolean;
   createdAt?: string;
+  channel?: string;
+  address?: string;
+  at?: string;
 };
 
 export type ContractRecord = {
@@ -149,6 +156,8 @@ export type AdminTask = {
   status?: string;
   actor?: string;
   createdAt?: string;
+  action?: string;
+  summary?: string;
 };
 
 export type RuntimeSnapshot = {
@@ -184,6 +193,10 @@ export type RuntimeToolingStatus = {
   observability?: Record<string, unknown>;
   github?: Record<string, unknown>;
   summary?: Record<string, unknown>;
+  propertyData?: Record<string, unknown>;
+  pipelineMemory?: Record<string, unknown>;
+  voiceFallback?: Record<string, unknown>;
+  desktopCopilot?: Record<string, unknown>;
 };
 
 export type RuntimeScriptCandidate = {
@@ -490,16 +503,24 @@ export async function bridgeRequest<T = unknown>({
   const canKeepalive =
     method !== 'GET' && method !== 'DELETE' && (!serializedBody || serializedBody.length < 60000);
   const requestUrl = buildUrl(path);
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), 15_000);
   const init = {
     method,
     headers: buildHeaders(body !== undefined && method !== 'GET'),
     body: serializedBody,
     keepalive: keepalive ?? canKeepalive,
+    signal: timeoutController.signal,
   };
-  let response = await fetch(requestUrl, init);
-  if (await shouldRetryRuntimeViaHosted(response, requestUrl)) {
-    const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
-    if (fallbackUrl) response = await fetch(fallbackUrl, init);
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, init);
+    if (await shouldRetryRuntimeViaHosted(response, requestUrl)) {
+      const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
+      if (fallbackUrl) response = await fetch(fallbackUrl, init);
+    }
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const text = await response.text();

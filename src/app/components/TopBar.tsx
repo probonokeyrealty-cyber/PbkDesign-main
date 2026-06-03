@@ -41,23 +41,26 @@ export function TopBar({
     <div className="fixed top-0 left-0 right-0 z-50 h-[54px] bg-black/90 backdrop-blur-xl flex items-center gap-1.5 px-3.5 border-b border-blue-500/35 shadow-lg">
       <button
         onClick={onMenuToggle}
+        aria-label="Toggle menu"
         className="md:hidden p-2 text-white hover:bg-white/10 rounded"
       >
         <Menu size={20} />
       </button>
-      
+
       <div className="bg-blue-500/12 px-3 py-1 rounded-full font-bold text-blue-500 text-[15px] tracking-tight">
         PBK
       </div>
-      
+
       <div className="hidden md:block flex-1 text-[12px] text-white/65 truncate">
         {address || 'No property loaded'}
       </div>
-      
-      <div className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap ${verdictColors[verdict]}`}>
+
+      <div
+        className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap ${verdictColors[verdict]}`}
+      >
         {verdictText[verdict]}
       </div>
-      
+
       <button
         onClick={onCallModeClick}
         className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium text-white/80 hover:text-white hover:bg-white/10 border border-white/10 transition-all whitespace-nowrap"
@@ -65,9 +68,10 @@ export function TopBar({
         <Phone size={12} />
         <span className="hidden sm:inline">Call</span>
       </button>
-      
+
       <button
         onClick={onDarkModeToggle}
+        aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
         className="relative w-10 h-5.5 bg-gray-700 rounded-full flex-shrink-0 transition-colors"
         style={{ backgroundColor: darkMode ? '#2A97DA' : '#334155' }}
       >
@@ -76,7 +80,7 @@ export function TopBar({
           style={{ transform: darkMode ? 'translateX(18px)' : 'translateX(0)' }}
         />
       </button>
-      
+
       <button
         onClick={onDocsClick}
         className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium text-white/80 hover:text-white hover:bg-white/10 border border-white/10 transition-all whitespace-nowrap"
@@ -84,18 +88,19 @@ export function TopBar({
         <FileText size={12} />
         <span className="hidden sm:inline">Docs</span>
       </button>
-      
+
       <button
         onClick={onPrint}
+        aria-label="Print deal package"
         className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium text-white/80 hover:text-white hover:bg-white/10 border border-white/10 transition-all whitespace-nowrap"
       >
         <Printer size={12} />
       </button>
-      
+
       <span className="text-[10px] text-white/45 whitespace-nowrap hidden lg:inline">
         Auto-saved
       </span>
-      
+
       <button
         onClick={onReset}
         className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium text-white bg-red-600 hover:bg-red-700 transition-colors whitespace-nowrap"

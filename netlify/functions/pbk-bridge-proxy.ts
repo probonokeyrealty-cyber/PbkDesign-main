@@ -278,6 +278,15 @@ export const handler: Handler = async (event) => {
     ? Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8')
     : undefined;
 
+  const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB — headroom under Netlify's 6 MB function limit
+  if (body && body.byteLength > MAX_BODY_BYTES) {
+    return {
+      statusCode: 413,
+      headers: { 'Content-Type': 'application/json', ...buildCorsHeaders(event), 'X-Request-ID': requestId },
+      body: JSON.stringify({ ok: false, error: 'Request body too large', maxBytes: MAX_BODY_BYTES, requestId }),
+    };
+  }
+
   const PROXY_TIMEOUT_MS = Math.max(
     5000,
     Math.min(25000, Number(process.env.PBK_BRIDGE_PROXY_TIMEOUT_MS || 20000)),

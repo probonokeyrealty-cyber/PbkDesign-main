@@ -336,6 +336,7 @@ export function Leads() {
   const [contractForm, setContractForm] = useState<ContractFormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [leadActionPending, setLeadActionPending] = useState('');
+  const [reloading, setReloading] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
   const [displayLimit, setDisplayLimit] = useState(40);
   const reloadTimerRef = useRef<number | null>(null);
@@ -421,6 +422,7 @@ export function Leads() {
     if (!selectedLeadId) return;
     if (reloadInFlightRef.current) return;
     reloadInFlightRef.current = true;
+    setReloading(true);
     setDetailStatus('Refreshing lead detail...');
     try {
       const [fullResponse, callResponse] = await Promise.all([
@@ -437,6 +439,7 @@ export function Leads() {
       );
     } finally {
       reloadInFlightRef.current = false;
+      setReloading(false);
     }
   }, [refresh, selectedLeadId]);
 
@@ -844,9 +847,10 @@ export function Leads() {
                   <button
                     type="button"
                     onClick={reloadLeadDetail}
+                    disabled={reloading}
                     className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200 disabled:cursor-wait disabled:opacity-60"
                   >
-                    <RefreshCw size={14} /> Refresh
+                    <RefreshCw size={14} /> {reloading ? 'Refreshing...' : 'Refresh'}
                   </button>
                   <button
                     type="button"

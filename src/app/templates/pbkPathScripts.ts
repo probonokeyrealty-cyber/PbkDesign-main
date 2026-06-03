@@ -27,7 +27,8 @@ const payment = (balance: number, rate: number) => {
   const monthlyRate = rate > 0 ? rate / 100 / 12 : 0;
   if (!balance || !monthlyRate) return 0;
   return Math.round(
-    balance * ((monthlyRate * Math.pow(1 + monthlyRate, 360)) / (Math.pow(1 + monthlyRate, 360) - 1)),
+    balance *
+      ((monthlyRate * Math.pow(1 + monthlyRate, 360)) / (Math.pow(1 + monthlyRate, 360) - 1))
   );
 };
 
@@ -69,7 +70,9 @@ function cashObjections(deal: DealData) {
       'Reframe: I can send proof of funds and place earnest money with title after agreement.',
       'Authority close: Would a refundable earnest deposit into escrow within 24 hours make you comfortable?',
     ],
-  ].map((parts) => parts.join('\n')).join('\n\n');
+  ]
+    .map((parts) => parts.join('\n'))
+    .join('\n\n');
 }
 
 function rbpObjections(deal: DealData) {
@@ -93,7 +96,9 @@ function rbpObjections(deal: DealData) {
       'Reframe: Your offer is locked in. The appraisal affects the buyer loan, not the number we are trying to protect for you.',
       'Authority close: Would a written net-proceeds guarantee make the process feel safer?',
     ],
-  ].map((parts) => parts.join('\n')).join('\n\n');
+  ]
+    .map((parts) => parts.join('\n'))
+    .join('\n\n');
 }
 
 function cfObjections(deal: DealData) {
@@ -130,7 +135,9 @@ function cfObjections(deal: DealData) {
       `Reframe: The seller gets near ${agreed}, I bring cash to closing, title transfers, and the rest is documented monthly income instead of a lower ${cash} cash number.`,
       'Authority close: Is beating the cash number worth a 10-minute conversation with the seller?',
     ],
-  ].map((parts) => parts.join('\n')).join('\n\n');
+  ]
+    .map((parts) => parts.join('\n'))
+    .join('\n\n');
 }
 
 function mtObjections(deal: DealData) {
@@ -168,7 +175,9 @@ function mtObjections(deal: DealData) {
       'Reframe: Seller financing may qualify for installment sale treatment under IRS Section 453.',
       'Authority close: Should I email a one-page CPA summary today?',
     ],
-  ].map((parts) => parts.join('\n')).join('\n\n');
+  ]
+    .map((parts) => parts.join('\n'))
+    .join('\n\n');
 }
 
 function landObjections(deal: DealData) {
@@ -204,10 +213,14 @@ function landObjections(deal: DealData) {
       'Reframe: County value does not underwrite buildability, utilities, wetlands, zoning, or builder margin.',
       `Authority close: If I walk you through the build math behind ${offer}, would that help?`,
     ],
-  ].map((parts) => parts.join('\n')).join('\n\n');
+  ]
+    .map((parts) => parts.join('\n'))
+    .join('\n\n');
 }
 
-export function buildPbkPathScripts(deal: DealData): Record<PbkLegacyScriptPath, PbkPathScriptGroup> {
+export function buildPbkPathScripts(
+  deal: DealData
+): Record<PbkLegacyScriptPath, PbkPathScriptGroup> {
   const seller = clean(deal.sellerName, '[SELLER_NAME]');
   const agent = clean(deal.sellerName, '[AGENT_NAME]');
   const address = clean(deal.address, '[PROPERTY_ADDRESS]');
@@ -221,13 +234,33 @@ export function buildPbkPathScripts(deal: DealData): Record<PbkLegacyScriptPath,
   const timeline = clean(deal.timeline, '[TIMELINE]');
   const earnest = clean(deal.earnestDeposit, '[EARNEST_DAYS]');
   const rent = money(deal.rent, '[RENT]');
-  const marketPayment = money(deal.price ? Math.round((deal.price * 0.8) * (0.075 / 12) / (1 - Math.pow(1 + 0.075 / 12, -360))) : 0, '[MARKET_PAYMENT]');
+  const marketPayment = money(
+    deal.price
+      ? Math.round((deal.price * 0.8 * (0.075 / 12)) / (1 - Math.pow(1 + 0.075 / 12, -360)))
+      : 0,
+    '[MARKET_PAYMENT]'
+  );
   const loanBalance = money(deal.mtBalanceConfirm || deal.balance, '[LOAN_BALANCE]');
   const existingRate = clean(deal.mtRateConfirm || deal.rate, '[EXISTING_RATE]');
-  const existingPaymentValue = payment(deal.mtBalanceConfirm || deal.balance || 0, deal.mtRateConfirm || deal.rate || 0);
+  const existingPaymentValue = payment(
+    deal.mtBalanceConfirm || deal.balance || 0,
+    deal.mtRateConfirm || deal.rate || 0
+  );
   const existingPayment = money(existingPaymentValue, '[EXISTING_PAYMENT]');
-  const savings = money(existingPaymentValue && deal.price ? Math.max(0, Math.round((deal.price * 0.8) * (0.075 / 12) / (1 - Math.pow(1 + 0.075 / 12, -360))) - existingPaymentValue) : 0, '[SAVINGS]');
-  const downPayment = money(deal.cfDownPayment || deal.mtUpfront || (deal.price ? Math.round(deal.price * 0.04) : 0), '[DOWN_PAYMENT]');
+  const savings = money(
+    existingPaymentValue && deal.price
+      ? Math.max(
+          0,
+          Math.round((deal.price * 0.8 * (0.075 / 12)) / (1 - Math.pow(1 + 0.075 / 12, -360))) -
+            existingPaymentValue
+        )
+      : 0,
+    '[SAVINGS]'
+  );
+  const downPayment = money(
+    deal.cfDownPayment || deal.mtUpfront || (deal.price ? Math.round(deal.price * 0.04) : 0),
+    '[DOWN_PAYMENT]'
+  );
   const interestRate = clean(deal.cfRate || deal.mtRateConfirm || deal.rate, '[INTEREST_RATE]');
   const monthlyInterest = money(deal.cfMonthlyPayment || 0, '[MONTHLY_INTEREST]');
   const lotSize = clean(deal.landLotSizeConfirm || deal.lotSize, '[LOT_SIZE]');
@@ -235,7 +268,6 @@ export function buildPbkPathScripts(deal: DealData): Record<PbkLegacyScriptPath,
   const builderPays = money(deal.builderTotal || deal.maoRBP, '[BUILDER_PAYS]');
   const offerToSeller = money(deal.offer || deal.mao60, '[OFFER_TO_SELLER]');
   const rbpGain = money(Math.max(0, (deal.maoRBP || 0) - (deal.mao60 || 0)), '[RBP_GAIN]');
-  const stretch = money((deal.agreedPrice || deal.price) ? Math.round((deal.agreedPrice || deal.price) * 1.08) : 0, '[STRETCH_PRICE]');
 
   const cashOwner: PbkScriptBundle = {
     opening: `[STEP 1 - OPENING]\n"Hey ${seller}, this is [YOUR_NAME] with Probono Key Realty. I know this is a little random. Did I catch you at a horrible time?"\n\n[STEP 2 - FRAME THE CALL]\n"I am looking at the property on ${address}. I do not want to assume anything, but I work with a small group of local buyers. We are looking for a few more houses in the area, and I wanted to see if you have ever thought about a simple, as-is cash sale: no repairs, no agent fees, no waiting."\n\n[STEP 3 - DISCOVERY]\n"Before I go any further, can you tell me a little about the property? Is it sitting empty, rented, or are you living there? What is the overall condition like?"\n\n[STEP 4 - PASS-OFF]\n"Got it. Here is how we work. I am not the final decision-maker on pricing. I am the scout. I find opportunities and pass them to our acquisitions team. They run the final numbers, build the offer package, and make the call."\n\n[STEP 5 - CLOSE]\n"Is ${phone} the best number for them to reach you? And ${email} for the documents?"`,

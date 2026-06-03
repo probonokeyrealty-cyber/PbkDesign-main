@@ -22,7 +22,7 @@ import {
 export const useARVCalculation = (comps: DealData['comps']) => {
   return useMemo(() => {
     return calculateARV(comps);
-  }, [comps.A.price, comps.B.price, comps.C.price]);
+  }, [comps]);
 };
 
 /**
@@ -31,9 +31,9 @@ export const useARVCalculation = (comps: DealData['comps']) => {
 export const useMAOCalculations = (arv: number, repairs: number, assignmentFee: number = 8000) => {
   return useMemo(() => {
     return {
-      mao60: calculateMAO.wholesale(arv, assignmentFee),  // MAO Cash uses FEE not repairs
+      mao60: calculateMAO.wholesale(arv, assignmentFee), // MAO Cash uses FEE not repairs
       maoRBP: calculateMAO.rbp(arv),
-      maoAfterRepairs: calculateMAO.afterRepairs(arv, repairs, assignmentFee),  // Added MAO AR
+      maoAfterRepairs: calculateMAO.afterRepairs(arv, repairs, assignmentFee), // Added MAO AR
       maoFixFlip: calculateMAO.fixFlip(arv, repairs),
     };
   }, [arv, repairs, assignmentFee]);
@@ -70,11 +70,7 @@ export const useInvestorMetrics = (
     const monthlyPayment = calculateMonthlyPayment(deal.balance, deal.rate);
 
     // Wholesale metrics
-    const wholesale = calculateInvestorMetrics.wholesale(
-      deal.price,
-      deal.arv,
-      deal.fee || 8000
-    );
+    const wholesale = calculateInvestorMetrics.wholesale(deal.price, deal.arv, deal.fee || 8000);
 
     // Fix & Flip metrics
     const fixFlip = calculateInvestorMetrics.fixFlip(
@@ -148,7 +144,11 @@ export const useMonthlyPayment = (balance: number, rate: number, years: number =
  */
 export const useDealAnalysis = (deal: DealData) => {
   const arv = useARVCalculation(deal.comps);
-  const { mao60, maoRBP, maoAfterRepairs, maoFixFlip } = useMAOCalculations(arv, deal.repairs.mid, deal.fee);
+  const { mao60, maoRBP, maoAfterRepairs, maoFixFlip } = useMAOCalculations(
+    arv,
+    deal.repairs.mid,
+    deal.fee
+  );
   const verdictData = useDealVerdict(deal.price, arv, maoRBP);
   const repairCondition = useRepairCondition(deal.repairs.mid, arv);
   const landMetrics = useLandMetrics(deal.lotSize, deal.builderPrice);
@@ -174,5 +174,17 @@ export const useDealAnalysis = (deal: DealData) => {
           ? ((landMetrics.totalValue - deal.offer) / landMetrics.totalValue) * 100
           : 0,
     };
-  }, [arv, mao60, maoRBP, maoAfterRepairs, maoFixFlip, verdictData, repairCondition, landMetrics, deal.price, deal.offer, deal.type]);
+  }, [
+    arv,
+    mao60,
+    maoRBP,
+    maoAfterRepairs,
+    maoFixFlip,
+    verdictData,
+    repairCondition,
+    landMetrics,
+    deal.price,
+    deal.offer,
+    deal.type,
+  ]);
 };

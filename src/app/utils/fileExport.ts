@@ -33,7 +33,7 @@ export const copyToClipboard = async (content: string): Promise<boolean> => {
   try {
     await navigator.clipboard.writeText(content);
     return true;
-  } catch (error) {
+  } catch {
     // Fallback for older browsers
     try {
       const textArea = document.createElement('textarea');
@@ -83,16 +83,20 @@ export const downloadJSON = (data: any, filename: string): void => {
  */
 export const downloadCSV = (data: string[][], filename: string): void => {
   try {
-    const csvContent = data.map(row =>
-      row.map(cell => {
-        // Escape cells that contain commas or quotes
-        const cellStr = String(cell);
-        if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
-          return `"${cellStr.replace(/"/g, '""')}"`;
-        }
-        return cellStr;
-      }).join(',')
-    ).join('\n');
+    const csvContent = data
+      .map((row) =>
+        row
+          .map((cell) => {
+            // Escape cells that contain commas or quotes
+            const cellStr = String(cell);
+            if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+              return `"${cellStr.replace(/"/g, '""')}"`;
+            }
+            return cellStr;
+          })
+          .join(',')
+      )
+      .join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -114,14 +118,8 @@ export const downloadCSV = (data: string[][], filename: string): void => {
 /**
  * Generate safe filename from deal address or default name
  */
-export const generateFilename = (
-  prefix: string,
-  address?: string,
-  suffix?: string
-): string => {
-  const sanitized = address
-    ? address.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50)
-    : 'Template';
+export const generateFilename = (prefix: string, address?: string, suffix?: string): string => {
+  const sanitized = address ? address.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50) : 'Template';
 
   const parts = [prefix, sanitized];
   if (suffix) parts.push(suffix);
@@ -172,11 +170,7 @@ export const printPage = (elementId?: string): void => {
 /**
  * Share content via Web Share API (mobile-friendly)
  */
-export const shareContent = async (
-  title: string,
-  text: string,
-  url?: string
-): Promise<boolean> => {
+export const shareContent = async (title: string, text: string, url?: string): Promise<boolean> => {
   if (navigator.share) {
     try {
       await navigator.share({

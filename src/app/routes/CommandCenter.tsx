@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
@@ -214,30 +214,27 @@ export function CommandCenter() {
     { label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
   ];
 
-  const kpis = useMemo(
-    () => [
-      { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
-      { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
-      {
-        label: 'Approvals Needed',
-        value: String(approvals.filter((item) => item.status === 'pending').length),
-        hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting`,
-      },
-      {
-        label: 'Deals in Pipeline',
-        value: String((snapshot?.contracts || []).length),
-        hint: 'prepared, sent, or signed contracts',
-      },
-      {
-        label: 'Tooling Ready',
-        value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
-        hint: toolingOptionalTotal
-          ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional add-ons enabled`
-          : 'advanced systems available in repo',
-      },
-    ],
-    [snapshot, tooling]
-  );
+  const kpis = [
+    { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
+    { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
+    {
+      label: 'Approvals Needed',
+      value: String(approvals.filter((item) => item.status === 'pending').length),
+      hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting`,
+    },
+    {
+      label: 'Deals in Pipeline',
+      value: String((snapshot?.contracts || []).length),
+      hint: 'prepared, sent, or signed contracts',
+    },
+    {
+      label: 'Tooling Ready',
+      value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
+      hint: toolingOptionalTotal
+        ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional add-ons enabled`
+        : 'advanced systems available in repo',
+    },
+  ];
 
   const runRuntimeAction = async (
     key: string,

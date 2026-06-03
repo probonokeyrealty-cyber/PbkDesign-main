@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { TopBar } from './components/TopBar';
 import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
@@ -230,33 +230,36 @@ export default function App({ engineOnly = false }: AppProps) {
     return next;
   };
 
-  const mergeExternalDeal = (incoming: Partial<DealData>) => {
+  const mergeExternalDeal = useCallback((incoming: Partial<DealData>) => {
     setDeal((prev) => buildMergedDealState(prev, incoming));
-  };
+  }, []);
 
-  const isEditingAnalyzerField = () => {
+  const isEditingAnalyzerField = useCallback(() => {
     const activeElement = document.activeElement;
     if (!activeElement) return false;
     const tagName = activeElement.tagName;
     return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
-  };
+  }, []);
 
-  const applyBridgeState = (payload: { deal?: Partial<DealData>; activeTab?: AppTab | string }) => {
-    if (!payload || typeof payload !== 'object') return;
-    const isEditing = isEditingAnalyzerField();
+  const applyBridgeState = useCallback(
+    (payload: { deal?: Partial<DealData>; activeTab?: AppTab | string }) => {
+      if (!payload || typeof payload !== 'object') return;
+      const isEditing = isEditingAnalyzerField();
 
-    if (payload.deal && !isEditing) {
-      mergeExternalDeal(payload.deal);
-    }
+      if (payload.deal && !isEditing) {
+        mergeExternalDeal(payload.deal);
+      }
 
-    if (
-      !isEditing &&
-      payload.activeTab &&
-      ['analyzer', 'callmode', 'documents', 'crm'].includes(payload.activeTab)
-    ) {
-      setActiveTab(payload.activeTab as AppTab);
-    }
-  };
+      if (
+        !isEditing &&
+        payload.activeTab &&
+        ['analyzer', 'callmode', 'documents', 'crm'].includes(payload.activeTab)
+      ) {
+        setActiveTab(payload.activeTab as AppTab);
+      }
+    },
+    [isEditingAnalyzerField, mergeExternalDeal]
+  );
 
   // Load saved data from localStorage
   useEffect(() => {
@@ -369,7 +372,7 @@ export default function App({ engineOnly = false }: AppProps) {
       window.removeEventListener('message', handleMessage);
       window.removeEventListener('storage', handleStorage);
     };
-  }, []);
+  }, [activeTab, applyBridgeState]);
 
   // Apply dark mode class to body
   useEffect(() => {
@@ -436,10 +439,14 @@ export default function App({ engineOnly = false }: AppProps) {
   }, [
     deal.price,
     deal.arv,
+    deal.comps,
     deal.comps.A.price,
     deal.comps.B.price,
     deal.comps.C.price,
     deal.fee,
+    deal.mao60,
+    deal.maoRBP,
+    deal.verdict,
     deal.underwriting?.maoCashPct,
     deal.underwriting?.maoRbpPct,
   ]);
@@ -489,7 +496,7 @@ export default function App({ engineOnly = false }: AppProps) {
     });
   };
 
-  const handleAnalyzeDeal = async () => {
+  const handleAnalyzeDeal = useCallback(async () => {
     const readiness = getAnalyzeReadiness(deal);
 
     if (!readiness.ready) {
@@ -547,7 +554,7 @@ export default function App({ engineOnly = false }: AppProps) {
         ? `${prev} Call Mode is ready when you choose a path.`
         : 'Analysis ready. Choose a path or open Call Mode when ready.'
     );
-  };
+  }, [deal]);
 
   const handleSendToAgent = async () => {
     if (!activeDeal.address.trim()) {
@@ -889,7 +896,15 @@ export default function App({ engineOnly = false }: AppProps) {
     return () => {
       delete (window as typeof window & { PBKAnalyzer?: unknown }).PBKAnalyzer;
     };
-  }, [activeDeal, activeSelectedPath, activeTab, analyzeStatus, branding]);
+  }, [
+    activeDeal,
+    activeSelectedPath,
+    activeTab,
+    analyzeStatus,
+    applyBridgeState,
+    branding,
+    handleAnalyzeDeal,
+  ]);
 
   return (
     <div

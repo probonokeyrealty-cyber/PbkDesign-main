@@ -209,31 +209,14 @@ export function InvestorYield({ deal, onDealChange, activePath }: InvestorYieldP
   const [inputs, setInputs] = useState(() => buildInitialInputs(deal, activePath));
   const [suggestedMaxPrice, setSuggestedMaxPrice] = useState<number | null>(null);
   const [mathCheck, setMathCheck] = useState<MathCheck | null>(null);
-  const seed = useMemo(
-    () => buildInitialInputs(deal, activePath),
-    [
-      activePath,
-      deal.agreedPrice,
-      deal.price,
-      deal.rent,
-      deal.balance,
-      deal.rate,
-      deal.cfDownPayment,
-      deal.cfRate,
-      deal.cfTerm,
-      deal.mtUpfront,
-      deal.mtBalanceConfirm,
-      deal.mtRateConfirm,
-      deal.underwriting?.targetCocPct,
-    ]
-  );
+  const seed = useMemo(() => buildInitialInputs(deal, activePath), [activePath, deal]);
   const seedKey = JSON.stringify(seed);
 
   useEffect(() => {
     setInputs(seed);
     setSuggestedMaxPrice(null);
     setMathCheck(null);
-  }, [seedKey]);
+  }, [seed, seedKey]);
 
   const metrics = useMemo(() => calculateCoCMetrics(inputs, activePath), [inputs, activePath]);
   const monthlyCashflow = Math.round(metrics.monthlyCashflow);

@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Download, Landmark, MessageSquareQuote, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  Landmark,
+  MessageSquareQuote,
+  Sparkles,
+} from 'lucide-react';
 import { DealData, PBKPath } from '../types';
 import { formatCurrency, sanitizeLegacyCopy } from '../utils/formatting';
 import { downloadTextFile } from '../utils/fileExport';
@@ -64,7 +71,7 @@ function buildCreativeOffers(deal: DealData): OfferCard[] {
     deal.rent || 0,
     deal.balance || 0,
     deal.rate || 0,
-    deal.mao60 || 0,
+    deal.mao60 || 0
   );
 
   return [
@@ -103,7 +110,8 @@ function buildMtOffers(deal: DealData) {
     balance > 0 && monthlyRate > 0
       ? Math.round(
           balance *
-            ((monthlyRate * Math.pow(1 + monthlyRate, months)) / (Math.pow(1 + monthlyRate, months) - 1)),
+            ((monthlyRate * Math.pow(1 + monthlyRate, months)) /
+              (Math.pow(1 + monthlyRate, months) - 1))
         )
       : 0;
   const gap = Math.max(0, price - balance);
@@ -111,7 +119,9 @@ function buildMtOffers(deal: DealData) {
   const gapCarry =
     gap > 0 && monthlyRate > 0
       ? Math.round(
-          gap * ((monthlyRate * Math.pow(1 + monthlyRate, carryMonths)) / (Math.pow(1 + monthlyRate, carryMonths) - 1)),
+          gap *
+            ((monthlyRate * Math.pow(1 + monthlyRate, carryMonths)) /
+              (Math.pow(1 + monthlyRate, carryMonths) - 1))
         )
       : 0;
 
@@ -137,7 +147,7 @@ function buildMtOffers(deal: DealData) {
   ];
 }
 
-function buildCreativeObjections(deal: DealData): ObjectionItem[] {
+function _buildCreativeObjections(deal: DealData): ObjectionItem[] {
   const price = deal.price || 0;
   const mao60 = deal.mao60 || 0;
   return [
@@ -146,7 +156,8 @@ function buildCreativeObjections(deal: DealData): ObjectionItem[] {
       l1: 'That is a fair reaction. Most sellers hear "seller financing" and picture uncertainty.',
       l2: 'What specifically worries them most: default risk, tax treatment, or the note staying tied to the property?',
       l3: 'Title still transfers at closing. The note is secured against the property, and a deed-in-lieu clause gives the seller a clean path back to the asset if I ever default.',
-      close: 'If I send a one-page explanation of the protection language, will you share it before ruling it out?',
+      close:
+        'If I send a one-page explanation of the protection language, will you share it before ruling it out?',
     },
     {
       q: 'My seller needs all cash at close.',
@@ -160,7 +171,8 @@ function buildCreativeObjections(deal: DealData): ObjectionItem[] {
       l1: 'That is great if it truly closes. I mean that.',
       l2: 'Has the lender approved this actual property at this exact price, or do you only have the buyer pre-approved?',
       l3: 'At today’s DSCR rules, a financed investor often fails at the address level even when the buyer looks qualified on paper.',
-      close: 'Would your seller be open to a clean backup structure in case the financed buyer slips in underwriting?',
+      close:
+        'Would your seller be open to a clean backup structure in case the financed buyer slips in underwriting?',
     },
     {
       q: 'What if you stop making payments?',
@@ -174,7 +186,8 @@ function buildCreativeObjections(deal: DealData): ObjectionItem[] {
       l1: 'They absolutely should.',
       l2: 'Seller financing often qualifies for installment-sale treatment, which can spread the capital-gains hit across the life of the note.',
       l3: 'I can package the structure terms, payment schedule, and security terms into one clean summary for their CPA.',
-      close: 'Want me to send that summary today so the accountant has something concrete to react to?',
+      close:
+        'Want me to send that summary today so the accountant has something concrete to react to?',
     },
     {
       q: 'This sounds complicated. The seller just wants a simple sale.',
@@ -186,7 +199,7 @@ function buildCreativeObjections(deal: DealData): ObjectionItem[] {
   ];
 }
 
-function buildMtObjections(deal: DealData): ObjectionItem[] {
+function _buildMtObjections(deal: DealData): ObjectionItem[] {
   const price = deal.agreedPrice || deal.price || 0;
   const cashPrice = deal.mao60 || 0;
   const stretch = Math.round(price * 1.08);
@@ -199,7 +212,8 @@ function buildMtObjections(deal: DealData): ObjectionItem[] {
       l1: 'You are right to ask that. The clause exists in nearly every standard mortgage.',
       l2: 'In practice, lenders care most about performance. When the payment stays current, the note rarely becomes the issue people imagine.',
       l3: 'If a lender ever did escalate, I would still control the outcome through refinance or payoff. That is a solvable risk, not a mystery risk.',
-      close: 'Would a written lender-risk plan make your seller comfortable enough to keep talking?',
+      close:
+        'Would a written lender-risk plan make your seller comfortable enough to keep talking?',
     },
     {
       q: 'My seller needs all cash at closing.',
@@ -220,7 +234,8 @@ function buildMtObjections(deal: DealData): ObjectionItem[] {
       l1: 'If that closes, great.',
       l2: 'I just want to know whether the approval is property-specific or still a buyer-only pre-approval.',
       l3: 'A lot of financed investment offers die after 20 to 30 days because the property does not meet lender math even when the buyer looks strong.',
-      close: 'Would your seller take a backup structure so they are not starting over if the financed buyer falls apart?',
+      close:
+        'Would your seller take a backup structure so they are not starting over if the financed buyer falls apart?',
     },
     {
       q: 'My seller needs to ask their CPA about taxes.',
@@ -246,7 +261,7 @@ function buildMtObjections(deal: DealData): ObjectionItem[] {
   ];
 }
 
-function buildLandObjections(deal: DealData, agentMode: boolean): ObjectionItem[] {
+function _buildLandObjections(deal: DealData, agentMode: boolean): ObjectionItem[] {
   const offer = formatCurrency(deal.offer || deal.mao60 || 0);
   const rbpOffer = formatCurrency(deal.builderTotal || deal.maoRBP || 0);
 
@@ -267,7 +282,8 @@ function buildLandObjections(deal: DealData, agentMode: boolean): ObjectionItem[
       l1: 'You might be right, and I would never tell you not to test the market.',
       l2: 'The tradeoff is time. Land can sit for months while taxes, HOA, and uncertainty keep running in the background.',
       l3: `My structure is ${offer} cash with a clean close timeline, not a paper number that sits in limbo.`,
-      close: 'If I can get close to the seller’s real net without the wait, would that be worth considering?',
+      close:
+        'If I can get close to the seller’s real net without the wait, would that be worth considering?',
     },
     {
       q: 'I need to think about it.',
@@ -305,35 +321,39 @@ function buildCreativeObjectionsV5(deal: DealData): ObjectionItem[] {
       l1: 'That is a fair reaction, and I respect it. Most sellers hear "seller financing" and picture uncertainty.',
       l2: 'What specifically concerns them: risk of default, tax treatment, or the fact that the loan stays in their name?',
       l3: 'Title transfers on day one. The note is secured against the property with a recorded lien. The deed-in-lieu clause means if I miss a payment, your seller gets the property back without going through foreclosure. Their attorney can review the clause before signing.',
-      close: 'If I can send a one-page summary of how the deed-in-lieu protection works, would you be willing to share it with your seller before making a final decision?',
+      close:
+        'If I can send a one-page summary of how the deed-in-lieu protection works, would you be willing to share it with your seller before making a final decision?',
     },
     {
       q: 'My seller needs all cash at close.',
       l1: 'Understood. Can I ask what the cash is being used for: another purchase, paying off debt, or just liquidity?',
       l2: `The reason I ask: I can sometimes increase the down payment to cover an immediate cash need. The note carries the rest. If the need is ${immediateCashNeed} at close, I can structure toward that.`,
-      l3: 'At current rates, a buyer who can offer near-ask and all cash on this property does not exist in today\'s market. The math does not work for a conventional investor. Partial cash now plus ongoing note income is actually a stronger position than waiting for a cash offer that beats them down.',
+      l3: "At current rates, a buyer who can offer near-ask and all cash on this property does not exist in today's market. The math does not work for a conventional investor. Partial cash now plus ongoing note income is actually a stronger position than waiting for a cash offer that beats them down.",
       close: 'What is the minimum amount at close that would make this work for your seller?',
     },
     {
       q: 'We already have a conventional offer.',
       l1: 'I respect that. And if that offer closes, your seller wins. I mean that.',
-      l2: 'Has the buyer\'s lender given a conditional approval specifically on this property at this price? Not a pre-qual letter, an actual conditional approval tied to this address.',
+      l2: "Has the buyer's lender given a conditional approval specifically on this property at this price? Not a pre-qual letter, an actual conditional approval tied to this address.",
       l3: 'At current DSCR underwriting standards, a financed investment buyer cannot clear approval on this property at asking price. That is not a negotiating position. It is an arithmetic fact.',
-      close: 'Would your seller be open to a backup offer so they have a clean exit if the conventional buyer\'s financing does not survive underwriting?',
+      close:
+        "Would your seller be open to a backup offer so they have a clean exit if the conventional buyer's financing does not survive underwriting?",
     },
     {
       q: 'What if you stop making payments?',
       l1: 'That is exactly the right question and I take it seriously.',
       l2: 'We set up the note through a licensed third-party loan servicer who tracks every payment and reports to both parties. Your seller gets a monthly statement.',
       l3: 'The deed-in-lieu clause means if I ever miss a payment, your seller files a simple notice and gets the property back. No court. No foreclosure timeline. No attorneys dragging it out for six months.',
-      close: 'Would it help if I sent you the exact deed-in-lieu language so your seller\'s attorney can review it before we go any further?',
+      close:
+        "Would it help if I sent you the exact deed-in-lieu language so your seller's attorney can review it before we go any further?",
     },
     {
       q: 'My seller has to talk to their accountant about taxes.',
       l1: 'That is the right call and I would encourage it. This is a significant transaction.',
       l2: 'Seller financing has a real tax advantage called installment sale treatment. Instead of recognizing the full capital gain in the year of sale, your seller can spread it over the life of the note as payments are received.',
       l3: 'I can provide a clean one-page structure summary: deal mechanics, payment schedule, and security details. It answers most of the questions and makes that CPA conversation faster.',
-      close: 'Should I put that summary together so your seller\'s accountant has everything they need to give a clear opinion?',
+      close:
+        "Should I put that summary together so your seller's accountant has everything they need to give a clear opinion?",
     },
     {
       q: 'This sounds complicated. The seller just wants a simple sale.',
@@ -347,7 +367,8 @@ function buildCreativeObjectionsV5(deal: DealData): ObjectionItem[] {
       l1: 'I understand. That is a stressful place to be. A loan modification can feel like the only option when they are drowning.',
       l2: 'A loan mod usually moves the missed payments to the back end. It does not erase them. Your seller still owes every dollar, and they are still in a mortgage they cannot afford.',
       l3: 'If the bank agrees to put the arrears on the back end of the loan, I may be able to structure a clean exit that stops the spiral, avoids foreclosure, and gets the seller out without future payments.',
-      close: 'Would your seller rather have a loan mod that only delays the problem, or a clean exit today with no more mortgage burden?',
+      close:
+        'Would your seller rather have a loan mod that only delays the problem, or a clean exit today with no more mortgage burden?',
     },
   ];
 }
@@ -365,7 +386,8 @@ function buildMtObjectionsV5(deal: DealData): ObjectionItem[] {
       l1: 'You are right to ask. That clause exists in every conventional mortgage.',
       l2: 'In practice, lenders only call the loan if payments stop. We set up payments from a separate account and keep the loan performing.',
       l3: 'If they ever called it, I have the capital path to refinance or pay it off. I will put that lender-risk plan in writing, and any real estate attorney can review that subject-to is legal and common.',
-      close: 'Would a written guarantee that I will cover any lender-related costs satisfy your seller?',
+      close:
+        'Would a written guarantee that I will cover any lender-related costs satisfy your seller?',
     },
     {
       q: 'My seller needs all cash at closing.',
@@ -384,8 +406,8 @@ function buildMtObjectionsV5(deal: DealData): ObjectionItem[] {
     {
       q: 'We already have a conventional offer.',
       l1: 'That is great. If it closes, your seller wins. I mean that.',
-      l2: 'Has the buyer\'s lender given a conditional approval specifically on this property at this price? Not a pre-qual letter, an actual approval tied to this address.',
-      l3: 'At today\'s DSCR standards, a financed investment buyer often cannot clear underwriting at asking price. If that offer falls apart in 30 days, my offer is still here as a backup.',
+      l2: "Has the buyer's lender given a conditional approval specifically on this property at this price? Not a pre-qual letter, an actual approval tied to this address.",
+      l3: "At today's DSCR standards, a financed investment buyer often cannot clear underwriting at asking price. If that offer falls apart in 30 days, my offer is still here as a backup.",
       close: 'Would your seller be open to a backup offer with no obligation?',
     },
     {
@@ -407,7 +429,8 @@ function buildMtObjectionsV5(deal: DealData): ObjectionItem[] {
       l1: 'I understand. That is a stressful place to be. A loan modification can feel like the only option when you are drowning.',
       l2: 'A loan mod usually just moves the missed payments to the back end. It does not erase them. Your seller still owes every dollar, and they are still in a mortgage they cannot afford.',
       l3: 'If the bank agrees to put the arrears on the back end of the loan, I can take over the mortgage as-is. They walk away with no foreclosure on record, no future payments, and no more monthly burden.',
-      close: 'Would your seller rather have a loan mod that only delays the problem, or a clean exit today with no more mortgage?',
+      close:
+        'Would your seller rather have a loan mod that only delays the problem, or a clean exit today with no more mortgage?',
     },
   ];
 }
@@ -433,7 +456,8 @@ function buildLandObjectionsV5(deal: DealData, agentMode: boolean): ObjectionIte
       l1: 'You might be right, and I would never tell you not to explore that.',
       l2: 'Land listings can sit for 6 to 18 months, especially without a motivated builder-buyer already in the pipeline. In that time you are carrying taxes and possibly HOA.',
       l3: `My offer is ${offer} cash, close in 21 days, zero fees or commissions out of your pocket. No waiting, no contingencies.`,
-      close: 'If I could match or beat your net after commissions and carrying costs, would you consider closing now?',
+      close:
+        'If I could match or beat your net after commissions and carrying costs, would you consider closing now?',
     },
     {
       q: 'I need to think about it.',
@@ -447,14 +471,16 @@ function buildLandObjectionsV5(deal: DealData, agentMode: boolean): ObjectionIte
       l1: 'That is great. Competition is healthy and it tells me you have a strong lot.',
       l2: 'Before you move forward, do you know how they are buying: cash, financing, or conditional? And is there earnest money already down?',
       l3: 'The number that matters is the one that actually closes. I have seen land deals fall apart at the lender level or when a builder walks after the inspection period.',
-      close: 'Would you be willing to share the offer structure so I can tell you honestly whether I can match it?',
+      close:
+        'Would you be willing to share the offer structure so I can tell you honestly whether I can match it?',
     },
     {
       q: 'Why so low? The county has it assessed higher.',
       l1: 'County assessed value and market value are two different things, especially for raw land.',
       l2: 'Assessed value does not account for what a builder actually needs to get out of a lot after site costs, permits, and build margin.',
       l3: 'I base my number on what similar lots in this zip have actually traded for recently, not what the county thinks it is worth on paper.',
-      close: 'Would you be open to me walking you through the comps I used to arrive at this number?',
+      close:
+        'Would you be open to me walking you through the comps I used to arrive at this number?',
     },
   ];
 }
@@ -466,7 +492,6 @@ function buildLandScripts(deal: DealData, agentMode: boolean) {
   const builderPays = formatCurrency(deal.builderTotal || deal.maoRBP || 0);
   const timeline = deal.timeline || '21 days';
   const earnest = deal.earnestDeposit || '3 business days';
-  const zip = deal.zipCode || '[ZIP]';
 
   if (agentMode) {
     return {
@@ -553,7 +578,10 @@ function ObjectionsAccordion({ items, scope }: { items: ObjectionItem[]; scope: 
           { label: 'Authority', body: sanitizeLegacyCopy(item.l3) },
         ];
         return (
-          <div key={`${scope}-${item.q}`} className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+          <div
+            key={`${scope}-${item.q}`}
+            className="rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900/80"
+          >
             <button
               type="button"
               onClick={() => setOpenId(isOpen ? null : item.q)}
@@ -563,7 +591,9 @@ function ObjectionsAccordion({ items, scope }: { items: ObjectionItem[]; scope: 
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
                   Objection
                 </div>
-                <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{safeQuestion}</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {safeQuestion}
+                </div>
               </div>
               <div className="rounded-full border border-gray-200 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-500 dark:border-slate-700 dark:text-gray-300">
                 {isOpen ? 'Hide' : 'Open'}
@@ -573,11 +603,16 @@ function ObjectionsAccordion({ items, scope }: { items: ObjectionItem[]; scope: 
               <div className="border-t border-gray-100 px-4 py-4 dark:border-slate-800">
                 <div className="grid gap-3 md:grid-cols-3">
                   {objectionParts.map((part) => (
-                    <div key={part.label} className="rounded-2xl bg-gray-50 p-3 dark:bg-slate-800/80">
+                    <div
+                      key={part.label}
+                      className="rounded-2xl bg-gray-50 p-3 dark:bg-slate-800/80"
+                    >
                       <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
                         {part.label}
                       </div>
-                      <div className="mt-2 text-sm leading-6 text-gray-700 dark:text-gray-200">{part.body}</div>
+                      <div className="mt-2 text-sm leading-6 text-gray-700 dark:text-gray-200">
+                        {part.body}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -585,7 +620,9 @@ function ObjectionsAccordion({ items, scope }: { items: ObjectionItem[]; scope: 
                   <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
                     Close Move
                   </div>
-                  <div className="mt-2 text-sm leading-6 text-emerald-900 dark:text-emerald-100">{safeClose}</div>
+                  <div className="mt-2 text-sm leading-6 text-emerald-900 dark:text-emerald-100">
+                    {safeClose}
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -599,7 +636,9 @@ function ObjectionsAccordion({ items, scope }: { items: ObjectionItem[]; scope: 
 function MetricCard({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
-      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
+        {label}
+      </div>
       <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">{value}</div>
       <div className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{note}</div>
     </div>
@@ -625,8 +664,12 @@ function ScriptSurface({
     <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">{safeEyebrow}</div>
-          <h4 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">{safeTitle}</h4>
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
+            {safeEyebrow}
+          </div>
+          <h4 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+            {safeTitle}
+          </h4>
         </div>
         <button
           type="button"
@@ -637,7 +680,9 @@ function ScriptSurface({
           Download
         </button>
       </div>
-      <pre className="mt-4 whitespace-pre-wrap text-sm leading-7 text-gray-700 dark:text-gray-200">{safeBody}</pre>
+      <pre className="mt-4 whitespace-pre-wrap text-sm leading-7 text-gray-700 dark:text-gray-200">
+        {safeBody}
+      </pre>
     </div>
   );
 }
@@ -660,8 +705,12 @@ function OfferBlock({
     <div className={`rounded-3xl border p-4 ${toneClasses}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">{offer.label}</div>
-          <div className="mt-1 text-xl font-semibold text-gray-900 dark:text-gray-100">{offer.badge}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
+            {offer.label}
+          </div>
+          <div className="mt-1 text-xl font-semibold text-gray-900 dark:text-gray-100">
+            {offer.badge}
+          </div>
         </div>
         <button
           type="button"
@@ -672,10 +721,22 @@ function OfferBlock({
         </button>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <MetricCard label="Price" value={formatCurrency(offer.price)} note="Working purchase target" />
+        <MetricCard
+          label="Price"
+          value={formatCurrency(offer.price)}
+          note="Working purchase target"
+        />
         <MetricCard label="Down" value={formatCurrency(offer.down)} note="At execution / closing" />
-        <MetricCard label="Rate / Term" value={`${offer.rate}% / ${offer.term} yrs`} note="Starting finance structure" />
-        <MetricCard label="Monthly" value={offer.monthly > 0 ? `${formatCurrency(offer.monthly)}/mo` : '0% carry'} note="Seller note payment" />
+        <MetricCard
+          label="Rate / Term"
+          value={`${offer.rate}% / ${offer.term} yrs`}
+          note="Starting finance structure"
+        />
+        <MetricCard
+          label="Monthly"
+          value={offer.monthly > 0 ? `${formatCurrency(offer.monthly)}/mo` : '0% carry'}
+          note="Seller note payment"
+        />
       </div>
       <div className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm leading-6 text-gray-700 dark:bg-slate-900/60 dark:text-gray-200">
         {sanitizeLegacyCopy(offer.summary)}
@@ -713,7 +774,7 @@ export function PathWorkflowPanel({
     deal.rent || 0,
     deal.balance || 0,
     deal.rate || 0,
-    deal.mao60 || 0,
+    deal.mao60 || 0
   );
   const marketRatePayment = cfMath.marketPiti;
   const cfSupportedRent = deal.rent || 0;
@@ -752,9 +813,18 @@ export function PathWorkflowPanel({
   const mtAnalysisText = [
     formatLine('Current balance', formatCurrency(mtBalance)),
     formatLine('Existing rate', mtRate > 0 ? `${mtRate}%` : 'Need confirmation'),
-    formatLine('Current payment', mtPayment > 0 ? `${formatCurrency(mtPayment)}/mo` : 'Need confirmation'),
-    formatLine('Market replacement payment', mtMarketPayment > 0 ? `${formatCurrency(mtMarketPayment)}/mo` : '-'),
-    formatLine('Monthly savings vs market', mtSavings > 0 ? `${formatCurrency(mtSavings)}/mo` : '-'),
+    formatLine(
+      'Current payment',
+      mtPayment > 0 ? `${formatCurrency(mtPayment)}/mo` : 'Need confirmation'
+    ),
+    formatLine(
+      'Market replacement payment',
+      mtMarketPayment > 0 ? `${formatCurrency(mtMarketPayment)}/mo` : '-'
+    ),
+    formatLine(
+      'Monthly savings vs market',
+      mtSavings > 0 ? `${formatCurrency(mtSavings)}/mo` : '-'
+    ),
     formatLine('Spread vs MAO Cash', formatCurrency(mtSpread)),
   ].join('\n');
 
@@ -792,10 +862,15 @@ export function PathWorkflowPanel({
       <div className="rounded-[28px] border border-gray-200 bg-gradient-to-b from-white to-gray-50/80 p-4 shadow-sm dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-slate-800">
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-500">Creative Finance Workflow</div>
-            <h3 className="mt-2 text-xl font-semibold text-gray-900 dark:text-gray-100">Agent-grade phases without losing the modern shell</h3>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-500">
+              Creative Finance Workflow
+            </div>
+            <h3 className="mt-2 text-xl font-semibold text-gray-900 dark:text-gray-100">
+              Agent-grade phases without losing the modern shell
+            </h3>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-              Use the opening to control the frame, the checkmate section to create the financing problem, then pivot into structure instead of price.
+              Use the opening to control the frame, the checkmate section to create the financing
+              problem, then pivot into structure instead of price.
             </p>
           </div>
           <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-700 dark:border-blue-800/60 dark:bg-blue-900/15 dark:text-blue-300">
@@ -825,10 +900,26 @@ export function PathWorkflowPanel({
           {activeTab === 'analysis' ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-4">
-                <MetricCard label="Market Payment" value={marketRatePayment > 0 ? `${formatCurrency(marketRatePayment)}/mo` : '-'} note="What financed buyers are fighting against" />
-                <MetricCard label="Rent Support" value={cfSupportedRent > 0 ? `${formatCurrency(cfSupportedRent)}/mo` : '-'} note="Current rent anchor" />
-                <MetricCard label="Cash Anchor" value={formatCurrency(cfCashAnchor)} note="Straight cash baseline" />
-                <MetricCard label="Creative Max" value={formatCurrency(cfMath.creativeMax)} note={cfMath.dealRating} />
+                <MetricCard
+                  label="Market Payment"
+                  value={marketRatePayment > 0 ? `${formatCurrency(marketRatePayment)}/mo` : '-'}
+                  note="What financed buyers are fighting against"
+                />
+                <MetricCard
+                  label="Rent Support"
+                  value={cfSupportedRent > 0 ? `${formatCurrency(cfSupportedRent)}/mo` : '-'}
+                  note="Current rent anchor"
+                />
+                <MetricCard
+                  label="Cash Anchor"
+                  value={formatCurrency(cfCashAnchor)}
+                  note="Straight cash baseline"
+                />
+                <MetricCard
+                  label="Creative Max"
+                  value={formatCurrency(cfMath.creativeMax)}
+                  note={cfMath.dealRating}
+                />
               </div>
               <ScriptSurface
                 eyebrow="Checkmate"
@@ -861,10 +952,13 @@ export function PathWorkflowPanel({
               <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
                 <div className="flex items-center gap-2">
                   <Landmark size={16} className="text-purple-500" />
-                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">CoC Calculator</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">
+                    CoC Calculator
+                  </div>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                  Keep this visible while shaping final terms so the conversation stays tied to cash-on-cash math, not just seller emotion.
+                  Keep this visible while shaping final terms so the conversation stays tied to
+                  cash-on-cash math, not just seller emotion.
                 </p>
                 <div className="mt-4">
                   <InvestorYield deal={deal} onDealChange={onDealChange} activePath="cf" />
@@ -905,7 +999,9 @@ export function PathWorkflowPanel({
             />
           ) : null}
 
-          {activeTab === 'objections' ? <ObjectionsAccordion items={cfObjections} scope="cf" /> : null}
+          {activeTab === 'objections' ? (
+            <ObjectionsAccordion items={cfObjections} scope="cf" />
+          ) : null}
         </div>
       </div>
     );
@@ -922,10 +1018,15 @@ export function PathWorkflowPanel({
       <div className="rounded-[28px] border border-gray-200 bg-gradient-to-b from-white to-gray-50/80 p-4 shadow-sm dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-slate-800">
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-purple-500">Mortgage Takeover Workflow</div>
-            <h3 className="mt-2 text-xl font-semibold text-gray-900 dark:text-gray-100">Rate preservation, not just a script card</h3>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-purple-500">
+              Mortgage Takeover Workflow
+            </div>
+            <h3 className="mt-2 text-xl font-semibold text-gray-900 dark:text-gray-100">
+              Rate preservation, not just a script card
+            </h3>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-              Use the analysis tab to prove the rate advantage, then move into a clean subject-to or carry-gap close without losing operator control.
+              Use the analysis tab to prove the rate advantage, then move into a clean subject-to or
+              carry-gap close without losing operator control.
             </p>
           </div>
           <div className="inline-flex items-center gap-2 rounded-full border border-purple-200 bg-purple-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-purple-700 dark:border-purple-800/60 dark:bg-purple-900/15 dark:text-purple-300">
@@ -955,10 +1056,26 @@ export function PathWorkflowPanel({
           {activeTab === 'analysis' ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-4">
-                <MetricCard label="Existing Rate" value={mtRate > 0 ? `${mtRate}%` : '-'} note={mtRating} />
-                <MetricCard label="Current Payment" value={mtPayment > 0 ? `${formatCurrency(mtPayment)}/mo` : '-'} note="Existing debt service" />
-                <MetricCard label="Market Payment" value={mtMarketPayment > 0 ? `${formatCurrency(mtMarketPayment)}/mo` : '-'} note="Replacement debt at current market" />
-                <MetricCard label="Monthly Savings" value={mtSavings > 0 ? `${formatCurrency(mtSavings)}/mo` : '-'} note="Why the rate asset matters" />
+                <MetricCard
+                  label="Existing Rate"
+                  value={mtRate > 0 ? `${mtRate}%` : '-'}
+                  note={mtRating}
+                />
+                <MetricCard
+                  label="Current Payment"
+                  value={mtPayment > 0 ? `${formatCurrency(mtPayment)}/mo` : '-'}
+                  note="Existing debt service"
+                />
+                <MetricCard
+                  label="Market Payment"
+                  value={mtMarketPayment > 0 ? `${formatCurrency(mtMarketPayment)}/mo` : '-'}
+                  note="Replacement debt at current market"
+                />
+                <MetricCard
+                  label="Monthly Savings"
+                  value={mtSavings > 0 ? `${formatCurrency(mtSavings)}/mo` : '-'}
+                  note="Why the rate asset matters"
+                />
               </div>
               <ScriptSurface
                 eyebrow="Analysis"
@@ -969,11 +1086,17 @@ export function PathWorkflowPanel({
               <div className="grid gap-4 xl:grid-cols-2">
                 {mtOffers.map((offer, index) => (
                   <div key={offer.id}>
-                    <div className={`rounded-3xl border p-4 ${index === 0 ? 'border-purple-200 bg-purple-50/70 dark:border-purple-800/60 dark:bg-purple-900/10' : 'border-blue-200 bg-blue-50/70 dark:border-blue-800/60 dark:bg-blue-900/10'}`}>
+                    <div
+                      className={`rounded-3xl border p-4 ${index === 0 ? 'border-purple-200 bg-purple-50/70 dark:border-purple-800/60 dark:bg-purple-900/10' : 'border-blue-200 bg-blue-50/70 dark:border-blue-800/60 dark:bg-blue-900/10'}`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">{offer.label}</div>
-                          <div className="mt-1 text-xl font-semibold text-gray-900 dark:text-gray-100">{offer.badge}</div>
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-500 dark:text-gray-400">
+                            {offer.label}
+                          </div>
+                          <div className="mt-1 text-xl font-semibold text-gray-900 dark:text-gray-100">
+                            {offer.badge}
+                          </div>
                         </div>
                         <button
                           type="button"
@@ -992,9 +1115,25 @@ export function PathWorkflowPanel({
                         </button>
                       </div>
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
-                        <MetricCard label="Upfront" value={formatCurrency(offer.upfront)} note="Cash to seller at close" />
-                        <MetricCard label="Existing Note" value={formatCurrency(mtBalance)} note={mtRate > 0 ? `${mtRate}% current rate` : 'Need rate confirmation'} />
-                        <MetricCard label="Extra Carry" value={offer.monthly > 0 ? `${formatCurrency(offer.monthly)}/mo` : 'None'} note={offer.type === 'carry-gap' ? 'Gap note if equity needs to be carried' : 'Pure subject-to structure'} />
+                        <MetricCard
+                          label="Upfront"
+                          value={formatCurrency(offer.upfront)}
+                          note="Cash to seller at close"
+                        />
+                        <MetricCard
+                          label="Existing Note"
+                          value={formatCurrency(mtBalance)}
+                          note={mtRate > 0 ? `${mtRate}% current rate` : 'Need rate confirmation'}
+                        />
+                        <MetricCard
+                          label="Extra Carry"
+                          value={offer.monthly > 0 ? `${formatCurrency(offer.monthly)}/mo` : 'None'}
+                          note={
+                            offer.type === 'carry-gap'
+                              ? 'Gap note if equity needs to be carried'
+                              : 'Pure subject-to structure'
+                          }
+                        />
                       </div>
                       <div className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm leading-6 text-gray-700 dark:bg-slate-900/60 dark:text-gray-200">
                         {sanitizeLegacyCopy(offer.summary)}
@@ -1006,10 +1145,13 @@ export function PathWorkflowPanel({
               <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
                 <div className="flex items-center gap-2">
                   <Sparkles size={16} className="text-purple-500" />
-                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">CoC Calculator</div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-500">
+                    CoC Calculator
+                  </div>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-                  Keep this visible while negotiating so the conversation stays anchored to payment coverage, CoC return, and investor spread.
+                  Keep this visible while negotiating so the conversation stays anchored to payment
+                  coverage, CoC return, and investor spread.
                 </p>
                 <div className="mt-4">
                   <InvestorYield deal={deal} onDealChange={onDealChange} activePath="mt" />
@@ -1050,7 +1192,9 @@ export function PathWorkflowPanel({
             />
           ) : null}
 
-          {activeTab === 'objections' ? <ObjectionsAccordion items={mtObjections} scope="mt" /> : null}
+          {activeTab === 'objections' ? (
+            <ObjectionsAccordion items={mtObjections} scope="mt" />
+          ) : null}
         </div>
       </div>
     );
@@ -1088,13 +1232,18 @@ export function PathWorkflowPanel({
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-gray-200 pb-4 dark:border-slate-800">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
-              {landAgentMode ? 'Land Agent Workflow' : activePath === 'rbp-land' ? 'RBP Land Workflow' : 'Land Owner Workflow'}
+              {landAgentMode
+                ? 'Land Agent Workflow'
+                : activePath === 'rbp-land'
+                  ? 'RBP Land Workflow'
+                  : 'Land Owner Workflow'}
             </div>
             <h3 className="mt-2 text-xl font-semibold text-gray-900 dark:text-gray-100">
               Builder-backed land scripts with the modern shell intact
             </h3>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600 dark:text-gray-300">
-              Keep land operational. This stays lighter than the old HTML visually, but it brings back the real call phases, qualification tools, and objection handling.
+              Keep land operational. This stays lighter than the old HTML visually, but it brings
+              back the real call phases, qualification tools, and objection handling.
             </p>
           </div>
           <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
@@ -1105,7 +1254,12 @@ export function PathWorkflowPanel({
 
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           {landHeaderMetrics.map((metric) => (
-            <MetricCard key={metric.label} label={metric.label} value={metric.value} note={metric.note} />
+            <MetricCard
+              key={metric.label}
+              label={metric.label}
+              value={metric.value}
+              note={metric.note}
+            />
           ))}
         </div>
 
@@ -1128,7 +1282,10 @@ export function PathWorkflowPanel({
 
         <div className="mt-5">
           {activeTab === 'objections' ? (
-            <ObjectionsAccordion items={landObjections} scope={landAgentMode ? 'land-agent' : 'land-owner'} />
+            <ObjectionsAccordion
+              items={landObjections}
+              scope={landAgentMode ? 'land-agent' : 'land-owner'}
+            />
           ) : activeTab === 'scripts' ? (
             <CallScriptSections
               deal={deal}
@@ -1175,7 +1332,8 @@ export function PathWorkflowPanel({
             Land Reminder
           </div>
           <p className="mt-2 text-sm leading-6 text-amber-900 dark:text-amber-100">
-            Use land scripts to qualify buildability first. Pretty lots with bad utilities or entitlement risk still break the deal no matter how clean the call goes.
+            Use land scripts to qualify buildability first. Pretty lots with bad utilities or
+            entitlement risk still break the deal no matter how clean the call goes.
           </p>
         </div>
       </div>
@@ -1189,7 +1347,8 @@ export function PathWorkflowPanel({
         Path workflow loaded
       </div>
       <p className="mt-3 text-sm leading-6 text-gray-600 dark:text-gray-300">
-        This path does not need the dedicated workflow panel. The current modern script surface is already active.
+        This path does not need the dedicated workflow panel. The current modern script surface is
+        already active.
       </p>
     </div>
   );

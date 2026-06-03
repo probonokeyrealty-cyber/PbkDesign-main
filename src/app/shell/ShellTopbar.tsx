@@ -193,7 +193,7 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
               </button>
             ))}
             {!searchResults.length && (
-              <div className="px-3 py-3 text-xs text-slate-500">No results</div>
+              <div className="px-3 py-3 text-xs text-slate-500">No matches found</div>
             )}
           </div>
         )}

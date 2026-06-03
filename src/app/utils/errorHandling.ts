@@ -148,7 +148,7 @@ export const validateNumber = (
  * Log error to console (can be extended to send to monitoring service)
  */
 export const logError = (error: Error | AppError, context?: any): void => {
-  const errorInfo = {
+  const _errorInfo = {
     message: error.message,
     stack: error.stack,
     timestamp: new Date().toISOString(),
@@ -165,7 +165,7 @@ export const logError = (error: Error | AppError, context?: any): void => {
   }
 
   // In production, you would send this to an error monitoring service
-  // Example: Sentry.captureException(error, { extra: errorInfo });
+  // Example: Sentry.captureException(error, { extra: _errorInfo });
 };
 
 /**

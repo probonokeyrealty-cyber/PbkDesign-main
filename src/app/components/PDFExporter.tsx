@@ -1,7 +1,6 @@
 import { DealData } from '../types';
 import { Download, FileText } from 'lucide-react';
 import { formatCurrency, formatDate } from '../utils/formatting';
-import { downloadTextFile } from '../utils/fileExport';
 
 interface PDFExporterProps {
   deal: DealData;
@@ -28,18 +27,24 @@ PROPERTY OVERVIEW
 Property Type:        ${deal.type === 'house' ? 'Single Family Residence' : 'Land/Lot'}
 Contact Type:         ${deal.contact === 'owner' ? 'Owner/FSBO' : 'Realtor Listed'}
 List Price:           ${formatCurrency(deal.price)}
-${deal.type === 'house' ? `
+${
+  deal.type === 'house'
+    ? `
 Bedrooms:             ${deal.beds || 'N/A'}
 Bathrooms:            ${deal.baths || 'N/A'}
 Square Footage:       ${deal.sqft?.toLocaleString() || 'N/A'}
 Year Built:           ${deal.year || 'N/A'}
 Days on Market:       ${deal.dom || 'N/A'}
-` : `
+`
+    : `
 Lot Size:             ${deal.lotSize} acres
 Target Zip Code:      ${deal.zipCode || 'N/A'}
-`}
+`
+}
 
-${deal.type === 'house' ? `───────────────────────────────────────────────────────────────────
+${
+  deal.type === 'house'
+    ? `───────────────────────────────────────────────────────────────────
 VALUATION ANALYSIS
 ───────────────────────────────────────────────────────────────────
 
@@ -56,7 +61,7 @@ COMPARABLE SALES:
 INVESTMENT ANALYSIS
 ───────────────────────────────────────────────────────────────────
 
-Maximum Allowable Offer (70%):   ${formatCurrency(deal.arv * 0.70 - deal.repairs.mid)}
+Maximum Allowable Offer (70%):   ${formatCurrency(deal.arv * 0.7 - deal.repairs.mid)}
 Retail Buyer Price (88%):        ${formatCurrency(deal.maoRBP)}
 Current List Price:              ${formatCurrency(deal.price)}
 
@@ -70,7 +75,8 @@ CREATIVE FINANCE OPTIONS:
   Seller Mortgage Balance:       ${formatCurrency(deal.balance)}
   Interest Rate:                 ${deal.rate}%
   Assignment Fee Target:         ${formatCurrency(deal.fee)}
-` : `───────────────────────────────────────────────────────────────────
+`
+    : `───────────────────────────────────────────────────────────────────
 LAND ANALYSIS
 ───────────────────────────────────────────────────────────────────
 
@@ -78,8 +84,9 @@ Builder Price per ¼ acre:        ${formatCurrency(deal.builderPrice)}
 Lot Units (0.25 ac each):        ${(parseFloat(deal.lotSize) / 0.25).toFixed(2)}
 Builder Total Value:             ${formatCurrency(deal.builderTotal)}
 Recommended Offer:               ${formatCurrency(deal.offer)}
-Assignment Spread:               ${formatCurrency(deal.builderTotal - deal.offer)} (${((deal.builderTotal - deal.offer) / deal.builderTotal * 100).toFixed(1)}%)
-`}
+Assignment Spread:               ${formatCurrency(deal.builderTotal - deal.offer)} (${(((deal.builderTotal - deal.offer) / deal.builderTotal) * 100).toFixed(1)}%)
+`
+}
 
 ───────────────────────────────────────────────────────────────────
 DEAL VERDICT
@@ -87,43 +94,52 @@ DEAL VERDICT
 
 ${deal.verdict === 'green' ? 'Go - Strong Deal' : deal.verdict === 'yellow' ? 'Review - Marginal Deal' : deal.verdict === 'red' ? 'Pass - Overpriced' : 'Not analyzed'}
 
-${deal.verdict === 'green' ? 
-  'This property presents an excellent investment opportunity with strong profit margins.' :
-  deal.verdict === 'yellow' ?
-  'This deal is workable but requires negotiation to achieve acceptable margins.' :
-  deal.verdict === 'red' ?
-  'Current pricing exceeds maximum allowable offer. Pass or negotiate significantly.' :
-  'Complete property analysis to generate verdict.'}
+${
+  deal.verdict === 'green'
+    ? 'This property presents an excellent investment opportunity with strong profit margins.'
+    : deal.verdict === 'yellow'
+      ? 'This deal is workable but requires negotiation to achieve acceptable margins.'
+      : deal.verdict === 'red'
+        ? 'Current pricing exceeds maximum allowable offer. Pass or negotiate significantly.'
+        : 'Complete property analysis to generate verdict.'
+}
 
 ───────────────────────────────────────────────────────────────────
 STRATEGY RECOMMENDATION
 ───────────────────────────────────────────────────────────────────
 
-${deal.type === 'house' ? 
-  deal.balance > 0 && deal.rate < 6 ?
-    'RECOMMENDED: Creative Finance / Subject-To\n' +
-    'The existing mortgage balance and favorable interest rate make this an\n' +
-    'excellent candidate for a Subject-To acquisition or seller financing.\n\n' +
-    'PITCH APPROACH:\n' +
-    '1. Discuss seller\'s motivation and timeline\n' +
-    '2. Present benefits of quick close without realtor fees\n' +
-    '3. Offer to take over payments or structure seller financing\n' +
-    '4. Highlight cash flow potential with rental income' :
-    'RECOMMENDED: Wholesale Assignment\n' +
-    'Target retail buyer or fix-and-flip investor.\n\n' +
-    'PITCH APPROACH:\n' +
-    '1. Secure property under contract at or below MAO RBP\n' +
-    '2. Market to cash buyer network\n' +
-    '3. Assignment fee: ' + formatCurrency(deal.fee) + '\n' +
-    '4. Close within 14-30 days'
-  :
-  'RECOMMENDED: Builder Assignment\n' +
-  'Connect with local builders paying ' + formatCurrency(deal.builderPrice) + ' per ¼ acre.\n\n' +
-  'PITCH APPROACH:\n' +
-  '1. Secure lot under contract at ' + formatCurrency(deal.offer) + '\n' +
-  '2. Verify zoning and utilities access\n' +
-  '3. Present to builder network\n' +
-  '4. Assignment spread: ' + formatCurrency(deal.builderTotal - deal.offer)
+${
+  deal.type === 'house'
+    ? deal.balance > 0 && deal.rate < 6
+      ? 'RECOMMENDED: Creative Finance / Subject-To\n' +
+        'The existing mortgage balance and favorable interest rate make this an\n' +
+        'excellent candidate for a Subject-To acquisition or seller financing.\n\n' +
+        'PITCH APPROACH:\n' +
+        "1. Discuss seller's motivation and timeline\n" +
+        '2. Present benefits of quick close without realtor fees\n' +
+        '3. Offer to take over payments or structure seller financing\n' +
+        '4. Highlight cash flow potential with rental income'
+      : 'RECOMMENDED: Wholesale Assignment\n' +
+        'Target retail buyer or fix-and-flip investor.\n\n' +
+        'PITCH APPROACH:\n' +
+        '1. Secure property under contract at or below MAO RBP\n' +
+        '2. Market to cash buyer network\n' +
+        '3. Assignment fee: ' +
+        formatCurrency(deal.fee) +
+        '\n' +
+        '4. Close within 14-30 days'
+    : 'RECOMMENDED: Builder Assignment\n' +
+      'Connect with local builders paying ' +
+      formatCurrency(deal.builderPrice) +
+      ' per ¼ acre.\n\n' +
+      'PITCH APPROACH:\n' +
+      '1. Secure lot under contract at ' +
+      formatCurrency(deal.offer) +
+      '\n' +
+      '2. Verify zoning and utilities access\n' +
+      '3. Present to builder network\n' +
+      '4. Assignment spread: ' +
+      formatCurrency(deal.builderTotal - deal.offer)
 }
 
 ───────────────────────────────────────────────────────────────────
@@ -151,10 +167,10 @@ Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com
   };
 
   const generateOfferPackage = () => {
-    const today = new Date().toLocaleDateString('en-US', { 
-      month: 'long', 
-      day: 'numeric', 
-      year: 'numeric' 
+    const today = new Date().toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
     });
 
     return `
@@ -206,22 +222,26 @@ WHY THIS OFFER MAKES SENSE
 OUR ANALYSIS
 ───────────────────────────────────────────────────────────────────
 
-${deal.type === 'house' ? `
+${
+  deal.type === 'house'
+    ? `
 Current Market Value (ARV):      ${formatCurrency(deal.arv)}
 Estimated Repair Costs:          ${formatCurrency(deal.repairs.mid)}
-Holding & Transaction Costs:     ${formatCurrency(deal.arv * 0.10)}
+Holding & Transaction Costs:     ${formatCurrency(deal.arv * 0.1)}
 Our Maximum Offer:               ${formatCurrency(deal.maoRBP)}
 
 This offer accounts for all costs involved in bringing the property
 to retail condition and provides a fair price for a quick sale.
-` : `
+`
+    : `
 Builder Market Value:            ${formatCurrency(deal.builderTotal)}
 Our Offer:                       ${formatCurrency(deal.offer)}
 Time to Close:                   14-21 days
 
 This offer provides immediate liquidity while we handle the process
 of connecting with qualified builders.
-`}
+`
+}
 
 ───────────────────────────────────────────────────────────────────
 NEXT STEPS
@@ -267,7 +287,7 @@ Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com
   const downloadDeliverable = (type: 'report' | 'offer', label: string) => {
     const content = type === 'report' ? generateDealReport() : generateOfferPackage();
     const filename = `${label}_${deal.address?.replace(/[^a-zA-Z0-9]/g, '_') || 'Document'}_${new Date().toISOString().split('T')[0]}.txt`;
-    
+
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -298,8 +318,10 @@ Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com
 
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3 mb-3">
         <div className="text-[11px] text-blue-800 dark:text-blue-300 leading-relaxed">
-          <strong>📦 Professional Deal Packages</strong><br />
-          Generate investor-grade deliverables ready to share with sellers, buyers, and team members.
+          <strong>📦 Professional Deal Packages</strong>
+          <br />
+          Generate investor-grade deliverables ready to share with sellers, buyers, and team
+          members.
         </div>
       </div>
 
@@ -315,7 +337,7 @@ Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com
                 Deliverable A: Complete Deal Analysis
               </div>
               <div className="text-[11px] text-gray-600 dark:text-gray-400 mb-2 leading-relaxed">
-                Comprehensive property analysis including ARV calculation, repair estimates, 
+                Comprehensive property analysis including ARV calculation, repair estimates,
                 comparable sales, investment metrics, and strategic recommendations.
               </div>
               <button
@@ -340,8 +362,8 @@ Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com
                 Deliverable B: Professional Offer Package
               </div>
               <div className="text-[11px] text-gray-600 dark:text-gray-400 mb-2 leading-relaxed">
-                Ready-to-present offer letter with property analysis, benefits breakdown, 
-                and next steps. Perfect for seller presentations.
+                Ready-to-present offer letter with property analysis, benefits breakdown, and next
+                steps. Perfect for seller presentations.
               </div>
               <button
                 onClick={() => downloadDeliverable('offer', 'Deliverable_B_Offer_Package')}
@@ -365,7 +387,8 @@ Probono Key Realty | (949) 204-0072 | info@probonokeyrealty.com
       </button>
 
       <div className="mt-3 text-[10px] text-gray-500 dark:text-gray-400 text-center">
-        Deliverables are downloaded as formatted text files. Use "Save as PDF" in your text editor or word processor.
+        Deliverables are downloaded as formatted text files. Use "Save as PDF" in your text editor
+        or word processor.
       </div>
     </div>
   );

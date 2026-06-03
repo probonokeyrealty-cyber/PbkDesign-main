@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { DealData } from '../types';
 import { FileText, Download, Copy, Check } from 'lucide-react';
 import { formatCurrency, formatDate } from '../utils/formatting';
-import { downloadTextFile, copyToClipboard } from '../utils/fileExport';
 
 interface DocumentTemplatesProps {
   deal: DealData;
@@ -121,13 +120,17 @@ PROPERTY CONDITION:
 8. Are there any known defects or issues? ☐ Yes ☐ No
    If yes, please describe: ___________________________
 9. What repairs or updates are needed?
-   ${deal.type === 'house' ? `
+   ${
+     deal.type === 'house'
+       ? `
    ☐ Roof          ☐ HVAC         ☐ Plumbing
    ☐ Electrical    ☐ Foundation   ☐ Kitchen
    ☐ Bathrooms     ☐ Flooring     ☐ Paint
-   ☐ Other: ___________________________` : `
+   ☐ Other: ___________________________`
+       : `
    ☐ Clearing      ☐ Grading      ☐ Utilities
-   ☐ Access Road   ☐ Survey       ☐ Other: ___________`}
+   ☐ Access Road   ☐ Survey       ☐ Other: ___________`
+   }
 
 10. Estimated repair costs: ___________
 
@@ -177,18 +180,22 @@ WHY OUR OFFER MAKES SENSE:
 ✓ No Realtor Fees: You keep more of the sale price
 ✓ Certainty: We have the funds ready to close
 
-${deal.type === 'house' ? `
+${
+  deal.type === 'house'
+    ? `
 PROPERTY ANALYSIS:
 After-Repair Value (ARV): ${formatCurrency(deal.arv)}
 Estimated Repairs: ${formatCurrency(deal.repairs.mid)}
 Our Maximum Offer: ${formatCurrency(deal.maoRBP)}
 
-This offer factors in repair costs, holding costs, and provides you with a fast, guaranteed sale.` : `
+This offer factors in repair costs, holding costs, and provides you with a fast, guaranteed sale.`
+    : `
 LAND ANALYSIS:
 Builder Value: ${formatCurrency(deal.builderTotal)}
 Our Offer: ${formatCurrency(deal.offer)}
 
-This offer provides you with immediate liquidity while we handle finding the right builder.`}
+This offer provides you with immediate liquidity while we handle finding the right builder.`
+}
 
 NEXT STEPS:
 1. Review this offer at your convenience
@@ -222,12 +229,18 @@ Prepared by: [YOUR NAME/COMPANY]
 SUBJECT PROPERTY:
 Address: ${deal.address || '[PROPERTY ADDRESS]'}
 Type: ${deal.type === 'house' ? 'Single Family Residence' : 'Land/Lot'}
-${deal.type === 'house' ? `Beds/Baths: ${deal.beds}/${deal.baths}
+${
+  deal.type === 'house'
+    ? `Beds/Baths: ${deal.beds}/${deal.baths}
 Square Feet: ${deal.sqft?.toLocaleString()}
-Year Built: ${deal.year}` : `Lot Size: ${deal.lotSize} acres`}
+Year Built: ${deal.year}`
+    : `Lot Size: ${deal.lotSize} acres`
+}
 List Price: ${formatCurrency(deal.price)}
 
-${deal.type === 'house' ? `COMPARABLE SALES:
+${
+  deal.type === 'house'
+    ? `COMPARABLE SALES:
 
 Comp A: ${deal.comps.A.address || '[Address]'}
 Sold Price: ${formatCurrency(deal.comps.A.price)}
@@ -249,13 +262,16 @@ Estimated Repairs: ${formatCurrency(deal.repairs.mid)}
 Property Condition: ${deal.repairs.condition}
 
 OFFER RECOMMENDATION:
-Maximum Allowable Offer (70%): ${formatCurrency(deal.arv * 0.70 - deal.repairs.mid)}
+Maximum Allowable Offer (70%): ${formatCurrency(deal.arv * 0.7 - deal.repairs.mid)}
 Retail Buyer Price (88% RBP): ${formatCurrency(deal.maoRBP)}
 
 CONCLUSION:
-${deal.price <= deal.maoRBP 
-  ? `At the current list price of ${formatCurrency(deal.price)}, this property represents a strong investment opportunity with built-in equity for a retail buyer.`
-  : `The current list price of ${formatCurrency(deal.price)} exceeds our maximum offer of ${formatCurrency(deal.maoRBP)}. Negotiation recommended.`}` : `
+${
+  deal.price <= deal.maoRBP
+    ? `At the current list price of ${formatCurrency(deal.price)}, this property represents a strong investment opportunity with built-in equity for a retail buyer.`
+    : `The current list price of ${formatCurrency(deal.price)} exceeds our maximum offer of ${formatCurrency(deal.maoRBP)}. Negotiation recommended.`
+}`
+    : `
 MARKET ANALYSIS:
 Builder Price per ¼ acre: ${formatCurrency(deal.builderPrice)}
 Total Lot Units: ${(parseFloat(deal.lotSize) / 0.25).toFixed(2)}
@@ -266,7 +282,8 @@ Recommended Offer: ${formatCurrency(deal.offer)}
 Target Spread: ${formatCurrency(deal.builderTotal - deal.offer)}
 
 CONCLUSION:
-This land opportunity provides a ${((deal.builderTotal - deal.offer) / deal.builderTotal * 100).toFixed(1)}% spread for assignment to qualified builders.`}
+This land opportunity provides a ${(((deal.builderTotal - deal.offer) / deal.builderTotal) * 100).toFixed(1)}% spread for assignment to qualified builders.`
+}
 
 ---
 This analysis is for informational purposes only.
@@ -335,7 +352,9 @@ Probono Key Realty © ${new Date().getFullYear()}`,
               </span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => copyToClipboard(templates[selectedTemplate as keyof typeof templates].content)}
+                  onClick={() =>
+                    copyToClipboard(templates[selectedTemplate as keyof typeof templates].content)
+                  }
                   className="flex items-center gap-1 px-2 py-1 rounded bg-blue-500 text-white text-[11px] font-medium hover:bg-blue-600 transition-all"
                 >
                   {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -361,7 +380,9 @@ Probono Key Realty © ${new Date().getFullYear()}`,
 
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3">
         <div className="text-[11px] text-blue-800 dark:text-blue-300 leading-relaxed">
-          <strong>⚠️ Legal Disclaimer:</strong> These templates are provided for informational purposes only and do not constitute legal advice. Always consult with a qualified real estate attorney in your jurisdiction before using any legal documents.
+          <strong>⚠️ Legal Disclaimer:</strong> These templates are provided for informational
+          purposes only and do not constitute legal advice. Always consult with a qualified real
+          estate attorney in your jurisdiction before using any legal documents.
         </div>
       </div>
     </div>

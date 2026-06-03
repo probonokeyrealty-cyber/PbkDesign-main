@@ -314,6 +314,7 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
           <input
             id="callbackTime"
             type="datetime-local"
+            aria-label="Callback date and time"
             value={callbackTime}
             onChange={(event) => setCallbackTime(event.target.value)}
             className="callback-time-input"

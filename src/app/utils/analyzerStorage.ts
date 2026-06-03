@@ -88,25 +88,37 @@ function sanitizeAnalyzerPayloadForLocalStorage(payload: unknown): unknown {
   return sanitizeAnalyzerDealForPersistentStorage(payload as Partial<DealData>);
 }
 
+function storageGet(store: Storage, key: string): string | null {
+  try { return store.getItem(key); } catch { return null; }
+}
+
+function storageSet(store: Storage, key: string, value: string): void {
+  try { store.setItem(key, value); } catch (err) { console.warn('[PBK] Storage write blocked (private mode?):', err); }
+}
+
+function storageDel(store: Storage, key: string): void {
+  try { store.removeItem(key); } catch { /* ignore — read-only or private mode */ }
+}
+
 export function readAnalyzerStorage<T>(key: string, fallback: T): T {
-  return decodeAnalyzerStoragePayload(sessionStorage.getItem(`${key}:session`), fallback)
-    || decodeAnalyzerStoragePayload(localStorage.getItem(key), fallback);
+  return decodeAnalyzerStoragePayload(storageGet(sessionStorage, `${key}:session`), fallback)
+    || decodeAnalyzerStoragePayload(storageGet(localStorage, key), fallback);
 }
 
 export function writeAnalyzerStorage(key: string, payload: unknown) {
-  localStorage.setItem(key, encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload)));
-  sessionStorage.setItem(`${key}:session`, encodeAnalyzerStoragePayload(payload));
+  storageSet(localStorage, key, encodeAnalyzerStoragePayload(sanitizeAnalyzerPayloadForLocalStorage(payload)));
+  storageSet(sessionStorage, `${key}:session`, encodeAnalyzerStoragePayload(payload));
 }
 
 export function readAnalyzerDeal(fallback: DealData): DealData {
   const current = readAnalyzerStorage<Partial<DealData> | null>(ANALYZER_CURRENT_DEAL_KEY, null);
   if (current) return { ...fallback, ...current } as DealData;
 
-  const legacy = localStorage.getItem('pbk-deal-data');
+  const legacy = storageGet(localStorage, 'pbk-deal-data');
   const parsed = decodeAnalyzerStoragePayload<Partial<DealData> | null>(legacy, null);
   if (parsed) {
     writeAnalyzerDeal({ ...fallback, ...parsed } as DealData);
-    localStorage.removeItem('pbk-deal-data');
+    storageDel(localStorage, 'pbk-deal-data');
     return { ...fallback, ...parsed } as DealData;
   }
 
@@ -118,7 +130,7 @@ export function writeAnalyzerDeal(deal: DealData) {
 }
 
 export function clearAnalyzerDeal() {
-  localStorage.removeItem(ANALYZER_CURRENT_DEAL_KEY);
-  sessionStorage.removeItem(`${ANALYZER_CURRENT_DEAL_KEY}:session`);
-  localStorage.removeItem('pbk-deal-data');
+  storageDel(localStorage, ANALYZER_CURRENT_DEAL_KEY);
+  storageDel(sessionStorage, `${ANALYZER_CURRENT_DEAL_KEY}:session`);
+  storageDel(localStorage, 'pbk-deal-data');
 }

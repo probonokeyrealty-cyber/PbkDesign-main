@@ -251,6 +251,7 @@ export function PathDeliverables({
 
             <div className="p-4">
               <textarea
+                aria-label={`Edit ${activeDocument} document`}
                 value={editableDocuments[activeDocument]}
                 onChange={(event) => handleDocumentEdit(activeDocument, event.target.value)}
                 className="min-h-[520px] w-full resize-y rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 font-mono text-[11.5px] leading-6 text-gray-800 outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-900 dark:text-gray-100"

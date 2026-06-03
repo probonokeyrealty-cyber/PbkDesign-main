@@ -219,6 +219,7 @@ function ComposeModal({
             value={draft.recipient}
             onChange={(event) => setDraft((current) => ({ ...current, recipient: event.target.value, leadId: '' }))}
             placeholder={draft.channel === 'sms' ? 'Name or phone number' : 'Name or email address'}
+            autoComplete={draft.channel === 'sms' ? 'tel' : 'email'}
           />
           {!!matches.length && !selectedLead && (
             <div className="compose-suggest">
@@ -299,7 +300,7 @@ function ComposeModal({
           <span className="text-xs text-slate-500">Draft saved locally as you type.</span>
           <div className="flex gap-2">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="button" className="btn-primary" disabled={sendDisabled} onClick={sendDemo}>
+            <button type="button" className="btn-primary" disabled={sendDisabled} title={sendDisabled ? (!draft.recipient.trim() ? 'Add a recipient before sending' : 'Add a message before sending') : undefined} onClick={sendDemo}>
               <Send size={15} />
               Send
             </button>

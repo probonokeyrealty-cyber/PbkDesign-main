@@ -292,6 +292,7 @@ export function LiveCallInputs({
             </label>
             <input
               type="text"
+              autoComplete="name"
               value={deal.sellerName || ''}
               onChange={(e) => handleChange('sellerName', e.target.value, 'sellerName')}
               placeholder="John Smith"
@@ -306,6 +307,7 @@ export function LiveCallInputs({
             </label>
             <input
               type="email"
+              autoComplete="email"
               value={deal.sellerEmail || ''}
               onChange={(e) => handleChange('sellerEmail', e.target.value)}
               placeholder="john@example.com"
@@ -325,6 +327,7 @@ export function LiveCallInputs({
             </div>
             <input
               type="tel"
+              autoComplete="tel"
               value={deal.sellerPhone || ''}
               onChange={(e) => handlePhoneChange(e.target.value)}
               placeholder="(555) 123-4567"
@@ -335,6 +338,7 @@ export function LiveCallInputs({
                 type="button"
                 onClick={handleVerifyPhone}
                 disabled={!(deal.sellerPhone || '').trim()}
+                title={!(deal.sellerPhone || '').trim() ? 'Enter a phone number first' : undefined}
                 className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition-all disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-900/15 dark:text-emerald-300"
               >
                 <ShieldCheck size={12} />

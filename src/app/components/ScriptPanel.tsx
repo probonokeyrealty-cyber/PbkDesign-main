@@ -158,6 +158,7 @@ export function ScriptPanel({
             <button
               type="button"
               disabled={forcedVariant === 'agent'}
+              title={forcedVariant === 'agent' ? 'Script variant is locked to Agent for this lead type' : undefined}
               onClick={() => onScriptVariantChange('owner')}
               className={`min-h-10 rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
                 scriptVariant === 'owner'
@@ -170,6 +171,7 @@ export function ScriptPanel({
             <button
               type="button"
               disabled={forcedVariant === 'owner'}
+              title={forcedVariant === 'owner' ? 'Script variant is locked to Owner/FSBO for this lead type' : undefined}
               onClick={() => onScriptVariantChange('agent')}
               className={`min-h-10 rounded-xl px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] transition ${
                 scriptVariant === 'agent'

@@ -357,6 +357,7 @@ function SkillTransferModal({
               type="button"
               className="btn-primary"
               disabled={!selectedIds.length || transferring}
+              title={!selectedIds.length ? 'Select at least one target agent to transfer' : transferring ? 'Transfer in progress…' : undefined}
               onClick={handleTransfer}
             >
               {transferring ? 'Transferring…' : 'Transfer skill'}

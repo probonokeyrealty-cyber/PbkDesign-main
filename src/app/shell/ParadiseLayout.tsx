@@ -1,11 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
 import { UiToastHost } from '../components/UiToastHost';
+import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { applyPbkTheme, readPbkPrefs, savePbkPrefs } from '../utils/uiPrefs';
+import { getPendingApprovalCount } from '../routes/inboxRuntimeLogic.js';
+import { showUiToast } from '../utils/uiFeedback';
 import { FavoritesBar } from './FavoritesBar';
 import { Sidebar } from './Sidebar';
 import { ShellTopbar } from './ShellTopbar';
+
+const VALID_SHELL_PATHS = new Set([
+  '/',
+  '/leads',
+  '/deal',
+  '/inbox',
+  '/fleet',
+  '/memory',
+  '/analytics',
+  '/settings',
+]);
+
+function getPathnameOnly(path = '') {
+  const trimmed = String(path || '').trim();
+  if (!trimmed.startsWith('/')) return '';
+  return trimmed.split(/[?#]/)[0].replace(/\/+$/, '') || '/';
+}
+
+function isValidShellPath(path = '') {
+  const pathname = getPathnameOnly(path);
+  if (!pathname) return false;
+  if (VALID_SHELL_PATHS.has(pathname)) return true;
+  return /^\/deal\/[^/]+$/.test(pathname);
+}
+
+function dispatchShortcutEvent(eventName: string, label: string) {
+  const detail = {
+    handled: false,
+    source: 'ParadiseLayout',
+    shortcut: label,
+  };
+  window.dispatchEvent(new CustomEvent(eventName, { detail }));
+  window.setTimeout(() => {
+    if (detail.handled) return;
+    showUiToast({
+      tone: 'info',
+      title: 'Shortcut not handled',
+      desc: `${label} has no active panel on this page.`,
+    });
+  }, 0);
+}
 
 /**
  * ParadiseLayout — outer chrome of the Paradise shell.
@@ -23,6 +67,9 @@ export function ParadiseLayout() {
   const [prefs, setPrefs] = useState(() => readPbkPrefs());
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [skeletonOn, setSkeletonOn] = useState(false);
+  const lastPageRestoredRef = useRef(false);
+  const { snapshot } = useRuntimeSnapshot(10000);
+  const pendingApprovalCount = getPendingApprovalCount(snapshot || {});
 
   useEffect(() => {
     applyPbkTheme(prefs.theme);
@@ -38,9 +85,20 @@ export function ParadiseLayout() {
   }, [location.pathname, location.search]);
 
   useEffect(() => {
+    if (lastPageRestoredRef.current) return;
+    lastPageRestoredRef.current = true;
     if (location.pathname !== '/' || prefs.lastPage === '/' || !prefs.lastPage) return;
+    if (!isValidShellPath(prefs.lastPage)) {
+      savePbkPrefs({ lastPage: '/' });
+      showUiToast({
+        tone: 'warning',
+        title: 'Saved page unavailable',
+        desc: 'The previous shell route no longer exists, so Command Center opened instead.',
+      });
+      return;
+    }
     navigate(prefs.lastPage, { replace: true });
-  }, []);
+  }, [location.pathname, navigate, prefs.lastPage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -51,7 +109,7 @@ export function ParadiseLayout() {
 
       if (event.key === 'Escape') {
         setShortcutOpen(false);
-        window.dispatchEvent(new CustomEvent('pbk:escape-ui'));
+        dispatchShortcutEvent('pbk:escape-ui', 'Escape');
         return;
       }
 
@@ -64,13 +122,13 @@ export function ParadiseLayout() {
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        window.dispatchEvent(new CustomEvent('pbk:open-command-palette'));
+        dispatchShortcutEvent('pbk:open-command-palette', 'Command palette');
         return;
       }
 
       if (event.altKey && event.shiftKey && event.key.toLowerCase() === 'c') {
         event.preventDefault();
-        window.dispatchEvent(new CustomEvent('pbk:call-now'));
+        dispatchShortcutEvent('pbk:call-now', 'Call now');
         return;
       }
 
@@ -100,7 +158,7 @@ export function ParadiseLayout() {
         });
       } else if (event.key.toLowerCase() === 'c') {
         event.preventDefault();
-        window.dispatchEvent(new CustomEvent('pbk:open-compose'));
+        dispatchShortcutEvent('pbk:open-compose', 'Compose');
       } else if (event.key.toLowerCase() === 'a') {
         event.preventDefault();
         (
@@ -139,7 +197,11 @@ export function ParadiseLayout() {
         prefs.railCollapsed ? 'md:grid-cols-[72px_1fr]' : 'md:grid-cols-[240px_1fr]',
       ].join(' ')}
     >
-      <Sidebar collapsed={prefs.railCollapsed} onToggleRail={toggleRail} />
+      <Sidebar
+        collapsed={prefs.railCollapsed}
+        pendingApprovals={pendingApprovalCount}
+        onToggleRail={toggleRail}
+      />
       <div className="grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
         <ShellTopbar theme={prefs.theme} onToggleTheme={updateTheme} />
         <FavoritesBar />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { updateAdminTaskDecision } from '../utils/runtimeBridge';
 
@@ -59,6 +59,15 @@ const DOT_CLASS: Record<ReadinessState, string> = {
   missing: 'bg-slate-600',
   unknown: 'bg-slate-700 animate-pulse',
 };
+const TOOLING_CARD_FALLBACK_COUNT = 11;
+
+type SettingsAdminDecisionDraft = {
+  taskId: string;
+  status: 'approved' | 'rejected';
+  provider: string;
+  action: string;
+  summary: string;
+};
 
 function StatusDot({ state }: { state: ReadinessState }) {
   return (
@@ -73,6 +82,9 @@ export function Settings() {
   const { snapshot, quotas, tooling, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
   const [actionStatus, setActionStatus] = useState('');
+  const [refreshingDecision, setRefreshingDecision] = useState(false);
+  const [settingsAdminDecisionDraft, setSettingsAdminDecisionDraft] =
+    useState<SettingsAdminDecisionDraft | null>(null);
   const status = (snapshot?.status || {}) as Record<string, unknown>;
   const runtimeProviders = (status.providers || {}) as Record<string, Record<string, unknown>>;
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
@@ -83,10 +95,11 @@ export function Settings() {
   );
   const toolingCoreTotal = toNumber(
     toolingSummary.requiredCount,
-    toNumber(toolingSummary.totalCount, toolingCards.length)
+    toNumber(toolingSummary.totalCount, TOOLING_CARD_FALLBACK_COUNT)
   );
   const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount);
   const toolingOptionalTotal = toNumber(toolingSummary.optionalCount);
+  const metricsUrl = String(toolingSummary.metricsUrl || '').trim();
 
   const providerCards = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
@@ -151,21 +164,50 @@ export function Settings() {
     },
   ];
 
-  const decideAdminTask = async (task: Record<string, unknown>, status: string) => {
+  useEffect(() => {
+    if (!actionStatus) return undefined;
+    const handle = window.setTimeout(() => setActionStatus(''), 5000);
+    return () => window.clearTimeout(handle);
+  }, [actionStatus]);
+
+  const confirmSettingsAdminDecision = (
+    task: Record<string, unknown>,
+    status: SettingsAdminDecisionDraft['status']
+  ) => {
     const taskId = String(task.id || '');
     if (!taskId) return;
+    setSettingsAdminDecisionDraft({
+      taskId,
+      status,
+      provider: String(task.provider || 'admin'),
+      action: String(task.action || 'review'),
+      summary: String(task.summary || task.command || 'Administrative action'),
+    });
+  };
+
+  const decideAdminTask = async () => {
+    if (!settingsAdminDecisionDraft) return;
+    const { taskId, status } = settingsAdminDecisionDraft;
     const key = `admin:${taskId}:${status}`;
+    setSettingsAdminDecisionDraft(null);
     setPendingAction(key);
     setActionStatus('');
+    let decisionSent = false;
     try {
       await updateAdminTaskDecision(taskId, status);
-      await refresh().catch(() => null);
+      decisionSent = true;
+      setRefreshingDecision(true);
+      await refresh();
       setActionStatus(
         status === 'approved' ? 'Admin task approved and executed.' : 'Admin task declined.'
       );
     } catch (nextError) {
-      setActionStatus(nextError instanceof Error ? nextError.message : 'Admin task update failed.');
+      const message = nextError instanceof Error ? nextError.message : 'Admin task update failed.';
+      setActionStatus(
+        decisionSent ? `Decision sent, but latest settings could not refresh: ${message}` : message
+      );
     } finally {
+      setRefreshingDecision(false);
       setPendingAction('');
     }
   };
@@ -201,6 +243,11 @@ export function Settings() {
       {actionStatus && (
         <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
           {actionStatus}
+        </div>
+      )}
+      {refreshingDecision && (
+        <div className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-300">
+          Refreshing Settings after admin decision...
         </div>
       )}
 
@@ -274,9 +321,18 @@ export function Settings() {
 
         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
           Metrics endpoint:{' '}
-          <span className="text-slate-200">
-            {String(toolingSummary.metricsUrl || 'waiting for bridge connection')}
-          </span>
+          {metricsUrl ? (
+            <a
+              href={metricsUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all text-sky-300 underline-offset-4 hover:underline"
+            >
+              {metricsUrl}
+            </a>
+          ) : (
+            <span className="text-slate-200">waiting for bridge connection</span>
+          )}
         </div>
       </section>
 
@@ -305,16 +361,16 @@ export function Settings() {
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        disabled={pendingAction === `admin:${String(task.id)}:approved`}
-                        onClick={() => void decideAdminTask(task, 'approved')}
+                        disabled={Boolean(pendingAction) || refreshingDecision}
+                        onClick={() => confirmSettingsAdminDecision(task, 'approved')}
                         className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
                       >
                         Approve
                       </button>
                       <button
                         type="button"
-                        disabled={pendingAction === `admin:${String(task.id)}:rejected`}
-                        onClick={() => void decideAdminTask(task, 'rejected')}
+                        disabled={Boolean(pendingAction) || refreshingDecision}
+                        onClick={() => confirmSettingsAdminDecision(task, 'rejected')}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
                         Decline
@@ -365,6 +421,60 @@ export function Settings() {
           </div>
         </section>
       </div>
+
+      {settingsAdminDecisionDraft && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-admin-decision-title"
+            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Admin safety check
+            </div>
+            <h3
+              id="settings-admin-decision-title"
+              className="mt-2 text-lg font-semibold text-slate-100"
+            >
+              Confirm admin decision
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              This will {settingsAdminDecisionDraft.status === 'approved' ? 'approve' : 'decline'}{' '}
+              <span className="font-semibold text-slate-200">
+                {settingsAdminDecisionDraft.provider} / {settingsAdminDecisionDraft.action}
+              </span>
+              .
+            </p>
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+              {settingsAdminDecisionDraft.summary}
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setSettingsAdminDecisionDraft(null)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  refreshingDecision ||
+                  pendingAction ===
+                    `admin:${settingsAdminDecisionDraft.taskId}:${settingsAdminDecisionDraft.status}`
+                }
+                onClick={() => void decideAdminTask()}
+                className="rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                {settingsAdminDecisionDraft.status === 'approved'
+                  ? 'Approve admin task'
+                  : 'Decline admin task'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

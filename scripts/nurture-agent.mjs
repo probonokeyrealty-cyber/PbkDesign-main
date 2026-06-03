@@ -1,4 +1,12 @@
 const STOP_REPLY_PATTERN = /\b(stop|unsubscribe|cancel|end|remove me)\b/i;
+const DATABASE_REQUIRED_MESSAGE = 'PBK_DATABASE_URL/DATABASE_URL is required for the Nurture Agent.';
+const DEFAULT_QUIET_HOURS = { startHour: 21, endHour: 8 };
+const DEFAULT_MAX_PER_DAY = 3;
+
+export function requireNurturePool(pool) {
+  if (!pool) throw new Error(DATABASE_REQUIRED_MESSAGE);
+  return pool;
+}
 
 function sqlJson(value) {
   return JSON.stringify(value && typeof value === 'object' ? value : {});
@@ -12,7 +20,7 @@ function normalizeStage(value = '') {
   );
 }
 
-function renderTemplate(template = '', lead = {}) {
+export function renderTemplate(template = '', lead = {}) {
   const replacements = {
     name: lead.first_name || lead.lead_name || lead.name || 'Seller',
     address: lead.address || 'your property',
@@ -22,8 +30,121 @@ function renderTemplate(template = '', lead = {}) {
   return String(template || '').replace(/\{(\w+)\}/g, (_, key) => String(replacements[key] ?? ''));
 }
 
+export async function renderNurtureMessage(template = '', lead = {}, options = {}) {
+  const draft = renderTemplate(template, lead);
+  if (!options.useLLMPersonalization || typeof options.personalizeMessage !== 'function') return draft;
+  try {
+    const personalized = await options.personalizeMessage({
+      template,
+      draft,
+      lead,
+      channel: options.channel || '',
+      step: options.step || null,
+      voice: options.voice || 'Ava',
+    });
+    const text =
+      typeof personalized === 'string'
+        ? personalized
+        : personalized?.message || personalized?.text || personalized?.body || '';
+    return String(text || draft).trim() || draft;
+  } catch (error) {
+    options.logger?.warn?.('[nurture-agent] personalization failed', error?.message || error);
+    return draft;
+  }
+}
+
+function normalizeHour(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(23, Math.floor(parsed)));
+}
+
+function nextAllowedQuietHour(now, quietHours) {
+  const current = new Date(now);
+  const hour = current.getHours();
+  const startHour = normalizeHour(quietHours?.startHour ?? quietHours?.start ?? DEFAULT_QUIET_HOURS.startHour, DEFAULT_QUIET_HOURS.startHour);
+  const endHour = normalizeHour(quietHours?.endHour ?? quietHours?.end ?? DEFAULT_QUIET_HOURS.endHour, DEFAULT_QUIET_HOURS.endHour);
+  const next = new Date(current);
+  next.setMinutes(0, 0, 0);
+  if (startHour === endHour) return next;
+  if (startHour > endHour) {
+    if (hour >= startHour) next.setDate(next.getDate() + 1);
+    next.setHours(endHour);
+    return next;
+  }
+  next.setHours(endHour);
+  return next;
+}
+
+export function shouldDeferNurtureSend(context = {}, options = {}) {
+  const now = context.now instanceof Date ? context.now : new Date(context.now || Date.now());
+  const quietHours = options.quietHours || {
+    startHour: options.quietHoursStart ?? options.quiet_hours_start ?? DEFAULT_QUIET_HOURS.startHour,
+    endHour: options.quietHoursEnd ?? options.quiet_hours_end ?? DEFAULT_QUIET_HOURS.endHour,
+  };
+  const startHour = normalizeHour(quietHours.startHour ?? quietHours.start, DEFAULT_QUIET_HOURS.startHour);
+  const endHour = normalizeHour(quietHours.endHour ?? quietHours.end, DEFAULT_QUIET_HOURS.endHour);
+  const maxPerDay = Math.max(1, Math.min(25, Number(options.maxPerDay ?? options.max_per_day ?? DEFAULT_MAX_PER_DAY)));
+  const sentToday = Math.max(0, Number(context.sentToday || context.sent_today || 0));
+  const hour = now.getHours();
+  const inQuietHours =
+    startHour === endHour
+      ? false
+      : startHour > endHour
+        ? hour >= startHour || hour < endHour
+        : hour >= startHour && hour < endHour;
+
+  if (inQuietHours) {
+    return {
+      defer: true,
+      reason: 'quiet_hours',
+      nextAllowedAt: nextAllowedQuietHour(now, { startHour, endHour }),
+      policy: { quietHours: { startHour, endHour }, maxPerDay },
+    };
+  }
+
+  if (sentToday >= maxPerDay) {
+    const next = new Date(now);
+    next.setDate(next.getDate() + 1);
+    next.setHours(endHour, 0, 0, 0);
+    return {
+      defer: true,
+      reason: 'daily_throttle',
+      nextAllowedAt: next,
+      policy: { quietHours: { startHour, endHour }, maxPerDay },
+    };
+  }
+
+  return {
+    defer: false,
+    reason: 'ok',
+    nextAllowedAt: null,
+    policy: { quietHours: { startHour, endHour }, maxPerDay },
+  };
+}
+
+export function buildNurtureComplianceHealth(env = process.env) {
+  const webhookUrl = String(
+    env.PBK_TELNYX_INBOUND_WEBHOOK_URL ||
+      env.TELNYX_INBOUND_WEBHOOK_URL ||
+      env.TELNYX_WEBHOOK_URL ||
+      '',
+  ).trim();
+  const warnings = [];
+  if (!webhookUrl) {
+    warnings.push('Telnyx inbound webhook URL is not configured; STOP/unsubscribe replies must route to /api/webhooks/telnyx/inbound or pauseNurtureForPhoneStop.');
+  }
+  return {
+    ok: Boolean(webhookUrl),
+    stopReplyWebhookConfigured: Boolean(webhookUrl),
+    webhookUrl: webhookUrl ? webhookUrl.replace(/([?&](?:token|secret|key)=)[^&]+/gi, '$1[redacted]') : '',
+    stopReplyPattern: STOP_REPLY_PATTERN.source,
+    warnings,
+  };
+}
+
 export async function ensureNurtureSchema(pool) {
-  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  requireNurturePool(pool);
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -279,8 +400,8 @@ async function loadLead(pool, leadId) {
 }
 
 export async function processNurtureInstance(pool, instanceId, options = {}) {
-  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
-  await ensureNurtureSchema(pool);
+  requireNurturePool(pool);
+  if (options.ensureSchema !== false) await ensureNurtureSchema(pool);
   const instanceResult = await pool.query(
     `SELECT ni.*, nst.steps
      FROM public.nurture_instances ni
@@ -310,10 +431,69 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
   const channel = String(step.channel || '')
     .trim()
     .toLowerCase();
-  const message = renderTemplate(step.template || '', lead);
+  const message = await renderNurtureMessage(step.template || '', lead, {
+    ...options,
+    channel,
+    step,
+  });
   let status = 'sent';
   let error = '';
   let invokeResult = {};
+
+  if (!options.skipPolicy) {
+    const sentTodayResult = await pool
+      .query(
+        `SELECT COUNT(*)::int AS sent_today
+         FROM public.nurture_step_logs
+         WHERE tenant_id = 'pbk'
+           AND lead_id = $1
+           AND status IN ('sent','queued_for_approval')
+           AND sent_at >= date_trunc('day', NOW())`,
+        [lead.id],
+      )
+      .catch(() => ({ rows: [{ sent_today: 0 }] }));
+    const sendDecision = shouldDeferNurtureSend(
+      {
+        now: options.now || new Date(),
+        sentToday: sentTodayResult.rows?.[0]?.sent_today || 0,
+      },
+      options,
+    );
+    if (sendDecision.defer) {
+      const nextAllowedAt = sendDecision.nextAllowedAt?.toISOString?.() || new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await pool.query(
+        `INSERT INTO public.nurture_step_logs (
+           tenant_id, nurture_instance_id, lead_id, step_index, channel, message_sent, sent_at, status, error, result, created_at
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,NULL,$7,'',$8::jsonb,NOW())`,
+        [
+          'pbk',
+          instance.id,
+          lead.id,
+          stepIndex,
+          channel,
+          message,
+          `deferred_${sendDecision.reason}`,
+          sqlJson({ ...sendDecision, nextAllowedAt }),
+        ],
+      );
+      await pool.query(
+        `UPDATE public.nurture_instances
+         SET next_step_at = $2, updated_at = NOW()
+         WHERE id = $1`,
+        [instance.id, nextAllowedAt],
+      );
+      return {
+        ok: true,
+        result: 'deferred',
+        status: `deferred_${sendDecision.reason}`,
+        channel,
+        stepIndex,
+        nextStepAt: nextAllowedAt,
+        policy: sendDecision.policy,
+      };
+    }
+  }
 
   try {
     if (channel === 'sms') {
@@ -322,6 +502,7 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
         to: lead.phone,
         text: message,
         source: 'nurture-agent',
+        approvalId: options.approvalId || options.approval_id || '',
       });
     } else if (channel === 'email') {
       invokeResult = await options.invokeTool?.('sendColdEmail', {
@@ -330,6 +511,7 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
         subject: 'Quick follow-up from PBK',
         body: message,
         source: 'nurture-agent',
+        approvalId: options.approvalId || options.approval_id || '',
       });
     } else if (channel === 'call') {
       invokeResult = await options.invokeTool?.('telnyx_call', {
@@ -337,6 +519,7 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
         to: lead.phone,
         callControlId: `nurture_${instance.id}`,
         source: 'nurture-agent',
+        approvalId: options.approvalId || options.approval_id || '',
       });
     } else {
       status = 'skipped';
@@ -397,7 +580,7 @@ export async function processNurtureInstance(pool, instanceId, options = {}) {
 }
 
 export async function processDueNurtureInstances(pool, options = {}) {
-  if (!pool) return { ok: false, reason: 'postgres_unavailable', processed: 0 };
+  requireNurturePool(pool);
   await ensureNurtureSchema(pool);
   const limit = Math.max(1, Math.min(100, Number(options.limit || 50)));
   const due = await pool.query(
@@ -419,7 +602,7 @@ export async function processDueNurtureInstances(pool, options = {}) {
 }
 
 export async function startNurtureSequenceCore(pool, params = {}, options = {}) {
-  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  requireNurturePool(pool);
   await ensureNurtureSchema(pool);
   const leadId = String(params.leadId || params.lead_id || '').trim();
   if (!leadId) return { ok: false, result: 'missing_lead_id', error: 'leadId is required.' };
@@ -479,7 +662,7 @@ export async function startNurtureSequenceCore(pool, params = {}, options = {}) 
 }
 
 export async function pauseNurtureForPhoneStop(pool, params = {}) {
-  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  requireNurturePool(pool);
   const text = String(params.text || params.body || '').trim();
   if (!STOP_REPLY_PATTERN.test(text)) return { ok: true, result: 'no_stop_intent', paused: 0 };
   const phone = String(params.from || params.phone || '').replace(/[^\d+]/g, '');
@@ -500,7 +683,7 @@ export async function pauseNurtureForPhoneStop(pool, params = {}) {
 }
 
 export async function consultNurtureAgentCore(pool, params = {}) {
-  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  requireNurturePool(pool);
   await ensureNurtureSchema(pool);
   const leadId = String(params.leadId || params.lead_id || '').trim();
   if (!leadId) return { ok: false, result: 'missing_lead_id' };
@@ -538,5 +721,44 @@ export async function consultNurtureAgentCore(pool, params = {}) {
       score,
     },
     recommendation,
+  };
+}
+
+export async function executeApprovedSequence(pool, params = {}, options = {}) {
+  requireNurturePool(pool);
+  const approval = params.approval && typeof params.approval === 'object' ? params.approval : {};
+  const metadata =
+    params.metadata && typeof params.metadata === 'object'
+      ? params.metadata
+      : approval.metadata && typeof approval.metadata === 'object'
+        ? approval.metadata
+        : {};
+  const nurtureInstanceId = String(
+    params.nurtureInstanceId ||
+      params.nurture_instance_id ||
+      metadata.nurtureInstanceId ||
+      metadata.nurture_instance_id ||
+      metadata.instanceId ||
+      '',
+  ).trim();
+  if (!nurtureInstanceId) {
+    return {
+      ok: false,
+      result: 'missing_nurture_instance_id',
+      error: 'Approved nurture execution requires nurtureInstanceId in params or approval metadata.',
+    };
+  }
+  const approvalId = String(params.approvalId || params.approval_id || approval.id || metadata.approvalId || '').trim();
+  const processed = await processNurtureInstance(pool, nurtureInstanceId, {
+    ...options,
+    approvalId,
+    approval,
+  });
+  return {
+    ...processed,
+    ok: processed.ok !== false,
+    result: processed.ok === false ? processed.result || 'approved_sequence_failed' : 'approved_sequence_executed',
+    approvalId,
+    nurtureInstanceId,
   };
 }

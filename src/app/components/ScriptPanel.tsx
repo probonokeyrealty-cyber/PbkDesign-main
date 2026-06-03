@@ -4,7 +4,12 @@ import { DealData, PBKPath } from '../types';
 import { buildPbkPathScripts, PbkLegacyScriptPath } from '../templates/pbkPathScripts';
 import { sanitizeLegacyCopy } from '../utils/formatting';
 import { downloadTextFile } from '../utils/fileExport';
-import { buildAgentDealContext, type AgentDealContext, type AgentScriptTab } from '../utils/agentDealContext';
+import {
+  buildAgentDealContext,
+  type AgentDealContext,
+  type AgentScriptTab,
+} from '../utils/agentDealContext';
+import { fetchCurrentScriptRequest, type RuntimeScriptCandidate } from '../utils/runtimeBridge';
 
 type ScriptVariant = 'owner' | 'agent';
 type ScriptTab = 'opening' | 'acquisition' | 'objections';
@@ -32,10 +37,14 @@ function getScriptPath(path: PBKPath): PbkLegacyScriptPath {
 }
 
 function getAccentClasses(tone: string) {
-  if (tone === 'green') return 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 border-emerald-200 dark:bg-emerald-900/10 dark:border-emerald-800/60';
-  if (tone === 'amber') return 'text-amber-700 dark:text-amber-300 bg-amber-50 border-amber-200 dark:bg-amber-900/10 dark:border-amber-800/60';
-  if (tone === 'blue') return 'text-blue-700 dark:text-blue-300 bg-blue-50 border-blue-200 dark:bg-blue-900/10 dark:border-blue-800/60';
-  if (tone === 'purple') return 'text-purple-700 dark:text-purple-300 bg-purple-50 border-purple-200 dark:bg-purple-900/10 dark:border-purple-800/60';
+  if (tone === 'green')
+    return 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 border-emerald-200 dark:bg-emerald-900/10 dark:border-emerald-800/60';
+  if (tone === 'amber')
+    return 'text-amber-700 dark:text-amber-300 bg-amber-50 border-amber-200 dark:bg-amber-900/10 dark:border-amber-800/60';
+  if (tone === 'blue')
+    return 'text-blue-700 dark:text-blue-300 bg-blue-50 border-blue-200 dark:bg-blue-900/10 dark:border-blue-800/60';
+  if (tone === 'purple')
+    return 'text-purple-700 dark:text-purple-300 bg-purple-50 border-purple-200 dark:bg-purple-900/10 dark:border-purple-800/60';
   return 'text-slate-700 dark:text-slate-300 bg-slate-50 border-slate-200 dark:bg-slate-900/70 dark:border-slate-700';
 }
 
@@ -53,6 +62,44 @@ function parseObjections(script: string) {
     });
 }
 
+function buildActiveScriptBody(
+  currentScripts: ReturnType<typeof buildPbkPathScripts>[PbkLegacyScriptPath][ScriptVariant],
+  activeTab: ScriptTab
+) {
+  return activeTab === 'acquisition'
+    ? `${currentScripts.acquisition}\n\n[NEXT-STEP CLOSE]\n${currentScripts.closing}`
+    : currentScripts[activeTab];
+}
+
+function buildScriptCandidate({
+  content,
+  scriptPath,
+  scriptVariant,
+  activeTab,
+  title,
+}: {
+  content: string;
+  scriptPath: PbkLegacyScriptPath;
+  scriptVariant: ScriptVariant;
+  activeTab: ScriptTab;
+  title: string;
+}): RuntimeScriptCandidate {
+  return {
+    id: `${scriptPath}-${scriptVariant}-${activeTab}`,
+    title,
+    content,
+    pathKey: scriptPath,
+    tags: [scriptPath, scriptVariant, activeTab],
+    allowedRoles: [scriptVariant],
+    metadata: {
+      source: 'script_panel',
+      activeTab,
+      scriptVariant,
+      pathKey: scriptPath,
+    },
+  };
+}
+
 export function ScriptPanel({
   deal,
   activePath,
@@ -64,22 +111,77 @@ export function ScriptPanel({
   const [activeTab, setActiveTab] = useState<ScriptTab>('opening');
   const [openObjectionIndex, setOpenObjectionIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [bridgeScript, setBridgeScript] = useState<RuntimeScriptCandidate | null>(null);
+  const [bridgeReasonCodes, setBridgeReasonCodes] = useState<string[]>([]);
   const pathScripts = useMemo(() => buildPbkPathScripts(deal), [deal]);
   const scriptPath = getScriptPath(activePath);
   const currentPath = pathScripts[scriptPath];
   const currentScripts = currentPath[scriptVariant];
-  const activeBody =
-    activeTab === 'acquisition'
-      ? `${currentScripts.acquisition}\n\n[NEXT-STEP CLOSE]\n${currentScripts.closing}`
-      : currentScripts[activeTab];
-  const safeBody = sanitizeLegacyCopy(activeBody);
+  const activeBody = buildActiveScriptBody(currentScripts, activeTab);
+  const displayBody = bridgeScript?.content || activeBody;
+  const safeBody = sanitizeLegacyCopy(displayBody);
   const accentClasses = getAccentClasses(currentPath.color);
-  const objections = useMemo(() => parseObjections(currentScripts.objections), [currentScripts.objections]);
+  const objections = useMemo(
+    () => parseObjections(currentScripts.objections),
+    [currentScripts.objections]
+  );
 
   useEffect(() => {
     setActiveTab('opening');
     setOpenObjectionIndex(0);
+    setBridgeScript(null);
+    setBridgeReasonCodes([]);
   }, [activePath, scriptVariant]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const localCandidate = buildScriptCandidate({
+      content: activeBody,
+      scriptPath,
+      scriptVariant,
+      activeTab,
+      title: `${currentPath.name} ${TAB_LABELS[activeTab]}`,
+    });
+    setBridgeScript(null);
+    setBridgeReasonCodes([]);
+    fetchCurrentScriptRequest({
+      pathKey: scriptPath,
+      selectedPath: activePath,
+      callerRole: scriptVariant,
+      sentiment: 0,
+      leadId: deal.leadId || deal.sellerPhone || deal.address || '',
+      address: deal.address || '',
+      leadName: deal.sellerName || '',
+      persistExposure: false,
+      scripts: [localCandidate],
+    })
+      .then((response) => {
+        if (cancelled || response.ok === false) return;
+        const selected = response.selectedScript || response.selected || null;
+        if (selected?.content) setBridgeScript(selected);
+        setBridgeReasonCodes(Array.isArray(response.reasonCodes) ? response.reasonCodes : []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBridgeScript(null);
+          setBridgeReasonCodes([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeBody,
+    activePath,
+    activeTab,
+    currentPath.name,
+    deal.address,
+    deal.leadId,
+    deal.sellerName,
+    deal.sellerPhone,
+    scriptPath,
+    scriptVariant,
+  ]);
 
   useEffect(() => {
     if (!copied) return;
@@ -109,7 +211,15 @@ export function ScriptPanel({
         scriptVariant,
         activeScriptTab: activeTab as AgentScriptTab,
         requestedBy: 'Call Mode Script Panel',
-      }),
+        runtimeSelectedScript: bridgeScript
+          ? {
+              id: bridgeScript.id,
+              title: bridgeScript.title,
+              content: bridgeScript.content,
+              reasonCodes: bridgeReasonCodes,
+            }
+          : undefined,
+      })
     );
   };
 
@@ -131,7 +241,9 @@ export function ScriptPanel({
               Canonical PBK script flow: opener, acquisition pitch, then objection control.
             </p>
           </div>
-          <div className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] ${accentClasses}`}>
+          <div
+            className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] ${accentClasses}`}
+          >
             {scriptVariant === 'agent' ? 'Agent Partnership' : 'Owner Direct'}
           </div>
         </div>
@@ -241,7 +353,9 @@ export function ScriptPanel({
                   </button>
                   {isOpen ? (
                     <div className="border-t border-gray-200 bg-white px-4 py-4 text-sm leading-7 text-gray-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-gray-200">
-                      <div className="whitespace-pre-wrap">{sanitizeLegacyCopy(objection.body)}</div>
+                      <div className="whitespace-pre-wrap">
+                        {sanitizeLegacyCopy(objection.body)}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -255,7 +369,14 @@ export function ScriptPanel({
         )}
 
         <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] leading-5 text-sky-800 dark:border-sky-800/60 dark:bg-sky-900/10 dark:text-sky-200">
-          Ava doctrine: these five paths are the PBK sales engine. Do not blend scripts; qualify the lead, choose the path, handle the objection, and secure the contract.
+          Ava doctrine: these five paths are the PBK sales engine. Do not blend scripts; qualify the
+          lead, choose the path, handle the objection, and secure the contract.
+          {bridgeScript ? (
+            <span className="ml-1 font-semibold">
+              Rotator selected {sanitizeLegacyCopy(bridgeScript.title || bridgeScript.id)}
+              {bridgeReasonCodes.length ? ` (${bridgeReasonCodes.slice(0, 3).join(', ')})` : ''}.
+            </span>
+          ) : null}
         </div>
       </div>
     </section>

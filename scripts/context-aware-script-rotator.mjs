@@ -28,10 +28,34 @@ function normalizeScript(raw = {}, index = 0) {
     pathKey,
     allowedRoles: Array.isArray(raw.allowedRoles || raw.allowed_roles) ? (raw.allowedRoles || raw.allowed_roles).map((role) => slug(role)) : [],
     metadata,
+    embedding: normalizeEmbedding(raw.embedding || raw.vector || metadata.embedding || metadata.vector),
+    learnedWeight: Math.max(-1, Math.min(1, numberOr(raw.learnedWeight ?? raw.learned_weight ?? metadata.learnedWeight ?? metadata.learned_weight, 0))),
     usageCount: Math.max(0, numberOr(raw.usageCount ?? raw.usage_count ?? metadata.usageCount ?? metadata.usage_count, 0)),
     conversionCount: Math.max(0, numberOr(raw.conversionCount ?? raw.conversion_count ?? metadata.conversionCount ?? metadata.conversion_count, 0)),
     dealValue: Math.max(0, numberOr(raw.dealValue ?? raw.deal_value ?? metadata.dealValue ?? metadata.deal_value, 0)),
   };
+}
+
+function normalizeEmbedding(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(Number).filter(Number.isFinite).slice(0, 1536);
+}
+
+function cosineSimilarity(left = [], right = []) {
+  const length = Math.min(left.length, right.length);
+  if (!length) return null;
+  let dot = 0;
+  let leftMagnitude = 0;
+  let rightMagnitude = 0;
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = Number(left[index] || 0);
+    const rightValue = Number(right[index] || 0);
+    dot += leftValue * rightValue;
+    leftMagnitude += leftValue * leftValue;
+    rightMagnitude += rightValue * rightValue;
+  }
+  if (!leftMagnitude || !rightMagnitude) return null;
+  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
 }
 
 function containsAny(haystack = '', needles = []) {
@@ -54,6 +78,7 @@ function scoreScript(script = {}, context = {}) {
   const sentiment = numberOr(context.sentiment ?? context.sellerSentiment ?? context.seller_sentiment, 0);
   const transcript = String(context.transcript || context.query || context.text || '').toLowerCase();
   const lastObjection = slug(context.lastObjection || context.last_objection || '');
+  const contextEmbedding = normalizeEmbedding(context.contextEmbedding || context.context_embedding || context.queryEmbedding || context.query_embedding || context.embedding);
   const scriptText = `${script.title} ${script.content} ${script.tags.join(' ')} ${JSON.stringify(script.metadata || {})}`.toLowerCase();
 
   if (!pathKey || script.pathKey === pathKey || script.tags.includes(pathKey)) {
@@ -108,6 +133,17 @@ function scoreScript(script = {}, context = {}) {
     reasons.push('historical_performance');
   }
 
+  const semanticSimilarity = cosineSimilarity(contextEmbedding, script.embedding);
+  if (semanticSimilarity !== null) {
+    score += Math.max(-20, Math.min(36, semanticSimilarity * 36));
+    if (semanticSimilarity >= 0.62) reasons.push('embedding_similarity');
+  }
+
+  if (script.learnedWeight) {
+    score += script.learnedWeight * 30;
+    reasons.push('learned_weight');
+  }
+
   return { script, score: Number(score.toFixed(3)), reasons };
 }
 
@@ -152,6 +188,8 @@ export function selectContextAwareScript(params = {}) {
       pathKey: item.script.pathKey,
       score: item.score,
       reasons: item.reasons,
+      semantic: cosineSimilarity(normalizeEmbedding(params.contextEmbedding || params.context_embedding || params.queryEmbedding || params.query_embedding || params.embedding), item.script.embedding),
+      learnedWeight: item.script.learnedWeight,
     })),
     reasonCodes,
     exploration: explore,

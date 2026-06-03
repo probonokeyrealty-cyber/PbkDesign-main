@@ -34,6 +34,14 @@ export type ApprovalRecord = {
   offerPrice?: number;
   mao?: number;
   notes?: string;
+  message?: string;
+  body?: string;
+  text?: string;
+  content?: string;
+  payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  approvalAction?: string;
+  action?: string;
   actor?: string;
   createdAt?: string;
   actedAt?: string;
@@ -63,8 +71,17 @@ export type BrainDoc = {
 
 export type LeadImport = {
   id: string;
+  leadId?: string;
+  leadName?: string;
+  name?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
   source?: string;
   status?: string;
+  seller?: Record<string, unknown>;
+  property?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
   createdAt?: string;
 };
 
@@ -94,9 +111,24 @@ export type MessageRecord = {
   id: string;
   leadId?: string;
   leadName?: string;
+  channel?: string;
+  direction?: string;
   to?: string;
+  from?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  subject?: string;
   body?: string;
   status?: string;
+  at?: string;
+  updatedAt?: string;
+  scheduledFor?: string;
+  sendAt?: string;
+  readAt?: string;
+  archivedAt?: string;
+  unread?: boolean;
+  isUnread?: boolean;
   createdAt?: string;
 };
 
@@ -121,6 +153,7 @@ export type AdminTask = {
 
 export type RuntimeSnapshot = {
   status?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
   approvals?: ApprovalRecord[];
   activity?: ActivityRecord[];
   brainDocs?: BrainDoc[];
@@ -151,6 +184,98 @@ export type RuntimeToolingStatus = {
   observability?: Record<string, unknown>;
   github?: Record<string, unknown>;
   summary?: Record<string, unknown>;
+};
+
+export type RuntimeScriptCandidate = {
+  id: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  pathKey?: string;
+  allowedRoles?: string[];
+  metadata?: Record<string, unknown>;
+  embedding?: number[];
+  learnedWeight?: number;
+};
+
+export type CurrentScriptResponse = {
+  ok: boolean;
+  result?: string;
+  selectedScript?: RuntimeScriptCandidate | null;
+  selected?: RuntimeScriptCandidate | null;
+  score?: number;
+  reasonCodes?: string[];
+  scoredScripts?: Array<Record<string, unknown>>;
+  rotationRule?: string;
+  source?: string;
+};
+
+export type AnalyticsLead = {
+  id: string;
+  name?: string;
+  address?: string;
+  stage?: string;
+  stageLabel?: string;
+  revenue?: number;
+  updatedAt?: string;
+};
+
+export type LeadStagesResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  stages?: Array<{
+    stage: string;
+    label?: string;
+    total?: number;
+    revenue?: number;
+    leads?: AnalyticsLead[];
+  }>;
+  warning?: string;
+};
+
+export type DealTimelineResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  days?: Array<{
+    day: string;
+    count?: number;
+    revenue?: number;
+    leads?: AnalyticsLead[];
+  }>;
+  warning?: string;
+};
+
+export type AiMetricsResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  metrics?: Record<string, unknown>;
+  warning?: string;
+};
+
+export type SkillOutcomesResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  skills?: Array<Record<string, unknown>>;
+  warning?: string;
+};
+
+export type SkillTrendsResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  skillId?: string;
+  skillName?: string;
+  points?: Array<Record<string, unknown>>;
+  warning?: string;
 };
 
 type BridgeRequestOptions = {
@@ -262,9 +387,25 @@ export function getRuntimeConfig(): RuntimeConfig {
 }
 
 function isAuthOptionalRuntimePath(path = '') {
-  const normalized = `/${String(path || '').replace(/^\/+/, '')}`;
+  const normalized = `/${
+    String(path || '')
+      .replace(/^\/+/, '')
+      .split('?')[0]
+  }`;
   return (
     ['/health', '/status', '/api/health', '/api/status'].includes(normalized) ||
+    normalized === '/api/scripts/current' ||
+    normalized === '/api/v1/scripts/current' ||
+    normalized === '/api/leads/stages' ||
+    normalized === '/api/v1/leads/stages' ||
+    normalized === '/api/deals/timeline' ||
+    normalized === '/api/v1/deals/timeline' ||
+    normalized === '/api/observability/ai-metrics' ||
+    normalized === '/api/v1/observability/ai-metrics' ||
+    normalized === '/api/skills/outcomes' ||
+    normalized === '/api/v1/skills/outcomes' ||
+    normalized === '/api/skills/trends' ||
+    normalized === '/api/v1/skills/trends' ||
     normalized.startsWith('/api/public/')
   );
 }
@@ -421,9 +562,39 @@ export async function invokeRuntimeTool<T = unknown>(
   });
 }
 
+export async function startLeadCallRequest(body: Record<string, unknown>) {
+  return invokeRuntimeTool<Record<string, unknown>>('telnyx_call', {
+    ...body,
+    source: body.source || 'command-center-ui',
+  });
+}
+
 export async function fetchRuntimeState() {
   return bridgeRequest<RuntimeSnapshot>({
     path: '/state',
+  });
+}
+
+export async function fetchRuntimeSettingsRequest() {
+  return bridgeRequest<{
+    ok: boolean;
+    source?: string;
+    settings?: Record<string, unknown>;
+  }>({
+    path: '/api/settings',
+  });
+}
+
+export async function updateRuntimeSettingsRequest(body: Record<string, unknown>) {
+  return bridgeRequest<{
+    ok: boolean;
+    source?: string;
+    settings?: Record<string, unknown>;
+    state?: RuntimeSnapshot;
+  }>({
+    method: 'PATCH',
+    path: '/api/settings',
+    body,
   });
 }
 
@@ -477,6 +648,151 @@ export async function updateApprovalDecision(approvalId: string, status: string)
       actor: 'PBK React shell',
       actedAt: new Date().toISOString(),
     },
+  });
+}
+
+export async function fetchLeadsRequest() {
+  const response = await bridgeRequest<{
+    ok: boolean;
+    leads?: LeadImport[];
+    leadImports?: LeadImport[];
+  }>({
+    path: '/api/leads',
+  });
+  return response.leads || response.leadImports || [];
+}
+
+export async function fetchLeadStagesRequest({ limit = 500 } = {}) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    groupBy: 'stage',
+  });
+  return bridgeRequest<LeadStagesResponse>({
+    path: `/api/leads/stages?${params.toString()}`,
+  });
+}
+
+export async function fetchDealTimelineRequest({ days = 30 } = {}) {
+  const params = new URLSearchParams({
+    days: String(days),
+  });
+  return bridgeRequest<DealTimelineResponse>({
+    path: `/api/deals/timeline?${params.toString()}`,
+  });
+}
+
+export async function fetchAiMetricsRequest({ days = 30 } = {}) {
+  const params = new URLSearchParams({
+    days: String(days),
+  });
+  return bridgeRequest<AiMetricsResponse>({
+    path: `/api/observability/ai-metrics?${params.toString()}`,
+  });
+}
+
+export async function fetchSkillOutcomesRequest() {
+  return bridgeRequest<SkillOutcomesResponse>({
+    path: '/api/skills/outcomes',
+  });
+}
+
+export async function fetchSkillTrendsRequest({
+  skillId = '',
+  skillName = '',
+  days = 30,
+}: {
+  skillId?: string;
+  skillName?: string;
+  days?: number;
+} = {}) {
+  const params = new URLSearchParams({
+    days: String(days),
+  });
+  if (skillId) params.set('skillId', skillId);
+  if (skillName) params.set('skillName', skillName);
+  return bridgeRequest<SkillTrendsResponse>({
+    path: `/api/skills/trends?${params.toString()}`,
+  });
+}
+
+export async function fetchMessagesRequest({ limit = 80, offset = 0 } = {}) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return bridgeRequest<{
+    ok: boolean;
+    count?: number;
+    limit?: number;
+    offset?: number;
+    messages?: MessageRecord[];
+  }>({
+    path: `/api/messages?${params.toString()}`,
+  });
+}
+
+export async function sendMessageRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/lead/send-message',
+    body,
+  });
+}
+
+export async function fetchCurrentScriptRequest(body: Record<string, unknown>) {
+  return bridgeRequest<CurrentScriptResponse>({
+    method: 'POST',
+    path: '/api/scripts/current',
+    body,
+  });
+}
+
+export async function scheduleMessageRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/messages',
+    body,
+  });
+}
+
+export async function scheduleAppointmentRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/appointments',
+    body,
+  });
+}
+
+export async function cancelScheduledCallRequest(
+  appointmentId: string,
+  body: Record<string, unknown> = {}
+) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/appointments',
+    body: {
+      ...body,
+      id: appointmentId,
+      status: 'cancelled',
+      actor: body.actor || 'PBK React shell',
+      notes: body.notes || 'Cancelled from the PBK call floor.',
+    },
+  });
+}
+
+export async function saveLeadNoteRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/leads/add-note',
+    body,
+  });
+}
+
+export async function sendOfferEmailRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/cold-email/send',
+    body,
   });
 }
 

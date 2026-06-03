@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   recordScriptOutcomeStats,
   selectContextAwareScript,
@@ -62,7 +65,53 @@ assert.equal(stats.usageCount, 21, 'Outcome stats should increment usage count.'
 assert.equal(stats.conversionCount, 6, 'Successful outcome should increment conversion count.');
 assert.equal(stats.dealValue, 15000, 'Outcome stats should accumulate deal value.');
 
+const semanticSelection = selectContextAwareScript({
+  scripts: [
+    {
+      id: 'cash-generic',
+      pathKey: 'cash_offer',
+      title: 'Generic Cash',
+      content: 'We can make a clean cash offer.',
+      tags: ['cash_offer'],
+      embedding: [1, 0, 0],
+      learnedWeight: 0,
+    },
+    {
+      id: 'cash-trust-proof',
+      pathKey: 'cash_offer',
+      title: 'Trust Proof',
+      content: 'I can slow down and show you proof before we talk numbers.',
+      tags: ['cash_offer'],
+      embedding: [0, 1, 0],
+      learnedWeight: 0.18,
+    },
+  ],
+  pathKey: 'cash_offer',
+  contextEmbedding: [0, 0.97, 0.03],
+  sentiment: 0,
+  explorationRate: 0,
+});
+
+assert.equal(semanticSelection.selectedScript.id, 'cash-trust-proof', 'Embedding similarity and learned weights should influence script selection.');
+assert(semanticSelection.reasonCodes.includes('embedding_similarity'), 'Selection should explain embedding similarity scoring.');
+assert(semanticSelection.reasonCodes.includes('learned_weight'), 'Selection should explain learned weight scoring.');
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const bridgeSource = readFileSync(path.resolve(__dirname, './openclaw-local-server.mjs'), 'utf8');
+const runtimeBridgeSource = readFileSync(path.resolve(__dirname, '../src/app/utils/runtimeBridge.ts'), 'utf8');
+const scriptPanelSource = readFileSync(path.resolve(__dirname, '../src/app/components/ScriptPanel.tsx'), 'utf8');
+
+assert(/\/api\/scripts\/current/.test(bridgeSource), 'Bridge should expose /api/scripts/current for ScriptPanel reconciliation.');
+assert(/fetchCurrentScriptRequest/.test(runtimeBridgeSource), 'Runtime bridge should expose a current-script fetch helper.');
+assert(
+  /normalized === '\/api\/scripts\/current'/.test(runtimeBridgeSource),
+  'Current-script reconciliation should be allowed through the local dev proxy without exposing bridge secrets.'
+);
+assert(/fetchCurrentScriptRequest/.test(scriptPanelSource), 'ScriptPanel should fetch the bridge-selected current script.');
+
 console.log('context-aware-script-rotator smoke passed', {
   lowSentiment: lowSentimentSelection.selectedScript.id,
   objection: objectionSelection.selectedScript.id,
+  semantic: semanticSelection.selectedScript.id,
 });

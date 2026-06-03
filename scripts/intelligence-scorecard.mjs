@@ -1,13 +1,33 @@
 import { fileURLToPath } from 'node:url';
 import { compactLongHorizonMemory } from './research-additives.mjs';
 
-const BASE_URL = String(process.env.PBK_HOSTED_BRIDGE_URL || process.env.PBK_BRIDGE_URL || 'https://pbk-openclaw-bridge.onrender.com')
-  .trim()
-  .replace(/\/+$/g, '');
-const API_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+export function getScorecardRuntimeConfig(env = process.env) {
+  return {
+    baseUrl: String(env.PBK_HOSTED_BRIDGE_URL || env.PBK_BRIDGE_URL || '')
+      .trim()
+      .replace(/\/+$/g, ''),
+    apiKey: String(env.PBK_BRIDGE_API_KEY || '').trim(),
+  };
+}
+
+export function assertScorecardRuntimeConfigured(env = process.env) {
+  const config = getScorecardRuntimeConfig(env);
+  if (!config.baseUrl) {
+    throw new Error('PBK_BRIDGE_URL or PBK_HOSTED_BRIDGE_URL is required for intelligence scorecard production checks.');
+  }
+  if (!config.apiKey) {
+    throw new Error('PBK_BRIDGE_API_KEY is required for intelligence scorecard authenticated checks.');
+  }
+  return config;
+}
+
+const SCORECARD_RUNTIME_CONFIG = getScorecardRuntimeConfig(process.env);
+const BASE_URL = SCORECARD_RUNTIME_CONFIG.baseUrl;
+const API_KEY = SCORECARD_RUNTIME_CONFIG.apiKey;
 const STRICT = process.argv.includes('--strict');
 const MEMORY_STATS = process.argv.includes('--memory-stats');
 const TARGET_SCORE = Math.max(1, Math.min(100, Number(process.env.PBK_INTELLIGENCE_TARGET_SCORE || 90)));
+const SMOKE_MIN_SCORE = Math.max(1, Math.min(100, Number(process.env.PBK_INTELLIGENCE_SMOKE_MIN_SCORE || 50)));
 
 export function clampScore(value) {
   if (!Number.isFinite(Number(value))) return 0;
@@ -33,6 +53,15 @@ export function gradeScore(score) {
   if (value >= 70) return 'C-';
   if (value >= 60) return 'D';
   return 'F';
+}
+
+export function assertScorecardThreshold(scorecard = {}, minScore = SMOKE_MIN_SCORE) {
+  const score = Number(scorecard?.overall?.score ?? scorecard?.score ?? 0);
+  const min = Math.max(1, Math.min(100, Number(minScore || SMOKE_MIN_SCORE)));
+  if (!Number.isFinite(score) || score < min) {
+    throw new Error(`Overall score ${Number.isFinite(score) ? score : 'missing'} is below intelligence score threshold ${min}.`);
+  }
+  return true;
 }
 
 function readinessLabel(score) {
@@ -184,30 +213,62 @@ export function buildMemoryStats(data = {}) {
   const latest = pickLatestTranscriptMessage(messages);
   const transcriptMessages = getTranscriptionMessages(messages);
   const transcript = getTranscriptTextForMemory(latest);
-  const compact = compactLongHorizonMemory({
-    transcript,
-    bant: extractBantFromDiagnosticPayload(latest.payload || {}),
-    emotion: latest.payload?.emotion || latest.payload?.emotionState || latest.payload?.sentiment || {},
-    turnCount: latest.payload?.turnCount || latest.payload?.transcript?.length || transcriptMessages.length,
-    env: process.env,
-  });
+  const compactor = typeof data.compactLongHorizonMemory === 'function' ? data.compactLongHorizonMemory : compactLongHorizonMemory;
+  let compact = null;
+  let memoryCompaction = {
+    status: 'ok',
+    reason: '',
+    engine: '',
+  };
+  try {
+    compact = compactor({
+      transcript,
+      bant: extractBantFromDiagnosticPayload(latest.payload || {}),
+      emotion: latest.payload?.emotion || latest.payload?.emotionState || latest.payload?.sentiment || {},
+      turnCount: latest.payload?.turnCount || latest.payload?.transcript?.length || transcriptMessages.length,
+      env: process.env,
+    });
+    memoryCompaction = {
+      status: compact?.ok === false ? 'failed' : 'ok',
+      reason: compact?.error || compact?.reason || '',
+      engine: compact?.engine || compact?.result || '',
+    };
+  } catch (error) {
+    compact = {
+      ok: false,
+      result: 'memory_compaction_failed',
+      compactState: null,
+      model: null,
+      error: error?.message || String(error),
+    };
+    memoryCompaction = {
+      status: 'failed',
+      reason: error?.message || String(error),
+      engine: 'compactLongHorizonMemory',
+    };
+  }
   return {
-    ok: true,
-    result: 'memory_stats_ready',
+    ok: memoryCompaction.status !== 'failed',
+    result: memoryCompaction.status === 'failed' ? 'memory_compaction_failed' : 'memory_stats_ready',
     baseUrl: BASE_URL,
     transcriptCount: transcriptMessages.length,
     latestMessageId: latest.id || latest.messageId || '',
     latestTranscriptChars: transcript.length,
-    compact: compact.compactState,
-    model: compact.model,
+    compact: compact?.compactState || null,
+    model: compact?.model || null,
+    components: {
+      memory_compaction: memoryCompaction,
+    },
     requestStatus: data.requestStatus || {},
-    missingCritical: compact.compactState?.openLoops || [],
+    missingCritical: compact?.compactState?.openLoops || [],
     diagnosticQuestions: [
       'What exact fact did Ava forget?',
       'How many turns into the call did the miss happen?',
       'Was it a BANT item, objection, personal detail, or callback/open loop?',
     ],
-    recommendation: compact.compactState?.shouldCompact
+    recommendation: memoryCompaction.status === 'failed'
+      ? `Memory compaction failed: ${memoryCompaction.reason || 'unknown reason'}. Check LLM/MEM1 configuration before trusting memory-readiness score.`
+      : compact?.compactState?.shouldCompact
       ? 'Compaction is active. Review protectedFields and openLoops; if Ava still forgets BANT/emotion facts after 50-100 calls, train the gated local MEM1 model.'
       : 'Current transcript is under compaction threshold. Keep collecting call turns; BANT/emotion/open loops are still explicitly protected.',
   };
@@ -821,6 +882,7 @@ async function collectProductionInputs() {
 }
 
 async function main() {
+  assertScorecardRuntimeConfigured(process.env);
   const inputs = await collectProductionInputs();
   if (MEMORY_STATS) {
     const output = buildMemoryStats(inputs);
@@ -841,7 +903,7 @@ async function main() {
     privateFailures,
   };
   console.log(JSON.stringify(output, null, 2));
-  if (STRICT && (output.overall.score < TARGET_SCORE || privateFailures.length)) {
+  if (STRICT && (privateFailures.length || !assertScorecardThreshold(output, TARGET_SCORE))) {
     process.exit(1);
   }
 }

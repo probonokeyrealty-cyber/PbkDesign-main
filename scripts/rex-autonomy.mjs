@@ -19,6 +19,48 @@ function getProfit(call = {}) {
   return Math.max(0, numberOr(call.profit ?? call.assignmentFee ?? call.assignment_fee ?? call.netProfit ?? call.net_profit ?? call.revenue, 0));
 }
 
+function getCallTimestamp(call = {}, fallback = Date.now()) {
+  const timestamp = Date.parse(call.createdAt || call.created_at || call.startedAt || call.started_at || call.updatedAt || call.updated_at || '');
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+function getTranscriptText(call = {}) {
+  const transcript = call.transcript || call.turns || call.messages || call.conversation || '';
+  if (Array.isArray(transcript)) {
+    return transcript
+      .map((turn) =>
+        typeof turn === 'string'
+          ? turn
+          : [turn.speaker || turn.role || '', turn.text || turn.content || turn.body || ''].filter(Boolean).join(': ')
+      )
+      .join('\n');
+  }
+  if (transcript && typeof transcript === 'object') return JSON.stringify(transcript);
+  return String(transcript || call.transcriptText || call.transcript_text || call.notes || '');
+}
+
+function inferFailureTagsFromCall(call = {}) {
+  const existing = Array.isArray(call.failureTags)
+    ? call.failureTags
+    : Array.isArray(call.failure_tags)
+      ? call.failure_tags
+      : [];
+  const tags = new Set(existing.map((tag) => String(tag || '').trim().toLowerCase()).filter(Boolean));
+  const text = getTranscriptText(call).toLowerCase();
+  const outcome = normalizeOutcome(call.outcome || call.status || call.result || call.outcomeLabel || call.outcome_label);
+  if (!text && !isAcceptedOffer(call)) tags.add('no_transcript');
+  if (/\b(scam|trust|worried|nervous|angry|frustrated|not interested|too low)\b/.test(text)) {
+    if (!/\b(i hear|understand|fair|makes sense|slow down|concern|no pressure|walk through)\b/.test(text)) {
+      tags.add('seller_negative_unhandled');
+    }
+  }
+  if (text && !/\b(send|schedule|contract|agreement|docusign|follow|next|call back|paperwork|appointment)\b/.test(text)) {
+    tags.add('weak_next_step');
+  }
+  if (/not_interested|lost|failed|no_answer|hung_up/.test(outcome)) tags.add(`outcome_${outcome}`);
+  return [...tags].filter(Boolean);
+}
+
 function countTags(items = []) {
   const counts = new Map();
   for (const item of items) {
@@ -38,6 +80,18 @@ function countTags(items = []) {
     .map(([tag, count]) => ({ tag, count }));
 }
 
+function inferMonthlyRunRate(calls = [], generatedAt = new Date().toISOString()) {
+  const now = Date.parse(generatedAt);
+  const currentTime = Number.isFinite(now) ? now : Date.now();
+  const since30Days = currentTime - 30 * 24 * 60 * 60 * 1000;
+  const closedCalls = calls.filter((call) => isAcceptedOffer(call) || getProfit(call) > 0);
+  const recentRevenue = closedCalls
+    .filter((call) => getCallTimestamp(call, currentTime) >= since30Days)
+    .reduce((sum, call) => sum + getProfit(call), 0);
+  if (recentRevenue > 0) return recentRevenue;
+  return closedCalls.reduce((sum, call) => sum + getProfit(call), 0);
+}
+
 export function buildRexKpiSnapshot(params = {}) {
   const calls = Array.isArray(params.calls) ? params.calls : [];
   const callAnalyses = Array.isArray(params.callAnalyses || params.call_analyses) ? (params.callAnalyses || params.call_analyses) : [];
@@ -46,23 +100,49 @@ export function buildRexKpiSnapshot(params = {}) {
   const totalProfit = calls.reduce((sum, call) => sum + getProfit(call), 0);
   const measuredProsody = prosodyDecisions.filter((item) => typeof item.outcomeSuccess === 'boolean' || typeof item.outcome_success === 'boolean').length;
   const targetMonthlyRevenue = Math.max(1, numberOr(params.targetMonthlyRevenue ?? params.target_monthly_revenue, DEFAULT_MONTHLY_TARGET));
+  const generatedAt = params.generatedAt || params.generated_at || new Date().toISOString();
+  const explicitMonthlyRunRate = params.monthlyRunRate ?? params.monthly_run_rate;
+  const monthlyRunRate = Math.max(
+    0,
+    explicitMonthlyRunRate === undefined || explicitMonthlyRunRate === null || explicitMonthlyRunRate === ''
+      ? inferMonthlyRunRate(calls, generatedAt)
+      : numberOr(explicitMonthlyRunRate, 0)
+  );
+  const minCallsForModel = numberOr(params.minCallsForModel, DEFAULT_MIN_CALLS_FOR_MODEL);
+  const onnxDataReady = calls.length >= minCallsForModel;
+  const structuredTagRows = countTags(callAnalyses);
+  const inferredCallTagRows = calls.map((call) => ({ failureTags: inferFailureTagsFromCall(call) }));
   return {
-    generatedAt: params.generatedAt || params.generated_at || new Date().toISOString(),
+    generatedAt,
     totalCalls: calls.length,
     acceptedOffers,
     conversionRate: calls.length ? acceptedOffers / calls.length : 0,
     totalProfit,
     averageProfit: calls.length ? totalProfit / calls.length : 0,
     targetMonthlyRevenue,
-    monthlyRunRate: Math.max(0, numberOr(params.monthlyRunRate ?? params.monthly_run_rate, 0)),
-    targetGap: Math.max(0, targetMonthlyRevenue - Math.max(0, numberOr(params.monthlyRunRate ?? params.monthly_run_rate, 0))),
+    monthlyRunRate,
+    targetGap: Math.max(0, targetMonthlyRevenue - monthlyRunRate),
     analyzedCalls: callAnalyses.length,
     averageCallScore: callAnalyses.length
       ? callAnalyses.reduce((sum, item) => sum + numberOr(item.score, 0), 0) / callAnalyses.length
       : 0,
-    topFailureTags: countTags(callAnalyses).slice(0, 8),
+    topFailureTags: (structuredTagRows.length ? structuredTagRows : countTags(inferredCallTagRows)).slice(0, 8),
     measuredProsody,
-    onnxDataReady: calls.length >= numberOr(params.minCallsForModel, DEFAULT_MIN_CALLS_FOR_MODEL),
+    onnxDataReady,
+    onnxTraining: onnxDataReady
+      ? {
+          ready: true,
+          action: 'trainEmotionWorldModel',
+          toolName: 'trainEmotionWorldModel',
+          endpoint: '/invoke',
+          command: 'npm run emotion-world-model:train',
+          source: 'rex-autonomy',
+        }
+      : {
+          ready: false,
+          action: 'collect_training_calls',
+          remainingCalls: Math.max(0, minCallsForModel - calls.length),
+        },
   };
 }
 
@@ -111,6 +191,19 @@ export function proposeAutonomousRexGoals(kpis = {}, options = {}) {
       priority: 'high',
       approvalRequired: true,
       metadata: { currentCalls: totalCalls, targetCalls: 500 },
+    }, goals.length, now));
+  } else if (kpis.onnxTraining?.action === 'trainEmotionWorldModel') {
+    goals.push(makeGoal({
+      actionId: 'train_emotion_world_model',
+      actionType: 'model_training',
+      title: 'Train Ava emotion/prosody model from live calls',
+      description: `${totalCalls} labeled calls are available; run the ONNX training/export job instead of leaving readiness as a flag.`,
+      reason: 'Rex has enough live data to graduate from heuristic voice guidance to a trained model artifact.',
+      successMetric: 'Emotion world model training completes and exports a fresh ONNX artifact.',
+      target: 'emotion_world_model',
+      priority: 'high',
+      approvalRequired: false,
+      metadata: { training: kpis.onnxTraining },
     }, goals.length, now));
   }
 

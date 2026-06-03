@@ -2,6 +2,7 @@ import {
   applySpikeInjection,
   createLifNetwork,
   getNetworkSnapshot,
+  restoreNetworkFromSnapshot,
   stepLifNetwork,
 } from './lifCore.mjs';
 
@@ -33,14 +34,30 @@ self.onmessage = (event) => {
   try {
     if (message.type === 'init') {
       agentId = String(message.agentId || message.agent || agentId || 'agent');
-      network = createLifNetwork(message.options || {});
-      post('initialized', { snapshot: getNetworkSnapshot(network) });
+      const options = message.options || {};
+      const restoredSnapshot = options.restoredSnapshot || message.restoredSnapshot || null;
+      network = restoredSnapshot
+        ? restoreNetworkFromSnapshot(restoredSnapshot, options)
+        : createLifNetwork(options);
+      post('initialized', {
+        restored: Boolean(restoredSnapshot),
+        snapshot: getNetworkSnapshot(network),
+      });
       return;
     }
 
     if (message.type === 'reset') {
       network = createLifNetwork(message.options || {});
       post('reset', { snapshot: getNetworkSnapshot(network) });
+      return;
+    }
+
+    if (message.type === 'restore_state') {
+      network = restoreNetworkFromSnapshot(
+        message.snapshot || message.data || {},
+        message.options || {}
+      );
+      post('restored', { snapshot: getNetworkSnapshot(network) });
       return;
     }
 
@@ -70,8 +87,20 @@ self.onmessage = (event) => {
       return;
     }
 
-    post('error', { error: `Unsupported SNN worker message: ${String(message.type || 'missing')}` });
+    post('error', {
+      error: `Unsupported SNN worker message: ${String(message.type || 'missing')}`,
+    });
   } catch (error) {
     post('error', { error: error instanceof Error ? error.message : String(error) });
   }
 };
+
+self.addEventListener?.('error', (event) => {
+  post('error', { error: event?.message || 'SNN worker crashed.' });
+});
+
+self.addEventListener?.('unhandledrejection', (event) => {
+  post('error', {
+    error: event?.reason?.message || String(event?.reason || 'SNN worker promise rejected.'),
+  });
+});

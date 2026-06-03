@@ -26,10 +26,10 @@ import { isYouTubeUrl, processYouTubeTraining, runYouTubeTrainingEvalSuite } fro
 import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './synthetic-edge-cases.mjs';
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
-import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent } from './ava-assistant-chat.mjs';
+import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { listTeamWorkflowTemplates, runAgentTeamWorkflow } from './agent-teams.mjs';
 import { runAutoSkillLearner as runAutoSkillLearnerCore } from './auto-skill-learner.mjs';
-import { consultNurtureAgentCore, ensureNurtureSchema, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
+import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -530,6 +530,23 @@ const PUBLIC_PATHS = new Set([
   '/api/public/ava-chat',
   '/public/ava-chat',
 ]);
+
+const PUBLIC_READ_PATHS = new Set([
+  '/api/leads/stages',
+  '/api/v1/leads/stages',
+  '/api/deals/timeline',
+  '/api/v1/deals/timeline',
+  '/api/observability/ai-metrics',
+  '/api/v1/observability/ai-metrics',
+  '/api/skills/outcomes',
+  '/api/v1/skills/outcomes',
+  '/api/skills/trends',
+  '/api/v1/skills/trends',
+]);
+
+function isPublicBridgeRequest(method = 'GET', pathname = '') {
+  return PUBLIC_PATHS.has(pathname) || (String(method || 'GET').toUpperCase() === 'GET' && PUBLIC_READ_PATHS.has(pathname));
+}
 
 // Postgres state backend. When PBK_DATABASE_URL is set the bridge persists
 // state to a 'bridge_state' table (single row, JSONB column) instead of the
@@ -17943,6 +17960,18 @@ async function selectContextAwareScriptRecord(params = {}) {
   };
 }
 
+async function getCurrentScriptRecord(params = {}) {
+  const selection = await selectContextAwareScriptRecord({
+    ...params,
+    persistExposure: params.persistExposure ?? params.persist_exposure ?? false,
+  });
+  return {
+    ...selection,
+    result: selection.ok ? 'current_script_selected' : selection.result,
+    source: 'context-aware-script-rotator',
+  };
+}
+
 async function recordContextAwareScriptOutcomeRecord(params = {}) {
   const scriptId = String(params.scriptId || params.script_id || params.id || '').trim();
   if (!scriptId) return { ok: false, result: 'invalid_request', error: 'scriptId is required.' };
@@ -32332,6 +32361,33 @@ async function invokeToolWithOperatingGuard(toolName, params = {}) {
   return result;
 }
 
+async function personalizeNurtureMessageWithStrategist({ draft = '', lead = {}, channel = '', step = null } = {}) {
+  const result = await askStrategistRecord({
+    agentName: 'Nurture Agent',
+    responseFormat: 'text',
+    temperature: 0.2,
+    maxTokens: 220,
+    source: 'nurture-agent-personalization',
+    situation: [
+      'Rewrite this PBK nurture follow-up in Ava voice.',
+      'Keep it compliant, concise, no pressure, and do not add prices or legal claims.',
+      `Channel: ${channel || 'unknown'}`,
+      `Lead: ${JSON.stringify({
+        name: lead.lead_name || lead.first_name || lead.name || '',
+        address: lead.address || '',
+        stage: lead.stage || '',
+        motivationScore: lead.motivation_score ?? null,
+        engagementScore: lead.engagement_score ?? null,
+      })}`,
+      step ? `Step: ${JSON.stringify(step)}` : '',
+      `Draft: ${draft}`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+  return String(result?.rawAnswer || result?.answer || result?.response?.text || result?.response?.message || draft).trim() || draft;
+}
+
 function getRangeStart(range = '30d') {
   const normalized = String(range || '30d')
     .trim()
@@ -32408,6 +32464,368 @@ function buildAnalyticsSnapshot(range = '30d') {
       contractCloseRate: contracts.length ? Number(((completedContracts.length / contracts.length) * 100).toFixed(1)) : 0,
     },
     rows,
+  };
+}
+
+const ANALYTICS_STAGE_ORDER = ['contacted', 'qualified', 'offer_sent', 'closed'];
+
+function normalizeAnalyticsStageKey(value = '') {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (/closed|won|signed|funded/.test(raw)) return 'closed';
+  if (/offer|proposal|contract|loi/.test(raw)) return 'offer_sent';
+  if (/qualif|warm|appointment|bant|negotiat/.test(raw)) return 'qualified';
+  if (/contact|callback|replied|new|cold|lead|property_data|import/.test(raw)) return 'contacted';
+  return raw || 'contacted';
+}
+
+function analyticsStageLabel(stage = '') {
+  const key = normalizeAnalyticsStageKey(stage);
+  if (key === 'offer_sent') return 'Offer Sent';
+  return key
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || 'Contacted';
+}
+
+function getAnalyticsLeadStage(lead = {}) {
+  return normalizeAnalyticsStageKey(
+    lead.stage ||
+      lead.status ||
+      lead.leadStage ||
+      lead.pipelineStage ||
+      lead.temperature ||
+      lead.raw?.stage ||
+      lead.raw?.status ||
+      lead.payload?.stage ||
+      lead.payload?.status ||
+      ''
+  );
+}
+
+function getAnalyticsLeadRevenue(lead = {}) {
+  const raw = lead.raw || {};
+  const property = lead.property || raw.property || {};
+  const deal = lead.deal || raw.deal || raw.analysis || raw.analyzer || {};
+  return toMoneyNumber(
+    lead.revenue ??
+      lead.estimatedProfit ??
+      lead.estimated_profit ??
+      lead.assignmentFee ??
+      lead.assignment_fee ??
+      deal.revenue ??
+      deal.estimatedProfit ??
+      deal.estimated_profit ??
+      deal.assignmentFee ??
+      deal.assignment_fee ??
+      property.estimatedProfit ??
+      property.estimated_profit ??
+      0,
+    0
+  );
+}
+
+function normalizeAnalyticsLead(lead = {}) {
+  const raw = lead.raw || {};
+  const seller = lead.seller || raw.seller || {};
+  const property = lead.property || raw.property || {};
+  const id = String(lead.id || lead.leadId || lead.lead_id || raw.id || raw.leadId || '').trim();
+  const stage = getAnalyticsLeadStage(lead);
+  return {
+    id: id || `lead-${Math.abs(hashString(JSON.stringify(lead))).toString(16)}`,
+    name: lead.leadName || lead.lead_name || seller.name || raw.leadName || 'Unknown seller',
+    address: lead.address || property.address || raw.address || '',
+    stage,
+    stageLabel: analyticsStageLabel(stage),
+    revenue: getAnalyticsLeadRevenue(lead),
+    updatedAt: lead.updatedAt || lead.updated_at || raw.updatedAt || raw.updated_at || lead.createdAt || lead.created_at || '',
+  };
+}
+
+function sortAnalyticsStages(stages = []) {
+  return [...stages].sort((left, right) => {
+    const leftIndex = ANALYTICS_STAGE_ORDER.indexOf(normalizeAnalyticsStageKey(left.stage));
+    const rightIndex = ANALYTICS_STAGE_ORDER.indexOf(normalizeAnalyticsStageKey(right.stage));
+    return (leftIndex === -1 ? 999 : leftIndex) - (rightIndex === -1 ? 999 : rightIndex) || String(left.stage).localeCompare(String(right.stage));
+  });
+}
+
+function buildLeadStageFallback({ warning = '' } = {}) {
+  const groups = new Map();
+  for (const lead of Array.isArray(state.leadImports) ? state.leadImports : []) {
+    const normalized = normalizeAnalyticsLead(lead);
+    if (!groups.has(normalized.stage)) {
+      groups.set(normalized.stage, {
+        stage: normalized.stage,
+        label: normalized.stageLabel,
+        total: 0,
+        revenue: 0,
+        leads: [],
+      });
+    }
+    const group = groups.get(normalized.stage);
+    group.total += 1;
+    group.revenue += normalized.revenue;
+    if (group.leads.length < 20) group.leads.push(normalized);
+  }
+  return {
+    ok: true,
+    result: 'local_view_only',
+    source: 'bridge-state',
+    generatedAt: isoNow(),
+    stages: sortAnalyticsStages(Array.from(groups.values())),
+    warning,
+  };
+}
+
+async function buildLeadStageAnalytics({ limit = 500 } = {}) {
+  const result = await queryPgRows(
+    `SELECT id, lead_name, address, status, stage, raw, created_at, updated_at
+     FROM public.lead_profiles
+     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT $1`,
+    [Math.max(1, Math.min(1000, Number(limit || 500)))]
+  );
+  if (!result.ok || !result.rows.length) {
+    return buildLeadStageFallback({
+      warning: result.ok ? 'Postgres lead_profiles is empty; showing bridge-state leads.' : `Postgres lead_profiles unavailable (${result.error || result.reason}); showing bridge-state leads.`,
+    });
+  }
+  const groups = new Map();
+  for (const row of result.rows) {
+    const normalized = normalizeAnalyticsLead(row);
+    if (!groups.has(normalized.stage)) {
+      groups.set(normalized.stage, {
+        stage: normalized.stage,
+        label: normalized.stageLabel,
+        total: 0,
+        revenue: 0,
+        leads: [],
+      });
+    }
+    const group = groups.get(normalized.stage);
+    group.total += 1;
+    group.revenue += normalized.revenue;
+    if (group.leads.length < 20) group.leads.push(normalized);
+  }
+  return {
+    ok: true,
+    result: 'live',
+    source: 'postgres:lead_profiles',
+    generatedAt: isoNow(),
+    stages: sortAnalyticsStages(Array.from(groups.values())),
+  };
+}
+
+function isClosedAnalyticsDeal(item = {}) {
+  return /closed|won|signed|funded|complete/i.test(String(item.status || item.stage || item.result || ''));
+}
+
+function getAnalyticsDealRevenue(item = {}) {
+  const payload = item.payload || item.raw || item.result || {};
+  return toMoneyNumber(
+    item.revenue ??
+      item.amount ??
+      item.estimatedProfit ??
+      item.estimated_profit ??
+      item.profit ??
+      item.assignmentFee ??
+      item.assignment_fee ??
+      payload.revenue ??
+      payload.amount ??
+      payload.estimatedProfit ??
+      payload.estimated_profit ??
+      payload.profit ??
+      payload.assignmentFee ??
+      payload.assignment_fee ??
+      0,
+    0
+  );
+}
+
+function normalizeAnalyticsDeal(item = {}) {
+  const lead = normalizeAnalyticsLead({
+    id: item.leadId || item.lead_id || item.lead?.id || item.id,
+    leadName: item.leadName || item.lead_name || item.lead?.leadName || item.lead?.lead_name,
+    address: item.address || item.lead?.address,
+    stage: 'closed',
+    revenue: getAnalyticsDealRevenue(item),
+    raw: item.payload || item.raw || {},
+    updatedAt: item.updatedAt || item.updated_at || item.createdAt || item.created_at,
+  });
+  return {
+    id: String(item.id || item.contractId || item.contract_id || item.leadId || item.lead_id || lead.id).trim(),
+    day: new Date(getRecordTimestamp(item) || Date.now()).toISOString().slice(0, 10),
+    status: item.status || '',
+    revenue: lead.revenue,
+    lead,
+  };
+}
+
+function buildDealTimelineFromItems(items = [], { days = 30, source = 'bridge-state', warning = '' } = {}) {
+  const startMs = Date.now() - Math.max(1, Number(days || 30)) * 24 * 60 * 60 * 1000;
+  const groups = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    const ts = getRecordTimestamp(item);
+    if (!ts || ts < startMs || !isClosedAnalyticsDeal(item)) continue;
+    const deal = normalizeAnalyticsDeal(item);
+    if (!groups.has(deal.day)) groups.set(deal.day, { day: deal.day, count: 0, revenue: 0, leads: [] });
+    const group = groups.get(deal.day);
+    group.count += 1;
+    group.revenue += deal.revenue;
+    if (group.leads.length < 20) group.leads.push(deal.lead);
+  }
+  return {
+    ok: true,
+    result: source.startsWith('postgres') ? 'live' : 'local_view_only',
+    source,
+    generatedAt: isoNow(),
+    days: Array.from(groups.values()).sort((left, right) => String(left.day).localeCompare(String(right.day))),
+    warning,
+  };
+}
+
+async function buildDealTimelineAnalytics({ days = 30 } = {}) {
+  const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const result = await queryPgRows(
+    `SELECT
+       c.id,
+       c.lead_id AS "leadId",
+       c.status,
+       c.amount::float AS amount,
+       c.payload,
+       c.created_at,
+       c.updated_at,
+       l.lead_name AS "leadName",
+       l.address
+     FROM public.contracts c
+     LEFT JOIN public.lead_profiles l ON l.id = c.lead_id
+     WHERE COALESCE(c.workspace_id, 'pbk') = 'pbk'
+       AND c.created_at > NOW() - ($1::int * INTERVAL '1 day')
+     ORDER BY c.created_at ASC`,
+    [rangeDays]
+  );
+  if (!result.ok || !result.rows.length) {
+    return buildDealTimelineFromItems([...(state.contracts || []), ...(state.analyzerRuns || [])], {
+      days: rangeDays,
+      source: 'bridge-state',
+      warning: result.ok ? 'Postgres contracts is empty; showing bridge-state deal records.' : `Postgres contracts unavailable (${result.error || result.reason}); showing bridge-state deal records.`,
+    });
+  }
+  return buildDealTimelineFromItems(result.rows, {
+    days: rangeDays,
+    source: 'postgres:contracts',
+  });
+}
+
+async function buildAiObservabilityMetrics({ days = 30 } = {}) {
+  const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const [latency, qa, safety, usage] = await Promise.all([
+    queryPgRows(
+      `SELECT percentile_cont(0.95) WITHIN GROUP (
+         ORDER BY COALESCE(turn_completion_ms, transcript_to_tts_ms, speech_final_to_reply_start_ms)
+       )::float AS p95_latency_ms
+       FROM public.pbk_turn_latency
+       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+         AND COALESCE(turn_completion_ms, transcript_to_tts_ms, speech_final_to_reply_start_ms) IS NOT NULL`,
+      [rangeDays]
+    ),
+    queryPgRows(
+      `SELECT
+         COUNT(*)::int AS total,
+         SUM(retry_count)::int AS retries
+       FROM public.pbk_qa_audit
+       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')`,
+      [rangeDays]
+    ),
+    queryPgRows(
+      `SELECT COUNT(*)::int AS safety_blocks
+       FROM public.pbk_safety_audit
+       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')
+         AND blocked IS TRUE`,
+      [rangeDays]
+    ),
+    queryPgRows(
+      `SELECT
+         COUNT(*)::int AS tool_calls,
+         COALESCE(SUM(
+           CASE
+             WHEN context->>'costUsd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'costUsd')::numeric
+             WHEN context->>'cost_usd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'cost_usd')::numeric
+             WHEN context->>'estimatedCostUsd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'estimatedCostUsd')::numeric
+             WHEN context->>'aiSpendUsd' ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (context->>'aiSpendUsd')::numeric
+             ELSE 0
+           END
+         ), 0)::float AS ai_spend_usd
+       FROM public.pbk_tool_usage
+       WHERE created_at > NOW() - ($1::int * INTERVAL '1 day')`,
+      [rangeDays]
+    ),
+  ]);
+  const postgresOk = latency.ok || qa.ok || safety.ok || usage.ok;
+  const toolUsage = state.status?.toolUsage || {};
+  const qaTotal = toNumber(qa.rows?.[0]?.total, 0);
+  const qaRetries = toNumber(qa.rows?.[0]?.retries, 0);
+  return {
+    ok: true,
+    result: postgresOk ? 'live' : 'local_view_only',
+    source: postgresOk ? 'postgres:observability' : 'bridge-state',
+    generatedAt: isoNow(),
+    days: rangeDays,
+    metrics: {
+      p95LatencyMs: toNumber(latency.rows?.[0]?.p95_latency_ms, 0),
+      qaRetryRate: qaTotal ? Number((qaRetries / qaTotal).toFixed(4)) : 0,
+      safetyBlocks: toNumber(safety.rows?.[0]?.safety_blocks, toNumber(toolUsage.safetyBlocks || toolUsage.safety_block || 0, 0)),
+      toolCalls: toNumber(usage.rows?.[0]?.tool_calls, Object.values(toolUsage).reduce((sum, value) => sum + toNumber(value, 0), 0)),
+      aiSpendUsd: Number(toNumber(usage.rows?.[0]?.ai_spend_usd, 0).toFixed(4)),
+    },
+    warning: postgresOk ? '' : 'Postgres observability tables were unavailable; showing bridge-state counters where available.',
+  };
+}
+
+async function buildSkillTrendAnalytics({ skillId = '', skillName = '', days = 30 } = {}) {
+  const rangeDays = Math.max(1, Math.min(365, Number(days || 30)));
+  const id = String(skillId || '').trim();
+  const name = String(skillName || '').trim();
+  const result = await queryPgRows(
+    `SELECT
+       used_at::date AS day,
+       COUNT(*)::int AS uses,
+       COUNT(*) FILTER (WHERE success IS TRUE)::int AS wins,
+       COUNT(*) FILTER (WHERE success IS FALSE)::int AS losses
+     FROM public.skill_usage
+     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+       AND used_at > NOW() - ($1::int * INTERVAL '1 day')
+       AND ($2::text = '' OR skill_id = $2)
+       AND ($3::text = '' OR LOWER(skill_name) = LOWER($3))
+     GROUP BY used_at::date
+     ORDER BY day ASC`,
+    [rangeDays, id, name]
+  );
+  const rows = result.rows || [];
+  return {
+    ok: true,
+    result: result.ok ? 'live' : 'local_view_only',
+    source: result.ok ? 'postgres:skill_usage' : 'bridge-state',
+    generatedAt: isoNow(),
+    skillId: id,
+    skillName: name,
+    points: rows.map((row) => {
+      const uses = toNumber(row.uses, 0);
+      const wins = toNumber(row.wins, 0);
+      return {
+        day: row.day,
+        uses,
+        wins,
+        losses: toNumber(row.losses, 0),
+        successRate: uses ? Number(((wins / uses) * 100).toFixed(1)) : 0,
+      };
+    }),
+    warning: result.ok ? '' : `Postgres skill_usage unavailable (${result.error || result.reason}); trend is unavailable.`,
   };
 }
 
@@ -33073,16 +33491,19 @@ function buildAgentRegistryStatus(params = {}) {
 async function checkAgentRegistryHealth({ persist = false } = {}) {
   const checkedAt = isoNow();
   const nextRegistry = [];
+  const localHandlers = getLocalAgentRegistryHandlers();
   for (const agent of getCurrentAgentRegistry()) {
     const normalized = normalizeAgentRegistryRecord(agent);
-    if (!normalized.endpoint) {
+    const localEndpoint = normalized.metadata?.local !== false && (!normalized.endpoint || normalized.endpoint.startsWith('/'));
+    if (localEndpoint) {
+      const handlerReady = typeof localHandlers[normalized.id] === 'function';
       nextRegistry.push({
         ...normalized,
-        status: normalized.status || 'active',
+        status: handlerReady ? 'active' : 'degraded',
         healthCheckedAt: checkedAt,
         health_checked_at: checkedAt,
-        lastError: '',
-        last_error: '',
+        lastError: handlerReady ? '' : 'local_handler_missing',
+        last_error: handlerReady ? '' : 'local_handler_missing',
       });
       continue;
     }
@@ -35263,6 +35684,83 @@ async function buildSkillOutcomes() {
     source: 'supabase',
     generatedAt: isoNow(),
     skills,
+  };
+}
+
+async function reloadActiveSkillsIntoBridgeState(options = {}) {
+  ensureAgentFleetCollections();
+  const limit = Math.max(1, Math.min(250, Number(options.limit || 100)));
+  const result = await queryPgRows(
+    `SELECT id, agent_id AS "agentId", agent_name AS "agentName", name, source, level, status,
+            COALESCE(confidence, 0)::float AS confidence, evidence, updated_at AS "updatedAt"
+     FROM public.skills
+     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+       AND COALESCE(status, 'active') NOT IN ('retired', 'disabled')
+     ORDER BY confidence DESC, updated_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+  let rows = result.ok ? result.rows : [];
+  let source = result.ok ? 'postgres' : result.reason || 'postgres_unavailable';
+  if (!rows.length) {
+    const rest = await fetchSkillOutcomesFromSupabaseRest();
+    if (rest.ok && rest.rows.length) {
+      rows = rest.rows;
+      source = 'supabase-rest';
+    }
+  }
+  const skills = rows.map(normalizeSkillOutcome).filter((skill) => !/retired|disabled/i.test(`${skill.status || ''} ${skill.level || ''}`));
+  const now = isoNow();
+  const touchedAgents = new Set();
+  for (const skill of skills) {
+    const agentId = normalizeAgentId(skill.agentId || skill.agentName || 'ava') || 'ava';
+    let agent = findAgentRecord(agentId);
+    if (!agent && agentId === 'ava') agent = findAgentRecord('ava');
+    if (!agent) continue;
+    const confidence = Number(skill.confidence || 0) <= 1 ? Math.round(Number(skill.confidence || 0) * 100) : Math.round(Number(skill.confidence || 0));
+    const nextSkill = {
+      id: skill.id,
+      name: skill.name,
+      level: skill.level || 'candidate',
+      status: skill.status || 'active',
+      source: skill.source || source,
+      confidence: Math.max(0, Math.min(100, confidence)),
+      evidence: skill.evidence || '',
+      updatedAt: skill.updatedAt || now,
+      reloadedAt: now,
+    };
+    const existingSkills = Array.isArray(agent.skills) ? agent.skills : [];
+    const nextAgent = {
+      ...agent,
+      skills: [...existingSkills.filter((item) => String(item.name || '').trim().toLowerCase() !== String(nextSkill.name || '').trim().toLowerCase()), nextSkill].sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0)),
+      updatedAt: now,
+      updatedBy: options.actor || 'Auto Skill Learner',
+      activity: options.activity || `Reloaded ${skill.name} from SkillRepo.`,
+    };
+    nextAgent.skillsTotal = Math.max(Number(nextAgent.skillsTotal || 0), nextAgent.skills.length);
+    upsertById(state, 'agents', nextAgent);
+    touchedAgents.add(nextAgent.id || nextAgent.name || agentId);
+  }
+  if (touchedAgents.size) {
+    addActivity(
+      state,
+      makeActivity({
+        actor: options.actor || 'Auto Skill Learner',
+        category: 'BRAIN',
+        status: 'success',
+        text: `Reloaded ${skills.length} active skill${skills.length === 1 ? '' : 's'} into ${touchedAgents.size} agent${touchedAgents.size === 1 ? '' : 's'}.`,
+        target: 'SkillRepo',
+      })
+    );
+    await persistState(state);
+  }
+  return {
+    ok: true,
+    result: touchedAgents.size ? 'active_skills_reloaded' : 'no_active_skills_reloaded',
+    source,
+    skillsReloaded: skills.length,
+    agentsUpdated: touchedAgents.size,
+    warning: result.ok ? '' : result.error || result.reason || '',
   };
 }
 
@@ -39481,6 +39979,10 @@ const toolHandlers = {
     const pool = getPgPool();
     const enriched = enrichNurtureLeadParams(params);
     return startNurtureSequenceCore(pool, enriched, {
+      approvalId: params.approvalId || params.approval_id || '',
+      useLLMPersonalization: params.useLLMPersonalization ?? params.use_llm_personalization,
+      personalizeMessage:
+        params.useLLMPersonalization || params.use_llm_personalization ? personalizeNurtureMessageWithStrategist : null,
       invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
     });
   },
@@ -39494,6 +39996,9 @@ const toolHandlers = {
     recordToolUse('processDueNurtureSteps');
     return processDueNurtureInstances(getPgPool(), {
       limit: params.limit,
+      useLLMPersonalization: params.useLLMPersonalization ?? params.use_llm_personalization,
+      personalizeMessage:
+        params.useLLMPersonalization || params.use_llm_personalization ? personalizeNurtureMessageWithStrategist : null,
       invokeTool: (toolName, toolParams) => invokeToolWithOperatingGuard(toolName, toolParams),
     });
   },
@@ -39503,10 +40008,16 @@ const toolHandlers = {
     try {
       const result = await runAutoSkillLearnerCore({
         pool: getPgPool(),
+        env: process.env,
         windowDays: params.windowDays || params.lookbackDays || params.days,
         minSuccessCount: params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes,
         minSuccessRate: params.minSuccessRate || params.min_success_rate,
         limit: params.limit,
+        reloadActiveSkills: (payload) =>
+          reloadActiveSkillsIntoBridgeState({
+            ...payload,
+            actor: params.actor || 'Auto Skill Learner',
+          }),
         strategist: async ({ role, prompt, responseFormat }) =>
           askStrategistRecord({
             agentName: role || 'Auto Skill Learner',
@@ -42142,6 +42653,17 @@ const toolHandlers = {
       address: context.address || params.address || '',
       notes: 'Lead nurture sequence requested. Email/SMS/voice touches stay approval-gated before provider sends.',
       source: params.source || 'lead-nurture-agent',
+      metadata: {
+        kind: 'lead_nurture',
+        executeOnApproval: true,
+        sequenceParams: {
+          ...params,
+          leadId,
+          leadName: context.leadName || params.leadName || 'Lead',
+          address: context.address || params.address || '',
+          force: Boolean(params.force),
+        },
+      },
     });
     const plan = {
       id: params.id || `nurture-${leadId}-${Date.now()}`,
@@ -44377,6 +44899,7 @@ async function handleEvent(eventType, payload = {}) {
     let promptResult = null;
     let rexDecisionResult = null;
     let providerActionResult = null;
+    let nurtureResult = null;
     if (approval.type === 'contract' && approval.contractId) {
       const contract = state.contracts.find((item) => item.id === approval.contractId);
       if (contract) {
@@ -44473,6 +44996,77 @@ async function handleEvent(eventType, payload = {}) {
       }
     }
 
+    if (approval.status === 'approved') {
+      const approvalType = String(approval.type || '').toLowerCase();
+      const approvalMetadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+      const hasNurtureInstance = Boolean(approvalMetadata.nurtureInstanceId || approvalMetadata.nurture_instance_id || approvalMetadata.instanceId);
+      if (hasNurtureInstance) {
+        try {
+          nurtureResult = await executeApprovedNurtureSequenceCore(
+            getPgPool(),
+            {
+              approval,
+              metadata: approvalMetadata,
+              approvalId: approval.id,
+            },
+            {
+              approvalId: approval.id,
+              invokeTool: (toolName, toolParams) =>
+                invokeToolWithOperatingGuard(toolName, {
+                  ...toolParams,
+                  approvalId: approval.id,
+                }),
+            }
+          );
+        } catch (error) {
+          nurtureResult = {
+            ok: false,
+            result: 'approved_nurture_execution_failed',
+            error: error?.message || String(error),
+          };
+        }
+      } else if (approvalType === 'lead-nurture' && approvalMetadata.executeOnApproval !== false) {
+        const sequenceParams = approvalMetadata.sequenceParams && typeof approvalMetadata.sequenceParams === 'object' ? approvalMetadata.sequenceParams : {};
+        try {
+          nurtureResult = await toolHandlers.startNurtureSequence({
+            ...sequenceParams,
+            leadId: sequenceParams.leadId || approval.leadId || approval.targetId || '',
+            leadName: sequenceParams.leadName || approval.leadName || '',
+            address: sequenceParams.address || approval.address || '',
+            phone: sequenceParams.phone || approval.phone || '',
+            email: sequenceParams.email || approval.email || '',
+            source: 'approval-callback',
+            approvalId: approval.id,
+            force: sequenceParams.force ?? true,
+          });
+          approval.metadata = {
+            ...approvalMetadata,
+            nurtureExecution: {
+              result: nurtureResult?.result || '',
+              ok: nurtureResult?.ok !== false,
+              nurtureInstanceId: nurtureResult?.nurtureInstanceId || '',
+              executedAt: isoNow(),
+            },
+          };
+        } catch (error) {
+          nurtureResult = {
+            ok: false,
+            result: 'approved_nurture_start_failed',
+            error: error?.message || String(error),
+          };
+          approval.metadata = {
+            ...approvalMetadata,
+            nurtureExecution: {
+              ok: false,
+              result: nurtureResult.result,
+              error: nurtureResult.error,
+              executedAt: isoNow(),
+            },
+          };
+        }
+      }
+    }
+
     addActivity(
       state,
       makeActivity({
@@ -44494,6 +45088,7 @@ async function handleEvent(eventType, payload = {}) {
       promptResult,
       rexDecisionResult,
       providerActionResult,
+      nurtureResult,
     };
   }
 
@@ -45717,11 +46312,11 @@ function validateMortgageTakeoverInputs(params = {}) {
 }
 
 function sanitizePublicAvaChatText(value = '') {
-  return String(value || '')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,})\b/g, '[redacted-secret]')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 1800);
+  return sanitizeAssistantTurn(value, 1800).content;
+}
+
+function sanitizePublicAvaChatTurn(value = '') {
+  return sanitizeAssistantTurn(value, 1800);
 }
 
 function extractPublicAvaLead(body = {}, text = '') {
@@ -45831,7 +46426,8 @@ async function handlePublicAvaChatRequest(request) {
   }
 
   const messages = normalizeConversationMessages(body.messages);
-  const text = sanitizePublicAvaChatText(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
+  const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
+  const text = sanitizedInput.content;
   if (!text) {
     return {
       statusCode: 400,
@@ -45883,7 +46479,10 @@ async function handlePublicAvaChatRequest(request) {
   const brain = lead.hasLeadSignal ? null : answerBrainQuery(state, text);
   const matched = Boolean(brain?.matches?.length) && isPublicAvaBrainAnswerSafe(brain?.answer);
   const assistantPlannedAnswer = assistantPlan?.answer && assistantPlan.action !== 'general' ? assistantPlan.answer : '';
-  const answer = assistantPlannedAnswer || (matched ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.` : lead.hasLeadSignal && (!processQuestion || lead.hasContact || lead.address) ? buildPublicAvaLeadAnswer(lead, leadCapture) : processQuestion ? buildPublicAvaProcessAnswer() : buildPublicAvaFallbackAnswer(lead));
+  let answer = assistantPlannedAnswer || (matched ? `${brain.answer}\n\nIf you want the PBK team to review a property, send the address and best callback info. Public chat can save the request, but calls, SMS, email, and contracts stay approval-gated.` : lead.hasLeadSignal && (!processQuestion || lead.hasContact || lead.address) ? buildPublicAvaLeadAnswer(lead, leadCapture) : processQuestion ? buildPublicAvaProcessAnswer() : buildPublicAvaFallbackAnswer(lead));
+  if (sanitizedInput.truncated) {
+    answer = `${sanitizedInput.warning} ${answer}`;
+  }
 
   assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
     source: 'public-ava-chat',
@@ -45922,6 +46521,7 @@ async function handlePublicAvaChatRequest(request) {
       leadCaptured: Boolean(leadCapture?.ok),
       leadCaptureSuppressed: suppressLeadCapture,
       requestedCallback: Boolean(lead.wantsCallback),
+      warning: sanitizedInput.warning || '',
       safety: {
         providerWrites: 'blocked',
         adminTools: 'blocked',
@@ -45983,7 +46583,8 @@ function findInternalAssistantLead(query = '') {
 async function handleInternalAvaAssistantChatRequest(request) {
   const body = await readBody(request);
   const messages = normalizeConversationMessages(body.messages);
-  const text = sanitizePublicAvaChatText(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
+  const sanitizedInput = sanitizePublicAvaChatTurn(getLastUserMessage(messages, body.message || body.query || body.text || body.prompt || ''));
+  const text = sanitizedInput.content;
   if (!text) {
     return {
       statusCode: 400,
@@ -46006,6 +46607,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     authenticated: true,
     session: assistantContextSession,
     leadId: assistantContextSession.leadId,
+    leads: state.leadImports || [],
   });
   let assistantSession = appendAssistantMessage(assistantContextSession, 'user', text, {
     source: body.source || 'command-center-assistant',
@@ -46019,14 +46621,39 @@ async function handleInternalAvaAssistantChatRequest(request) {
   let additiveIntelligence = null;
 
   if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'analyzeDeal') {
-    const execution = await executeToolHandlerWithQa('analyzeDeal', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
-    toolResult = execution.result;
-    qa = execution.qaValidation?.qa || null;
-    safety = execution.safetyValidation || null;
-    const arv = Number(toolResult?.analysis?.arv ?? toolResult?.arv ?? 0);
-    const mao = Number(toolResult?.analysis?.mao ?? toolResult?.mao ?? 0);
-    const profit = Number(toolResult?.analysis?.profit ?? toolResult?.profit ?? 0);
-    answer = [`For ${assistantPlan.toolPlan.params.address}, the analysis is ready.`, arv ? `ARV ${currency(arv)}.` : '', mao ? `MAO ${currency(mao)}.` : '', profit ? `Estimated profit ${currency(profit)}.` : ''].filter(Boolean).join(' ');
+    let execution = null;
+    let analyzeError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        execution = await executeToolHandlerWithQa('analyzeDeal', assistantPlan.toolPlan.params || {}, 'ava-assistant-chat');
+        if (execution.result?.ok === false) {
+          const error = new Error(execution.result?.error || execution.result?.message || 'Analysis returned an unsuccessful result.');
+          error.result = execution.result;
+          throw error;
+        }
+        analyzeError = null;
+        break;
+      } catch (error) {
+        analyzeError = error;
+      }
+    }
+    if (analyzeError) {
+      toolResult = {
+        ok: false,
+        result: 'analysis_failed',
+        error: String(analyzeError.message || analyzeError),
+        retryable: true,
+      };
+      answer = `Analysis failed for ${assistantPlan.toolPlan.params.address}. Retry from the Command Center and I will run it again.`;
+    } else {
+      toolResult = execution.result;
+      qa = execution.qaValidation?.qa || null;
+      safety = execution.safetyValidation || null;
+      const arv = Number(toolResult?.analysis?.arv ?? toolResult?.arv ?? 0);
+      const mao = Number(toolResult?.analysis?.mao ?? toolResult?.mao ?? 0);
+      const profit = Number(toolResult?.analysis?.profit ?? toolResult?.profit ?? 0);
+      answer = [`For ${assistantPlan.toolPlan.params.address}, the analysis is ready.`, arv ? `ARV ${currency(arv)}.` : '', mao ? `MAO ${currency(mao)}.` : '', profit ? `Estimated profit ${currency(profit)}.` : ''].filter(Boolean).join(' ');
+    }
   } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'getApprovals') {
     answer = buildInternalAssistantApprovalAnswer();
     toolResult = {
@@ -46076,7 +46703,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const coverage = toolResult?.coverage || {};
     const providerAugmentation = toolResult?.providerAugmentation || {};
     answer = [`Unified intelligence is synced across ${coverage.used || 10}/${coverage.total || 10} additives.`, providerAugmentation.ready !== undefined ? `Provider check: ${providerAugmentation.ready || 0}/${providerAugmentation.configured || 0} configured external providers ready; PBK-native fallback is active.` : '', nextAction.action ? `Next action: ${String(nextAction.action).replace(/^consider_tool:/, 'consider ')}` : '', nextAction.reason ? `Why: ${String(nextAction.reason).slice(0, 260)}` : '', 'Provider writes, desktop actions, and contracts still stay approval-gated.'].filter(Boolean).join(' ');
-  } else if (assistantPlan.action === 'tool_plan' && assistantPlan.toolPlan?.toolName === 'findLead') {
+  } else if (assistantPlan.toolPlan?.toolName === 'findLead') {
     const lead = findInternalAssistantLead(assistantPlan.toolPlan.params?.query || '');
     answer = lead ? `Found ${lead.leadName || lead.name || 'lead'}${lead.address ? ` at ${lead.address}` : ''}.` : `I could not find a lead matching "${assistantPlan.toolPlan.params?.query || ''}" in the current runtime snapshot.`;
     toolResult = {
@@ -46091,6 +46718,9 @@ async function handleInternalAvaAssistantChatRequest(request) {
     const brain = answerBrainQuery(state, text);
     answer = isPublicAvaBrainAnswerSafe(brain?.answer) ? brain.answer : 'I can help with deal analysis, approvals, recent activity, lead lookup, and PBK workflow questions.';
     toolResult = { ok: true, result: 'brain_answer', citations: brain?.citations || [] };
+  }
+  if (sanitizedInput.truncated) {
+    answer = `${sanitizedInput.warning} ${answer}`;
   }
 
   assistantSession = appendAssistantMessage(assistantSession, 'assistant', answer, {
@@ -46127,6 +46757,7 @@ async function handleInternalAvaAssistantChatRequest(request) {
       additiveIntelligence,
       qa,
       safety,
+      warning: sanitizedInput.warning || '',
     },
   };
 }
@@ -50211,7 +50842,7 @@ const server = createServer(async (request, response) => {
 
   // Bearer-token gate. Local dev can run open, but hosted production must not
   // become public if PBK_BRIDGE_API_KEY is accidentally omitted.
-  if (HOSTED_BRIDGE_AUTH_MISCONFIGURED && !PUBLIC_PATHS.has(pathname)) {
+  if (HOSTED_BRIDGE_AUTH_MISCONFIGURED && !isPublicBridgeRequest(request.method, pathname)) {
     json(response, 503, {
       ok: false,
       error: 'Hosted bridge authentication is not configured.',
@@ -50223,7 +50854,7 @@ const server = createServer(async (request, response) => {
 
   // Healthcheck endpoints stay open so Render's healthCheckPath and external
   // monitors keep working without credentials.
-  if (BRIDGE_API_KEY && !PUBLIC_PATHS.has(pathname)) {
+  if (BRIDGE_API_KEY && !isPublicBridgeRequest(request.method, pathname)) {
     const header = String(request.headers.authorization || '').trim();
     const expected = `Bearer ${BRIDGE_API_KEY}`;
     if (header !== expected) {
@@ -50773,6 +51404,21 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/leads/stages', '/api/v1/leads/stages'])) {
+      json(response, 200, await buildLeadStageAnalytics({ limit: url.searchParams.get('limit') || 500 }));
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/deals/timeline', '/api/v1/deals/timeline'])) {
+      json(response, 200, await buildDealTimelineAnalytics({ days: url.searchParams.get('days') || 30 }));
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/observability/ai-metrics', '/api/v1/observability/ai-metrics'])) {
+      json(response, 200, await buildAiObservabilityMetrics({ days: url.searchParams.get('days') || 30 }));
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/analytics/campaign-drilldown') {
       json(response, 200, buildCampaignAnalyticsDrilldown(url.searchParams));
       return;
@@ -50942,6 +51588,17 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && matchesPath(pathname, ['/api/scripts/context-select', '/api/v1/scripts/context-select'])) {
       const body = await readBody(request);
       const result = await selectContextAwareScriptRecord(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (matchesPath(pathname, ['/api/scripts/current', '/api/v1/scripts/current']) && ['GET', 'POST'].includes(request.method)) {
+      const body = request.method === 'POST' ? await readBody(request) : {};
+      const queryParams = Object.fromEntries(url.searchParams.entries());
+      const result = await getCurrentScriptRecord({
+        ...queryParams,
+        ...body,
+      });
       json(response, result.ok ? 200 : 400, result);
       return;
     }
@@ -51460,6 +52117,28 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && pathname === '/api/skills/outcomes') {
       json(response, 200, await buildSkillOutcomes());
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/skills/trends', '/api/v1/skills/trends'])) {
+      json(response, 200, await buildSkillTrendAnalytics({
+        skillId: url.searchParams.get('skillId') || url.searchParams.get('skill_id') || '',
+        skillName: url.searchParams.get('skillName') || url.searchParams.get('skill_name') || '',
+        days: url.searchParams.get('days') || 30,
+      }));
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/skills/reload', '/api/v1/skills/reload'])) {
+      const body = await readBody(request);
+      const result = await reloadActiveSkillsIntoBridgeState({
+        ...body,
+        actor: body.actor || 'PBK Command Center',
+      });
+      json(response, result.ok ? 200 : 503, {
+        ...result,
+        state: buildStateSnapshot(),
+      });
       return;
     }
 
@@ -53673,6 +54352,17 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/nurture/health', '/api/v1/nurture/health'])) {
+      json(response, 200, {
+        ...buildNurtureComplianceHealth(process.env),
+        generatedAt: isoNow(),
+        state: {
+          status: buildStateSnapshot().status,
+        },
+      });
+      return;
+    }
+
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
       const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
@@ -54015,6 +54705,30 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/calls/summary', '/api/v1/calls/summary'])) {
+      const kpis = buildRexAutonomyKpiSnapshot({
+        targetMonthlyRevenue: url.searchParams.get('targetMonthlyRevenue') || url.searchParams.get('target_monthly_revenue') || undefined,
+        revenueDays: url.searchParams.get('revenueDays') || url.searchParams.get('revenue_days') || 30,
+      });
+      const allCalls = sortNewest(Array.isArray(state.calls) ? state.calls : []);
+      json(response, 200, {
+        ok: true,
+        result: 'calls_summary',
+        generatedAt: isoNow(),
+        count: allCalls.length,
+        calls: {
+          total: kpis.totalCalls,
+          acceptedOffers: kpis.acceptedOffers,
+          conversionRate: kpis.conversionRate,
+          recent: allCalls.slice(0, 12),
+        },
+        rexKpis: kpis,
+        topFailureTags: kpis.topFailureTags || [],
+        onnxTraining: kpis.onnxTraining || null,
+      });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/calls') {
       const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit') || 80)));
       const offset = Math.max(0, Number(url.searchParams.get('offset') || 0));
@@ -54126,6 +54840,80 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/messages') {
       const body = await readBody(request);
+      const scheduledFor = String(body.scheduledFor || body.sendAt || body.scheduled_at || '').trim();
+      const wantsSchedule =
+        String(body.status || '')
+          .trim()
+          .toLowerCase() === 'scheduled' ||
+        Boolean(body.sendLater && scheduledFor);
+      if (wantsSchedule) {
+        const context = findLeadContext(body);
+        const channel =
+          String(body.channel || 'sms')
+            .trim()
+            .toLowerCase() === 'email'
+            ? 'email'
+            : 'sms';
+        const messageBody = String(body.message || body.body || '').trim();
+        const scheduledTime = Date.parse(scheduledFor);
+        if (!messageBody) {
+          json(response, 400, { ok: false, error: 'Message body is required.' });
+          return;
+        }
+        if (!scheduledFor || Number.isNaN(scheduledTime)) {
+          json(response, 400, { ok: false, error: 'A valid scheduledFor datetime is required.' });
+          return;
+        }
+        const recipient =
+          channel === 'email'
+            ? String(body.email || body.to || context.email || inferSkipTraceContact(context).email || '').trim()
+            : normalizePhone(body.phone || body.to || context.phone || inferSkipTraceContact(context).phone);
+        if (!recipient) {
+          json(response, 400, {
+            ok: false,
+            error: channel === 'email' ? 'No destination email was available.' : 'No destination phone number was available.',
+          });
+          return;
+        }
+        const message = createMessageRecord({
+          ...body,
+          ...context,
+          channel,
+          direction: 'outbound',
+          body: messageBody,
+          status: 'scheduled',
+          provider: 'PBK Scheduler',
+          ...(channel === 'email' ? { email: recipient } : { phone: recipient }),
+        });
+        message.to = recipient;
+        message.scheduledFor = scheduledFor;
+        message.sendAt = scheduledFor;
+        message.payload = {
+          ...(message.payload || {}),
+          scheduled: true,
+          scheduledFor,
+          requestedFrom: 'inbox-compose',
+        };
+        upsertMessage(state, message);
+        addActivity(
+          state,
+          makeActivity({
+            actor: 'Command Center',
+            category: channel === 'email' ? 'EMAIL' : 'SMS',
+            status: 'scheduled',
+            text: `Outbound ${channel.toUpperCase()} scheduled for ${context.leadName || recipient} at ${scheduledFor}.`,
+            target: context.address || recipient,
+          })
+        );
+        await persistState(state);
+        json(response, 202, {
+          ok: true,
+          result: 'scheduled',
+          message,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
       const guard = await enforceOperatingModeForTool('telnyx_sms', body);
       if (guard) {
         json(response, guard.ok === false ? 409 : 202, {

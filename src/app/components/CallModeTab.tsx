@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { DealData, PBKPath } from '../types';
 import { LiveCallInputs } from './LiveCallInputs';
 import { LiveDealTrackerPanel } from './LiveDealTrackerPanel';
@@ -6,6 +6,13 @@ import { ScriptPanel } from './ScriptPanel';
 import { InvestorYield } from './InvestorYield';
 import { getLiveInputPath, getPathLabel, getPathOptions } from '../utils/pbk';
 import type { AgentDealContext } from '../utils/agentDealContext';
+import {
+  invokeRuntimeTool,
+  saveLeadNoteRequest,
+  scheduleAppointmentRequest,
+  sendOfferEmailRequest,
+} from '../utils/runtimeBridge';
+import { showUiToast } from '../utils/uiFeedback';
 
 type ScriptVariant = 'owner' | 'agent';
 
@@ -29,6 +36,48 @@ function isCoCPath(path: PBKPath): path is 'cf' | 'mt' {
   return path === 'cf' || path === 'mt';
 }
 
+function normalizePhone(value = '') {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function getDealLeadId(deal: DealData) {
+  return deal.sellerPhone || deal.sellerEmail || deal.address || 'manual-deal';
+}
+
+function getDealLeadName(deal: DealData) {
+  return deal.sellerName || 'Seller';
+}
+
+function getTomorrowMorningIso() {
+  const next = new Date();
+  next.setDate(next.getDate() + 1);
+  next.setHours(9, 0, 0, 0);
+  return next.toISOString();
+}
+
+function buildOfferEmailBody(deal: DealData, selectedPath: PBKPath, callNotes = '') {
+  const sellerName = deal.sellerName?.trim() || 'there';
+  const address = deal.address?.trim() || 'your property';
+  const pathLabel = getPathLabel(selectedPath);
+  const offerLine =
+    deal.agreedPrice || deal.offer || deal.mao60
+      ? `We can review an offer range around $${Math.round(deal.agreedPrice || deal.offer || deal.mao60).toLocaleString()}.`
+      : 'We can review the cleanest offer path once the remaining details are confirmed.';
+  return [
+    `Hi ${sellerName},`,
+    '',
+    `Following up on our conversation about ${address}. Based on the ${pathLabel} path, PBK can keep the next step simple and transparent.`,
+    offerLine,
+    callNotes.trim() ? `Call notes: ${callNotes.trim()}` : '',
+    '',
+    'If you want to keep moving, reply with the best time to talk through the next step.',
+    '',
+    'PBK Team',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 export function CallModeTab({
   deal,
   onDealChange,
@@ -36,9 +85,12 @@ export function CallModeTab({
   onSelectPath,
   onPushScriptToAgent,
 }: CallModeTabProps) {
-  const [callNotes, setCallNotes] = useState('');
+  const [callNotes, setCallNotes] = useState(deal.notes || '');
+  const [lastSavedNotes, setLastSavedNotes] = useState(deal.notes || '');
+  const [postCallStatus, setPostCallStatus] = useState('');
+  const [pendingPostCallAction, setPendingPostCallAction] = useState('');
   const [scriptVariant, setScriptVariant] = useState<ScriptVariant>(
-    deal.contact === 'realtor' ? 'agent' : 'owner',
+    deal.contact === 'realtor' ? 'agent' : 'owner'
   );
   const pathOptions = getPathOptions({ type: deal.type, contact: deal.contact });
   const forcedVariant = getForcedVariant(activePath);
@@ -53,6 +105,159 @@ export function CallModeTab({
     }
   }, [forcedVariant]);
 
+  useEffect(() => {
+    setCallNotes(deal.notes || '');
+    setLastSavedNotes(deal.notes || '');
+  }, [deal.address]);
+
+  const saveCallNotes = useCallback(async () => {
+    const note = callNotes.trim();
+    if (!note || note === lastSavedNotes.trim()) return;
+    try {
+      await saveLeadNoteRequest({
+        leadId: getDealLeadId(deal),
+        leadName: getDealLeadName(deal),
+        address: deal.address,
+        email: deal.sellerEmail || '',
+        phone: deal.sellerPhone || '',
+        note,
+        actor: 'Call Mode',
+        source: 'deal-view-call-mode',
+      });
+      setLastSavedNotes(note);
+      setPostCallStatus('Call notes saved to the bridge.');
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Call notes not saved',
+        desc: error instanceof Error ? error.message : 'The bridge did not accept the note.',
+      });
+    }
+  }, [callNotes, deal, lastSavedNotes]);
+
+  const handleScheduleFollowUp = async () => {
+    setPendingPostCallAction('schedule');
+    setPostCallStatus('');
+    try {
+      const startTime = getTomorrowMorningIso();
+      await scheduleAppointmentRequest({
+        leadId: getDealLeadId(deal),
+        leadName: getDealLeadName(deal),
+        address: deal.address,
+        email: deal.sellerEmail || '',
+        phone: deal.sellerPhone || '',
+        startTime,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+        source: 'deal-view-call-mode',
+        actor: 'Call Mode',
+        notes: callNotes.trim() || `Follow-up for ${getPathLabel(activePath)} path.`,
+      });
+      setPostCallStatus(`Follow-up call scheduled for ${new Date(startTime).toLocaleString()}.`);
+      showUiToast({
+        tone: 'success',
+        title: 'Follow-up scheduled',
+        desc: 'The bridge appointment queue was updated.',
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Follow-up failed',
+        desc: error instanceof Error ? error.message : 'The bridge did not schedule the call.',
+      });
+    } finally {
+      setPendingPostCallAction('');
+    }
+  };
+
+  const handleSendOfferEmail = async () => {
+    if (!deal.sellerEmail?.includes('@')) {
+      showUiToast({
+        tone: 'error',
+        title: 'Email blocked',
+        desc: 'Add a valid seller email before sending an offer email.',
+      });
+      return;
+    }
+    setPendingPostCallAction('email');
+    setPostCallStatus('');
+    try {
+      const subject = `Offer next steps for ${deal.address || 'your property'}`;
+      const body = buildOfferEmailBody(deal, activePath, callNotes);
+      const result = await sendOfferEmailRequest({
+        leadId: getDealLeadId(deal),
+        leadName: getDealLeadName(deal),
+        address: deal.address,
+        email: deal.sellerEmail,
+        phone: deal.sellerPhone || '',
+        subject,
+        body,
+        selectedPath: activePath,
+        selectedPathLabel: getPathLabel(activePath),
+        source: 'deal-view-call-mode',
+      });
+      const status = String(result.result || result.status || '').toLowerCase();
+      const queued =
+        status.includes('approval') ||
+        status.includes('queued') ||
+        Boolean(result.approval || result.approvalId);
+      setPostCallStatus(
+        queued ? 'Offer email queued for approval.' : 'Offer email handed to the bridge.'
+      );
+      showUiToast({
+        tone: queued ? 'info' : 'success',
+        title: queued ? 'Offer email queued' : 'Offer email submitted',
+        desc: queued
+          ? 'Provider send is approval-gated.'
+          : 'The bridge accepted the offer email request.',
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Offer email failed',
+        desc: error instanceof Error ? error.message : 'The bridge did not accept the offer email.',
+      });
+    } finally {
+      setPendingPostCallAction('');
+    }
+  };
+
+  const handleAddToCrm = async () => {
+    setPendingPostCallAction('crm');
+    setPostCallStatus('');
+    try {
+      const result = await invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
+        target: deal.address || getDealLeadName(deal),
+        leadId: getDealLeadId(deal),
+        leadName: getDealLeadName(deal),
+        address: deal.address,
+        email: deal.sellerEmail || '',
+        phone: normalizePhone(deal.sellerPhone || ''),
+        selectedPath: activePath,
+        selectedPathLabel: getPathLabel(activePath),
+        motivationScore: deal.motivationScore || 0,
+        notes: callNotes.trim() || deal.notes || '',
+        message: `Call Mode synced ${deal.address || getDealLeadName(deal)} to CRM after ${getPathLabel(activePath)} call review.`,
+        deal,
+        source: 'deal-view-call-mode',
+      });
+      const status = String(result.result || result.status || '').replace(/_/g, ' ') || 'submitted';
+      setPostCallStatus(`CRM update ${status}.`);
+      showUiToast({
+        tone: 'success',
+        title: 'CRM update submitted',
+        desc: 'The bridge accepted the CRM sync request.',
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'CRM update failed',
+        desc: error instanceof Error ? error.message : 'The bridge did not accept the CRM update.',
+      });
+    } finally {
+      setPendingPostCallAction('');
+    }
+  };
+
   return (
     <div className="p-3.5">
       <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
@@ -64,12 +269,16 @@ export function CallModeTab({
             </h3>
           </div>
           <div className="text-[10px] text-gray-500 dark:text-gray-400">
-            Active packet path: <strong className="text-purple-600 dark:text-purple-300">{getPathLabel(activePath)}</strong>
+            Active packet path:{' '}
+            <strong className="text-purple-600 dark:text-purple-300">
+              {getPathLabel(activePath)}
+            </strong>
           </div>
         </div>
 
         <div className="mb-3 rounded-2xl border border-purple-200 bg-purple-50 px-3 py-2 text-[11px] leading-5 text-purple-800 dark:border-purple-800 dark:bg-purple-950/30 dark:text-purple-300">
-          Tap a path and the scripts, tracker, live inputs, and Documents/PDF packet all follow this same selected path.
+          Tap a path and the scripts, tracker, live inputs, and Documents/PDF packet all follow this
+          same selected path.
         </div>
 
         <div className="flex gap-2 overflow-x-auto pb-1">
@@ -141,7 +350,11 @@ export function CallModeTab({
 
         <textarea
           value={callNotes}
-          onChange={(event) => setCallNotes(event.target.value)}
+          onChange={(event) => {
+            setCallNotes(event.target.value);
+            onDealChange({ notes: event.target.value });
+          }}
+          onBlur={() => void saveCallNotes()}
           placeholder="Take notes during your call..."
           className="w-full h-32 px-3 py-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-900 text-gray-900 dark:text-gray-100 text-[12.5px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all resize-vertical"
         />
@@ -163,14 +376,34 @@ export function CallModeTab({
         </div>
 
         <div className="space-y-2">
-          <button className="w-full px-4 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-300 text-[12px] font-medium text-left hover:bg-green-100 dark:hover:bg-green-900/30 transition-all">
-            Schedule Follow-up Call
+          {postCallStatus && (
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-200">
+              {postCallStatus}
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={Boolean(pendingPostCallAction)}
+            onClick={() => void handleScheduleFollowUp()}
+            className="w-full px-4 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-300 text-[12px] font-medium text-left hover:bg-green-100 dark:hover:bg-green-900/30 transition-all disabled:cursor-wait disabled:opacity-60"
+          >
+            {pendingPostCallAction === 'schedule' ? 'Scheduling...' : 'Schedule Follow-up Call'}
           </button>
-          <button className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-300 text-[12px] font-medium text-left hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-all">
-            Send Offer Email
+          <button
+            type="button"
+            disabled={Boolean(pendingPostCallAction)}
+            onClick={() => void handleSendOfferEmail()}
+            className="w-full px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-300 text-[12px] font-medium text-left hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-all disabled:cursor-wait disabled:opacity-60"
+          >
+            {pendingPostCallAction === 'email' ? 'Sending...' : 'Send Offer Email'}
           </button>
-          <button className="w-full px-4 py-2 rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-300 text-[12px] font-medium text-left hover:bg-gray-100 dark:hover:bg-slate-800 transition-all">
-            Add to CRM
+          <button
+            type="button"
+            disabled={Boolean(pendingPostCallAction)}
+            onClick={() => void handleAddToCrm()}
+            className="w-full px-4 py-2 rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-800 dark:text-gray-300 text-[12px] font-medium text-left hover:bg-gray-100 dark:hover:bg-slate-800 transition-all disabled:cursor-wait disabled:opacity-60"
+          >
+            {pendingPostCallAction === 'crm' ? 'Syncing...' : 'Add to CRM'}
           </button>
         </div>
       </div>

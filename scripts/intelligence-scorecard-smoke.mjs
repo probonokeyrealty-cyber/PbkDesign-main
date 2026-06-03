@@ -1,4 +1,7 @@
 import {
+  assertScorecardRuntimeConfigured,
+  assertScorecardThreshold,
+  buildMemoryStats,
   buildIntelligenceScorecard,
   gradeScore,
   scoreLinear,
@@ -6,6 +9,26 @@ import {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function assertThrows(fn, pattern, message) {
+  try {
+    fn();
+  } catch (error) {
+    if (!pattern.test(error?.message || String(error))) {
+      throw new Error(`${message} Unexpected error: ${error?.message || error}`);
+    }
+    return;
+  }
+  throw new Error(message);
+}
+
+function assertDoesNotThrow(fn, message) {
+  try {
+    fn();
+  } catch (error) {
+    throw new Error(`${message} Unexpected error: ${error?.message || error}`);
+  }
 }
 
 const readyHealth = {
@@ -151,8 +174,24 @@ const strongScorecard = buildIntelligenceScorecard({
 
 assert(gradeScore(96) === 'A+', '96 should grade A+.');
 assert(scoreLinear(50, 100) === 50, 'scoreLinear should map half target to 50.');
+assertThrows(
+  () => assertScorecardRuntimeConfigured({ PBK_BRIDGE_URL: 'https://bridge.example.com' }),
+  /PBK_BRIDGE_API_KEY/i,
+  'Scorecard should fail loudly when API key is missing.',
+);
+assertThrows(
+  () => assertScorecardRuntimeConfigured({ PBK_BRIDGE_API_KEY: 'secret' }),
+  /PBK_BRIDGE_URL/i,
+  'Scorecard should fail loudly when bridge URL is missing.',
+);
 assert(strongScorecard.ok === true, 'Strong fixture should be ok.');
 assert(strongScorecard.overall.score >= 90, `Strong fixture should be 90+, got ${strongScorecard.overall.score}.`);
+assertDoesNotThrow(() => assertScorecardThreshold(strongScorecard, 50), 'Strong fixture should pass the CI threshold helper.');
+assertThrows(
+  () => assertScorecardThreshold({ overall: { score: 12 } }, 50),
+  /below intelligence score threshold/i,
+  'CI threshold helper should fail when the score is too low.',
+);
 assert(strongScorecard.agents.ava.score >= 90, `Ava should be 90+, got ${strongScorecard.agents.ava.score}.`);
 assert(strongScorecard.agents.rex.score >= 90, `Rex should be 90+, got ${strongScorecard.agents.rex.score}.`);
 assert(strongScorecard.metrics.some((metric) => metric.id === 'ava_live_hearing_proof'), 'Ava hearing metric missing.');
@@ -199,6 +238,28 @@ const sparseScorecard = buildIntelligenceScorecard({
 assert(sparseScorecard.overall.score < 90, 'Sparse real-world fixture should not claim 10/10.');
 assert(sparseScorecard.actions.some((item) => item.id === 'collect_real_call_outcomes'), 'Sparse fixture should ask for real call outcomes.');
 assert(sparseScorecard.actions.some((item) => item.id === 'clear_approval_backlog'), 'Sparse fixture should flag approval backlog.');
+
+const failedMemoryStats = buildMemoryStats(
+  {
+    messages: {
+      messages: [
+        {
+          id: 'msg-memory-fail',
+          channel: 'call',
+          direction: 'transcription',
+          body: 'Seller needs to talk to spouse next week.',
+          payload: {},
+        },
+      ],
+    },
+    compactLongHorizonMemory: () => {
+      throw new Error('LLM unavailable');
+    },
+  },
+);
+
+assert(failedMemoryStats.components.memory_compaction.status === 'failed', 'Memory compaction failure should be surfaced by component.');
+assert(/LLM unavailable/.test(failedMemoryStats.components.memory_compaction.reason), 'Memory compaction failure should include the root cause.');
 
 console.log(JSON.stringify({
   ok: true,

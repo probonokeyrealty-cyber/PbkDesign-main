@@ -5,21 +5,49 @@ const { Pool } = pg;
 const DEFAULT_WINDOW_DAYS = 7;
 const MIN_SUCCESS_COUNT_TO_BOOST = 5;
 const MIN_SUCCESS_RATE_TO_BOOST = 0.8;
+const MIN_FAILURE_COUNT_TO_DECAY = 3;
+const MAX_SUCCESS_RATE_TO_KEEP = 0.5;
 const CONFIDENCE_INCREMENT = 0.05;
+const CONFIDENCE_DECAY_RATE = 0.05;
 const MAX_CONFIDENCE = 0.95;
+const MAX_TRANSCRIPT_CHARS = 4000;
+const DATABASE_REQUIRED_MESSAGE = 'PBK_DATABASE_URL/DATABASE_URL is required for the Auto Skill Learner.';
 
-function getDatabaseUrl() {
-  return String(process.env.PBK_DATABASE_URL || process.env.DATABASE_URL || '').trim();
+function getDatabaseUrl(env = process.env) {
+  return String(env.PBK_DATABASE_URL || env.DATABASE_URL || '').trim();
 }
 
-function createPool() {
-  const connectionString = getDatabaseUrl();
-  if (!connectionString) return null;
+function assertSkillLearnerDatabaseConfigured(env = process.env) {
+  const connectionString = getDatabaseUrl(env);
+  if (!connectionString) throw new Error(DATABASE_REQUIRED_MESSAGE);
+  return connectionString;
+}
+
+function createPool(options = {}) {
+  const env = options.env || process.env;
+  const connectionString = options.connectionString || assertSkillLearnerDatabaseConfigured(env);
   return new Pool({
     connectionString,
     max: 2,
     ssl: /(localhost|127\.0\.0\.1)/.test(connectionString) ? false : { rejectUnauthorized: false },
   });
+}
+
+function hasSkillLearnerLlmProvider(env = process.env) {
+  return Boolean(
+    String(
+      env.OPENAI_API_KEY ||
+        env.ANTHROPIC_API_KEY ||
+        env.GEMINI_API_KEY ||
+        env.GOOGLE_API_KEY ||
+        env.DEEPSEEK_API_KEY ||
+        env.MISTRAL_API_KEY ||
+        env.OPENROUTER_API_KEY ||
+        env.PBK_LLM_PROVIDER_URL ||
+        env.PBK_STRATEGIST_URL ||
+        '',
+    ).trim(),
+  );
 }
 
 function clampConfidence(value) {
@@ -60,6 +88,19 @@ function transcriptToText(transcript) {
   }
   if (transcript && typeof transcript === 'object') return JSON.stringify(transcript);
   return String(transcript || '');
+}
+
+function prepareSkillExtractionTranscript(transcript, options = {}) {
+  const maxChars = Math.max(500, Math.min(16000, Number(options.maxChars || MAX_TRANSCRIPT_CHARS)));
+  const rawText = transcriptToText(transcript);
+  const truncated = rawText.length > maxChars;
+  return {
+    text: truncated ? rawText.slice(0, maxChars) : rawText,
+    originalLength: rawText.length,
+    maxChars,
+    truncated,
+    warning: truncated ? `Skill extraction transcript truncated to ${maxChars} characters from ${rawText.length}.` : '',
+  };
 }
 
 async function ensureAutoSkillSchema(pool) {
@@ -203,19 +244,112 @@ async function boostSuccessfulSkills(pool, options = {}) {
   return boosted;
 }
 
-async function extractSkillCandidate(call, strategist) {
-  const transcript = transcriptToText(call.transcript).slice(0, 7000);
+async function decayUnderperformingSkills(pool, options = {}) {
+  const windowDays = Math.max(1, Math.min(90, Number(options.windowDays || DEFAULT_WINDOW_DAYS)));
+  const minFailures = Math.max(1, Number(options.minFailureCount || MIN_FAILURE_COUNT_TO_DECAY));
+  const maxSuccessRate = Math.max(0, Math.min(1, Number(options.maxSuccessRateToKeep ?? MAX_SUCCESS_RATE_TO_KEEP)));
+  const decayRate = Math.max(0.01, Math.min(0.5, Number(options.confidenceDecayRate || CONFIDENCE_DECAY_RATE)));
+  const stats = await pool.query(
+    `SELECT
+       COALESCE(su.skill_id, '') AS skill_id,
+       COALESCE(NULLIF(su.skill_name, ''), COALESCE(su.skill_id, 'unknown')) AS skill_name,
+       COUNT(*)::int AS total_uses,
+       COUNT(*) FILTER (WHERE su.success IS TRUE)::int AS successes,
+       COUNT(*) FILTER (WHERE su.success IS FALSE)::int AS failures,
+       MAX(COALESCE(s.confidence, su.confidence, 0.6))::numeric AS current_confidence
+     FROM public.skill_usage su
+     LEFT JOIN public.skills s ON s.id = su.skill_id
+     WHERE su.workspace_id = 'pbk'
+       AND su.used_at >= NOW() - ($1::int * INTERVAL '1 day')
+       AND (su.skill_id IS NOT NULL OR su.skill_name <> '')
+     GROUP BY COALESCE(su.skill_id, ''), COALESCE(NULLIF(su.skill_name, ''), COALESCE(su.skill_id, 'unknown'))
+     HAVING COUNT(*) FILTER (WHERE su.success IS FALSE) >= $2
+     ORDER BY failures DESC
+     LIMIT 100`,
+    [windowDays, minFailures],
+  );
+
+  const decayed = [];
+  for (const row of stats.rows || []) {
+    const successes = Number(row.successes || 0);
+    const totalUses = Number(row.total_uses || 0);
+    const failures = Number(row.failures || 0);
+    const successRate = totalUses ? successes / totalUses : 0;
+    if (successRate > maxSuccessRate) continue;
+    const currentConfidence = clampConfidence(row.current_confidence ?? 0.6);
+    let update;
+    if (row.skill_id) {
+      update = await pool.query(
+        `UPDATE public.skills
+         SET confidence = GREATEST(0.05, COALESCE(confidence, $2::numeric) * (1 - $3::numeric)),
+             metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, name, confidence`,
+        [
+          row.skill_id,
+          currentConfidence,
+          decayRate,
+          safeJson({ autoLearner: { decayedAt: new Date().toISOString(), successRate, uses: totalUses, failures } }),
+        ],
+      );
+    }
+    if (!update?.rows?.[0] && row.skill_name) {
+      update = await pool.query(
+        `UPDATE public.skills
+         SET confidence = GREATEST(0.05, COALESCE(confidence, $2::numeric) * (1 - $3::numeric)),
+             metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+             updated_at = NOW()
+         WHERE workspace_id = 'pbk' AND LOWER(name) = LOWER($1)
+         RETURNING id, name, confidence`,
+        [
+          row.skill_name,
+          currentConfidence,
+          decayRate,
+          safeJson({ autoLearner: { decayedAt: new Date().toISOString(), successRate, uses: totalUses, failures } }),
+        ],
+      );
+    }
+    if (update?.rows?.[0]) {
+      decayed.push({
+        ...update.rows[0],
+        totalUses,
+        failures,
+        successRate: Number(successRate.toFixed(3)),
+      });
+    }
+  }
+  return decayed;
+}
+
+async function extractSkillCandidate(call, strategist, options = {}) {
+  const prepared = prepareSkillExtractionTranscript(call.transcript, {
+    maxChars: options.maxTranscriptChars || MAX_TRANSCRIPT_CHARS,
+  });
+  const transcript = prepared.text;
   if (!transcript) return null;
   if (typeof strategist === 'function') {
     const prompt = [
       'Extract exactly one reusable PBK acquisition skill from this successful call.',
       'Return JSON only with: skill_name, skill_type (objection_handler|probe|closing_tactic), trigger_keywords, content, confidence.',
       `Call ID: ${call.id}`,
+      prepared.warning ? `Warning: ${prepared.warning}` : '',
       `Transcript:\n${transcript}`,
-    ].join('\n\n');
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const result = await strategist({ prompt, role: 'Auto Skill Learner', responseFormat: 'json' });
     const parsed = extractJsonObject(result?.rawAnswer || result?.answer || result?.text || result?.response?.raw || JSON.stringify(result?.response || result || {}));
-    if (parsed?.skill_name && parsed?.content) return parsed;
+    if (parsed?.skill_name && parsed?.content) {
+      return {
+        ...parsed,
+        metadata: {
+          ...(parsed.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : {}),
+          transcriptTruncated: prepared.truncated,
+          transcriptOriginalLength: prepared.originalLength,
+        },
+      };
+    }
   }
 
   const objection = transcript.match(/\b(too expensive|think about it|talk to (?:my )?(?:wife|husband|spouse|partner)|send me|call me later|not interested)\b/i)?.[0] || 'successful seller hesitation';
@@ -225,6 +359,10 @@ async function extractSkillCandidate(call, strategist) {
     trigger_keywords: [objection],
     content: 'Acknowledge the concern, ask one clarifying question, then reconnect the seller to their stated timeline and cost of delay.',
     confidence: 0.62,
+    metadata: {
+      transcriptTruncated: prepared.truncated,
+      transcriptOriginalLength: prepared.originalLength,
+    },
   };
 }
 
@@ -299,7 +437,7 @@ async function generateNewSkillsFromSuccess(pool, options = {}) {
 
   const created = [];
   for (const call of calls.rows || []) {
-    const candidate = await extractSkillCandidate(call, options.strategist).catch(() => null);
+    const candidate = await extractSkillCandidate(call, options.strategist, options).catch(() => null);
     if (!candidate) continue;
     const inserted = await insertSkillCandidate(pool, candidate, call.id).catch((error) => ({
       ok: false,
@@ -312,25 +450,56 @@ async function generateNewSkillsFromSuccess(pool, options = {}) {
 }
 
 export async function runAutoSkillLearner(options = {}) {
-  const pool = options.pool || createPool();
+  const env = options.env || process.env;
+  const pool = options.pool || createPool({ env });
   const ownsPool = !options.pool && Boolean(pool);
-  if (!pool) return { ok: false, result: 'postgres_unavailable', error: 'PBK_DATABASE_URL/DATABASE_URL is not configured.' };
   try {
     await ensureAutoSkillSchema(pool);
     const boosted = await boostSuccessfulSkills(pool, options);
-    const created = await generateNewSkillsFromSuccess(pool, options);
+    const decayed = await decayUnderperformingSkills(pool, options);
+    const llmAvailable = hasSkillLearnerLlmProvider(env);
+    const created = llmAvailable ? await generateNewSkillsFromSuccess(pool, options) : [];
+    const extractionSkippedReason = llmAvailable ? '' : 'llm_provider_unavailable';
+    let reloadResult = null;
+    const changed = [...boosted, ...decayed, ...created];
+    if (changed.length && typeof options.reloadActiveSkills === 'function') {
+      reloadResult = await options.reloadActiveSkills({
+        source: 'auto_skill_learner',
+        boosted,
+        decayed,
+        created,
+        changedCount: changed.length,
+      });
+    }
     return {
       ok: true,
       result: 'auto_skill_learner_complete',
       boostedCount: boosted.length,
+      decayedCount: decayed.length,
       createdCount: created.length,
+      extractionSkippedReason,
       boosted,
+      decayed,
       created,
+      reloadResult,
     };
   } finally {
     if (ownsPool) await pool.end().catch(() => {});
   }
 }
+
+export {
+  assertSkillLearnerDatabaseConfigured,
+  boostSuccessfulSkills,
+  clampConfidence,
+  createPool,
+  decayUnderperformingSkills,
+  extractSkillCandidate,
+  generateNewSkillsFromSuccess,
+  getDatabaseUrl,
+  hasSkillLearnerLlmProvider,
+  prepareSkillExtractionTranscript,
+};
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   runAutoSkillLearner()

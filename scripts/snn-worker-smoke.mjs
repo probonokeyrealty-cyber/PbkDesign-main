@@ -4,6 +4,9 @@ import {
   getNetworkSnapshot,
   stepLifNetwork,
 } from '../src/app/agents/snn/lifCore.mjs';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 function assert(condition, message) {
   if (!condition) {
@@ -35,6 +38,17 @@ const snapshot = getNetworkSnapshot(network);
 assert(snapshot.tick === 1, `Expected tick 1 after one step, got ${snapshot.tick}.`);
 assert(snapshot.lastSpikeCount >= 2, `Expected at least 2 spikes, got ${snapshot.lastSpikeCount}.`);
 assert(snapshot.symbolicFacts.length === 2, 'Symbolic facts were not retained on the network snapshot.');
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const bridgeSource = readFileSync(path.resolve(__dirname, '../src/app/utils/snnWorkerBridge.ts'), 'utf8');
+const workerSource = readFileSync(path.resolve(__dirname, '../src/app/agents/snn/agentBrain.worker.js'), 'utf8');
+
+assert(/worker\.onerror\s*=/.test(bridgeSource), 'SNN bridge should register worker.onerror for crash visibility.');
+assert(/localStorage/.test(bridgeSource), 'SNN bridge should persist snapshots across page reloads.');
+assert(/requestNetworkSnapshot/.test(bridgeSource), 'SNN bridge should expose a network snapshot request helper.');
+assert(/getNetworkSnapshot/.test(bridgeSource), 'SNN bridge should expose the last network snapshot to UI/API callers.');
+assert(/restore_state|restoredSnapshot/i.test(workerSource), 'SNN worker should support restoring persisted network state.');
 
 console.log(JSON.stringify({
   ok: true,

@@ -2,6 +2,16 @@ import { randomUUID } from 'node:crypto';
 
 const MAX_ASSISTANT_HISTORY = 40;
 const MAX_TURN_CONTENT = 1800;
+const COMMAND_CENTER_PATH = '/index.shell.html';
+const TURN_TRUNCATION_WARNING =
+  'Long text truncated; Ava only retained the first 1800 characters for this turn.';
+
+const SECRET_PATTERNS = [
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}\b/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi,
+  /\b(?:docusign|telnyx|instantly)_[a-z0-9_]*(?:key|token|secret|sid|client_id|private_key|access_token|api_key)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}["']?/gi,
+  /\b(?:DOCUSIGN|TELNYX|INSTANTLY)_[A-Z0-9_]*(?:KEY|TOKEN|SECRET|SID|CLIENT_ID|PRIVATE_KEY|ACCESS_TOKEN|API_KEY)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}["']?/g,
+];
 
 export const ASSISTANT_SYSTEM_PROMPT = `
 You are Ava, PBK Command Center's personal assistant.
@@ -18,12 +28,42 @@ export function createAssistantSessionId(prefix = 'ava_chat') {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 
-function cleanText(value = '', maxLength = MAX_TURN_CONTENT) {
-  return String(value || '')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,})\b/g, '[redacted-secret]')
+export function redactAssistantSecrets(value = '') {
+  let text = String(value || '');
+  for (const pattern of SECRET_PATTERNS) {
+    text = text.replace(pattern, '[redacted-secret]');
+  }
+  return text;
+}
+
+export function sanitizeAssistantTurn(value = '', maxLength = MAX_TURN_CONTENT) {
+  const raw = String(value || '');
+  const compacted = redactAssistantSecrets(raw)
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxLength);
+    .trim();
+  const truncated = compacted.length > maxLength;
+  return {
+    content: compacted.slice(0, maxLength),
+    truncated,
+    warning: truncated ? TURN_TRUNCATION_WARNING : '',
+    originalLength: raw.length,
+    retainedLength: Math.min(compacted.length, maxLength),
+  };
+}
+
+function cleanText(value = '', maxLength = MAX_TURN_CONTENT) {
+  return sanitizeAssistantTurn(value, maxLength).content;
+}
+
+function mergeSanitizationMetadata(metadata = {}, sanitized = {}) {
+  const safeMetadata = metadata && typeof metadata === 'object' ? { ...metadata } : {};
+  if (sanitized.truncated) {
+    safeMetadata.truncated = true;
+    safeMetadata.warning = sanitized.warning;
+    safeMetadata.originalLength = sanitized.originalLength;
+    safeMetadata.retainedLength = sanitized.retainedLength;
+  }
+  return safeMetadata;
 }
 
 export function normalizeAssistantSession(session = {}) {
@@ -31,14 +71,17 @@ export function normalizeAssistantSession(session = {}) {
   return {
     ...session,
     history: history
-      .map((turn) => ({
-        role: ['user', 'assistant', 'system'].includes(String(turn?.role || '').toLowerCase())
-          ? String(turn.role).toLowerCase()
-          : 'user',
-        content: cleanText(turn?.content || ''),
-        at: turn?.at || turn?.timestamp || null,
-        metadata: turn?.metadata && typeof turn.metadata === 'object' ? turn.metadata : {},
-      }))
+      .map((turn) => {
+        const sanitized = sanitizeAssistantTurn(turn?.content || '');
+        return {
+          role: ['user', 'assistant', 'system'].includes(String(turn?.role || '').toLowerCase())
+            ? String(turn.role).toLowerCase()
+            : 'user',
+          content: sanitized.content,
+          at: turn?.at || turn?.timestamp || null,
+          metadata: mergeSanitizationMetadata(turn?.metadata, sanitized),
+        };
+      })
       .filter((turn) => turn.content)
       .slice(-MAX_ASSISTANT_HISTORY),
     leadId: cleanText(session?.leadId || session?.lead_id || '', 120),
@@ -53,15 +96,15 @@ export function appendAssistantMessage(session = {}, role = 'user', content = ''
   const safeRole = ['user', 'assistant', 'system'].includes(String(role || '').toLowerCase())
     ? String(role).toLowerCase()
     : 'user';
-  const safeContent = cleanText(content);
-  if (!safeContent) return normalized;
+  const sanitized = sanitizeAssistantTurn(content);
+  if (!sanitized.content) return normalized;
   normalized.history = [
     ...normalized.history,
     {
       role: safeRole,
-      content: safeContent,
+      content: sanitized.content,
       at: new Date().toISOString(),
-      metadata: metadata && typeof metadata === 'object' ? metadata : {},
+      metadata: mergeSanitizationMetadata(metadata, sanitized),
     },
   ].slice(-MAX_ASSISTANT_HISTORY);
   return normalized;
@@ -87,6 +130,100 @@ function extractLeadQuery(message = '') {
     /\b(?:find|show|get|lookup|look up)\s+(?:lead|seller|contact)\s+(?:named|called|with)?\s*"?([^".,?]+)"?/i
   );
   return cleanText(match?.[1] || '', 120);
+}
+
+function stripLeadQuery(value = '') {
+  const query = cleanText(value, 160)
+    .replace(/\b(?:tonight|today|tomorrow|this week|next week|now|please|asap|after|before|at|on|by)\b.*$/i, '')
+    .replace(/\b(?:lead|seller|contact)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!query || /^(?:this|that|the|a|an|for|with|to)$/i.test(query)) return '';
+  return query.length >= 2 ? query : '';
+}
+
+function extractNurtureLeadQuery(message = '') {
+  const text = String(message || '');
+  const quoted = text.match(/"([^"]{2,120})"/);
+  if (quoted?.[1]) return stripLeadQuery(quoted[1]);
+  const match = text.match(
+    /\b(?:for|with|to)\s+(?:the\s+)?(?:lead|seller|contact)?\s*([^".,?]+?)(?:\s+\b(?:tonight|today|tomorrow|this week|next week|now|please|asap|after|before|at|on|by)\b|[.?!]|$)/i
+  );
+  return stripLeadQuery(match?.[1] || '');
+}
+
+function normalizeComparableText(value = '') {
+  return cleanText(value, 320)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenSimilarity(query = '', candidate = '') {
+  const q = normalizeComparableText(query);
+  const c = normalizeComparableText(candidate);
+  if (!q || !c) return 0;
+  if (c === q) return 1;
+  if (c.includes(q)) return 0.95;
+  if (q.includes(c) && c.length >= 4) return 0.82;
+  const qTokens = q.split(' ').filter((token) => token.length > 1);
+  const cTokens = new Set(c.split(' ').filter((token) => token.length > 1));
+  if (!qTokens.length || !cTokens.size) return 0;
+  const overlap = qTokens.filter((token) => cTokens.has(token)).length;
+  const prefixOverlap = qTokens.filter((token) =>
+    [...cTokens].some((candidateToken) => candidateToken.startsWith(token) || token.startsWith(candidateToken))
+  ).length;
+  return Math.max(overlap / qTokens.length, prefixOverlap ? prefixOverlap / qTokens.length - 0.1 : 0);
+}
+
+function getLeadIdentity(lead = {}) {
+  const name =
+    lead.name ||
+    lead.leadName ||
+    lead.sellerName ||
+    lead.ownerName ||
+    lead.contactName ||
+    lead.seller?.name ||
+    lead.contact?.name ||
+    '';
+  const address =
+    lead.address ||
+    lead.propertyAddress ||
+    lead.property?.address ||
+    lead.home?.address ||
+    lead.mailingAddress ||
+    '';
+  const leadId = lead.id || lead.leadId || lead.lead_id || lead.uuid || '';
+  return {
+    leadId: cleanText(leadId, 120),
+    name: cleanText(name, 160),
+    address: cleanText(address, 220),
+  };
+}
+
+export function findAssistantLeadMatch(query = '', leads = [], { threshold = 0.3 } = {}) {
+  const safeQuery = stripLeadQuery(query) || cleanText(query, 160);
+  if (!safeQuery || !Array.isArray(leads) || !leads.length) return null;
+  let best = null;
+  for (const lead of leads) {
+    const identity = getLeadIdentity(lead);
+    if (!identity.leadId && !identity.name && !identity.address) continue;
+    const nameScore = tokenSimilarity(safeQuery, identity.name);
+    const addressScore = tokenSimilarity(safeQuery, identity.address);
+    const combinedScore = tokenSimilarity(safeQuery, `${identity.name} ${identity.address}`);
+    const similarity = Math.max(nameScore, addressScore, combinedScore);
+    if (!best || similarity > best.similarity) {
+      best = {
+        ...identity,
+        similarity: Number(similarity.toFixed(3)),
+        matchMode: 'fuzzy',
+      };
+    }
+  }
+  return best && best.similarity >= threshold ? best : null;
 }
 
 export function detectAssistantIntent(message = '') {
@@ -115,7 +252,11 @@ export function detectAssistantIntent(message = '') {
     return { intent: 'session_recall', message: text };
   }
 
-  if (/\b(analy[sz]e|mao|arv|offer|deal math|underwrite|property value)\b/i.test(lower)) {
+  if (
+    /\b(analy[sz]e|mao|arv|offer|deal math|underwrite|property value|worth chasing|worth pursuing|worth it|should (?:we|i) chase|should (?:we|i) pursue|make sense as a deal|deal worth)\b/i.test(
+      lower
+    )
+  ) {
     return { intent: 'analyze_deal', message: text, address };
   }
 
@@ -132,6 +273,7 @@ export function detectAssistantIntent(message = '') {
       intent: explicitStart ? 'nurture_start' : 'nurture_consult',
       message: text,
       requestedChannel,
+      leadQuery: extractNurtureLeadQuery(text),
     };
   }
 
@@ -207,7 +349,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
     return {
       action: 'blocked_public_private_data',
       answer:
-        'That information lives inside the authenticated PBK Command Center. Open the Command Center to review approvals, leads, calls, and private deal activity.',
+        `That information lives inside the authenticated PBK Command Center. Open the Command Center at ${COMMAND_CENTER_PATH} to review approvals, leads, calls, and private deal activity.`,
       suggestions,
       toolPlan: null,
       usedIntent: intent,
@@ -227,7 +369,15 @@ export function planAssistantIntent(detected = {}, options = {}) {
 
   if (intent === 'session_recall') {
     const session = normalizeAssistantSession(options.session || {});
-    const lastUserTurn = [...session.history]
+    const recalledHistory = normalizeAssistantSession({
+      history: Array.isArray(options.recalledHistory)
+        ? options.recalledHistory
+        : Array.isArray(options.persistedHistory)
+          ? options.persistedHistory
+          : [],
+    }).history;
+    const recallHistory = [...recalledHistory, ...session.history].slice(-MAX_ASSISTANT_HISTORY);
+    const lastUserTurn = [...recallHistory]
       .reverse()
       .find(
         (turn) =>
@@ -277,6 +427,8 @@ export function planAssistantIntent(detected = {}, options = {}) {
         toolName: 'analyzeDeal',
         params: { address: detected.address },
         providerWrite: false,
+        requiresBridgeConfirmation: true,
+        retryable: true,
       },
       usedIntent: intent,
     };
@@ -315,6 +467,60 @@ export function planAssistantIntent(detected = {}, options = {}) {
     const session = normalizeAssistantSession(options.session || {});
     const leadId = cleanText(options.leadId || detected.leadId || session.leadId || '', 120);
     if (!leadId) {
+      const providedLeads = [
+        ...(Array.isArray(options.leads) ? options.leads : []),
+        ...(Array.isArray(options.leadRoster) ? options.leadRoster : []),
+        ...(Array.isArray(options.session?.leads) ? options.session.leads : []),
+      ];
+      const leadQuery = detected.leadQuery || extractNurtureLeadQuery(detected.message || '');
+      const leadMatch = findAssistantLeadMatch(leadQuery || detected.message || '', providedLeads);
+      const nextToolName = intent === 'nurture_start' ? 'startNurtureSequence' : 'consultNurtureAgent';
+      if (leadMatch) {
+        return {
+          action: 'lead_confirmation_required',
+          answer: `I found ${leadMatch.name || 'a likely lead'}${leadMatch.address ? ` at ${leadMatch.address}` : ''}. Confirm this is the lead before I ${intent === 'nurture_start' ? 'queue the nurture sequence for approval' : 'consult the Nurture Agent'}.`,
+          suggestions,
+          leadMatch,
+          toolPlan: {
+            toolName: 'confirmLeadMatch',
+            params: {
+              nextToolName,
+              leadId: leadMatch.leadId,
+              matchedLead: leadMatch,
+              userRequest: detected.message,
+              requestedChannel: detected.requestedChannel || '',
+              matchMode: 'fuzzy',
+              threshold: 0.3,
+            },
+            providerWrite: false,
+            requiresConfirmation: true,
+          },
+          usedIntent: intent,
+        };
+      }
+      if (leadQuery) {
+        return {
+          action: 'lead_lookup_required',
+          answer:
+            `I need to confirm the lead before any nurture action. I can search for "${leadQuery}" and ask you to confirm the best match.`,
+          suggestions,
+          toolPlan: {
+            toolName: 'findLead',
+            params: {
+              query: leadQuery,
+              matchMode: 'fuzzy',
+              strategy: 'pg_trgm_similarity',
+              threshold: 0.3,
+              nextToolName,
+              userRequest: detected.message,
+              requestedChannel: detected.requestedChannel || '',
+            },
+            providerWrite: false,
+            requiresConfirmation: true,
+          },
+          usedIntent: intent,
+        };
+      }
       return {
         action: 'missing_required_info',
         answer:
@@ -392,7 +598,7 @@ export function planAssistantIntent(detected = {}, options = {}) {
         'I can run the unified additive intelligence layer across PBK now and return the safest next action.',
       suggestions,
       toolPlan: {
-        toolName: 'runProviderAugmentedAdditiveIntelligence',
+        toolName: 'runUnifiedAdditiveIntelligence',
         params: {
           query: detected.message,
           command: detected.message,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -17,6 +17,7 @@ import {
   fetchLeadLastCallRequest,
   patchLeadRequest,
   sendLeadContractRequest,
+  startLeadCallRequest,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 
@@ -141,9 +142,44 @@ function getLeadPhone(lead: BridgeRecord) {
   return text(lead.phone || seller.phone);
 }
 
+function normalizePhone(value: unknown) {
+  return text(value).replace(/\D/g, '');
+}
+
+function isCallablePhone(value: unknown) {
+  return normalizePhone(value).length >= 10;
+}
+
+function isValidEmail(value: unknown) {
+  const email = text(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function getLeadAddress(lead: BridgeRecord) {
   const property = getProperty(lead);
   return text(lead.address || property.address, 'No property');
+}
+
+function validateLeadForCall(lead: BridgeRecord) {
+  if (!isCallablePhone(getLeadPhone(lead))) {
+    return `${getSellerName(lead)} needs a valid phone number before Telnyx can dial.`;
+  }
+  return '';
+}
+
+function validateContractBeforeSend(form: ContractFormState, lead: BridgeRecord) {
+  if (!text(form.seller1Name)) return 'Seller 1 name is required before DocuSign can be queued.';
+  if (!isValidEmail(form.seller1Email)) {
+    return 'A valid Seller 1 email is required before DocuSign can be queued.';
+  }
+  if (!isCallablePhone(getLeadPhone(lead))) {
+    return 'A valid lead phone is required before sending this contract packet.';
+  }
+  if (form.seller2Email && !isValidEmail(form.seller2Email)) {
+    return 'Seller 2 email is not valid.';
+  }
+  if (!isValidEmail(form.slot2Email)) return 'Signer 2 email is not valid.';
+  return '';
 }
 
 function getLeadScore(lead: BridgeRecord) {
@@ -285,20 +321,27 @@ const softPanelClass =
 
 export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
-  const leads = Array.isArray(snapshot?.leadImports)
-    ? (snapshot.leadImports as BridgeRecord[])
-    : [];
+  const leads = useMemo(
+    () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
+    [snapshot?.leadImports]
+  );
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [leadDetail, setLeadDetail] = useState<BridgeRecord | null>(null);
   const [lastCall, setLastCall] = useState<BridgeRecord | null>(null);
   const [detailStatus, setDetailStatus] = useState('');
   const [editOpen, setEditOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
+  const [contractConfirmOpen, setContractConfirmOpen] = useState(false);
   const [editForm, setEditForm] = useState<LeadFormState | null>(null);
   const [contractForm, setContractForm] = useState<ContractFormState | null>(null);
   const [saving, setSaving] = useState(false);
+  const [leadActionPending, setLeadActionPending] = useState('');
   const [contractStatus, setContractStatus] = useState('');
   const [displayLimit, setDisplayLimit] = useState(40);
+  const reloadTimerRef = useRef<number | null>(null);
+  const reloadInFlightRef = useRef(false);
+  const leadActionLockRef = useRef(false);
+  const isLeadActionBusy = saving || Boolean(leadActionPending);
 
   const selectedLead = useMemo(
     () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
@@ -307,6 +350,18 @@ export function Leads() {
   const visibleLeads = useMemo(() => leads.slice(0, displayLimit), [displayLimit, leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
+  const beginLeadAction = useCallback((key: string) => {
+    if (leadActionLockRef.current) return false;
+    leadActionLockRef.current = true;
+    setLeadActionPending(key);
+    setSaving(true);
+    return true;
+  }, []);
+  const endLeadAction = useCallback(() => {
+    leadActionLockRef.current = false;
+    setLeadActionPending('');
+    setSaving(false);
+  }, []);
   const leadActivity = Array.isArray(activeLead?.activity)
     ? (activeLead.activity as BridgeRecord[])
     : Array.isArray(snapshot?.activity)
@@ -360,10 +415,12 @@ export function Leads() {
     return () => {
       cancelled = true;
     };
-  }, [selectedLeadId]);
+  }, [selectedLead, selectedLeadId]);
 
-  const reloadLeadDetail = async () => {
+  const reloadLeadDetailNow = useCallback(async () => {
     if (!selectedLeadId) return;
+    if (reloadInFlightRef.current) return;
+    reloadInFlightRef.current = true;
     setDetailStatus('Refreshing lead detail...');
     try {
       const [fullResponse, callResponse] = await Promise.all([
@@ -378,8 +435,23 @@ export function Leads() {
       setDetailStatus(
         nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.'
       );
+    } finally {
+      reloadInFlightRef.current = false;
     }
-  };
+  }, [refresh, selectedLeadId]);
+
+  const reloadLeadDetail = useCallback(() => {
+    if (reloadTimerRef.current) window.clearTimeout(reloadTimerRef.current);
+    reloadTimerRef.current = window.setTimeout(() => {
+      void reloadLeadDetailNow();
+    }, 300);
+  }, [reloadLeadDetailNow]);
+
+  useEffect(() => {
+    return () => {
+      if (reloadTimerRef.current) window.clearTimeout(reloadTimerRef.current);
+    };
+  }, []);
 
   const openEditModal = () => {
     if (!activeLead) return;
@@ -391,12 +463,13 @@ export function Leads() {
     if (!activeLead) return;
     setContractForm(contractFormFromLead(activeLead, lastCall));
     setContractStatus('');
+    setContractConfirmOpen(false);
     setContractOpen(true);
   };
 
   const saveLead = async () => {
     if (!editForm || !activeLeadId) return;
-    setSaving(true);
+    if (!beginLeadAction('save-lead')) return;
     try {
       let bant: BridgeRecord = {};
       if (editForm.bant.trim()) {
@@ -437,17 +510,74 @@ export function Leads() {
         nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.'
       );
     } finally {
-      setSaving(false);
+      endLeadAction();
     }
+  };
+
+  const startLeadCall = async (lead: BridgeRecord) => {
+    const validation = validateLeadForCall(lead);
+    if (validation) {
+      showUiToast({ tone: 'error', title: 'Call blocked', desc: validation });
+      return;
+    }
+    const leadId = getLeadId(lead);
+    if (!beginLeadAction(`call:${leadId}`)) return;
+    try {
+      const response = await startLeadCallRequest({
+        leadId,
+        leadName: getSellerName(lead),
+        phone: getLeadPhone(lead),
+        email: getLeadEmail(lead),
+        address: getLeadAddress(lead),
+        source: 'leads-page',
+      });
+      const status = String(
+        response.status || response.result || response.outcome || response.action || ''
+      ).toLowerCase();
+      const approvalQueued =
+        status.includes('approval') || Boolean(response.approvalId || response.approval_id);
+      showUiToast({
+        tone: approvalQueued ? 'info' : 'success',
+        title: approvalQueued ? 'Call queued for approval' : 'Call request sent',
+        desc: approvalQueued
+          ? `${getSellerName(lead)} needs approval before Telnyx dials.`
+          : `${getSellerName(lead)} was handed to the Telnyx call lane.`,
+      });
+      await refresh().catch(() => null);
+    } catch (nextError) {
+      showUiToast({
+        tone: 'error',
+        title: 'Call request failed',
+        desc:
+          nextError instanceof Error
+            ? nextError.message
+            : 'The bridge did not accept the call request.',
+      });
+    } finally {
+      endLeadAction();
+    }
+  };
+
+  const requestContractSend = () => {
+    if (!contractForm || !activeLead) return;
+    const validation = validateContractBeforeSend(contractForm, activeLead);
+    if (validation) {
+      setContractStatus(validation);
+      return;
+    }
+    setContractConfirmOpen(true);
   };
 
   const sendContract = async () => {
     if (!contractForm || !activeLead) return;
-    if (!contractForm.seller1Email.trim()) {
-      setContractStatus('Seller 1 email is required before DocuSign can be queued.');
+    const validation = validateContractBeforeSend(contractForm, activeLead);
+    if (validation) {
+      setContractConfirmOpen(false);
+      setContractStatus(validation);
       return;
     }
-    setSaving(true);
+    if (!beginLeadAction(`contract:${activeLeadId}`)) return;
+    setContractConfirmOpen(false);
     setContractStatus('Preparing path-aware contract request...');
     try {
       const signers = [
@@ -513,13 +643,13 @@ export function Leads() {
             ? text(response.error, 'Contract request failed.')
             : 'Contract request captured. Activity is attached to this lead.'
       );
-      await Promise.all([reloadLeadDetail(), refresh().catch(() => null)]);
+      await Promise.all([reloadLeadDetailNow(), refresh().catch(() => null)]);
     } catch (nextError) {
       setContractStatus(
         nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.'
       );
     } finally {
-      setSaving(false);
+      endLeadAction();
     }
   };
 
@@ -604,17 +734,14 @@ export function Leads() {
                     </span>
                     <button
                       type="button"
-                      className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950"
+                      disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
+                      className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={(event) => {
                         event.stopPropagation();
-                        showUiToast({
-                          tone: 'info',
-                          title: 'Call queued (demo)',
-                          desc: `${sellerName} stays selected. No provider call was made.`,
-                        });
+                        void startLeadCall(lead);
                       }}
                     >
-                      Call
+                      {leadActionPending === `call:${id}` ? 'Calling...' : 'Call'}
                     </button>
                   </span>
                 </div>
@@ -717,13 +844,14 @@ export function Leads() {
                   <button
                     type="button"
                     onClick={reloadLeadDetail}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200"
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200 disabled:cursor-wait disabled:opacity-60"
                   >
                     <RefreshCw size={14} /> Refresh
                   </button>
                   <button
                     type="button"
                     onClick={openEditModal}
+                    disabled={isLeadActionBusy}
                     className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200"
                   >
                     <Edit3 size={14} /> Edit Lead
@@ -731,7 +859,8 @@ export function Leads() {
                   <button
                     type="button"
                     onClick={openContractModal}
-                    className="inline-flex items-center gap-2 rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-300"
+                    disabled={isLeadActionBusy}
+                    className="inline-flex items-center gap-2 rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
                   >
                     <FileSignature size={14} /> Send Contract
                   </button>
@@ -1043,7 +1172,7 @@ export function Leads() {
               </button>
               <button
                 type="button"
-                disabled={saving}
+                disabled={isLeadActionBusy}
                 onClick={saveLead}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
@@ -1068,7 +1197,10 @@ export function Leads() {
               </div>
               <button
                 type="button"
-                onClick={() => setContractOpen(false)}
+                onClick={() => {
+                  setContractConfirmOpen(false);
+                  setContractOpen(false);
+                }}
                 className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
               >
                 <X size={18} />
@@ -1203,7 +1335,7 @@ export function Leads() {
               </div>
               {contractStatus && (
                 <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-xs text-slate-300">
-                  {contractStatus.includes('failed') || contractStatus.includes('required') ? (
+                  {/(failed|required|valid)/i.test(contractStatus) ? (
                     <AlertCircle size={15} className="mt-0.5 text-amber-300" />
                   ) : (
                     <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
@@ -1215,18 +1347,71 @@ export function Leads() {
             <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:justify-end">
               <button
                 type="button"
-                onClick={() => setContractOpen(false)}
+                onClick={() => {
+                  setContractConfirmOpen(false);
+                  setContractOpen(false);
+                }}
                 className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={saving}
-                onClick={sendContract}
+                disabled={isLeadActionBusy}
+                onClick={requestContractSend}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
                 <Send size={15} /> Send via DocuSign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {contractConfirmOpen && contractForm && activeLead && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contract-confirm-title"
+            className={`${softPanelClass} w-full max-w-md p-5`}
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Final DocuSign check
+            </div>
+            <h3 id="contract-confirm-title" className="mt-2 text-lg font-semibold text-slate-100">
+              Confirm contract send
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              PBK cannot undo this provider send after DocuSign accepts it. Confirm the signer email
+              and lead phone before continuing.
+            </p>
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+              <div className="font-semibold text-slate-100">{PATH_LABELS[contractForm.path]}</div>
+              <div className="mt-1">
+                {getSellerName(activeLead)} / {getLeadAddress(activeLead)}
+              </div>
+              <div className="mt-2 text-xs text-slate-400">
+                {contractForm.seller1Email} / {getLeadPhone(activeLead)}
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setContractConfirmOpen(false)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isLeadActionBusy}
+                onClick={() => {
+                  void sendContract();
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                <Send size={15} /> Confirm and Send
               </button>
             </div>
           </div>

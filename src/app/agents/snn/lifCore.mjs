@@ -23,7 +23,9 @@ export function createLifNetwork(options = {}) {
     threshold: clamp(options.threshold ?? DEFAULT_THRESHOLD, 0.05, 10),
     decay: clamp(options.decay ?? DEFAULT_DECAY, 0, 1),
     refractoryMs: clamp(options.refractoryMs ?? DEFAULT_REFRACTORY_MS, 0, 250),
-    resetPotential: Number.isFinite(Number(options.resetPotential)) ? Number(options.resetPotential) : DEFAULT_RESET_POTENTIAL,
+    resetPotential: Number.isFinite(Number(options.resetPotential))
+      ? Number(options.resetPotential)
+      : DEFAULT_RESET_POTENTIAL,
     tick: 0,
     lastSpikes: [],
     symbolicFacts: [],
@@ -116,7 +118,10 @@ export function getNetworkSnapshot(network) {
       totalSpikes: neuron.totalSpikes,
     }))
     .filter((neuron) => neuron.membrane > 0 || neuron.lastInjection > 0 || neuron.totalSpikes > 0)
-    .sort((left, right) => right.totalSpikes - left.totalSpikes || right.lastInjection - left.lastInjection)
+    .sort(
+      (left, right) =>
+        right.totalSpikes - left.totalSpikes || right.lastInjection - left.lastInjection
+    )
     .slice(0, 16);
 
   return {
@@ -127,4 +132,30 @@ export function getNetworkSnapshot(network) {
     symbolicFacts: [...network.symbolicFacts],
     activeNeurons,
   };
+}
+
+export function restoreNetworkFromSnapshot(snapshot = {}, options = {}) {
+  const size = Math.max(1, Math.min(4096, Number(snapshot.size || options.size || DEFAULT_SIZE)));
+  const network = createLifNetwork({ ...options, size });
+  network.tick = Math.max(0, Math.floor(Number(snapshot.tick || 0)));
+  network.lastSpikes = Array.isArray(snapshot.lastSpikes)
+    ? snapshot.lastSpikes
+        .map((item) => toValidNeuronId(item, network.size))
+        .filter((item) => item !== null)
+    : [];
+  network.symbolicFacts = Array.isArray(snapshot.symbolicFacts)
+    ? snapshot.symbolicFacts.slice(-24)
+    : [];
+
+  const activeNeurons = Array.isArray(snapshot.activeNeurons) ? snapshot.activeNeurons : [];
+  for (const item of activeNeurons) {
+    const neuronId = toValidNeuronId(item?.neuronId, network.size);
+    if (neuronId === null) continue;
+    const neuron = network.neurons[neuronId];
+    neuron.membrane = clamp(item?.membrane ?? 0, -10, 10);
+    neuron.lastInjection = clamp(item?.lastInjection ?? 0, 0, 1);
+    neuron.totalSpikes = Math.max(0, Math.floor(Number(item?.totalSpikes || 0)));
+  }
+
+  return network;
 }

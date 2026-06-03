@@ -26,6 +26,13 @@ async function main() {
     assert(ids.includes(required), `Default registry should include ${required}.`);
   }
 
+  for (const required of ['script-rotator', 'bant-enforcer', 'qa-agent', 'nurture-agent']) {
+    const agent = registry.find((item) => item.id === required);
+    assert.equal(agent.endpoint, '/invoke', `${required} should expose the bridge invoke endpoint.`);
+    assert.equal(agent.status, 'standby', `${required} should start as standby until a health check runs.`);
+    assert.equal(agent.healthCheckedAt, '', `${required} should not pretend it was health-checked at startup.`);
+  }
+
   assert.equal(normalizeAgentRegistryId(' Call Analyzer! '), 'call-analyzer');
 
   const analyzers = findAgentsByCapability(registry, 'analysis');
@@ -34,8 +41,8 @@ async function main() {
     'analysis capability should discover Call Analyzer.'
   );
   assert(
-    analyzers.every((agent) => agent.status === 'active'),
-    'capability lookup should prefer active agents.'
+    analyzers.every((agent) => ['active', 'standby'].includes(agent.status)),
+    'capability lookup should return routable active or standby agents.'
   );
 
   const nurtureAgents = findAgentsByCapability(registry, 'nurture');
@@ -65,7 +72,7 @@ async function main() {
   assert.equal(ava.metadata.customized, true, 'existing metadata should be preserved.');
 
   const localResult = await invokeRegisteredAgent(
-    { id: 'call-analyzer', endpoint: '', status: 'active' },
+    { id: 'call-analyzer', endpoint: '/invoke', status: 'active', metadata: { local: true } },
     { callId: 'call_123' },
     {
       localHandlers: {
@@ -79,6 +86,39 @@ async function main() {
   );
   assert.equal(localResult.ok, true);
   assert.equal(localResult.handledBy, 'call-analyzer');
+
+  const invocationSmokeHandlers = {
+    'script-rotator': async (payload) => ({
+      ok: true,
+      result: 'script_rotation_selected',
+      script: payload.query || 'default',
+    }),
+    'bant-enforcer': async () => ({
+      ok: true,
+      result: 'bant_enforcer_status',
+      complete: false,
+      missing: ['budget'],
+    }),
+    'qa-agent': async () => ({
+      ok: true,
+      result: 'qa_agent_registered',
+      qa: { validators: ['sendDocuSign'] },
+    }),
+    'nurture-agent': async () => ({
+      ok: true,
+      result: 'nurture_recommendation',
+      recommendation: { channel: 'sms', urgency: 'today' },
+    }),
+  };
+  for (const required of Object.keys(invocationSmokeHandlers)) {
+    const agent = registry.find((item) => item.id === required);
+    const output = await invokeRegisteredAgent(
+      agent,
+      { query: 'smoke invocation', leadId: 'lead-smoke' },
+      { localHandlers: invocationSmokeHandlers }
+    );
+    assert.equal(output.ok, true, `${required} should be callable through registry invocation.`);
+  }
 
   const snapshot = buildAgentRegistrySnapshot(registry);
   assert.equal(snapshot.ok, true, 'default registry should be ready.');

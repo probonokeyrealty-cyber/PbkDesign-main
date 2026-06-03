@@ -20,6 +20,14 @@ async function main() {
   assert.equal(sentContract.ok, true, 'sendDocuSign with an envelope id should pass QA.');
   assert.equal(sentContract.skipped, false, 'known provider tools should not be marked skipped.');
 
+  const fakeContract = validateQaToolResult('sendDocuSign', {
+    ok: true,
+    envelopeId: 'test-123',
+    status: 'sent',
+  });
+  assert.equal(fakeContract.ok, false, 'sendDocuSign should reject obviously fake envelope ids.');
+  assert.match(fakeContract.reason, /invalid_delivery_proof/);
+
   const brokenContract = validateQaToolResult('sendDocuSign', {
     ok: true,
     status: 'drafted',
@@ -30,6 +38,22 @@ async function main() {
   const brainState = validateQaToolResult('getBrainState', { ok: true, answer: 'PBK brain is available.' });
   assert.equal(brainState.ok, true, 'getBrainState should pass as a known read-only tool.');
   assert.equal(brainState.skipped, false, 'getBrainState should have a registered QA validator.');
+
+  const nurtureConsult = validateQaToolResult('consultNurtureAgent', {
+    ok: true,
+    recommendation: {
+      channel: 'sms',
+      urgency: 'today',
+      reason: 'Seller replied recently.',
+    },
+  });
+  assert.equal(nurtureConsult.ok, true, 'consultNurtureAgent should have a semantic QA validator.');
+
+  const brokenNurtureStart = validateQaToolResult('startNurtureSequence', {
+    ok: true,
+    status: 'started',
+  });
+  assert.equal(brokenNurtureStart.ok, false, 'startNurtureSequence should fail QA without approval or sequence proof.');
 
   const originalWarn = console.warn;
   let unknown;
@@ -84,6 +108,21 @@ async function main() {
   assert.equal(auditEvents.length, 1, 'failed QA should write exactly one audit record.');
   assert.equal(approvalEvents.length, 1, 'failed provider QA should create an escalation event.');
   assert.equal(approvalEvents[0].type, 'qa_failure');
+
+  const fallbackEvents = [];
+  const qaWithMetricFailure = await validateToolCallWithQa({
+    toolName: 'telnyx_sms',
+    params: { phone: '+15551234567' },
+    result: { ok: true, messageId: 'msg_123' },
+    metricSink: () => {
+      throw new Error('observability unavailable');
+    },
+    auditFallbackSink: async (record) => fallbackEvents.push(record),
+    source: 'smoke-metric-fallback',
+  });
+  assert.equal(qaWithMetricFailure.ok, true, 'QA should still return validation results if observability recording fails.');
+  assert.equal(fallbackEvents.length, 1, 'QA should write an audit fallback when observability recording fails.');
+  assert.match(fallbackEvents[0].fallbackReason, /observability unavailable/);
 
   console.log('QA agent smoke passed.');
 }

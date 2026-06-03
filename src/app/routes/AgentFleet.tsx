@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, X, Zap } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, Phone, X, Zap } from 'lucide-react';
 import { showUiToast } from '../utils/uiFeedback';
 import {
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
   getSnnWorkerStatus,
   invokeRuntimeTool,
+  startLeadCallRequest,
 } from '../utils/runtimeBridge';
 import { AGENT_REGISTRY, type RegistryAgent } from '../utils/agentRegistry';
 
@@ -136,9 +137,6 @@ const AGENT_SKILLS: Record<string, AgentSkill[]> = {
   ],
 };
 
-// Module-level queue — survives re-renders, retried on bridge reconnect.
-const pendingTransferQueue: PendingTransfer[] = [];
-
 function buildFleetAgents(): FleetAgent[] {
   return AGENT_REGISTRY.map((agent) => ({
     ...agent,
@@ -182,6 +180,50 @@ function getLeadOptionLabel(lead: RuntimeLeadOption) {
   return `${name} - ${address}`;
 }
 
+function getLeadOptionName(lead: RuntimeLeadOption) {
+  return String(lead.leadName || lead.name || lead.seller?.name || 'Unknown seller');
+}
+
+function getLeadOptionAddress(lead: RuntimeLeadOption) {
+  return String(lead.address || lead.property?.address || 'Unknown property');
+}
+
+function getLeadOptionPhone(lead: RuntimeLeadOption) {
+  return String(lead.phone || lead.seller?.phone || '').trim();
+}
+
+function normalizePhone(value = '') {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function assertBridgeTransferApplied(result: unknown, skillName = 'skill') {
+  const response = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
+  if (response.ok === false) {
+    throw new Error(String(response.error || `${skillName} transfer failed.`));
+  }
+  const statusText = String(
+    response.result || response.status || response.outcome || ''
+  ).toLowerCase();
+  if (/failed|error|rejected|not[_-]?applied/.test(statusText)) {
+    throw new Error(
+      String(response.error || `${skillName} transfer was not applied by the bridge.`)
+    );
+  }
+  const confirmed =
+    response.ok === true ||
+    Boolean(
+      response.transferId ||
+      response.transfer_id ||
+      response.state ||
+      response.skill ||
+      response.updatedAgents
+    ) ||
+    /transferred|applied|copied|delivered|queued/.test(statusText);
+  if (!confirmed) {
+    throw new Error(`Bridge did not confirm '${skillName}' was applied.`);
+  }
+}
+
 function getBridgeSnnWorkerForAgent(workers: BridgeSnnWorker[], agentId = '') {
   const normalized = normalizeFleetAgentId(agentId);
   return workers.find(
@@ -193,15 +235,15 @@ function formatAgentPreviewAction(value = '') {
   return String(value || 'inspect_lead_profile').replace(/_/g, ' ');
 }
 
-async function flushTransferQueue(agents: FleetAgent[]) {
-  const retryable = pendingTransferQueue.filter((t) => t.retries < 3);
+async function flushTransferQueue(queue: PendingTransfer[], agents: FleetAgent[]) {
+  const retryable = queue.filter((t) => t.retries < 3);
   for (const transfer of [...retryable]) {
     const toNames = agents
       .filter((a) => transfer.toAgentIds.includes(a.id))
       .map((a) => a.name)
       .join(', ');
     try {
-      await invokeRuntimeTool('pbk_transfer_agent_skill', {
+      const result = await invokeRuntimeTool('pbk_transfer_agent_skill', {
         skillName: transfer.skillName,
         skillSource: transfer.skillSource,
         fromAgentId: transfer.fromAgentId,
@@ -209,8 +251,9 @@ async function flushTransferQueue(agents: FleetAgent[]) {
         versioned: transfer.versioned,
         requestedBy: 'AgentFleet UI (retry)',
       });
-      const idx = pendingTransferQueue.indexOf(transfer);
-      if (idx >= 0) pendingTransferQueue.splice(idx, 1);
+      assertBridgeTransferApplied(result, transfer.skillName);
+      const idx = queue.indexOf(transfer);
+      if (idx >= 0) queue.splice(idx, 1);
       showUiToast({
         tone: 'success',
         title: 'Queued transfer sent',
@@ -225,8 +268,8 @@ async function flushTransferQueue(agents: FleetAgent[]) {
       });
       transfer.retries += 1;
       if (transfer.retries >= 3) {
-        const idx = pendingTransferQueue.indexOf(transfer);
-        if (idx >= 0) pendingTransferQueue.splice(idx, 1);
+        const idx = queue.indexOf(transfer);
+        if (idx >= 0) queue.splice(idx, 1);
         showUiToast({
           tone: 'error',
           title: 'Transfer dropped',
@@ -490,6 +533,13 @@ export function AgentFleet() {
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [callActionPending, setCallActionPending] = useState(false);
+  const [transferStatus, setTransferStatus] = useState('');
+  const [pendingTransferCount, setPendingTransferCount] = useState(0);
+  const pendingTransferQueueRef = useRef<PendingTransfer[]>([]);
+  const syncPendingTransferCount = useCallback(() => {
+    setPendingTransferCount(pendingTransferQueueRef.current.length);
+  }, []);
 
   useEffect(() => {
     setSnnStatus(getSnnWorkerStatus());
@@ -533,19 +583,23 @@ export function AgentFleet() {
           : [];
         setAgents((prev) => {
           const merged = mergeAgentStatuses(prev, bridgeAgents);
-          flushTransferQueue(merged).catch((error) => {
-            console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
-            if (!cancelled) {
-              showUiToast({
-                tone: 'warning',
-                title: 'Transfer retry failed',
-                desc:
-                  error instanceof Error
-                    ? error.message
-                    : 'Queued skill transfer could not reach the bridge.',
-              });
-            }
-          });
+          flushTransferQueue(pendingTransferQueueRef.current, merged)
+            .catch((error) => {
+              console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
+              if (!cancelled) {
+                showUiToast({
+                  tone: 'warning',
+                  title: 'Transfer retry failed',
+                  desc:
+                    error instanceof Error
+                      ? error.message
+                      : 'Queued skill transfer could not reach the bridge.',
+                });
+              }
+            })
+            .finally(() => {
+              if (!cancelled) syncPendingTransferCount();
+            });
           return merged;
         });
         setBridgeConnected(true);
@@ -562,8 +616,9 @@ export function AgentFleet() {
       });
     return () => {
       cancelled = true;
+      pendingTransferQueueRef.current = [];
     };
-  }, []);
+  }, [syncPendingTransferCount]);
 
   const activeAgent = useMemo(
     () => agents.find((a) => a.id === activeAgentId) ?? agents[0],
@@ -615,8 +670,63 @@ export function AgentFleet() {
     }
   };
 
+  const handleCallSelectedLead = async () => {
+    if (!selectedLead) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Select a lead',
+        desc: 'Choose a live lead before requesting a call.',
+      });
+      return;
+    }
+    const phone = getLeadOptionPhone(selectedLead);
+    if (normalizePhone(phone).length < 10) {
+      showUiToast({
+        tone: 'error',
+        title: 'Call blocked',
+        desc: `${getLeadOptionName(selectedLead)} needs a valid phone number before Telnyx can dial.`,
+      });
+      return;
+    }
+    setCallActionPending(true);
+    try {
+      const response = await startLeadCallRequest({
+        leadId: getLeadOptionId(selectedLead),
+        leadName: getLeadOptionName(selectedLead),
+        phone,
+        email: selectedLead.email || selectedLead.seller?.email || '',
+        address: getLeadOptionAddress(selectedLead),
+        agentId: activeAgent.id,
+        agentName: activeAgent.name,
+        source: 'agent-fleet',
+      });
+      const status = String(
+        response.status || response.result || response.outcome || ''
+      ).toLowerCase();
+      const approvalQueued =
+        status.includes('approval') || Boolean(response.approvalId || response.approval_id);
+      showUiToast({
+        tone: approvalQueued ? 'info' : 'success',
+        title: approvalQueued ? 'Call queued for approval' : 'Call request sent',
+        desc: approvalQueued
+          ? `${getLeadOptionName(selectedLead)} needs approval before Telnyx dials.`
+          : `${getLeadOptionName(selectedLead)} was handed to the Telnyx call lane.`,
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Call request failed',
+        desc:
+          error instanceof Error ? error.message : 'The bridge did not accept the call request.',
+      });
+    } finally {
+      setCallActionPending(false);
+    }
+  };
+
   const handleTransfer = async (targetAgentIds: string[], versioned: boolean) => {
     if (!selectedSkill) return;
+    setTransferStatus('Confirming skill transfer with bridge...');
     const targetNames = agents
       .filter((a) => targetAgentIds.includes(a.id))
       .map((a) => a.name)
@@ -632,7 +742,8 @@ export function AgentFleet() {
     };
 
     try {
-      await invokeRuntimeTool('pbk_transfer_agent_skill', transferPayload);
+      const result = await invokeRuntimeTool('pbk_transfer_agent_skill', transferPayload);
+      assertBridgeTransferApplied(result, selectedSkill.name);
       // Record transfer in local skill history
       setAgents((prev) =>
         prev.map((agent) => {
@@ -658,13 +769,18 @@ export function AgentFleet() {
         title: 'Skill transferred',
         desc: `'${selectedSkill.name}' copied to ${targetNames}${versioned ? ' (versioned)' : ''}`,
       });
-    } catch {
+      setTransferStatus(`Bridge confirmed '${selectedSkill.name}' was applied to ${targetNames}.`);
+    } catch (error) {
       // Queue for retry on next bridge reconnect
-      pendingTransferQueue.push({
+      pendingTransferQueueRef.current.push({
         ...transferPayload,
         queuedAt: new Date().toISOString(),
         retries: 0,
       });
+      syncPendingTransferCount();
+      const message =
+        error instanceof Error ? error.message : 'Bridge did not confirm the skill transfer.';
+      setTransferStatus(`${message} Queued retry for ${targetNames}.`);
       showUiToast({
         tone: 'error',
         title: 'Transfer queued',
@@ -694,10 +810,10 @@ export function AgentFleet() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {pendingTransferQueue.length > 0 && (
+          {pendingTransferCount > 0 && (
             <span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-300">
               <AlertTriangle size={11} />
-              {pendingTransferQueue.length} queued
+              {pendingTransferCount} queued
             </span>
           )}
           <div className={statusBadgeClass}>
@@ -709,6 +825,11 @@ export function AgentFleet() {
           </div>
         </div>
       </div>
+      {transferStatus && (
+        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+          {transferStatus}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
         {/* Agent sidebar */}
@@ -835,15 +956,30 @@ export function AgentFleet() {
                   )}
                 </select>
               </div>
-              <button
-                type="button"
-                className="btn-primary flex min-h-10 items-center justify-center gap-2"
-                disabled={!selectedLead || previewLoading}
-                onClick={handlePreviewAgentDealContext}
-              >
-                {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
-              </button>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <button
+                  type="button"
+                  className="btn-secondary flex min-h-10 items-center justify-center gap-2"
+                  disabled={!selectedLead || callActionPending}
+                  onClick={handleCallSelectedLead}
+                >
+                  {callActionPending ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Phone size={14} />
+                  )}
+                  {callActionPending ? 'Calling...' : 'Call lead'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary flex min-h-10 items-center justify-center gap-2"
+                  disabled={!selectedLead || previewLoading}
+                  onClick={handlePreviewAgentDealContext}
+                >
+                  {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                  {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
+                </button>
+              </div>
             </div>
             {dealPreview && (
               <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">

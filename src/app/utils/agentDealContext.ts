@@ -14,6 +14,12 @@ export interface AgentDealContextOptions {
   activeScriptTab?: AgentScriptTab;
   callNotes?: string;
   requestedBy?: string;
+  runtimeSelectedScript?: {
+    id?: string;
+    title?: string;
+    content?: string;
+    reasonCodes?: string[];
+  };
 }
 
 export interface AgentDealContext {
@@ -53,6 +59,7 @@ export interface AgentDealContext {
     assignmentFee: number;
   };
   activeScript: string;
+  runtimeSelectedScript?: AgentDealContextOptions['runtimeSelectedScript'];
   activeScriptBundle: PbkScriptBundle;
   allPathScripts: ReturnType<typeof buildPbkPathScripts>;
   callNotes?: string;
@@ -65,7 +72,11 @@ export function getAgentScriptPath(path: PBKPath): PbkLegacyScriptPath {
   return path;
 }
 
-export function getAgentScriptVariant(path: PBKPath, deal: DealData, preferred?: AgentScriptVariant): AgentScriptVariant {
+export function getAgentScriptVariant(
+  path: PBKPath,
+  deal: DealData,
+  preferred?: AgentScriptVariant
+): AgentScriptVariant {
   if (path === 'cf' || path === 'mt' || path === 'land-agent') return 'agent';
   if (path === 'rbp' || path === 'land-owner' || path === 'rbp-land') return 'owner';
   return preferred || (deal.contact === 'realtor' ? 'agent' : 'owner');
@@ -79,15 +90,18 @@ export function buildAgentDealContext(
     activeScriptTab = 'opening',
     callNotes = '',
     requestedBy = 'PBK Analyzer',
-  }: AgentDealContextOptions = {},
+    runtimeSelectedScript,
+  }: AgentDealContextOptions = {}
 ): AgentDealContext {
   const allPathScripts = buildPbkPathScripts(deal);
   const scriptPath = getAgentScriptPath(activePath);
   const resolvedVariant = getAgentScriptVariant(activePath, deal, scriptVariant);
   const activeScriptBundle = allPathScripts[scriptPath][resolvedVariant];
-  const activeScript = activeScriptTab === 'acquisition'
-    ? `${activeScriptBundle.acquisition}\n\n[NEXT-STEP CLOSE]\n${activeScriptBundle.closing}`
-    : activeScriptBundle[activeScriptTab];
+  const localActiveScript =
+    activeScriptTab === 'acquisition'
+      ? `${activeScriptBundle.acquisition}\n\n[NEXT-STEP CLOSE]\n${activeScriptBundle.closing}`
+      : activeScriptBundle[activeScriptTab];
+  const activeScript = runtimeSelectedScript?.content || localActiveScript;
 
   return {
     version: 1,
@@ -126,6 +140,7 @@ export function buildAgentDealContext(
       assignmentFee: deal.fee || 0,
     },
     activeScript,
+    runtimeSelectedScript,
     activeScriptBundle,
     allPathScripts,
     callNotes,

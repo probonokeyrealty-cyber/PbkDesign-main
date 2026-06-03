@@ -14,12 +14,20 @@ import { showUiToast } from '../utils/uiFeedback';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
-  const diff = Math.max(0, Date.now() - new Date(value).getTime());
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return value.slice(0, 16).replace('T', ' ');
+  const diff = Math.max(0, Date.now() - timestamp);
   const minutes = Math.round(diff / 60000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
   return `${hours}h ago`;
+}
+
+function formatActivityTitle(value?: string) {
+  if (!value) return 'Current session';
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : value;
 }
 
 function toNumber(value: unknown, fallback: number | null = null) {
@@ -101,11 +109,22 @@ function mapRuntimeCall(call: Record<string, unknown> | undefined): LiveCallStat
   };
 }
 
+type AdminDecisionDraft = {
+  taskId: string;
+  status: 'approved' | 'rejected';
+  provider: string;
+  action: string;
+  summary: string;
+};
+
 export function CommandCenter() {
   const navigate = useNavigate();
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
   const [actionStatus, setActionStatus] = useState('');
   const [pendingAction, setPendingAction] = useState('');
+  const [webSearchProbeFailed, setWebSearchProbeFailed] = useState(false);
+  const [webSearchProbeError, setWebSearchProbeError] = useState('');
+  const [adminDecisionDraft, setAdminDecisionDraft] = useState<AdminDecisionDraft | null>(null);
   const announcedCallRef = useRef('');
 
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
@@ -137,6 +156,12 @@ export function CommandCenter() {
       )
     ) || calls[0]
   );
+
+  useEffect(() => {
+    if (!actionStatus) return undefined;
+    const handle = window.setTimeout(() => setActionStatus(''), 5000);
+    return () => window.clearTimeout(handle);
+  }, [actionStatus]);
 
   useEffect(() => {
     if (!activeCall?.callId || activeCall.status === 'idle') return;
@@ -232,6 +257,8 @@ export function CommandCenter() {
   const runWebSearchProbe = async () => {
     setPendingAction('web-search:probe');
     setActionStatus('');
+    setWebSearchProbeFailed(false);
+    setWebSearchProbeError('');
     try {
       const result = await fetchWebSearchStatusRequest();
       const status = (result.status || {}) as Record<string, unknown>;
@@ -247,12 +274,44 @@ export function CommandCenter() {
       );
       await refresh().catch(() => null);
     } catch (nextError) {
-      setActionStatus(
-        nextError instanceof Error ? nextError.message : 'Web-search status probe failed.'
-      );
+      const message =
+        nextError instanceof Error ? nextError.message : 'Web-search status probe failed.';
+      setWebSearchProbeFailed(true);
+      setWebSearchProbeError(message);
+      setActionStatus(message);
     } finally {
       setPendingAction('');
     }
+  };
+
+  const confirmAdminDecision = (
+    task: Record<string, unknown>,
+    status: AdminDecisionDraft['status']
+  ) => {
+    const taskId = String(task.id || '');
+    if (!taskId) return;
+    setAdminDecisionDraft({
+      taskId,
+      status,
+      provider: String(task.provider || 'admin'),
+      action: String(task.action || 'review'),
+      summary: String(task.summary || task.command || 'Administrative action'),
+    });
+  };
+
+  const executeAdminDecision = () => {
+    if (!adminDecisionDraft) return;
+    const draft = adminDecisionDraft;
+    setAdminDecisionDraft(null);
+    void runRuntimeAction(
+      `admin:${draft.taskId}:${draft.status}`,
+      draft.status === 'approved'
+        ? 'Admin task approved and replayed through Rex.'
+        : 'Admin task declined.',
+      async () => {
+        await updateAdminTaskDecision(draft.taskId, draft.status);
+      }
+    );
   };
 
   return (
@@ -374,17 +433,7 @@ export function CommandCenter() {
                       <button
                         type="button"
                         disabled={pendingAction === `admin:${String(task.id)}:approved`}
-                        onClick={() => {
-                          const taskId = String(task.id || '');
-                          if (!taskId) return;
-                          void runRuntimeAction(
-                            `admin:${taskId}:approved`,
-                            'Admin task approved and replayed through Rex.',
-                            async () => {
-                              await updateAdminTaskDecision(taskId, 'approved');
-                            }
-                          );
-                        }}
+                        onClick={() => confirmAdminDecision(task, 'approved')}
                         className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
                       >
                         Approve
@@ -392,17 +441,7 @@ export function CommandCenter() {
                       <button
                         type="button"
                         disabled={pendingAction === `admin:${String(task.id)}:rejected`}
-                        onClick={() => {
-                          const taskId = String(task.id || '');
-                          if (!taskId) return;
-                          void runRuntimeAction(
-                            `admin:${taskId}:rejected`,
-                            'Admin task declined.',
-                            async () => {
-                              await updateAdminTaskDecision(taskId, 'rejected');
-                            }
-                          );
-                        }}
+                        onClick={() => confirmAdminDecision(task, 'rejected')}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
                         Decline
@@ -487,16 +526,35 @@ export function CommandCenter() {
                   <span> / Missing: {webSearchMissing.join(', ') || 'PBK_TAVILY_API_KEY'}</span>
                 )}
               </div>
-              <button
-                type="button"
-                disabled={pendingAction === 'web-search:probe'}
-                onClick={() => {
-                  void runWebSearchProbe();
-                }}
-                className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
-              >
-                Probe Status
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {webSearchProbeFailed && (
+                  <button
+                    type="button"
+                    disabled={pendingAction === 'web-search:probe'}
+                    onClick={() => {
+                      void runWebSearchProbe();
+                    }}
+                    className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Retry Probe
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={pendingAction === 'web-search:probe'}
+                  onClick={() => {
+                    void runWebSearchProbe();
+                  }}
+                  className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Probe Status
+                </button>
+              </div>
+              {webSearchProbeFailed && webSearchProbeError && (
+                <div className="basis-full text-[11px] text-amber-300">
+                  Last probe failed: {webSearchProbeError}
+                </div>
+              )}
             </div>
           </section>
 
@@ -570,11 +628,7 @@ export function CommandCenter() {
                     </div>
                     <div
                       className="text-[10px] text-slate-500"
-                      title={
-                        item.at || item.createdAt
-                          ? new Date(String(item.at || item.createdAt)).toLocaleString()
-                          : 'Current session'
-                      }
+                      title={formatActivityTitle(String(item.at || item.createdAt || ''))}
                     >
                       {formatRelative(String(item.at || item.createdAt || ''))}
                     </div>
@@ -679,6 +733,56 @@ export function CommandCenter() {
           </section>
         </div>
       </div>
+
+      {adminDecisionDraft && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-decision-title"
+            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Admin safety check
+            </div>
+            <h3 id="admin-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
+              Confirm admin decision
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              This will {adminDecisionDraft.status === 'approved' ? 'approve' : 'decline'}{' '}
+              <span className="font-semibold text-slate-200">
+                {adminDecisionDraft.provider} / {adminDecisionDraft.action}
+              </span>
+              .
+            </p>
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+              {adminDecisionDraft.summary}
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setAdminDecisionDraft(null)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  pendingAction ===
+                  `admin:${adminDecisionDraft.taskId}:${adminDecisionDraft.status}`
+                }
+                onClick={executeAdminDecision}
+                className="rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                {adminDecisionDraft.status === 'approved'
+                  ? 'Approve admin task'
+                  : 'Decline admin task'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

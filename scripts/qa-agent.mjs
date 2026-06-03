@@ -1,7 +1,16 @@
+import { mkdir, appendFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { recordQaValidationMetric } from './observability.mjs';
 
 const SECRET_KEY_PATTERN = /(secret|token|passcode|password|authorization|api[_-]?key|private[_-]?key|service[_-]?role|envvarvalue|bridge[_-]?api[_-]?key)/i;
 const MAX_SANITIZE_DEPTH = 8;
+const QA_AUDIT_FALLBACK_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '.pbk-local',
+  'qa-audit-fallback.ndjson'
+);
 
 function hasValue(value) {
   return value !== undefined && value !== null && String(value).trim() !== '';
@@ -15,15 +24,69 @@ function resultOk(result = {}) {
 }
 
 function hasAnyPath(result = {}, paths = []) {
-  return paths.some((path) => {
-    const parts = String(path || '').split('.').filter(Boolean);
-    let cursor = result;
-    for (const part of parts) {
-      if (!cursor || typeof cursor !== 'object' || !(part in cursor)) return false;
-      cursor = cursor[part];
-    }
-    return hasValue(cursor);
-  });
+  return paths.some((path) => hasValue(getPathValue(result, path)));
+}
+
+function getPathValue(result = {}, path = '') {
+  const parts = String(path || '').split('.').filter(Boolean);
+  let cursor = result;
+  for (const part of parts) {
+    if (!cursor || typeof cursor !== 'object' || !(part in cursor)) return undefined;
+    cursor = cursor[part];
+  }
+  return cursor;
+}
+
+function getFirstPathValue(result = {}, paths = []) {
+  for (const path of paths) {
+    const value = getPathValue(result, path);
+    if (hasValue(value)) return value;
+  }
+  return '';
+}
+
+function hasSemanticProviderId(value = '', { allowEnvPrefix = false } = {}) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  if (/^(?:test|fake|demo|mock|sample)[_-]?[a-z0-9-]*$/i.test(text)) return false;
+  if (/00000000-0000-0000-0000-000000000000/.test(text)) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text)) return true;
+  if (allowEnvPrefix && /^env(?:elope)?[_-]?[a-z0-9-]{3,}$/i.test(text)) return true;
+  return /^[a-z][a-z0-9_-]{7,}$/i.test(text);
+}
+
+function hasNurtureRecommendation(result = {}) {
+  const recommendation =
+    result.recommendation && typeof result.recommendation === 'object'
+      ? result.recommendation
+      : result.nurtureRecommendation && typeof result.nurtureRecommendation === 'object'
+        ? result.nurtureRecommendation
+        : {};
+  const channel = String(recommendation.channel || result.channel || '').toLowerCase();
+  const hasChannel = /^(sms|email|call|manual|none)$/.test(channel);
+  const hasReason = hasValue(recommendation.reason || recommendation.rationale || result.reason || result.summary);
+  return hasChannel && hasReason;
+}
+
+async function writeQaAuditFallback(record = {}) {
+  await mkdir(path.dirname(QA_AUDIT_FALLBACK_PATH), { recursive: true });
+  await appendFile(QA_AUDIT_FALLBACK_PATH, `${JSON.stringify(record)}\n`, 'utf8');
+  return { ok: true, path: QA_AUDIT_FALLBACK_PATH };
+}
+
+async function writeAuditFallback(auditFallbackSink, auditRecord, reason) {
+  if (typeof auditFallbackSink !== 'function') return null;
+  const fallbackRecord = {
+    ...auditRecord,
+    fallbackReason: String(reason || 'qa_audit_fallback').slice(0, 500),
+    fallbackAt: new Date().toISOString(),
+  };
+  const output = await auditFallbackSink(fallbackRecord);
+  return {
+    ok: true,
+    record: fallbackRecord,
+    output: output || null,
+  };
 }
 
 function qaPass(validator, details = {}) {
@@ -55,7 +118,7 @@ const QA_VALIDATORS = {
   sendDocuSign(result = {}) {
     const providerFailure = validateProviderOk('sendDocuSign', result);
     if (providerFailure) return providerFailure;
-    const delivered = hasAnyPath(result, [
+    const envelopeId = getFirstPathValue(result, [
       'envelopeId',
       'envelope_id',
       'docusign.envelopeId',
@@ -65,7 +128,11 @@ const QA_VALIDATORS = {
       'delivery.envelopeId',
       'delivery.envelope_id',
     ]);
+    const delivered = hasValue(envelopeId);
     const status = String(result.status || result.docusign?.status || result.contract?.status || '').toLowerCase();
+    if (delivered && !hasSemanticProviderId(envelopeId, { allowEnvPrefix: true })) {
+      return qaFail('sendDocuSign', 'invalid_delivery_proof', { envelopeId: '[invalid-format]', status });
+    }
     if (delivered && (!status || /sent|delivered|complete|created/.test(status))) {
       return qaPass('sendDocuSign', { deliveryProof: true, status });
     }
@@ -79,13 +146,17 @@ const QA_VALIDATORS = {
   prepare_and_send_contract(result = {}) {
     const providerFailure = validateProviderOk('prepare_and_send_contract', result);
     if (providerFailure) return providerFailure;
-    const sent = hasAnyPath(result, [
+    const envelopeId = getFirstPathValue(result, [
       'contractResult.envelopeId',
       'contractResult.docusign.envelopeId',
       'docusign.envelopeId',
       'envelopeId',
       'contract.envelopeId',
     ]);
+    const sent = hasValue(envelopeId);
+    if (sent && !hasSemanticProviderId(envelopeId, { allowEnvPrefix: true })) {
+      return qaFail('prepare_and_send_contract', 'invalid_delivery_proof', { envelopeId: '[invalid-format]' });
+    }
     if (sent) return qaPass('prepare_and_send_contract', { deliveryProof: true });
     return qaFail('prepare_and_send_contract', 'missing_delivery_proof');
   },
@@ -267,6 +338,33 @@ const QA_VALIDATORS = {
     }
     return qaFail('getBrainState', 'missing_brain_state_output');
   },
+
+  consultNurtureAgent(result = {}) {
+    const providerFailure = validateProviderOk('consultNurtureAgent', result);
+    if (providerFailure) return providerFailure;
+    if (hasNurtureRecommendation(result)) return qaPass('consultNurtureAgent', { recommendationProof: true });
+    return qaFail('consultNurtureAgent', 'missing_nurture_recommendation');
+  },
+
+  startNurtureSequence(result = {}) {
+    const providerFailure = validateProviderOk('startNurtureSequence', result);
+    if (providerFailure) return providerFailure;
+    const proofId = getFirstPathValue(result, [
+      'approvalId',
+      'approval_id',
+      'approval.id',
+      'nurtureInstance.id',
+      'instance.id',
+      'instanceId',
+      'sequenceId',
+      'sequence.id',
+      'id',
+    ]);
+    const status = String(result.status || result.result || result.approval?.status || result.instance?.status || '').toLowerCase();
+    const queued = /approval|queued|scheduled|created|pending|active|started/.test(status);
+    if (hasValue(proofId) && queued) return qaPass('startNurtureSequence', { sequenceProof: true, status });
+    return qaFail('startNurtureSequence', 'missing_nurture_sequence_proof', { status });
+  },
 };
 
 export function sanitizeQaPayload(value, depth = 0) {
@@ -359,17 +457,24 @@ export async function validateToolCallWithQa({
   params = {},
   result = {},
   retryCount = 0,
+  metricSink = recordQaValidationMetric,
   auditSink = null,
+  auditFallbackSink = writeQaAuditFallback,
   approvalSink = null,
   source = 'pbk-bridge',
 } = {}) {
   const qa = validateQaToolResult(toolName, result);
-  recordQaValidationMetric({
-    toolName,
-    ok: qa.ok === true || qa.skipped === true,
-    reason: qa.reason || '',
-    source,
-  });
+  let metricError = null;
+  try {
+    await metricSink({
+      toolName,
+      ok: qa.ok === true || qa.skipped === true,
+      reason: qa.reason || '',
+      source,
+    });
+  } catch (error) {
+    metricError = error;
+  }
   const auditRecord = buildQaAuditRecord({
     toolName,
     params,
@@ -378,9 +483,17 @@ export async function validateToolCallWithQa({
     retryCount,
     source,
   });
+  let auditFallback = null;
+  if (metricError) {
+    auditFallback = await writeAuditFallback(auditFallbackSink, auditRecord, metricError.message || metricError);
+  }
 
   if (typeof auditSink === 'function') {
-    await auditSink(auditRecord);
+    try {
+      await auditSink(auditRecord);
+    } catch (error) {
+      auditFallback = await writeAuditFallback(auditFallbackSink, auditRecord, error.message || error);
+    }
   }
 
   let approval = null;
@@ -395,6 +508,7 @@ export async function validateToolCallWithQa({
     qa,
     auditRecord,
     approval,
+    auditFallback,
     result,
   };
 }

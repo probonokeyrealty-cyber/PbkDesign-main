@@ -10,6 +10,8 @@ const REQUIRED_AGENT_IDS = [
   'qa-agent',
   'nurture-agent',
 ];
+const LOCAL_BRIDGE_INVOKE_ENDPOINT = '/invoke';
+const ROUTABLE_AGENT_STATUSES = new Set(['active', 'standby']);
 
 function uniqueStrings(values = []) {
   return Array.from(
@@ -32,7 +34,7 @@ export function normalizeAgentRegistryId(value = '') {
 
 export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
   const activeAt = new Date(now).toISOString();
-  return [
+  const agents = [
     {
       id: 'ava',
       name: 'Ava',
@@ -250,6 +252,19 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
       },
     },
   ];
+  return agents.map((agent) => ({
+    ...agent,
+    status: 'standby',
+    endpoint: agent.endpoint || LOCAL_BRIDGE_INVOKE_ENDPOINT,
+    healthCheckedAt: '',
+    health_checked_at: '',
+    metadata: {
+      ...(agent.metadata || {}),
+      local: agent.metadata?.local !== false,
+      registeredAt: activeAt,
+      communication: agent.metadata?.communication || 'pbk-bridge-local',
+    },
+  }));
 }
 
 export function normalizeAgentRegistryRecord(record = {}) {
@@ -260,7 +275,7 @@ export function normalizeAgentRegistryRecord(record = {}) {
     name: String(record.name || id || '').trim(),
     description: String(record.description || '').trim(),
     capabilities: uniqueStrings(record.capabilities || []),
-    status: String(record.status || 'active')
+    status: String(record.status || 'standby')
       .trim()
       .toLowerCase(),
     endpoint: String(record.endpoint || '').trim(),
@@ -315,7 +330,7 @@ export function findAgentsByCapability(
   if (!wanted) return [];
   return (Array.isArray(registry) ? registry : [])
     .map(normalizeAgentRegistryRecord)
-    .filter((agent) => includeInactive || agent.status === 'active')
+    .filter((agent) => includeInactive || ROUTABLE_AGENT_STATUSES.has(agent.status))
     .filter((agent) => agent.capabilities.map((item) => item.toLowerCase()).includes(wanted));
 }
 
@@ -352,14 +367,19 @@ export function buildAgentRegistrySnapshot(
 export async function invokeRegisteredAgent(agent = {}, payload = {}, options = {}) {
   const normalized = normalizeAgentRegistryRecord(agent);
   if (!normalized.id) throw new Error('Agent id is required.');
-  if (normalized.status && !['active', 'standby'].includes(normalized.status)) {
+  if (normalized.status && !ROUTABLE_AGENT_STATUSES.has(normalized.status)) {
     throw new Error(`Agent ${normalized.id} is ${normalized.status}.`);
   }
-  if (!normalized.endpoint) {
+  const isRemoteEndpoint = /^https?:\/\//i.test(normalized.endpoint);
+  const localPreferred = normalized.metadata?.local !== false && !isRemoteEndpoint;
+  if (localPreferred || !normalized.endpoint) {
     const handler = options.localHandlers?.[normalized.id];
     if (typeof handler !== 'function')
       throw new Error(`No local handler registered for agent ${normalized.id}.`);
     return handler(payload, normalized);
+  }
+  if (!isRemoteEndpoint) {
+    throw new Error(`Agent ${normalized.id} endpoint is not a remote URL and no local handler was used.`);
   }
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function')
@@ -368,7 +388,9 @@ export async function invokeRegisteredAgent(agent = {}, payload = {}, options = 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(`${normalized.endpoint.replace(/\/+$/, '')}/invoke`, {
+    const endpoint = normalized.endpoint.replace(/\/+$/, '');
+    const invokeUrl = /\/invoke$/i.test(endpoint) ? endpoint : `${endpoint}/invoke`;
+    const response = await fetchImpl(invokeUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload || {}),

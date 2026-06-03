@@ -7,7 +7,12 @@ import { CallModeTab } from './components/CallModeTab';
 import { PathDeliverables } from './components/PathDeliverables';
 import { CRMFeatures } from './components/CRMFeatures';
 import { DealData, QuickDocumentType } from './types';
-import { calculateARV, calculateLandOffer, calculateMAO, calculateVerdict } from './utils/dealCalculations';
+import {
+  calculateARV,
+  calculateLandOffer,
+  calculateMAO,
+  calculateVerdict,
+} from './utils/dealCalculations';
 import {
   DEFAULT_BRANDING,
   PBKBranding,
@@ -21,7 +26,12 @@ import {
   openMasterPackageWindow,
 } from './utils/pbk';
 import { sendDealToAgent, sendSellerDocsRequest, syncDealAnalysis } from './utils/runtimeBridge';
-import { ANALYZER_CURRENT_DEAL_KEY, clearAnalyzerDeal, readAnalyzerDeal, writeAnalyzerDeal } from './utils/analyzerStorage';
+import {
+  ANALYZER_CURRENT_DEAL_KEY,
+  clearAnalyzerDeal,
+  readAnalyzerDeal,
+  writeAnalyzerDeal,
+} from './utils/analyzerStorage';
 import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
 
@@ -136,7 +146,11 @@ const initialDealData: DealData = {
 
 const BRANDING_STORAGE_KEY = 'pbk-branding';
 
-export default function App() {
+type AppProps = {
+  engineOnly?: boolean;
+};
+
+export default function App({ engineOnly = false }: AppProps) {
   const [deal, setDeal] = useState<DealData>(initialDealData);
   const [activeTab, setActiveTab] = useState<AppTab>('analyzer');
   const [activeDocument, setActiveDocument] = useState<QuickDocumentType>('report');
@@ -144,20 +158,24 @@ export default function App() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [branding, setBranding] = useState<PBKBranding>(DEFAULT_BRANDING);
-  const [exportStatus, setExportStatus] = useState('Select a path and complete seller info to generate.');
+  const [exportStatus, setExportStatus] = useState(
+    'Select a path and complete seller info to generate.'
+  );
   const [analyzeStatus, setAnalyzeStatus] = useState('');
-  const [documentDeliveryStatus, setDocumentDeliveryStatus] = useState('Choose the documents you want to email from the PBK business sender.');
+  const [documentDeliveryStatus, setDocumentDeliveryStatus] = useState(
+    'Choose the documents you want to email from the PBK business sender.'
+  );
   const activeSelectedPath = normalizeSelectedPath(deal);
   const activeDeal = useMemo(
     () => ({
       ...deal,
       selectedPath: activeSelectedPath,
     }),
-    [deal, activeSelectedPath],
+    [deal, activeSelectedPath]
   );
   const generatedDocuments = useMemo(
     () => buildDocumentSet(activeDeal, branding),
-    [activeDeal, branding],
+    [activeDeal, branding]
   );
 
   const buildMergedDealState = (base: DealData, incoming: Partial<DealData> = {}): DealData => {
@@ -223,10 +241,7 @@ export default function App() {
     return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
   };
 
-  const applyBridgeState = (payload: {
-    deal?: Partial<DealData>;
-    activeTab?: AppTab | string;
-  }) => {
+  const applyBridgeState = (payload: { deal?: Partial<DealData>; activeTab?: AppTab | string }) => {
     if (!payload || typeof payload !== 'object') return;
     const isEditing = isEditingAnalyzerField();
 
@@ -302,7 +317,7 @@ export default function App() {
           deal?: Partial<DealData>;
           activeTab?: AppTab | string;
         };
-      }>,
+      }>
     ) => {
       if (event.origin !== origin || !event.data || typeof event.data !== 'object') {
         return;
@@ -334,7 +349,7 @@ export default function App() {
             activeTab,
           },
         },
-        origin,
+        origin
       );
       window.parent.postMessage(
         {
@@ -343,7 +358,7 @@ export default function App() {
             activeTab,
           },
         },
-        origin,
+        origin
       );
     }
 
@@ -396,7 +411,7 @@ export default function App() {
     const mao60 = calculateMAO.wholesale(
       arv,
       deal.fee || 8000,
-      deal.underwriting?.maoCashPct || 60,
+      deal.underwriting?.maoCashPct || 60
     );
     const maoRBP = calculateMAO.rbp(arv, deal.underwriting?.maoRbpPct || 88);
 
@@ -447,7 +462,7 @@ export default function App() {
 
   const handleDealChange = (updates: Partial<DealData>) => {
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
-      ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData),
+      ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)
     );
 
     if (shouldResetAnalysis) {
@@ -485,11 +500,15 @@ export default function App() {
 
     try {
       const response = await syncDealAnalysis(deal);
-      const result = (response as { result?: Record<string, unknown> }).result || (response as Record<string, unknown>);
+      const result =
+        (response as { result?: Record<string, unknown> }).result ||
+        (response as Record<string, unknown>);
       setDeal((prev) => {
         const nextArv = Number(result?.arv || prev.arv || 0);
         const nextMao60 = Number(result?.mao || result?.mao60 || prev.mao60 || 0);
-        const nextMaoRBP = Number(result?.maoRbp || result?.maoRBP || result?.mao || prev.maoRBP || 0);
+        const nextMaoRBP = Number(
+          result?.maoRbp || result?.maoRBP || result?.mao || prev.maoRBP || 0
+        );
 
         return {
           ...prev,
@@ -508,7 +527,7 @@ export default function App() {
       setAnalyzeStatus(
         result?.mao
           ? `Bridge analysis synced. ARV ${Number(result.arv || 0).toLocaleString()} · MAO ${Number(result.mao || 0).toLocaleString()}`
-          : readiness.successMessage,
+          : readiness.successMessage
       );
     } catch (error) {
       setDeal((prev) => ({
@@ -519,12 +538,14 @@ export default function App() {
       setAnalyzeStatus(
         error instanceof Error
           ? `Runtime sync failed, but the local analyzer is still ready: ${error.message}`
-          : readiness.successMessage,
+          : readiness.successMessage
       );
     }
 
     setAnalyzeStatus((prev) =>
-      prev ? `${prev} Call Mode is ready when you choose a path.` : 'Analysis ready. Choose a path or open Call Mode when ready.',
+      prev
+        ? `${prev} Call Mode is ready when you choose a path.`
+        : 'Analysis ready. Choose a path or open Call Mode when ready.'
     );
   };
 
@@ -540,7 +561,9 @@ export default function App() {
       setAnalyzeStatus('Analyzer snapshot sent to Ava and the runtime CRM queue.');
     } catch (error) {
       setAnalyzeStatus(
-        error instanceof Error ? `Could not send this deal to Ava: ${error.message}` : 'Could not send this deal to Ava.',
+        error instanceof Error
+          ? `Could not send this deal to Ava: ${error.message}`
+          : 'Could not send this deal to Ava.'
       );
     }
   };
@@ -549,13 +572,13 @@ export default function App() {
     try {
       await sendDealToAgent(activeDeal, { agentDealContext });
       setAnalyzeStatus(
-        `${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script pushed to Ava with analyzer numbers.`,
+        `${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script pushed to Ava with analyzer numbers.`
       );
     } catch (error) {
       setAnalyzeStatus(
         error instanceof Error
           ? `Could not push this script to Ava: ${error.message}`
-          : 'Could not push this script to Ava.',
+          : 'Could not push this script to Ava.'
       );
     }
   };
@@ -592,12 +615,14 @@ export default function App() {
           type: 'note',
           content: `Activity saved to team CRM for ${getPathLabel(activeSelectedPath)}.`,
         });
-        setAnalyzeStatus(`${saved.address}: Saved locally · runtime CRM synced for ${getPathLabel(activeSelectedPath)}.`);
+        setAnalyzeStatus(
+          `${saved.address}: Saved locally · runtime CRM synced for ${getPathLabel(activeSelectedPath)}.`
+        );
       } catch (syncError) {
         setAnalyzeStatus(
           syncError instanceof Error
             ? `${saved.address}: Saved locally · Bridge sync pending: ${syncError.message}`
-            : `${saved.address}: Saved locally · Bridge sync pending.`,
+            : `${saved.address}: Saved locally · Bridge sync pending.`
         );
       }
     } catch (error) {
@@ -665,7 +690,9 @@ export default function App() {
         type: 'pdf',
         content: `Opened print-ready Master Deal PDF for ${getPathLabel(activeSelectedPath)}.`,
       });
-      setExportStatus(`Print-ready package opened in a new tab for ${getPathLabel(activeSelectedPath)}.`);
+      setExportStatus(
+        `Print-ready package opened in a new tab for ${getPathLabel(activeSelectedPath)}.`
+      );
     }
   };
 
@@ -727,11 +754,11 @@ export default function App() {
           ? `Seller package emailed from the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`
           : deliveryStatus === 'provider_missing'
             ? `Provider key missing. Seller package was not sent for ${getPathLabel(activeSelectedPath)}.`
-            : `Queued for approval with the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`,
+            : `Queued for approval with the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`
       );
     } catch (error) {
       setDocumentDeliveryStatus(
-        error instanceof Error ? `Delivery failed: ${error.message}` : 'Delivery failed.',
+        error instanceof Error ? `Delivery failed: ${error.message}` : 'Delivery failed.'
       );
     }
   };
@@ -765,7 +792,7 @@ export default function App() {
             updatedAt: Date.now(),
           },
         },
-        window.location.origin,
+        window.location.origin
       );
     }
   }, [activeDeal, activeTab, analyzeStatus]);
@@ -793,10 +820,12 @@ export default function App() {
         }
       | undefined;
 
-    (window as typeof window & {
-      PBKAnalyzer?: unknown;
-      PBK?: Record<string, unknown>;
-    }).PBKAnalyzer = {
+    (
+      window as typeof window & {
+        PBKAnalyzer?: unknown;
+        PBK?: Record<string, unknown>;
+      }
+    ).PBKAnalyzer = {
       getState: () => ({
         deal: activeDeal,
         activeTab,
@@ -804,23 +833,18 @@ export default function App() {
       }),
       getBranding: () => branding,
       getSelectedPath: () => activeSelectedPath,
-      getAgentDealContext: () => buildAgentDealContext(activeDeal, {
-        activePath: activeSelectedPath,
-        requestedBy: 'PBKAnalyzer global',
-      }),
+      getAgentDealContext: () =>
+        buildAgentDealContext(activeDeal, {
+          activePath: activeSelectedPath,
+          requestedBy: 'PBKAnalyzer global',
+        }),
       getPdfReadiness: (incomingDeal?: Partial<DealData>) =>
         getPdfReadiness(buildMergedDealState(activeDeal, incomingDeal || {})),
-      getDocumentSet: (
-        incomingDeal?: Partial<DealData>,
-        incomingBranding?: Partial<PBKBranding>,
-      ) =>
-        buildDocumentSet(
-          buildMergedDealState(activeDeal, incomingDeal || {}),
-          {
-            ...branding,
-            ...(incomingBranding || {}),
-          },
-        ),
+      getDocumentSet: (incomingDeal?: Partial<DealData>, incomingBranding?: Partial<PBKBranding>) =>
+        buildDocumentSet(buildMergedDealState(activeDeal, incomingDeal || {}), {
+          ...branding,
+          ...(incomingBranding || {}),
+        }),
       buildMasterPackageQuery: ({
         deal: incomingDeal,
         branding: incomingBranding,
@@ -836,16 +860,18 @@ export default function App() {
             ...branding,
             ...(incomingBranding || {}),
           },
-          Boolean(printMode),
+          Boolean(printMode)
         ),
       setState: applyBridgeState,
       setActiveTab: (nextTab: AppTab) => setActiveTab(nextTab),
       analyze: handleAnalyzeDeal,
     };
 
-    (window as typeof window & {
-      PBK?: Record<string, unknown>;
-    }).PBK = {
+    (
+      window as typeof window & {
+        PBK?: Record<string, unknown>;
+      }
+    ).PBK = {
       ...((window as typeof window & { PBK?: Record<string, unknown> }).PBK || {}),
       openclaw: {
         invoke: (toolName: string, params?: unknown) => {
@@ -854,7 +880,7 @@ export default function App() {
           }
 
           return Promise.reject(
-            new Error('OpenClaw bridge is not available in this analyzer context yet.'),
+            new Error('OpenClaw bridge is not available in this analyzer context yet.')
           );
         },
       },
@@ -866,28 +892,44 @@ export default function App() {
   }, [activeDeal, activeSelectedPath, activeTab, analyzeStatus, branding]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#EDF0F7] dark:bg-slate-950">
-      <TopBar
-        address={activeDeal.address}
-        verdict={activeDeal.verdict}
-        onMenuToggle={() => setLeftPanelOpen(!leftPanelOpen)}
-        onCallModeClick={() => setActiveTab('callmode')}
-        onDocsClick={() => handleOpenDocuments('report')}
-        onPrint={handlePrint}
-        onReset={handleReset}
-        darkMode={darkMode}
-        onDarkModeToggle={() => setDarkMode(!darkMode)}
-      />
+    <div
+      className={[
+        engineOnly ? 'relative h-full w-full' : 'h-screen w-screen',
+        'overflow-hidden bg-[#EDF0F7] dark:bg-slate-950',
+      ].join(' ')}
+    >
+      {!engineOnly && (
+        <TopBar
+          address={activeDeal.address}
+          verdict={activeDeal.verdict}
+          onMenuToggle={() => setLeftPanelOpen(!leftPanelOpen)}
+          onCallModeClick={() => setActiveTab('callmode')}
+          onDocsClick={() => handleOpenDocuments('report')}
+          onPrint={handlePrint}
+          onReset={handleReset}
+          darkMode={darkMode}
+          onDarkModeToggle={() => setDarkMode(!darkMode)}
+        />
+      )}
 
       {/* Overlay for mobile */}
       {(leftPanelOpen || rightPanelOpen) && (
         <div
-          className="fixed inset-0 top-[54px] bg-black/40 z-30 md:hidden"
+          className={[
+            engineOnly ? 'absolute inset-0' : 'fixed inset-0 top-[54px]',
+            'bg-black/40 z-30 md:hidden',
+          ].join(' ')}
           onClick={closeDrawers}
         />
       )}
 
-      <div className="fixed top-[54px] left-0 right-0 bottom-0 flex overflow-hidden">
+      <div
+        className={
+          engineOnly
+            ? 'absolute inset-0 flex overflow-hidden'
+            : 'fixed top-[54px] left-0 right-0 bottom-0 flex overflow-hidden'
+        }
+      >
         <LeftPanel deal={activeDeal} isOpen={leftPanelOpen} />
 
         {/* Main Content */}
@@ -979,10 +1021,7 @@ export default function App() {
               />
             )}
             {activeTab === 'crm' && (
-              <CRMFeatures
-                deal={activeDeal}
-                onLoadDeal={handleLoadSavedDeal}
-              />
+              <CRMFeatures deal={activeDeal} onLoadDeal={handleLoadSavedDeal} />
             )}
           </div>
         </div>

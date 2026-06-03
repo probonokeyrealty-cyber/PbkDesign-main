@@ -1703,9 +1703,9 @@ const checks = [
     ok:
       /api\/public\/ava-chat/.test(bridge) &&
       /pbk-ava-public-chat/.test(widget) &&
-      /export\s+const\s+handler/.test(netlifyPublicAvaFunction) &&
-      /from\s*=\s*"\/api\/public\/ava-chat"/.test(netlifyConfig) &&
-      /to\s*=\s*"\/\.netlify\/functions\/public-ava-chat"/.test(netlifyConfig),
+      /export\s+default\s+async/.test(netlifyPublicAvaFunction) &&
+      /export\s+const\s+config/.test(netlifyPublicAvaFunction) &&
+      /path\s*:\s*'\/api\/public\/ava-chat'/.test(netlifyPublicAvaFunction),
   },
   {
     name: 'Public Ava chat keeps seller-facing replies separate from internal brain summaries',
@@ -1748,10 +1748,11 @@ const checks = [
   {
     name: 'Public Ava chat fails closed when its bridge public key is missing',
     ok:
-      /PUBLIC_AVA_CHAT_KEY is not configured/.test(netlifyPublicAvaFunction) &&
+      /getRequiredEnv\(\['PUBLIC_AVA_CHAT_KEY', 'PBK_PUBLIC_AVA_CHAT_KEY'\]\)/.test(netlifyPublicAvaFunction) &&
       /missingPublicKeyWarned/.test(netlifyPublicAvaFunction) &&
       /503/.test(netlifyPublicAvaFunction) &&
-      /'X-Public-Ava-Key': PUBLIC_AVA_CHAT_KEY/.test(netlifyPublicAvaFunction),
+      /chat_not_configured/.test(netlifyPublicAvaFunction) &&
+      /'X-Public-Ava-Key': publicKey/.test(netlifyPublicAvaFunction),
   },
   {
     name: 'Hosted settings include a safe clear-key action for stale bridge sessions',

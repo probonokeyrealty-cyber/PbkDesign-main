@@ -254,14 +254,14 @@ const requiredNetlifyFunctionRoutes = [
   },
 ];
 const missingNetlifyFunctionRoutes = requiredNetlifyFunctionRoutes.filter(({ path, functionSource, functionName }) => {
-  const functionDeclaresPath =
-    /export\s+const\s+handler/.test(functionSource) ||
-    (/export\s+default\s+async/.test(functionSource) &&
-      /export\s+const\s+config/.test(functionSource) &&
-      new RegExp(`path\\s*:\\s*["']${path.replace(/\//g, '\\/')}["']`).test(functionSource));
+  const hasClassicHandler = /export\s+const\s+handler/.test(functionSource);
+  const declaresConfigPath =
+    /export\s+default\s+async/.test(functionSource) &&
+    /export\s+const\s+config/.test(functionSource) &&
+    new RegExp(`path\\s*:\\s*["']${path.replace(/\//g, '\\/')}["']`).test(functionSource);
   const redirectFrom = new RegExp(`from\\s*=\\s*["']${path.replace(/\//g, '\\/')}["']`).test(netlifyConfig);
   const redirectTo = new RegExp(`to\\s*=\\s*["']\\/\\.netlify\\/functions\\/${functionName}["']`).test(netlifyConfig);
-  return !functionDeclaresPath || !redirectFrom || !redirectTo;
+  return !(declaresConfigPath || (hasClassicHandler && redirectFrom && redirectTo));
 }).map(({ label }) => label);
 if (missingNetlifyFunctionRoutes.length) {
   fail.push({

@@ -27,12 +27,6 @@ timeout = 25
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'"
 
 [[redirects]]
-from = "/api/public/ava-chat"
-to = "/.netlify/functions/public-ava-chat"
-status = 200
-force = true
-
-[[redirects]]
 from = "/api/documents/pdf"
 to = "/.netlify/functions/documents-pdf"
 status = 200

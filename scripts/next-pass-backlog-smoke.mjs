@@ -46,6 +46,8 @@ assert.match(fuzzyMigration, /lead_imports/i, 'Fuzzy lookup should include impor
 const bridge = read('scripts/openclaw-local-server.mjs');
 assert.match(bridge, /runFuzzyLeadLookupFromDb/, 'Bridge should expose a Postgres-backed fuzzy lead lookup helper.');
 assert.match(bridge, /pbk_fuzzy_lead_lookup/, 'Bridge fuzzy lookup helper should call the pg_trgm database function.');
+assert.match(bridge, /ensureFuzzyLeadLookupSchema/, 'Bridge should self-ensure the fuzzy lookup schema on hosted startup.');
+assert.match(bridge, /CREATE EXTENSION IF NOT EXISTS pg_trgm/i, 'Bridge hosted startup should enable pg_trgm when Postgres is configured.');
 assert.match(bridge, /\/api\/leads\/search/, 'Bridge should expose an HTTP lead search endpoint for UI and assistant use.');
 assert.match(bridge, /async function executeRouteToolHandler/, 'Bridge should expose a traced route tool helper for direct HTTP routes.');
 assert.match(

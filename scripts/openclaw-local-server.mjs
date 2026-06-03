@@ -10655,6 +10655,93 @@ function searchLeadImports(params = {}) {
   };
 }
 
+function normalizeFuzzyLeadRow(row = {}) {
+  const leadId = String(row.lead_id || row.leadId || '').trim();
+  const leadName = String(row.lead_name || row.leadName || '').trim();
+  const address = String(row.address || '').trim();
+  const email = String(row.email || '').trim();
+  const phone = normalizePhone(row.phone || '');
+  const source = String(row.source || 'postgres').trim();
+  const similarity = Number(row.similarity_score ?? row.similarity ?? 0);
+  return {
+    id: leadId,
+    leadId,
+    leadName,
+    name: leadName,
+    address,
+    email,
+    phone,
+    stage: String(row.stage || '').trim(),
+    source,
+    score: toNumber(row.score, 0),
+    similarity: Number.isFinite(similarity) ? Number(similarity.toFixed(3)) : 0,
+    matchMode: 'pg_trgm_similarity',
+    raw: row.raw && typeof row.raw === 'object' ? row.raw : {},
+    seller: {
+      name: leadName,
+      email,
+      phone,
+    },
+    property: {
+      address,
+    },
+  };
+}
+
+async function runFuzzyLeadLookupFromDb(params = {}) {
+  const query = String(params.query || params.search || params.q || params.text || '').trim();
+  const threshold = Math.max(0.05, Math.min(1, Number(params.threshold || params.minSimilarity || params.min_similarity || 0.3)));
+  const limit = Math.max(1, Math.min(50, Number(params.limit || 8)));
+  if (!query) {
+    return {
+      ok: true,
+      result: 'empty_query',
+      query,
+      count: 0,
+      leads: [],
+    };
+  }
+  const pool = getPgPool();
+  if (!pool) {
+    return {
+      ok: false,
+      result: 'postgres_unavailable',
+      reason: 'postgres_unavailable',
+      query,
+      count: 0,
+      leads: [],
+    };
+  }
+  try {
+    const db = await pool.query(
+      'SELECT * FROM public.pbk_fuzzy_lead_lookup($1::text, $2::double precision, $3::integer)',
+      [query, threshold, limit]
+    );
+    markPostgresHealth(true);
+    const leads = (db.rows || []).map(normalizeFuzzyLeadRow);
+    return {
+      ok: true,
+      result: 'postgres_fuzzy_lookup',
+      query,
+      threshold,
+      count: leads.length,
+      leads,
+    };
+  } catch (error) {
+    markPostgresHealth(false, error?.message || error);
+    return {
+      ok: false,
+      result: 'postgres_fuzzy_lookup_failed',
+      reason: 'postgres_fuzzy_lookup_failed',
+      query,
+      threshold,
+      count: 0,
+      leads: [],
+      error: error?.message || String(error),
+    };
+  }
+}
+
 function leadMatchesIdentifiers(lead = {}, identifiers = {}) {
   const leadId = String(identifiers.leadId || identifiers.id || '').trim();
   const email = String(identifiers.email || '')
@@ -32364,6 +32451,27 @@ async function invokeToolWithOperatingGuard(toolName, params = {}) {
   return result;
 }
 
+async function executeRouteToolHandler(toolName, params = {}, source = 'http-route') {
+  const guarded = await enforceOperatingModeForTool(toolName, params);
+  if (guarded) {
+    return {
+      result: guarded,
+      guarded,
+      qaValidation: {
+        ok: true,
+        skipped: true,
+        qa: {
+          ok: true,
+          skipped: true,
+          reason: guarded.result || guarded.reason || 'approval_or_guard_required',
+        },
+      },
+      safetyValidation: null,
+    };
+  }
+  return executeToolHandlerWithQa(toolName, params, source);
+}
+
 async function personalizeNurtureMessageWithStrategist({ draft = '', lead = {}, channel = '', step = null } = {}) {
   const result = await askStrategistRecord({
     agentName: 'Nurture Agent',
@@ -43132,16 +43240,24 @@ const toolHandlers = {
       leadName: context.leadName,
     });
     const templateId = params.templateId || (brainInfo.probateStatus ? 'probate' : brainInfo.absenteeOwner ? 'absentee' : brainInfo.estimatedEquity >= 100000 ? 'high-equity' : 'generic');
-    const content = buildColdEmailContent(
-      templateId,
-      {
-        firstName: context.leadName?.split(/\s+/)[0] || '',
-        name: context.leadName,
-        address: context.address,
-        email,
-      },
-      brainInfo
-    );
+    const customText = String(params.customBody || params.body || params.message || '').trim();
+    const customSubject = String(params.subject || '').trim();
+    const content = customText
+      ? {
+          subject: customSubject || `Message from Probono Key Realty`,
+          text: customText,
+          html: `<p>${escapeHtml(customText).replace(/\n/g, '<br>')}</p>`,
+        }
+      : buildColdEmailContent(
+          templateId,
+          {
+            firstName: context.leadName?.split(/\s+/)[0] || '',
+            name: context.leadName,
+            address: context.address,
+            email,
+          },
+          brainInfo
+        );
 
     let delivery = null;
     let provider = 'Resend';
@@ -43201,6 +43317,7 @@ const toolHandlers = {
       email,
       channel: 'email',
       direction: 'outbound',
+      subject: content.subject,
       body: content.text,
       status: delivery?.ok ? 'sent' : 'queued',
       provider,
@@ -53967,15 +54084,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/cold-email/send') {
       const body = await readBody(request);
-      const guard = await enforceOperatingModeForTool('sendColdEmail', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.sendColdEmail(body);
+      const { result } = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route');
       json(response, result.ok === false ? 400 : 200, {
         ...result,
         state: buildStateSnapshot(),
@@ -56150,6 +56259,32 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/leads/search', '/api/v1/leads/search'])) {
+      const query = url.searchParams.get('q') || url.searchParams.get('query') || url.searchParams.get('search') || '';
+      const limit = url.searchParams.get('limit') || '8';
+      const threshold = url.searchParams.get('threshold') || url.searchParams.get('minSimilarity') || '0.3';
+      const postgresLookup = await runFuzzyLeadLookupFromDb({ query, limit, threshold });
+      if (postgresLookup.ok) {
+        json(response, 200, {
+          ...postgresLookup,
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const fallback = searchLeadImports({ query, limit });
+      json(response, 200, {
+        ...fallback,
+        result: 'runtime_fallback',
+        postgres: {
+          ok: false,
+          reason: postgresLookup.reason || postgresLookup.result || 'postgres_unavailable',
+          error: postgresLookup.error || '',
+        },
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/leads', '/api/leads/import'])) {
       json(response, 200, {
         ok: true,
@@ -56209,26 +56344,13 @@ const server = createServer(async (request, response) => {
         json(response, 400, { ok: false, error: 'Message body is required.' });
         return;
       }
-      const guard = await enforceOperatingModeForTool(channel === 'email' ? 'sendColdEmail' : 'telnyx_sms', {
-        ...body,
-        ...context,
-        body: messageBody,
-      });
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-
       if (channel === 'sms') {
-        const result = await toolHandlers.telnyx_sms({
+        const { result } = await executeRouteToolHandler('telnyx_sms', {
           ...body,
           ...context,
           body: messageBody,
-        });
-        json(response, result.ok === false ? 400 : 200, {
+        }, 'lead-send-message');
+        json(response, result.requiresApproval ? 202 : result.ok === false ? 400 : 200, {
           ...result,
           result: result.telnyx?.live ? 'live' : result.result || 'provider_missing',
           verbiage: result.telnyx?.live ? 'SMS sent or queued through Telnyx.' : 'SMS was recorded without claiming carrier delivery.',
@@ -56241,44 +56363,19 @@ const server = createServer(async (request, response) => {
       const subject = body.subject || explicitSubjectMatch?.[1]?.trim() || `Message from Probono Key Realty`;
       const cleanText = messageBody.replace(/^subject:\s*.+\r?\n*/i, '').trim();
       const recipient = body.email || context.email || inferSkipTraceContact(context).email;
-      const senderAddress = getSenderAddress('cold', body.fromEmail || body.from_email || body.senderEmail || '');
-      const delivery = await sendTransactionalEmail({
-        from: senderAddress,
-        to: recipient,
-        subject,
-        text: cleanText,
-        html: `<p>${escapeHtml(cleanText).replace(/\n/g, '<br>')}</p>`,
-      });
-      const message = createMessageRecord({
+      const { result } = await executeRouteToolHandler('sendColdEmail', {
         ...body,
         ...context,
         email: recipient,
-        channel: 'email',
-        direction: 'outbound',
         subject,
         body: cleanText,
-        status: delivery.ok ? 'sent' : 'queued',
-        provider: delivery.ok ? 'Resend' : 'PBK',
-      });
-      upsertMessage(state, message);
-      await persistUnifiedMessageRecord(message);
-      addActivity(
-        state,
-        makeActivity({
-          actor: delivery.ok ? 'Ava' : 'Email',
-          category: 'EMAIL',
-          status: delivery.ok ? (delivery.live === false ? 'prepared' : 'sent') : 'warning',
-          text: delivery.ok ? `Outbound email ${delivery.live === false ? 'prepared' : 'sent'} to ${context.leadName}.` : `Outbound email could not send for ${context.leadName}: ${delivery.error || 'Provider key missing'}`,
-          target: context.address || recipient || context.leadName,
-        })
-      );
-      await persistState(state);
-      json(response, delivery.ok ? 200 : 400, {
-        ok: delivery.ok,
-        result: delivery.ok ? (delivery.live === false ? 'provider_missing' : 'live') : delivery.result || 'provider_missing',
-        verbiage: delivery.ok ? 'Email sent or prepared.' : delivery.error || 'Provider key missing.',
-        delivery,
-        message,
+        customBody: cleanText,
+        templateId: body.templateId || 'custom',
+      }, 'lead-send-message');
+      json(response, result.requiresApproval ? 202 : result.ok === false ? 400 : 200, {
+        ...result,
+        result: result.delivery?.live ? 'live' : result.result || 'provider_missing',
+        verbiage: result.delivery?.ok ? 'Email sent or prepared.' : result.verbiage || result.delivery?.error || 'Provider key missing.',
         state: buildStateSnapshot(),
       });
       return;

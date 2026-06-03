@@ -5,12 +5,114 @@ const MAX_TURN_CONTENT = 1800;
 const COMMAND_CENTER_PATH = '/index.shell.html';
 const TURN_TRUNCATION_WARNING =
   'Long text truncated; Ava only retained the first 1800 characters for this turn.';
+const ASSISTANT_INTENT_CLASSIFIER = String(process.env.PBK_ASSISTANT_INTENT_CLASSIFIER || 'regex')
+  .trim()
+  .toLowerCase();
+const ASSISTANT_INTENT_CLASSIFIER_THRESHOLD = Math.max(
+  0.35,
+  Math.min(0.98, Number(process.env.PBK_ASSISTANT_INTENT_CLASSIFIER_THRESHOLD || 0.72))
+);
 
 const SECRET_PATTERNS = [
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}\b/gi,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi,
   /\b(?:docusign|telnyx|instantly)_[a-z0-9_]*(?:key|token|secret|sid|client_id|private_key|access_token|api_key)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}["']?/gi,
   /\b(?:DOCUSIGN|TELNYX|INSTANTLY)_[A-Z0-9_]*(?:KEY|TOKEN|SECRET|SID|CLIENT_ID|PRIVATE_KEY|ACCESS_TOKEN|API_KEY)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}["']?/g,
+];
+
+const LOCAL_INTENT_EXAMPLES = [
+  {
+    intent: 'analyze_deal',
+    examples: [
+      'analyze this deal',
+      'what is the mao',
+      'is this worth chasing',
+      'should we pursue this property',
+      'run the deal math',
+      'underwrite this address',
+    ],
+  },
+  {
+    intent: 'nurture_start',
+    examples: [
+      'start a nurture sequence',
+      'schedule follow up campaign',
+      'automate follow up for this seller',
+      'queue a nurture sequence tonight',
+    ],
+  },
+  {
+    intent: 'nurture_consult',
+    examples: [
+      'what is the best follow up',
+      'should i text or email',
+      'recommend the next seller follow up',
+      'which channel should we use',
+    ],
+  },
+  {
+    intent: 'unified_additive_intelligence',
+    examples: [
+      'use all intelligence',
+      'run frontier additives',
+      'sync the whole system',
+      'use the unified intelligence layer',
+    ],
+  },
+  {
+    intent: 'session_recall',
+    examples: [
+      'what did i just ask',
+      'what was my last message',
+      'recall my last question',
+      'remember what i said',
+    ],
+  },
+  {
+    intent: 'lead_lookup',
+    examples: [
+      'find this lead',
+      'look up seller',
+      'show contact named',
+      'get lead with this address',
+    ],
+  },
+  {
+    intent: 'approvals',
+    examples: [
+      'show pending approvals',
+      'what contracts are waiting',
+      'approval status',
+      'what is waiting for approval',
+    ],
+  },
+  {
+    intent: 'summary',
+    examples: [
+      'summarize recent calls',
+      'catch me up on leads',
+      'recap deal activity',
+      'summarize approvals',
+    ],
+  },
+  {
+    intent: 'call',
+    examples: [
+      'call this number',
+      'dial the seller',
+      'ring the owner',
+      'place a call now',
+    ],
+  },
+  {
+    intent: 'help',
+    examples: [
+      'what can you do',
+      'show commands',
+      'help me',
+      'what are your capabilities',
+    ],
+  },
 ];
 
 export const ASSISTANT_SYSTEM_PROMPT = `
@@ -226,14 +328,92 @@ export function findAssistantLeadMatch(query = '', leads = [], { threshold = 0.3
   return best && best.similarity >= threshold ? best : null;
 }
 
+export function classifyAssistantIntentLocally(message = '', options = {}) {
+  const mode = String(options.classifierMode || ASSISTANT_INTENT_CLASSIFIER || 'regex')
+    .trim()
+    .toLowerCase();
+  if (!['local', 'offline', 'tiny', 'tiny-local', 'local-llm'].includes(mode)) return null;
+  const text = cleanText(message, 2400);
+  if (!text) return null;
+  let best = null;
+  for (const item of LOCAL_INTENT_EXAMPLES) {
+    for (const example of item.examples) {
+      const similarity = Math.max(
+        tokenSimilarity(text, example),
+        tokenSimilarity(example, text)
+      );
+      if (!best || similarity > best.confidence) {
+        best = {
+          intent: item.intent,
+          confidence: Number(similarity.toFixed(3)),
+          classifierSource: 'local_tiny_intent',
+          example,
+        };
+      }
+    }
+  }
+  const threshold = Math.max(
+    0.35,
+    Math.min(0.98, Number(options.threshold || ASSISTANT_INTENT_CLASSIFIER_THRESHOLD))
+  );
+  return best && best.confidence >= threshold ? best : null;
+}
+
+function buildAssistantIntentFromClassifier(classified = null, context = {}) {
+  if (!classified?.intent) return null;
+  const text = context.text || '';
+  const lower = context.lower || text.toLowerCase();
+  const phone = context.phone || '';
+  const address = context.address || '';
+  const base = {
+    message: text,
+    classifierSource: classified.classifierSource || 'local_classifier',
+    classifierConfidence: classified.confidence,
+  };
+  if (classified.intent === 'help') return { ...base, intent: 'help' };
+  if (classified.intent === 'unified_additive_intelligence') {
+    return { ...base, intent: 'unified_additive_intelligence' };
+  }
+  if (classified.intent === 'session_recall') return { ...base, intent: 'session_recall' };
+  if (classified.intent === 'analyze_deal') {
+    return { ...base, intent: 'analyze_deal', address };
+  }
+  if (classified.intent === 'nurture_start' || classified.intent === 'nurture_consult') {
+    const channelMatch = lower.match(/\b(sms|text|email|call)\b/i);
+    const requestedChannel = channelMatch?.[1] === 'text' ? 'sms' : channelMatch?.[1] || '';
+    return {
+      ...base,
+      intent: classified.intent,
+      requestedChannel,
+      leadQuery: extractNurtureLeadQuery(text),
+    };
+  }
+  if (classified.intent === 'call' && phone) return { ...base, intent: 'call', phone };
+  if (classified.intent === 'approvals') return { ...base, intent: 'approvals' };
+  if (classified.intent === 'summary') return { ...base, intent: 'summary' };
+  if (classified.intent === 'lead_lookup') {
+    return {
+      ...base,
+      intent: 'lead_lookup',
+      query: extractLeadQuery(text) || extractNurtureLeadQuery(text) || address || '',
+    };
+  }
+  return null;
+}
+
 export function detectAssistantIntent(message = '') {
   const text = cleanText(message, 2400);
   const lower = text.toLowerCase();
   const phone = extractPhone(text);
   const address = extractAddress(text);
+  const localIntent = buildAssistantIntentFromClassifier(
+    classifyAssistantIntentLocally(text),
+    { text, lower, phone, address }
+  );
+  if (localIntent) return localIntent;
 
   if (/\b(what can you do|help|capabilities|commands?)\b/i.test(lower)) {
-    return { intent: 'help', message: text };
+    return { intent: 'help', message: text, classifierSource: 'regex' };
   }
 
   if (
@@ -241,7 +421,7 @@ export function detectAssistantIntent(message = '') {
       lower
     )
   ) {
-    return { intent: 'unified_additive_intelligence', message: text };
+    return { intent: 'unified_additive_intelligence', message: text, classifierSource: 'regex' };
   }
 
   if (
@@ -249,7 +429,7 @@ export function detectAssistantIntent(message = '') {
       lower
     )
   ) {
-    return { intent: 'session_recall', message: text };
+    return { intent: 'session_recall', message: text, classifierSource: 'regex' };
   }
 
   if (
@@ -257,7 +437,7 @@ export function detectAssistantIntent(message = '') {
       lower
     )
   ) {
-    return { intent: 'analyze_deal', message: text, address };
+    return { intent: 'analyze_deal', message: text, address, classifierSource: 'regex' };
   }
 
   if (
@@ -274,11 +454,12 @@ export function detectAssistantIntent(message = '') {
       message: text,
       requestedChannel,
       leadQuery: extractNurtureLeadQuery(text),
+      classifierSource: 'regex',
     };
   }
 
   if (/\b(call|dial|ring)\b/i.test(lower) && phone) {
-    return { intent: 'call', message: text, phone };
+    return { intent: 'call', message: text, phone, classifierSource: 'regex' };
   }
 
   if (
@@ -286,7 +467,7 @@ export function detectAssistantIntent(message = '') {
       lower
     )
   ) {
-    return { intent: 'approvals', message: text };
+    return { intent: 'approvals', message: text, classifierSource: 'regex' };
   }
 
   if (
@@ -294,15 +475,15 @@ export function detectAssistantIntent(message = '') {
       lower
     )
   ) {
-    return { intent: 'summary', message: text };
+    return { intent: 'summary', message: text, classifierSource: 'regex' };
   }
 
   const leadQuery = extractLeadQuery(text);
   if (leadQuery) {
-    return { intent: 'lead_lookup', message: text, query: leadQuery };
+    return { intent: 'lead_lookup', message: text, query: leadQuery, classifierSource: 'regex' };
   }
 
-  return { intent: 'general', message: text };
+  return { intent: 'general', message: text, classifierSource: 'regex' };
 }
 
 export function buildAssistantSuggestions(intent = 'general', { publicMode = true } = {}) {

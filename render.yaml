@@ -35,6 +35,15 @@ services:
       # (Telnyx call events, DocuSign envelope status, etc.) that point back here.
       - key: PBK_PUBLIC_BASE_URL
         value: https://pbk-openclaw-bridge.onrender.com
+      # Optional permanent Render -> local callback tunnel. Use a stable
+      # Cloudflare Tunnel/ngrok reserved domain here when you want hosted
+      # bridge jobs to trigger scripts on a local workstation.
+      - key: PBK_LOCAL_CALLBACK_URL
+        sync: false
+      - key: PBK_LOCAL_CALLBACK_TOKEN
+        sync: false
+      - key: PBK_LOCAL_CALLBACK_TIMEOUT_MS
+        value: "300000"
       # Optional shared state for multi-instance readiness. Set this to a
       # Render Key Value / Redis URL before raising numInstances above 1.
       - key: PBK_REDIS_URL
@@ -381,6 +390,44 @@ services:
         value: pbk-coworker-heartbeat
       - key: OTEL_SERVICE_NAME
         value: pbk-coworker-heartbeat
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
+      - key: PBK_OBSERVABILITY_ALERTS_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SLACK_WEBHOOK_URL
+        sync: false
+
+  - type: cron
+    name: pbk-nightly-learning
+    runtime: node
+    plan: free
+    region: ohio
+    schedule: "0 8 * * *"
+    buildCommand: npm ci --omit=dev
+    startCommand: npm run learning:nightly
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PBK_DATABASE_URL
+        fromDatabase:
+          name: pbk-openclaw-db
+          property: connectionString
+      - key: PBK_PUBLIC_BASE_URL
+        value: https://pbk-openclaw-bridge.onrender.com
+      - key: PBK_BRIDGE_API_KEY
+        sync: false
+      - key: PBK_NIGHTLY_EMOTION_MIN_SAMPLES
+        value: "500"
+      - key: PBK_NIGHTLY_EMOTION_LIMIT
+        value: "2000"
+      - key: PBK_OBSERVABILITY_ENABLED
+        value: "true"
+      - key: PBK_OBSERVABILITY_SERVICE_NAME
+        value: pbk-nightly-learning
+      - key: OTEL_SERVICE_NAME
+        value: pbk-nightly-learning
       - key: OTEL_EXPORTER_OTLP_ENDPOINT
         sync: false
       - key: OTEL_EXPORTER_OTLP_HEADERS

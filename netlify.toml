@@ -10,6 +10,12 @@ included_files = ["node_modules/@sparticuz/chromium/bin/**"]
 [functions.documents-pdf]
 timeout = 26
 
+[functions.public-ava-chat]
+timeout = 15
+
+[functions.pbk-bridge-proxy]
+timeout = 25
+
 [[headers]]
   for = "/*"
   [headers.values]
@@ -18,6 +24,7 @@ timeout = 26
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'"
 
 [[redirects]]
 from = "/api/public/ava-chat"

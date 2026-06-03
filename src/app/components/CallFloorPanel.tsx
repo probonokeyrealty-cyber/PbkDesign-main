@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Clock3, Phone, Search, X } from 'lucide-react';
 import { showUiToast } from '../utils/uiFeedback';
 
@@ -139,7 +139,7 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
     [selectedLeadId, visibleLeads],
   );
 
-  const startDemoCall = (lead: BridgeRecord | null = selectedLead) => {
+  const startDemoCall = useCallback((lead: BridgeRecord | null = selectedLead) => {
     if (!lead) {
       showUiToast({ tone: 'error', title: 'No lead selected', desc: 'Search or select a lead first.' });
       return;
@@ -157,13 +157,13 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
       setDialingId((current) => (current === leadId ? '' : current));
       showUiToast({ tone: 'success', title: 'Call queued (demo)', desc: 'No provider call was made from this UI polish.' });
     }, 900);
-  };
+  }, [activePhones, selectedLead]);
 
   useEffect(() => {
     const onCallNow = () => startDemoCall(visibleLeads.find((lead) => !activePhones.has(normalizePhone(getLeadPhone(lead)))) || null);
     window.addEventListener('pbk:call-now', onCallNow);
     return () => window.removeEventListener('pbk:call-now', onCallNow);
-  }, [activePhones, visibleLeads]);
+  }, [activePhones, visibleLeads, startDemoCall]);
 
   const applyQuickTime = (type: 'hour' | 'two-hours' | 'today-five' | 'tomorrow-nine') => {
     const next = new Date();

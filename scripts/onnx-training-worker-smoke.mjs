@@ -5,14 +5,21 @@ import path from 'node:path';
 
 const workerPath = path.resolve('scripts', 'onnx-training-worker.mjs');
 
-function makePool({ recentCalls = 0, lastTrainingAt = null } = {}) {
+function makePool({ recentCalls = 0, lastTrainingAt = null, hasTranscriptColumn = true } = {}) {
   const calls = [];
   return {
     calls,
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (/information_schema\.columns/i.test(sql)) {
-        return { rows: [{ has_transcript_column: true }] };
+        return { rows: [{ has_transcript_column: hasTranscriptColumn }] };
+      }
+      if (/ALTER TABLE public\.pbk_call_analyses/i.test(sql)) {
+        hasTranscriptColumn = true;
+        return { rows: [] };
+      }
+      if (/CREATE INDEX IF NOT EXISTS pbk_call_analyses_transcript_ready_idx/i.test(sql)) {
+        return { rows: [] };
       }
       if (/COUNT\(\*\).*recent_call_count/is.test(sql)) {
         return { rows: [{ recent_call_count: recentCalls }] };
@@ -86,6 +93,18 @@ async function main() {
   assert.equal(status.result, 'emotion_training_status');
   assert.equal(status.readiness.ready, true);
   assert.equal(status.readiness.recentCalls, 640);
+
+  const ensurePool = makePool({ recentCalls: 0, hasTranscriptColumn: false });
+  const ensured = await getEmotionTrainingStatus(ensurePool, {
+    ensureSchema: true,
+    minCalls: 500,
+    now: new Date('2026-06-03T12:00:00.000Z'),
+  });
+  assert.equal(ensured.readiness.hasTranscriptColumn, true);
+  assert(
+    ensurePool.calls.some((call) => /ALTER TABLE public\.pbk_call_analyses/i.test(call.sql)),
+    'status checks with ensureSchema should add the transcript column before readiness queries.'
+  );
 
   const cronSource = await readFile(path.resolve('scripts', 'nightly-learning-cron.mjs'), 'utf8');
   assert.match(cronSource, /runAutoTrainingIfReady/, 'nightly cron should call the ONNX auto-training worker.');

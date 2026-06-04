@@ -52097,6 +52097,7 @@ const server = createServer(async (request, response) => {
         tenantId: url.searchParams.get('tenantId') || url.searchParams.get('tenant_id') || 'pbk',
         minCalls: url.searchParams.get('minCalls') || url.searchParams.get('min_calls') || EMOTION_WORLD_MODEL_RETRAIN_MIN_SAMPLES,
         lookbackDays: url.searchParams.get('lookbackDays') || url.searchParams.get('lookback_days') || 7,
+        ensureSchema: true,
       });
       json(response, result.ok ? 200 : 503, result);
       return;

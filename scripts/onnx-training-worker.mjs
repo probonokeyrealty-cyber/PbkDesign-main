@@ -57,6 +57,27 @@ async function hasTranscriptColumn(pool) {
   }
 }
 
+export async function ensureEmotionTrainingSchema(pool) {
+  if (!pool) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await pool.query(`
+      ALTER TABLE public.pbk_call_analyses
+        ADD COLUMN IF NOT EXISTS transcript TEXT NOT NULL DEFAULT ''
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS pbk_call_analyses_transcript_ready_idx
+        ON public.pbk_call_analyses (tenant_id, created_at DESC)
+        WHERE NULLIF(BTRIM(transcript), '') IS NOT NULL
+    `);
+    return { ok: true };
+  } catch (error) {
+    if (isMissingDbShape(error)) {
+      return { ok: false, reason: 'pbk_call_analyses_unavailable', error: error?.message || String(error) };
+    }
+    throw error;
+  }
+}
+
 async function countRecentTranscriptCalls(pool, options = {}) {
   const tenantId = String(options.tenantId || options.tenant_id || 'pbk').trim() || 'pbk';
   const lookbackDays = Math.max(1, toInt(options.lookbackDays || options.lookback_days, DEFAULT_LOOKBACK_DAYS));
@@ -285,6 +306,7 @@ export async function getEmotionTrainingStatus(pool, options = {}) {
   const minCalls = Math.max(1, toInt(options.minCalls || options.min_calls, DEFAULT_MIN_CALLS));
   const now = options.now ? new Date(options.now) : new Date();
   const cooldownDays = Math.max(1, toInt(options.cooldownDays || options.cooldown_days, DEFAULT_COOLDOWN_DAYS));
+  const schema = options.ensureSchema ? await ensureEmotionTrainingSchema(pool) : { ok: true };
   const recent = await countRecentTranscriptCalls(pool, { ...options, now });
   const lastTrainingAt = await getLastTrainingAt(pool, options);
   const lastTraining = lastTrainingAt ? new Date(lastTrainingAt) : null;
@@ -302,7 +324,8 @@ export async function getEmotionTrainingStatus(pool, options = {}) {
     readiness: {
       ready,
       eligible: ready && !trainedWithinCooldown,
-      reason: ready ? '' : recent.reason || `only ${recent.recentCalls} recent calls`,
+      reason: ready ? '' : schema.reason || recent.reason || `only ${recent.recentCalls} recent calls`,
+      schema,
       tenantId: recent.tenantId,
       recentCalls: recent.recentCalls,
       minCalls,
@@ -314,7 +337,10 @@ export async function getEmotionTrainingStatus(pool, options = {}) {
 }
 
 export async function runAutoTrainingIfReady(pool, options = {}) {
-  const status = await getEmotionTrainingStatus(pool, options);
+  const status = await getEmotionTrainingStatus(pool, {
+    ...options,
+    ensureSchema: options.ensureSchema !== false,
+  });
   if (status.ok === false) {
     return {
       trained: false,

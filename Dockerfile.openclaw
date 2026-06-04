@@ -116,6 +116,7 @@ COPY scripts/mission-resilience.mjs ./scripts/mission-resilience.mjs
 COPY scripts/agent-teams.mjs ./scripts/agent-teams.mjs
 COPY scripts/auto-skill-learner.mjs ./scripts/auto-skill-learner.mjs
 COPY scripts/nurture-agent.mjs ./scripts/nurture-agent.mjs
+COPY scripts/onnx-training-worker.mjs ./scripts/onnx-training-worker.mjs
 COPY scripts/research-additives.mjs ./scripts/research-additives.mjs
 COPY scripts/train-emotion-world-model.mjs ./scripts/train-emotion-world-model.mjs
 COPY scripts/train_emotion_world_model_onnx.py ./scripts/train_emotion_world_model_onnx.py

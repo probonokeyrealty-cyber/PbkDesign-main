@@ -98,6 +98,13 @@ async function main() {
     'bridge should expose GET /api/emotion/training/status.'
   );
 
+  const dockerfile = await readFile(path.resolve('Dockerfile.openclaw'), 'utf8');
+  assert.match(
+    dockerfile,
+    /COPY scripts\/onnx-training-worker\.mjs \.\/scripts\/onnx-training-worker\.mjs/,
+    'Render bridge image should copy the ONNX worker imported by openclaw-local-server.mjs.'
+  );
+
   console.log('ONNX training worker smoke passed.');
 }
 

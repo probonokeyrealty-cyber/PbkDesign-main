@@ -439,22 +439,11 @@ interface PbkDataSourceProps {
 export function PbkDataSource({ endpoint, status, note }: PbkDataSourceProps) {
   return (
     <div className="pbk-data-source">
-      <span
-        style={{
-          color: 'var(--text-tertiary)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.1em',
-        }}
-      >
-        ◆ source
-      </span>{' '}
-      <code>{endpoint}</code>
-      <span
-        style={{ color: status === 'ships' ? 'var(--lime)' : 'var(--amber)', marginLeft: '6px' }}
-      >
+      <span className="ds-tag">source</span> <code>{endpoint}</code>
+      <span className={`ds-status ${status === 'needs-wiring' ? 'needs' : ''}`.trim()}>
         {status === 'ships' ? 'ships' : 'needs wiring'}
       </span>
-      {note && <span style={{ color: 'var(--text-ghost)', marginLeft: '6px' }}>{note}</span>}
+      {note && <span className="ds-note">{note}</span>}
     </div>
   );
 }

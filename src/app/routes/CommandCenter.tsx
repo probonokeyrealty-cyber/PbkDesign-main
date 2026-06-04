@@ -7,6 +7,7 @@ import { StatusColorLegend } from '../components/StatusColorLegend';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
 import type { LiveCallState, TranscriptLine } from '../components/shell/LiveCallWidget';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index';
 import {
   controlRuntimeCall,
   fetchWebSearchStatusRequest,
@@ -203,6 +204,383 @@ function getCallOutcome(call: Record<string, unknown>) {
   );
 }
 
+type RuntimeRecord = Record<string, unknown>;
+type BattlefieldTone = 'urgent' | 'hot' | 'warm' | 'money';
+
+type BattlefieldItem = {
+  id: string;
+  tag: string;
+  body: string;
+  when: string;
+  tone: BattlefieldTone;
+  pulse?: 'default' | 'amber' | 'sky' | 'lime';
+  targetPath: string;
+};
+
+function getNestedRecord(record: RuntimeRecord, key: string) {
+  return record[key] && typeof record[key] === 'object' ? (record[key] as RuntimeRecord) : {};
+}
+
+function getRuntimeDate(record: RuntimeRecord) {
+  const raw =
+    record.at ||
+    record.createdAt ||
+    record.created_at ||
+    record.updatedAt ||
+    record.updated_at ||
+    record.startedAt ||
+    record.scheduledFor ||
+    record.sendAt;
+  return raw ? String(raw) : '';
+}
+
+function isRecentRuntimeRecord(record: RuntimeRecord, hours = 24) {
+  const raw = getRuntimeDate(record);
+  if (!raw) return false;
+  const timestamp = new Date(raw).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= hours * 60 * 60 * 1000;
+}
+
+function formatCompactMoney(value: unknown) {
+  const amount = toNumber(value, 0) || 0;
+  if (!amount) return '$0';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+    notation: Math.abs(amount) >= 100000 ? 'compact' : 'standard',
+  }).format(amount);
+}
+
+function getLeadDisplayName(lead: RuntimeRecord) {
+  const seller = getNestedRecord(lead, 'seller');
+  return String(lead.leadName || lead.name || lead.lead_name || seller.name || 'Unnamed lead');
+}
+
+function getLeadDisplayAddress(lead: RuntimeRecord) {
+  const property = getNestedRecord(lead, 'property');
+  return String(
+    lead.address ||
+      lead.property_address ||
+      lead.propertyAddress ||
+      property.address ||
+      'No address recorded'
+  );
+}
+
+function getLeadScore(lead: RuntimeRecord) {
+  return (
+    toNumber(
+      lead.priorityScore ??
+        lead.priority_score ??
+        lead.engagementScore ??
+        lead.engagement_score ??
+        lead.motivationScore ??
+        lead.motivation_score ??
+        lead.score,
+      0
+    ) || 0
+  );
+}
+
+function getMessageRecipient(message: RuntimeRecord) {
+  return String(
+    message.leadName ||
+      message.to ||
+      message.from ||
+      message.phone ||
+      message.email ||
+      message.address ||
+      'seller'
+  );
+}
+
+function buildHeroStats(params: {
+  leadImports: RuntimeRecord[];
+  calls: RuntimeRecord[];
+  messages: RuntimeRecord[];
+  contracts: RuntimeRecord[];
+}) {
+  const calls24h = params.calls.filter((call) => isRecentRuntimeRecord(call, 24)).length;
+  const messages24h = params.messages.filter((message) =>
+    isRecentRuntimeRecord(message, 24)
+  ).length;
+  const contacted24h = calls24h + messages24h;
+  const sentContracts = params.contracts.filter((contract) =>
+    ['sent', 'signed', 'completed', 'closed'].includes(String(contract.status || '').toLowerCase())
+  ).length;
+  const closedContracts = params.contracts.filter((contract) =>
+    ['signed', 'completed', 'closed', 'won'].includes(String(contract.status || '').toLowerCase())
+  );
+  const pipelineValue = params.contracts.reduce(
+    (sum, contract) =>
+      sum + (toNumber(contract.amount ?? contract.revenue ?? contract.value, 0) || 0),
+    0
+  );
+
+  return [
+    {
+      label: 'Leads Contacted / 24h',
+      value: String(contacted24h),
+      delta: `${calls24h} calls / ${messages24h} msgs`,
+      tone: 'sky',
+    },
+    {
+      label: 'Contracts Sent',
+      value: String(sentContracts),
+      delta: `${params.contracts.length} total`,
+      tone: 'sky',
+    },
+    {
+      label: 'Deals Closed / MTD',
+      value: String(closedContracts.length),
+      delta: closedContracts.length ? 'active close path' : 'none yet',
+      tone: closedContracts.length ? 'lime' : 'warn',
+    },
+    {
+      label: 'Est. Profit Pipeline',
+      value: formatCompactMoney(pipelineValue),
+      delta: `${params.leadImports.length} leads`,
+      tone: pipelineValue ? 'lime' : 'warn',
+    },
+  ];
+}
+
+function buildBattlefieldItems(params: {
+  approvals: RuntimeRecord[];
+  adminTasks: RuntimeRecord[];
+  leadImports: RuntimeRecord[];
+  messages: RuntimeRecord[];
+  calls: RuntimeRecord[];
+}) {
+  const items: BattlefieldItem[] = [];
+
+  params.calls
+    .filter((call) =>
+      ['live', 'connected', 'dialing', 'queued', 'on-hold'].includes(
+        String(call.status || '').toLowerCase()
+      )
+    )
+    .slice(0, 2)
+    .forEach((call, index) => {
+      const sentiment = toNumber(call.sentiment, null);
+      items.push({
+        id: `call-${String(call.id || call.callId || index)}`,
+        tag: String(call.status || 'Live'),
+        body: `${String(call.leadName || call.name || call.phone || 'Active call')} ${
+          sentiment == null
+            ? ''
+            : `/ sentiment ${Math.round(sentiment <= 1 ? sentiment * 100 : sentiment)}`
+        }`.trim(),
+        when: 'now',
+        tone: 'urgent',
+        pulse: 'default',
+        targetPath: '#live-call',
+      });
+    });
+
+  params.approvals
+    .filter((approval) => String(approval.status || '').toLowerCase() === 'pending')
+    .slice(0, 4)
+    .forEach((approval, index) => {
+      const type = String(approval.type || 'Approval');
+      const amount = approval.offerPrice || approval.mao || approval.amount;
+      items.push({
+        id: `approval-${String(approval.id || index)}`,
+        tag: type,
+        body: `${amount ? `${formatCompactMoney(amount)} / ` : ''}${String(
+          approval.leadName || approval.address || 'approval needed'
+        )}`,
+        when: formatRelative(getRuntimeDate(approval)),
+        tone: type.toLowerCase().includes('contract') ? 'money' : 'hot',
+        pulse: type.toLowerCase().includes('contract') ? 'lime' : undefined,
+        targetPath: '#approvals',
+      });
+    });
+
+  params.messages
+    .filter((message) =>
+      ['failed', 'delivery_failed', 'error'].includes(String(message.status || '').toLowerCase())
+    )
+    .slice(0, 2)
+    .forEach((message, index) => {
+      items.push({
+        id: `message-failed-${String(message.id || index)}`,
+        tag: 'Send failed',
+        body: `${String(message.channel || 'message').toUpperCase()} to ${getMessageRecipient(message)}`,
+        when: formatRelative(getRuntimeDate(message)),
+        tone: 'urgent',
+        targetPath: '/inbox',
+      });
+    });
+
+  params.messages
+    .filter((message) => Boolean(message.unread || message.isUnread))
+    .slice(0, 2)
+    .forEach((message, index) => {
+      items.push({
+        id: `message-unread-${String(message.id || index)}`,
+        tag: String(message.channel || 'Reply'),
+        body: `${getMessageRecipient(message)} / ${String(
+          message.subject || message.body || 'new seller reply'
+        ).slice(0, 56)}`,
+        when: formatRelative(getRuntimeDate(message)),
+        tone: 'warm',
+        pulse: 'amber',
+        targetPath: '/inbox',
+      });
+    });
+
+  params.adminTasks
+    .filter((task) => String(task.status || '').toLowerCase() === 'pending')
+    .slice(0, 2)
+    .forEach((task, index) => {
+      items.push({
+        id: `admin-${String(task.id || index)}`,
+        tag: 'Admin',
+        body: `${String(task.provider || 'Rex')} / ${String(task.action || task.summary || 'decision')}`,
+        when: formatRelative(getRuntimeDate(task)),
+        tone: 'hot',
+        targetPath: '#admin-activity',
+      });
+    });
+
+  params.leadImports
+    .filter((lead) => getLeadScore(lead) >= 75)
+    .slice(0, 2)
+    .forEach((lead, index) => {
+      items.push({
+        id: `lead-${String(lead.id || lead.leadId || index)}`,
+        tag: 'Hot lead',
+        body: `${getLeadDisplayName(lead)} / ${getLeadDisplayAddress(lead)}`,
+        when: `${Math.round(getLeadScore(lead))}`,
+        tone: 'money',
+        targetPath: '/leads',
+      });
+    });
+
+  return items.slice(0, 8);
+}
+
+function DataSourceCaption({
+  endpoint,
+  status = 'ships',
+  note,
+}: {
+  endpoint: string;
+  status?: 'ships' | 'needs-wiring';
+  note?: string;
+}) {
+  return <PbkDataSource endpoint={endpoint} status={status} note={note} />;
+}
+
+function StatSpark({ tone }: { tone: string }) {
+  const stroke = tone === 'lime' ? 'var(--lime)' : tone === 'warn' ? 'var(--amber)' : 'var(--sky)';
+  return (
+    <svg className="pbk-stat-spark" viewBox="0 0 70 24" fill="none" aria-hidden="true">
+      <path
+        d="M0 20 L10 17 L20 18 L30 12 L40 14 L50 8 L60 10 L70 5"
+        stroke={stroke}
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function FounderBattlefield({
+  items,
+  loading,
+  error,
+  agentsReady,
+  agentsTotal,
+  mode,
+  onSelect,
+}: {
+  items: BattlefieldItem[];
+  loading: boolean;
+  error: string;
+  agentsReady: number;
+  agentsTotal: number;
+  mode: string;
+  onSelect: (item: BattlefieldItem) => void;
+}) {
+  const urgentCount = items.filter((item) => item.tone === 'urgent' || item.tone === 'hot').length;
+  const approvalCount = items.filter((item) => /approval|contract/i.test(item.tag)).length;
+  const failedCount = items.filter((item) => /failed/i.test(item.tag)).length;
+  const sub =
+    items.length > 0
+      ? `${approvalCount} approvals / ${failedCount} failed sends / ${urgentCount} urgent`
+      : loading
+        ? 'bridge sync in progress'
+        : 'no ranked work waiting';
+  const bridgeTone = loading ? 'amber' : error ? 'crimson' : 'lime';
+  const bridgeLabel = loading ? 'syncing' : error ? 'offline' : 'healthy';
+
+  return (
+    <section className="space-y-2" aria-labelledby="battlefield-title">
+      <div className="pbk-battlefield">
+        <div className="pbk-battlefield-left">
+          <div id="battlefield-title" className="pbk-battlefield-label">
+            Do next / ranked queue
+          </div>
+          <div className="pbk-battlefield-count">
+            <em>{items.length}</em> waiting on you
+          </div>
+          <div className="pbk-battlefield-sub">{sub}</div>
+        </div>
+        <div className="pbk-battlefield-center" aria-label="Ranked work queue">
+          {items.length ? (
+            items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`pbk-bf-chip ${item.tone}`}
+                title={`${item.tag}: ${item.body}`}
+                onClick={() => onSelect(item)}
+              >
+                {item.pulse && <PbkPulseDot color={item.pulse} />}
+                <span className="pbk-bf-chip-tag">{item.tag}</span>
+                <span className="pbk-bf-chip-body">{item.body}</span>
+                <span className="pbk-bf-chip-when">{item.when}</span>
+              </button>
+            ))
+          ) : (
+            <button type="button" className="pbk-bf-chip warm" onClick={() => undefined}>
+              <PbkPulseDot color="sky" />
+              <span className="pbk-bf-chip-tag">Clear</span>
+              <span className="pbk-bf-chip-body">
+                No urgent approvals, live calls, or failed sends in the bridge snapshot
+              </span>
+              <span className="pbk-bf-chip-when">now</span>
+            </button>
+          )}
+        </div>
+        <div className="pbk-battlefield-right">
+          <div className="pbk-bf-mini-stat">
+            <div className="l">Bridge</div>
+            <div className={`v ${bridgeTone}`}>{bridgeLabel}</div>
+          </div>
+          <div className="pbk-bf-mini-stat">
+            <div className="l">Agents</div>
+            <div className="v">
+              {agentsReady}/{agentsTotal || agentsReady || 0}
+            </div>
+          </div>
+          <div className="pbk-bf-mini-stat">
+            <div className="l">Mode</div>
+            <div className="v amber">{mode}</div>
+          </div>
+        </div>
+      </div>
+      <DataSourceCaption
+        endpoint="snapshot.approvals + snapshot.calls + snapshot.messages + snapshot.leadImports"
+        note="canonical GET /api/founder/work-queue needs Mastra wiring"
+      />
+    </section>
+  );
+}
+
 export function CommandCenter() {
   const navigate = useNavigate();
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
@@ -226,6 +604,8 @@ export function CommandCenter() {
   const activityItems = Array.isArray(snapshot?.activity) ? snapshot.activity : [];
   const visibleActivity = activityItems.slice(0, activityLimit);
   const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+  const contracts = Array.isArray(snapshot?.contracts) ? snapshot.contracts : [];
   const isWidgetVisible = (id: CommandWidgetId) => widgetPrefs[id] !== false;
   const runtimeProviders = (snapshot?.status?.providers || {}) as Record<
     string,
@@ -317,8 +697,6 @@ export function CommandCenter() {
     toNumber(toolingSummary.requiredReadyCount, toNumber(toolingSummary.readyCount, 0)) || 0;
   const toolingCoreTotal =
     toNumber(toolingSummary.requiredCount, toNumber(toolingSummary.totalCount, 0)) || 0;
-  const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount, 0) || 0;
-  const toolingOptionalTotal = toNumber(toolingSummary.optionalCount, 0) || 0;
   const toolingHighlights = [
     { label: 'Meta-Agent', meta: tooling?.metaAgent as Record<string, unknown> | undefined },
     { label: 'BrowserOS Agent', meta: tooling?.browserOs as Record<string, unknown> | undefined },
@@ -338,27 +716,37 @@ export function CommandCenter() {
     { label: 'Observability', meta: tooling?.observability as Record<string, unknown> | undefined },
   ];
 
-  const kpis = [
-    { label: 'Active Leads', value: String(leadImports.length), hint: 'live from bridge intake' },
-    { label: 'Calls Today', value: String(calls.length), hint: 'Telnyx + bridge runtime' },
-    {
-      label: 'Approvals Needed',
-      value: String(approvals.filter((item) => item.status === 'pending').length),
-      hint: `${adminTasks.filter((item) => item.status === 'pending').length} admin approvals waiting`,
-    },
-    {
-      label: 'Deals in Pipeline',
-      value: String((snapshot?.contracts || []).length),
-      hint: 'prepared, sent, or signed contracts',
-    },
-    {
-      label: 'Tooling Ready',
-      value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
-      hint: toolingOptionalTotal
-        ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional add-ons enabled`
-        : 'advanced systems available in repo',
-    },
-  ];
+  const heroStats = useMemo(
+    () => buildHeroStats({ leadImports, calls, messages, contracts }),
+    [leadImports, calls, messages, contracts]
+  );
+  const battlefieldItems = useMemo(
+    () => buildBattlefieldItems({ approvals, adminTasks, leadImports, messages, calls }),
+    [approvals, adminTasks, leadImports, messages, calls]
+  );
+  const pendingApprovalCount = approvals.filter((item) => item.status === 'pending').length;
+  const pendingAdminCount = adminTasks.filter((item) => item.status === 'pending').length;
+  const heroTimeLabel = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date());
+  const approvalMode =
+    pendingApprovalCount || pendingAdminCount
+      ? 'Approval'
+      : String(snapshot?.settings?.mode || snapshot?.status?.mode || 'Auto').replace(/_/g, ' ');
+
+  const selectBattlefieldItem = (item: BattlefieldItem) => {
+    if (item.targetPath.startsWith('#')) {
+      document
+        .querySelector(item.targetPath)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    navigate(item.targetPath);
+  };
 
   const runRuntimeAction = async (
     key: string,
@@ -490,604 +878,661 @@ export function CommandCenter() {
   };
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-6 p-4 md:p-6">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100 sm:text-2xl">Command Center</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Live agent activity, approvals, contracts, and admin operations.
-          </p>
-        </div>
-        <div
-          className="inline-flex items-center gap-2 self-start rounded-full border border-slate-800 bg-slate-950/70 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-400 md:self-auto"
-          aria-live="polite"
-        >
-          <span
-            aria-hidden="true"
-            className={[
-              'h-2 w-2 rounded-full',
-              loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
-            ].join(' ')}
-          />
-          {loading ? 'Syncing runtime' : error ? 'Bridge offline' : 'Bridge sync healthy'}
-        </div>
-      </div>
-
-      {actionStatus && (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          className={[
-            'flex items-start gap-2 rounded-2xl px-4 py-3 text-sm',
-            actionStatus.tone === 'error'
-              ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
-              : actionStatus.tone === 'success'
-                ? 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
-                : 'border border-sky-500/20 bg-sky-500/10 text-sky-100',
-          ].join(' ')}
-        >
-          {actionStatus.tone === 'pending' ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : actionStatus.tone === 'error' ? (
-            <AlertCircle size={15} className="mt-0.5 text-rose-300" />
-          ) : (
-            <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
-          )}
-          <span>{actionStatus.text}</span>
-        </div>
-      )}
-
-      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-100">Widget controls</h2>
-            <p className="text-xs text-slate-500">
-              Personalise this dashboard locally without changing bridge data or operator policy.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {COMMAND_WIDGETS.map((widget) => {
-              const active = isWidgetVisible(widget.id);
-              return (
-                <button
-                  key={widget.id}
-                  type="button"
-                  onClick={() => toggleWidget(widget.id)}
-                  className={[
-                    'rounded-full border px-3 py-1.5 text-[11px] font-semibold transition',
-                    active
-                      ? 'border-sky-400/40 bg-sky-500/10 text-sky-200'
-                      : 'border-slate-800 bg-slate-900 text-slate-500',
-                  ].join(' ')}
-                  aria-pressed={active}
-                >
-                  {widget.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {isWidgetVisible('statusLegend') && <StatusColorLegend />}
-
-      {isWidgetVisible('kpis') && (
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
-          {kpis.map((kpi) => (
-            <div
-              key={kpi.label}
-              className="rounded-2xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700"
-            >
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                {kpi.label}
-              </div>
-              <div className="mt-2 text-2xl font-semibold text-slate-100 tabular-nums">
-                {kpi.value}
-              </div>
-              <div className="mt-1 text-[11px] text-slate-500">{kpi.hint}</div>
+    <div className="pbk-command-surface min-h-full space-y-6 bg-[var(--bg-void)] p-4 text-[var(--text-primary)] md:p-6">
+      <div className="mx-auto max-w-screen-2xl space-y-6">
+        <section className="pbk-command-hero">
+          <div className="pbk-command-hero-top">
+            <div>
+              <div className="pbk-eyebrow">Live / {heroTimeLabel}</div>
+              <h1 className="pbk-display pbk-h1">
+                Good morning, PBK.{' '}
+                <em>
+                  {pendingApprovalCount + pendingAdminCount
+                    ? `${pendingApprovalCount + pendingAdminCount} decisions need you.`
+                    : 'Your agents are standing by.'}
+                </em>
+              </h1>
+              <p>
+                Live agent activity, approvals, contracts, and admin operations. Every number below
+                is derived from the bridge snapshot or clearly marked when the canonical endpoint
+                still needs wiring.
+              </p>
             </div>
-          ))}
-        </div>
-      )}
+            <div className="pbk-hero-sync" aria-live="polite">
+              <span
+                aria-hidden="true"
+                className={[
+                  'h-2 w-2 rounded-full',
+                  loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
+                ].join(' ')}
+              />
+              {loading ? 'Syncing runtime' : error ? 'Bridge offline' : 'Bridge sync healthy'}
+            </div>
+          </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <div className="xl:col-span-5 space-y-4">
-          {isWidgetVisible('liveCall') && (
-            <LiveCallWidget
-              state={activeCall}
-              onTakeOver={(state) => {
-                const callId = state.callId || '';
-                void runRuntimeAction(
-                  `call:${callId}:takeover`,
-                  'Human takeover sent to the bridge.',
-                  async () => {
-                    if (callId) await controlRuntimeCall(callId, 'takeover');
-                    navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
-                  }
-                );
-              }}
-              onMute={(state) => {
-                const callId = state.callId || '';
-                if (!callId) return;
-                void runRuntimeAction(
-                  `call:${callId}:mute`,
-                  'Ava mute command sent to the bridge.',
-                  async () => {
-                    await controlRuntimeCall(callId, 'mute');
-                  }
-                );
-              }}
-              onEnd={(state) => {
-                const callId = state.callId || '';
-                if (!callId) return;
-                void runRuntimeAction(
-                  `call:${callId}:end`,
-                  'Call end command sent to the bridge.',
-                  async () => {
-                    await controlRuntimeCall(callId, 'end');
-                  }
-                );
-              }}
-            />
-          )}
-
-          {isWidgetVisible('callFloor') && <CallFloorPanel leads={leadImports} calls={calls} />}
-
-          {isWidgetVisible('adminActivity') && (
-            <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-100">Admin Activity</h2>
-                  <p className="text-xs text-slate-500">
-                    Approval-backed infrastructure changes from Rex.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 space-y-2">
-                {adminTasks.slice(0, 5).map((task) => (
-                  <div
-                    key={String(task.id)}
-                    className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-medium text-slate-200">
-                        {String(task.provider || 'admin')} · {String(task.action || 'review')}
-                      </div>
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                        {formatRuntimeStatus(task.status)}
-                      </div>
-                    </div>
-                    <div className="mt-2 text-xs text-slate-400">
-                      {String(task.summary || task.command || 'Administrative action')}
-                    </div>
-                    {String(task.status || '').toLowerCase() === 'pending' && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={pendingAction === `admin:${String(task.id)}:approved`}
-                          onClick={() => confirmAdminDecision(task, 'approved')}
-                          className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {pendingAction === `admin:${String(task.id)}:approved` ? '…' : 'Approve'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={pendingAction === `admin:${String(task.id)}:rejected`}
-                          onClick={() => confirmAdminDecision(task, 'rejected')}
-                          className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {pendingAction === `admin:${String(task.id)}:rejected` ? '…' : 'Decline'}
-                        </button>
-                      </div>
-                    )}
+          {isWidgetVisible('kpis') && (
+            <div className="pbk-stats-ribbon">
+              {heroStats.map((stat) => (
+                <div key={stat.label} className="pbk-stat">
+                  <div className="pbk-stat-label">{stat.label}</div>
+                  <div className="pbk-stat-value">
+                    {stat.value}
+                    <span className={`pbk-stat-delta ${stat.tone === 'warn' ? 'warn' : ''}`}>
+                      {stat.delta}
+                    </span>
                   </div>
-                ))}
-                {!adminTasks.length && (
-                  <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                    No admin approvals are needed.
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-
-          {isWidgetVisible('webSearch') && (
-            <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-100">Web Search Cognition</h2>
-                  <p className="text-xs text-slate-500">
-                    Live data status for Ava/Rex spikes, facts, and fallback telemetry.
-                  </p>
+                  <StatSpark tone={stat.tone} />
                 </div>
-                <span
-                  className={[
-                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
-                    webSearchLiveReady
-                      ? 'bg-emerald-500/10 text-emerald-300'
-                      : 'bg-amber-500/10 text-amber-300',
-                  ].join(' ')}
-                >
-                  <span
-                    aria-hidden="true"
+              ))}
+            </div>
+          )}
+          <DataSourceCaption
+            endpoint="snapshot.leadImports + snapshot.calls + snapshot.messages + snapshot.contracts"
+            note="stats ribbon only uses live runtime arrays"
+          />
+        </section>
+
+        {actionStatus && (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className={[
+              'flex items-start gap-2 rounded-2xl px-4 py-3 text-sm',
+              actionStatus.tone === 'error'
+                ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
+                : actionStatus.tone === 'success'
+                  ? 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+                  : 'border border-sky-500/20 bg-sky-500/10 text-sky-100',
+            ].join(' ')}
+          >
+            {actionStatus.tone === 'pending' ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : actionStatus.tone === 'error' ? (
+              <AlertCircle size={15} className="mt-0.5 text-rose-300" />
+            ) : (
+              <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
+            )}
+            <span>{actionStatus.text}</span>
+          </div>
+        )}
+
+        <FounderBattlefield
+          items={battlefieldItems}
+          loading={loading}
+          error={error}
+          agentsReady={toolingCoreReady}
+          agentsTotal={toolingCoreTotal}
+          mode={approvalMode}
+          onSelect={selectBattlefieldItem}
+        />
+
+        <PbkPanel className="p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-100">Widget controls</h2>
+              <p className="text-xs text-slate-500">
+                Personalise this dashboard locally without changing bridge data or operator policy.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {COMMAND_WIDGETS.map((widget) => {
+                const active = isWidgetVisible(widget.id);
+                return (
+                  <button
+                    key={widget.id}
+                    type="button"
+                    onClick={() => toggleWidget(widget.id)}
                     className={[
-                      'h-1.5 w-1.5 rounded-full',
-                      webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
+                      'rounded-full border px-3 py-1.5 text-[11px] font-semibold transition',
+                      active
+                        ? 'border-sky-400/40 bg-sky-500/10 text-sky-200'
+                        : 'border-slate-800 bg-slate-900 text-slate-500',
                     ].join(' ')}
-                  />
-                  {webSearchLiveReady ? 'Tavily live' : 'Fallback active'}
-                </span>
+                    aria-pressed={active}
+                  >
+                    {widget.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <DataSourceCaption
+            endpoint="localStorage pbk:command-center:widgets"
+            note="operator display preference only"
+          />
+        </PbkPanel>
+
+        {isWidgetVisible('statusLegend') && <StatusColorLegend />}
+
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+          <div className="xl:col-span-5 space-y-4">
+            {isWidgetVisible('liveCall') && (
+              <div
+                id="live-call"
+                className={
+                  activeCall?.status && activeCall.status !== 'idle'
+                    ? 'pbk-priority-live rounded-lg'
+                    : 'rounded-lg'
+                }
+              >
+                <LiveCallWidget
+                  state={activeCall}
+                  onTakeOver={(state) => {
+                    const callId = state.callId || '';
+                    void runRuntimeAction(
+                      `call:${callId}:takeover`,
+                      'Human takeover sent to the bridge.',
+                      async () => {
+                        if (callId) await controlRuntimeCall(callId, 'takeover');
+                        navigate(state.dealId ? `/deal/${state.dealId}` : '/deal');
+                      }
+                    );
+                  }}
+                  onMute={(state) => {
+                    const callId = state.callId || '';
+                    if (!callId) return;
+                    void runRuntimeAction(
+                      `call:${callId}:mute`,
+                      'Ava mute command sent to the bridge.',
+                      async () => {
+                        await controlRuntimeCall(callId, 'mute');
+                      }
+                    );
+                  }}
+                  onEnd={(state) => {
+                    const callId = state.callId || '';
+                    if (!callId) return;
+                    void runRuntimeAction(
+                      `call:${callId}:end`,
+                      'Call end command sent to the bridge.',
+                      async () => {
+                        await controlRuntimeCall(callId, 'end');
+                      }
+                    );
+                  }}
+                />
+                <DataSourceCaption endpoint="snapshot.calls[0] + POST /api/calls/:id/action" />
               </div>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Provider Path
-                  </div>
-                  <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
-                    {webSearchPrimaryProvider}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {String(webSearchStatus.mode || 'waiting for bridge status')}
+            )}
+
+            {isWidgetVisible('callFloor') && <CallFloorPanel leads={leadImports} calls={calls} />}
+
+            {isWidgetVisible('adminActivity') && (
+              <section
+                id="admin-activity"
+                className={`pbk-panel ${pendingAdminCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Admin Activity</h2>
+                    <p className="text-xs text-slate-500">
+                      Approval-backed infrastructure changes from Rex.
+                    </p>
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-                  <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Neural Contract
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-100">
-                    {String(webSearchNeuralOutput.spikeVersion || 'pbk-web-search-spikes-v1')}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {webSearchNeuralOutput.exposesSymbolicFacts === false
-                      ? 'Spikes only'
-                      : 'Spikes + symbolic facts'}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-                {String(
-                  webSearchStatus.note ||
-                    'Waiting for the bridge to report web-search cognition status.'
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-[11px] text-slate-500">
-                  Log event:{' '}
-                  <span className="text-slate-300">
-                    {String(webSearchStatus.logEvent || 'pbk_web_search_provider')}
-                  </span>
-                  {!webSearchLiveReady && (
-                    <span> / Missing: {webSearchMissing.join(', ') || 'PBK_TAVILY_API_KEY'}</span>
+                <div className="mt-3 space-y-2">
+                  {adminTasks.slice(0, 5).map((task) => (
+                    <div
+                      key={String(task.id)}
+                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-medium text-slate-200">
+                          {String(task.provider || 'admin')} · {String(task.action || 'review')}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                          {formatRuntimeStatus(task.status)}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">
+                        {String(task.summary || task.command || 'Administrative action')}
+                      </div>
+                      {String(task.status || '').toLowerCase() === 'pending' && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={pendingAction === `admin:${String(task.id)}:approved`}
+                            onClick={() => confirmAdminDecision(task, 'approved')}
+                            className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {pendingAction === `admin:${String(task.id)}:approved`
+                              ? '…'
+                              : 'Approve'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={pendingAction === `admin:${String(task.id)}:rejected`}
+                            onClick={() => confirmAdminDecision(task, 'rejected')}
+                            className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {pendingAction === `admin:${String(task.id)}:rejected`
+                              ? '…'
+                              : 'Decline'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {!adminTasks.length && (
+                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                      No admin approvals are needed.
+                    </div>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {webSearchProbeFailed && (
+                <DataSourceCaption endpoint="snapshot.adminTasks + POST /api/admin/tasks/:id/decision" />
+              </section>
+            )}
+
+            {isWidgetVisible('webSearch') && (
+              <section
+                className={`pbk-panel ${webSearchLiveReady ? 'pbk-priority-money' : 'pbk-priority-high'}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Web Search Cognition</h2>
+                    <p className="text-xs text-slate-500">
+                      Live data status for Ava/Rex spikes, facts, and fallback telemetry.
+                    </p>
+                  </div>
+                  <span
+                    className={[
+                      'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em]',
+                      webSearchLiveReady
+                        ? 'bg-emerald-500/10 text-emerald-300'
+                        : 'bg-amber-500/10 text-amber-300',
+                    ].join(' ')}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={[
+                        'h-1.5 w-1.5 rounded-full',
+                        webSearchLiveReady ? 'bg-emerald-400' : 'bg-amber-300',
+                      ].join(' ')}
+                    />
+                    {webSearchLiveReady ? 'Tavily live' : 'Fallback active'}
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Provider Path
+                    </div>
+                    <div className="mt-1 text-sm font-semibold capitalize text-slate-100">
+                      {webSearchPrimaryProvider}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {String(webSearchStatus.mode || 'waiting for bridge status')}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Neural Contract
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-slate-100">
+                      {String(webSearchNeuralOutput.spikeVersion || 'pbk-web-search-spikes-v1')}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {webSearchNeuralOutput.exposesSymbolicFacts === false
+                        ? 'Spikes only'
+                        : 'Spikes + symbolic facts'}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
+                  {String(
+                    webSearchStatus.note ||
+                      'Waiting for the bridge to report web-search cognition status.'
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] text-slate-500">
+                    Log event:{' '}
+                    <span className="text-slate-300">
+                      {String(webSearchStatus.logEvent || 'pbk_web_search_provider')}
+                    </span>
+                    {!webSearchLiveReady && (
+                      <span> / Missing: {webSearchMissing.join(', ') || 'PBK_TAVILY_API_KEY'}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {webSearchProbeFailed && (
+                      <button
+                        type="button"
+                        disabled={pendingAction === 'web-search:probe'}
+                        onClick={() => {
+                          void runWebSearchProbe();
+                        }}
+                        className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        Retry Probe
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={pendingAction === 'web-search:probe'}
                       onClick={() => {
                         void runWebSearchProbe();
                       }}
-                      className="rounded-full bg-sky-400 px-3 py-1.5 text-[11px] font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                      className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Retry Probe
+                      Probe Status
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={pendingAction === 'web-search:probe'}
-                    onClick={() => {
-                      void runWebSearchProbe();
-                    }}
-                    className="rounded-full border border-sky-500/40 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-wait disabled:opacity-60"
-                  >
-                    Probe Status
-                  </button>
-                </div>
-                {webSearchProbeFailed && webSearchProbeError && (
-                  <div className="basis-full text-[11px] text-amber-300">
-                    Last probe failed: {webSearchProbeError}
                   </div>
-                )}
-              </div>
-            </section>
-          )}
-
-          {isWidgetVisible('tooling') && (
-            <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-100">Tooling Readiness</h2>
-                  <p className="text-xs text-slate-500">
-                    Research, monitoring, and meta-agent support systems.
-                  </p>
-                </div>
-                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                  {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
-                </div>
-              </div>
-              <div className="mt-3 space-y-2">
-                {toolingHighlights.map((item) => {
-                  const ready = Boolean(item.meta?.ready);
-                  return (
-                    <div
-                      key={item.label}
-                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0 text-xs font-medium text-slate-200">
-                          {item.label}
-                        </div>
-                        <span
-                          aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
-                          className={[
-                            'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
-                            ready
-                              ? 'bg-emerald-500/10 text-emerald-300'
-                              : 'bg-slate-800 text-slate-400',
-                          ].join(' ')}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={[
-                              'h-1.5 w-1.5 rounded-full',
-                              ready ? 'bg-emerald-400' : 'bg-slate-500',
-                            ].join(' ')}
-                          />
-                          {ready ? 'Ready' : 'Needs setup'}
-                        </span>
-                      </div>
-                      <div className="mt-2 break-words text-xs text-slate-400">
-                        {String(item.meta?.note || 'Waiting on bridge status.')}
-                      </div>
+                  {webSearchProbeFailed && webSearchProbeError && (
+                    <div className="basis-full text-[11px] text-amber-300">
+                      Last probe failed: {webSearchProbeError}
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-        </div>
-
-        <div className="xl:col-span-7 space-y-4">
-          {isWidgetVisible('activity') && (
-            <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-100">Activity Feed</h2>
-                  <p className="text-xs text-slate-500">Recent Ava, Rex, and provider events.</p>
+                  )}
                 </div>
-              </div>
-              <div className="mt-3 space-y-2">
-                {visibleActivity.map((item, index) => (
-                  <div
-                    key={`${String(item.id || item.at || item.createdAt || 'activity')}-${index}`}
-                    className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-medium text-slate-100">
-                        {String(item.actor || 'System')}
+                <DataSourceCaption endpoint="GET /api/web-search/status" />
+              </section>
+            )}
+
+            {isWidgetVisible('tooling') && (
+              <section className="pbk-panel pbk-priority-low">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Tooling Readiness</h2>
+                    <p className="text-xs text-slate-500">
+                      Research, monitoring, and meta-agent support systems.
+                    </p>
+                  </div>
+                  <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                    {String(toolingCoreReady)}/{String(toolingCoreTotal)} core
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {toolingHighlights.map((item) => {
+                    const ready = Boolean(item.meta?.ready);
+                    return (
+                      <div
+                        key={item.label}
+                        className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 transition-colors hover:border-slate-700"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 text-xs font-medium text-slate-200">
+                            {item.label}
+                          </div>
+                          <span
+                            aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
+                            className={[
+                              'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
+                              ready
+                                ? 'bg-emerald-500/10 text-emerald-300'
+                                : 'bg-slate-800 text-slate-400',
+                            ].join(' ')}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={[
+                                'h-1.5 w-1.5 rounded-full',
+                                ready ? 'bg-emerald-400' : 'bg-slate-500',
+                              ].join(' ')}
+                            />
+                            {ready ? 'Ready' : 'Needs setup'}
+                          </span>
+                        </div>
+                        <div className="mt-2 break-words text-xs text-slate-400">
+                          {String(item.meta?.note || 'Waiting on bridge status.')}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <DataSourceCaption endpoint="GET /api/tooling/status" />
+              </section>
+            )}
+          </div>
+
+          <div className="xl:col-span-7 space-y-4">
+            {isWidgetVisible('activity') && (
+              <section className="pbk-panel">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Activity Feed</h2>
+                    <p className="text-xs text-slate-500">Recent Ava, Rex, and provider events.</p>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {visibleActivity.map((item, index) => (
+                    <div
+                      key={`${String(item.id || item.at || item.createdAt || 'activity')}-${index}`}
+                      className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-medium text-slate-100">
+                          {String(item.actor || 'System')}
+                        </div>
+                        <div
+                          className="text-[10px] text-slate-500"
+                          title={formatActivityTitle(String(item.at || item.createdAt || ''))}
+                        >
+                          {formatRelative(String(item.at || item.createdAt || ''))}
+                        </div>
                       </div>
                       <div
-                        className="text-[10px] text-slate-500"
-                        title={formatActivityTitle(String(item.at || item.createdAt || ''))}
+                        className="mt-2 line-clamp-2 max-w-full text-xs text-slate-300"
+                        title={String(item.text || 'Runtime event')}
                       >
-                        {formatRelative(String(item.at || item.createdAt || ''))}
+                        {String(item.text || 'Runtime event')}
                       </div>
-                    </div>
-                    <div
-                      className="mt-2 line-clamp-2 max-w-full text-xs text-slate-300"
-                      title={String(item.text || 'Runtime event')}
-                    >
-                      {String(item.text || 'Runtime event')}
-                    </div>
-                    <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
-                      {String(item.category || 'INFO')}
-                    </div>
-                  </div>
-                ))}
-                {!visibleActivity.length && (
-                  <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                    The bridge has not recorded activity yet.
-                  </div>
-                )}
-                {activityItems.length > visibleActivity.length && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setActivityLimit((current) => Math.min(current + 8, activityItems.length))
-                    }
-                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-500/50"
-                  >
-                    Load more activity ({visibleActivity.length} of {activityItems.length})
-                  </button>
-                )}
-              </div>
-            </section>
-          )}
-
-          {isWidgetVisible('approvals') && (
-            <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
-                  <p className="text-xs text-slate-500">
-                    Items Ava/Rex need you to approve before sending.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 grid gap-2 md:grid-cols-2">
-                {approvals
-                  .filter((item) => item.status === 'pending')
-                  .slice(0, 6)
-                  .map((approval) => (
-                    <div
-                      key={String(approval.id)}
-                      className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
-                    >
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                        {String(approval.type || 'approval')}
-                      </div>
-                      <div className="mt-2 text-sm font-semibold text-slate-100">
-                        {String(approval.leadName || approval.address || 'PBK approval')}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-400">
-                        {String(approval.address || 'No address recorded')}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          data-approval-primary="true"
-                          disabled={pendingAction === `approval:${String(approval.id)}:approved`}
-                          onClick={() => confirmApprovalDecision(approval, 'approved')}
-                          className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {pendingAction === `approval:${String(approval.id)}:approved`
-                            ? '…'
-                            : 'Approve'}
-                        </button>
-                        <button
-                          type="button"
-                          data-approval-secondary="true"
-                          disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
-                          onClick={() => {
-                            const rejectionStatus =
-                              String(approval.type || '').toLowerCase() === 'contract'
-                                ? 'needs-revision'
-                                : 'rejected';
-                            confirmApprovalDecision(approval, rejectionStatus);
-                          }}
-                          className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          {pendingAction === `approval:${String(approval.id)}:rejected`
-                            ? '…'
-                            : String(approval.type || '').toLowerCase() === 'contract'
-                              ? 'Needs Revision'
-                              : 'Decline'}
-                        </button>
+                      <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">
+                        {String(item.category || 'INFO')}
                       </div>
                     </div>
                   ))}
-                {!approvals.filter((item) => item.status === 'pending').length && (
-                  <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                    No pending approvals right now.
+                  {!visibleActivity.length && (
+                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                      The bridge has not recorded activity yet.
+                    </div>
+                  )}
+                  {activityItems.length > visibleActivity.length && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActivityLimit((current) => Math.min(current + 8, activityItems.length))
+                      }
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-500/50"
+                    >
+                      Load more activity ({visibleActivity.length} of {activityItems.length})
+                    </button>
+                  )}
+                </div>
+                <DataSourceCaption endpoint="snapshot.activity" />
+              </section>
+            )}
+
+            {isWidgetVisible('approvals') && (
+              <section
+                id="approvals"
+                className={`pbk-panel ${pendingApprovalCount ? 'pbk-priority-high' : 'pbk-priority-low'}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
+                    <p className="text-xs text-slate-500">
+                      Items Ava/Rex need you to approve before sending.
+                    </p>
                   </div>
-                )}
-              </div>
-            </section>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {approvals
+                    .filter((item) => item.status === 'pending')
+                    .slice(0, 6)
+                    .map((approval) => (
+                      <div
+                        key={String(approval.id)}
+                        className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
+                      >
+                        <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+                          {String(approval.type || 'approval')}
+                        </div>
+                        <div className="mt-2 text-sm font-semibold text-slate-100">
+                          {String(approval.leadName || approval.address || 'PBK approval')}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {String(approval.address || 'No address recorded')}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            data-approval-primary="true"
+                            disabled={pendingAction === `approval:${String(approval.id)}:approved`}
+                            onClick={() => confirmApprovalDecision(approval, 'approved')}
+                            className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {pendingAction === `approval:${String(approval.id)}:approved`
+                              ? '…'
+                              : 'Approve'}
+                          </button>
+                          <button
+                            type="button"
+                            data-approval-secondary="true"
+                            disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
+                            onClick={() => {
+                              const rejectionStatus =
+                                String(approval.type || '').toLowerCase() === 'contract'
+                                  ? 'needs-revision'
+                                  : 'rejected';
+                              confirmApprovalDecision(approval, rejectionStatus);
+                            }}
+                            className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {pendingAction === `approval:${String(approval.id)}:rejected`
+                              ? '…'
+                              : String(approval.type || '').toLowerCase() === 'contract'
+                                ? 'Needs Revision'
+                                : 'Decline'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  {!approvals.filter((item) => item.status === 'pending').length && (
+                    <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
+                      No pending approvals right now.
+                    </div>
+                  )}
+                </div>
+                <DataSourceCaption endpoint="snapshot.approvals + POST /api/approvals/:id/decision" />
+              </section>
+            )}
+          </div>
+        </div>
+
+        <CallQualityReviewDialog
+          open={Boolean(qualityReviewCall)}
+          leadName={String(
+            qualityReviewCall?.leadName || qualityReviewCall?.name || qualityReviewCall?.phone || ''
           )}
-        </div>
-      </div>
+          score={qualityReviewCall ? getCallQualityScore(qualityReviewCall) : null}
+          outcome={qualityReviewCall ? getCallOutcome(qualityReviewCall) : ''}
+          sentiment={qualityReviewCall ? toNumber(qualityReviewCall.sentiment, null) : null}
+          transcriptCount={
+            Array.isArray(qualityReviewCall?.transcript) ? qualityReviewCall.transcript.length : 0
+          }
+          onClose={() => setQualityReviewCall(null)}
+        />
 
-      <CallQualityReviewDialog
-        open={Boolean(qualityReviewCall)}
-        leadName={String(
-          qualityReviewCall?.leadName || qualityReviewCall?.name || qualityReviewCall?.phone || ''
+        {adminDecisionDraft && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="admin-decision-title"
+              className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+            >
+              <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+                Admin safety check
+              </div>
+              <h3 id="admin-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
+                Confirm admin decision
+              </h3>
+              <p className="mt-2 text-sm text-slate-400">
+                This will {adminDecisionDraft.status === 'approved' ? 'approve' : 'decline'}{' '}
+                <span className="font-semibold text-slate-200">
+                  {adminDecisionDraft.provider} / {adminDecisionDraft.action}
+                </span>
+                .
+              </p>
+              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+                {adminDecisionDraft.summary}
+              </div>
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setAdminDecisionDraft(null)}
+                  className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    pendingAction ===
+                    `admin:${adminDecisionDraft.taskId}:${adminDecisionDraft.status}`
+                  }
+                  onClick={executeAdminDecision}
+                  className="rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {adminDecisionDraft.status === 'approved'
+                    ? 'Approve admin task'
+                    : 'Decline admin task'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
-        score={qualityReviewCall ? getCallQualityScore(qualityReviewCall) : null}
-        outcome={qualityReviewCall ? getCallOutcome(qualityReviewCall) : ''}
-        sentiment={qualityReviewCall ? toNumber(qualityReviewCall.sentiment, null) : null}
-        transcriptCount={
-          Array.isArray(qualityReviewCall?.transcript) ? qualityReviewCall.transcript.length : 0
-        }
-        onClose={() => setQualityReviewCall(null)}
-      />
 
-      {adminDecisionDraft && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="admin-decision-title"
-            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
-          >
-            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-              Admin safety check
-            </div>
-            <h3 id="admin-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
-              Confirm admin decision
-            </h3>
-            <p className="mt-2 text-sm text-slate-400">
-              This will {adminDecisionDraft.status === 'approved' ? 'approve' : 'decline'}{' '}
-              <span className="font-semibold text-slate-200">
-                {adminDecisionDraft.provider} / {adminDecisionDraft.action}
-              </span>
-              .
-            </p>
-            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
-              {adminDecisionDraft.summary}
-            </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setAdminDecisionDraft(null)}
-                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+        {approvalDecisionDraft && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="approval-decision-title"
+              className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+            >
+              <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+                Approval safety check
+              </div>
+              <h3
+                id="approval-decision-title"
+                className="mt-2 text-lg font-semibold text-slate-100"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={
-                  pendingAction ===
-                  `admin:${adminDecisionDraft.taskId}:${adminDecisionDraft.status}`
-                }
-                onClick={executeAdminDecision}
-                className="rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
-              >
-                {adminDecisionDraft.status === 'approved'
-                  ? 'Approve admin task'
-                  : 'Decline admin task'}
-              </button>
+                Confirm approval decision
+              </h3>
+              <p className="mt-2 text-sm text-slate-400">
+                This will {approvalDecisionDraft.actionLabel}{' '}
+                <span className="font-semibold text-slate-200">{approvalDecisionDraft.type}</span>{' '}
+                for {approvalDecisionDraft.leadName}.
+              </p>
+              <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+                {approvalDecisionDraft.address}
+              </div>
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setApprovalDecisionDraft(null)}
+                  className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    pendingAction ===
+                    `approval:${approvalDecisionDraft.approvalId}:${approvalDecisionDraft.status}`
+                  }
+                  onClick={executeApprovalDecision}
+                  className="rounded-full bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                >
+                  Confirm decision
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {approvalDecisionDraft && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="approval-decision-title"
-            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
-          >
-            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-              Approval safety check
-            </div>
-            <h3 id="approval-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
-              Confirm approval decision
-            </h3>
-            <p className="mt-2 text-sm text-slate-400">
-              This will {approvalDecisionDraft.actionLabel}{' '}
-              <span className="font-semibold text-slate-200">{approvalDecisionDraft.type}</span> for{' '}
-              {approvalDecisionDraft.leadName}.
-            </p>
-            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
-              {approvalDecisionDraft.address}
-            </div>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setApprovalDecisionDraft(null)}
-                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={
-                  pendingAction ===
-                  `approval:${approvalDecisionDraft.approvalId}:${approvalDecisionDraft.status}`
-                }
-                onClick={executeApprovalDecision}
-                className="rounded-full bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-              >
-                Confirm decision
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

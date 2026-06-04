@@ -1,4 +1,5 @@
 import { Circle, CircleAlert, CircleCheck, CircleDashed, Radio } from 'lucide-react';
+import { PbkDataSource } from '../../components/pbk/index';
 
 const STATUS_ITEMS = [
   {
@@ -63,6 +64,7 @@ export function StatusColorLegend() {
           );
         })}
       </div>
+      <PbkDataSource endpoint="static PBK status legend" status="ships" />
     </section>
   );
 }

@@ -6,6 +6,7 @@ import {
   startLeadCallRequest,
 } from '../utils/runtimeBridge';
 import { showUiToast, toastUndo } from '../utils/uiFeedback';
+import { PbkDataSource } from '../../components/pbk/index';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -661,6 +662,11 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
           )}
         </div>
       </div>
+
+      <PbkDataSource
+        endpoint="snapshot.leadImports + POST /api/leads/:id/call + GET/POST /api/appointments"
+        status="ships"
+      />
 
       {cancelScheduledCallDraft && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">

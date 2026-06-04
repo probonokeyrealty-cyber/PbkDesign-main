@@ -251,6 +251,20 @@ export function Analytics() {
             className="btn-secondary"
             onClick={exportAnalytics}
             disabled={status !== 'ready'}
+            title={
+              status !== 'ready'
+                ? status === 'loading'
+                  ? 'Loading analytics data...'
+                  : 'Analytics unavailable — retry to enable export'
+                : undefined
+            }
+            aria-label={
+              status !== 'ready'
+                ? status === 'loading'
+                  ? 'Export CSV — loading data'
+                  : 'Export CSV — unavailable, retry first'
+                : 'Export analytics as CSV'
+            }
           >
             <Download size={15} />
             Export CSV

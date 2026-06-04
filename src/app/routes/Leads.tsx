@@ -398,6 +398,12 @@ export function Leads() {
   }, [leads, selectedLeadId]);
 
   useEffect(() => {
+    if (!detailStatus) return undefined;
+    const handle = window.setTimeout(() => setDetailStatus(''), 5000);
+    return () => clearTimeout(handle);
+  }, [detailStatus]);
+
+  useEffect(() => {
     if (!selectedLeadId) return;
     let cancelled = false;
     const loadDetail = async () => {
@@ -765,7 +771,18 @@ export function Leads() {
                     </span>
                     <button
                       type="button"
-                      aria-label={`Call ${sellerName}`}
+                      aria-label={
+                        leadActionPending === `call:${id}`
+                          ? `Calling ${sellerName}...`
+                          : !isCallablePhone(getLeadPhone(lead))
+                            ? `${sellerName} has no callable phone number`
+                            : `Call ${sellerName}`
+                      }
+                      title={
+                        !isCallablePhone(getLeadPhone(lead))
+                          ? 'No callable phone number on file'
+                          : undefined
+                      }
                       disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
                       className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={(event) => {

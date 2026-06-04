@@ -153,6 +153,9 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
         <input
           id="pbk-global-search"
+          aria-label="Search leads, addresses, and owners"
+          role="combobox"
+          aria-autocomplete="list"
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);

@@ -218,7 +218,14 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
         });
         return;
       }
-      if (activePhones.has(phone)) return;
+      if (activePhones.has(phone)) {
+        showUiToast({
+          tone: 'warning',
+          title: 'Already in call',
+          desc: `${getLeadName(lead)} is already active on the call floor.`,
+        });
+        return;
+      }
       setDialingId(leadId);
       showUiToast({
         tone: 'info',

@@ -689,6 +689,12 @@ export function AgentFleet() {
     setDealPreview(null);
   }, [activeAgentId, selectedLeadId]);
 
+  useEffect(() => {
+    if (!transferStatus) return undefined;
+    const handle = window.setTimeout(() => setTransferStatus(''), 5000);
+    return () => clearTimeout(handle);
+  }, [transferStatus]);
+
   const handlePreviewAgentDealContext = async () => {
     if (!selectedLead) {
       showUiToast({
@@ -1017,6 +1023,14 @@ export function AgentFleet() {
                   type="button"
                   className="btn-secondary flex min-h-10 items-center justify-center gap-2"
                   disabled={!selectedLead || callActionPending}
+                  title={!selectedLead ? 'Select a lead to call' : undefined}
+                  aria-label={
+                    callActionPending
+                      ? 'Calling lead...'
+                      : !selectedLead
+                        ? 'Select a lead to call'
+                        : 'Call selected lead'
+                  }
                   onClick={handleCallSelectedLead}
                 >
                   {callActionPending ? (
@@ -1030,6 +1044,14 @@ export function AgentFleet() {
                   type="button"
                   className="btn-primary flex min-h-10 items-center justify-center gap-2"
                   disabled={!selectedLead || previewLoading}
+                  title={!selectedLead ? 'Select a lead to preview agent behavior' : undefined}
+                  aria-label={
+                    previewLoading
+                      ? 'Loading preview...'
+                      : !selectedLead
+                        ? 'Select a lead to preview agent behavior'
+                        : 'Preview agent deal context'
+                  }
                   onClick={handlePreviewAgentDealContext}
                 >
                   {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}

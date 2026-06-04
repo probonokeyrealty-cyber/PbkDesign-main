@@ -467,6 +467,12 @@ export default function App({ engineOnly = false }: AppProps) {
     }
   }, [deal.type, deal.lotSize, deal.builderPrice, deal.builderTotal, deal.offer]);
 
+  useEffect(() => {
+    if (!analyzeStatus) return undefined;
+    const handle = window.setTimeout(() => setAnalyzeStatus(''), 6000);
+    return () => clearTimeout(handle);
+  }, [analyzeStatus]);
+
   const handleDealChange = (updates: Partial<DealData>) => {
     const shouldResetAnalysis = Object.keys(updates).some((key) =>
       ANALYSIS_IMPACT_FIELDS.includes(key as keyof DealData)

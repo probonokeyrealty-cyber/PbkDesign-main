@@ -110,6 +110,12 @@ export function CallModeTab({
     setLastSavedNotes(deal.notes || '');
   }, [deal.address, deal.notes]);
 
+  useEffect(() => {
+    if (!postCallStatus) return undefined;
+    const handle = window.setTimeout(() => setPostCallStatus(''), 5000);
+    return () => clearTimeout(handle);
+  }, [postCallStatus]);
+
   const saveCallNotes = useCallback(async () => {
     const note = callNotes.trim();
     if (!note || note === lastSavedNotes.trim()) return;

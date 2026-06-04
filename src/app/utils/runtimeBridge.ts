@@ -367,6 +367,25 @@ export type CampaignsResponse = {
   error?: string;
 };
 
+export type ReplyTemplateRecord = {
+  templateKey?: string;
+  templateVersion?: string;
+  channel?: string;
+  subject?: string;
+  text?: string;
+  html?: string;
+  [key: string]: unknown;
+};
+
+export type ReplyTemplatesResponse = {
+  ok: boolean;
+  reply?: Record<string, unknown>;
+  calendarEvent?: Record<string, unknown> | null;
+  selected?: ReplyTemplateRecord;
+  templates?: Record<string, ReplyTemplateRecord>;
+  error?: string;
+};
+
 type BridgeRequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
@@ -854,6 +873,28 @@ export async function fetchCampaignLeadSourcesRequest() {
     state?: RuntimeSnapshot;
   }>({
     path: '/api/campaigns/lead-sources',
+  });
+}
+
+export async function fetchReplyTemplatesRequest({
+  channel = 'email',
+  leadName = '',
+  address = '',
+  body = '',
+}: {
+  channel?: string;
+  leadName?: string;
+  address?: string;
+  body?: string;
+} = {}) {
+  const params = new URLSearchParams({
+    channel,
+  });
+  if (leadName.trim()) params.set('leadName', leadName.trim());
+  if (address.trim()) params.set('address', address.trim());
+  if (body.trim()) params.set('body', body.trim());
+  return bridgeRequest<ReplyTemplatesResponse>({
+    path: `/api/replies/templates?${params.toString()}`,
   });
 }
 

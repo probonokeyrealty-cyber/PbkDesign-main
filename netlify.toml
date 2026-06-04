@@ -24,7 +24,7 @@ timeout = 25
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'"
 
 [[redirects]]
 from = "/api/documents/pdf"
@@ -40,6 +40,72 @@ force = true
 
 [[redirects]]
 from = "/"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/dashboard"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/command-center"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/leads"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/deal"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/deal/*"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/inbox"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/fleet"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/memory"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/analytics"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/settings"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/campaigns"
 to = "/index.shell.html"
 status = 200
 force = true

@@ -173,6 +173,11 @@ export type RuntimeSnapshot = {
   skillOutcomes?: Array<Record<string, unknown>>;
   adminTasks?: AdminTask[];
   adminAudit?: Array<Record<string, unknown>>;
+  campaigns?: CampaignRecord[];
+  campaignLeads?: CampaignLeadRecord[];
+  campaignEvents?: CampaignEventRecord[];
+  campaignLeadSources?: CampaignLeadSource[];
+  campaignExecutions?: Array<Record<string, unknown>>;
 };
 
 export type RuntimeQuotas = {
@@ -286,6 +291,80 @@ export type SkillTrendsResponse = {
   skillName?: string;
   points?: Array<Record<string, unknown>>;
   warning?: string;
+};
+
+export type CampaignRecord = {
+  id: string;
+  name?: string;
+  channel?: string;
+  provider?: string;
+  status?: string;
+  templateId?: string;
+  leadSource?: string;
+  leadFilter?: Record<string, unknown>;
+  schedule?: Record<string, unknown>;
+  sequence?: Record<string, unknown>;
+  metrics?: Record<string, unknown>;
+  approvalId?: string;
+  approvalStatus?: string;
+  pendingAction?: string;
+  leadCount?: number;
+  eventCount?: number;
+  conflictCount?: number;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CampaignLeadRecord = {
+  id: string;
+  campaignId?: string;
+  leadId?: string;
+  leadName?: string;
+  address?: string;
+  email?: string;
+  phone?: string;
+  tags?: string[];
+  status?: string;
+  touchIndex?: number;
+  lastTouchAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CampaignEventRecord = {
+  id: string;
+  campaignId?: string;
+  campaignLeadId?: string;
+  leadId?: string;
+  eventType?: string;
+  channel?: string;
+  provider?: string;
+  providerEventId?: string;
+  providerStatus?: string;
+  occurredAt?: string;
+  createdAt?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type CampaignLeadSource = {
+  id: string;
+  label?: string;
+  count?: number;
+  source?: string;
+  note?: string;
+};
+
+export type CampaignsResponse = {
+  ok: boolean;
+  result?: string;
+  campaigns?: CampaignRecord[];
+  leads?: CampaignLeadRecord[];
+  events?: CampaignEventRecord[];
+  sources?: CampaignLeadSource[];
+  state?: RuntimeSnapshot;
+  verbiage?: string;
+  error?: string;
 };
 
 type BridgeRequestOptions = {
@@ -730,6 +809,84 @@ export async function fetchSkillTrendsRequest({
   if (skillName) params.set('skillName', skillName);
   return bridgeRequest<SkillTrendsResponse>({
     path: `/api/skills/trends?${params.toString()}`,
+  });
+}
+
+export async function fetchCampaignsRequest({
+  search = '',
+  status = 'all',
+  channel = 'all',
+}: {
+  search?: string;
+  status?: string;
+  channel?: string;
+} = {}) {
+  const params = new URLSearchParams();
+  if (search.trim()) params.set('search', search.trim());
+  if (status && status !== 'all') params.set('status', status);
+  if (channel && channel !== 'all') params.set('channel', channel);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return bridgeRequest<CampaignsResponse>({
+    path: `/api/campaigns${suffix}`,
+  });
+}
+
+export async function fetchCampaignLeadSourcesRequest() {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    sources?: CampaignLeadSource[];
+    state?: RuntimeSnapshot;
+  }>({
+    path: '/api/campaigns/lead-sources',
+  });
+}
+
+export async function createCampaignRequest(body: Record<string, unknown>) {
+  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord }>({
+    method: 'POST',
+    path: '/api/campaigns',
+    body,
+  });
+}
+
+export async function patchCampaignRequest(campaignId: string, body: Record<string, unknown>) {
+  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord }>({
+    method: 'PATCH',
+    path: `/api/campaigns/${encodeURIComponent(campaignId)}`,
+    body,
+  });
+}
+
+export async function requestCampaignApprovalRequest(
+  campaignId: string,
+  body: Record<string, unknown>
+) {
+  return bridgeRequest<
+    CampaignsResponse & { campaign?: CampaignRecord; approval?: ApprovalRecord }
+  >({
+    method: 'POST',
+    path: `/api/campaigns/${encodeURIComponent(campaignId)}/approval`,
+    body,
+  });
+}
+
+export async function runCampaignActionRequest(campaignId: string, body: Record<string, unknown>) {
+  return bridgeRequest<CampaignsResponse & { campaign?: CampaignRecord }>({
+    method: 'POST',
+    path: `/api/campaigns/${encodeURIComponent(campaignId)}/actions`,
+    body,
+  });
+}
+
+export async function recordCampaignEventRequest(
+  campaignId: string,
+  body: Record<string, unknown>
+) {
+  return bridgeRequest<CampaignsResponse & { event?: CampaignEventRecord }>({
+    method: 'POST',
+    path: `/api/campaigns/${encodeURIComponent(campaignId)}/events`,
+    body,
   });
 }
 

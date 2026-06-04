@@ -26,6 +26,7 @@ const VALID_SHELL_PATHS = new Set([
   '/fleet',
   '/memory',
   '/analytics',
+  '/campaigns',
   '/settings',
 ]);
 

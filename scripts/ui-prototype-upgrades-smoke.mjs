@@ -62,8 +62,13 @@ expectContains(liveCallWidget, 'renderHighlightedTranscript(line.text, transcrip
 
 expectContains(
   bridgeMap,
-  'Campaign wizard autosave',
-  'Bridge map names campaign wizard autosave as a missing modern-shell port'
+  '## Campaigns',
+  'Bridge map documents the ported Campaigns surface'
+);
+expectContains(
+  bridgeMap,
+  'POST /api/campaigns',
+  'Bridge map pairs Campaigns with the real campaign creation endpoint'
 );
 expectContains(
   bridgeMap,

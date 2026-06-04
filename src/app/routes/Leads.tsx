@@ -12,6 +12,7 @@ import {
   Send,
   X,
 } from 'lucide-react';
+import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchLeadFullRequest,
@@ -68,6 +69,13 @@ type DetailStatus = {
   tone: 'info' | 'success' | 'error';
   text: string;
   retry?: 'detail' | 'refresh';
+};
+
+type LeadsStats = {
+  total: number;
+  callable: number;
+  contractReady: number;
+  hot: number;
 };
 
 const PATH_LABELS: Record<CanonicalPath, string> = {
@@ -384,6 +392,154 @@ function LeadDetailSkeleton() {
   );
 }
 
+function buildLeadsStats(leads: BridgeRecord[]): LeadsStats {
+  return {
+    total: leads.length,
+    callable: leads.filter((lead) => isCallablePhone(getLeadPhone(lead))).length,
+    contractReady: leads.filter((lead) => isValidEmail(getLeadEmail(lead))).length,
+    hot: leads.filter((lead) => getLeadScore(lead) >= 80).length,
+  };
+}
+
+function LeadsSourceRail() {
+  return (
+    <div className="pbk-leads-source-rail" aria-label="Leads data sources">
+      <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.leadImports pipeline" />
+      <PbkDataSource
+        endpoint="GET /api/leads"
+        status="needs-wiring"
+        note="replace snapshot roster for full production list"
+      />
+      <PbkDataSource endpoint="GET /api/leads/:id/full" status="ships" note="lead detail" />
+      <PbkDataSource endpoint="GET /api/leads/:id/last-call" status="ships" note="call memory" />
+      <PbkDataSource endpoint="PATCH /api/leads/:id" status="ships" note="CRM corrections" />
+      <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" note="call lane" />
+      <PbkDataSource endpoint="POST /api/contract/send" status="ships" note="contract packet" />
+    </div>
+  );
+}
+
+function LeadsStatRibbon({ stats }: { stats: LeadsStats }) {
+  const cards = [
+    {
+      label: 'Bridge leads',
+      value: String(stats.total),
+      detail: 'from runtime snapshot',
+      tone: 'sky',
+    },
+    {
+      label: 'Callable',
+      value: String(stats.callable),
+      detail: 'valid phone ready',
+      tone: 'lime',
+    },
+    {
+      label: 'Contract ready',
+      value: String(stats.contractReady),
+      detail: 'seller email captured',
+      tone: 'sky',
+    },
+    {
+      label: 'Hot scores',
+      value: String(stats.hot),
+      detail: 'score 80 or higher',
+      tone: stats.hot ? 'amber' : 'sky',
+    },
+  ];
+
+  return (
+    <div className="pbk-leads-grid" aria-label="Leads summary">
+      {cards.map((card) => (
+        <div key={card.label} className="pbk-leads-stat">
+          <div className="l">{card.label}</div>
+          <div className={['v', card.tone].join(' ')}>{card.value}</div>
+          <div className="delta">{card.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LeadsHero({
+  loading,
+  error,
+  stats,
+  onRefresh,
+}: {
+  loading: boolean;
+  error: string | null | undefined;
+  stats: LeadsStats;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="pbk-leads-hero">
+      <div className="pbk-leads-hero-top">
+        <div>
+          <div className="pbk-eyebrow">
+            Lead command -{' '}
+            {loading ? 'loading bridge' : error ? 'bridge offline' : `${stats.total} records`}
+          </div>
+          <h1 className="pbk-display pbk-h1">
+            Leads &amp; <em>contracts</em>.
+          </h1>
+          <p>
+            Seller pipeline, call memory, CRM corrections, and path-aware contract handoff in one
+            operator cockpit. The full-roster endpoint is labeled until this page switches off the
+            runtime snapshot feed.
+          </p>
+        </div>
+        <button type="button" className="pbk-leads-refresh" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          {loading ? 'Refreshing' : 'Refresh leads'}
+        </button>
+      </div>
+      <LeadsStatRibbon stats={stats} />
+      <LeadsSourceRail />
+    </section>
+  );
+}
+
+function LeadsPipelineRail({
+  children,
+  total,
+  visible,
+  onLoadMore,
+}: {
+  children: ReactNode;
+  total: number;
+  visible: number;
+  onLoadMore: () => void;
+}) {
+  return (
+    <section className={`${softPanelClass} pbk-leads-pipeline-rail overflow-hidden`}>
+      <div className="pipeline-head">
+        <div>
+          <span className="pbk-kicker">Pipeline leads</span>
+          <h2>Seller roster</h2>
+          <p>Tap a lead to load bridge detail and call memory.</p>
+        </div>
+        <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.leadImports" />
+      </div>
+      {children}
+      {total > visible && (
+        <div className="pipeline-load">
+          <button type="button" className="load-more-leads" onClick={onLoadMore}>
+            Load 50 more
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LeadsDetailShell({ children }: { children: ReactNode }) {
+  return (
+    <section className={`${softPanelClass} pbk-leads-detail-shell min-h-[520px] p-4 md:p-5`}>
+      {children}
+    </section>
+  );
+}
+
 const inputClass =
   'w-full rounded-xl border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20';
 
@@ -424,6 +580,7 @@ export function Leads() {
     [leads, selectedLeadId]
   );
   const visibleLeads = useMemo(() => leads.slice(0, displayLimit), [displayLimit, leads]);
+  const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
   const bantJsonError = useMemo(
@@ -788,27 +945,27 @@ export function Leads() {
   const activeLeadTemplateName = TEMPLATE_NAMES[activeLeadPath];
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100">Leads</h1>
-          <p className="text-sm text-slate-400">
-            Lead detail, live call context, CRM corrections, and one-click path-aware contracts.
-          </p>
-        </div>
-        <div className="text-xs text-slate-500">
-          {loading ? 'Loading leads...' : error || `${leads.length} lead records in the bridge`}
-        </div>
-      </div>
+    <div className="pbk-leads-surface">
+      <LeadsHero
+        loading={loading}
+        error={error}
+        stats={leadsStats}
+        onRefresh={() => void refresh()}
+      />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,420px)_minmax(0,1fr)]">
-        <section className={`${softPanelClass} overflow-hidden`}>
-          <div className="border-b border-slate-800 px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-              Pipeline leads
-            </div>
-            <div className="mt-1 text-sm text-slate-300">Tap a lead to load detail.</div>
-          </div>
+      {error && (
+        <div className="pbk-leads-status" aria-live="polite">
+          <AlertCircle size={15} aria-hidden="true" />
+          {error}
+        </div>
+      )}
+
+      <div className="pbk-leads-layout">
+        <LeadsPipelineRail
+          total={leads.length}
+          visible={visibleLeads.length}
+          onLoadMore={() => setDisplayLimit((current) => current + 50)}
+        >
           <div className="leads-mobile-cards">
             {visibleLeads.map((lead) => {
               const id = getLeadId(lead);
@@ -948,20 +1105,9 @@ export function Leads() {
               </div>
             )}
           </div>
-          {leads.length > visibleLeads.length && (
-            <div className="border-t border-slate-800 p-3">
-              <button
-                type="button"
-                className="load-more-leads"
-                onClick={() => setDisplayLimit((current) => current + 50)}
-              >
-                Load 50 more
-              </button>
-            </div>
-          )}
-        </section>
+        </LeadsPipelineRail>
 
-        <section className={`${softPanelClass} min-h-[520px] p-4 md:p-5`}>
+        <LeadsDetailShell>
           {activeLead ? (
             <div className="space-y-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1201,7 +1347,7 @@ export function Leads() {
               Select a lead to open the detail view.
             </div>
           )}
-        </section>
+        </LeadsDetailShell>
       </div>
 
       {editOpen && editForm && (

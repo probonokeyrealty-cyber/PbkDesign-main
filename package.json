@@ -104,6 +104,7 @@
     "test:analytics-prototype-modern": "node ./scripts/analytics-prototype-modern-smoke.mjs",
     "test:inbox-prototype-modern": "node ./scripts/inbox-prototype-modern-smoke.mjs",
     "test:settings-prototype-modern": "node ./scripts/settings-prototype-modern-smoke.mjs",
+    "test:leads-prototype-modern": "node ./scripts/leads-prototype-modern-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

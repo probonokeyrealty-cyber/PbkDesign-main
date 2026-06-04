@@ -124,10 +124,15 @@ function getRequestId(event: Parameters<Handler>[0]) {
 
 function buildRequestHeaders(event: Parameters<Handler>[0], requestId: string) {
   const headers: Record<string, string> = {};
+  const incomingAuthorization = getHeader(event, 'authorization');
   for (const [name, value] of Object.entries(event.headers || {})) {
     const lower = name.toLowerCase();
     if (!FORWARDED_REQUEST_HEADERS.has(lower) || value == null) continue;
     headers[name] = value;
+  }
+  const bridgeApiKey = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+  if (!incomingAuthorization && bridgeApiKey) {
+    headers.Authorization = `Bearer ${bridgeApiKey}`;
   }
   headers['X-PBK-Netlify-Proxy'] = 'pbk-bridge-proxy';
   headers['X-Request-ID'] = requestId;

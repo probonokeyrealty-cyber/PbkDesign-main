@@ -1,16 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertCircle,
-  AlertTriangle,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Loader2,
-  Phone,
-  X,
-  Zap,
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AlertCircle, Check, ChevronDown, ChevronUp, Loader2, Phone, X } from 'lucide-react';
 import { showUiToast } from '../utils/uiFeedback';
+import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
@@ -269,6 +260,32 @@ function formatAgentPreviewAction(value = '') {
   return String(value || 'inspect_lead_profile').replace(/_/g, ' ');
 }
 
+function getAgentActivityState(agent: FleetAgent, bridgeWorker?: BridgeSnnWorker) {
+  if (bridgeWorker?.currentTask || bridgeWorker?.status === 'running') return 'learning';
+  if (agent.metadata.approvalGated) return 'running_campaign';
+  if (agent.status === 'active') return 'active';
+  if (agent.status === 'standby') return 'learning';
+  return 'idle';
+}
+
+function getAgentDeployClass(agent: FleetAgent) {
+  if (agent.status === 'active') return 'production';
+  if (agent.status === 'standby') return 'local';
+  return 'offline';
+}
+
+function getAgentSummary(agent: FleetAgent, lastOutcome: string, bridgeWorker?: BridgeSnnWorker) {
+  if (bridgeWorker?.currentTask) return bridgeWorker.currentTask;
+  if (lastOutcome && lastOutcome !== 'No call outcome yet') return `Last call: ${lastOutcome}`;
+  if (agent.metadata.approvalGated) return 'Approval-gated provider actions available';
+  if (agent.metadata.suggestOnly) return 'Suggest-only analysis lane';
+  return agent.description;
+}
+
+function countSkills(agents: FleetAgent[]) {
+  return agents.reduce((total, agent) => total + agent.skills.length, 0);
+}
+
 async function flushTransferQueue(queue: PendingTransfer[], agents: FleetAgent[]) {
   const retryable = queue.filter((t) => t.retries < 3);
   for (const transfer of [...retryable]) {
@@ -315,6 +332,196 @@ async function flushTransferQueue(queue: PendingTransfer[], agents: FleetAgent[]
 }
 
 // ---------- Sub-components ----------
+
+function AgentFleetSourceRail() {
+  return (
+    <div className="pbk-fleet-source-rail" aria-label="Agent Fleet data sources">
+      <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
+      <PbkDataSource endpoint="GET /state" status="ships" />
+      <PbkDataSource endpoint="POST /invoke: getSnnWorkerStatus" status="ships" />
+      <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
+      <PbkDataSource endpoint="POST /invoke: pbk_transfer_agent_skill" status="ships" />
+      <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" />
+      <PbkDataSource
+        endpoint="GET /api/agents/registry"
+        status="needs-wiring"
+        note="canonical remote registry if agents move out of the bridge process"
+      />
+      <PbkDataSource
+        endpoint="GET /api/agents/snn-status"
+        status="needs-wiring"
+        note="durable SNN state beyond local worker and invoke status"
+      />
+    </div>
+  );
+}
+
+function AgentFleetHero({
+  agents,
+  bridgeConnected,
+  pendingTransferCount,
+  leadCount,
+  callCount,
+}: {
+  agents: FleetAgent[];
+  bridgeConnected: boolean | null;
+  pendingTransferCount: number;
+  leadCount: number;
+  callCount: number;
+}) {
+  const active = agents.filter((agent) => agent.status === 'active').length;
+  const standby = agents.filter((agent) => agent.status === 'standby').length;
+  const inactive = agents.filter((agent) => agent.status === 'inactive').length;
+  const bridgeLabel =
+    bridgeConnected === null ? 'Connecting' : bridgeConnected ? 'Bridge live' : 'Bridge offline';
+
+  return (
+    <section className="pbk-fleet-hero">
+      <div className="pbk-fleet-hero-top">
+        <div>
+          <div className="pbk-eyebrow">
+            Agent Fleet - {active} active - {standby} standby - {inactive} inactive
+          </div>
+          <h1 className="pbk-display pbk-h1">
+            The <em>agent fleet</em>.
+          </h1>
+          <p>
+            Every PBK agent at a glance: bridge health, SNN readiness, live lead context, skill
+            transfer safety, and approval-gated provider actions in one command surface.
+          </p>
+        </div>
+        <div className="pbk-fleet-bridge-card">
+          <span className={bridgeConnected ? 'live' : bridgeConnected === false ? 'warn' : ''} />
+          <strong>{bridgeLabel}</strong>
+          <small>
+            {pendingTransferCount
+              ? `${pendingTransferCount} queued transfer retries`
+              : 'No queued transfers'}
+          </small>
+        </div>
+      </div>
+
+      <div className="pbk-stats-ribbon">
+        <div className="pbk-stat">
+          <div className="pbk-stat-label">Agents</div>
+          <div className="pbk-stat-value">{agents.length}</div>
+        </div>
+        <div className="pbk-stat">
+          <div className="pbk-stat-label">Skills loaded</div>
+          <div className="pbk-stat-value">{countSkills(agents)}</div>
+        </div>
+        <div className="pbk-stat">
+          <div className="pbk-stat-label">Lead context</div>
+          <div className="pbk-stat-value">{leadCount}</div>
+        </div>
+        <div className="pbk-stat">
+          <div className="pbk-stat-label">Call outcomes</div>
+          <div className="pbk-stat-value">{callCount}</div>
+        </div>
+      </div>
+
+      <AgentFleetSourceRail />
+    </section>
+  );
+}
+
+function AgentFleetCard({
+  agent,
+  selected,
+  bridgeWorker,
+  localSnnActive,
+  transferFeedback,
+  lastOutcome,
+  onSelect,
+}: {
+  agent: FleetAgent;
+  selected: boolean;
+  bridgeWorker?: BridgeSnnWorker;
+  localSnnActive: boolean;
+  transferFeedback?: string;
+  lastOutcome: string;
+  onSelect: () => void;
+}) {
+  const activityState = getAgentActivityState(agent, bridgeWorker);
+  const ready = localSnnActive || Boolean(bridgeWorker?.ready);
+  const topSkills = agent.skills.slice(0, 3);
+  return (
+    <article className={`pbk-agent-card ${selected ? 'selected' : ''}`.trim()}>
+      <button type="button" className="pbk-agent-card-button" onClick={onSelect}>
+        <span className="pbk-agent-card-head">
+          <span className="pbk-agent-avatar-wrap">
+            <span
+              className={`pbk-agent-avatar ${agent.id === 'rex' ? 'purple' : agent.id === 'max' ? 'amber' : agent.id === 'nurture-agent' ? 'lime' : ''}`.trim()}
+            >
+              {agent.initial}
+            </span>
+            <span className={`pbk-agent-status-dot ${activityState}`} />
+          </span>
+          <span className="pbk-agent-id">
+            <span className="name">
+              <em>{agent.name}</em>
+            </span>
+            <span className="role">
+              {agent.role} - {agent.version}
+            </span>
+          </span>
+          <span className={`pbk-agent-deploy-pill ${getAgentDeployClass(agent)}`}>
+            {agent.status === 'active' ? 'production' : agent.status}
+          </span>
+        </span>
+
+        <span className={`pbk-agent-activity ${activityState}`}>
+          <strong>{getAgentSummary(agent, lastOutcome, bridgeWorker)}</strong>
+          <span>
+            {ready ? 'SNN ready' : 'SNN local status pending'} -{' '}
+            {agent.metadata.orchestrationRole || 'worker'}
+          </span>
+          <span className="sentiment-line">
+            <span>Confidence lane</span>
+            <span className="sentiment-bar">
+              <span
+                className="sentiment-fill"
+                style={{ width: `${Math.min(96, 44 + agent.skills.length * 11)}%` }}
+              />
+            </span>
+          </span>
+        </span>
+
+        <span className="pbk-agent-skill-chips">
+          {topSkills.length ? (
+            topSkills.map((skill) => (
+              <span
+                key={skill.name}
+                className={`pbk-agent-skill-chip ${skill.confidence >= 80 ? 'proven' : skill.confidence >= 60 ? 'evolving' : ''}`.trim()}
+              >
+                {skill.name} - {skill.confidence}%
+              </span>
+            ))
+          ) : (
+            <span className="pbk-agent-skill-chip">No skills recorded</span>
+          )}
+        </span>
+
+        <span className="pbk-agent-meta">
+          <span>
+            {agent.skills.length} skills - {agent.capabilities.length} capabilities
+          </span>
+          <span title={lastOutcome}>{lastOutcome}</span>
+        </span>
+      </button>
+      {transferFeedback && (
+        <span className="pbk-agent-transfer-ok">
+          <Check size={11} />
+          {transferFeedback}
+        </span>
+      )}
+    </article>
+  );
+}
+
+function AgentDetailPanel({ children }: { children: ReactNode }) {
+  return <section className="pbk-agent-detail-panel">{children}</section>;
+}
 
 interface SkillTransferModalProps {
   skill: AgentSkill;
@@ -774,6 +981,10 @@ export function AgentFleet() {
     () => leadOptions.find((lead) => getLeadOptionId(lead) === selectedLeadId) || null,
     [leadOptions, selectedLeadId]
   );
+  const activeBridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, activeAgent.id);
+  const activeLocalSnn =
+    (activeAgent.id === 'ava' && snnStatus.ava) || (activeAgent.id === 'rex' && snnStatus.rex);
+  const activeActivityState = getAgentActivityState(activeAgent, activeBridgeWorker);
 
   useEffect(() => {
     setDealPreview(null);
@@ -949,397 +1160,331 @@ export function AgentFleet() {
     setSelectedSkill(null);
   };
 
-  const statusBadgeClass = [
-    'rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.16em]',
-    bridgeConnected === null
-      ? 'border-slate-800 bg-slate-950 text-slate-500'
-      : bridgeConnected
-        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-        : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-  ].join(' ');
-
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      {/* Header */}
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100 sm:text-2xl">Agent Fleet</h1>
-          <p className="text-sm text-slate-400">
-            {agents.length} agents · Transfer proven skills · Live registry
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {pendingTransferCount > 0 && (
-            <span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-300">
-              <AlertTriangle size={11} />
-              {pendingTransferCount} queued
-            </span>
-          )}
-          <div className={statusBadgeClass}>
-            {bridgeConnected === null
-              ? 'Connecting…'
-              : bridgeConnected
-                ? 'Bridge live'
-                : 'Bridge offline'}
-          </div>
-        </div>
-      </div>
-      {transferStatus && (
-        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
-          {transferStatus}
-        </div>
-      )}
+    <div className="pbk-fleet-surface min-h-full text-slate-100">
+      <main className="mx-auto flex w-full max-w-screen-2xl flex-col gap-4 px-4 py-5 pb-8">
+        <AgentFleetHero
+          agents={agents}
+          bridgeConnected={bridgeConnected}
+          pendingTransferCount={pendingTransferCount}
+          leadCount={leadOptions.length}
+          callCount={runtimeCalls.length}
+        />
+        {transferStatus && <div className="pbk-fleet-transfer-status">{transferStatus}</div>}
 
-      {agentsLoading ? (
-        <FleetLoadingSkeleton />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
-          {/* Agent sidebar */}
-          <section className="rounded-2xl border border-slate-800 bg-slate-950 p-3">
-            <div className="mb-2 px-2 text-[11px] uppercase tracking-[0.16em] text-slate-500">
-              Agents ({agents.length})
-            </div>
-            <div className="space-y-1.5">
+        {agentsLoading ? (
+          <FleetLoadingSkeleton />
+        ) : (
+          <div className="pbk-fleet-layout">
+            <section className="pbk-agent-grid" aria-label="Agent roster">
               {agents.map((agent) => {
                 const bridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, agent.id);
                 const localSnnActive =
                   (agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex);
-                const transferFeedback = transferFeedbackByAgentId[agent.id];
-                const lastOutcome = lastCallOutcomeByAgentId[agent.id] || 'No call outcome yet';
                 return (
-                  <button
+                  <AgentFleetCard
                     key={agent.id}
-                    type="button"
-                    onClick={() => setActiveAgentId(agent.id)}
-                    className={[
-                      'flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition',
-                      activeAgent.id === agent.id
-                        ? 'border-sky-500/40 bg-sky-500/10'
-                        : 'border-slate-800 bg-slate-900/70 hover:border-slate-700',
-                    ].join(' ')}
-                  >
-                    <span className="agent-avatar shrink-0">{agent.initial}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <span className="block text-sm font-semibold text-slate-100">
-                          {agent.name}
-                        </span>
-                        {localSnnActive || bridgeWorker?.ready ? (
-                          <Zap size={10} className="text-sky-400" aria-label="SNN active" />
-                        ) : null}
-                      </span>
-                      <span className="block truncate text-xs text-slate-500">{agent.role}</span>
-                      <span
-                        className="mt-1 block truncate text-[10px] text-slate-500"
-                        title={lastOutcome}
-                      >
-                        Last call outcome: {lastOutcome}
-                      </span>
-                      {bridgeWorker && (
-                        <span className="mt-1 block truncate text-[10px] uppercase tracking-wide text-sky-300/80">
-                          SNN {bridgeWorker.status || 'ready'}
-                        </span>
-                      )}
-                      {transferFeedback && (
-                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                          <Check size={11} />
-                          {transferFeedback}
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      className={[
-                        'rounded-full border px-2 py-0.5 text-[10px] uppercase',
-                        agent.status === 'active'
-                          ? 'border-emerald-700/50 text-emerald-400'
-                          : 'border-slate-700 text-slate-400',
-                      ].join(' ')}
-                    >
-                      {agent.status}
-                    </span>
-                  </button>
+                    agent={agent}
+                    selected={activeAgent.id === agent.id}
+                    bridgeWorker={bridgeWorker}
+                    localSnnActive={localSnnActive}
+                    transferFeedback={transferFeedbackByAgentId[agent.id]}
+                    lastOutcome={lastCallOutcomeByAgentId[agent.id] || 'No call outcome yet'}
+                    onSelect={() => setActiveAgentId(agent.id)}
+                  />
                 );
               })}
-            </div>
-          </section>
-
-          {/* Detail panel */}
-          <section className="rounded-2xl border border-slate-800 bg-slate-950">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-4 py-4">
-              <div className="min-w-0">
-                <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                  Detail panel
+              <div className="pbk-agent-deploy-card">
+                <div className="plus">+</div>
+                <h4>Deploy new agent</h4>
+                <p>Remote deployment waits for canonical registry wiring.</p>
+                <PbkDataSource endpoint="POST /api/agents/deploy" status="needs-wiring" />
+              </div>
+            </section>
+            {/* Detail panel */}
+            <AgentDetailPanel>
+              <div className="pbk-dp-head">
+                <div className="pbk-dp-head-row">
+                  <div className="pbk-dp-avatar-wrap">
+                    <div className="pbk-dp-avatar">{activeAgent.initial}</div>
+                    <div className={`pbk-dp-status-dot ${activeActivityState}`} />
+                  </div>
+                  <div className="pbk-dp-id min-w-0">
+                    <div className="name">
+                      <em>{activeAgent.name}</em>
+                    </div>
+                    <div className="meta">
+                      {activeAgent.role} - {activeAgent.version}
+                    </div>
+                  </div>
+                  <div className="pbk-dp-flags">
+                    <span>{activeAgent.status}</span>
+                    {(activeLocalSnn || activeBridgeWorker?.ready) && <span>SNN ready</span>}
+                  </div>
                 </div>
-                <h2 className="mt-1 text-2xl font-semibold text-slate-100">{activeAgent.name}</h2>
-                <p className="text-sm text-slate-400">{activeAgent.role}</p>
-                <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                <p className="mt-2 text-xs text-slate-500 leading-relaxed">
                   {activeAgent.description}
                 </p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end gap-2">
-                <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
-                  Skills tab
-                </span>
-                <span className="text-[10px] text-slate-600">{activeAgent.version}</span>
-                {activeAgent.metadata.approvalGated && (
-                  <span className="rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] text-amber-400">
-                    approval-gated
-                  </span>
-                )}
-                {activeAgent.metadata.suggestOnly && (
-                  <span className="rounded-full border border-sky-500/30 px-2 py-0.5 text-[10px] text-sky-400">
-                    suggest-only
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Capabilities bar */}
-            <div className="flex flex-wrap gap-1.5 border-b border-slate-800 px-4 py-3">
-              {activeAgent.capabilities.map((cap) => (
-                <span
-                  key={cap}
-                  className="rounded-lg border border-slate-700/60 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400"
-                >
-                  {cap.replace(/_/g, ' ')}
-                </span>
-              ))}
-            </div>
-
-            <div className="border-b border-slate-800 px-4 py-4">
-              <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                    Deal context preview
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Read-only preview of how {activeAgent.name} would handle a live lead. Provider
-                    writes stay blocked.
-                  </p>
-                  <select
-                    className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
-                    value={selectedLeadId}
-                    onChange={(event) => setSelectedLeadId(event.target.value)}
-                  >
-                    {leadOptions.length ? (
-                      leadOptions.map((lead) => (
-                        <option key={getLeadOptionId(lead)} value={getLeadOptionId(lead)}>
-                          {getLeadOptionLabel(lead)}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">No bridge leads loaded yet</option>
-                    )}
-                  </select>
-                </div>
-                <div className="flex flex-wrap gap-2 lg:justify-end">
-                  <button
-                    type="button"
-                    className="btn-secondary flex min-h-10 items-center justify-center gap-2"
-                    disabled={!selectedLead || callActionPending}
-                    onClick={handleCallSelectedLead}
-                  >
-                    {callActionPending ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Phone size={14} />
-                    )}
-                    {callActionPending ? 'Calling...' : 'Call lead'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary flex min-h-10 items-center justify-center gap-2"
-                    disabled={!selectedLead || previewLoading}
-                    onClick={handlePreviewAgentDealContext}
-                  >
-                    {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                    {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
-                  </button>
+                <div className="pbk-dp-context-badges">
+                  {activeAgent.metadata.approvalGated && <span>approval-gated</span>}
+                  {activeAgent.metadata.suggestOnly && <span>suggest-only</span>}
+                  <span>{activeAgent.metadata.orchestrationRole || 'worker'}</span>
                 </div>
               </div>
-              {previewError && (
-                <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 gap-2">
-                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-300" />
-                    <div>
-                      <div className="font-semibold">Preview failed</div>
-                      <div className="mt-1 text-xs leading-relaxed text-rose-100/80">
-                        {previewError}
-                      </div>
+
+              {/* Capabilities bar */}
+              <div className="pbk-dp-context-badges border-b border-slate-800 px-4 py-3">
+                {activeAgent.capabilities.map((cap) => (
+                  <span
+                    key={cap}
+                    className="rounded-lg border border-slate-700/60 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400"
+                  >
+                    {cap.replace(/_/g, ' ')}
+                  </span>
+                ))}
+              </div>
+
+              <div className="border-b border-slate-800 px-4 py-4">
+                <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                      Deal context preview
                     </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Read-only preview of how {activeAgent.name} would handle a live lead. Provider
+                      writes stay blocked.
+                    </p>
+                    <select
+                      className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
+                      value={selectedLeadId}
+                      onChange={(event) => setSelectedLeadId(event.target.value)}
+                    >
+                      {leadOptions.length ? (
+                        leadOptions.map((lead) => (
+                          <option key={getLeadOptionId(lead)} value={getLeadOptionId(lead)}>
+                            {getLeadOptionLabel(lead)}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">No bridge leads loaded yet</option>
+                      )}
+                    </select>
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex flex-wrap gap-2 lg:justify-end">
                     <button
                       type="button"
-                      className="rounded-full border border-rose-300/40 px-3 py-1.5 text-xs font-semibold text-rose-50 transition hover:bg-rose-300/10"
-                      onClick={() => void handlePreviewAgentDealContext()}
+                      className="btn-secondary flex min-h-10 items-center justify-center gap-2"
+                      disabled={!selectedLead || callActionPending}
+                      onClick={handleCallSelectedLead}
                     >
-                      Retry preview
+                      {callActionPending ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Phone size={14} />
+                      )}
+                      {callActionPending ? 'Calling...' : 'Call lead'}
                     </button>
                     <button
                       type="button"
-                      className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                      onClick={() => setPreviewError('')}
+                      className="btn-primary flex min-h-10 items-center justify-center gap-2"
+                      disabled={!selectedLead || previewLoading}
+                      onClick={handlePreviewAgentDealContext}
                     >
-                      Dismiss
+                      {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                      {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
                     </button>
                   </div>
                 </div>
-              )}
-              {dealPreview && (
-                <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-sky-300">
-                        {dealPreview.writeMode || 'read_only'} /{' '}
-                        {dealPreview.result || 'agent_deal_context_preview'}
-                      </div>
-                      <h3 className="mt-1 text-sm font-semibold text-slate-100">
-                        {formatAgentPreviewAction(dealPreview.recommendedAction)}
-                      </h3>
-                      <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                        {dealPreview.summary}
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-200">
-                      {Math.round(Number(dealPreview.confidence || 0))}% confidence
-                    </span>
-                  </div>
-                  <div className="mt-3 grid gap-2 md:grid-cols-3">
-                    <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">BANT</div>
-                      <div className="text-xs text-slate-300">
-                        {dealPreview.bant?.complete
-                          ? 'Complete'
-                          : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
-                      </div>
-                    </div>
-                    <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                        Analyzer
-                      </div>
-                      <div className="text-xs text-slate-300">
-                        {dealPreview.analyzer?.found
-                          ? `MAO ${dealPreview.analyzer.mao || '-'}`
-                          : 'Numbers not found'}
-                      </div>
-                    </div>
-                    <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                        Safety
-                      </div>
-                      <div className="text-xs text-slate-300">
-                        {dealPreview.requiredApprovals?.length
-                          ? `Approval: ${dealPreview.requiredApprovals.join(', ')}`
-                          : 'No provider write'}
-                      </div>
-                    </div>
-                  </div>
-                  {dealPreview.reasoning?.length ? (
-                    <ul className="mt-3 space-y-1 text-xs text-slate-500">
-                      {dealPreview.reasoning.slice(0, 5).map((reason) => (
-                        <li key={reason}>- {reason}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              )}
-            </div>
-
-            {/* Skills */}
-            <div className="p-4">
-              {activeAgent.skills.length === 0 ? (
-                <div className="py-8 text-center text-sm text-slate-500">
-                  No skills recorded for {activeAgent.name} yet.
-                </div>
-              ) : (
-                <>
-                  <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                    Production-ready and evolving skills
-                  </div>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    {activeAgent.skills.map((skill) => {
-                      const exKey = `${activeAgent.id}:${skill.name}`;
-                      const isExampleOpen = expandedExample === exKey;
-                      const isTestOpen = testingSkill === exKey;
-                      return (
-                        <div key={skill.name} className="fleet-skill-card">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h3 className="flex items-center gap-2">
-                                {skill.name}
-                                {skill.transferHistory && skill.transferHistory.length > 0 && (
-                                  <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300">
-                                    v{skill.transferHistory.length + 1}
-                                  </span>
-                                )}
-                              </h3>
-                              <p>{skill.source}</p>
-                            </div>
-                            <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] text-slate-400">
-                              {skill.confidence}%
-                            </span>
-                          </div>
-                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                            <div
-                              className="h-full rounded-full bg-gradient-to-r from-red-400 via-amber-300 to-lime-300"
-                              style={{ width: `${skill.confidence}%` }}
-                            />
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                            <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
-                              Used{' '}
-                              <span className="font-semibold text-slate-100">{skill.usage}</span>
-                            </div>
-                            <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
-                              Success{' '}
-                              <span className="font-semibold text-lime-300">{skill.success}</span>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="chip-btn skill-transfer-btn"
-                              onClick={() => setSelectedSkill(skill)}
-                            >
-                              Transfer
-                            </button>
-                            <button
-                              type="button"
-                              className="chip-btn"
-                              onClick={() => setTestingSkill(isTestOpen ? null : exKey)}
-                            >
-                              Test on lead
-                            </button>
-                            <button
-                              type="button"
-                              className="chip-btn flex items-center gap-1"
-                              onClick={() => setExpandedExample(isExampleOpen ? null : exKey)}
-                            >
-                              View example
-                              {isExampleOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-                            </button>
-                          </div>
-                          {isTestOpen && (
-                            <TestSkillPanel
-                              skill={skill}
-                              agentId={activeAgent.id}
-                              onClose={() => setTestingSkill(null)}
-                            />
-                          )}
-                          {isExampleOpen && !isTestOpen && (
-                            <ExamplePanel skill={skill} agent={activeAgent} />
-                          )}
+                {previewError && (
+                  <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 gap-2">
+                      <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-300" />
+                      <div>
+                        <div className="font-semibold">Preview failed</div>
+                        <div className="mt-1 text-xs leading-relaxed text-rose-100/80">
+                          {previewError}
                         </div>
-                      );
-                    })}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        className="rounded-full border border-rose-300/40 px-3 py-1.5 text-xs font-semibold text-rose-50 transition hover:bg-rose-300/10"
+                        onClick={() => void handlePreviewAgentDealContext()}
+                      >
+                        Retry preview
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                        onClick={() => setPreviewError('')}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
                   </div>
-                </>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
+                )}
+                {dealPreview && (
+                  <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-sky-300">
+                          {dealPreview.writeMode || 'read_only'} /{' '}
+                          {dealPreview.result || 'agent_deal_context_preview'}
+                        </div>
+                        <h3 className="mt-1 text-sm font-semibold text-slate-100">
+                          {formatAgentPreviewAction(dealPreview.recommendedAction)}
+                        </h3>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                          {dealPreview.summary}
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-200">
+                        {Math.round(Number(dealPreview.confidence || 0))}% confidence
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                          BANT
+                        </div>
+                        <div className="text-xs text-slate-300">
+                          {dealPreview.bant?.complete
+                            ? 'Complete'
+                            : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                          Analyzer
+                        </div>
+                        <div className="text-xs text-slate-300">
+                          {dealPreview.analyzer?.found
+                            ? `MAO ${dealPreview.analyzer.mao || '-'}`
+                            : 'Numbers not found'}
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                          Safety
+                        </div>
+                        <div className="text-xs text-slate-300">
+                          {dealPreview.requiredApprovals?.length
+                            ? `Approval: ${dealPreview.requiredApprovals.join(', ')}`
+                            : 'No provider write'}
+                        </div>
+                      </div>
+                    </div>
+                    {dealPreview.reasoning?.length ? (
+                      <ul className="mt-3 space-y-1 text-xs text-slate-500">
+                        {dealPreview.reasoning.slice(0, 5).map((reason) => (
+                          <li key={reason}>- {reason}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+
+              {/* Skills */}
+              <div className="p-4">
+                {activeAgent.skills.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-slate-500">
+                    No skills recorded for {activeAgent.name} yet.
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                      Production-ready and evolving skills
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {activeAgent.skills.map((skill) => {
+                        const exKey = `${activeAgent.id}:${skill.name}`;
+                        const isExampleOpen = expandedExample === exKey;
+                        const isTestOpen = testingSkill === exKey;
+                        return (
+                          <div key={skill.name} className="pbk-skill-row fleet-skill-card">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <h3 className="flex items-center gap-2">
+                                  {skill.name}
+                                  {skill.transferHistory && skill.transferHistory.length > 0 && (
+                                    <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300">
+                                      v{skill.transferHistory.length + 1}
+                                    </span>
+                                  )}
+                                </h3>
+                                <p>{skill.source}</p>
+                              </div>
+                              <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] text-slate-400">
+                                {skill.confidence}%
+                              </span>
+                            </div>
+                            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-red-400 via-amber-300 to-lime-300"
+                                style={{ width: `${skill.confidence}%` }}
+                              />
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                              <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
+                                Used{' '}
+                                <span className="font-semibold text-slate-100">{skill.usage}</span>
+                              </div>
+                              <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
+                                Success{' '}
+                                <span className="font-semibold text-lime-300">{skill.success}</span>
+                              </div>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="chip-btn skill-transfer-btn"
+                                onClick={() => setSelectedSkill(skill)}
+                              >
+                                Transfer
+                              </button>
+                              <button
+                                type="button"
+                                className="chip-btn"
+                                onClick={() => setTestingSkill(isTestOpen ? null : exKey)}
+                              >
+                                Test on lead
+                              </button>
+                              <button
+                                type="button"
+                                className="chip-btn flex items-center gap-1"
+                                onClick={() => setExpandedExample(isExampleOpen ? null : exKey)}
+                              >
+                                View example
+                                {isExampleOpen ? (
+                                  <ChevronUp size={11} />
+                                ) : (
+                                  <ChevronDown size={11} />
+                                )}
+                              </button>
+                            </div>
+                            {isTestOpen && (
+                              <TestSkillPanel
+                                skill={skill}
+                                agentId={activeAgent.id}
+                                onClose={() => setTestingSkill(null)}
+                              />
+                            )}
+                            {isExampleOpen && !isTestOpen && (
+                              <ExamplePanel skill={skill} agent={activeAgent} />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </AgentDetailPanel>
+          </div>
+        )}
+      </main>
 
       {selectedSkill && (
         <SkillTransferModal

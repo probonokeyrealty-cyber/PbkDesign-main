@@ -99,6 +99,7 @@
     "test:root-shell-promotion": "node ./scripts/root-shell-promotion-smoke.mjs",
     "test:campaigns-shell": "node ./scripts/campaigns-shell-smoke.mjs",
     "test:campaigns-prototype-modern": "node ./scripts/campaigns-prototype-modern-smoke.mjs",
+    "test:agent-fleet-prototype-modern": "node ./scripts/agent-fleet-prototype-modern-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

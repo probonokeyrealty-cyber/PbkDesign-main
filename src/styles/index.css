@@ -320,6 +320,10 @@ html[data-theme='light'] .border-slate-700 {
   border-left-color: #f87171;
 }
 
+.ui-toast-critical {
+  box-shadow: 0 20px 80px rgba(244, 63, 94, 0.24);
+}
+
 .ui-toast-title {
   font-size: 0.84rem;
   font-weight: 800;
@@ -332,6 +336,12 @@ html[data-theme='light'] .border-slate-700 {
   color: #94a3b8;
 }
 
+.ui-toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .ui-toast-action {
   margin-top: 0.55rem;
   min-height: 34px;
@@ -339,6 +349,28 @@ html[data-theme='light'] .border-slate-700 {
   border: 1px solid rgba(125, 211, 252, 0.35);
   padding: 0 0.8rem;
   color: #bae6fd;
+}
+
+.lead-detail-skeleton,
+.fleet-loading-skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.lead-detail-skeleton::after,
+.fleet-loading-skeleton::after {
+  animation: pbk-skeleton-shimmer 1.4s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.12), transparent);
+  content: '';
+  inset: 0;
+  position: absolute;
+  transform: translateX(-100%);
+}
+
+@keyframes pbk-skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .page-switch-skeleton {

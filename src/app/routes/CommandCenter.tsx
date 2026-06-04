@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { CallFloorPanel } from '../components/CallFloorPanel';
 import { LiveCallWidget } from '../components/shell/LiveCallWidget';
@@ -126,10 +127,15 @@ type ApprovalDecisionDraft = {
   actionLabel: string;
 };
 
+type ActionStatus = {
+  tone: 'pending' | 'success' | 'error';
+  text: string;
+};
+
 export function CommandCenter() {
   const navigate = useNavigate();
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
-  const [actionStatus, setActionStatus] = useState('');
+  const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
   const [pendingAction, setPendingAction] = useState('');
   const [webSearchProbeFailed, setWebSearchProbeFailed] = useState(false);
   const [webSearchProbeError, setWebSearchProbeError] = useState('');
@@ -171,7 +177,8 @@ export function CommandCenter() {
 
   useEffect(() => {
     if (!actionStatus) return undefined;
-    const handle = window.setTimeout(() => setActionStatus(''), 5000);
+    if (actionStatus.tone !== 'success') return undefined;
+    const handle = window.setTimeout(() => setActionStatus(null), 5000);
     return () => window.clearTimeout(handle);
   }, [actionStatus]);
 
@@ -254,16 +261,19 @@ export function CommandCenter() {
     action: () => Promise<void>
   ) => {
     setPendingAction(key);
-    setActionStatus('');
+    setActionStatus({ tone: 'pending', text: 'Working with the bridge...' });
     try {
       await action();
       await refresh().catch((err) => {
         console.warn('[PBK] State refresh failed after runtime action:', err);
         return null;
       });
-      setActionStatus(successMessage);
+      setActionStatus({ tone: 'success', text: successMessage });
     } catch (nextError) {
-      setActionStatus(nextError instanceof Error ? nextError.message : 'Runtime action failed.');
+      setActionStatus({
+        tone: 'error',
+        text: nextError instanceof Error ? nextError.message : 'Runtime action failed.',
+      });
     } finally {
       setPendingAction('');
     }
@@ -271,7 +281,7 @@ export function CommandCenter() {
 
   const runWebSearchProbe = async () => {
     setPendingAction('web-search:probe');
-    setActionStatus('');
+    setActionStatus({ tone: 'pending', text: 'Checking web-search cognition...' });
     setWebSearchProbeFailed(false);
     setWebSearchProbeError('');
     try {
@@ -284,9 +294,10 @@ export function CommandCenter() {
       );
       const liveLabel = status.liveReady ? 'live Tavily' : 'fallback';
       const spikeVersion = String(neuralOutput.spikeVersion || 'pbk-web-search-spikes-v1');
-      setActionStatus(
-        `Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`
-      );
+      setActionStatus({
+        tone: 'success',
+        text: `Web-search status is ${liveLabel} via ${provider}; ${spikeVersion} and symbolic facts are available.`,
+      });
       await refresh().catch((err) => {
         console.warn('[PBK] State refresh failed after web-search probe:', err);
         return null;
@@ -296,7 +307,7 @@ export function CommandCenter() {
         nextError instanceof Error ? nextError.message : 'Web-search status probe failed.';
       setWebSearchProbeFailed(true);
       setWebSearchProbeError(message);
-      setActionStatus(message);
+      setActionStatus({ tone: 'error', text: message });
     } finally {
       setPendingAction('');
     }
@@ -397,9 +408,23 @@ export function CommandCenter() {
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100"
+          className={[
+            'flex items-start gap-2 rounded-2xl px-4 py-3 text-sm',
+            actionStatus.tone === 'error'
+              ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
+              : actionStatus.tone === 'success'
+                ? 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+                : 'border border-sky-500/20 bg-sky-500/10 text-sky-100',
+          ].join(' ')}
         >
-          {actionStatus}
+          {actionStatus.tone === 'pending' ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : actionStatus.tone === 'error' ? (
+            <AlertCircle size={15} className="mt-0.5 text-rose-300" />
+          ) : (
+            <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
+          )}
+          <span>{actionStatus.text}</span>
         </div>
       )}
 

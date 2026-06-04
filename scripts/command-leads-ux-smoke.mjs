@@ -17,7 +17,10 @@ assert(/webSearchProbeFailed/.test(commandCenter), 'Command Center should track 
 assert(/Retry Probe/.test(commandCenter), 'Command Center should render a web-search retry button.');
 assert(/adminDecisionDraft/.test(commandCenter), 'Admin decisions should be staged in a confirmation dialog.');
 assert(/Confirm admin decision/.test(commandCenter), 'Admin approval/decline should show a confirmation dialog.');
-assert(/setTimeout\(\(\) => setActionStatus\(''\), 5000\)/.test(commandCenter), 'Command Center actionStatus should auto-clear.');
+assert(
+  /setTimeout\(\(\) => setActionStatus\(null\), 5000\)/.test(commandCenter),
+  'Command Center success actionStatus should auto-clear.',
+);
 assert(/Number\.isFinite\(timestamp\)/.test(commandCenter), 'Activity timestamp formatting should guard invalid dates.');
 assert(/The bridge has not recorded activity yet/.test(commandCenter), 'Activity feed should keep its empty state.');
 assert(/pollMs = 5000/.test(runtimeSnapshot), 'Runtime polling should remain at 5 seconds or faster by default.');

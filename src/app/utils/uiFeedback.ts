@@ -6,6 +6,7 @@ export type UiToastPayload = {
   tone?: ToastTone;
   actionLabel?: string;
   retryId?: string;
+  critical?: boolean;
 };
 
 const retryHandlers = new Map<string, () => void | Promise<void>>();

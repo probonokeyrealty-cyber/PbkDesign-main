@@ -90,6 +90,7 @@
     "test:live-data-audit": "node ./scripts/live-data-audit.mjs",
     "test:ui-actions": "node ./scripts/ui-action-wiring-audit.mjs && node ./scripts/ui-loading-feedback-smoke.mjs",
     "test:intelligence-scorecard": "node ./scripts/intelligence-scorecard-smoke.mjs",
+    "test:ui-error-loading-validation": "node ./scripts/ui-error-loading-validation-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

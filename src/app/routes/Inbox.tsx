@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Reply, Send, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Plus, RefreshCw, Reply, Send, X } from 'lucide-react';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchLeadsRequest,
@@ -48,6 +48,11 @@ type ApprovalDecisionDraft = {
   status: string;
   actionLabel: string;
   warning: string;
+};
+
+type InboxActionStatus = {
+  tone: 'success' | 'error';
+  text: string;
 };
 
 const EMPTY_DRAFT: ComposeDraft = {
@@ -113,6 +118,32 @@ function formatRuntimeStatus(status: unknown) {
   if (normalized === 'rejected') return 'Declined';
   if (normalized === 'needs-revision' || normalized === 'needs_revision') return 'Needs Revision';
   return normalized ? normalized.replace(/_/g, ' ') : 'No data yet';
+}
+
+function isValidRecipientEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isValidRecipientPhone(value: string) {
+  return value.replace(/\D/g, '').length >= 10;
+}
+
+function validateComposeRecipient(draft: ComposeDraft, selectedLead?: ComposeLead) {
+  const recipient = draft.recipient.trim();
+  if (!recipient) return '';
+  if (selectedLead) {
+    if (draft.channel === 'sms' && !selectedLead.phone) return 'Selected lead has no phone number.';
+    if (draft.channel === 'email' && !selectedLead.email)
+      return 'Selected lead has no email address.';
+    return '';
+  }
+  if (draft.channel === 'sms' && !isValidRecipientPhone(recipient)) {
+    return 'Enter a phone number with at least 10 digits or choose a lead.';
+  }
+  if (draft.channel === 'email' && !isValidRecipientEmail(recipient)) {
+    return 'Enter a valid email address or choose a lead.';
+  }
+  return '';
 }
 
 function formatRelativeTime(value: string) {
@@ -244,11 +275,13 @@ function ComposeModal({
     })
     .slice(0, 5);
   const segmentInfo = getSmsSegmentInfo(draft.message);
+  const recipientValidation = validateComposeRecipient(draft, selectedLead);
   const sendDisabled =
     sending ||
     !draft.recipient.trim() ||
     !draft.message.trim() ||
-    (draft.sendLater && !draft.sendAt.trim());
+    (draft.sendLater && !draft.sendAt.trim()) ||
+    Boolean(recipientValidation);
 
   const setChannel = (channel: ComposeChannel) => {
     setDraft((current) => ({
@@ -264,6 +297,10 @@ function ComposeModal({
 
   const sendCompose = async () => {
     if (sendDisabled) return;
+    if (recipientValidation) {
+      setSendError(recipientValidation);
+      return;
+    }
     setSending(true);
     setSendError('');
     const request = buildComposeRequest(draft, selectedLead || {});
@@ -298,7 +335,7 @@ function ComposeModal({
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : 'Message send failed.';
       setSendError(message);
-      showUiToast({ tone: 'error', title: 'Message not sent', desc: message });
+      showUiToast({ tone: 'error', title: 'Message not sent', desc: message, critical: true });
     } finally {
       setSending(false);
     }
@@ -365,6 +402,7 @@ function ComposeModal({
             </span>
           )}
           <input
+            type={draft.channel === 'email' ? 'email' : 'tel'}
             value={draft.recipient}
             onFocus={() => {
               if (!leads.length) void onRefreshLeads();
@@ -373,7 +411,14 @@ function ComposeModal({
               setDraft((current) => ({ ...current, recipient: event.target.value, leadId: '' }))
             }
             placeholder={draft.channel === 'sms' ? 'Name or phone number' : 'Name or email address'}
+            aria-invalid={Boolean(recipientValidation)}
           />
+          {recipientValidation && (
+            <span className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-300">
+              <AlertCircle size={12} />
+              {recipientValidation}
+            </span>
+          )}
           {!!matches.length && !selectedLead && (
             <div className="compose-suggest">
               {matches.map((lead) => (
@@ -477,8 +522,9 @@ function ComposeModal({
         )}
 
         {sendError && (
-          <div className="rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
-            {sendError}
+          <div className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span>{sendError}</span>
           </div>
         )}
 
@@ -498,7 +544,7 @@ function ComposeModal({
               disabled={sendDisabled}
               onClick={() => void sendCompose()}
             >
-              <Send size={15} />
+              {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={15} />}
               {sending ? 'Sending...' : draft.sendLater ? 'Schedule' : 'Send'}
             </button>
           </div>
@@ -567,6 +613,7 @@ function ContractApprovalConfirm({
               Cancel
             </button>
             <button type="button" className="btn-primary" disabled={pending} onClick={onConfirm}>
+              {pending ? <Loader2 size={14} className="animate-spin" /> : null}
               {pending ? 'Approving...' : 'Approve DocuSign'}
             </button>
           </div>
@@ -638,6 +685,7 @@ function ApprovalDecisionConfirm({
               Cancel
             </button>
             <button type="button" className="btn-primary" disabled={pending} onClick={onConfirm}>
+              {pending ? <Loader2 size={14} className="animate-spin" /> : null}
               {pending ? 'Sending...' : draft.actionLabel}
             </button>
           </div>
@@ -650,7 +698,7 @@ function ApprovalDecisionConfirm({
 export function Inbox() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
-  const [actionStatus, setActionStatus] = useState('');
+  const [actionStatus, setActionStatus] = useState<InboxActionStatus | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [replyDraft, setReplyDraft] = useState<ComposeDraft | null>(null);
   const [confirmApproval, setConfirmApproval] = useState<Record<string, unknown> | null>(null);
@@ -723,7 +771,8 @@ export function Inbox() {
 
   useEffect(() => {
     if (!actionStatus) return undefined;
-    const timer = window.setTimeout(() => setActionStatus(''), 5000);
+    if (actionStatus.tone !== 'success') return undefined;
+    const timer = window.setTimeout(() => setActionStatus(null), 5000);
     return () => window.clearTimeout(timer);
   }, [actionStatus]);
 
@@ -742,15 +791,19 @@ export function Inbox() {
     if (!approvalId) return;
     const key = `approval:${approvalId}:${status}`;
     setPendingAction(key);
-    setActionStatus('');
+    setActionStatus(null);
     try {
       await updateApprovalDecision(approvalId, status);
       await refreshInbox();
-      setActionStatus(
-        status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.'
-      );
+      setActionStatus({
+        tone: 'success',
+        text: status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.',
+      });
     } catch (nextError) {
-      setActionStatus(nextError instanceof Error ? nextError.message : 'Approval update failed.');
+      setActionStatus({
+        tone: 'error',
+        text: nextError instanceof Error ? nextError.message : 'Approval update failed.',
+      });
     } finally {
       setPendingAction('');
     }
@@ -834,12 +887,26 @@ export function Inbox() {
       )}
 
       {actionStatus && (
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
-          <span>{actionStatus}</span>
+        <div
+          className={[
+            'flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm',
+            actionStatus.tone === 'error'
+              ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
+              : 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100',
+          ].join(' ')}
+        >
+          <span className="flex items-center gap-2">
+            {actionStatus.tone === 'error' ? (
+              <AlertCircle size={15} className="text-rose-300" />
+            ) : (
+              <CheckCircle2 size={15} className="text-emerald-300" />
+            )}
+            {actionStatus.text}
+          </span>
           <button
             type="button"
-            className="rounded-full p-1 text-sky-100/70 hover:bg-sky-400/10 hover:text-sky-50"
-            onClick={() => setActionStatus('')}
+            className="rounded-full p-1 opacity-70 hover:bg-white/10 hover:opacity-100"
+            onClick={() => setActionStatus(null)}
             aria-label="Dismiss status"
           >
             <X size={15} />
@@ -887,9 +954,14 @@ export function Inbox() {
                       onClick={() => {
                         openApprovalDecisionConfirm(approval, 'approved');
                       }}
-                      className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Approve
+                      {pendingAction === `approval:${approvalId}:approved` && (
+                        <Loader2 size={14} className="animate-spin" />
+                      )}
+                      {pendingAction === `approval:${approvalId}:approved`
+                        ? 'Approving...'
+                        : 'Approve'}
                     </button>
                     <button
                       type="button"
@@ -899,9 +971,16 @@ export function Inbox() {
                         const status = contract ? 'needs-revision' : 'rejected';
                         openApprovalDecisionConfirm(approval, status);
                       }}
-                      className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {contract ? 'Needs Revision' : 'Decline'}
+                      {pendingAction === `approval:${approvalId}:rejected` && (
+                        <Loader2 size={14} className="animate-spin" />
+                      )}
+                      {pendingAction === `approval:${approvalId}:rejected`
+                        ? 'Sending...'
+                        : contract
+                          ? 'Needs Revision'
+                          : 'Decline'}
                     </button>
                   </div>
                 </div>

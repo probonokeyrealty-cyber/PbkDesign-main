@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Edit3,
   FileSignature,
+  Loader2,
   Mail,
   Phone,
   RefreshCw,
@@ -61,6 +62,12 @@ type LeadCallConfirmDraft = {
   sellerName: string;
   phone: string;
   address: string;
+};
+
+type DetailStatus = {
+  tone: 'info' | 'success' | 'error';
+  text: string;
+  retry?: 'detail' | 'refresh';
 };
 
 const PATH_LABELS: Record<CanonicalPath, string> = {
@@ -186,6 +193,39 @@ function validateContractBeforeSend(form: ContractFormState, lead: BridgeRecord)
   if (form.seller2Email && !isValidEmail(form.seller2Email)) {
     return 'Seller 2 email is not valid.';
   }
+  if (!isValidEmail(form.slot2Email)) return 'Signer 2 email is not valid.';
+  return '';
+}
+
+function clampMotivationScore(value: string) {
+  if (!value.trim()) return '';
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  return String(Math.min(10, Math.max(1, Math.round(numeric))));
+}
+
+function validateBantJson(value: string) {
+  if (!value.trim()) return '';
+  try {
+    JSON.parse(value);
+    return '';
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Invalid JSON syntax.';
+  }
+}
+
+function getSeller1EmailError(form: ContractFormState | null) {
+  if (!form) return '';
+  if (!text(form.seller1Email)) return 'Seller 1 email is required.';
+  if (!isValidEmail(form.seller1Email)) return 'Enter a valid Seller 1 email address.';
+  return '';
+}
+
+function getContractLiveValidation(form: ContractFormState | null) {
+  if (!form) return '';
+  const seller1EmailError = getSeller1EmailError(form);
+  if (seller1EmailError) return seller1EmailError;
+  if (form.seller2Email && !isValidEmail(form.seller2Email)) return 'Seller 2 email is not valid.';
   if (!isValidEmail(form.slot2Email)) return 'Signer 2 email is not valid.';
   return '';
 }
@@ -321,6 +361,29 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function LeadDetailSkeleton() {
+  return (
+    <div
+      className="lead-detail-skeleton grid gap-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4"
+      aria-label="Loading lead detail"
+    >
+      <div className="h-6 w-2/3 rounded-full bg-slate-800" />
+      <div className="grid gap-3 md:grid-cols-4">
+        {[0, 1, 2, 3].map((item) => (
+          <div key={item} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+            <div className="h-3 w-20 rounded-full bg-slate-800" />
+            <div className="mt-3 h-5 w-28 rounded-full bg-slate-800" />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="h-52 rounded-2xl border border-slate-800 bg-slate-950/70" />
+        <div className="h-52 rounded-2xl border border-slate-800 bg-slate-950/70" />
+      </div>
+    </div>
+  );
+}
+
 const inputClass =
   'w-full rounded-xl border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20';
 
@@ -336,7 +399,8 @@ export function Leads() {
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [leadDetail, setLeadDetail] = useState<BridgeRecord | null>(null);
   const [lastCall, setLastCall] = useState<BridgeRecord | null>(null);
-  const [detailStatus, setDetailStatus] = useState('');
+  const [detailStatus, setDetailStatus] = useState<DetailStatus | null>(null);
+  const [leadDetailLoading, setLeadDetailLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
   const [contractConfirmOpen, setContractConfirmOpen] = useState(false);
@@ -362,6 +426,15 @@ export function Leads() {
   const visibleLeads = useMemo(() => leads.slice(0, displayLimit), [displayLimit, leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
+  const bantJsonError = useMemo(
+    () => (editForm ? validateBantJson(editForm.bant) : ''),
+    [editForm]
+  );
+  const seller1EmailError = useMemo(() => getSeller1EmailError(contractForm), [contractForm]);
+  const contractLiveValidation = useMemo(
+    () => getContractLiveValidation(contractForm),
+    [contractForm]
+  );
   const beginLeadAction = useCallback((key: string) => {
     if (leadActionLockRef.current) return false;
     leadActionLockRef.current = true;
@@ -401,7 +474,8 @@ export function Leads() {
     if (!selectedLeadId) return;
     let cancelled = false;
     const loadDetail = async () => {
-      setDetailStatus('Loading lead detail...');
+      setLeadDetailLoading(true);
+      setDetailStatus({ tone: 'info', text: 'Loading lead detail...' });
       try {
         const [fullResponse, callResponse] = await Promise.all([
           fetchLeadFullRequest(selectedLeadId),
@@ -411,16 +485,21 @@ export function Leads() {
         const lead = unwrapLeadResponse(fullResponse);
         setLeadDetail(lead);
         setLastCall(callResponse as BridgeRecord | null);
-        setDetailStatus('Lead synced from bridge.');
+        setDetailStatus({ tone: 'success', text: 'Lead synced from bridge.' });
       } catch (nextError) {
         if (cancelled) return;
         setLeadDetail(selectedLead || null);
         setLastCall(null);
-        setDetailStatus(
-          nextError instanceof Error
-            ? `Bridge detail unavailable: ${nextError.message}`
-            : 'Bridge detail unavailable.'
-        );
+        setDetailStatus({
+          tone: 'error',
+          text:
+            nextError instanceof Error
+              ? `Bridge detail unavailable: ${nextError.message}`
+              : 'Bridge detail unavailable.',
+          retry: 'detail',
+        });
+      } finally {
+        if (!cancelled) setLeadDetailLoading(false);
       }
     };
     void loadDetail();
@@ -434,7 +513,7 @@ export function Leads() {
     if (reloadInFlightRef.current) return;
     reloadInFlightRef.current = true;
     setReloading(true);
-    setDetailStatus('Refreshing lead detail...');
+    setDetailStatus({ tone: 'info', text: 'Refreshing lead detail...' });
     try {
       const [fullResponse, callResponse] = await Promise.all([
         fetchLeadFullRequest(selectedLeadId),
@@ -442,12 +521,15 @@ export function Leads() {
       ]);
       setLeadDetail(unwrapLeadResponse(fullResponse));
       setLastCall(callResponse as BridgeRecord | null);
-      setDetailStatus('Lead refreshed.');
+      setDetailStatus({ tone: 'success', text: 'Lead refreshed.' });
       await refresh().catch(() => null);
     } catch (nextError) {
-      setDetailStatus(
-        nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.'
-      );
+      setDetailStatus({
+        tone: 'error',
+        text:
+          nextError instanceof Error ? `Refresh failed: ${nextError.message}` : 'Refresh failed.',
+        retry: 'refresh',
+      });
     } finally {
       reloadInFlightRef.current = false;
       setReloading(false);
@@ -483,20 +565,18 @@ export function Leads() {
 
   const saveLead = async () => {
     if (!editForm || !activeLeadId) return;
+    if (bantJsonError) {
+      setDetailStatus({
+        tone: 'error',
+        text: `Invalid BANT JSON: ${bantJsonError}`,
+      });
+      return;
+    }
     if (!beginLeadAction('save-lead')) return;
     try {
       let bant: BridgeRecord = {};
       if (editForm.bant.trim()) {
-        try {
-          bant = JSON.parse(editForm.bant);
-        } catch (error) {
-          setDetailStatus(
-            error instanceof Error
-              ? `Invalid BANT JSON: ${error.message}`
-              : 'Invalid BANT JSON. Please check the field syntax.'
-          );
-          return;
-        }
+        bant = JSON.parse(editForm.bant);
       }
       const response = await patchLeadRequest(activeLeadId, {
         name: editForm.name,
@@ -517,12 +597,13 @@ export function Leads() {
       const lead = unwrapLeadResponse(response);
       setLeadDetail(lead);
       setEditOpen(false);
-      setDetailStatus('Lead saved to bridge.');
+      setDetailStatus({ tone: 'success', text: 'Lead saved to bridge.' });
       await refresh().catch(() => null);
     } catch (nextError) {
-      setDetailStatus(
-        nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.'
-      );
+      setDetailStatus({
+        tone: 'error',
+        text: nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.',
+      });
     } finally {
       endLeadAction();
     }
@@ -579,6 +660,7 @@ export function Leads() {
           nextError instanceof Error
             ? nextError.message
             : 'The bridge did not accept the call request.',
+        critical: true,
       });
     } finally {
       endLeadAction();
@@ -587,6 +669,10 @@ export function Leads() {
 
   const requestContractSend = () => {
     if (!contractForm || !activeLead) return;
+    if (contractLiveValidation) {
+      setContractStatus(contractLiveValidation);
+      return;
+    }
     const validation = validateContractBeforeSend(contractForm, activeLead);
     if (validation) {
       setContractStatus(validation);
@@ -597,6 +683,11 @@ export function Leads() {
 
   const sendContract = async () => {
     if (!contractForm || !activeLead) return;
+    if (contractLiveValidation) {
+      setContractConfirmOpen(false);
+      setContractStatus(contractLiveValidation);
+      return;
+    }
     const validation = validateContractBeforeSend(contractForm, activeLead);
     if (validation) {
       setContractConfirmOpen(false);
@@ -672,9 +763,15 @@ export function Leads() {
       );
       await Promise.all([reloadLeadDetailNow(), refresh().catch(() => null)]);
     } catch (nextError) {
-      setContractStatus(
-        nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.'
-      );
+      const message =
+        nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.';
+      setContractStatus(message);
+      showUiToast({
+        tone: 'error',
+        title: 'Contract request failed',
+        desc: message,
+        critical: true,
+      });
     } finally {
       endLeadAction();
     }
@@ -881,7 +978,8 @@ export function Leads() {
                     disabled={reloading}
                     className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400 hover:text-sky-200 disabled:cursor-wait disabled:opacity-60"
                   >
-                    <RefreshCw size={14} /> {reloading ? 'Refreshing...' : 'Refresh'}
+                    <RefreshCw size={14} className={reloading ? 'animate-spin' : ''} />{' '}
+                    {reloading ? 'Refreshing...' : 'Refresh'}
                   </button>
                   <button
                     type="button"
@@ -903,141 +1001,184 @@ export function Leads() {
               </div>
 
               {detailStatus && (
-                <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
-                  {detailStatus}
+                <div
+                  className={[
+                    'flex flex-col gap-2 rounded-xl px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between',
+                    detailStatus.tone === 'error'
+                      ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
+                      : detailStatus.tone === 'success'
+                        ? 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+                        : 'border border-sky-500/20 bg-sky-500/10 text-sky-100',
+                  ].join(' ')}
+                >
+                  <span className="flex items-center gap-2">
+                    {detailStatus.tone === 'error' ? (
+                      <AlertCircle size={15} className="shrink-0 text-rose-300" />
+                    ) : detailStatus.tone === 'success' ? (
+                      <CheckCircle2 size={15} className="shrink-0 text-emerald-300" />
+                    ) : (
+                      <Loader2 size={15} className="shrink-0 animate-spin text-sky-300" />
+                    )}
+                    {detailStatus.text}
+                  </span>
+                  {detailStatus.tone === 'error' && (
+                    <button
+                      type="button"
+                      className="rounded-full border border-rose-300/40 px-3 py-1 text-[11px] font-semibold text-rose-100 transition hover:bg-rose-300/10"
+                      onClick={() =>
+                        detailStatus.retry === 'refresh'
+                          ? void reloadLeadDetailNow()
+                          : void reloadLeadDetailNow()
+                      }
+                    >
+                      Retry detail
+                    </button>
+                  )}
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                    Last offer
-                  </div>
-                  <div className="mt-2 text-lg font-semibold text-slate-100">
-                    {money(
-                      lastCall?.last_offer ||
-                        getCallContext(activeLead).last_offer ||
-                        getCallContext(activeLead).lastOffer
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                    Sentiment
-                  </div>
-                  <div className="mt-2 text-lg font-semibold text-slate-100">
-                    {text(lastCall?.sentiment || getCallContext(activeLead).sentiment, 'No data')}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                    Template
-                  </div>
-                  <div className="mt-2 truncate text-sm font-semibold text-slate-100">
-                    {
-                      TEMPLATE_NAMES[
-                        normalizePath(
-                          activeLead.selected_path || activeLead.selectedPath,
-                          activeLead
-                        )
-                      ]
-                    }
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
-                  <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                    Lead ID
-                  </div>
-                  <div className="mt-2 truncate text-sm font-semibold text-slate-100">
-                    {activeLeadId}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-100">
-                        Activity for this lead
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        Documents, email sends, calls, and CRM edits attach here.
-                      </p>
+              {leadDetailLoading ? (
+                <LeadDetailSkeleton />
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                        Last offer
+                      </div>
+                      <div className="mt-2 text-lg font-semibold text-slate-100">
+                        {money(
+                          lastCall?.last_offer ||
+                            getCallContext(activeLead).last_offer ||
+                            getCallContext(activeLead).lastOffer
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                        Sentiment
+                      </div>
+                      <div className="mt-2 text-lg font-semibold text-slate-100">
+                        {text(
+                          lastCall?.sentiment || getCallContext(activeLead).sentiment,
+                          'No data'
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                        Template
+                      </div>
+                      <div className="mt-2 truncate text-sm font-semibold text-slate-100">
+                        {
+                          TEMPLATE_NAMES[
+                            normalizePath(
+                              activeLead.selected_path || activeLead.selectedPath,
+                              activeLead
+                            )
+                          ]
+                        }
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                        Lead ID
+                      </div>
+                      <div className="mt-2 truncate text-sm font-semibold text-slate-100">
+                        {activeLeadId}
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-3 space-y-2">
-                    {leadActivity.slice(0, 8).map((item, index) => (
-                      <div
-                        key={`${text(item.id, 'activity')}-${index}`}
-                        className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-xs font-medium text-slate-200">
-                            {text(item.actor, 'System')}
-                          </div>
-                          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                            {text(item.category, 'Activity')} - {text(item.status, 'saved')}
-                          </div>
-                        </div>
-                        <div className="mt-2 text-xs leading-relaxed text-slate-400">
-                          {text(item.text, 'Runtime activity')}
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-600">
-                          {formatDate(item.at || item.createdAt)}
-                        </div>
-                      </div>
-                    ))}
-                    {!leadActivity.length && (
-                      <div className="rounded-xl border border-dashed border-slate-800 px-3 py-5 text-center text-xs text-slate-500">
-                        No lead-specific activity yet. PDF and contract actions will appear after
-                        they are captured.
-                      </div>
-                    )}
-                  </div>
-                </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-100">Live Call Details</h3>
-                      <p className="text-xs text-slate-500">
-                        Latest transcript, sentiment, and offer memory.
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-slate-700 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                      {lastCall?.call
-                        ? text((lastCall.call as BridgeRecord).status, 'Call ended')
-                        : 'No active call'}
-                    </span>
-                  </div>
-                  <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-xs leading-relaxed text-slate-300">
-                    {text(
-                      lastCall?.summary || getCallContext(activeLead).summary,
-                      'No recent call summary captured yet.'
-                    )}
-                  </div>
-                  <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
-                    {Array.isArray(lastCall?.transcript) && lastCall.transcript.length ? (
-                      (lastCall.transcript as BridgeRecord[]).slice(-8).map((line, index) => (
-                        <div
-                          key={text(line.id, `transcript-${index}`)}
-                          className="rounded-lg bg-slate-950/60 px-3 py-2 text-xs text-slate-400"
-                        >
-                          <span className="font-semibold text-slate-300">
-                            {text(line.speaker, 'Lead')}:{' '}
-                          </span>
-                          {text(line.text || line.body)}
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-100">
+                            Activity for this lead
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Documents, email sends, calls, and CRM edits attach here.
+                          </p>
                         </div>
-                      ))
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-slate-800 px-3 py-4 text-center text-xs text-slate-500">
-                        Transcript will appear here after Telnyx/Deepgram call events are attached.
                       </div>
-                    )}
+                      <div className="mt-3 space-y-2">
+                        {leadActivity.slice(0, 8).map((item, index) => (
+                          <div
+                            key={`${text(item.id, 'activity')}-${index}`}
+                            className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-xs font-medium text-slate-200">
+                                {text(item.actor, 'System')}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                                {text(item.category, 'Activity')} - {text(item.status, 'saved')}
+                              </div>
+                            </div>
+                            <div className="mt-2 text-xs leading-relaxed text-slate-400">
+                              {text(item.text, 'Runtime activity')}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              {formatDate(item.at || item.createdAt)}
+                            </div>
+                          </div>
+                        ))}
+                        {!leadActivity.length && (
+                          <div className="rounded-xl border border-dashed border-slate-800 px-3 py-5 text-center text-xs text-slate-500">
+                            No lead-specific activity yet. PDF and contract actions will appear
+                            after they are captured.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-100">
+                            Live Call Details
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Latest transcript, sentiment, and offer memory.
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-slate-700 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                          {lastCall?.call
+                            ? text((lastCall.call as BridgeRecord).status, 'Call ended')
+                            : 'No active call'}
+                        </span>
+                      </div>
+                      <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-xs leading-relaxed text-slate-300">
+                        {text(
+                          lastCall?.summary || getCallContext(activeLead).summary,
+                          'No recent call summary captured yet.'
+                        )}
+                      </div>
+                      <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+                        {Array.isArray(lastCall?.transcript) && lastCall.transcript.length ? (
+                          (lastCall.transcript as BridgeRecord[]).slice(-8).map((line, index) => (
+                            <div
+                              key={text(line.id, `transcript-${index}`)}
+                              className="rounded-lg bg-slate-950/60 px-3 py-2 text-xs text-slate-400"
+                            >
+                              <span className="font-semibold text-slate-300">
+                                {text(line.speaker, 'Lead')}:{' '}
+                              </span>
+                              {text(line.text || line.body)}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-slate-800 px-3 py-4 text-center text-xs text-slate-500">
+                            Transcript will appear here after Telnyx/Deepgram call events are
+                            attached.
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           ) : (
             <div className="flex min-h-[420px] items-center justify-center text-center text-sm text-slate-500">
@@ -1136,7 +1277,10 @@ export function Leads() {
                     max="10"
                     value={editForm.motivation}
                     onChange={(event) =>
-                      setEditForm({ ...editForm, motivation: event.target.value })
+                      setEditForm({
+                        ...editForm,
+                        motivation: clampMotivationScore(event.target.value),
+                      })
                     }
                   />
                 </Field>
@@ -1193,7 +1337,14 @@ export function Leads() {
                     className={`${inputClass} min-h-40 resize-y font-mono text-xs`}
                     value={editForm.bant}
                     onChange={(event) => setEditForm({ ...editForm, bant: event.target.value })}
+                    aria-invalid={Boolean(bantJsonError)}
                   />
+                  {bantJsonError && (
+                    <span className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-300">
+                      <AlertCircle size={12} />
+                      Invalid JSON: {bantJsonError}
+                    </span>
+                  )}
                 </Field>
               </div>
             </div>
@@ -1207,11 +1358,16 @@ export function Leads() {
               </button>
               <button
                 type="button"
-                disabled={isLeadActionBusy}
+                disabled={isLeadActionBusy || Boolean(bantJsonError)}
                 onClick={saveLead}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
-                <Save size={15} /> Save Changes
+                {isLeadActionBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Save size={15} />
+                )}
+                Save Changes
               </button>
             </div>
           </div>
@@ -1295,7 +1451,11 @@ export function Leads() {
                 <Field label="Signer 2 email">
                   <input
                     className={inputClass}
+                    type="email"
                     value={contractForm.slot2Email}
+                    aria-invalid={Boolean(
+                      contractForm.slot2Email && !isValidEmail(contractForm.slot2Email)
+                    )}
                     onChange={(event) =>
                       setContractForm({ ...contractForm, slot2Email: event.target.value })
                     }
@@ -1313,11 +1473,20 @@ export function Leads() {
                 <Field label="Seller 1 email">
                   <input
                     className={inputClass}
+                    type="email"
+                    required
                     value={contractForm.seller1Email}
+                    aria-invalid={Boolean(seller1EmailError)}
                     onChange={(event) =>
                       setContractForm({ ...contractForm, seller1Email: event.target.value })
                     }
                   />
+                  {seller1EmailError && (
+                    <span className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-300">
+                      <AlertCircle size={12} />
+                      {seller1EmailError}
+                    </span>
+                  )}
                 </Field>
                 <Field label="4. Seller 2 name">
                   <input
@@ -1331,7 +1500,11 @@ export function Leads() {
                 <Field label="Seller 2 email">
                   <input
                     className={inputClass}
+                    type="email"
                     value={contractForm.seller2Email}
+                    aria-invalid={Boolean(
+                      contractForm.seller2Email && !isValidEmail(contractForm.seller2Email)
+                    )}
                     onChange={(event) =>
                       setContractForm({ ...contractForm, seller2Email: event.target.value })
                     }
@@ -1368,14 +1541,14 @@ export function Leads() {
                   />
                 </Field>
               </div>
-              {contractStatus && (
+              {(contractStatus || contractLiveValidation) && (
                 <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-xs text-slate-300">
-                  {/(failed|required|valid)/i.test(contractStatus) ? (
+                  {contractLiveValidation || /(failed|required|valid)/i.test(contractStatus) ? (
                     <AlertCircle size={15} className="mt-0.5 text-amber-300" />
                   ) : (
                     <CheckCircle2 size={15} className="mt-0.5 text-emerald-300" />
                   )}
-                  <span>{contractStatus}</span>
+                  <span>{contractLiveValidation || contractStatus}</span>
                 </div>
               )}
             </div>
@@ -1392,11 +1565,16 @@ export function Leads() {
               </button>
               <button
                 type="button"
-                disabled={isLeadActionBusy}
+                disabled={isLeadActionBusy || Boolean(contractLiveValidation)}
                 onClick={requestContractSend}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
-                <Send size={15} /> Send via DocuSign
+                {isLeadActionBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Send size={15} />
+                )}
+                Send via DocuSign
               </button>
             </div>
           </div>

@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Loader2, Phone, X, Zap } from 'lucide-react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  Phone,
+  X,
+  Zap,
+} from 'lucide-react';
 import { showUiToast } from '../utils/uiFeedback';
 import {
   fetchRuntimeState,
@@ -571,10 +581,34 @@ function ExamplePanel({ skill, agent }: { skill: AgentSkill; agent: FleetAgent }
   );
 }
 
+function FleetLoadingSkeleton() {
+  return (
+    <div className="fleet-loading-skeleton grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {[0, 1, 2, 3].map((item) => (
+        <div key={item} className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-slate-800" />
+            <div className="min-w-0 flex-1">
+              <div className="h-4 w-28 rounded-full bg-slate-800" />
+              <div className="mt-2 h-3 w-40 rounded-full bg-slate-800" />
+            </div>
+          </div>
+          <div className="mt-4 h-3 w-full rounded-full bg-slate-800" />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className="h-12 rounded-xl bg-slate-900" />
+            <div className="h-12 rounded-xl bg-slate-900" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---------- Main component ----------
 
 export function AgentFleet() {
   const [agents, setAgents] = useState<FleetAgent[]>(buildFleetAgents);
+  const [agentsLoading, setAgentsLoading] = useState(true);
   const [bridgeConnected, setBridgeConnected] = useState<boolean | null>(null);
   const [activeAgentId, setActiveAgentId] = useState('ava');
   const [selectedSkill, setSelectedSkill] = useState<AgentSkill | null>(null);
@@ -589,6 +623,7 @@ export function AgentFleet() {
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [callActionPending, setCallActionPending] = useState(false);
   const [transferStatus, setTransferStatus] = useState('');
   const [pendingTransferCount, setPendingTransferCount] = useState(0);
@@ -630,6 +665,7 @@ export function AgentFleet() {
 
   useEffect(() => {
     let cancelled = false;
+    setAgentsLoading(true);
     fetchRuntimeToolingStatus()
       .then((tooling) => {
         if (cancelled) return;
@@ -660,15 +696,21 @@ export function AgentFleet() {
         });
         setBridgeConnected(true);
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
           setBridgeConnected(false);
+          setPreviewError(
+            error instanceof Error ? error.message : 'Agent registry could not reach the bridge.'
+          );
           showUiToast({
             tone: 'warning',
             title: 'Bridge offline',
             desc: 'Agent Fleet showing cached registry data. Skill transfers will queue.',
           });
         }
+      })
+      .finally(() => {
+        if (!cancelled) setAgentsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -687,6 +729,7 @@ export function AgentFleet() {
 
   useEffect(() => {
     setDealPreview(null);
+    setPreviewError('');
   }, [activeAgentId, selectedLeadId]);
 
   const handlePreviewAgentDealContext = async () => {
@@ -699,6 +742,7 @@ export function AgentFleet() {
       return;
     }
     setPreviewLoading(true);
+    setPreviewError('');
     try {
       const result = await invokeRuntimeTool<AgentDealPreview>('previewAgentDealContext', {
         agentId: activeAgent.id,
@@ -713,14 +757,11 @@ export function AgentFleet() {
       setDealPreview(result);
     } catch (error) {
       console.warn('[PBK AgentFleet] deal context preview failed', error);
-      showUiToast({
-        tone: 'error',
-        title: 'Preview failed',
-        desc:
-          error instanceof Error
-            ? error.message
-            : 'Agent deal context preview could not reach the bridge.',
-      });
+      setPreviewError(
+        error instanceof Error
+          ? error.message
+          : 'Agent deal context preview could not reach the bridge.'
+      );
     } finally {
       setPreviewLoading(false);
     }
@@ -774,6 +815,7 @@ export function AgentFleet() {
         title: 'Call request failed',
         desc:
           error instanceof Error ? error.message : 'The bridge did not accept the call request.',
+        critical: true,
       });
     } finally {
       setCallActionPending(false);
@@ -887,306 +929,342 @@ export function AgentFleet() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
-        {/* Agent sidebar */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-3">
-          <div className="mb-2 px-2 text-[11px] uppercase tracking-[0.16em] text-slate-500">
-            Agents ({agents.length})
-          </div>
-          <div className="space-y-1.5">
-            {agents.map((agent) => {
-              const bridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, agent.id);
-              const localSnnActive =
-                (agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex);
-              return (
-                <button
-                  key={agent.id}
-                  type="button"
-                  onClick={() => setActiveAgentId(agent.id)}
-                  className={[
-                    'flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition',
-                    activeAgent.id === agent.id
-                      ? 'border-sky-500/40 bg-sky-500/10'
-                      : 'border-slate-800 bg-slate-900/70 hover:border-slate-700',
-                  ].join(' ')}
-                >
-                  <span className="agent-avatar shrink-0">{agent.initial}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="block text-sm font-semibold text-slate-100">
-                        {agent.name}
-                      </span>
-                      {localSnnActive || bridgeWorker?.ready ? (
-                        <Zap size={10} className="text-sky-400" aria-label="SNN active" />
-                      ) : null}
-                    </span>
-                    <span className="block truncate text-xs text-slate-500">{agent.role}</span>
-                    {bridgeWorker && (
-                      <span className="mt-1 block truncate text-[10px] uppercase tracking-wide text-sky-300/80">
-                        SNN {bridgeWorker.status || 'ready'}
-                      </span>
-                    )}
-                  </span>
-                  <span
+      {agentsLoading ? (
+        <FleetLoadingSkeleton />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+          {/* Agent sidebar */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-950 p-3">
+            <div className="mb-2 px-2 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              Agents ({agents.length})
+            </div>
+            <div className="space-y-1.5">
+              {agents.map((agent) => {
+                const bridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, agent.id);
+                const localSnnActive =
+                  (agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex);
+                return (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    onClick={() => setActiveAgentId(agent.id)}
                     className={[
-                      'rounded-full border px-2 py-0.5 text-[10px] uppercase',
-                      agent.status === 'active'
-                        ? 'border-emerald-700/50 text-emerald-400'
-                        : 'border-slate-700 text-slate-400',
+                      'flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition',
+                      activeAgent.id === agent.id
+                        ? 'border-sky-500/40 bg-sky-500/10'
+                        : 'border-slate-800 bg-slate-900/70 hover:border-slate-700',
                     ].join(' ')}
                   >
-                    {agent.status}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Detail panel */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-950">
-          <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-4 py-4">
-            <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                Detail panel
-              </div>
-              <h2 className="mt-1 text-2xl font-semibold text-slate-100">{activeAgent.name}</h2>
-              <p className="text-sm text-slate-400">{activeAgent.role}</p>
-              <p className="mt-1 text-xs text-slate-500 leading-relaxed">
-                {activeAgent.description}
-              </p>
+                    <span className="agent-avatar shrink-0">{agent.initial}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="block text-sm font-semibold text-slate-100">
+                          {agent.name}
+                        </span>
+                        {localSnnActive || bridgeWorker?.ready ? (
+                          <Zap size={10} className="text-sky-400" aria-label="SNN active" />
+                        ) : null}
+                      </span>
+                      <span className="block truncate text-xs text-slate-500">{agent.role}</span>
+                      {bridgeWorker && (
+                        <span className="mt-1 block truncate text-[10px] uppercase tracking-wide text-sky-300/80">
+                          SNN {bridgeWorker.status || 'ready'}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={[
+                        'rounded-full border px-2 py-0.5 text-[10px] uppercase',
+                        agent.status === 'active'
+                          ? 'border-emerald-700/50 text-emerald-400'
+                          : 'border-slate-700 text-slate-400',
+                      ].join(' ')}
+                    >
+                      {agent.status}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-2">
-              <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
-                Skills tab
-              </span>
-              <span className="text-[10px] text-slate-600">{activeAgent.version}</span>
-              {activeAgent.metadata.approvalGated && (
-                <span className="rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] text-amber-400">
-                  approval-gated
-                </span>
-              )}
-              {activeAgent.metadata.suggestOnly && (
-                <span className="rounded-full border border-sky-500/30 px-2 py-0.5 text-[10px] text-sky-400">
-                  suggest-only
-                </span>
-              )}
-            </div>
-          </div>
+          </section>
 
-          {/* Capabilities bar */}
-          <div className="flex flex-wrap gap-1.5 border-b border-slate-800 px-4 py-3">
-            {activeAgent.capabilities.map((cap) => (
-              <span
-                key={cap}
-                className="rounded-lg border border-slate-700/60 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400"
-              >
-                {cap.replace(/_/g, ' ')}
-              </span>
-            ))}
-          </div>
-
-          <div className="border-b border-slate-800 px-4 py-4">
-            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-              <div>
+          {/* Detail panel */}
+          <section className="rounded-2xl border border-slate-800 bg-slate-950">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-4 py-4">
+              <div className="min-w-0">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                  Deal context preview
+                  Detail panel
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
-                  Read-only preview of how {activeAgent.name} would handle a live lead. Provider
-                  writes stay blocked.
+                <h2 className="mt-1 text-2xl font-semibold text-slate-100">{activeAgent.name}</h2>
+                <p className="text-sm text-slate-400">{activeAgent.role}</p>
+                <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                  {activeAgent.description}
                 </p>
-                <select
-                  className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
-                  value={selectedLeadId}
-                  onChange={(event) => setSelectedLeadId(event.target.value)}
-                >
-                  {leadOptions.length ? (
-                    leadOptions.map((lead) => (
-                      <option key={getLeadOptionId(lead)} value={getLeadOptionId(lead)}>
-                        {getLeadOptionLabel(lead)}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">No bridge leads loaded yet</option>
-                  )}
-                </select>
               </div>
-              <div className="flex flex-wrap gap-2 lg:justify-end">
-                <button
-                  type="button"
-                  className="btn-secondary flex min-h-10 items-center justify-center gap-2"
-                  disabled={!selectedLead || callActionPending}
-                  onClick={handleCallSelectedLead}
-                >
-                  {callActionPending ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Phone size={14} />
-                  )}
-                  {callActionPending ? 'Calling...' : 'Call lead'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary flex min-h-10 items-center justify-center gap-2"
-                  disabled={!selectedLead || previewLoading}
-                  onClick={handlePreviewAgentDealContext}
-                >
-                  {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                  {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
-                </button>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
+                  Skills tab
+                </span>
+                <span className="text-[10px] text-slate-600">{activeAgent.version}</span>
+                {activeAgent.metadata.approvalGated && (
+                  <span className="rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] text-amber-400">
+                    approval-gated
+                  </span>
+                )}
+                {activeAgent.metadata.suggestOnly && (
+                  <span className="rounded-full border border-sky-500/30 px-2 py-0.5 text-[10px] text-sky-400">
+                    suggest-only
+                  </span>
+                )}
               </div>
             </div>
-            {dealPreview && (
-              <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-sky-300">
-                      {dealPreview.writeMode || 'read_only'} /{' '}
-                      {dealPreview.result || 'agent_deal_context_preview'}
-                    </div>
-                    <h3 className="mt-1 text-sm font-semibold text-slate-100">
-                      {formatAgentPreviewAction(dealPreview.recommendedAction)}
-                    </h3>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                      {dealPreview.summary}
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-200">
-                    {Math.round(Number(dealPreview.confidence || 0))}% confidence
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-2 md:grid-cols-3">
-                  <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">BANT</div>
-                    <div className="text-xs text-slate-300">
-                      {dealPreview.bant?.complete
-                        ? 'Complete'
-                        : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                      Analyzer
-                    </div>
-                    <div className="text-xs text-slate-300">
-                      {dealPreview.analyzer?.found
-                        ? `MAO ${dealPreview.analyzer.mao || '-'}`
-                        : 'Numbers not found'}
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-slate-950/70 px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-slate-500">Safety</div>
-                    <div className="text-xs text-slate-300">
-                      {dealPreview.requiredApprovals?.length
-                        ? `Approval: ${dealPreview.requiredApprovals.join(', ')}`
-                        : 'No provider write'}
-                    </div>
-                  </div>
-                </div>
-                {dealPreview.reasoning?.length ? (
-                  <ul className="mt-3 space-y-1 text-xs text-slate-500">
-                    {dealPreview.reasoning.slice(0, 5).map((reason) => (
-                      <li key={reason}>- {reason}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            )}
-          </div>
 
-          {/* Skills */}
-          <div className="p-4">
-            {activeAgent.skills.length === 0 ? (
-              <div className="py-8 text-center text-sm text-slate-500">
-                No skills recorded for {activeAgent.name} yet.
+            {/* Capabilities bar */}
+            <div className="flex flex-wrap gap-1.5 border-b border-slate-800 px-4 py-3">
+              {activeAgent.capabilities.map((cap) => (
+                <span
+                  key={cap}
+                  className="rounded-lg border border-slate-700/60 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-400"
+                >
+                  {cap.replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
+
+            <div className="border-b border-slate-800 px-4 py-4">
+              <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                    Deal context preview
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Read-only preview of how {activeAgent.name} would handle a live lead. Provider
+                    writes stay blocked.
+                  </p>
+                  <select
+                    className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
+                    value={selectedLeadId}
+                    onChange={(event) => setSelectedLeadId(event.target.value)}
+                  >
+                    {leadOptions.length ? (
+                      leadOptions.map((lead) => (
+                        <option key={getLeadOptionId(lead)} value={getLeadOptionId(lead)}>
+                          {getLeadOptionLabel(lead)}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">No bridge leads loaded yet</option>
+                    )}
+                  </select>
+                </div>
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <button
+                    type="button"
+                    className="btn-secondary flex min-h-10 items-center justify-center gap-2"
+                    disabled={!selectedLead || callActionPending}
+                    onClick={handleCallSelectedLead}
+                  >
+                    {callActionPending ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Phone size={14} />
+                    )}
+                    {callActionPending ? 'Calling...' : 'Call lead'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary flex min-h-10 items-center justify-center gap-2"
+                    disabled={!selectedLead || previewLoading}
+                    onClick={handlePreviewAgentDealContext}
+                  >
+                    {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {previewLoading ? 'Previewing...' : `Preview ${activeAgent.name}`}
+                  </button>
+                </div>
               </div>
-            ) : (
-              <>
-                <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                  Production-ready and evolving skills
-                </div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {activeAgent.skills.map((skill) => {
-                    const exKey = `${activeAgent.id}:${skill.name}`;
-                    const isExampleOpen = expandedExample === exKey;
-                    const isTestOpen = testingSkill === exKey;
-                    return (
-                      <div key={skill.name} className="fleet-skill-card">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <h3 className="flex items-center gap-2">
-                              {skill.name}
-                              {skill.transferHistory && skill.transferHistory.length > 0 && (
-                                <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300">
-                                  v{skill.transferHistory.length + 1}
-                                </span>
-                              )}
-                            </h3>
-                            <p>{skill.source}</p>
-                          </div>
-                          <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] text-slate-400">
-                            {skill.confidence}%
-                          </span>
-                        </div>
-                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-red-400 via-amber-300 to-lime-300"
-                            style={{ width: `${skill.confidence}%` }}
-                          />
-                        </div>
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                          <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
-                            Used <span className="font-semibold text-slate-100">{skill.usage}</span>
-                          </div>
-                          <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
-                            Success{' '}
-                            <span className="font-semibold text-lime-300">{skill.success}</span>
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="chip-btn skill-transfer-btn"
-                            onClick={() => setSelectedSkill(skill)}
-                          >
-                            Transfer
-                          </button>
-                          <button
-                            type="button"
-                            className="chip-btn"
-                            onClick={() => setTestingSkill(isTestOpen ? null : exKey)}
-                          >
-                            Test on lead
-                          </button>
-                          <button
-                            type="button"
-                            className="chip-btn flex items-center gap-1"
-                            onClick={() => setExpandedExample(isExampleOpen ? null : exKey)}
-                          >
-                            View example
-                            {isExampleOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-                          </button>
-                        </div>
-                        {isTestOpen && (
-                          <TestSkillPanel
-                            skill={skill}
-                            agentId={activeAgent.id}
-                            onClose={() => setTestingSkill(null)}
-                          />
-                        )}
-                        {isExampleOpen && !isTestOpen && (
-                          <ExamplePanel skill={skill} agent={activeAgent} />
-                        )}
+              {previewError && (
+                <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 gap-2">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-rose-300" />
+                    <div>
+                      <div className="font-semibold">Preview failed</div>
+                      <div className="mt-1 text-xs leading-relaxed text-rose-100/80">
+                        {previewError}
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full border border-rose-300/40 px-3 py-1.5 text-xs font-semibold text-rose-50 transition hover:bg-rose-300/10"
+                      onClick={() => void handlePreviewAgentDealContext()}
+                    >
+                      Retry preview
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                      onClick={() => setPreviewError('')}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
-              </>
-            )}
-          </div>
-        </section>
-      </div>
+              )}
+              {dealPreview && (
+                <div className="mt-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-sky-300">
+                        {dealPreview.writeMode || 'read_only'} /{' '}
+                        {dealPreview.result || 'agent_deal_context_preview'}
+                      </div>
+                      <h3 className="mt-1 text-sm font-semibold text-slate-100">
+                        {formatAgentPreviewAction(dealPreview.recommendedAction)}
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                        {dealPreview.summary}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-200">
+                      {Math.round(Number(dealPreview.confidence || 0))}% confidence
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-3">
+                    <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">BANT</div>
+                      <div className="text-xs text-slate-300">
+                        {dealPreview.bant?.complete
+                          ? 'Complete'
+                          : `Missing ${dealPreview.bant?.missing?.join(', ') || 'fields'}`}
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                        Analyzer
+                      </div>
+                      <div className="text-xs text-slate-300">
+                        {dealPreview.analyzer?.found
+                          ? `MAO ${dealPreview.analyzer.mao || '-'}`
+                          : 'Numbers not found'}
+                      </div>
+                    </div>
+                    <div className="rounded-xl bg-slate-950/70 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                        Safety
+                      </div>
+                      <div className="text-xs text-slate-300">
+                        {dealPreview.requiredApprovals?.length
+                          ? `Approval: ${dealPreview.requiredApprovals.join(', ')}`
+                          : 'No provider write'}
+                      </div>
+                    </div>
+                  </div>
+                  {dealPreview.reasoning?.length ? (
+                    <ul className="mt-3 space-y-1 text-xs text-slate-500">
+                      {dealPreview.reasoning.slice(0, 5).map((reason) => (
+                        <li key={reason}>- {reason}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            {/* Skills */}
+            <div className="p-4">
+              {activeAgent.skills.length === 0 ? (
+                <div className="py-8 text-center text-sm text-slate-500">
+                  No skills recorded for {activeAgent.name} yet.
+                </div>
+              ) : (
+                <>
+                  <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                    Production-ready and evolving skills
+                  </div>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {activeAgent.skills.map((skill) => {
+                      const exKey = `${activeAgent.id}:${skill.name}`;
+                      const isExampleOpen = expandedExample === exKey;
+                      const isTestOpen = testingSkill === exKey;
+                      return (
+                        <div key={skill.name} className="fleet-skill-card">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="flex items-center gap-2">
+                                {skill.name}
+                                {skill.transferHistory && skill.transferHistory.length > 0 && (
+                                  <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] text-sky-300">
+                                    v{skill.transferHistory.length + 1}
+                                  </span>
+                                )}
+                              </h3>
+                              <p>{skill.source}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] text-slate-400">
+                              {skill.confidence}%
+                            </span>
+                          </div>
+                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-red-400 via-amber-300 to-lime-300"
+                              style={{ width: `${skill.confidence}%` }}
+                            />
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
+                              Used{' '}
+                              <span className="font-semibold text-slate-100">{skill.usage}</span>
+                            </div>
+                            <div className="rounded-xl bg-slate-900 px-3 py-2 text-slate-400">
+                              Success{' '}
+                              <span className="font-semibold text-lime-300">{skill.success}</span>
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="chip-btn skill-transfer-btn"
+                              onClick={() => setSelectedSkill(skill)}
+                            >
+                              Transfer
+                            </button>
+                            <button
+                              type="button"
+                              className="chip-btn"
+                              onClick={() => setTestingSkill(isTestOpen ? null : exKey)}
+                            >
+                              Test on lead
+                            </button>
+                            <button
+                              type="button"
+                              className="chip-btn flex items-center gap-1"
+                              onClick={() => setExpandedExample(isExampleOpen ? null : exKey)}
+                            >
+                              View example
+                              {isExampleOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                            </button>
+                          </div>
+                          {isTestOpen && (
+                            <TestSkillPanel
+                              skill={skill}
+                              agentId={activeAgent.id}
+                              onClose={() => setTestingSkill(null)}
+                            />
+                          )}
+                          {isExampleOpen && !isTestOpen && (
+                            <ExamplePanel skill={skill} agent={activeAgent} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
 
       {selectedSkill && (
         <SkillTransferModal

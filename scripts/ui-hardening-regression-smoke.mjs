@@ -52,7 +52,7 @@ assert(
   'Netlify should rewrite / to the split shell entry point.'
 );
 assert(
-  /setTimeout\(\(\) => setActionStatus\(''\), 5000\)/.test(inboxRoute),
+  /setTimeout\(\(\) => setActionStatus\(null\), 5000\)/.test(inboxRoute),
   'Inbox actionStatus should auto-clear after 5 seconds.'
 );
 

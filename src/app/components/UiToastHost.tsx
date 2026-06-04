@@ -13,9 +13,11 @@ export function UiToastHost() {
       const detail = (event as CustomEvent<UiToastPayload>).detail;
       const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setToasts((current) => [{ ...detail, id }, ...current].slice(0, 4));
-      window.setTimeout(() => {
-        setToasts((current) => current.filter((toast) => toast.id !== id));
-      }, 4200);
+      if (!detail.critical) {
+        window.setTimeout(() => {
+          setToasts((current) => current.filter((toast) => toast.id !== id));
+        }, 6000);
+      }
     };
 
     window.addEventListener('pbk:ui-toast', onToast);
@@ -23,25 +25,46 @@ export function UiToastHost() {
   }, []);
 
   if (!toasts.length) return null;
+  const hasCriticalToast = toasts.some((toast) => toast.critical);
 
   return (
-    <div className="ui-toast-stack" aria-live="polite">
+    <div className="ui-toast-stack" aria-live={hasCriticalToast ? 'assertive' : 'polite'}>
       {toasts.map((toast) => (
-        <div key={toast.id} className={['ui-toast', `ui-toast-${toast.tone || 'info'}`].join(' ')}>
+        <div
+          key={toast.id}
+          className={[
+            'ui-toast',
+            `ui-toast-${toast.tone || 'info'}`,
+            toast.critical ? 'ui-toast-critical' : '',
+          ].join(' ')}
+        >
           <div className="ui-toast-title">{toast.title}</div>
           {toast.desc && <div className="ui-toast-desc">{toast.desc}</div>}
-          {toast.retryId && toast.actionLabel && (
-            <button
-              type="button"
-              className="ui-toast-action"
-              onClick={() => {
-                void runToastRetry(toast.retryId || '');
-                setToasts((current) => current.filter((item) => item.id !== toast.id));
-              }}
-            >
-              {toast.actionLabel}
-            </button>
-          )}
+          <div className="ui-toast-actions">
+            {toast.retryId && toast.actionLabel && (
+              <button
+                type="button"
+                className="ui-toast-action"
+                onClick={() => {
+                  void runToastRetry(toast.retryId || '');
+                  setToasts((current) => current.filter((item) => item.id !== toast.id));
+                }}
+              >
+                {toast.actionLabel}
+              </button>
+            )}
+            {toast.critical && (
+              <button
+                type="button"
+                className="ui-toast-action"
+                onClick={() =>
+                  setToasts((current) => current.filter((item) => item.id !== toast.id))
+                }
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
         </div>
       ))}
     </div>

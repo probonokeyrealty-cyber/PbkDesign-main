@@ -1,11 +1,39 @@
-import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Database, RefreshCw } from 'lucide-react';
+import { PbkDataSource } from '../../components/pbk/index';
 import { fetchSkillOutcomesRequest, fetchSkillTrendsRequest } from '../utils/runtimeBridge';
 import { buildMemoryAnalyticsViewModel } from './memoryAnalyticsRuntimeLogic.js';
 
 type MemoryViewModel = ReturnType<typeof buildMemoryAnalyticsViewModel>;
 type SkillMetric = MemoryViewModel['skills'][number];
 type ExperimentMetric = MemoryViewModel['experiments'][number];
+type MemoryStats = {
+  activeSkills: number;
+  totalUsage: number;
+  averageConfidence: number;
+  provenSkills: number;
+  evolvingSkills: number;
+};
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value || 0);
+}
+
+function buildMemoryStats(skills: SkillMetric[]): MemoryStats {
+  const totalUsage = skills.reduce((sum, skill) => sum + Number(skill.usage || 0), 0);
+  const averageConfidence = skills.length
+    ? Math.round(
+        skills.reduce((sum, skill) => sum + Number(skill.confidence || 0), 0) / skills.length
+      )
+    : 0;
+  return {
+    activeSkills: skills.length,
+    totalUsage,
+    averageConfidence,
+    provenSkills: skills.filter((skill) => Number(skill.confidence || 0) >= 85).length,
+    evolvingSkills: skills.filter((skill) => Number(skill.confidence || 0) < 85).length,
+  };
+}
 
 function trendTone(values: number[]) {
   const first = values[0] || 0;
@@ -26,7 +54,7 @@ function Sparkline({ values }: { values: number[] }) {
 
   return (
     <svg
-      className={['sparkline', trendTone(values)].join(' ')}
+      className={['pbk-memory-sparkline', trendTone(values)].join(' ')}
       width="60"
       height="20"
       viewBox="0 0 60 20"
@@ -44,23 +72,143 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
-function LiveExperimentCard({ experiment }: { experiment: ExperimentMetric }) {
+function MemorySourceRail() {
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="pbk-memory-source-rail" aria-label="Memory Analytics data sources">
+      <PbkDataSource endpoint="GET /api/skills/outcomes" status="ships" />
+      <PbkDataSource endpoint="GET /api/skills/trends" status="ships" />
+      <PbkDataSource
+        endpoint="GET /api/memory/events"
+        status="needs-wiring"
+        note="premium memory timeline and agent learning events"
+      />
+      <PbkDataSource
+        endpoint="GET /api/experiments/active"
+        status="needs-wiring"
+        note="canonical A/B experiment management beyond skill-outcome payloads"
+      />
+    </div>
+  );
+}
+
+function MemoryHero({
+  status,
+  model,
+  stats,
+  onRefresh,
+}: {
+  status: 'loading' | 'ready' | 'error';
+  model: MemoryViewModel;
+  stats: MemoryStats;
+  onRefresh: () => void;
+}) {
+  const sourceLabel = model.source || 'runtime';
+  return (
+    <section className="pbk-memory-hero">
+      <div className="pbk-memory-hero-top">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-            Active experiment
+          <div className="pbk-eyebrow">
+            Self-modifying memory - {stats.activeSkills} active skills - {sourceLabel}
           </div>
-          <h2 className="mt-1 text-lg font-semibold text-slate-100">{experiment.name}</h2>
-          <p className="text-xs text-slate-500">{experiment.status || 'Runtime experiment'}</p>
+          <h1 className="pbk-display pbk-h1">
+            Memory &amp; <em>analytics</em>.
+          </h1>
+          <p>
+            Every skill outcome and confidence trend across the PBK fleet. Rex learns from call
+            outcomes, promotes what works, and keeps weak skills visible without inventing a fake
+            training story.
+          </p>
         </div>
-        <span className="rounded-full bg-lime-500/10 px-3 py-1 text-xs font-semibold text-lime-300">
-          {experiment.confidence}% confidence
+        <button
+          type="button"
+          className="pbk-memory-refresh"
+          onClick={onRefresh}
+          disabled={status === 'loading'}
+        >
+          <RefreshCw size={15} className={status === 'loading' ? 'animate-spin' : ''} />
+          {status === 'loading' ? 'Refreshing' : 'Refresh memory'}
+        </button>
+      </div>
+      <MemoryStatRibbon stats={stats} generatedAt={model.generatedAt} />
+      <MemorySourceRail />
+    </section>
+  );
+}
+
+function MemoryStatRibbon({ stats, generatedAt }: { stats: MemoryStats; generatedAt: string }) {
+  const generatedLabel = generatedAt
+    ? new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(new Date(generatedAt))
+    : 'runtime';
+  return (
+    <div className="pbk-memory-grid">
+      <div className="pbk-memory-stat">
+        <div className="l">Active skills</div>
+        <div className="v sky">{formatNumber(stats.activeSkills)}</div>
+        <div className="delta">from skill outcomes</div>
+      </div>
+      <div className="pbk-memory-stat">
+        <div className="l">Recorded uses</div>
+        <div className="v">{formatNumber(stats.totalUsage)}</div>
+        <div className="delta">wins, losses, attempts</div>
+      </div>
+      <div className="pbk-memory-stat">
+        <div className="l">Avg confidence</div>
+        <div className="v lime">{stats.averageConfidence}%</div>
+        <div className="delta">{stats.provenSkills} proven skills</div>
+      </div>
+      <div className="pbk-memory-stat">
+        <div className="l">Last refresh</div>
+        <div className="v">{generatedLabel}</div>
+        <div className="delta">{stats.evolvingSkills} evolving</div>
+      </div>
+    </div>
+  );
+}
+
+function MemorySkillRow({ skill }: { skill: SkillMetric }) {
+  const confidence = Number(skill.confidence || 0);
+  const tone = confidence >= 85 ? 'lime' : confidence >= 60 ? 'amber' : '';
+  return (
+    <div className="pbk-memory-perf-row">
+      <div className="name">
+        {skill.name}
+        <span className="src">
+          {skill.agentName || skill.source || skill.status || 'PBK runtime'}
         </span>
       </div>
+      <div className="num">{formatNumber(Number(skill.usage || 0))}x</div>
+      <div
+        className={`num ${skill.successRate >= 60 ? 'good' : skill.successRate < 35 ? 'warn' : ''}`.trim()}
+      >
+        {skill.successRate}%
+      </div>
+      <div className="spark-wrap">
+        <Sparkline values={skill.trend} />
+      </div>
+      <div className="bar">
+        <div
+          className={`bar-fill ${tone}`.trim()}
+          style={{ width: `${Math.max(0, Math.min(100, confidence))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
+function MemoryExperimentCard({ experiment }: { experiment: ExperimentMetric }) {
+  return (
+    <section className="pbk-memory-ab-card">
+      <div className="ab-card-head">
+        <h4>Active A/B - {experiment.name}</h4>
+        <span className="lift">{experiment.confidence}% confidence</span>
+      </div>
+
+      <div className="ab-card-vs">
         {experiment.variants.map((variant: Record<string, unknown>, index: number) => {
           const name = String(variant.name || variant.id || `Variant ${index + 1}`);
           const attempts = Number(variant.attempts || variant.uses || 0);
@@ -68,20 +216,27 @@ function LiveExperimentCard({ experiment }: { experiment: ExperimentMetric }) {
           const rate = attempts
             ? Math.round((successes / attempts) * 100)
             : Number(variant.rate || 0);
+          const winner =
+            rate ===
+            Math.max(
+              ...experiment.variants.map((candidate: Record<string, unknown>) => {
+                const candidateAttempts = Number(candidate.attempts || candidate.uses || 0);
+                const candidateSuccesses = Number(candidate.successes || candidate.wins || 0);
+                return candidateAttempts
+                  ? Math.round((candidateSuccesses / candidateAttempts) * 100)
+                  : Number(candidate.rate || 0);
+              })
+            );
           return (
-            <div key={name} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-100">{name}</div>
-                  <div className="text-xs text-slate-500">
-                    {successes}/{attempts} successes
-                  </div>
-                </div>
-                <div className="text-2xl font-semibold text-slate-200">{rate}%</div>
+            <div key={name} className={`ab-variant ${winner ? 'winner' : ''}`.trim()}>
+              <div className="v-label">{winner ? `${name} (leader)` : name}</div>
+              <div className="v-val">
+                {successes} / {attempts}
               </div>
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
+              <div className="v-rate">{rate}% success rate</div>
+              <div className="ab-bar-track">
                 <div
-                  className="h-full rounded-full bg-sky-300"
+                  className={`ab-bar-fill ${winner ? 'winner' : ''}`.trim()}
                   style={{ width: `${Math.max(0, Math.min(100, rate))}%` }}
                 />
               </div>
@@ -89,6 +244,25 @@ function LiveExperimentCard({ experiment }: { experiment: ExperimentMetric }) {
           );
         })}
       </div>
+      <p className="ab-note">
+        {experiment.status || 'Experiment data came from the bridge outcome payload.'}
+      </p>
+    </section>
+  );
+}
+
+function MemoryExperimentEmpty() {
+  return (
+    <section className="pbk-memory-ab-card empty">
+      <div className="ab-card-head">
+        <h4>Active A/B experiments</h4>
+        <span className="lift muted">needs wiring</span>
+      </div>
+      <p className="ab-note">
+        The bridge did not return experiment rows. Canonical experiment management remains marked as
+        needs wiring instead of rendering sample variants.
+      </p>
+      <PbkDataSource endpoint="GET /api/experiments/active" status="needs-wiring" />
     </section>
   );
 }
@@ -99,6 +273,18 @@ export function MemoryAnalytics() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
   const [model, setModel] = useState<MemoryViewModel>(EMPTY_MEMORY);
+  const stats = useMemo(() => buildMemoryStats(model.skills), [model.skills]);
+  const topSkills = useMemo(
+    () =>
+      [...model.skills]
+        .sort(
+          (left, right) =>
+            Number(right.confidence || 0) - Number(left.confidence || 0) ||
+            Number(right.usage || 0) - Number(left.usage || 0)
+        )
+        .slice(0, 8),
+    [model.skills]
+  );
 
   const loadMemoryAnalytics = useCallback(async () => {
     setStatus('loading');
@@ -128,124 +314,108 @@ export function MemoryAnalytics() {
   }, [loadMemoryAnalytics]);
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100 sm:text-2xl">Memory & Analytics</h1>
-          <p className="text-sm text-slate-400">
-            Live skill outcomes, confidence, and trend history from the PBK bridge.
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {status === 'loading'
-              ? 'Loading skill outcomes...'
-              : `${model.skills.length} skills returned from ${model.source}`}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={loadMemoryAnalytics}
-          disabled={status === 'loading'}
-        >
-          <RefreshCw size={15} />
-          Retry
-        </button>
-      </div>
+    <div className="pbk-memory-surface min-h-full text-slate-100">
+      <main className="mx-auto flex w-full max-w-screen-2xl flex-col gap-4 px-4 py-5 pb-8">
+        <MemoryHero status={status} model={model} stats={stats} onRefresh={loadMemoryAnalytics} />
 
-      {status === 'error' && (
-        <section className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
-          <h2 className="text-sm font-semibold text-red-100">
-            Memory analytics bridge unavailable
-          </h2>
-          <p className="mt-1 text-sm text-red-200/80">{error}</p>
-        </section>
-      )}
+        {status === 'error' && (
+          <section className="rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
+            <h2 className="text-sm font-semibold text-red-100">
+              Memory analytics bridge unavailable
+            </h2>
+            <p className="mt-1 text-sm text-red-200/80">{error}</p>
+          </section>
+        )}
 
-      {model.warning && (
-        <section className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">
-          {model.warning}
-        </section>
-      )}
+        {model.warning && (
+          <section className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+            {model.warning}
+          </section>
+        )}
 
-      <section className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
-        <div className="border-b border-slate-800 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-100">Skill performance</h2>
-          <p className="text-xs text-slate-500">
-            Trend lines are built from recorded skill usage history.
-          </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[680px] text-left text-sm">
-            <thead className="bg-slate-900/80 text-[11px] uppercase tracking-[0.16em] text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">Skill</th>
-                <th className="px-4 py-3 font-semibold">Usage</th>
-                <th className="px-4 py-3 font-semibold">Success rate</th>
-                <th className="px-4 py-3 font-semibold">Confidence</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {model.skills.length ? (
-                model.skills.map((skill: SkillMetric) => (
-                  <tr key={skill.id || skill.name} className="perf-row hover:bg-slate-900/70">
-                    <td className="px-4 py-4 font-medium text-slate-100">
-                      <div>{skill.name}</div>
-                      <div className="mt-1 text-xs font-normal text-slate-500">
-                        {skill.agentName || skill.source || skill.status || 'PBK'}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 text-slate-400">{skill.usage}</td>
-                    <td className="px-4 py-4">
-                      <span className="inline-flex items-center gap-2 text-slate-200">
-                        {skill.successRate}%
-                        <Sparkline values={skill.trend} />
-                      </span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="h-2 w-40 overflow-hidden rounded-full bg-slate-800">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-red-400 via-amber-300 to-lime-300"
-                            style={{ width: `${skill.confidence}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-slate-400">{skill.confidence}%</span>
-                      </div>
-                    </td>
-                  </tr>
+        <section className="pbk-memory-body">
+          <div className="pbk-memory-card span-2">
+            <div className="mem-card-head">
+              <h3>Skill performance - top {topSkills.length || 0}</h3>
+              <span className="more">GET /api/skills/outcomes</span>
+            </div>
+            <div className="mem-card-body">
+              <div className="pbk-memory-perf-row head">
+                <div className="name">Skill</div>
+                <div className="num">Use</div>
+                <div className="num">Win</div>
+                <div className="spark-wrap">Trend</div>
+                <div className="num">Confidence</div>
+              </div>
+              {topSkills.length ? (
+                topSkills.map((skill: SkillMetric) => (
+                  <MemorySkillRow key={skill.id || skill.name} skill={skill} />
                 ))
               ) : (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">
-                    {status === 'loading'
-                      ? 'Loading skills...'
-                      : 'No skill outcome rows returned yet.'}
-                  </td>
-                </tr>
+                <div className="pbk-memory-empty">
+                  <Database size={18} />
+                  {status === 'loading'
+                    ? 'Loading skills from the bridge...'
+                    : 'No skill outcome rows returned yet.'}
+                </div>
               )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {model.experiments.length ? (
-        model.experiments.map((experiment: ExperimentMetric) => (
-          <LiveExperimentCard key={experiment.id || experiment.name} experiment={experiment} />
-        ))
-      ) : (
-        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-            Experiment data
+            </div>
           </div>
-          <h2 className="mt-1 text-lg font-semibold text-slate-100">
-            No active runtime experiments
-          </h2>
-          <p className="mt-1 text-sm text-slate-400">
-            When the bridge publishes live experiment results, this section will render those
-            variants and confidence values.
-          </p>
+
+          <div className="pbk-memory-card">
+            <div className="mem-card-head">
+              <h3>Learning lanes</h3>
+              <span className="more">derived</span>
+            </div>
+            <div className="mem-card-body">
+              <div className="pbk-memory-lane">
+                <span>Proven</span>
+                <strong>{stats.provenSkills}</strong>
+              </div>
+              <div className="pbk-memory-lane">
+                <span>Evolving</span>
+                <strong>{stats.evolvingSkills}</strong>
+              </div>
+              <div className="pbk-memory-lane">
+                <span>Usage events</span>
+                <strong>{formatNumber(stats.totalUsage)}</strong>
+              </div>
+              <PbkDataSource
+                endpoint="GET /api/memory/events"
+                status="needs-wiring"
+                note="timeline requires canonical event feed"
+              />
+            </div>
+          </div>
+
+          <div className="pbk-memory-card">
+            <div className="mem-card-head">
+              <h3>Trend source</h3>
+              <span className="more">30 days</span>
+            </div>
+            <div className="mem-card-body">
+              <p className="pbk-memory-note">
+                Trend lines are built from recorded skill usage history. Missing trend rows fall
+                back to the latest success rate, not sample sparkline data.
+              </p>
+              <PbkDataSource endpoint="GET /api/skills/trends" status="ships" />
+            </div>
+          </div>
+
+          <div className="span-2">
+            {model.experiments.length ? (
+              model.experiments.map((experiment: ExperimentMetric) => (
+                <MemoryExperimentCard
+                  key={experiment.id || experiment.name}
+                  experiment={experiment}
+                />
+              ))
+            ) : (
+              <MemoryExperimentEmpty />
+            )}
+          </div>
         </section>
-      )}
+      </main>
     </div>
   );
 }

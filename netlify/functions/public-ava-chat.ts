@@ -56,7 +56,7 @@ function getAllowedOrigins() {
   const configured = String(getEnv('PBK_ALLOWED_ORIGINS') || getEnv('PBK_CORS_ALLOWED_ORIGINS') || '')
     .split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean);
+    .filter((origin) => Boolean(origin) && origin !== '*');
   return new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]);
 }
 
@@ -69,8 +69,8 @@ function buildCorsHeaders(request: Request) {
   };
   const origin = request.headers.get('origin') || '';
   const allowedOrigins = getAllowedOrigins();
-  if (origin && (allowedOrigins.has(origin) || allowedOrigins.has('*'))) {
-    headers['Access-Control-Allow-Origin'] = allowedOrigins.has('*') ? '*' : origin;
+  if (origin && allowedOrigins.has(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
   }
   return headers;
 }
@@ -233,7 +233,6 @@ export default async (request: Request, context: Context) => {
         ok: false,
         error: 'chat_not_configured',
         message: 'Chat not configured. Contact administrator.',
-        requiredEnv: publicKey.name,
         requestId,
       },
       503,
@@ -253,7 +252,6 @@ export default async (request: Request, context: Context) => {
         ok: false,
         error: 'bridge_not_configured',
         message: 'Chat not configured. Contact administrator.',
-        requiredEnv: bridge.name,
         requestId,
       },
       503,

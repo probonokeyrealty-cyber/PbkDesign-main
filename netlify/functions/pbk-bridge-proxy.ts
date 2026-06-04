@@ -89,7 +89,12 @@ function normalizeProxyPath(eventPath = '', requestedPath = '') {
   const raw = String(requestedPath || '').trim()
     || String(eventPath || '').replace(/^\/\.netlify\/functions\/pbk-bridge-proxy\/?/, '');
   const path = `/${raw.replace(/^\/+/, '')}`;
-  return path === '/' ? '/health' : path;
+  const resolved = path === '/' ? '/health' : path;
+  // Block path traversal — segments must not resolve above root
+  if (resolved.includes('..')) {
+    return '/health';
+  }
+  return resolved;
 }
 
 function appendQueryParams(url: URL, event: Parameters<Handler>[0]) {

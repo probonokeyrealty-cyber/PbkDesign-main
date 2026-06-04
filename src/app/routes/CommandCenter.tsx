@@ -117,6 +117,15 @@ type AdminDecisionDraft = {
   summary: string;
 };
 
+type ApprovalDecisionDraft = {
+  approvalId: string;
+  status: 'approved' | 'rejected' | 'needs-revision';
+  type: string;
+  leadName: string;
+  address: string;
+  actionLabel: string;
+};
+
 export function CommandCenter() {
   const navigate = useNavigate();
   const { snapshot, tooling, loading, error, refresh } = useRuntimeSnapshot();
@@ -125,6 +134,9 @@ export function CommandCenter() {
   const [webSearchProbeFailed, setWebSearchProbeFailed] = useState(false);
   const [webSearchProbeError, setWebSearchProbeError] = useState('');
   const [adminDecisionDraft, setAdminDecisionDraft] = useState<AdminDecisionDraft | null>(null);
+  const [approvalDecisionDraft, setApprovalDecisionDraft] = useState<ApprovalDecisionDraft | null>(
+    null
+  );
   const announcedCallRef = useRef('');
 
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
@@ -320,6 +332,42 @@ export function CommandCenter() {
     );
   };
 
+  const confirmApprovalDecision = (
+    approval: Record<string, unknown>,
+    status: ApprovalDecisionDraft['status']
+  ) => {
+    const approvalId = String(approval.id || '');
+    if (!approvalId) return;
+    const type = String(approval.type || 'approval');
+    const actionLabel =
+      status === 'approved'
+        ? 'approve'
+        : status === 'needs-revision'
+          ? 'request revisions for'
+          : 'decline';
+    setApprovalDecisionDraft({
+      approvalId,
+      status,
+      type,
+      leadName: String(approval.leadName || approval.address || 'PBK approval'),
+      address: String(approval.address || 'No address recorded'),
+      actionLabel,
+    });
+  };
+
+  const executeApprovalDecision = () => {
+    if (!approvalDecisionDraft) return;
+    const draft = approvalDecisionDraft;
+    setApprovalDecisionDraft(null);
+    void runRuntimeAction(
+      `approval:${draft.approvalId}:${draft.status}`,
+      draft.status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.',
+      async () => {
+        await updateApprovalDecision(draft.approvalId, draft.status);
+      }
+    );
+  };
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -345,7 +393,12 @@ export function CommandCenter() {
       </div>
 
       {actionStatus && (
-        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100"
+        >
           {actionStatus}
         </div>
       )}
@@ -587,6 +640,7 @@ export function CommandCenter() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0 text-xs font-medium text-slate-200">{item.label}</div>
                       <span
+                        aria-label={`${item.label} status: ${ready ? 'Ready' : 'Needs setup'}`}
                         className={[
                           'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]',
                           ready
@@ -687,17 +741,7 @@ export function CommandCenter() {
                         type="button"
                         data-approval-primary="true"
                         disabled={pendingAction === `approval:${String(approval.id)}:approved`}
-                        onClick={() => {
-                          const approvalId = String(approval.id || '');
-                          if (!approvalId) return;
-                          void runRuntimeAction(
-                            `approval:${approvalId}:approved`,
-                            'Approved. Ava can continue.',
-                            async () => {
-                              await updateApprovalDecision(approvalId, 'approved');
-                            }
-                          );
-                        }}
+                        onClick={() => confirmApprovalDecision(approval, 'approved')}
                         className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
                       >
                         {pendingAction === `approval:${String(approval.id)}:approved`
@@ -709,19 +753,11 @@ export function CommandCenter() {
                         data-approval-secondary="true"
                         disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
                         onClick={() => {
-                          const approvalId = String(approval.id || '');
-                          if (!approvalId) return;
                           const rejectionStatus =
                             String(approval.type || '').toLowerCase() === 'contract'
                               ? 'needs-revision'
                               : 'rejected';
-                          void runRuntimeAction(
-                            `approval:${approvalId}:rejected`,
-                            'Decision sent to Ava.',
-                            async () => {
-                              await updateApprovalDecision(approvalId, rejectionStatus);
-                            }
-                          );
+                          confirmApprovalDecision(approval, rejectionStatus);
                         }}
                         className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                       >
@@ -788,6 +824,52 @@ export function CommandCenter() {
                 {adminDecisionDraft.status === 'approved'
                   ? 'Approve admin task'
                   : 'Decline admin task'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {approvalDecisionDraft && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="approval-decision-title"
+            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Approval safety check
+            </div>
+            <h3 id="approval-decision-title" className="mt-2 text-lg font-semibold text-slate-100">
+              Confirm approval decision
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              This will {approvalDecisionDraft.actionLabel}{' '}
+              <span className="font-semibold text-slate-200">{approvalDecisionDraft.type}</span> for{' '}
+              {approvalDecisionDraft.leadName}.
+            </p>
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+              {approvalDecisionDraft.address}
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setApprovalDecisionDraft(null)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  pendingAction ===
+                  `approval:${approvalDecisionDraft.approvalId}:${approvalDecisionDraft.status}`
+                }
+                onClick={executeApprovalDecision}
+                className="rounded-full bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                Confirm decision
               </button>
             </div>
           </div>

@@ -104,6 +104,7 @@
     "test:command-leads-ux": "node ./scripts/command-leads-ux-smoke.mjs",
     "test:agent-settings-shell-ux": "node ./scripts/agent-settings-shell-ux-smoke.mjs",
     "test:shell-callmode-callfloor": "node ./scripts/shell-callmode-callfloor-smoke.mjs",
+    "test:ui-accessibility-confirmation": "node ./scripts/ui-accessibility-confirmation-smoke.mjs",
     "test:local-callback": "node ./scripts/local-callback-server-smoke.mjs",
     "test:safety-validator": "node ./scripts/safety-validator-smoke.mjs",
     "test:ava-eval-suite": "node ./scripts/ava-eval-suite-smoke.mjs",

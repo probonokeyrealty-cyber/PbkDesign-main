@@ -19,6 +19,8 @@ type ScheduledCall = {
   notifiedAt?: string;
 };
 
+type CancelScheduledCallDraft = ScheduledCall;
+
 const SCHEDULED_CALLS_KEY = 'pbk:scheduled-calls:v1';
 
 function text(value: unknown, fallback = '') {
@@ -162,6 +164,8 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
   const [callbackTime, setCallbackTime] = useState('');
   const [scheduledCalls, setScheduledCalls] = useState(() => readScheduledCalls());
   const [scheduleActionPending, setScheduleActionPending] = useState('');
+  const [cancelScheduledCallDraft, setCancelScheduledCallDraft] =
+    useState<CancelScheduledCallDraft | null>(null);
   const [alertsEnabled, setAlertsEnabled] = useState(
     typeof Notification !== 'undefined' && Notification.permission === 'granted'
   );
@@ -452,6 +456,10 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
           return (
             <div
               key={leadId}
+              aria-label={`Select ${getLeadName(lead)} at ${getLeadAddress(lead)}. ${
+                phone || 'No phone'
+              }.`}
+              aria-selected={selectedLeadId === leadId}
               className={[
                 'outbound-lead-result',
                 selectedLeadId === leadId ? 'is-selected' : '',
@@ -462,6 +470,13 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
               }}
               role="button"
               tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setSelectedLeadId(leadId);
+                  onSelectLead?.(lead);
+                }
+              }}
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -576,7 +591,7 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
                 type="button"
                 aria-label={`Cancel ${item.leadName}`}
                 disabled={scheduleActionPending === `cancel:${item.id}`}
-                onClick={() => void cancelScheduledCall(item.id)}
+                onClick={() => setCancelScheduledCallDraft(item)}
               >
                 <X size={14} />
                 {scheduleActionPending === `cancel:${item.id}` ? 'Canceling...' : 'Cancel'}
@@ -591,6 +606,58 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
           )}
         </div>
       </div>
+
+      {cancelScheduledCallDraft && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="cancel-scheduled-call-title"
+            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_24px_80px_rgba(2,6,23,0.55)]"
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
+              Schedule change
+            </div>
+            <h3
+              id="cancel-scheduled-call-title"
+              className="mt-2 text-lg font-semibold text-slate-100"
+            >
+              Cancel this callback?
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              This removes the callback for{' '}
+              <span className="font-semibold text-slate-200">
+                {cancelScheduledCallDraft.leadName}
+              </span>{' '}
+              from the bridge appointment queue.
+            </p>
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+              {new Date(cancelScheduledCallDraft.scheduledAt).toLocaleString()} -{' '}
+              {cancelScheduledCallDraft.phone || cancelScheduledCallDraft.address}
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setCancelScheduledCallDraft(null)}
+              >
+                Keep scheduled
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  const id = cancelScheduledCallDraft.id;
+                  setCancelScheduledCallDraft(null);
+                  void cancelScheduledCall(id);
+                }}
+              >
+                Cancel callback
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

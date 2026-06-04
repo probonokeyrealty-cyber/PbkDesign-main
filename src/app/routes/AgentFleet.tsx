@@ -304,11 +304,17 @@ function SkillTransferModal({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [versioned, setVersioned] = useState(true);
   const [transferring, setTransferring] = useState(false);
+  const [confirmingTransfer, setConfirmingTransfer] = useState(false);
+  const selectedTargets = useMemo(
+    () => agents.filter((agent) => selectedIds.includes(agent.id)),
+    [agents, selectedIds]
+  );
 
   const toggle = (id: string) =>
     setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
-  const handleTransfer = async () => {
+  const executeTransfer = async () => {
+    setConfirmingTransfer(false);
     setTransferring(true);
     await onTransfer(selectedIds, versioned);
     setTransferring(false);
@@ -317,7 +323,7 @@ function SkillTransferModal({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
-        className="modal skill-transfer-modal"
+        className="modal skill-transfer-modal relative"
         role="dialog"
         aria-modal="true"
         aria-label="Transfer skill"
@@ -410,12 +416,52 @@ function SkillTransferModal({
                     ? 'Transfer in progress…'
                     : undefined
               }
-              onClick={handleTransfer}
+              onClick={() => setConfirmingTransfer(true)}
             >
               {transferring ? 'Transferring…' : 'Transfer skill'}
             </button>
           </div>
         </div>
+
+        {confirmingTransfer && (
+          <div className="absolute inset-0 z-10 grid place-items-center rounded-[inherit] bg-slate-950/85 p-4 backdrop-blur-sm">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="skill-transfer-confirm-title"
+              className="w-full max-w-sm rounded-2xl border border-sky-500/20 bg-slate-950 p-4 shadow-2xl"
+            >
+              <div className="text-[11px] uppercase tracking-[0.16em] text-sky-300">
+                Transfer safety check
+              </div>
+              <h4
+                id="skill-transfer-confirm-title"
+                className="mt-2 text-base font-semibold text-slate-100"
+              >
+                Transfer this skill?
+              </h4>
+              <p className="mt-2 text-sm text-slate-400">
+                {skill.name} will be copied to{' '}
+                <span className="font-semibold text-slate-200">
+                  {selectedTargets.map((agent) => agent.name).join(', ')}
+                </span>
+                {versioned ? ' as a versioned transfer.' : '.'}
+              </p>
+              <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setConfirmingTransfer(false)}
+                >
+                  Cancel
+                </button>
+                <button type="button" className="btn-primary" onClick={executeTransfer}>
+                  Confirm transfer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -43,6 +43,13 @@ type ComposeDraft = {
   sendAt: string;
 };
 
+type ApprovalDecisionDraft = {
+  approval: Record<string, unknown>;
+  status: string;
+  actionLabel: string;
+  warning: string;
+};
+
 const EMPTY_DRAFT: ComposeDraft = {
   channel: 'sms',
   recipient: '',
@@ -569,6 +576,77 @@ function ContractApprovalConfirm({
   );
 }
 
+function ApprovalDecisionConfirm({
+  draft,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  draft: ApprovalDecisionDraft | null;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!draft) return null;
+  const approval = draft.approval;
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+      <div
+        className="modal max-w-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="inbox-approval-decision-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head">
+          <div>
+            <div className="modal-kicker">Approval confirmation</div>
+            <h3 id="inbox-approval-decision-title">Confirm decision</h3>
+            <p>{draft.warning}</p>
+          </div>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={onCancel}
+            aria-label="Close approval confirmation"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="space-y-3 text-sm">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
+            <div className="text-xs uppercase tracking-[0.14em] text-slate-500">
+              {String(approval.type || 'approval')}
+            </div>
+            <div className="mt-1 font-semibold text-slate-100">
+              {String(approval.leadName || 'Pending lead')}
+            </div>
+            <div className="text-xs text-slate-400">
+              {String(approval.address || 'No address recorded')}
+            </div>
+          </div>
+          <div className="max-h-48 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3 text-xs leading-relaxed text-slate-300">
+            {getApprovalPreview(approval)}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <span className="text-xs text-slate-500">
+            The bridge receives this decision immediately.
+          </span>
+          <div className="flex gap-2">
+            <button type="button" className="btn-secondary" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="button" className="btn-primary" disabled={pending} onClick={onConfirm}>
+              {pending ? 'Sending...' : draft.actionLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Inbox() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
@@ -576,6 +654,9 @@ export function Inbox() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [replyDraft, setReplyDraft] = useState<ComposeDraft | null>(null);
   const [confirmApproval, setConfirmApproval] = useState<Record<string, unknown> | null>(null);
+  const [approvalDecisionDraft, setApprovalDecisionDraft] = useState<ApprovalDecisionDraft | null>(
+    null
+  );
   const [messageLimit, setMessageLimit] = useState(MESSAGE_PAGE_SIZE);
   const [liveMessages, setLiveMessages] = useState<Array<Record<string, unknown>>>([]);
   const [messageTotal, setMessageTotal] = useState(0);
@@ -673,6 +754,34 @@ export function Inbox() {
     } finally {
       setPendingAction('');
     }
+  };
+
+  const openApprovalDecisionConfirm = (approval: Record<string, unknown>, status: string) => {
+    const contract = isContractApproval(approval);
+    if (contract && status === 'approved') {
+      setConfirmApproval(approval);
+      return;
+    }
+    const actionLabel =
+      status === 'approved'
+        ? 'Approve'
+        : status === 'needs-revision'
+          ? 'Request revision'
+          : 'Decline';
+    const warning =
+      status === 'approved'
+        ? 'Approving lets Ava continue with this queued action.'
+        : status === 'needs-revision'
+          ? 'This asks Ava to revise the contract before sending.'
+          : 'Declining stops this queued action from being sent.';
+    setApprovalDecisionDraft({ approval, status, actionLabel, warning });
+  };
+
+  const executeApprovalDecision = () => {
+    if (!approvalDecisionDraft) return;
+    const draft = approvalDecisionDraft;
+    setApprovalDecisionDraft(null);
+    void decideApproval(draft.approval, draft.status);
   };
 
   const openReply = (message: Record<string, unknown>) => {
@@ -776,11 +885,7 @@ export function Inbox() {
                       data-approval-primary={index === 0 ? 'true' : undefined}
                       disabled={pendingAction === `approval:${approvalId}:approved`}
                       onClick={() => {
-                        if (contract) {
-                          setConfirmApproval(approval);
-                          return;
-                        }
-                        void decideApproval(approval, 'approved');
+                        openApprovalDecisionConfirm(approval, 'approved');
                       }}
                       className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
                     >
@@ -792,7 +897,7 @@ export function Inbox() {
                       disabled={pendingAction === `approval:${approvalId}:rejected`}
                       onClick={() => {
                         const status = contract ? 'needs-revision' : 'rejected';
-                        void decideApproval(approval, status);
+                        openApprovalDecisionConfirm(approval, status);
                       }}
                       className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                     >
@@ -939,6 +1044,16 @@ export function Inbox() {
           if (!confirmApproval) return;
           void decideApproval(confirmApproval, 'approved').then(() => setConfirmApproval(null));
         }}
+      />
+      <ApprovalDecisionConfirm
+        draft={approvalDecisionDraft}
+        pending={Boolean(
+          approvalDecisionDraft &&
+          pendingAction ===
+            `approval:${String(approvalDecisionDraft.approval.id || '')}:${approvalDecisionDraft.status}`
+        )}
+        onCancel={() => setApprovalDecisionDraft(null)}
+        onConfirm={executeApprovalDecision}
       />
     </div>
   );

@@ -55,6 +55,14 @@ type ContractFormState = {
   notes: string;
 };
 
+type LeadCallConfirmDraft = {
+  lead: BridgeRecord;
+  leadId: string;
+  sellerName: string;
+  phone: string;
+  address: string;
+};
+
 const PATH_LABELS: Record<CanonicalPath, string> = {
   cash: 'Cash Offer',
   rbp: 'Retail Buyer Program',
@@ -332,6 +340,9 @@ export function Leads() {
   const [editOpen, setEditOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
   const [contractConfirmOpen, setContractConfirmOpen] = useState(false);
+  const [leadCallConfirmDraft, setLeadCallConfirmDraft] = useState<LeadCallConfirmDraft | null>(
+    null
+  );
   const [editForm, setEditForm] = useState<LeadFormState | null>(null);
   const [contractForm, setContractForm] = useState<ContractFormState | null>(null);
   const [saving, setSaving] = useState(false);
@@ -517,12 +528,25 @@ export function Leads() {
     }
   };
 
-  const startLeadCall = async (lead: BridgeRecord) => {
+  const startLeadCall = (lead: BridgeRecord) => {
     const validation = validateLeadForCall(lead);
     if (validation) {
       showUiToast({ tone: 'error', title: 'Call blocked', desc: validation });
       return;
     }
+    setLeadCallConfirmDraft({
+      lead,
+      leadId: getLeadId(lead),
+      sellerName: getSellerName(lead),
+      phone: getLeadPhone(lead),
+      address: getLeadAddress(lead),
+    });
+  };
+
+  const executeLeadCall = async () => {
+    if (!leadCallConfirmDraft) return;
+    const { lead } = leadCallConfirmDraft;
+    setLeadCallConfirmDraft(null);
     const leadId = getLeadId(lead);
     if (!beginLeadAction(`call:${leadId}`)) return;
     try {
@@ -684,11 +708,15 @@ export function Leads() {
               const score = getLeadScore(lead);
               const path = normalizePath(lead.selected_path || lead.selectedPath, lead);
               const sellerName = getSellerName(lead);
+              const isSelected = id === activeLeadId;
               return (
                 <div
                   key={id}
                   role="button"
                   tabIndex={0}
+                  aria-label={`Open lead ${sellerName} at ${getLeadAddress(lead)}`}
+                  aria-selected={isSelected}
+                  aria-pressed={isSelected}
                   className="lead-mobile-card"
                   onClick={() => setSelectedLeadId(id)}
                   onKeyDown={(event) => {
@@ -737,6 +765,7 @@ export function Leads() {
                     </span>
                     <button
                       type="button"
+                      aria-label={`Call ${sellerName}`}
                       disabled={isLeadActionBusy || !isCallablePhone(getLeadPhone(lead))}
                       className="rounded-full bg-sky-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={(event) => {
@@ -761,6 +790,8 @@ export function Leads() {
                 <button
                   key={id}
                   type="button"
+                  aria-label={`Open lead ${getSellerName(lead)} at ${getLeadAddress(lead)}`}
+                  aria-selected={isSelected}
                   onClick={() => setSelectedLeadId(id)}
                   className={[
                     'grid w-full grid-cols-1 gap-2 px-4 py-4 text-left transition md:grid-cols-[1fr_auto]',
@@ -1366,6 +1397,51 @@ export function Leads() {
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >
                 <Send size={15} /> Send via DocuSign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {leadCallConfirmDraft && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 p-4 backdrop-blur-sm">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="lead-call-confirm-title"
+            className={`${softPanelClass} w-full max-w-md p-5`}
+          >
+            <div className="text-[11px] uppercase tracking-[0.16em] text-sky-300">
+              Call confirmation
+            </div>
+            <h3 id="lead-call-confirm-title" className="mt-2 text-lg font-semibold text-slate-100">
+              Place this call?
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              PBK will ask the bridge to dial this seller through the Telnyx call lane.
+            </p>
+            <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-300">
+              <div className="font-semibold text-slate-100">{leadCallConfirmDraft.sellerName}</div>
+              <div className="mt-1">{leadCallConfirmDraft.address}</div>
+              <div className="mt-2 text-xs text-slate-400">{leadCallConfirmDraft.phone}</div>
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setLeadCallConfirmDraft(null)}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isLeadActionBusy}
+                onClick={() => {
+                  void executeLeadCall();
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+              >
+                <Phone size={15} /> Confirm and Call
               </button>
             </div>
           </div>

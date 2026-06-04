@@ -30,6 +30,7 @@ import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent
 import { listTeamWorkflowTemplates, runAgentTeamWorkflow } from './agent-teams.mjs';
 import { runAutoSkillLearner as runAutoSkillLearnerCore } from './auto-skill-learner.mjs';
 import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
+import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -6526,6 +6527,7 @@ async function ensurePgSchema() {
       score NUMERIC NOT NULL DEFAULT 0,
       grade TEXT NOT NULL DEFAULT '',
       failure_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      transcript TEXT NOT NULL DEFAULT '',
       strengths JSONB NOT NULL DEFAULT '[]'::jsonb,
       prosody_suggestions JSONB NOT NULL DEFAULT '{}'::jsonb,
       script_suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -6545,6 +6547,7 @@ async function ensurePgSchema() {
       ADD COLUMN IF NOT EXISTS score NUMERIC NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS grade TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS failure_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS transcript TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS strengths JSONB NOT NULL DEFAULT '[]'::jsonb,
       ADD COLUMN IF NOT EXISTS prosody_suggestions JSONB NOT NULL DEFAULT '{}'::jsonb,
       ADD COLUMN IF NOT EXISTS script_suggestions JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -17157,14 +17160,15 @@ async function persistCallAnalysisToPg(record = {}) {
   const result = await queryPgRows(
     `INSERT INTO public.pbk_call_analyses (
        id, tenant_id, call_id, lead_id, agent_id, score, grade, failure_tags,
-       strengths, prosody_suggestions, script_suggestions, tool_suggestions,
+       transcript, strengths, prosody_suggestions, script_suggestions, tool_suggestions,
        evidence, status, metadata, created_at, updated_at
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15::jsonb,$16,$17)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15,$16::jsonb,$17,$18)
      ON CONFLICT (id) DO UPDATE SET
        score = EXCLUDED.score,
        grade = EXCLUDED.grade,
        failure_tags = EXCLUDED.failure_tags,
+       transcript = EXCLUDED.transcript,
        strengths = EXCLUDED.strengths,
        prosody_suggestions = EXCLUDED.prosody_suggestions,
        script_suggestions = EXCLUDED.script_suggestions,
@@ -17173,7 +17177,7 @@ async function persistCallAnalysisToPg(record = {}) {
        status = EXCLUDED.status,
        metadata = EXCLUDED.metadata,
        updated_at = EXCLUDED.updated_at`,
-    [record.id, record.tenantId, record.callId || '', record.leadId || '', record.agentId || 'ava', Number(record.score || 0), record.grade || '', JSON.stringify(record.failureTags || []), JSON.stringify(record.strengths || []), JSON.stringify(record.prosodySuggestions || {}), JSON.stringify(record.scriptSuggestions || []), JSON.stringify(record.toolSuggestions || []), JSON.stringify(record.evidence || []), record.status || 'analyzed', JSON.stringify(record.metadata || {}), record.createdAt || isoNow(), record.updatedAt || isoNow()]
+    [record.id, record.tenantId, record.callId || '', record.leadId || '', record.agentId || 'ava', Number(record.score || 0), record.grade || '', JSON.stringify(record.failureTags || []), String(record.transcript || '').slice(0, 240000), JSON.stringify(record.strengths || []), JSON.stringify(record.prosodySuggestions || {}), JSON.stringify(record.scriptSuggestions || []), JSON.stringify(record.toolSuggestions || []), JSON.stringify(record.evidence || []), record.status || 'analyzed', JSON.stringify(record.metadata || {}), record.createdAt || isoNow(), record.updatedAt || isoNow()]
   );
   return result.ok;
 }
@@ -17339,6 +17343,7 @@ function buildCallFailureAnalysis(call = {}, params = {}) {
     score,
     grade: score >= 85 ? 'A' : score >= 72 ? 'B' : score >= 60 ? 'C' : 'needs_coaching',
     failureTags: [...failureTags].filter(Boolean).slice(0, 12),
+    transcript: joined.slice(0, 240000),
     strengths: score >= 72 ? ['Ava kept enough structure to continue the seller path.'] : [],
     prosodySuggestions,
     scriptSuggestions: [...new Set(scriptSuggestions.length ? scriptSuggestions : qa.nextActions || [])].slice(0, 8),
@@ -52084,6 +52089,16 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const result = await recordContextAwareScriptOutcomeRecord(body);
       json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/emotion/training/status', '/api/v1/emotion/training/status'])) {
+      const result = await getEmotionTrainingStatus(getPgPool(), {
+        tenantId: url.searchParams.get('tenantId') || url.searchParams.get('tenant_id') || 'pbk',
+        minCalls: url.searchParams.get('minCalls') || url.searchParams.get('min_calls') || EMOTION_WORLD_MODEL_RETRAIN_MIN_SAMPLES,
+        lookbackDays: url.searchParams.get('lookbackDays') || url.searchParams.get('lookback_days') || 7,
+      });
+      json(response, result.ok ? 200 : 503, result);
       return;
     }
 

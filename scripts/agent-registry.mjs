@@ -12,6 +12,20 @@ const REQUIRED_AGENT_IDS = [
 ];
 const LOCAL_BRIDGE_INVOKE_ENDPOINT = '/invoke';
 const ROUTABLE_AGENT_STATUSES = new Set(['active', 'standby']);
+const DEFAULT_REMOTE_TIMEOUT_MS = 30000;
+const EXTERNAL_AGENT_ENV_ALIASES = {
+  ava: ['PBK_EXTERNAL_AGENT_AVA'],
+  max: ['PBK_EXTERNAL_AGENT_MAX'],
+  rex: ['PBK_EXTERNAL_AGENT_REX'],
+  hermes: ['PBK_EXTERNAL_AGENT_HERMES'],
+  'call-analyzer': ['PBK_EXTERNAL_AGENT_ANALYZER', 'PBK_EXTERNAL_AGENT_CALL_ANALYZER'],
+  'prosody-tuner': ['PBK_EXTERNAL_AGENT_PROSODY', 'PBK_EXTERNAL_AGENT_PROSODY_TUNER'],
+  'script-rotator': ['PBK_EXTERNAL_AGENT_SCRIPT', 'PBK_EXTERNAL_AGENT_SCRIPT_ROTATOR'],
+  'bant-enforcer': ['PBK_EXTERNAL_AGENT_BANT', 'PBK_EXTERNAL_AGENT_BANT_ENFORCER'],
+  'qa-agent': ['PBK_EXTERNAL_AGENT_QA', 'PBK_EXTERNAL_AGENT_QA_AGENT'],
+  'nurture-agent': ['PBK_EXTERNAL_AGENT_NURTURE', 'PBK_EXTERNAL_AGENT_NURTURE_AGENT'],
+  'research-orchestrator': ['PBK_EXTERNAL_AGENT_RESEARCH', 'PBK_EXTERNAL_AGENT_RESEARCH_ORCHESTRATOR'],
+};
 
 function uniqueStrings(values = []) {
   return Array.from(
@@ -32,7 +46,40 @@ export function normalizeAgentRegistryId(value = '') {
     .replace(/^-+|-+$/g, '');
 }
 
-export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
+function buildExternalAgentEnvKeys(agent = {}) {
+  const id = normalizeAgentRegistryId(agent.id || agent.name);
+  const generic = id ? `PBK_EXTERNAL_AGENT_${id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}` : '';
+  return uniqueStrings([EXTERNAL_AGENT_ENV_ALIASES[id] || [], generic]);
+}
+
+function getExternalAgentEndpoint(agent = {}, env = process.env) {
+  for (const key of buildExternalAgentEnvKeys(agent)) {
+    const endpoint = String(env?.[key] || '').trim();
+    if (/^https?:\/\//i.test(endpoint)) return endpoint.replace(/\/+$/, '');
+  }
+  return '';
+}
+
+export function applyExternalAgentEndpointOverrides(registry = [], env = process.env) {
+  return (Array.isArray(registry) ? registry : []).map((agent) => {
+    const endpoint = getExternalAgentEndpoint(agent, env);
+    if (!endpoint) return agent;
+    const metadata = agent.metadata && typeof agent.metadata === 'object' ? agent.metadata : {};
+    return {
+      ...agent,
+      endpoint,
+      metadata: {
+        ...metadata,
+        local: false,
+        remote: true,
+        communication: 'pbk-remote-agent',
+        endpointSource: buildExternalAgentEnvKeys(agent).find((key) => String(env?.[key] || '').trim() === endpoint) || 'env',
+      },
+    };
+  });
+}
+
+export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env } = {}) {
   const activeAt = new Date(now).toISOString();
   const agents = [
     {
@@ -252,19 +299,22 @@ export function buildDefaultAgentRegistry({ now = Date.now() } = {}) {
       },
     },
   ];
-  return agents.map((agent) => ({
-    ...agent,
-    status: 'standby',
-    endpoint: agent.endpoint || LOCAL_BRIDGE_INVOKE_ENDPOINT,
-    healthCheckedAt: '',
-    health_checked_at: '',
-    metadata: {
-      ...(agent.metadata || {}),
-      local: agent.metadata?.local !== false,
-      registeredAt: activeAt,
-      communication: agent.metadata?.communication || 'pbk-bridge-local',
-    },
-  }));
+  return applyExternalAgentEndpointOverrides(
+    agents.map((agent) => ({
+      ...agent,
+      status: 'standby',
+      endpoint: agent.endpoint || LOCAL_BRIDGE_INVOKE_ENDPOINT,
+      healthCheckedAt: '',
+      health_checked_at: '',
+      metadata: {
+        ...(agent.metadata || {}),
+        local: agent.metadata?.local !== false,
+        registeredAt: activeAt,
+        communication: agent.metadata?.communication || 'pbk-bridge-local',
+      },
+    })),
+    env
+  );
 }
 
 export function normalizeAgentRegistryRecord(record = {}) {
@@ -384,18 +434,22 @@ export async function invokeRegisteredAgent(agent = {}, payload = {}, options = 
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function')
     throw new Error('fetch is not available for remote agent invocation.');
-  const timeoutMs = Math.max(1000, Number(options.timeoutMs || 5000));
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs || DEFAULT_REMOTE_TIMEOUT_MS));
+  const apiKey = String(options.apiKey || options.env?.PBK_BRIDGE_API_KEY || process.env.PBK_BRIDGE_API_KEY || '').trim();
   try {
     const endpoint = normalized.endpoint.replace(/\/+$/, '');
     const invokeUrl = /\/invoke$/i.test(endpoint) ? endpoint : `${endpoint}/invoke`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetchImpl(invokeUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
       body: JSON.stringify(payload || {}),
       signal: controller.signal,
-    });
+    }).finally(() => clearTimeout(timer));
     const text = await response.text();
     let body = null;
     try {
@@ -403,12 +457,11 @@ export async function invokeRegisteredAgent(agent = {}, payload = {}, options = 
     } catch {
       body = { text };
     }
-    if (!response.ok) {
-      throw new Error(`Agent ${normalized.id} returned HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Agent ${normalized.id} returned HTTP ${response.status}`);
     return body;
-  } finally {
-    clearTimeout(timer);
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`Agent ${normalized.id} remote invocation timed out after ${timeoutMs}ms.`);
+    throw error;
   }
 }
 

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { createPool, runAutoSkillLearner } from './auto-skill-learner.mjs';
+import { runAutoTrainingIfReady } from './onnx-training-worker.mjs';
 
 const DEFAULT_LIMIT = 1000;
 const DEFAULT_MIN_SAMPLES = 500;
@@ -142,6 +143,15 @@ export async function runNightlyLearningCron(options = {}) {
             sampleCount: 0,
             minSamples,
           },
+          autoOnnxTraining: {
+            trained: false,
+            reason: 'postgres_unavailable',
+            readiness: {
+              ready: false,
+              recentCalls: 0,
+              minCalls: minSamples,
+            },
+          },
         };
       }
       throw new Error('PBK_DATABASE_URL/DATABASE_URL is required for nightly learning.');
@@ -188,12 +198,21 @@ export async function runNightlyLearningCron(options = {}) {
         : runEmotionTrainer(statePath, { ...options, minSamples });
     }
 
+    const autoOnnxTraining = await runAutoTrainingIfReady(pool, {
+      ...options,
+      dryRun,
+      minCalls: minSamples,
+      minSamples,
+      source: 'nightly_learning_cron',
+    });
+
     return {
-      ok: skillLearner.ok !== false && emotionTraining.ok !== false,
+      ok: skillLearner.ok !== false && emotionTraining.ok !== false && autoOnnxTraining.reason !== 'training_failed',
       result: 'nightly_learning_complete',
       dryRun,
       skillLearner,
       emotionTraining,
+      autoOnnxTraining,
     };
   } finally {
     if (ownsPool && pool) await pool.end().catch(() => {});

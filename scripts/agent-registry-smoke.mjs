@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  applyExternalAgentEndpointOverrides,
   buildAgentRegistrySnapshot,
   buildDefaultAgentRegistry,
   findAgentsByCapability,
@@ -9,7 +10,7 @@ import {
 } from './agent-registry.mjs';
 
 async function main() {
-  const registry = buildDefaultAgentRegistry({ now: 1780000000000 });
+  const registry = buildDefaultAgentRegistry({ now: 1780000000000, env: {} });
   const ids = registry.map((agent) => agent.id);
 
   for (const required of [
@@ -96,6 +97,38 @@ async function main() {
   );
   assert.equal(localResult.ok, true);
   assert.equal(localResult.handledBy, 'call-analyzer');
+
+  const remoteRegistry = applyExternalAgentEndpointOverrides(registry, {
+    PBK_EXTERNAL_AGENT_NURTURE: 'https://nurture.example.test/api',
+  });
+  const remoteNurture = remoteRegistry.find((agent) => agent.id === 'nurture-agent');
+  assert.equal(remoteNurture.endpoint, 'https://nurture.example.test/api');
+  assert.equal(remoteNurture.metadata.local, false);
+  assert.equal(remoteNurture.metadata.remote, true);
+  assert.equal(remoteNurture.metadata.communication, 'pbk-remote-agent');
+
+  let remoteCall = null;
+  const remoteResult = await invokeRegisteredAgent(
+    { ...remoteNurture, status: 'active' },
+    { leadId: 'lead-remote', sequenceId: 'seq-1' },
+    {
+      apiKey: 'bridge-secret',
+      fetchImpl: async (url, init = {}) => {
+        remoteCall = { url, init };
+        return {
+          ok: true,
+          status: 200,
+          async text() {
+            return JSON.stringify({ ok: true, result: 'remote_nurture_agent_invoked' });
+          },
+        };
+      },
+    }
+  );
+  assert.equal(remoteCall.url, 'https://nurture.example.test/api/invoke');
+  assert.equal(remoteCall.init.headers.Authorization, 'Bearer bridge-secret');
+  assert.equal(JSON.parse(remoteCall.init.body).leadId, 'lead-remote');
+  assert.equal(remoteResult.result, 'remote_nurture_agent_invoked');
 
   const invocationSmokeHandlers = {
     max: async (payload) => ({

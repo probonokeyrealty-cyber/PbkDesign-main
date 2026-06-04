@@ -96,6 +96,7 @@
     "test:research-additives": "node ./scripts/research-additives-smoke.mjs",
     "test:qa-agent": "node ./scripts/qa-agent-smoke.mjs",
     "test:agent-registry": "node ./scripts/agent-registry-smoke.mjs",
+    "test:onnx-training-worker": "node ./scripts/onnx-training-worker-smoke.mjs",
     "test:event-bus": "node ./scripts/event-bus-smoke.mjs",
     "test:rex-autonomy": "node ./scripts/rex-autonomy-smoke.mjs",
     "test:script-rotator": "node ./scripts/context-aware-script-rotator-smoke.mjs",

@@ -452,6 +452,9 @@ export function getRuntimeConfig(): RuntimeConfig {
   const stored = readRuntimeConfigFromStorage();
   if (stored?.endpoint) {
     const localFallback = buildLocalBridgeFallback();
+    if (isNetlifyHostedRuntimeShell() && !stored.apiKey) {
+      return { endpoint: window.location.origin };
+    }
     if (
       localFallback &&
       !stored.apiKey &&
@@ -464,6 +467,8 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   const localFallback = buildLocalBridgeFallback();
   if (localFallback) return localFallback;
+
+  if (isNetlifyHostedRuntimeShell()) return { endpoint: window.location.origin };
 
   const envConfig = getEnvRuntimeConfig();
   if (envConfig?.endpoint) return envConfig;

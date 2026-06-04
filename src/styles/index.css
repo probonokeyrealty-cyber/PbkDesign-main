@@ -1,6 +1,8 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+@import './pbk-tokens.css';
+@import './pbk-components.css';
 
 /* Print styles */
 @media print {

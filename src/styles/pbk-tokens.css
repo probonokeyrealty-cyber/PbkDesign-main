@@ -1,0 +1,205 @@
+/*
+ * PBK COMMAND CENTER — DESIGN TOKENS
+ * ====================================
+ * Import this file FIRST in your global stylesheet.
+ * Every PBK component references these variables.
+ * If this file is missing, nothing renders correctly.
+ *
+ * Usage in your app entry point:
+ *   import './styles/pbk-tokens.css';
+ *   import './styles/pbk-components.css';
+ *
+ * Or in your global CSS:
+ *   @import './pbk-tokens.css';
+ */
+
+/* ============================================================
+   FONTS — these MUST load or the aesthetic collapses
+   ============================================================
+   Add this to your <head> or import in CSS:
+   
+   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+   If you prefer @import (slower but works in CSS files):
+*/
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ---- BACKGROUNDS (darkest → lightest) ---- */
+  --bg-void: #06080b;
+  --bg-console: #0b0e13;
+  --bg-panel: #11151c;
+  --bg-panel-elevated: #171c25;
+  --bg-hover: #1d232e;
+
+  /* ---- BORDERS ---- */
+  --border-dim: #1c222c;
+  --border: #2a3140;
+  --border-bright: #3b4352;
+
+  /* ---- TEXT ---- */
+  --text-primary: #e8edf4;
+  --text-secondary: #9aa4b4;
+  --text-tertiary: #5a6372;
+  --text-ghost: #38404d;
+
+  /* ---- SKY (primary brand accent) ---- */
+  --sky: #7dd3fc;
+  --sky-bright: #bae6fd;
+  --sky-dim: #38bdf8;
+  --sky-deep: #0284c7;
+  --sky-glow: rgba(125, 211, 252, 0.15);
+  --sky-glow-strong: rgba(125, 211, 252, 0.28);
+
+  /* ---- SEMANTIC ACCENTS ---- */
+  --amber: #ffb020;
+  --amber-glow: rgba(255, 176, 32, 0.12);
+  --ion: #38bdf8;
+  --ion-glow: rgba(56, 189, 248, 0.12);
+  --crimson: #f87171;
+  --crimson-deep: #ef4444;
+  --crimson-glow: rgba(248, 113, 113, 0.12);
+  --magenta: #e879f9;
+  --magenta-glow: rgba(232, 121, 249, 0.12);
+  --lime: #a3e635;
+  --lime-glow: rgba(163, 230, 53, 0.12);
+
+  /* ---- TYPOGRAPHY ---- */
+  --font-display: 'Fraunces', 'Georgia', 'Times New Roman', serif;
+  --font-ui: 'Geist', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  /* ---- SPACING (4px grid) ---- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+
+  /* ---- RADII ---- */
+  --radius-sm: 4px; /* chips, tags */
+  --radius: 6px; /* buttons, inputs */
+  --radius-lg: 10px; /* cards, modals */
+  --radius-xl: 16px; /* floating panels */
+
+  /* ---- TRANSITIONS ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 0.12s;
+  --duration-normal: 0.2s;
+}
+
+/* ---- BASE RESET ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---- ANIMATIONS (used by components) ---- */
+@keyframes pbk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes pbk-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(248, 113, 113, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(248, 113, 113, 0);
+  }
+}
+
+@keyframes pbk-pulse-ring-sky {
+  0% {
+    box-shadow: 0 0 0 0 rgba(125, 211, 252, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(125, 211, 252, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(125, 211, 252, 0);
+  }
+}
+
+@keyframes pbk-pulse-ring-lime {
+  0% {
+    box-shadow: 0 0 0 0 rgba(163, 230, 53, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(163, 230, 53, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(163, 230, 53, 0);
+  }
+}
+
+@keyframes pbk-pulse-ring-amber {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 176, 32, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(255, 176, 32, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 176, 32, 0);
+  }
+}
+
+@keyframes pbk-shimmer {
+  0% {
+    background-position: -200px 0;
+  }
+  100% {
+    background-position: calc(200px + 100%) 0;
+  }
+}
+
+@keyframes pbk-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pbk-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -6,6 +6,7 @@ import {
   Briefcase,
   Inbox as InboxIcon,
   LayoutDashboard,
+  Megaphone,
   Settings as SettingsIcon,
   Users,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard }> = 
   { to: '/fleet', label: 'Agent Fleet', icon: Bot },
   { to: '/memory', label: 'Memory', icon: BrainCircuit },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 

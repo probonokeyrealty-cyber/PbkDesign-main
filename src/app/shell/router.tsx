@@ -22,30 +22,38 @@ const MemoryAnalytics = lazy(() =>
 const Analytics = lazy(() =>
   import('../routes/Analytics').then((module) => ({ default: module.Analytics }))
 );
+const Campaigns = lazy(() =>
+  import('../routes/Campaigns').then((module) => ({ default: module.Campaigns }))
+);
 
 const shellBasename =
   typeof window !== 'undefined' &&
-  (window.location.pathname.endsWith('/index.shell.html') || window.location.pathname.includes('/index.shell.html/'))
+  (window.location.pathname.endsWith('/index.shell.html') ||
+    window.location.pathname.includes('/index.shell.html/'))
     ? '/index.shell.html'
     : undefined;
 
-const router = createBrowserRouter([
-  {
-    path: '/',
-    Component: ParadiseLayout,
-    children: [
-      { index: true, element: <CommandCenter /> },
-      { path: 'leads', element: <Leads /> },
-      { path: 'deal', element: <DealView /> },
-      { path: 'deal/:id', element: <DealView /> },
-      { path: 'inbox', element: <Inbox /> },
-      { path: 'fleet', element: <AgentFleet /> },
-      { path: 'memory', element: <MemoryAnalytics /> },
-      { path: 'analytics', element: <Analytics /> },
-      { path: 'settings', element: <Settings /> },
-    ],
-  },
-], shellBasename ? { basename: shellBasename } : undefined);
+const router = createBrowserRouter(
+  [
+    {
+      path: '/',
+      Component: ParadiseLayout,
+      children: [
+        { index: true, element: <CommandCenter /> },
+        { path: 'leads', element: <Leads /> },
+        { path: 'deal', element: <DealView /> },
+        { path: 'deal/:id', element: <DealView /> },
+        { path: 'inbox', element: <Inbox /> },
+        { path: 'fleet', element: <AgentFleet /> },
+        { path: 'memory', element: <MemoryAnalytics /> },
+        { path: 'analytics', element: <Analytics /> },
+        { path: 'campaigns', element: <Campaigns /> },
+        { path: 'settings', element: <Settings /> },
+      ],
+    },
+  ],
+  shellBasename ? { basename: shellBasename } : undefined
+);
 
 /** ParadiseRouter — top-level router used by `main.shell.tsx`. */
 export function ParadiseRouter() {

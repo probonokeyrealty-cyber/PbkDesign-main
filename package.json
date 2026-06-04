@@ -93,6 +93,8 @@
     "test:ui-error-loading-validation": "node ./scripts/ui-error-loading-validation-smoke.mjs",
     "test:ui-feedback-truncation-responsive": "node ./scripts/ui-feedback-truncation-responsive-smoke.mjs",
     "test:ui-prototype-upgrades": "node ./scripts/ui-prototype-upgrades-smoke.mjs",
+    "test:root-shell-promotion": "node ./scripts/root-shell-promotion-smoke.mjs",
+    "test:campaigns-shell": "node ./scripts/campaigns-shell-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

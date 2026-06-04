@@ -1,0 +1,839 @@
+/*
+ * PBK COMMAND CENTER — COMPONENT CLASSES
+ * ========================================
+ * Import AFTER pbk-tokens.css.
+ * These classes are the canonical UI vocabulary.
+ * Do NOT use shadcn/ui defaults — use these instead.
+ */
+
+/* ============================================================
+   BUTTONS
+   5 variants. Use class="pbk-btn pbk-btn-{variant}".
+   ============================================================ */
+.pbk-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all var(--duration-fast) var(--ease-out);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  line-height: 1.4;
+  text-decoration: none;
+}
+.pbk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.pbk-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--sky-glow-strong);
+}
+
+/* Primary — one per page */
+.pbk-btn-primary {
+  background: var(--sky);
+  color: var(--bg-void);
+  border-color: var(--sky);
+  font-weight: 600;
+}
+.pbk-btn-primary:hover {
+  background: var(--sky-bright);
+  box-shadow: 0 0 12px var(--sky-glow-strong);
+}
+
+/* Ghost — secondary actions */
+.pbk-btn-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.pbk-btn-ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+  background: var(--bg-hover);
+}
+
+/* Danger — destructive */
+.pbk-btn-danger {
+  background: var(--crimson-deep);
+  border-color: var(--crimson-deep);
+  color: var(--text-primary);
+}
+.pbk-btn-danger:hover {
+  background: var(--crimson);
+}
+
+/* Success — affirmative (call now, send, approve) */
+.pbk-btn-success {
+  background: linear-gradient(135deg, var(--lime), #84cc16);
+  color: var(--bg-void);
+  border-color: #84cc16;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgba(163, 230, 53, 0.25);
+}
+.pbk-btn-success:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(163, 230, 53, 0.35);
+}
+
+/* Sky gradient — hero CTAs (compose, start batch) */
+.pbk-btn-sky-gradient {
+  background: linear-gradient(135deg, var(--sky-deep), var(--sky-dim));
+  color: white;
+  border-color: var(--sky-dim);
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(125, 211, 252, 0.2);
+}
+.pbk-btn-sky-gradient:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(125, 211, 252, 0.3);
+}
+
+/* Small variant */
+.pbk-btn-sm {
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
+/* ============================================================
+   CHIP BUTTONS (filter tabs)
+   ============================================================ */
+.pbk-chip {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 5px 11px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pbk-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--border-bright);
+}
+.pbk-chip[data-active='true'],
+.pbk-chip.active {
+  background: var(--sky-glow);
+  border-color: var(--sky-dim);
+  color: var(--sky);
+}
+
+/* ============================================================
+   STATUS CHIPS — lead/call lifecycle states
+   ============================================================ */
+.pbk-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pbk-status-new {
+  background: var(--ion-glow);
+  color: var(--ion);
+}
+.pbk-status-negotiating,
+.pbk-status-neg {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+.pbk-status-sent {
+  background: var(--magenta-glow);
+  color: var(--magenta);
+}
+.pbk-status-won {
+  background: var(--lime-glow);
+  color: var(--lime);
+}
+.pbk-status-signed {
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+.pbk-status-cold {
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+}
+.pbk-status-live {
+  background: var(--crimson-glow);
+  color: var(--crimson);
+}
+.pbk-status-live::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--crimson);
+  animation: pbk-pulse 1s infinite;
+}
+.pbk-status-pending {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+.pbk-status-approved {
+  background: var(--lime-glow);
+  color: var(--lime);
+}
+.pbk-status-rejected {
+  background: var(--crimson-glow);
+  color: var(--crimson);
+}
+.pbk-status-testing {
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+
+/* ============================================================
+   LEAD TAGS — property attribute pills
+   ============================================================ */
+.pbk-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--bg-void);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-dim);
+  display: inline-block;
+}
+.pbk-tag-probate {
+  background: var(--magenta-glow);
+  color: var(--magenta);
+  border-color: rgba(232, 121, 249, 0.3);
+}
+.pbk-tag-absentee {
+  background: var(--ion-glow);
+  color: var(--ion);
+  border-color: rgba(56, 189, 248, 0.3);
+}
+.pbk-tag-vacant {
+  background: var(--amber-glow);
+  color: var(--amber);
+  border-color: rgba(255, 176, 32, 0.3);
+}
+.pbk-tag-prefc {
+  background: var(--crimson-glow);
+  color: var(--crimson);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+.pbk-tag-hot {
+  background: var(--lime-glow);
+  color: var(--lime);
+  border-color: rgba(163, 230, 53, 0.3);
+}
+
+/* ============================================================
+   SCORE PILLS — lead scores 0-100, color-bucketed
+   hot ≥80 lime, warm ≥60 sky, cool ≥40 amber, cold <40 gray
+   ============================================================ */
+.pbk-score {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 6px;
+  display: inline-block;
+  min-width: 38px;
+  text-align: center;
+}
+.pbk-score-hot {
+  background: var(--lime-glow);
+  color: var(--lime);
+}
+.pbk-score-warm {
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+.pbk-score-cool {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+.pbk-score-cold {
+  background: var(--bg-panel-elevated);
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
+   PAGE STATUS PILLS — honest feature state
+   ============================================================ */
+.pbk-page-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pbk-page-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pbk-page-status-production {
+  background: var(--lime-glow);
+  color: var(--lime);
+}
+.pbk-page-status-partial {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+.pbk-page-status-concept {
+  background: var(--magenta-glow);
+  color: var(--magenta);
+}
+
+/* ============================================================
+   DEMO TAG
+   ============================================================ */
+.pbk-demo-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  background: var(--bg-panel-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--amber);
+  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* ============================================================
+   AVATARS — agent gradient circles
+   ============================================================ */
+.pbk-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--sky), var(--ion));
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-style: italic;
+  font-size: 14px;
+  color: var(--bg-void);
+  flex-shrink: 0;
+}
+.pbk-avatar-sm {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+.pbk-avatar-lg {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+.pbk-avatar-magenta {
+  background: linear-gradient(135deg, var(--magenta), var(--ion));
+}
+.pbk-avatar-lime {
+  background: linear-gradient(135deg, var(--lime), var(--sky));
+}
+.pbk-avatar-amber {
+  background: linear-gradient(135deg, var(--amber), var(--crimson));
+}
+
+/* ============================================================
+   PANELS / CARDS
+   ============================================================ */
+.pbk-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  padding: var(--s-5);
+}
+.pbk-panel-elevated {
+  background: var(--bg-panel-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--s-5);
+}
+
+/* Priority variants */
+.pbk-priority-high {
+  box-shadow:
+    0 0 0 1px rgba(255, 176, 32, 0.12),
+    0 8px 32px rgba(255, 176, 32, 0.08);
+  border-color: rgba(255, 176, 32, 0.35) !important;
+  position: relative;
+}
+.pbk-priority-high::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--amber), transparent);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.pbk-priority-live {
+  box-shadow:
+    0 0 0 1px rgba(248, 113, 113, 0.12),
+    0 0 28px rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.4) !important;
+}
+.pbk-priority-money {
+  box-shadow:
+    0 0 0 1px rgba(163, 230, 53, 0.12),
+    0 8px 32px rgba(163, 230, 53, 0.06);
+  border-color: rgba(163, 230, 53, 0.3) !important;
+}
+.pbk-priority-low {
+  opacity: 0.7;
+  filter: saturate(0.7);
+}
+.pbk-priority-low:hover {
+  opacity: 1;
+  filter: none;
+}
+
+/* ============================================================
+   INPUTS
+   ============================================================ */
+.pbk-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-void);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition:
+    border-color var(--duration-fast),
+    box-shadow var(--duration-fast);
+}
+.pbk-input:focus {
+  outline: none;
+  border-color: var(--sky-dim);
+  box-shadow: 0 0 0 3px var(--sky-glow);
+}
+.pbk-input::placeholder {
+  color: var(--text-ghost);
+}
+.pbk-input-error {
+  border-color: var(--crimson);
+  box-shadow: 0 0 0 3px var(--crimson-glow);
+}
+.pbk-input-success {
+  border-color: var(--lime);
+}
+
+.pbk-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-void);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 80px;
+  resize: vertical;
+}
+.pbk-textarea:focus {
+  outline: none;
+  border-color: var(--sky-dim);
+  box-shadow: 0 0 0 3px var(--sky-glow);
+}
+
+.pbk-select {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-void);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 9px 14px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  cursor: pointer;
+  color-scheme: dark;
+}
+.pbk-select:focus {
+  outline: none;
+  border-color: var(--sky-dim);
+  box-shadow: 0 0 0 3px var(--sky-glow);
+}
+
+/* Form field wrapper */
+.pbk-field {
+  margin-bottom: var(--s-3);
+}
+.pbk-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.pbk-label-required::after {
+  content: ' *';
+  color: var(--crimson);
+}
+.pbk-help {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.pbk-error-msg {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--crimson);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pbk-error-msg::before {
+  content: '✕';
+  font-size: 9px;
+}
+
+/* ============================================================
+   TOGGLE SWITCH
+   ============================================================ */
+.pbk-toggle {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-void);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast),
+    border-color var(--duration-fast);
+  flex-shrink: 0;
+}
+.pbk-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-tertiary);
+  border-radius: 50%;
+  transition:
+    left var(--duration-fast),
+    background var(--duration-fast);
+}
+.pbk-toggle[data-on='true'],
+.pbk-toggle.on {
+  background: var(--sky);
+  border-color: var(--sky);
+}
+.pbk-toggle[data-on='true']::after,
+.pbk-toggle.on::after {
+  left: 18px;
+  background: white;
+}
+
+/* ============================================================
+   TOASTS
+   ============================================================ */
+.pbk-toast {
+  background: rgba(11, 14, 19, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sky);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  min-width: 280px;
+  max-width: 380px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  animation: pbk-slide-up 0.2s var(--ease-out);
+}
+.pbk-toast-success {
+  border-left-color: var(--lime);
+}
+.pbk-toast-error {
+  border-left-color: var(--crimson);
+}
+.pbk-toast-warning {
+  border-left-color: var(--amber);
+}
+.pbk-toast-info {
+  border-left-color: var(--sky);
+}
+
+.pbk-toast-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+}
+.pbk-toast-success .pbk-toast-icon {
+  background: var(--lime-glow);
+  color: var(--lime);
+}
+.pbk-toast-error .pbk-toast-icon {
+  background: var(--crimson-glow);
+  color: var(--crimson);
+}
+.pbk-toast-warning .pbk-toast-icon {
+  background: var(--amber-glow);
+  color: var(--amber);
+}
+.pbk-toast-info .pbk-toast-icon {
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+
+.pbk-toast-title {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+.pbk-toast-desc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+/* ============================================================
+   TYPOGRAPHY HELPERS
+   ============================================================ */
+.pbk-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  line-height: 1.05;
+}
+.pbk-display em {
+  font-style: italic;
+  color: var(--sky);
+  font-weight: 600;
+}
+.pbk-h1 {
+  font-size: 56px;
+}
+.pbk-h2 {
+  font-size: 32px;
+}
+.pbk-h3 {
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.pbk-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sky);
+}
+.pbk-eyebrow::before {
+  content: '▸ ';
+}
+
+.pbk-mono-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.pbk-mono-data {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   EMPTY STATES
+   ============================================================ */
+.pbk-empty {
+  padding: var(--s-6) var(--s-5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  text-align: center;
+  min-height: 140px;
+}
+.pbk-empty-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-void);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+.pbk-empty-ok .pbk-empty-icon {
+  color: var(--lime);
+  border-color: rgba(163, 230, 53, 0.3);
+  background: var(--lime-glow);
+}
+.pbk-empty-idle .pbk-empty-icon {
+  color: var(--sky);
+  border-color: rgba(125, 211, 252, 0.3);
+  background: var(--sky-glow);
+}
+
+.pbk-empty-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.pbk-empty-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+/* ============================================================
+   PULSE DOTS
+   ============================================================ */
+.pbk-pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--crimson);
+  animation: pbk-pulse-ring 1.4s ease-out infinite;
+  vertical-align: middle;
+}
+.pbk-pulse-dot-sky {
+  background: var(--sky);
+  animation-name: pbk-pulse-ring-sky;
+}
+.pbk-pulse-dot-lime {
+  background: var(--lime);
+  animation-name: pbk-pulse-ring-lime;
+}
+.pbk-pulse-dot-amber {
+  background: var(--amber);
+  animation-name: pbk-pulse-ring-amber;
+}
+
+/* ============================================================
+   SKELETON LOADING
+   ============================================================ */
+.pbk-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-panel) 25%,
+    var(--bg-panel-elevated) 50%,
+    var(--bg-panel) 75%
+  );
+  background-size: 200px 100%;
+  animation: pbk-shimmer 1.2s ease-in-out infinite;
+  border-radius: var(--radius);
+}
+.pbk-skeleton-text {
+  height: 14px;
+  margin-bottom: 8px;
+}
+.pbk-skeleton-title {
+  height: 24px;
+  width: 60%;
+  margin-bottom: 12px;
+}
+.pbk-skeleton-card {
+  height: 120px;
+  border-radius: var(--radius-lg);
+}
+
+/* ============================================================
+   ERROR BANNER
+   ============================================================ */
+.pbk-error-banner {
+  border: 1px solid var(--crimson);
+  background: var(--crimson-glow);
+  border-radius: var(--radius);
+  padding: var(--s-3) var(--s-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-3);
+}
+.pbk-error-banner-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--crimson);
+}
+
+/* ============================================================
+   DATA SOURCE CAPTION (honest endpoint label)
+   ============================================================ */
+.pbk-data-source {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-ghost);
+  letter-spacing: 0.06em;
+  padding: 4px var(--s-4) var(--s-2);
+  border-top: 1px dashed var(--border-dim);
+  margin-top: auto;
+}
+.pbk-data-source code {
+  color: var(--sky);
+  background: var(--bg-void);
+  padding: 1px 5px;
+  border-radius: 3px;
+}

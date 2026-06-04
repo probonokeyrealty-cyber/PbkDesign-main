@@ -504,8 +504,18 @@ function isAuthOptionalRuntimePath(path = '') {
   );
 }
 
+function hasServerSideRuntimeAuth() {
+  if (typeof window === 'undefined') return false;
+  if (!isNetlifyHostedRuntimeShell()) return false;
+  const config = getRuntimeConfig();
+  const endpoint = String(config.endpoint || '').replace(/\/+$/g, '');
+  const origin = String(window.location.origin || '').replace(/\/+$/g, '');
+  return endpoint === origin;
+}
+
 function assertRuntimeAuthConfigured(path = '') {
   if (isAuthOptionalRuntimePath(path)) return;
+  if (hasServerSideRuntimeAuth()) return;
   const config = getRuntimeConfig();
   if (config.apiKey) return;
   throw new Error(

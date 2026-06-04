@@ -23,6 +23,16 @@ assert(
 );
 
 assert(
+  /function\s+hasServerSideRuntimeAuth\(\)/.test(source),
+  'runtimeBridge must recognize when Netlify same-origin proxy provides server-side bridge auth.',
+);
+
+assert(
+  /if\s*\(\s*hasServerSideRuntimeAuth\(\)\s*\)\s*return/.test(source),
+  'runtimeBridge auth guard must allow protected requests through the authenticated same-origin proxy.',
+);
+
+assert(
   /shouldRetryRuntimeViaHosted/.test(source) && /usage_exceeded/i.test(source),
   'runtimeBridge should still retry direct Render when Netlify function usage is exhausted.',
 );

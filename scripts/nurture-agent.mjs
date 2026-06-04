@@ -739,6 +739,10 @@ export async function executeApprovedSequence(pool, params = {}, options = {}) {
       metadata.nurtureInstanceId ||
       metadata.nurture_instance_id ||
       metadata.instanceId ||
+      metadata.sequenceId ||
+      metadata.sequence_id ||
+      params.sequenceId ||
+      params.sequence_id ||
       '',
   ).trim();
   if (!nurtureInstanceId) {

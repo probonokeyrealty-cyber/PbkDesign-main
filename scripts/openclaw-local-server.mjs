@@ -45308,8 +45308,10 @@ async function handleEvent(eventType, payload = {}) {
     if (approval.status === 'approved') {
       const approvalType = String(approval.type || '').toLowerCase();
       const approvalMetadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
-      const hasNurtureInstance = Boolean(approvalMetadata.nurtureInstanceId || approvalMetadata.nurture_instance_id || approvalMetadata.instanceId);
-      if (hasNurtureInstance) {
+      const approvalAction = String(approval.approvalAction || approval.action || approvalMetadata.approvalAction || approvalMetadata.action || approvalMetadata.toolName || approvalMetadata.requestedTool || '').toLowerCase();
+      const explicitNurtureSend = approvalAction === 'send_nurture' || approvalType === 'send_nurture';
+      const hasNurtureInstance = Boolean(approvalMetadata.nurtureInstanceId || approvalMetadata.nurture_instance_id || approvalMetadata.instanceId || approvalMetadata.sequenceId || approvalMetadata.sequence_id);
+      if (explicitNurtureSend || hasNurtureInstance) {
         try {
           nurtureResult = await executeApprovedNurtureSequenceCore(
             getPgPool(),
@@ -45317,6 +45319,9 @@ async function handleEvent(eventType, payload = {}) {
               approval,
               metadata: approvalMetadata,
               approvalId: approval.id,
+              leadId: approvalMetadata.leadId || approvalMetadata.lead_id || approval.leadId || approval.targetId || '',
+              sequenceId: approvalMetadata.sequenceId || approvalMetadata.sequence_id || '',
+              stepId: approvalMetadata.stepId || approvalMetadata.step_id || '',
             },
             {
               approvalId: approval.id,
@@ -45334,6 +45339,16 @@ async function handleEvent(eventType, payload = {}) {
             error: error?.message || String(error),
           };
         }
+        approval.metadata = {
+          ...approvalMetadata,
+          nurtureExecution: {
+            ok: nurtureResult?.ok !== false,
+            result: nurtureResult?.result || '',
+            nurtureInstanceId: nurtureResult?.nurtureInstanceId || approvalMetadata.nurtureInstanceId || approvalMetadata.nurture_instance_id || approvalMetadata.sequenceId || approvalMetadata.sequence_id || '',
+            executedAt: isoNow(),
+            error: nurtureResult?.error || '',
+          },
+        };
       } else if (approvalType === 'lead-nurture' && approvalMetadata.executeOnApproval !== false) {
         const sequenceParams = approvalMetadata.sequenceParams && typeof approvalMetadata.sequenceParams === 'object' ? approvalMetadata.sequenceParams : {};
         try {

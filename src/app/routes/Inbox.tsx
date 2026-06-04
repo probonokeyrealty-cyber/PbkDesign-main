@@ -642,7 +642,7 @@ export function Inbox() {
 
   useEffect(() => {
     if (!actionStatus) return undefined;
-    const timer = window.setTimeout(() => setActionStatus(''), 6000);
+    const timer = window.setTimeout(() => setActionStatus(''), 5000);
     return () => window.clearTimeout(timer);
   }, [actionStatus]);
 

@@ -108,7 +108,7 @@ export function CallModeTab({
   useEffect(() => {
     setCallNotes(deal.notes || '');
     setLastSavedNotes(deal.notes || '');
-  }, [deal.address]);
+  }, [deal.address, deal.notes]);
 
   const saveCallNotes = useCallback(async () => {
     const note = callNotes.trim();

@@ -14,6 +14,8 @@ function assert(condition, message) {
 const landAnalysis = read('src/app/components/LandAnalysis.tsx');
 const router = read('src/app/shell/router.tsx');
 const viteConfig = read('vite.config.ts');
+const netlifyConfig = read('netlify.toml');
+const inboxRoute = read('src/app/routes/Inbox.tsx');
 const inboxLogic = read('src/app/routes/inboxRuntimeLogic.js');
 const avaAssistant = read('scripts/ava-assistant-chat.mjs');
 const openclaw = read('scripts/openclaw-local-server.mjs');
@@ -44,6 +46,17 @@ assert(/vendor-react/.test(viteConfig), 'Vite chunks should split React/router v
 assert(/vendor-ui/.test(viteConfig), 'Vite chunks should split UI vendor code.');
 
 assert(
+  /from\s*=\s*["']\/["'][\s\S]*?to\s*=\s*["']\/index\.shell\.html["'][\s\S]*?status\s*=\s*200/.test(
+    netlifyConfig
+  ),
+  'Netlify should rewrite / to the split shell entry point.'
+);
+assert(
+  /setTimeout\(\(\) => setActionStatus\(''\), 5000\)/.test(inboxRoute),
+  'Inbox actionStatus should auto-clear after 5 seconds.'
+);
+
+assert(
   /getSmsSegmentInfo/.test(inboxLogic) && /gsmSeptetLength/.test(inboxLogic),
   'Inbox SMS counting should use a GSM/UCS-2 helper.'
 );
@@ -58,6 +71,11 @@ assert(
       openclaw
     ),
   'Ava chat should warn callers when long input was truncated.'
+);
+assert(
+  /send_nurture/.test(openclaw) &&
+    /executeApprovedNurtureSequenceCore[\s\S]*approvalAction[\s\S]*send_nurture/.test(openclaw),
+  'Approval callback should execute explicit send_nurture approvals through the nurture agent.'
 );
 
 assert(

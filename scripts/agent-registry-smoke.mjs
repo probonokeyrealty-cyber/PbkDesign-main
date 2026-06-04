@@ -27,6 +27,15 @@ async function main() {
     assert(ids.includes(required), `Default registry should include ${required}.`);
   }
 
+  for (const agent of registry) {
+    assert.equal(
+      agent.endpoint,
+      '/invoke',
+      `${agent.id} should explicitly route local dispatch through the bridge invoke endpoint.`
+    );
+    assert.equal(agent.metadata?.local, true, `${agent.id} should be marked as local-only.`);
+  }
+
   for (const required of ['script-rotator', 'bant-enforcer', 'qa-agent', 'nurture-agent']) {
     const agent = registry.find((item) => item.id === required);
     assert.equal(agent.endpoint, '/invoke', `${required} should expose the bridge invoke endpoint.`);

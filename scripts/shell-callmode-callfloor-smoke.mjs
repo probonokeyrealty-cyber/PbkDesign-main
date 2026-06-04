@@ -33,6 +33,10 @@ assert(/dispatchShortcutEvent/.test(paradiseLayout), 'ParadiseLayout shortcuts s
 assert(/showUiToast/.test(paradiseLayout), 'ParadiseLayout should show a toast when a shortcut fires into no listener.');
 
 assert(/saveLeadNoteRequest/.test(callMode), 'CallMode should save call notes through the bridge.');
+assert(
+  /setCallNotes\(deal\.notes \|\| ''\);\s*setLastSavedNotes\(deal\.notes \|\| ''\);\s*}\s*,\s*\[deal\.address,\s*deal\.notes\]/s.test(callMode),
+  'CallMode notes sync effect should depend on deal.notes.'
+);
 assert(/scheduleAppointmentRequest/.test(callMode), 'Schedule Follow-up should call the bridge scheduler.');
 assert(/sendOfferEmailRequest/.test(callMode), 'Send Offer Email should call the bridge email endpoint.');
 assert(/invokeRuntimeTool<Record<string, unknown>>\('updateCRM'/.test(callMode), 'Add to CRM should invoke the runtime CRM tool.');

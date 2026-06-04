@@ -49,18 +49,16 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, pendingApprovals = 0, onToggleRail }: SidebarProps) {
   return (
-    <aside className="hidden h-full bg-slate-950 border-r border-slate-800 md:flex md:flex-col">
-      <div className="h-14 flex items-center justify-between gap-2 px-4 border-b border-slate-800">
-        <div className="min-w-0">
-          <span className="font-semibold tracking-wide text-slate-100">PBK</span>
-          {!collapsed && (
-            <span className="ml-2 text-xs uppercase tracking-widest text-slate-400">Paradise</span>
-          )}
+    <aside className="pbk-shell-sidebar hidden h-full bg-slate-950 border-r border-slate-800 md:flex md:flex-col">
+      <div className="pbk-shell-sidebar-head h-14 flex items-center justify-between gap-2 px-4 border-b border-slate-800">
+        <div className="pbk-shell-brand min-w-0">
+          <span className="pbk-shell-brand-mark">PBK</span>
+          {!collapsed && <span className="pbk-shell-brand-word">Paradise</span>}
         </div>
         <button
           type="button"
           onClick={onToggleRail}
-          className="grid h-8 w-8 place-items-center rounded-lg border border-slate-800 text-slate-500 transition hover:border-sky-500/40 hover:text-sky-200"
+          className="pbk-shell-rail-toggle grid h-8 w-8 place-items-center rounded-lg border border-slate-800 text-slate-500 transition hover:border-sky-500/40 hover:text-sky-200"
           aria-label={collapsed ? 'Expand navigation rail' : 'Collapse navigation rail'}
           title="Collapse/expand rail ([)"
         >
@@ -68,7 +66,7 @@ export function Sidebar({ collapsed, pendingApprovals = 0, onToggleRail }: Sideb
         </button>
       </div>
 
-      <nav className="flex-1 py-3">
+      <nav className="pbk-shell-nav flex-1 py-3">
         {NAV.map(({ to, label, icon: Icon }) => {
           const showBadge = to === '/inbox' && pendingApprovals > 0;
           return (
@@ -78,10 +76,10 @@ export function Sidebar({ collapsed, pendingApprovals = 0, onToggleRail }: Sideb
               end={to === '/'}
               className={({ isActive }) =>
                 [
-                  'flex items-center gap-3 px-4 py-2.5 text-sm transition-colors',
+                  'pbk-shell-nav-link flex items-center gap-3 px-4 py-2.5 text-sm transition-colors',
                   collapsed ? 'justify-center' : '',
                   isActive
-                    ? 'bg-slate-800 text-white border-l-2 border-emerald-500'
+                    ? 'active bg-slate-800 text-white border-l-2 border-emerald-500'
                     : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900 border-l-2 border-transparent',
                 ].join(' ')
               }
@@ -110,7 +108,10 @@ export function Sidebar({ collapsed, pendingApprovals = 0, onToggleRail }: Sideb
         })}
       </nav>
 
-      <div className="p-3 text-[11px] text-slate-500 border-t border-slate-800">
+      <div
+        className="pbk-shell-release p-3 text-[11px] text-slate-500 border-t border-slate-800"
+        data-source="build env"
+      >
         {buildReleaseLabel(collapsed)}
       </div>
     </aside>

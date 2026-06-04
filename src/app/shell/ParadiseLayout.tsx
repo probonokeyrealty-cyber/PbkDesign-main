@@ -217,7 +217,7 @@ export function ParadiseLayout() {
   return (
     <div
       className={[
-        'h-full w-full grid grid-cols-1 bg-slate-950 text-slate-100 overflow-hidden transition-[grid-template-columns]',
+        'pbk-shell-frame h-full w-full grid grid-cols-1 bg-slate-950 text-slate-100 overflow-hidden transition-[grid-template-columns]',
         prefs.railCollapsed ? 'md:grid-cols-[72px_1fr]' : 'md:grid-cols-[240px_1fr]',
       ].join(' ')}
     >
@@ -226,10 +226,10 @@ export function ParadiseLayout() {
         pendingApprovals={pendingApprovalCount}
         onToggleRail={toggleRail}
       />
-      <div className="grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
+      <div className="pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
         <ShellTopbar theme={prefs.theme} onToggleTheme={updateTheme} />
         <FavoritesBar />
-        <main className="relative overflow-auto bg-slate-900">
+        <main className="pbk-shell-content relative overflow-auto bg-slate-900">
           {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
           <ErrorBoundary>
             <Suspense

@@ -4019,6 +4019,198 @@
 }
 
 /* ============================================================
+   MODERN SHELL CHROME
+   ============================================================ */
+.pbk-shell-frame {
+  color: var(--text-primary);
+  background: linear-gradient(180deg, rgba(7, 12, 20, 0.98), rgba(2, 6, 23, 1)), var(--bg-void);
+}
+
+.pbk-shell-main-column {
+  min-width: 0;
+  border-left: 1px solid rgba(125, 211, 252, 0.08);
+  background: var(--bg-void);
+}
+
+.pbk-shell-content {
+  background:
+    linear-gradient(180deg, rgba(14, 165, 233, 0.06), transparent 28%),
+    linear-gradient(90deg, rgba(163, 230, 53, 0.04), transparent 42%), var(--bg-void);
+}
+
+.pbk-shell-sidebar {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.99)), var(--bg-panel);
+  border-color: rgba(125, 211, 252, 0.14);
+}
+
+.pbk-shell-sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, var(--sky), rgba(163, 230, 53, 0.45), transparent);
+  opacity: 0.72;
+}
+
+.pbk-shell-sidebar-head {
+  position: relative;
+  border-color: rgba(148, 163, 184, 0.12);
+  background: rgba(2, 6, 23, 0.35);
+}
+
+.pbk-shell-brand {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pbk-shell-brand-mark {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.pbk-shell-brand-word {
+  color: var(--sky);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.pbk-shell-rail-toggle {
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.pbk-shell-nav {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 12px 8px;
+}
+
+.pbk-shell-nav-link {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-family: var(--font-ui);
+}
+
+.pbk-shell-nav-link.active {
+  border-color: rgba(125, 211, 252, 0.22);
+  background:
+    linear-gradient(90deg, rgba(14, 165, 233, 0.16), rgba(15, 23, 42, 0.75)), rgba(15, 23, 42, 0.78);
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--lime);
+}
+
+.pbk-shell-nav-link:hover:not(.active) {
+  border-color: rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.pbk-shell-release {
+  border-color: rgba(148, 163, 184, 0.12);
+  color: var(--text-ghost);
+  font-family: var(--font-mono);
+  line-height: 1.4;
+}
+
+.pbk-shell-topbar {
+  border-color: rgba(125, 211, 252, 0.14);
+  background:
+    linear-gradient(90deg, rgba(14, 165, 233, 0.08), transparent 50%), rgba(2, 6, 23, 0.98);
+  backdrop-filter: blur(12px);
+}
+
+.pbk-shell-search {
+  min-width: 180px;
+}
+
+.pbk-shell-search-input {
+  border-radius: 8px;
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.82);
+  font-family: var(--font-ui);
+}
+
+.pbk-shell-search-input:focus {
+  border-color: rgba(125, 211, 252, 0.6);
+  box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.12);
+}
+
+.pbk-shell-search-results {
+  border-radius: 8px;
+  border-color: rgba(125, 211, 252, 0.18);
+  background: rgba(2, 6, 23, 0.98);
+}
+
+.pbk-shell-autopilot,
+.pbk-shell-theme-button {
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.pbk-shell-theme-button {
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.pbk-shell-account {
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+.pbk-shell-account-avatar {
+  border: 1px solid rgba(163, 230, 53, 0.24);
+  background: rgba(163, 230, 53, 0.12);
+}
+
+.pbk-shell-favorites.favorites-bar {
+  border-color: rgba(125, 211, 252, 0.12);
+  background:
+    linear-gradient(90deg, rgba(163, 230, 53, 0.07), rgba(14, 165, 233, 0.06), transparent 60%),
+    rgba(2, 6, 23, 0.94);
+}
+
+.pbk-shell-favorite-link.favorite-link,
+.pbk-shell-favorite-pin.favorite-pin {
+  border-radius: 8px;
+  border-color: rgba(148, 163, 184, 0.14);
+  background: rgba(15, 23, 42, 0.72);
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+
+.pbk-shell-favorite-link.favorite-link.active,
+.pbk-shell-favorite-link.favorite-link:hover,
+.pbk-shell-favorite-pin.favorite-pin:hover {
+  border-color: rgba(125, 211, 252, 0.48);
+  background: rgba(14, 165, 233, 0.12);
+  color: var(--sky);
+}
+
+@media (max-width: 640px) {
+  .pbk-shell-topbar {
+    min-height: 64px;
+    flex-wrap: wrap;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .pbk-shell-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+
+/* ============================================================
    LEADS COCKPIT
    ============================================================ */
 .pbk-leads-surface {

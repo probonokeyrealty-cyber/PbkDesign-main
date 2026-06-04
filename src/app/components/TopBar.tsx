@@ -58,7 +58,7 @@ export function TopBar({
   const VerdictIcon = verdictMeta[verdict].icon;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 h-[54px] bg-black/90 backdrop-blur-xl flex items-center gap-1.5 px-3.5 border-b border-blue-500/35 shadow-lg">
+    <div className="fixed top-0 left-0 right-0 z-50 min-h-[54px] min-w-[280px] bg-black/90 backdrop-blur-xl flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 border-b border-blue-500/35 shadow-lg">
       <button
         onClick={onMenuToggle}
         aria-label="Toggle menu"
@@ -71,7 +71,10 @@ export function TopBar({
         PBK
       </div>
 
-      <div className="hidden md:block flex-1 text-[12px] text-white/65 truncate">
+      <div
+        className="hidden min-w-0 flex-1 truncate text-[12px] text-white/65 md:block"
+        title={address || 'No property loaded'}
+      >
         {address || 'No property loaded'}
       </div>
 

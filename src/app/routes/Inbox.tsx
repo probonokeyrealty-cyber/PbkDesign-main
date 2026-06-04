@@ -699,6 +699,7 @@ export function Inbox() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
   const [actionStatus, setActionStatus] = useState<InboxActionStatus | null>(null);
+  const [approvalFeedbackById, setApprovalFeedbackById] = useState<Record<string, string>>({});
   const [composeOpen, setComposeOpen] = useState(false);
   const [replyDraft, setReplyDraft] = useState<ComposeDraft | null>(null);
   const [confirmApproval, setConfirmApproval] = useState<Record<string, unknown> | null>(null);
@@ -799,6 +800,17 @@ export function Inbox() {
         tone: 'success',
         text: status === 'approved' ? 'Approved. Ava can continue.' : 'Decision sent to Ava.',
       });
+      setApprovalFeedbackById((current) => ({
+        ...current,
+        [approvalId]: status === 'approved' ? 'Approved' : 'Decision sent',
+      }));
+      window.setTimeout(() => {
+        setApprovalFeedbackById((current) => {
+          const next = { ...current };
+          delete next[approvalId];
+          return next;
+        });
+      }, 3000);
     } catch (nextError) {
       setActionStatus({
         tone: 'error',
@@ -924,6 +936,7 @@ export function Inbox() {
             {approvals.map((approval, index) => {
               const contract = isContractApproval(approval);
               const approvalId = String(approval.id || '');
+              const approvalFeedback = approvalFeedbackById[approvalId];
               return (
                 <div
                   key={approvalId}
@@ -938,6 +951,12 @@ export function Inbox() {
                   <div className="mt-1 text-xs text-slate-400">
                     {String(approval.address || 'No address recorded')}
                   </div>
+                  {approvalFeedback && (
+                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-100">
+                      <CheckCircle2 size={13} className="text-emerald-300" />
+                      {approvalFeedback}
+                    </div>
+                  )}
                   <div className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs leading-relaxed text-slate-300">
                     {getApprovalPreview(approval)}
                   </div>

@@ -909,8 +909,8 @@ html[data-theme='light'] .border-slate-700 {
 }
 
 .quick-time-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
   gap: 0.45rem;
 }
 

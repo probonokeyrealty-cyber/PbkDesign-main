@@ -626,8 +626,12 @@ export function AgentFleet() {
   const [previewError, setPreviewError] = useState('');
   const [callActionPending, setCallActionPending] = useState(false);
   const [transferStatus, setTransferStatus] = useState('');
+  const [transferFeedbackByAgentId, setTransferFeedbackByAgentId] = useState<
+    Record<string, string>
+  >({});
   const [pendingTransferCount, setPendingTransferCount] = useState(0);
   const pendingTransferQueueRef = useRef<PendingTransfer[]>([]);
+  const transferFeedbackTimersRef = useRef<number[]>([]);
   const syncPendingTransferCount = useCallback(() => {
     setPendingTransferCount(pendingTransferQueueRef.current.length);
   }, []);
@@ -715,6 +719,8 @@ export function AgentFleet() {
     return () => {
       cancelled = true;
       pendingTransferQueueRef.current = [];
+      transferFeedbackTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      transferFeedbackTimersRef.current = [];
     };
   }, [syncPendingTransferCount]);
 
@@ -867,6 +873,19 @@ export function AgentFleet() {
         title: 'Skill transferred',
         desc: `'${selectedSkill.name}' copied to ${targetNames}${versioned ? ' (versioned)' : ''}`,
       });
+      setTransferFeedbackByAgentId((current) => {
+        const next = { ...current };
+        for (const agentId of targetAgentIds) next[agentId] = 'Transferred';
+        return next;
+      });
+      const timer = window.setTimeout(() => {
+        setTransferFeedbackByAgentId((current) => {
+          const next = { ...current };
+          for (const agentId of targetAgentIds) delete next[agentId];
+          return next;
+        });
+      }, 5000);
+      transferFeedbackTimersRef.current.push(timer);
       setTransferStatus(`Bridge confirmed '${selectedSkill.name}' was applied to ${targetNames}.`);
     } catch (error) {
       // Queue for retry on next bridge reconnect
@@ -943,6 +962,7 @@ export function AgentFleet() {
                 const bridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, agent.id);
                 const localSnnActive =
                   (agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex);
+                const transferFeedback = transferFeedbackByAgentId[agent.id];
                 return (
                   <button
                     key={agent.id}
@@ -969,6 +989,12 @@ export function AgentFleet() {
                       {bridgeWorker && (
                         <span className="mt-1 block truncate text-[10px] uppercase tracking-wide text-sky-300/80">
                           SNN {bridgeWorker.status || 'ready'}
+                        </span>
+                      )}
+                      {transferFeedback && (
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                          <Check size={11} />
+                          {transferFeedback}
                         </span>
                       )}
                     </span>

@@ -74,7 +74,7 @@ function DrillDownPanel({ open, title, meta, items, onClose, onExport }: DrillDo
   return (
     <div className="drill-backdrop" role="presentation" onMouseDown={onClose}>
       <aside
-        className="drill-panel"
+        className="drill-panel min-w-[min(320px,calc(100vw-2rem))]"
         role="dialog"
         aria-modal="true"
         aria-label={title}

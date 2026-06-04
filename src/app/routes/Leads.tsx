@@ -598,6 +598,11 @@ export function Leads() {
       setLeadDetail(lead);
       setEditOpen(false);
       setDetailStatus({ tone: 'success', text: 'Lead saved to bridge.' });
+      showUiToast({
+        tone: 'success',
+        title: 'Lead updated',
+        desc: `${getSellerName(lead)} was saved to the bridge.`,
+      });
       await refresh().catch(() => null);
     } catch (nextError) {
       setDetailStatus({
@@ -777,6 +782,11 @@ export function Leads() {
     }
   };
 
+  const activeLeadPath = activeLead
+    ? normalizePath(activeLead.selected_path || activeLead.selectedPath, activeLead)
+    : 'cash';
+  const activeLeadTemplateName = TEMPLATE_NAMES[activeLeadPath];
+
   return (
     <div className="p-4 md:p-6 space-y-4">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -791,7 +801,7 @@ export function Leads() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[420px_1fr]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,420px)_minmax(0,1fr)]">
         <section className={`${softPanelClass} overflow-hidden`}>
           <div className="border-b border-slate-800 px-4 py-3">
             <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
@@ -825,10 +835,16 @@ export function Leads() {
                 >
                   <span className={['lead-score', scoreTone(score)].join(' ')}>{score}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-base font-semibold text-slate-100">
+                    <span
+                      className="block truncate text-base font-semibold text-slate-100"
+                      title={sellerName}
+                    >
                       {sellerName}
                     </span>
-                    <span className="mt-1 block text-xs text-slate-400">
+                    <span
+                      className="mt-1 block truncate text-xs text-slate-400"
+                      title={getLeadAddress(lead)}
+                    >
                       {getLeadAddress(lead)}
                     </span>
                     <span className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
@@ -896,10 +912,16 @@ export function Leads() {
                   ].join(' ')}
                 >
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-slate-100">
+                    <span
+                      className="block truncate text-sm font-semibold text-slate-100"
+                      title={getSellerName(lead)}
+                    >
                       {getSellerName(lead)}
                     </span>
-                    <span className="mt-1 block truncate text-xs text-slate-400">
+                    <span
+                      className="mt-1 block truncate text-xs text-slate-400"
+                      title={getLeadAddress(lead)}
+                    >
                       {getLeadAddress(lead)}
                     </span>
                     <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
@@ -945,21 +967,19 @@ export function Leads() {
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-2xl font-semibold text-slate-100">
+                    <h2
+                      className="truncate text-2xl font-semibold text-slate-100"
+                      title={getSellerName(activeLead)}
+                    >
                       {getSellerName(activeLead)}
                     </h2>
                     <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-300">
-                      {
-                        PATH_LABELS[
-                          normalizePath(
-                            activeLead.selected_path || activeLead.selectedPath,
-                            activeLead
-                          )
-                        ]
-                      }
+                      {PATH_LABELS[activeLeadPath]}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-slate-400">{getLeadAddress(activeLead)}</p>
+                  <p className="mt-1 text-sm text-slate-400" title={getLeadAddress(activeLead)}>
+                    {getLeadAddress(activeLead)}
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                     <span className="inline-flex items-center gap-1">
                       <Phone size={13} />
@@ -1069,15 +1089,11 @@ export function Leads() {
                       <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">
                         Template
                       </div>
-                      <div className="mt-2 truncate text-sm font-semibold text-slate-100">
-                        {
-                          TEMPLATE_NAMES[
-                            normalizePath(
-                              activeLead.selected_path || activeLead.selectedPath,
-                              activeLead
-                            )
-                          ]
-                        }
+                      <div
+                        className="mt-2 truncate text-sm font-semibold text-slate-100"
+                        title={activeLeadTemplateName}
+                      >
+                        {activeLeadTemplateName}
                       </div>
                     </div>
                     <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">

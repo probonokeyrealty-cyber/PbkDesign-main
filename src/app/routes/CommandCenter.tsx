@@ -269,6 +269,11 @@ export function CommandCenter() {
         return null;
       });
       setActionStatus({ tone: 'success', text: successMessage });
+      showUiToast({
+        tone: 'success',
+        title: 'Runtime action complete',
+        desc: successMessage,
+      });
     } catch (nextError) {
       setActionStatus({
         tone: 'error',
@@ -380,7 +385,7 @@ export function CommandCenter() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="mx-auto max-w-screen-2xl space-y-6 p-4 md:p-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-100 sm:text-2xl">Command Center</h1>
@@ -718,7 +723,10 @@ export function CommandCenter() {
                       {formatRelative(String(item.at || item.createdAt || ''))}
                     </div>
                   </div>
-                  <div className="mt-2 text-xs text-slate-300">
+                  <div
+                    className="mt-2 line-clamp-2 max-w-full text-xs text-slate-300"
+                    title={String(item.text || 'Runtime event')}
+                  >
                     {String(item.text || 'Runtime event')}
                   </div>
                   <div className="mt-1 text-[11px] text-slate-500 uppercase tracking-[0.12em]">

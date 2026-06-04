@@ -479,8 +479,10 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
               }}
             >
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <strong>{getLeadName(lead)}</strong>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <strong className="min-w-0 max-w-full truncate" title={getLeadName(lead)}>
+                    {getLeadName(lead)}
+                  </strong>
                   <span
                     className={`score-badge ${score >= 75 ? 'hot' : score >= 50 ? 'warm' : ''}`}
                   >
@@ -488,8 +490,12 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
                   </span>
                   {inCall && <span className="in-call-badge">In call</span>}
                 </div>
-                <div className="mt-1 text-xs text-slate-400">
-                  <span className="mono">{phone || 'no phone'}</span> · {getLeadAddress(lead)}
+                <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-slate-400">
+                  <span className="mono shrink-0">{phone || 'no phone'}</span>
+                  <span aria-hidden="true">-</span>
+                  <span className="min-w-0 truncate" title={getLeadAddress(lead)}>
+                    {getLeadAddress(lead)}
+                  </span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
                   <span>Last touch: {formatRelative(getLeadLastTouch(lead))}</span>
@@ -523,31 +529,31 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
           <CalendarClock size={14} />
           Schedule callback
         </div>
-        <div className="quick-time-row mt-3">
+        <div className="quick-time-row mt-3 grid grid-cols-[repeat(auto-fit,minmax(80px,1fr))] gap-2">
           <button
             type="button"
-            className="chip-btn quick-time"
+            className="chip-btn quick-time w-full justify-center"
             onClick={() => applyQuickTime('hour')}
           >
             In 1 hour
           </button>
           <button
             type="button"
-            className="chip-btn quick-time"
+            className="chip-btn quick-time w-full justify-center"
             onClick={() => applyQuickTime('two-hours')}
           >
             In 2 hours
           </button>
           <button
             type="button"
-            className="chip-btn quick-time"
+            className="chip-btn quick-time w-full justify-center"
             onClick={() => applyQuickTime('today-five')}
           >
             Today 5pm
           </button>
           <button
             type="button"
-            className="chip-btn quick-time"
+            className="chip-btn quick-time w-full justify-center"
             onClick={() => applyQuickTime('tomorrow-nine')}
           >
             Tomorrow 9am

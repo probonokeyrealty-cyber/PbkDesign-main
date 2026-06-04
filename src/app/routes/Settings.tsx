@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Activity, Database, ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { updateAdminTaskDecision } from '../utils/runtimeBridge';
 
@@ -69,12 +71,187 @@ type SettingsAdminDecisionDraft = {
   summary: string;
 };
 
+type SettingsRuntimeCard = {
+  id: string;
+  label: string;
+  meta: Record<string, unknown> | undefined;
+};
+
+type SettingsStat = {
+  label: string;
+  value: string;
+  detail: string;
+  tone?: 'sky' | 'lime' | 'amber';
+};
+
 function StatusDot({ state }: { state: ReadinessState }) {
   return (
     <span
       aria-hidden="true"
       className={['inline-block h-2 w-2 rounded-full', DOT_CLASS[state]].join(' ')}
     />
+  );
+}
+
+function SettingsSourceRail() {
+  return (
+    <div className="pbk-settings-source-rail" aria-label="Settings data sources">
+      <PbkDataSource endpoint="GET /state" status="ships" note="runtime settings and admin queue" />
+      <PbkDataSource endpoint="GET /api/quotas" status="ships" note="provider readiness cards" />
+      <PbkDataSource
+        endpoint="GET /api/tooling/status"
+        status="ships"
+        note="support system health"
+      />
+      <PbkDataSource endpoint="PUT /api/admin/tasks/:id" status="ships" note="admin decisions" />
+      <PbkDataSource
+        endpoint="GET/POST /api/settings"
+        status="ships"
+        note="operator mode and runtime preferences"
+      />
+      <PbkDataSource
+        endpoint="GET /api/observability/status"
+        status="needs-wiring"
+        note="canonical metrics dashboard health"
+      />
+    </div>
+  );
+}
+
+function SettingsStatRibbon({ stats }: { stats: SettingsStat[] }) {
+  return (
+    <div className="pbk-settings-grid" aria-label="Settings summary">
+      {stats.map((stat) => (
+        <div key={stat.label} className="pbk-settings-stat">
+          <div className="l">{stat.label}</div>
+          <div className={['v', stat.tone || ''].join(' ').trim()}>{stat.value}</div>
+          <div className="delta">{stat.detail}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SettingsHero({
+  loading,
+  error,
+  stateBackend,
+  stats,
+  onRefresh,
+}: {
+  loading: boolean;
+  error: string | null | undefined;
+  stateBackend: string;
+  stats: SettingsStat[];
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="pbk-settings-hero">
+      <div className="pbk-settings-hero-top">
+        <div>
+          <div className="pbk-eyebrow">
+            Runtime settings -{' '}
+            {loading ? 'checking bridge' : error ? 'bridge offline' : stateBackend}
+          </div>
+          <h1 className="pbk-display pbk-h1">
+            Settings &amp; <em>safety</em>.
+          </h1>
+          <p>
+            Provider readiness, tooling health, admin approvals, and safety controls in one
+            bridge-backed operating panel. Every tile states its source before it ships.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="pbk-settings-refresh"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          {loading ? 'Refreshing' : 'Refresh settings'}
+        </button>
+      </div>
+      <SettingsStatRibbon stats={stats} />
+      <SettingsSourceRail />
+    </section>
+  );
+}
+
+function SettingsProviderCard({ card }: { card: SettingsRuntimeCard }) {
+  const state = readinessFor(card.meta);
+  return (
+    <section className="pbk-settings-provider-card">
+      <div className="card-head">
+        <div>
+          <span className="pbk-kicker">Provider</span>
+          <h3>{card.label}</h3>
+        </div>
+        <StatusDot state={state} />
+      </div>
+      <strong>{describeProvider(card.meta)}</strong>
+      <p>{String(card.meta?.note || '') || 'Bridge-backed runtime surface.'}</p>
+    </section>
+  );
+}
+
+function SettingsToolCard({ card }: { card: SettingsRuntimeCard }) {
+  const state = readinessFor(card.meta);
+  return (
+    <section className="pbk-settings-tool-card">
+      <div className="card-head">
+        <h3>{card.label}</h3>
+        <StatusDot state={state} />
+      </div>
+      <strong>{describeTooling(card.meta)}</strong>
+      <p>{String(card.meta?.note || 'Bridge-backed tooling surface.')}</p>
+    </section>
+  );
+}
+
+function SettingsSafetyRail({ status }: { status: Record<string, unknown> }) {
+  const rows = [
+    {
+      label: 'Approvals',
+      value: `${String(status.pendingApprovals || 0)} offer / outbound approvals pending`,
+      icon: ShieldCheck,
+    },
+    {
+      label: 'Admin Queue',
+      value: `${String(status.pendingAdminTasks || 0)} admin changes still require review`,
+      icon: Activity,
+    },
+    {
+      label: 'Document Sends',
+      value: `${String(status.documentDeliveries || 0)} seller document sends tracked in the bridge`,
+      icon: Database,
+    },
+  ];
+  return (
+    <section className="pbk-settings-card pbk-settings-safety-rail">
+      <div className="pbk-settings-card-head">
+        <div>
+          <span className="pbk-kicker">Guardrails</span>
+          <h2>Safety controls</h2>
+        </div>
+        <PbkDataSource endpoint="GET /state" status="ships" note="status safety counters" />
+      </div>
+      <div className="safety-list">
+        {rows.map((row) => {
+          const Icon = row.icon;
+          return (
+            <div key={row.label} className="safety-row">
+              <span className="safety-icon" aria-hidden="true">
+                <Icon size={16} />
+              </span>
+              <div>
+                <div className="label">{row.label}</div>
+                <div className="value">{row.value}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -101,12 +278,12 @@ export function Settings() {
   const toolingOptionalTotal = toNumber(toolingSummary.optionalCount);
   const metricsUrl = String(toolingSummary.metricsUrl || '').trim();
 
-  const providerCards = [
+  const providerCards: SettingsRuntimeCard[] = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
     { id: 'instantly', label: 'Instantly', meta: quotas?.instantly || runtimeProviders.instantly },
     { id: 'docs', label: 'Document Sends', meta: quotas?.docs },
   ];
-  const toolingCards = [
+  const toolingCards: SettingsRuntimeCard[] = [
     {
       id: 'meta-agent',
       label: 'Meta-Agent Lab',
@@ -163,6 +340,41 @@ export function Settings() {
       meta: tooling?.github as Record<string, unknown> | undefined,
     },
   ];
+  const providerReadyCount = providerCards.filter(
+    (card) => readinessFor(card.meta) === 'ready'
+  ).length;
+  const pendingAdminCount = adminTasks.filter(
+    (task) => String(task.status || '').toLowerCase() === 'pending'
+  ).length;
+  const stateBackend = String(status.stateBackend || 'No data yet');
+  const settingsStats: SettingsStat[] = [
+    {
+      label: 'Providers ready',
+      value: `${providerReadyCount}/${providerCards.length}`,
+      detail: 'quota and provider status',
+      tone: providerReadyCount === providerCards.length ? 'lime' : 'amber',
+    },
+    {
+      label: 'Core tooling',
+      value: `${String(toolingCoreReady)}/${String(toolingCoreTotal)}`,
+      detail: toolingOptionalTotal
+        ? `${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional enabled`
+        : 'required systems',
+      tone: toolingCoreReady >= toolingCoreTotal ? 'lime' : 'sky',
+    },
+    {
+      label: 'Admin queue',
+      value: String(pendingAdminCount),
+      detail: 'pending infrastructure decisions',
+      tone: pendingAdminCount ? 'amber' : 'lime',
+    },
+    {
+      label: 'Safety holds',
+      value: String(status.pendingApprovals || 0),
+      detail: 'operator-gated outbound actions',
+      tone: Number(status.pendingApprovals || 0) ? 'amber' : 'sky',
+    },
+  ];
 
   useEffect(() => {
     if (!actionStatus) return undefined;
@@ -213,157 +425,99 @@ export function Settings() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100 sm:text-2xl">Settings</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Provider status, usage limits, and safety controls.
-          </p>
-        </div>
-        <div
-          className="inline-flex items-center gap-2 self-start rounded-full border border-slate-800 bg-slate-950/70 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-400 md:self-auto"
-          aria-live="polite"
-        >
-          <span
-            aria-hidden="true"
-            className={[
-              'h-2 w-2 rounded-full',
-              loading ? 'bg-sky-400 animate-pulse' : error ? 'bg-amber-400' : 'bg-emerald-400',
-            ].join(' ')}
-          />
-          {loading
-            ? 'Checking bridge connection'
-            : error
-              ? 'Bridge offline'
-              : `State backend · ${(status.stateBackend as string) || 'No data yet'}`}
-        </div>
-      </div>
+    <div className="pbk-settings-surface">
+      <SettingsHero
+        loading={loading}
+        error={error}
+        stateBackend={stateBackend}
+        stats={settingsStats}
+        onRefresh={() => void refresh()}
+      />
 
       {actionStatus && (
-        <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+        <div className="pbk-settings-status" aria-live="polite">
           {actionStatus}
         </div>
       )}
       {refreshingDecision && (
-        <div className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-300">
+        <div className="pbk-settings-status muted" aria-live="polite">
+          <Loader2 size={15} className="animate-spin" aria-hidden="true" />
           Refreshing Settings after admin decision...
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
-        {providerCards.map((card) => {
-          const meta = card.meta as Record<string, unknown> | undefined;
-          const state = readinessFor(meta);
-          return (
-            <section
-              key={card.id}
-              className="rounded-2xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                  {card.label}
-                </div>
-                <StatusDot state={state} />
-              </div>
-              <div className="mt-2 text-lg font-semibold text-slate-100">
-                {describeProvider(meta)}
-              </div>
-              <div className="mt-1 text-xs text-slate-500 whitespace-pre-wrap">
-                {String(meta?.note || '') || 'Bridge-backed runtime surface.'}
-              </div>
-            </section>
-          );
-        })}
+      <div className="pbk-settings-provider-strip" aria-label="Provider readiness">
+        {providerCards.map((card) => (
+          <SettingsProviderCard key={card.id} card={card} />
+        ))}
       </div>
 
-      <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-100">Agent Tools</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Repo-level systems that support research, observability, workflow health, and future
-              agent training.
-            </p>
+      <div className="pbk-settings-layout">
+        <section className="pbk-settings-card span-2">
+          <div className="pbk-settings-card-head">
+            <div>
+              <span className="pbk-kicker">Runtime support</span>
+              <h2>Agent tools</h2>
+              <p>
+                Repo-level systems that support research, observability, workflow health, and future
+                agent training.
+              </p>
+            </div>
+            <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
           </div>
-          <div className="text-xs text-slate-500">
-            {String(toolingCoreReady)}/{String(toolingCoreTotal)} core ready
-            {toolingOptionalTotal
-              ? ` · ${String(toolingOptionalReady)}/${String(toolingOptionalTotal)} optional enabled`
-              : ''}
+
+          <div className="pbk-settings-tool-grid">
+            {toolingCards.map((card) => (
+              <SettingsToolCard key={card.id} card={card} />
+            ))}
           </div>
-        </div>
 
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-          {toolingCards.map((card) => {
-            const state = readinessFor(card.meta);
-            return (
-              <section
-                key={card.id}
-                className="rounded-2xl border border-slate-800 bg-slate-900 p-4 transition-colors hover:border-slate-700"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0 text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                    {card.label}
-                  </div>
-                  <StatusDot state={state} />
-                </div>
-                <div className="mt-2 break-words text-lg font-semibold text-slate-100">
-                  {describeTooling(card.meta)}
-                </div>
-                <div className="mt-1 whitespace-pre-wrap break-words text-xs text-slate-500">
-                  {String(card.meta?.note || 'Bridge-backed tooling surface.')}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-
-        <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-xs text-slate-400">
-          Metrics endpoint:{' '}
-          {metricsUrl ? (
-            <a
-              href={metricsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="break-all text-sky-300 underline-offset-4 hover:underline"
-            >
-              {metricsUrl}
-            </a>
-          ) : (
-            <span className="text-slate-200">waiting for bridge connection</span>
-          )}
-        </div>
-      </section>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-4">
-        <section className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
-          <div className="border-b border-slate-800 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-100">Admin Approvals Needed</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Test mode and approval-backed infrastructure changes queued by Rex.
-            </p>
+          <div className="pbk-settings-metrics">
+            <div>
+              <span className="pbk-kicker">Metrics endpoint</span>
+              {metricsUrl ? (
+                <a href={metricsUrl} target="_blank" rel="noreferrer">
+                  {metricsUrl}
+                  <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              ) : (
+                <strong>Waiting for bridge connection</strong>
+              )}
+            </div>
+            <PbkDataSource
+              endpoint="GET /api/observability/status"
+              status="needs-wiring"
+              note="canonical dashboard URL/status"
+            />
           </div>
-          <div className="divide-y divide-slate-800">
+        </section>
+
+        <section className="pbk-settings-card pbk-settings-admin-card">
+          <div className="pbk-settings-card-head">
+            <div>
+              <span className="pbk-kicker">Approvals</span>
+              <h2>Admin approvals needed</h2>
+              <p>Test mode and approval-backed infrastructure changes queued by Rex.</p>
+            </div>
+            <PbkDataSource endpoint="PUT /api/admin/tasks/:id" status="ships" />
+          </div>
+          <div className="admin-list">
             {adminTasks.map((task) => (
-              <div
-                key={String(task.id)}
-                className="grid grid-cols-1 gap-2 px-4 py-4 text-sm text-slate-200 md:grid-cols-[1fr_auto]"
-              >
+              <div key={String(task.id)} className="admin-row">
                 <div>
-                  <div className="font-medium text-slate-100">
+                  <div className="admin-title">
                     {String(task.provider || 'admin')} / {String(task.action || 'review')}
                   </div>
-                  <div className="mt-1 text-xs text-slate-400">
+                  <div className="admin-summary">
                     {String(task.summary || task.command || 'Administrative action')}
                   </div>
                   {String(task.status || '').toLowerCase() === 'pending' && (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="admin-actions">
                       <button
                         type="button"
                         disabled={Boolean(pendingAction) || refreshingDecision}
                         onClick={() => confirmSettingsAdminDecision(task, 'approved')}
-                        className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
+                        className="approve"
                       >
                         Approve
                       </button>
@@ -371,55 +525,23 @@ export function Settings() {
                         type="button"
                         disabled={Boolean(pendingAction) || refreshingDecision}
                         onClick={() => confirmSettingsAdminDecision(task, 'rejected')}
-                        className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
+                        className="decline"
                       >
                         Decline
                       </button>
                     </div>
                   )}
                 </div>
-                <div className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                  {formatRuntimeStatus(task.status)}
-                </div>
+                <div className="admin-status">{formatRuntimeStatus(task.status)}</div>
               </div>
             ))}
             {!adminTasks.length && (
-              <div className="px-4 py-10 text-center text-xs text-slate-500">
-                No admin approvals are needed.
-              </div>
+              <div className="pbk-settings-empty">No admin approvals are needed.</div>
             )}
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <h2 className="text-sm font-semibold text-slate-100">Safety Controls</h2>
-          <div className="mt-3 space-y-3 text-sm">
-            <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                Approvals
-              </div>
-              <div className="mt-1 text-slate-100">
-                {String(status.pendingApprovals || 0)} offer / outbound approvals pending
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                Admin Queue
-              </div>
-              <div className="mt-1 text-slate-100">
-                {String(status.pendingAdminTasks || 0)} admin changes still require review
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-                Document Sends
-              </div>
-              <div className="mt-1 text-slate-100">
-                {String(status.documentDeliveries || 0)} seller document sends tracked in the bridge
-              </div>
-            </div>
-          </div>
-        </section>
+        <SettingsSafetyRail status={status} />
       </div>
 
       {settingsAdminDecisionDraft && (

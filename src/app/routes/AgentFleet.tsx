@@ -57,6 +57,8 @@ type RuntimeLeadOption = {
   selected_path?: string;
 };
 
+type RuntimeCallRecord = Record<string, unknown>;
+
 type BridgeSnnWorker = {
   agentId?: string;
   name?: string;
@@ -67,6 +69,28 @@ type BridgeSnnWorker = {
   note?: string;
   spikeSources?: Array<{ name?: string; count?: number; ready?: boolean }>;
 };
+
+function getCallAgentId(call: RuntimeCallRecord) {
+  return String(call.agentId || call.agent_id || call.agent || call.agentName || '').toLowerCase();
+}
+
+function getCallTimestamp(call: RuntimeCallRecord) {
+  const value = String(call.endedAt || call.completedAt || call.createdAt || call.startedAt || '');
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getCallOutcomeSummary(call: RuntimeCallRecord) {
+  return String(
+    call.outcome ||
+      call.outcomeLabel ||
+      call.outcome_label ||
+      call.disposition ||
+      call.summary ||
+      call.status ||
+      'No disposition reported'
+  ).replace(/_/g, ' ');
+}
 
 type AgentDealPreview = {
   result?: string;
@@ -620,6 +644,7 @@ export function AgentFleet() {
   });
   const [bridgeSnnWorkers, setBridgeSnnWorkers] = useState<BridgeSnnWorker[]>([]);
   const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
+  const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -656,7 +681,11 @@ export function AgentFleet() {
         const leads = Array.isArray(stateResult.value.leadImports)
           ? (stateResult.value.leadImports as RuntimeLeadOption[])
           : [];
+        const calls = Array.isArray(stateResult.value.calls)
+          ? (stateResult.value.calls as RuntimeCallRecord[])
+          : [];
         setLeadOptions(leads.slice(0, 25));
+        setRuntimeCalls(calls);
         if (!selectedLeadId && leads[0]) setSelectedLeadId(getLeadOptionId(leads[0]));
       } else {
         console.warn('[PBK AgentFleet] lead context options unavailable', stateResult.reason);
@@ -728,6 +757,19 @@ export function AgentFleet() {
     () => agents.find((a) => a.id === activeAgentId) ?? agents[0],
     [activeAgentId, agents]
   );
+  const lastCallOutcomeByAgentId = useMemo(() => {
+    const ordered = [...runtimeCalls].sort(
+      (left, right) => getCallTimestamp(right) - getCallTimestamp(left)
+    );
+    return agents.reduce<Record<string, string>>((summary, agent) => {
+      const match = ordered.find((call) => {
+        const agentKey = getCallAgentId(call);
+        return agentKey === agent.id || agentKey === agent.name.toLowerCase();
+      });
+      summary[agent.id] = match ? getCallOutcomeSummary(match) : 'No call outcome yet';
+      return summary;
+    }, {});
+  }, [agents, runtimeCalls]);
   const selectedLead = useMemo(
     () => leadOptions.find((lead) => getLeadOptionId(lead) === selectedLeadId) || null,
     [leadOptions, selectedLeadId]
@@ -963,6 +1005,7 @@ export function AgentFleet() {
                 const localSnnActive =
                   (agent.id === 'ava' && snnStatus.ava) || (agent.id === 'rex' && snnStatus.rex);
                 const transferFeedback = transferFeedbackByAgentId[agent.id];
+                const lastOutcome = lastCallOutcomeByAgentId[agent.id] || 'No call outcome yet';
                 return (
                   <button
                     key={agent.id}
@@ -986,6 +1029,12 @@ export function AgentFleet() {
                         ) : null}
                       </span>
                       <span className="block truncate text-xs text-slate-500">{agent.role}</span>
+                      <span
+                        className="mt-1 block truncate text-[10px] text-slate-500"
+                        title={lastOutcome}
+                      >
+                        Last call outcome: {lastOutcome}
+                      </span>
                       {bridgeWorker && (
                         <span className="mt-1 block truncate text-[10px] uppercase tracking-wide text-sky-300/80">
                           SNN {bridgeWorker.status || 'ready'}

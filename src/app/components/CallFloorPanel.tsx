@@ -5,7 +5,7 @@ import {
   scheduleAppointmentRequest,
   startLeadCallRequest,
 } from '../utils/runtimeBridge';
-import { showUiToast } from '../utils/uiFeedback';
+import { showUiToast, toastUndo } from '../utils/uiFeedback';
 
 type BridgeRecord = Record<string, unknown>;
 
@@ -365,6 +365,55 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
     }
   };
 
+  const restoreScheduledCall = useCallback(async (item: ScheduledCall) => {
+    setScheduleActionPending(`restore:${item.id}`);
+    try {
+      const response = await scheduleAppointmentRequest({
+        leadId: item.leadId,
+        leadName: item.leadName,
+        phone: item.phone,
+        address: item.address,
+        startTime: item.scheduledAt,
+        scheduledFor: item.scheduledAt,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+        source: 'call-floor-panel-undo',
+        actor: 'Call Floor',
+        notes: 'Restored callback from PBK undo toast.',
+      });
+      const appointment =
+        response.appointment && typeof response.appointment === 'object'
+          ? (response.appointment as BridgeRecord)
+          : {};
+      const restored: ScheduledCall = {
+        ...item,
+        id: text(appointment.id, item.id),
+        scheduledAt: text(appointment.startTime, item.scheduledAt),
+      };
+      setScheduledCalls((current) =>
+        saveScheduledCalls(
+          [restored, ...current.filter((nextItem) => nextItem.id !== restored.id)].slice(0, 8)
+        )
+      );
+      showUiToast({
+        tone: 'success',
+        title: 'Callback restored',
+        desc: `${item.leadName} is back on the bridge appointment queue.`,
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Undo failed',
+        desc:
+          error instanceof Error
+            ? error.message
+            : 'The bridge did not restore the scheduled callback.',
+        critical: true,
+      });
+    } finally {
+      setScheduleActionPending('');
+    }
+  }, []);
+
   const cancelScheduledCall = async (id: string) => {
     const item = scheduledCalls.find((call) => call.id === id);
     if (!item) return;
@@ -382,10 +431,10 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
       setScheduledCalls((current) =>
         saveScheduledCalls(current.filter((nextItem) => nextItem.id !== id))
       );
-      showUiToast({
-        tone: 'info',
+      toastUndo({
         title: 'Scheduled call canceled',
         desc: 'Cancellation was synced to the bridge appointment queue.',
+        undo: () => restoreScheduledCall(item),
       });
     } catch (error) {
       showUiToast({

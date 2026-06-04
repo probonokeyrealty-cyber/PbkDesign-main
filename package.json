@@ -92,6 +92,7 @@
     "test:intelligence-scorecard": "node ./scripts/intelligence-scorecard-smoke.mjs",
     "test:ui-error-loading-validation": "node ./scripts/ui-error-loading-validation-smoke.mjs",
     "test:ui-feedback-truncation-responsive": "node ./scripts/ui-feedback-truncation-responsive-smoke.mjs",
+    "test:ui-prototype-upgrades": "node ./scripts/ui-prototype-upgrades-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

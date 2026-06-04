@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { runToastRetry, type UiToastPayload } from '../utils/uiFeedback';
+import { runToastRetry, runToastUndo, type UiToastPayload } from '../utils/uiFeedback';
 
 type ToastRecord = UiToastPayload & {
   id: string;
@@ -41,12 +41,13 @@ export function UiToastHost() {
           <div className="ui-toast-title">{toast.title}</div>
           {toast.desc && <div className="ui-toast-desc">{toast.desc}</div>}
           <div className="ui-toast-actions">
-            {toast.retryId && toast.actionLabel && (
+            {(toast.retryId || toast.undoId) && toast.actionLabel && (
               <button
                 type="button"
                 className="ui-toast-action"
                 onClick={() => {
-                  void runToastRetry(toast.retryId || '');
+                  if (toast.undoId) void runToastUndo(toast.undoId);
+                  else void runToastRetry(toast.retryId || '');
                   setToasts((current) => current.filter((item) => item.id !== toast.id));
                 }}
               >

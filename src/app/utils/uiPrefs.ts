@@ -18,14 +18,40 @@ function canUseStorage() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
-export function readPbkPrefs(): PbkPrefs {
-  if (!canUseStorage()) return DEFAULT_PBK_PREFS;
+/** Resolve the browser/system color preference for PBK shell startup. */
+export function getSystemPbkTheme(): PbkPrefs['theme'] {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'dark';
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+export function hasStoredPbkThemePreference() {
+  if (!canUseStorage()) return false;
   try {
     const raw = window.localStorage.getItem(PBK_PREFS_KEY);
-    if (!raw) return DEFAULT_PBK_PREFS;
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Partial<PbkPrefs>;
+    return parsed.theme === 'light' || parsed.theme === 'dark';
+  } catch {
+    return false;
+  }
+}
+
+function getDefaultPbkPrefs(): PbkPrefs {
+  return {
+    ...DEFAULT_PBK_PREFS,
+    theme: getSystemPbkTheme(),
+  };
+}
+
+export function readPbkPrefs(): PbkPrefs {
+  const defaults = getDefaultPbkPrefs();
+  if (!canUseStorage()) return defaults;
+  try {
+    const raw = window.localStorage.getItem(PBK_PREFS_KEY);
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<PbkPrefs>;
     return {
-      ...DEFAULT_PBK_PREFS,
+      ...defaults,
       ...parsed,
       theme: parsed.theme === 'light' ? 'light' : 'dark',
       railCollapsed: Boolean(parsed.railCollapsed),
@@ -33,7 +59,7 @@ export function readPbkPrefs(): PbkPrefs {
       tourCompleted: Boolean(parsed.tourCompleted),
     };
   } catch {
-    return DEFAULT_PBK_PREFS;
+    return defaults;
   }
 }
 

@@ -1,10 +1,17 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
 import { UiToastHost } from '../components/UiToastHost';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
-import { applyPbkTheme, readPbkPrefs, savePbkPrefs } from '../utils/uiPrefs';
+import {
+  applyPbkTheme,
+  getSystemPbkTheme,
+  hasStoredPbkThemePreference,
+  readPbkPrefs,
+  savePbkPrefs,
+} from '../utils/uiPrefs';
 import { getPendingApprovalCount } from '../routes/inboxRuntimeLogic.js';
 import { showUiToast } from '../utils/uiFeedback';
 import { FavoritesBar } from './FavoritesBar';
@@ -66,6 +73,7 @@ export function ParadiseLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [prefs, setPrefs] = useState(() => readPbkPrefs());
+  const [systemTheme, setSystemTheme] = useState(() => getSystemPbkTheme());
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [skeletonOn, setSkeletonOn] = useState(false);
   const lastPageRestoredRef = useRef(false);
@@ -75,6 +83,20 @@ export function ParadiseLayout() {
   useEffect(() => {
     applyPbkTheme(prefs.theme);
   }, [prefs.theme]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = () => {
+      const nextSystemTheme = getSystemPbkTheme();
+      setSystemTheme(nextSystemTheme);
+      if (!hasStoredPbkThemePreference()) {
+        setPrefs((current) => ({ ...current, theme: nextSystemTheme }));
+      }
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     const path = `${location.pathname}${location.search || ''}`;
@@ -222,6 +244,15 @@ export function ParadiseLayout() {
         </main>
       </div>
       <ShortcutCheatSheet open={shortcutOpen} onClose={() => setShortcutOpen(false)} />
+      <SessionTimeoutWarning
+        onStayActive={() =>
+          showUiToast({
+            tone: 'success',
+            title: 'Session kept active',
+            desc: `Dashboard stays in ${systemTheme} system-aware mode.`,
+          })
+        }
+      />
       <UiToastHost />
     </div>
   );

@@ -28,24 +28,11 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Phone,
-  PhoneOff,
-  MicOff,
-  Hand,
-  CircleDot,
-  Bot,
-  Activity,
-} from 'lucide-react';
+import { Phone, PhoneOff, MicOff, Hand, CircleDot, Bot, Activity } from 'lucide-react';
 
 // ---- Types --------------------------------------------------------------
 
-export type CallStatus =
-  | 'idle'
-  | 'dialing'
-  | 'connected'
-  | 'on-hold'
-  | 'ended';
+export type CallStatus = 'idle' | 'dialing' | 'connected' | 'on-hold' | 'ended';
 
 export type AgentMode = 'autopilot' | 'co-pilot' | 'human';
 
@@ -145,20 +132,51 @@ const TRANSCRIPT_HIGHLIGHT_REGEX =
 
 function highlightTone(match: string) {
   const lower = match.toLowerCase();
-  if (/too expensive|think about|talk to|not interested|angry|frustrated/.test(lower)) return 'objection';
-  if (/cash offer|creative finance|mortgage takeover|retail buyer|rbp|path locked|mao/.test(lower)) return 'decision';
+  if (/too expensive|think about|talk to|not interested|angry|frustrated/.test(lower))
+    return 'objection';
+  if (/cash offer|creative finance|mortgage takeover|retail buyer|rbp|path locked|mao/.test(lower))
+    return 'decision';
   return 'emotion';
 }
 
-function renderHighlightedTranscript(text: string) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function renderSystemHighlightedTranscript(text: string, keyPrefix = '') {
   const parts = text.split(TRANSCRIPT_HIGHLIGHT_REGEX);
   return parts.map((part, index) => {
     if (!part) return null;
     TRANSCRIPT_HIGHLIGHT_REGEX.lastIndex = 0;
-    if (!TRANSCRIPT_HIGHLIGHT_REGEX.test(part)) return <span key={`${part}-${index}`}>{part}</span>;
+    if (!TRANSCRIPT_HIGHLIGHT_REGEX.test(part))
+      return <span key={`${keyPrefix}${part}-${index}`}>{part}</span>;
     TRANSCRIPT_HIGHLIGHT_REGEX.lastIndex = 0;
     return (
-      <mark key={`${part}-${index}`} className={`transcript-highlight ${highlightTone(part)}`}>
+      <mark
+        key={`${keyPrefix}${part}-${index}`}
+        className={`transcript-highlight ${highlightTone(part)}`}
+      >
+        {part}
+      </mark>
+    );
+  });
+}
+
+function renderHighlightedTranscript(text: string, userQuery = '') {
+  const query = userQuery.trim();
+  if (!query) return renderSystemHighlightedTranscript(text);
+  const queryRegex = new RegExp(`(${escapeRegExp(query)})`, 'gi');
+  return text.split(queryRegex).map((part, index) => {
+    if (!part) return null;
+    if (part.toLowerCase() !== query.toLowerCase()) {
+      return (
+        <span key={`search-context-${index}`}>
+          {renderSystemHighlightedTranscript(part, `search-context-${index}-`)}
+        </span>
+      );
+    }
+    return (
+      <mark key={`search-hit-${index}`} className="transcript-highlight decision">
         {part}
       </mark>
     );
@@ -183,6 +201,7 @@ export function LiveCallWidget({
   compact = false,
 }: LiveCallWidgetProps) {
   const live = state ?? EMPTY_STATE;
+  const [transcriptQuery, setTranscriptQuery] = useState('');
 
   // Tick once per second so elapsed timer updates without external state.
   const [, setTick] = useState(0);
@@ -204,6 +223,14 @@ export function LiveCallWidget({
   const status = useMemo(() => statusTone(live.status), [live.status]);
   const sent = useMemo(() => sentimentTone(live.sentiment), [live.sentiment]);
   const elapsed = fmtElapsed(live.startedAt);
+  const transcriptMatchCount = useMemo(() => {
+    const needle = transcriptQuery.trim().toLowerCase();
+    if (!needle) return 0;
+    return live.transcript.reduce(
+      (count, line) => count + (line.text.toLowerCase().includes(needle) ? 1 : 0),
+      0
+    );
+  }, [live.transcript, transcriptQuery]);
 
   const isLive =
     live.status === 'connected' || live.status === 'on-hold' || live.status === 'dialing';
@@ -224,7 +251,9 @@ export function LiveCallWidget({
           <div className="text-[11px] uppercase tracking-wider font-medium text-slate-300">
             Live Call
           </div>
-          <span className={`ml-2 inline-flex items-center gap-1.5 text-[10px] font-semibold ${status.color}`}>
+          <span
+            className={`ml-2 inline-flex items-center gap-1.5 text-[10px] font-semibold ${status.color}`}
+          >
             <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
             {status.label}
           </span>
@@ -274,6 +303,23 @@ export function LiveCallWidget({
         </div>
       </div>
 
+      <div className="border-b border-slate-800 px-4 py-2">
+        <label className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-[11px] text-slate-400 focus-within:border-sky-500/60">
+          <span className="shrink-0 uppercase tracking-[0.12em]">Search transcript</span>
+          <input
+            value={transcriptQuery}
+            onChange={(event) => setTranscriptQuery(event.target.value)}
+            placeholder="keyword..."
+            className="min-w-0 flex-1 bg-transparent text-xs text-slate-100 outline-none placeholder:text-slate-600"
+          />
+          {transcriptQuery.trim() && (
+            <span className="shrink-0 text-[10px] text-sky-300">
+              {transcriptMatchCount} hit{transcriptMatchCount === 1 ? '' : 's'}
+            </span>
+          )}
+        </label>
+      </div>
+
       {/* Transcript */}
       <div
         ref={scrollRef}
@@ -294,7 +340,9 @@ export function LiveCallWidget({
                 >
                   {sp.label}
                 </span>
-                <span className={`${sp.text}`}>{renderHighlightedTranscript(line.text)}</span>
+                <span className={`${sp.text}`}>
+                  {renderHighlightedTranscript(line.text, transcriptQuery)}
+                </span>
               </div>
             );
           })

@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, Plus, RefreshCw, Reply, Send, X } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock3,
+  Database,
+  Inbox as InboxIcon,
+  Loader2,
+  Mail,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  Reply,
+  Send,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
+import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchLeadsRequest,
@@ -53,6 +69,14 @@ type ApprovalDecisionDraft = {
 type InboxActionStatus = {
   tone: 'success' | 'error';
   text: string;
+};
+type InboxStats = {
+  pendingApprovals: number;
+  unreadMessages: number;
+  scheduledMessages: number;
+  totalMessages: number;
+  visibleMessages: number;
+  composeLeadCount: number;
 };
 
 const EMPTY_DRAFT: ComposeDraft = {
@@ -170,6 +194,344 @@ function formatDateTime(value: unknown) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function getMessageTimestamp(message: Record<string, unknown>) {
+  return String(
+    message.createdAt ||
+      message.at ||
+      message.updatedAt ||
+      message.scheduledFor ||
+      message.sendAt ||
+      ''
+  );
+}
+
+function getMessageTitle(message: Record<string, unknown>) {
+  return String(message.leadName || message.address || message.from || message.to || 'Message');
+}
+
+function getMessageBody(message: Record<string, unknown>) {
+  return String(message.body || message.message || message.text || '(empty message)');
+}
+
+function buildInboxStats({
+  approvals,
+  allMessages,
+  visibleMessages,
+  totalMessages,
+  composeLeadCount,
+}: {
+  approvals: Record<string, unknown>[];
+  allMessages: Record<string, unknown>[];
+  visibleMessages: Record<string, unknown>[];
+  totalMessages: number;
+  composeLeadCount: number;
+}): InboxStats {
+  return {
+    pendingApprovals: approvals.length,
+    unreadMessages: allMessages.filter(isUnreadMessage).length,
+    scheduledMessages: allMessages.filter((message) =>
+      Boolean(
+        message.scheduledFor || message.sendAt || String(message.status || '') === 'scheduled'
+      )
+    ).length,
+    totalMessages,
+    visibleMessages: visibleMessages.length,
+    composeLeadCount,
+  };
+}
+
+function InboxSourceRail() {
+  return (
+    <div className="pbk-inbox-source-rail" aria-label="Inbox data sources">
+      <PbkDataSource
+        endpoint="GET /state"
+        status="ships"
+        note="approval queue and snapshot fallback messages"
+      />
+      <PbkDataSource endpoint="GET /api/messages" status="ships" note="message list paging" />
+      <PbkDataSource endpoint="GET /api/leads" status="ships" note="compose lead autocomplete" />
+      <PbkDataSource endpoint="PUT /api/approvals/:id" status="ships" note="operator decisions" />
+      <PbkDataSource
+        endpoint="POST /api/lead/send-message"
+        status="ships"
+        note="send now through bridge providers"
+      />
+      <PbkDataSource endpoint="POST /api/messages" status="ships" note="send later queue" />
+      <PbkDataSource
+        endpoint="PATCH /api/messages/:id/archive"
+        status="needs-wiring"
+        note="prototype swipe/archive persistence"
+      />
+    </div>
+  );
+}
+
+function InboxStatRibbon({ stats }: { stats: InboxStats }) {
+  return (
+    <div className="pbk-inbox-grid">
+      <div className="pbk-inbox-stat">
+        <div className="l">Approval queue</div>
+        <div className="v amber">{stats.pendingApprovals}</div>
+        <div className="delta">from runtime snapshot</div>
+      </div>
+      <div className="pbk-inbox-stat">
+        <div className="l">Unread replies</div>
+        <div className="v sky">{stats.unreadMessages}</div>
+        <div className="delta">inbound seller messages</div>
+      </div>
+      <div className="pbk-inbox-stat">
+        <div className="l">Scheduled sends</div>
+        <div className="v lime">{stats.scheduledMessages}</div>
+        <div className="delta">bridge queued messages</div>
+      </div>
+      <div className="pbk-inbox-stat">
+        <div className="l">Lead roster</div>
+        <div className="v">{stats.composeLeadCount}</div>
+        <div className="delta">compose autocomplete</div>
+      </div>
+    </div>
+  );
+}
+
+function InboxHero({
+  loading,
+  stats,
+  source,
+  onCompose,
+  onRefresh,
+}: {
+  loading: boolean;
+  stats: InboxStats;
+  source: string;
+  onCompose: () => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <section className="pbk-inbox-hero">
+      <div className="pbk-inbox-hero-top">
+        <div>
+          <div className="pbk-eyebrow">
+            Unified inbox - {stats.pendingApprovals} approvals - {stats.unreadMessages} unread
+          </div>
+          <h1 className="pbk-display pbk-h1">
+            Inbox &amp; <em>approvals</em>.
+          </h1>
+          <p>
+            Seller replies, Ava/Rex approvals, scheduled outreach, and bridge-backed compose in one
+            operator cockpit. Archive gestures stay labeled as a wiring gap until the bridge owns
+            that persistence.
+          </p>
+        </div>
+        <div className="pbk-inbox-hero-actions">
+          <span className="pbk-inbox-sync">
+            <Database size={13} />
+            {loading ? 'syncing' : source || 'runtime'}
+          </span>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-sky-gradient pbk-btn-sm"
+            onClick={onCompose}
+          >
+            <Plus size={14} />
+            Compose
+          </button>
+        </div>
+      </div>
+      <InboxStatRibbon stats={stats} />
+      <InboxSourceRail />
+    </section>
+  );
+}
+
+function InboxThreadRail({
+  stats,
+  statusCopy,
+  leadStatus,
+  onCompose,
+}: {
+  stats: InboxStats;
+  statusCopy: string;
+  leadStatus: string;
+  onCompose: () => void;
+}) {
+  const lanes = [
+    {
+      label: 'Approvals',
+      value: stats.pendingApprovals,
+      note: 'Ava/Rex waiting',
+      icon: <ShieldCheck size={15} />,
+      tone: 'amber',
+    },
+    {
+      label: 'Unread',
+      value: stats.unreadMessages,
+      note: 'seller replies',
+      icon: <MessageSquare size={15} />,
+      tone: 'sky',
+    },
+    {
+      label: 'Scheduled',
+      value: stats.scheduledMessages,
+      note: 'send later queue',
+      icon: <Clock3 size={15} />,
+      tone: 'lime',
+    },
+  ];
+
+  return (
+    <aside className="pbk-inbox-thread-rail">
+      <div className="rail-head">
+        <div>
+          <h2>Unified Inbox</h2>
+          <p>{statusCopy}</p>
+        </div>
+        <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onCompose}>
+          <Mail size={14} />
+          New
+        </button>
+      </div>
+      <div className="rail-lanes">
+        {lanes.map((lane) => (
+          <div key={lane.label} className={`rail-lane ${lane.tone}`}>
+            <span className="lane-icon">{lane.icon}</span>
+            <span className="lane-body">
+              <strong>{lane.label}</strong>
+              <span>{lane.note}</span>
+            </span>
+            <span className="lane-count">{lane.value}</span>
+          </div>
+        ))}
+      </div>
+      <div className="rail-foot">
+        <div className="l">Lead lookup</div>
+        <div className="v">{leadStatus || `${stats.composeLeadCount} leads ready for compose`}</div>
+      </div>
+      <PbkDataSource endpoint="GET /api/leads" status="ships" note="live compose roster" />
+    </aside>
+  );
+}
+
+function InboxApprovalCard({
+  approval,
+  index,
+  pendingAction,
+  feedback,
+  onDecision,
+}: {
+  approval: Record<string, unknown>;
+  index: number;
+  pendingAction: string;
+  feedback?: string;
+  onDecision: (approval: Record<string, unknown>, status: string) => void;
+}) {
+  const contract = isContractApproval(approval);
+  const approvalId = String(approval.id || '');
+  const secondaryStatus = contract ? 'needs-revision' : 'rejected';
+  return (
+    <div className={`pbk-inbox-approval-card ${contract ? 'contract' : ''}`.trim()}>
+      <div className="approval-top">
+        <div>
+          <div className="approval-type">{String(approval.type || 'approval')}</div>
+          <h3>{String(approval.leadName || 'Pending lead')}</h3>
+          <p>{String(approval.address || 'No address recorded')}</p>
+        </div>
+        {feedback && (
+          <div className="approval-feedback">
+            <CheckCircle2 size={13} />
+            {feedback}
+          </div>
+        )}
+      </div>
+      <div className="approval-preview">{getApprovalPreview(approval)}</div>
+      {contract && (
+        <div className="approval-warning">
+          Contract approval can release DocuSign. A confirmation step is required.
+        </div>
+      )}
+      <div className="approval-actions">
+        <button
+          type="button"
+          data-approval-primary={index === 0 ? 'true' : undefined}
+          disabled={pendingAction === `approval:${approvalId}:approved`}
+          onClick={() => onDecision(approval, 'approved')}
+          className="pbk-btn pbk-btn-success pbk-btn-sm"
+        >
+          {pendingAction === `approval:${approvalId}:approved` && (
+            <Loader2 size={14} className="animate-spin" />
+          )}
+          {pendingAction === `approval:${approvalId}:approved` ? 'Approving' : 'Approve'}
+        </button>
+        <button
+          type="button"
+          data-approval-secondary={index === 0 ? 'true' : undefined}
+          disabled={pendingAction === `approval:${approvalId}:${secondaryStatus}`}
+          onClick={() => onDecision(approval, secondaryStatus)}
+          className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+        >
+          {pendingAction === `approval:${approvalId}:${secondaryStatus}` && (
+            <Loader2 size={14} className="animate-spin" />
+          )}
+          {pendingAction === `approval:${approvalId}:${secondaryStatus}`
+            ? 'Sending'
+            : contract
+              ? 'Needs Revision'
+              : 'Decline'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InboxMessageRow({
+  message,
+  onReply,
+}: {
+  message: Record<string, unknown>;
+  onReply: (message: Record<string, unknown>) => void;
+}) {
+  const unread = isUnreadMessage(message);
+  const timestamp = getMessageTimestamp(message);
+  return (
+    <div className={`pbk-inbox-message-row ${unread ? 'unread' : ''}`.trim()}>
+      <div className="msg-channel">
+        <span>{String(message.channel || 'sms')}</span>
+        {unread && <strong>New</strong>}
+      </div>
+      <div className="msg-body">
+        <div className="msg-head">
+          <span className="msg-name">{getMessageTitle(message)}</span>
+          {Boolean(message.subject) && (
+            <span className="msg-subject">{String(message.subject)}</span>
+          )}
+        </div>
+        <div className="msg-preview">{getMessageBody(message)}</div>
+        <button type="button" onClick={() => onReply(message)} className="msg-reply">
+          <Reply size={13} />
+          Reply
+        </button>
+      </div>
+      <div className="msg-meta">
+        <span>{formatRuntimeStatus(message.status)}</span>
+        {timestamp && (
+          <span title={new Date(timestamp).toLocaleString()}>{formatRelativeTime(timestamp)}</span>
+        )}
+        {Boolean(message.scheduledFor || message.sendAt) && (
+          <span>{formatDateTime(message.scheduledFor || message.sendAt)}</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function readComposeDraft() {
@@ -725,6 +1087,17 @@ export function Inbox() {
     const snapshotLeads = normalizeComposeLeads(snapshot?.leadImports || []) as ComposeLead[];
     return liveLeads.length ? liveLeads : snapshotLeads;
   }, [liveLeads, snapshot?.leadImports]);
+  const inboxStats = useMemo(
+    () =>
+      buildInboxStats({
+        approvals,
+        allMessages,
+        visibleMessages,
+        totalMessages,
+        composeLeadCount: composeLeads.length,
+      }),
+    [allMessages, approvals, composeLeads.length, totalMessages, visibleMessages]
+  );
 
   const loadMessages = useCallback(async (limit: number) => {
     try {
@@ -858,301 +1231,193 @@ export function Inbox() {
     ? 'Loading inbox...'
     : `Showing ${visibleMessages.length} of ${totalMessages || visibleMessages.length} messages`;
   const bridgeError = error || messageError;
+  const snapshotSource =
+    snapshot && typeof snapshot === 'object'
+      ? String((snapshot as unknown as Record<string, unknown>).source || 'runtime')
+      : 'runtime';
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-100">Inbox</h1>
-          <p className="text-sm text-slate-400">
-            Approvals, seller replies, and agent handoffs from the runtime.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setComposeOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-xs font-bold text-slate-950 transition hover:bg-sky-300"
-          >
-            <Plus size={15} />
-            Compose
-          </button>
-          <div className="text-xs text-slate-500">{statusCopy}</div>
-        </div>
-      </div>
+    <div className="pbk-inbox-surface min-h-full text-slate-100">
+      <main className="space-y-4 p-4 md:p-6">
+        <InboxHero
+          loading={loading}
+          stats={inboxStats}
+          source={snapshotSource}
+          onCompose={() => setComposeOpen(true)}
+          onRefresh={() => void refreshInbox()}
+        />
 
-      {bridgeError && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-50 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="font-semibold">Bridge connection issue</div>
-            <div className="mt-1 text-xs text-amber-100/80">{bridgeError}</div>
+        {bridgeError && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-50 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-semibold">Bridge connection issue</div>
+              <div className="mt-1 text-xs text-amber-100/80">{bridgeError}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshInbox()}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-semibold text-amber-50 transition hover:bg-amber-300/10"
+            >
+              <RefreshCw size={14} />
+              Retry
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => void refreshInbox()}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-semibold text-amber-50 transition hover:bg-amber-300/10"
-          >
-            <RefreshCw size={14} />
-            Retry
-          </button>
-        </div>
-      )}
+        )}
 
-      {actionStatus && (
-        <div
-          className={[
-            'flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm',
-            actionStatus.tone === 'error'
-              ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
-              : 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100',
-          ].join(' ')}
-        >
-          <span className="flex items-center gap-2">
-            {actionStatus.tone === 'error' ? (
-              <AlertCircle size={15} className="text-rose-300" />
-            ) : (
-              <CheckCircle2 size={15} className="text-emerald-300" />
-            )}
-            {actionStatus.text}
-          </span>
-          <button
-            type="button"
-            className="rounded-full p-1 opacity-70 hover:bg-white/10 hover:opacity-100"
-            onClick={() => setActionStatus(null)}
-            aria-label="Dismiss status"
+        {actionStatus && (
+          <div
+            className={[
+              'flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm',
+              actionStatus.tone === 'error'
+                ? 'border border-rose-400/30 bg-rose-500/10 text-rose-100'
+                : 'border border-emerald-400/25 bg-emerald-500/10 text-emerald-100',
+            ].join(' ')}
           >
-            <X size={15} />
-          </button>
-        </div>
-      )}
+            <span className="flex items-center gap-2">
+              {actionStatus.tone === 'error' ? (
+                <AlertCircle size={15} className="text-rose-300" />
+              ) : (
+                <CheckCircle2 size={15} className="text-emerald-300" />
+              )}
+              {actionStatus.text}
+            </span>
+            <button
+              type="button"
+              className="rounded-full p-1 opacity-70 hover:bg-white/10 hover:opacity-100"
+              onClick={() => setActionStatus(null)}
+              aria-label="Dismiss status"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[390px_1fr] gap-4">
-        <section className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-          <h2 className="text-sm font-semibold text-slate-100">Approvals Needed</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Items Ava/Rex need you to approve before sending.
-          </p>
-          <div className="mt-3 space-y-2">
-            {approvals.map((approval, index) => {
-              const contract = isContractApproval(approval);
-              const approvalId = String(approval.id || '');
-              const approvalFeedback = approvalFeedbackById[approvalId];
-              return (
-                <div
-                  key={approvalId}
-                  className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
-                >
-                  <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
-                    {String(approval.type || 'approval')}
-                  </div>
-                  <div className="mt-2 text-sm font-semibold text-slate-100">
-                    {String(approval.leadName || 'Pending lead')}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-400">
-                    {String(approval.address || 'No address recorded')}
-                  </div>
-                  {approvalFeedback && (
-                    <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-100">
-                      <CheckCircle2 size={13} className="text-emerald-300" />
-                      {approvalFeedback}
-                    </div>
-                  )}
-                  <div className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs leading-relaxed text-slate-300">
-                    {getApprovalPreview(approval)}
-                  </div>
-                  {contract && (
-                    <div className="mt-2 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-100">
-                      Contract approval can release DocuSign. A confirmation step is required.
-                    </div>
-                  )}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      data-approval-primary={index === 0 ? 'true' : undefined}
-                      disabled={pendingAction === `approval:${approvalId}:approved`}
-                      onClick={() => {
-                        openApprovalDecisionConfirm(approval, 'approved');
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {pendingAction === `approval:${approvalId}:approved` && (
-                        <Loader2 size={14} className="animate-spin" />
-                      )}
-                      {pendingAction === `approval:${approvalId}:approved`
-                        ? 'Approving...'
-                        : 'Approve'}
-                    </button>
-                    <button
-                      type="button"
-                      data-approval-secondary={index === 0 ? 'true' : undefined}
-                      disabled={pendingAction === `approval:${approvalId}:rejected`}
-                      onClick={() => {
-                        const status = contract ? 'needs-revision' : 'rejected';
-                        openApprovalDecisionConfirm(approval, status);
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {pendingAction === `approval:${approvalId}:rejected` && (
-                        <Loader2 size={14} className="animate-spin" />
-                      )}
-                      {pendingAction === `approval:${approvalId}:rejected`
-                        ? 'Sending...'
-                        : contract
-                          ? 'Needs Revision'
-                          : 'Decline'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-            {!approvals.length && (
-              <div className="rounded-xl border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">
-                Nothing is waiting on human approval.
+        <section className="pbk-inbox-layout">
+          <InboxThreadRail
+            stats={inboxStats}
+            statusCopy={statusCopy}
+            leadStatus={leadStatus}
+            onCompose={() => setComposeOpen(true)}
+          />
+
+          <section className="pbk-inbox-card">
+            <div className="pbk-inbox-card-head">
+              <div>
+                <h2>Approvals needed</h2>
+                <p>Items Ava/Rex need you to approve before sending.</p>
               </div>
-            )}
-          </div>
-        </section>
+              <span className="count">{approvals.length}</span>
+            </div>
+            <div className="pbk-inbox-approval-list">
+              {approvals.map((approval, index) => {
+                const approvalId = String(approval.id || '');
+                return (
+                  <InboxApprovalCard
+                    key={approvalId || index}
+                    approval={approval}
+                    index={index}
+                    pendingAction={pendingAction}
+                    feedback={approvalFeedbackById[approvalId]}
+                    onDecision={openApprovalDecisionConfirm}
+                  />
+                );
+              })}
+              {!approvals.length && (
+                <div className="pbk-inbox-empty">
+                  <InboxIcon size={18} />
+                  <span>Nothing is waiting on human approval.</span>
+                </div>
+              )}
+            </div>
+            <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.approvals" />
+            <PbkDataSource endpoint="PUT /api/approvals/:id" status="ships" />
+          </section>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
-          <div className="flex flex-col gap-2 border-b border-slate-800 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="grid grid-cols-[auto_1fr_auto] gap-3 text-[11px] uppercase tracking-[0.14em] text-slate-500 sm:flex sm:items-center">
+          <section className="pbk-inbox-card pbk-inbox-message-card">
+            <div className="pbk-inbox-card-head">
+              <div>
+                <h2>Message stream</h2>
+                <p>Replies, scheduled sends, and provider status from the bridge.</p>
+              </div>
+              <span className="count">
+                {visibleMessages.length
+                  ? `${visibleMessages.length}/${totalMessages || visibleMessages.length}`
+                  : '0'}
+              </span>
+            </div>
+            <div className="pbk-inbox-message-head">
               <span>Channel</span>
               <span>Message</span>
               <span>Status</span>
             </div>
-            <div className="text-xs text-slate-500">
-              {visibleMessages.length
-                ? `Showing ${visibleMessages.length} of ${totalMessages || visibleMessages.length}`
-                : 'No messages'}
-            </div>
-          </div>
-          <div className="divide-y divide-slate-800">
-            {visibleMessages.map((message) => {
-              const unread = isUnreadMessage(message);
-              const timestamp = String(
-                message.createdAt ||
-                  message.at ||
-                  message.updatedAt ||
-                  message.scheduledFor ||
-                  message.sendAt ||
-                  ''
-              );
-              return (
-                <div
-                  key={String(message.id)}
-                  className={[
-                    'grid grid-cols-1 gap-3 px-4 py-4 text-sm md:grid-cols-[auto_1fr_auto]',
-                    unread
-                      ? 'border-l-2 border-sky-300 bg-sky-400/5 text-slate-100'
-                      : 'border-l-2 border-transparent text-slate-200',
-                  ].join(' ')}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">
-                      {String(message.channel || 'sms')}
-                    </div>
-                    {unread && (
-                      <span className="rounded-full bg-sky-300 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-950">
-                        New
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="font-medium text-slate-100">
-                      {String(
-                        message.leadName ||
-                          message.address ||
-                          message.from ||
-                          message.to ||
-                          'Message'
-                      )}
-                    </div>
-                    {Boolean(message.subject) && (
-                      <div className="mt-1 text-xs font-medium text-slate-300">
-                        {String(message.subject)}
-                      </div>
-                    )}
-                    <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-400">
-                      {String(message.body || '(empty message)')}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openReply(message)}
-                      className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition hover:border-sky-400/50 hover:text-sky-100"
-                    >
-                      <Reply size={13} />
-                      Reply
-                    </button>
-                  </div>
-                  <div className="text-xs text-slate-500 md:text-right">
-                    {formatRuntimeStatus(message.status)}
-                    {timestamp && (
-                      <div title={new Date(timestamp).toLocaleString()}>
-                        {formatRelativeTime(timestamp)}
-                      </div>
-                    )}
-                    {Boolean(message.scheduledFor || message.sendAt) && (
-                      <div className="mt-1 text-[11px] text-slate-400">
-                        {formatDateTime(message.scheduledFor || message.sendAt)}
-                      </div>
-                    )}
-                  </div>
+            <div className="pbk-inbox-message-list">
+              {visibleMessages.map((message, index) => (
+                <InboxMessageRow
+                  key={String(message.id || index)}
+                  message={message}
+                  onReply={openReply}
+                />
+              ))}
+              {!visibleMessages.length && (
+                <div className="pbk-inbox-empty">
+                  <MessageSquare size={18} />
+                  <span>No runtime messages yet.</span>
                 </div>
-              );
-            })}
-            {!visibleMessages.length && (
-              <div className="px-4 py-10 text-center text-xs text-slate-500">
-                No runtime messages yet.
-              </div>
-            )}
-          </div>
-          {totalMessages > visibleMessages.length && (
-            <div className="border-t border-slate-800 p-3 text-center">
+              )}
+            </div>
+            {totalMessages > visibleMessages.length && (
               <button
                 type="button"
                 onClick={() => setMessageLimit((current) => current + MESSAGE_PAGE_SIZE)}
-                className="rounded-full border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-sky-400/50 hover:text-sky-100"
+                className="pbk-inbox-load-more"
               >
                 Load more messages
               </button>
-            </div>
-          )}
+            )}
+            <PbkDataSource endpoint="GET /api/messages" status="ships" note="paged bridge list" />
+            <PbkDataSource
+              endpoint="PATCH /api/messages/:id/archive"
+              status="needs-wiring"
+              note="archive/swipe action is not shipped yet"
+            />
+          </section>
         </section>
-      </div>
-      <ComposeModal
-        open={composeOpen}
-        leads={composeLeads}
-        leadStatus={leadStatus}
-        initialDraft={replyDraft}
-        onClose={() => {
-          setComposeOpen(false);
-          setReplyDraft(null);
-        }}
-        onSent={refreshInbox}
-        onRefreshLeads={loadLeads}
-        onInitialDraftUsed={() => setReplyDraft(null)}
-      />
-      <ContractApprovalConfirm
-        approval={confirmApproval}
-        pending={Boolean(
-          confirmApproval && pendingAction === `approval:${String(confirmApproval.id)}:approved`
-        )}
-        onCancel={() => setConfirmApproval(null)}
-        onConfirm={() => {
-          if (!confirmApproval) return;
-          void decideApproval(confirmApproval, 'approved').then(() => setConfirmApproval(null));
-        }}
-      />
-      <ApprovalDecisionConfirm
-        draft={approvalDecisionDraft}
-        pending={Boolean(
-          approvalDecisionDraft &&
-          pendingAction ===
-            `approval:${String(approvalDecisionDraft.approval.id || '')}:${approvalDecisionDraft.status}`
-        )}
-        onCancel={() => setApprovalDecisionDraft(null)}
-        onConfirm={executeApprovalDecision}
-      />
+
+        <ComposeModal
+          open={composeOpen}
+          leads={composeLeads}
+          leadStatus={leadStatus}
+          initialDraft={replyDraft}
+          onClose={() => {
+            setComposeOpen(false);
+            setReplyDraft(null);
+          }}
+          onSent={refreshInbox}
+          onRefreshLeads={loadLeads}
+          onInitialDraftUsed={() => setReplyDraft(null)}
+        />
+        <ContractApprovalConfirm
+          approval={confirmApproval}
+          pending={Boolean(
+            confirmApproval && pendingAction === `approval:${String(confirmApproval.id)}:approved`
+          )}
+          onCancel={() => setConfirmApproval(null)}
+          onConfirm={() => {
+            if (!confirmApproval) return;
+            void decideApproval(confirmApproval, 'approved').then(() => setConfirmApproval(null));
+          }}
+        />
+        <ApprovalDecisionConfirm
+          draft={approvalDecisionDraft}
+          pending={Boolean(
+            approvalDecisionDraft &&
+            pendingAction ===
+              `approval:${String(approvalDecisionDraft.approval.id || '')}:${approvalDecisionDraft.status}`
+          )}
+          onCancel={() => setApprovalDecisionDraft(null)}
+          onConfirm={executeApprovalDecision}
+        />
+      </main>
     </div>
   );
 }

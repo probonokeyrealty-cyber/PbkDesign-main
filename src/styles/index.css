@@ -122,7 +122,8 @@ html[data-theme='light'] .pbk-command-surface,
 html[data-theme='light'] .pbk-campaign-surface,
 html[data-theme='light'] .pbk-fleet-surface,
 html[data-theme='light'] .pbk-memory-surface,
-html[data-theme='light'] .pbk-analytics-surface {
+html[data-theme='light'] .pbk-analytics-surface,
+html[data-theme='light'] .pbk-inbox-surface {
   background: var(--bg-void);
   color: var(--text-primary);
 }
@@ -166,7 +167,15 @@ html[data-theme='light'] .pbk-analytics-surface .bg-slate-900\/70,
 html[data-theme='light'] .pbk-analytics-surface .bg-slate-900\/80,
 html[data-theme='light'] .pbk-analytics-surface .bg-slate-950\/70,
 html[data-theme='light'] .pbk-analytics-surface .bg-slate-950\/80,
-html[data-theme='light'] .pbk-analytics-surface .bg-slate-950\/95 {
+html[data-theme='light'] .pbk-analytics-surface .bg-slate-950\/95,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-950,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-900,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-900\/60,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-900\/70,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-900\/80,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-950\/70,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-950\/80,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-950\/95 {
   background-color: var(--bg-panel) !important;
 }
 
@@ -174,7 +183,8 @@ html[data-theme='light'] .pbk-command-surface .bg-slate-800,
 html[data-theme='light'] .pbk-campaign-surface .bg-slate-800,
 html[data-theme='light'] .pbk-fleet-surface .bg-slate-800,
 html[data-theme='light'] .pbk-memory-surface .bg-slate-800,
-html[data-theme='light'] .pbk-analytics-surface .bg-slate-800 {
+html[data-theme='light'] .pbk-analytics-surface .bg-slate-800,
+html[data-theme='light'] .pbk-inbox-surface .bg-slate-800 {
   background-color: var(--bg-hover) !important;
 }
 
@@ -187,7 +197,9 @@ html[data-theme='light'] .pbk-fleet-surface .text-slate-200,
 html[data-theme='light'] .pbk-memory-surface .text-slate-100,
 html[data-theme='light'] .pbk-memory-surface .text-slate-200,
 html[data-theme='light'] .pbk-analytics-surface .text-slate-100,
-html[data-theme='light'] .pbk-analytics-surface .text-slate-200 {
+html[data-theme='light'] .pbk-analytics-surface .text-slate-200,
+html[data-theme='light'] .pbk-inbox-surface .text-slate-100,
+html[data-theme='light'] .pbk-inbox-surface .text-slate-200 {
   color: var(--text-primary) !important;
 }
 
@@ -200,7 +212,9 @@ html[data-theme='light'] .pbk-fleet-surface .text-slate-400,
 html[data-theme='light'] .pbk-memory-surface .text-slate-300,
 html[data-theme='light'] .pbk-memory-surface .text-slate-400,
 html[data-theme='light'] .pbk-analytics-surface .text-slate-300,
-html[data-theme='light'] .pbk-analytics-surface .text-slate-400 {
+html[data-theme='light'] .pbk-analytics-surface .text-slate-400,
+html[data-theme='light'] .pbk-inbox-surface .text-slate-300,
+html[data-theme='light'] .pbk-inbox-surface .text-slate-400 {
   color: var(--text-secondary) !important;
 }
 
@@ -213,7 +227,9 @@ html[data-theme='light'] .pbk-fleet-surface .text-slate-600,
 html[data-theme='light'] .pbk-memory-surface .text-slate-500,
 html[data-theme='light'] .pbk-memory-surface .text-slate-600,
 html[data-theme='light'] .pbk-analytics-surface .text-slate-500,
-html[data-theme='light'] .pbk-analytics-surface .text-slate-600 {
+html[data-theme='light'] .pbk-analytics-surface .text-slate-600,
+html[data-theme='light'] .pbk-inbox-surface .text-slate-500,
+html[data-theme='light'] .pbk-inbox-surface .text-slate-600 {
   color: var(--text-tertiary) !important;
 }
 
@@ -226,7 +242,9 @@ html[data-theme='light'] .pbk-fleet-surface .border-slate-700,
 html[data-theme='light'] .pbk-memory-surface .border-slate-800,
 html[data-theme='light'] .pbk-memory-surface .border-slate-700,
 html[data-theme='light'] .pbk-analytics-surface .border-slate-800,
-html[data-theme='light'] .pbk-analytics-surface .border-slate-700 {
+html[data-theme='light'] .pbk-analytics-surface .border-slate-700,
+html[data-theme='light'] .pbk-inbox-surface .border-slate-800,
+html[data-theme='light'] .pbk-inbox-surface .border-slate-700 {
   border-color: var(--border-dim) !important;
 }
 

@@ -77,6 +77,7 @@ Components using `useRuntimeSnapshot()` are fed by this polling bundle:
 | Reply from message row    | Same compose/send path                              | Yes: `POST /api/lead/send-message` or `POST /api/messages` | Ships.                                                                                                        |
 | Draft persistence         | `localStorage`                                      | Local-only by design                                       | Ships only as browser-local draft. Needs Mastra/bridge wiring if drafts must roam or recover across browsers. |
 | SMS segment count         | Client utility `getSmsSegmentInfo`                  | Local deterministic logic                                  | Ships. No bridge endpoint needed unless billing quote must come from Telnyx.                                  |
+| Message archive/swipe     | Not currently persisted                             | No: proposed `PATCH /api/messages/:id/archive`             | Needs Mastra wiring before the prototype swipe/archive action can ship.                                       |
 
 ## Agent Fleet
 

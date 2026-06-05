@@ -49,8 +49,9 @@ assert(
   'ShellTopbar must annotate autopilot writes as PATCH /api/settings.'
 );
 assert(
-  /data-source="localStorage:pbk:favorites:v1"/.test(favorites),
-  'FavoritesBar must annotate local-only favorites source.'
+  /data-source="PATCH \/api\/settings ui\.favorites"/.test(favorites) &&
+    /data-fallback="localStorage:pbk:favorites:v1"/.test(favorites),
+  'FavoritesBar must annotate bridge-backed favorites and local fallback sources.'
 );
 assert(
   /data-source="build env"/.test(sidebar),

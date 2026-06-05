@@ -4315,6 +4315,15 @@
     rgba(2, 6, 23, 0.94);
 }
 
+.pbk-shell-favorites-source {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .pbk-shell-favorite-link.favorite-link,
 .pbk-shell-favorite-pin.favorite-pin {
   border-radius: 8px;

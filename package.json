@@ -111,6 +111,7 @@
     "test:agent-health-modern": "node ./scripts/agent-health-modern-smoke.mjs",
     "test:agent-registry-canonical": "node ./scripts/agent-registry-canonical-smoke.mjs",
     "test:shell-global-search-bridge": "node ./scripts/shell-global-search-bridge-smoke.mjs",
+    "test:shell-favorites-bridge": "node ./scripts/shell-favorites-bridge-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

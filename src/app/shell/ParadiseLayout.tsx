@@ -78,7 +78,7 @@ export function ParadiseLayout() {
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [skeletonOn, setSkeletonOn] = useState(false);
   const lastPageRestoredRef = useRef(false);
-  const { snapshot } = useRuntimeSnapshot(10000);
+  const { snapshot, refresh } = useRuntimeSnapshot(10000);
   const pendingApprovalCount = getPendingApprovalCount(snapshot || {});
 
   useEffect(() => {
@@ -228,7 +228,7 @@ export function ParadiseLayout() {
       />
       <div className="pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
         <ShellTopbar theme={prefs.theme} onToggleTheme={updateTheme} />
-        <FavoritesBar />
+        <FavoritesBar snapshot={snapshot} refresh={refresh} />
         <main className="pbk-shell-content relative overflow-auto bg-slate-900">
           {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
           <ErrorBoundary>

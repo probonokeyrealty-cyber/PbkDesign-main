@@ -14,7 +14,9 @@ assert.match(server, /function isVoiceFallbackRoundTripReady/, 'voice fallback m
 assert.match(server, /voiceFallbackEndpointConfigured && voiceFallbackRoundTripReady/, 'voice fallback must not mark ready from URL configuration alone');
 assert.match(server, /localAudioRoundTripPassed: voiceFallbackRoundTripReady/, 'voice fallback status must expose the local round-trip gate');
 assert.match(server, /CREATE TABLE IF NOT EXISTS public\.calls/, 'bridge schema self-ensure must create the calls table used by startup call joins');
+assert.match(server, /CREATE TABLE IF NOT EXISTS public\.contracts/, 'bridge schema self-ensure must create the contracts table used by follow-up and analytics joins');
 assert.match(server, /'lead_profiles', 'lead_imports', 'calls'/, 'schema status must verify calls alongside lead tables');
+assert.match(server, /'calls', 'contract_path_templates', 'contracts'/, 'schema status must verify contract tables after calls');
 
 assert.equal(pkg.scripts['voice-fallback:smoke'], 'node ./scripts/voice-fallback-smoke.mjs', 'package.json must expose the voice fallback smoke command');
 assert.equal(pkg.scripts['test:pipeline-voice-readiness'], 'node ./scripts/pipeline-voice-readiness-smoke.mjs', 'package.json must expose the readiness regression smoke');

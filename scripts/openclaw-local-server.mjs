@@ -5369,6 +5369,112 @@ async function ensurePbkOperationalTables(pool) {
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    CREATE TABLE IF NOT EXISTS public.contract_path_templates (
+      path_key TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      label TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT '',
+      audience TEXT NOT NULL DEFAULT '',
+      folder_path TEXT NOT NULL DEFAULT '',
+      template_file TEXT NOT NULL DEFAULT '',
+      fields_file TEXT NOT NULL DEFAULT 'fields.json',
+      negotiation_file TEXT NOT NULL DEFAULT 'negotiation.md',
+      fields JSONB NOT NULL DEFAULT '{}'::JSONB,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      version TEXT NOT NULL DEFAULT 'v1',
+      updated_by TEXT NOT NULL DEFAULT 'Rex',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.contract_path_templates
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS folder_path TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS template_file TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS fields_file TEXT NOT NULL DEFAULT 'fields.json',
+      ADD COLUMN IF NOT EXISTS negotiation_file TEXT NOT NULL DEFAULT 'negotiation.md',
+      ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS version TEXT NOT NULL DEFAULT 'v1',
+      ADD COLUMN IF NOT EXISTS updated_by TEXT NOT NULL DEFAULT 'Rex',
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.contracts (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      amount NUMERIC NOT NULL DEFAULT 0,
+      selected_path TEXT REFERENCES public.contract_path_templates(path_key) ON DELETE SET NULL,
+      selected_path_label TEXT NOT NULL DEFAULT '',
+      timeline TEXT NOT NULL DEFAULT '',
+      earnest_deposit TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      provider TEXT NOT NULL DEFAULT 'docusign',
+      envelope_id TEXT NOT NULL DEFAULT '',
+      document_title TEXT NOT NULL DEFAULT '',
+      preview_url TEXT NOT NULL DEFAULT '',
+      pdf_url TEXT NOT NULL DEFAULT '',
+      master_package_query TEXT NOT NULL DEFAULT '',
+      pdf_generated_at TIMESTAMPTZ,
+      notes TEXT NOT NULL DEFAULT '',
+      approval_id TEXT,
+      template_id TEXT NOT NULL DEFAULT '',
+      template_fields JSONB NOT NULL DEFAULT '{}'::JSONB,
+      template_field_map JSONB NOT NULL DEFAULT '{}'::JSONB,
+      contract_path TEXT NOT NULL DEFAULT '',
+      contract_type TEXT NOT NULL DEFAULT '',
+      template_path TEXT NOT NULL DEFAULT '',
+      template_file TEXT NOT NULL DEFAULT '',
+      negotiation_file TEXT NOT NULL DEFAULT '',
+      negotiation_prompt TEXT NOT NULL DEFAULT '',
+      underwriting_status TEXT NOT NULL DEFAULT '',
+      underwriting_reviewer_email TEXT NOT NULL DEFAULT '',
+      underwriting_reviewer_name TEXT NOT NULL DEFAULT '',
+      seller_notice TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.contracts
+      ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS amount NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS selected_path TEXT REFERENCES public.contract_path_templates(path_key) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS selected_path_label TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS timeline TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS earnest_deposit TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'docusign',
+      ADD COLUMN IF NOT EXISTS envelope_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS document_title TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS preview_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS pdf_url TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS master_package_query TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS pdf_generated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS approval_id TEXT,
+      ADD COLUMN IF NOT EXISTS template_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS template_fields JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS template_field_map JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS contract_path TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS contract_type TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS template_path TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS template_file TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS negotiation_file TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS negotiation_prompt TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS underwriting_status TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS underwriting_reviewer_email TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS underwriting_reviewer_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS seller_notice TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.agent_registry (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5668,6 +5774,8 @@ async function ensurePbkOperationalTables(pool) {
       ON public.agent_registry (tenant_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS calls_lead_started_idx
       ON public.calls (lead_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS contracts_lead_status_idx
+      ON public.contracts (lead_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
       ON public.pbk_qa_audit (tenant_id, tool_name, created_at DESC);
     CREATE INDEX IF NOT EXISTS event_dead_letters_type_idx
@@ -56310,7 +56418,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
       if (!pool) {
         json(response, 200, {
           ok: false,

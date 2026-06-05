@@ -118,6 +118,7 @@
     "test:analytics-campaign-attribution-bridge": "node ./scripts/analytics-campaign-attribution-bridge-smoke.mjs",
     "test:agent-health-modern": "node ./scripts/agent-health-modern-smoke.mjs",
     "test:agent-registry-canonical": "node ./scripts/agent-registry-canonical-smoke.mjs",
+    "test:agent-fleet-lead-context-roster": "node ./scripts/agent-fleet-lead-context-roster-smoke.mjs",
     "test:shell-global-search-bridge": "node ./scripts/shell-global-search-bridge-smoke.mjs",
     "test:shell-favorites-bridge": "node ./scripts/shell-favorites-bridge-smoke.mjs",
     "test:shell-prefs-bridge": "node ./scripts/shell-prefs-bridge-smoke.mjs",

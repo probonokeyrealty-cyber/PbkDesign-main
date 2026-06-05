@@ -5,6 +5,7 @@ import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchAgentHealthRequest,
   fetchAgentRegistryRequest,
+  fetchLeadsRequest,
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
   getSnnWorkerStatus,
@@ -456,7 +457,8 @@ function AgentFleetSourceRail() {
       <PbkDataSource endpoint="GET /api/agents/registry" status="ships" />
       <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
       <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
-      <PbkDataSource endpoint="GET /state" status="ships" />
+      <PbkDataSource endpoint="GET /api/leads" status="ships" note="lead context picker" />
+      <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback and calls" />
       <PbkDataSource endpoint="POST /invoke: getSnnWorkerStatus" status="ships" />
       <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
       <PbkDataSource endpoint="POST /invoke: pbk_transfer_agent_skill" status="ships" />
@@ -476,6 +478,7 @@ function AgentFleetHero({
   agentRegistrySource,
   pendingTransferCount,
   leadCount,
+  leadContextSource,
   callCount,
 }: {
   agents: FleetAgent[];
@@ -483,6 +486,7 @@ function AgentFleetHero({
   agentRegistrySource: string;
   pendingTransferCount: number;
   leadCount: number;
+  leadContextSource: string;
   callCount: number;
 }) {
   const active = agents.filter((agent) => agent.status === 'active').length;
@@ -529,6 +533,7 @@ function AgentFleetHero({
         <div className="pbk-stat">
           <div className="pbk-stat-label">Lead context</div>
           <div className="pbk-stat-value">{leadCount}</div>
+          <div className="pbk-stat-label">{leadContextSource}</div>
         </div>
         <div className="pbk-stat">
           <div className="pbk-stat-label">Call outcomes</div>
@@ -1002,6 +1007,7 @@ export function AgentFleet() {
   const [agentHealthProbes, setAgentHealthProbes] = useState<AgentHealthProbe[]>([]);
   const [agentRegistrySource, setAgentRegistrySource] = useState('local fallback');
   const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
+  const [leadContextSource, setLeadContextSource] = useState('pending full roster');
   const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
@@ -1027,32 +1033,50 @@ export function AgentFleet() {
     let cancelled = false;
     Promise.allSettled([
       invokeRuntimeTool<{ workers?: BridgeSnnWorker[] }>('getSnnWorkerStatus', {}),
+      fetchLeadsRequest(),
       fetchRuntimeState(),
-    ]).then(([snnResult, stateResult]) => {
+    ]).then(([snnResult, rosterResult, stateResult]) => {
       if (cancelled) return;
       if (snnResult.status === 'fulfilled') {
         setBridgeSnnWorkers(Array.isArray(snnResult.value.workers) ? snnResult.value.workers : []);
       } else {
         console.warn('[PBK AgentFleet] SNN worker status unavailable', snnResult.reason);
       }
-      if (stateResult.status === 'fulfilled') {
-        const leads = Array.isArray(stateResult.value.leadImports)
+      const snapshotLeads =
+        stateResult.status === 'fulfilled' && Array.isArray(stateResult.value.leadImports)
           ? (stateResult.value.leadImports as RuntimeLeadOption[])
           : [];
+      if (rosterResult.status === 'fulfilled') {
+        const fullRoster = Array.isArray(rosterResult.value)
+          ? (rosterResult.value as RuntimeLeadOption[])
+          : [];
+        setLeadOptions(fullRoster.slice(0, 25));
+        setLeadContextSource('GET /api/leads full roster');
+        setSelectedLeadId(
+          (current) => current || (fullRoster[0] ? getLeadOptionId(fullRoster[0]) : '')
+        );
+      } else {
+        console.warn('[PBK AgentFleet] full lead roster unavailable', rosterResult.reason);
+        setLeadOptions(snapshotLeads.slice(0, 25));
+        setLeadContextSource('snapshot fallback');
+        setSelectedLeadId(
+          (current) => current || (snapshotLeads[0] ? getLeadOptionId(snapshotLeads[0]) : '')
+        );
+      }
+      if (stateResult.status === 'fulfilled') {
         const calls = Array.isArray(stateResult.value.calls)
           ? (stateResult.value.calls as RuntimeCallRecord[])
           : [];
-        setLeadOptions(leads.slice(0, 25));
         setRuntimeCalls(calls);
-        if (!selectedLeadId && leads[0]) setSelectedLeadId(getLeadOptionId(leads[0]));
       } else {
-        console.warn('[PBK AgentFleet] lead context options unavailable', stateResult.reason);
+        console.warn('[PBK AgentFleet] runtime calls unavailable', stateResult.reason);
+        setRuntimeCalls([]);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [selectedLeadId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1357,6 +1381,7 @@ export function AgentFleet() {
           agentRegistrySource={agentRegistrySource}
           pendingTransferCount={pendingTransferCount}
           leadCount={leadOptions.length}
+          leadContextSource={leadContextSource}
           callCount={runtimeCalls.length}
         />
         {transferStatus && <div className="pbk-fleet-transfer-status">{transferStatus}</div>}

@@ -727,6 +727,7 @@ const BROWSER_RESEARCH_JOBS_FILE = path.join(ROOT_DIR, 'ops', 'browser-research'
 const BROWSER_RESEARCH_TARGETS_FILE = path.join(ROOT_DIR, 'ops', 'browser-research', 'targets.example.json');
 const UPGRADE_INTEGRATIONS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'pbk-upgrade-integrations.json');
 const PROPERTY_DATA_LOCAL_STATUS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'local-property-data-status.json');
+const VOICE_FALLBACK_LOCAL_STATUS_FILE = path.join(ROOT_DIR, 'ops', 'upgrade-integrations', 'local-voice-fallback-status.json');
 const PROPERTY_DATA_ADAPTER_SCRIPT = path.join(ROOT_DIR, 'scripts', 'property-data-adapter.mjs');
 const PROPERTY_DATA_VENV_DIR = path.join(ROOT_DIR, '.venv');
 const PROPERTY_DATA_PYTHON_CANDIDATES = [path.join(PROPERTY_DATA_VENV_DIR, 'bin', 'python'), path.join(PROPERTY_DATA_VENV_DIR, 'Scripts', 'python.exe')];
@@ -27880,6 +27881,12 @@ function countManifestItems(manifest, group) {
   return Array.isArray(items) ? items.length : 0;
 }
 
+function isVoiceFallbackRoundTripReady(status) {
+  if (!status || status.ok !== true) return false;
+  const bytes = Number(status.audioBytes || status.bytes || status.byteLength || 0);
+  return bytes > 44 && status.playableAudio !== false;
+}
+
 function parseJsonFromCommandOutput(output = '') {
   const text = String(output || '').trim();
   const firstBrace = text.indexOf('{');
@@ -28081,7 +28088,22 @@ async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
 }
 
 async function buildToolingStatus() {
-  const [scenario, researchJobs, upgradeManifest, propertyDataLocalStatus, mcpRegistry, mcpResearchCandidates, dashboard] = await Promise.all([readJsonIfExists(META_AGENT_SCENARIO_FILE), readJsonIfExists(BROWSER_RESEARCH_JOBS_FILE), readJsonIfExists(UPGRADE_INTEGRATIONS_FILE), readJsonIfExists(PROPERTY_DATA_LOCAL_STATUS_FILE), readJsonIfExists(MCP_REGISTRY_FILE), readJsonIfExists(MCP_RESEARCH_CANDIDATES_FILE), readJsonIfExists(OBSERVABILITY_DASHBOARD_FILE)]);
+  const [scenario, researchJobs, upgradeManifest, propertyDataLocalStatus, voiceFallbackLocalStatus, mcpRegistry, mcpResearchCandidates, dashboard, streakPipelineStatus] = await Promise.all([
+    readJsonIfExists(META_AGENT_SCENARIO_FILE),
+    readJsonIfExists(BROWSER_RESEARCH_JOBS_FILE),
+    readJsonIfExists(UPGRADE_INTEGRATIONS_FILE),
+    readJsonIfExists(PROPERTY_DATA_LOCAL_STATUS_FILE),
+    readJsonIfExists(VOICE_FALLBACK_LOCAL_STATUS_FILE),
+    readJsonIfExists(MCP_REGISTRY_FILE),
+    readJsonIfExists(MCP_RESEARCH_CANDIDATES_FILE),
+    readJsonIfExists(OBSERVABILITY_DASHBOARD_FILE),
+    inspectStreakPipelineState({ refresh: false }).catch((error) => ({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error || 'streak_pipeline_unavailable'),
+      readiness: { readyForPbk: false, missingStageMappings: [], missingFieldMappings: [] },
+      provider: getStreakProviderMeta(),
+    })),
+  ]);
 
   const mcpServers = mcpRegistry?.mcpServers || {};
   const candidateMcpServers = mcpResearchCandidates?.mcpServers || {};
@@ -28089,10 +28111,16 @@ async function buildToolingStatus() {
   const propertyDataVenvReady = PROPERTY_DATA_PYTHON_CANDIDATES.some((candidate) => existsSync(candidate)) && PROPERTY_DATA_SCRAPLING_CANDIDATES.some((candidate) => existsSync(candidate)) && existsSync(PROPERTY_DATA_ADAPTER_SCRIPT);
   const propertyDataConfigured = existsSync(UPGRADE_INTEGRATIONS_FILE) || Boolean(propertyDataLocalStatus) || propertyDataVenvReady || Boolean(candidateMcpServers.scrapling || candidateMcpServers.homeharvest);
   const propertyDataReady = Boolean(propertyDataLocalStatus?.ok) || propertyDataVenvReady || hasAnyEnv(['PBK_HOMEHARVEST_ENABLED', 'PBK_HOMEHARVEST_ENDPOINT']) || hasAnyEnv(['PBK_SCRAPLING_MCP_URL', 'PBK_SCRAPLING_ENDPOINT']);
-  const pipelineMemoryConfigured = hasAnyEnv(['PBK_INSULA_CRM_BASE_URL', 'PBK_REALTORSPAL_BASE_URL']) || countManifestItems(upgradeManifest, 'pipelineMemory') > 0;
-  const pipelineMemoryReady = hasAnyEnv(['PBK_INSULA_CRM_BASE_URL']) && hasAnyEnv(['PBK_INSULA_CRM_API_KEY']);
-  const voiceFallbackConfigured = hasAnyEnv(['PBK_MOSS_TTS_BASE_URL', 'PBK_ZEROVOX_BASE_URL', 'PBK_TTS_FALLBACK_BASE_URL']) || countManifestItems(upgradeManifest, 'voiceFallback') > 0;
-  const voiceFallbackReady = hasAnyEnv(['PBK_MOSS_TTS_BASE_URL', 'PBK_ZEROVOX_BASE_URL', 'PBK_TTS_FALLBACK_BASE_URL']);
+  const externalPipelineMemoryReady =
+    (hasAnyEnv(['PBK_INSULA_CRM_BASE_URL']) && hasAnyEnv(['PBK_INSULA_CRM_API_KEY'])) ||
+    (hasAnyEnv(['PBK_REALTORSPAL_BASE_URL']) && hasAnyEnv(['PBK_REALTORSPAL_API_KEY']));
+  const streakPipelineMemoryReady = Boolean(streakPipelineStatus?.readiness?.readyForPbk);
+  const pipelineMemoryConfigured = hasAnyEnv(['PBK_INSULA_CRM_BASE_URL', 'PBK_REALTORSPAL_BASE_URL']) || Boolean(streakPipelineStatus?.provider?.configured || getStreakProviderMeta().configured) || countManifestItems(upgradeManifest, 'pipelineMemory') > 0;
+  const pipelineMemoryReady = Boolean(externalPipelineMemoryReady || streakPipelineMemoryReady);
+  const voiceFallbackEndpointConfigured = hasAnyEnv(['PBK_MOSS_TTS_BASE_URL', 'PBK_ZEROVOX_BASE_URL', 'PBK_TTS_FALLBACK_BASE_URL']);
+  const voiceFallbackConfigured = voiceFallbackEndpointConfigured || countManifestItems(upgradeManifest, 'voiceFallback') > 0;
+  const voiceFallbackRoundTripReady = isVoiceFallbackRoundTripReady(voiceFallbackLocalStatus);
+  const voiceFallbackReady = Boolean(voiceFallbackEndpointConfigured && voiceFallbackRoundTripReady);
   const desktopCopilotConfigured = hasAnyEnv(['PBK_CLICKUI_BASE_URL']) || countManifestItems(upgradeManifest, 'desktopCopilot') > 0;
   const desktopCopilotReady = hasAnyEnv(['PBK_CLICKUI_BASE_URL']);
   const metricsUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/metrics` : `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}/metrics`;
@@ -28135,15 +28163,24 @@ async function buildToolingStatus() {
       optional: true,
       ready: pipelineMemoryReady,
       configured: pipelineMemoryConfigured,
+      mode: streakPipelineMemoryReady ? 'streak_pipeline' : externalPipelineMemoryReady ? 'external_crm' : null,
+      streakReadyForPbk: streakPipelineMemoryReady,
+      streakMissingStageMappings: streakPipelineStatus?.readiness?.missingStageMappings || [],
+      streakMissingFieldMappings: streakPipelineStatus?.readiness?.missingFieldMappings || [],
       candidateCount: countManifestItems(upgradeManifest, 'pipelineMemory'),
-      note: pipelineMemoryReady ? 'External pipeline memory is connected for Ava pre-call context.' : pipelineMemoryConfigured ? 'Pipeline memory candidates are documented; connect the CRM base URL and API key before Ava relies on them.' : 'Add a pipeline-memory CRM connector only as a supporting source, not a PBK CRM replacement.',
+      note: pipelineMemoryReady ? (streakPipelineMemoryReady ? 'Canonical Streak pipeline memory is connected for Ava pre-call context.' : 'External pipeline memory is connected for Ava pre-call context.') : pipelineMemoryConfigured ? 'Pipeline memory candidates are documented; connect the CRM base URL and API key before Ava relies on them.' : 'Add a pipeline-memory CRM connector only as a supporting source, not a PBK CRM replacement.',
     },
     voiceFallback: {
       optional: true,
       ready: voiceFallbackReady,
       configured: voiceFallbackConfigured,
+      endpointConfigured: voiceFallbackEndpointConfigured,
+      localAudioRoundTripPassed: voiceFallbackRoundTripReady,
+      localSmokeAt: voiceFallbackLocalStatus?.generatedAt || null,
+      localSmokeProvider: voiceFallbackLocalStatus?.provider || null,
+      localSmokeUrl: voiceFallbackLocalStatus?.url || null,
       candidateCount: countManifestItems(upgradeManifest, 'voiceFallback'),
-      note: voiceFallbackReady ? 'Offline/local TTS fallback endpoint is configured.' : voiceFallbackConfigured ? 'MOSS-TTS and ZeroVOX are staged as fallback candidates. Do not mark live until a local audio round trip passes.' : 'Stage a local TTS fallback only after the primary Telnyx/Deepgram voice path is stable.',
+      note: voiceFallbackReady ? 'Offline/local TTS fallback endpoint is configured and passed an audio round trip.' : voiceFallbackEndpointConfigured ? 'Fallback TTS endpoint is configured; run npm run voice-fallback:smoke before Ava relies on it.' : voiceFallbackConfigured ? 'MOSS-TTS and ZeroVOX are staged as fallback candidates. Do not mark live until a local audio round trip passes.' : 'Stage a local TTS fallback only after the primary Telnyx/Deepgram voice path is stable.',
     },
     desktopCopilot: {
       optional: true,
@@ -30394,7 +30431,7 @@ async function inspectStreakPipelineState(params = {}) {
       logicalKey,
       configuredFieldKey,
       detectedFieldKey,
-      mapped: Boolean(configuredFieldKey),
+      mapped: Boolean(configuredFieldKey || detectedFieldKey),
       presentInPipeline: configuredFieldKey ? availableFieldKeys.includes(configuredFieldKey) : Boolean(detectedFieldKey),
     };
   });

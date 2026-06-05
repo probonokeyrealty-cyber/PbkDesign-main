@@ -68,10 +68,10 @@ assert(
   'Memory Analytics must honestly mark the premium memory timeline as needs-wiring.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/experiments\/active"[\s\S]*status="needs-wiring"/.test(
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/emotion\/policies\/experiments"[\s\S]*status="ships"/.test(
     memory
   ),
-  'Memory Analytics must honestly mark canonical A/B experiment management as needs-wiring.'
+  'Memory Analytics must mark active emotion-policy experiments as a shipped data source.'
 );
 
 assert(
@@ -79,8 +79,10 @@ assert(
   'Memory Analytics must not port prototype sample skills, agents, or metric counts.'
 );
 assert(
-  /fetchSkillOutcomesRequest/.test(memory) && /fetchSkillTrendsRequest/.test(memory),
-  'Memory Analytics must keep using real skill outcome and trend endpoint helpers.'
+  /fetchSkillOutcomesRequest/.test(memory) &&
+    /fetchSkillTrendsRequest/.test(memory) &&
+    /fetchActiveExperimentsRequest/.test(memory),
+  'Memory Analytics must keep using real skill outcome, trend, and experiment endpoint helpers.'
 );
 assert(
   runtimeBridge.includes('/api/skills/outcomes') && runtimeBridge.includes('/api/skills/trends'),
@@ -89,7 +91,8 @@ assert(
 assert(
   dataMap.includes('/api/skills/outcomes') &&
     dataMap.includes('/api/skills/trends') &&
-    dataMap.includes('Active experiment card'),
+    dataMap.includes('/api/emotion/policies/experiments') &&
+    dataMap.includes('Active memory experiments'),
   'Bridge data map must document Memory Analytics runtime sources.'
 );
 

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Database, RefreshCw } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
-import { fetchSkillOutcomesRequest, fetchSkillTrendsRequest } from '../utils/runtimeBridge';
+import {
+  fetchActiveExperimentsRequest,
+  fetchSkillOutcomesRequest,
+  fetchSkillTrendsRequest,
+} from '../utils/runtimeBridge';
 import { buildMemoryAnalyticsViewModel } from './memoryAnalyticsRuntimeLogic.js';
 
 type MemoryViewModel = ReturnType<typeof buildMemoryAnalyticsViewModel>;
@@ -83,9 +87,9 @@ function MemorySourceRail() {
         note="premium memory timeline and agent learning events"
       />
       <PbkDataSource
-        endpoint="GET /api/experiments/active"
-        status="needs-wiring"
-        note="canonical A/B experiment management beyond skill-outcome payloads"
+        endpoint="GET /api/emotion/policies/experiments"
+        status="ships"
+        note="active emotion-policy experiment rows"
       />
     </div>
   );
@@ -256,13 +260,12 @@ function MemoryExperimentEmpty() {
     <section className="pbk-memory-ab-card empty">
       <div className="ab-card-head">
         <h4>Active A/B experiments</h4>
-        <span className="lift muted">needs wiring</span>
+        <span className="lift muted">none active</span>
       </div>
       <p className="ab-note">
-        The bridge did not return experiment rows. Canonical experiment management remains marked as
-        needs wiring instead of rendering sample variants.
+        The bridge returned no active emotional policy experiments. No sample variants are rendered.
       </p>
-      <PbkDataSource endpoint="GET /api/experiments/active" status="needs-wiring" />
+      <PbkDataSource endpoint="GET /api/emotion/policies/experiments" status="ships" />
     </section>
   );
 }
@@ -301,7 +304,10 @@ export function MemoryAnalytics() {
         })
       );
       const trendsBySkillId = Object.fromEntries(trendPairs.filter(([key]) => Boolean(key)));
-      setModel(buildMemoryAnalyticsViewModel({ outcomesResponse, trendsBySkillId }));
+      const experimentsResponse = await fetchActiveExperimentsRequest();
+      setModel(
+        buildMemoryAnalyticsViewModel({ outcomesResponse, trendsBySkillId, experimentsResponse })
+      );
       setStatus('ready');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));

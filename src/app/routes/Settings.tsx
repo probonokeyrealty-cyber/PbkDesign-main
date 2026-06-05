@@ -3,8 +3,10 @@ import { Activity, Database, ExternalLink, Loader2, RefreshCw, ShieldCheck } fro
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
+  fetchObservabilityStatusRequest,
   fetchReleaseStatusRequest,
   updateAdminTaskDecision,
+  type ObservabilityStatusResponse,
   type ReleaseStatusComponent,
   type ReleaseStatusResponse,
 } from '../utils/runtimeBridge';
@@ -116,7 +118,7 @@ function SettingsSourceRail() {
       />
       <PbkDataSource
         endpoint="GET /api/observability/status"
-        status="needs-wiring"
+        status="ships"
         note="canonical metrics dashboard health"
       />
       <PbkDataSource
@@ -443,6 +445,8 @@ export function Settings() {
   const [actionStatus, setActionStatus] = useState('');
   const [refreshingDecision, setRefreshingDecision] = useState(false);
   const [releaseStatus, setReleaseStatus] = useState<ReleaseStatusResponse | null>(null);
+  const [observabilityStatus, setObservabilityStatus] =
+    useState<ObservabilityStatusResponse | null>(null);
   const [settingsAdminDecisionDraft, setSettingsAdminDecisionDraft] =
     useState<SettingsAdminDecisionDraft | null>(null);
   const status = (snapshot?.status || {}) as Record<string, unknown>;
@@ -460,6 +464,15 @@ export function Settings() {
   const toolingOptionalReady = toNumber(toolingSummary.optionalReadyCount);
   const toolingOptionalTotal = toNumber(toolingSummary.optionalCount);
   const metricsUrl = String(toolingSummary.metricsUrl || '').trim();
+  const observabilitySummary = observabilityStatus
+    ? [
+        observabilityStatus.enabled ? 'enabled' : 'disabled',
+        observabilityStatus.otelReady ? 'OTel ready' : 'OTel not ready',
+        observabilityStatus.eventBus ? 'event bus reporting' : '',
+      ]
+        .filter(Boolean)
+        .join(' - ')
+    : '';
 
   const providerCards: SettingsRuntimeCard[] = [
     { id: 'telnyx', label: 'Telnyx', meta: quotas?.telnyx || runtimeProviders.telnyx },
@@ -588,6 +601,22 @@ export function Settings() {
     };
   }, [stateBackend, toolingCoreReady, toolingCoreTotal]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchObservabilityStatusRequest()
+      .then((response) => {
+        if (cancelled) return;
+        setObservabilityStatus(response);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setObservabilityStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stateBackend]);
+
   const confirmSettingsAdminDecision = (
     task: Record<string, unknown>,
     status: SettingsAdminDecisionDraft['status']
@@ -689,13 +718,13 @@ export function Settings() {
                   <ExternalLink size={13} aria-hidden="true" />
                 </a>
               ) : (
-                <strong>Waiting for bridge connection</strong>
+                <strong>{observabilitySummary || 'Waiting for bridge connection'}</strong>
               )}
             </div>
             <PbkDataSource
               endpoint="GET /api/observability/status"
-              status="needs-wiring"
-              note="canonical dashboard URL/status"
+              status="ships"
+              note={observabilityStatus?.serviceName || 'canonical dashboard URL/status'}
             />
           </div>
         </section>

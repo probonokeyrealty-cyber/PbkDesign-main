@@ -72,10 +72,10 @@ assert(
   'Settings must mark GET /api/tooling/status as a shipped tooling source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/observability\/status"[\s\S]*status="needs-wiring"/.test(
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/observability\/status"[\s\S]*status="ships"/.test(
     settings
   ),
-  'Settings must honestly mark canonical observability dashboard status as needs-wiring.'
+  'Settings must mark canonical observability status as a shipped data source.'
 );
 
 assert(

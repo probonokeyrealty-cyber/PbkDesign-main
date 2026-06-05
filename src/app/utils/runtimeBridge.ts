@@ -479,6 +479,28 @@ export type SkillTrendsResponse = {
   warning?: string;
 };
 
+export type ActiveExperimentsResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  experiments?: Array<Record<string, unknown>>;
+  tests?: Array<Record<string, unknown>>;
+  warning?: string;
+};
+
+export type ObservabilityStatusResponse = {
+  ok: boolean;
+  enabled?: boolean;
+  initialized?: boolean;
+  otelReady?: boolean;
+  serviceName?: string;
+  lastError?: string;
+  metrics?: Record<string, unknown>;
+  alerts?: Array<Record<string, unknown>>;
+  eventBus?: Record<string, unknown>;
+};
+
 export type CampaignRecord = {
   id: string;
   name?: string;
@@ -1010,6 +1032,26 @@ export async function fetchAgentRegistryRequest() {
   });
 }
 
+export async function deployAgentRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/agents/deploy',
+    body,
+  });
+}
+
+export async function fetchAgentSnnStatusRequest() {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    workers?: Array<Record<string, unknown>>;
+    frontend?: Record<string, unknown>;
+    providers?: Record<string, unknown>;
+  }>({
+    path: '/api/agents/snn-status',
+  });
+}
+
 export async function fetchGlobalSearchRequest({
   query = '',
   limit = 8,
@@ -1052,6 +1094,12 @@ export async function fetchSystemSourceLabelsRequest() {
 export async function fetchReleaseStatusRequest() {
   return bridgeRequest<ReleaseStatusResponse>({
     path: '/api/release/status',
+  });
+}
+
+export async function fetchObservabilityStatusRequest() {
+  return bridgeRequest<ObservabilityStatusResponse>({
+    path: '/api/observability/status',
   });
 }
 
@@ -1151,6 +1199,12 @@ export async function fetchSkillTrendsRequest({
   if (skillName) params.set('skillName', skillName);
   return bridgeRequest<SkillTrendsResponse>({
     path: `/api/skills/trends?${params.toString()}`,
+  });
+}
+
+export async function fetchActiveExperimentsRequest() {
+  return bridgeRequest<ActiveExperimentsResponse>({
+    path: '/api/emotion/policies/experiments',
   });
 }
 

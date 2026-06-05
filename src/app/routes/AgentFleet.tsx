@@ -3,8 +3,10 @@ import { AlertCircle, Check, ChevronDown, ChevronUp, Loader2, Phone, X } from 'l
 import { showUiToast } from '../utils/uiFeedback';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
+  deployAgentRequest,
   fetchAgentHealthRequest,
   fetchAgentRegistryRequest,
+  fetchAgentSnnStatusRequest,
   fetchLeadsRequest,
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
@@ -465,8 +467,8 @@ function AgentFleetSourceRail() {
       <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" />
       <PbkDataSource
         endpoint="GET /api/agents/snn-status"
-        status="needs-wiring"
-        note="durable SNN state beyond local worker and invoke status"
+        status="ships"
+        note="durable bridge cognition lane status"
       />
     </div>
   );
@@ -1014,6 +1016,8 @@ export function AgentFleet() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [callActionPending, setCallActionPending] = useState(false);
+  const [deployActionPending, setDeployActionPending] = useState(false);
+  const [deployStatus, setDeployStatus] = useState('');
   const [transferStatus, setTransferStatus] = useState('');
   const [transferFeedbackByAgentId, setTransferFeedbackByAgentId] = useState<
     Record<string, string>
@@ -1032,13 +1036,17 @@ export function AgentFleet() {
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      invokeRuntimeTool<{ workers?: BridgeSnnWorker[] }>('getSnnWorkerStatus', {}),
+      fetchAgentSnnStatusRequest(),
       fetchLeadsRequest(),
       fetchRuntimeState(),
     ]).then(([snnResult, rosterResult, stateResult]) => {
       if (cancelled) return;
       if (snnResult.status === 'fulfilled') {
-        setBridgeSnnWorkers(Array.isArray(snnResult.value.workers) ? snnResult.value.workers : []);
+        setBridgeSnnWorkers(
+          Array.isArray(snnResult.value.workers)
+            ? (snnResult.value.workers as BridgeSnnWorker[])
+            : []
+        );
       } else {
         console.warn('[PBK AgentFleet] SNN worker status unavailable', snnResult.reason);
       }
@@ -1293,6 +1301,53 @@ export function AgentFleet() {
     }
   };
 
+  const handleDeployAgent = async () => {
+    setDeployActionPending(true);
+    setDeployStatus(`Requesting approval to deploy ${activeAgent.name}...`);
+    try {
+      const response = await deployAgentRequest({
+        agentId: activeAgent.id,
+        name: `${activeAgent.name} remote worker`,
+        role: activeAgent.role,
+        version: activeAgent.version,
+        endpoint: activeAgent.registryEndpoint || '',
+        capabilities: activeAgent.capabilities,
+        metadata: {
+          ...activeAgent.metadata,
+          sourceRegistry: activeAgent.registrySource || agentRegistrySource,
+        },
+        rationale: `Agent Fleet requested an approval-gated deployment path for ${activeAgent.name}.`,
+        actor: 'Agent Fleet UI',
+        requestApproval: true,
+      });
+      const approvalId = String(
+        response.approvalId || response.approval_id || response.id || response.result || ''
+      );
+      setDeployStatus(
+        approvalId
+          ? `Deployment approval queued for ${activeAgent.name}.`
+          : `Deployment request accepted for ${activeAgent.name}.`
+      );
+      showUiToast({
+        tone: 'info',
+        title: 'Deployment approval queued',
+        desc: `${activeAgent.name} deployment was handed to Rex for approval gating.`,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'The bridge did not accept the deploy request.';
+      setDeployStatus(`Deploy request failed: ${message}`);
+      showUiToast({
+        tone: 'error',
+        title: 'Deploy request failed',
+        desc: message,
+        critical: true,
+      });
+    } finally {
+      setDeployActionPending(false);
+    }
+  };
+
   const handleTransfer = async (targetAgentIds: string[], versioned: boolean) => {
     if (!selectedSkill) return;
     setTransferStatus('Confirming skill transfer with bridge...');
@@ -1412,8 +1467,20 @@ export function AgentFleet() {
               <div className="pbk-agent-deploy-card">
                 <div className="plus">+</div>
                 <h4>Deploy new agent</h4>
-                <p>Remote deployment waits for canonical registry wiring.</p>
-                <PbkDataSource endpoint="POST /api/agents/deploy" status="needs-wiring" />
+                <p>
+                  Request an approval-gated remote worker deployment for the selected registry
+                  agent.
+                </p>
+                <button
+                  type="button"
+                  className="pbk-agent-deploy-button"
+                  disabled={deployActionPending}
+                  onClick={() => void handleDeployAgent()}
+                >
+                  {deployActionPending ? 'Requesting...' : 'Request deployment'}
+                </button>
+                {deployStatus && <span className="pbk-agent-deploy-status">{deployStatus}</span>}
+                <PbkDataSource endpoint="POST /api/agents/deploy" status="ships" />
               </div>
             </section>
             {/* Detail panel */}

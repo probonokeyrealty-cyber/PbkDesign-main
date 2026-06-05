@@ -61,15 +61,51 @@ export function buildMemoryAnalyticsViewModel({
     warning: outcomesResponse.warning || '',
     skills,
     experiments: arrayOr(experimentsResponse.experiments || experimentsResponse.tests).map(
-      (experiment) => ({
-        id: String(experiment.id || experiment.name || '').trim(),
-        name: String(
-          experiment.name || experiment.testName || experiment.test_name || 'Experiment'
-        ).trim(),
-        status: String(experiment.status || '').trim(),
-        confidence: normalizeConfidence(experiment.confidence),
-        variants: arrayOr(experiment.variants),
-      })
+      (experiment) => {
+        const stats =
+          experiment.stats && typeof experiment.stats === 'object' ? experiment.stats : {};
+        const statVariants = arrayOr(stats.variants);
+        const statById = new Map(
+          statVariants.map((variant) => [
+            String(variant.variantId || variant.id || '').trim(),
+            variant,
+          ])
+        );
+        const variants = arrayOr(experiment.variants).map((variant) => {
+          const id = String(variant.id || variant.variantId || variant.name || '').trim();
+          const stat = statById.get(id) || {};
+          const total = numberOr(stat.total ?? variant.attempts ?? variant.uses, 0);
+          const wins = numberOr(stat.wins ?? variant.successes ?? variant.wins, 0);
+          const successRate = stat.successRate ?? variant.successRate ?? variant.rate;
+          return {
+            ...variant,
+            id,
+            name: String(variant.name || variant.label || stat.label || id || 'Variant').trim(),
+            attempts: total,
+            successes: wins,
+            rate:
+              successRate !== null && successRate !== undefined
+                ? percentValue(successRate, 1)
+                : total
+                  ? percentValue(wins / total, 1)
+                  : 0,
+          };
+        });
+        return {
+          id: String(experiment.id || experiment.name || '').trim(),
+          name: String(
+            experiment.name ||
+              experiment.policyName ||
+              experiment.policy_name ||
+              experiment.testName ||
+              experiment.test_name ||
+              'Experiment'
+          ).trim(),
+          status: String(stats.status || experiment.status || '').trim(),
+          confidence: normalizeConfidence(experiment.confidence ?? stats.total),
+          variants,
+        };
+      }
     ),
   };
 }

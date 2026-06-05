@@ -45,23 +45,31 @@ assert(
 });
 
 [
+  'GET /api/agents/registry',
   'GET /api/tooling/status',
+  'GET /api/agents/health',
   'GET /state',
-  'POST /invoke: getSnnWorkerStatus',
+  'GET /api/agents/snn-status',
   'POST /invoke: previewAgentDealContext',
   'POST /invoke: pbk_transfer_agent_skill',
   'POST /invoke: telnyx_call',
+  'POST /api/agents/deploy',
 ].forEach((endpoint) => {
   assert(agentFleet.includes(endpoint), `Agent Fleet should surface data source ${endpoint}.`);
 });
 
 assert(
-  /PbkDataSource[\s\S]*GET \/api\/agents\/registry[\s\S]*needs-wiring/.test(agentFleet),
-  'Agent Fleet must honestly mark canonical remote agent registry wiring as needs-wiring.'
+  /PbkDataSource[\s\S]*GET \/api\/agents\/registry[\s\S]*status="ships"/.test(agentFleet),
+  'Agent Fleet must mark the canonical agent registry as a shipped data source.'
 );
 assert(
-  /PbkDataSource[\s\S]*GET \/api\/agents\/snn-status[\s\S]*needs-wiring/.test(agentFleet),
-  'Agent Fleet must honestly mark durable SNN state endpoint as needs-wiring.'
+  /PbkDataSource[\s\S]*GET \/api\/agents\/snn-status[\s\S]*status="ships"/.test(agentFleet),
+  'Agent Fleet must mark durable SNN status as a shipped data source.'
+);
+assert(
+  /PbkDataSource[\s\S]*POST \/api\/agents\/deploy[\s\S]*status="ships"/.test(agentFleet) &&
+    /Request deployment/.test(agentFleet),
+  'Agent Fleet must expose a shipped approval-gated deploy request action.'
 );
 assert(
   !/Diane Kowalski|Probate Warm-up|Nora|Spanish Acquisitions/.test(agentFleet),

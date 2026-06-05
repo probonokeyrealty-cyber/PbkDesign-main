@@ -11,6 +11,7 @@ import { showUiToast } from '../utils/uiFeedback';
 
 interface ShellTopbarProps {
   theme: 'dark' | 'light';
+  themeDataSource?: string;
   onToggleTheme: () => void;
 }
 
@@ -95,7 +96,11 @@ function initials(label: string) {
   return (letters || 'PB').toUpperCase();
 }
 
-export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
+export function ShellTopbar({
+  theme,
+  themeDataSource = 'Local fallback',
+  onToggleTheme,
+}: ShellTopbarProps) {
   const navigate = useNavigate();
   const { snapshot, refresh } = useRuntimeSnapshot(10000);
   const [autopilot, setAutopilot] = useState(false);
@@ -329,9 +334,11 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
       <button
         type="button"
         onClick={onToggleTheme}
+        data-source="PATCH /api/settings ui.theme"
+        data-fallback="localStorage:pbk:prefs:v1"
         className="pbk-shell-theme-button inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-800 bg-slate-900 text-slate-400 transition-colors hover:text-sky-200"
         aria-label="Toggle theme"
-        title="Toggle theme (T)"
+        title={`Toggle theme (T) - ${themeDataSource}`}
       >
         {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
       </button>

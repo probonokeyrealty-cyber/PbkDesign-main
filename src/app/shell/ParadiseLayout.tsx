@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
@@ -9,9 +9,11 @@ import {
   applyPbkTheme,
   getSystemPbkTheme,
   hasStoredPbkThemePreference,
+  type PbkPrefs,
   readPbkPrefs,
   savePbkPrefs,
 } from '../utils/uiPrefs';
+import { updateRuntimeSettingsRequest, type RuntimeSnapshot } from '../utils/runtimeBridge';
 import { getPendingApprovalCount } from '../routes/inboxRuntimeLogic.js';
 import { showUiToast } from '../utils/uiFeedback';
 import { FavoritesBar } from './FavoritesBar';
@@ -41,6 +43,20 @@ function isValidShellPath(path = '') {
   if (!pathname) return false;
   if (VALID_SHELL_PATHS.has(pathname)) return true;
   return /^\/deal\/[^/]+$/.test(pathname);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function getBridgeShellPrefs(
+  snapshot?: RuntimeSnapshot | null
+): Partial<Pick<PbkPrefs, 'theme' | 'railCollapsed'>> {
+  const settings = asRecord(snapshot?.settings);
+  const ui = asRecord(settings.ui);
+  const theme = ui.theme === 'light' || ui.theme === 'dark' ? ui.theme : undefined;
+  const railCollapsed = typeof ui.railCollapsed === 'boolean' ? ui.railCollapsed : undefined;
+  return { theme, railCollapsed };
 }
 
 function dispatchShortcutEvent(eventName: string, label: string) {
@@ -75,15 +91,66 @@ export function ParadiseLayout() {
   const navigate = useNavigate();
   const [prefs, setPrefs] = useState(() => readPbkPrefs());
   const [systemTheme, setSystemTheme] = useState(() => getSystemPbkTheme());
+  const [prefsSource, setPrefsSource] = useState('Local fallback');
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [skeletonOn, setSkeletonOn] = useState(false);
   const lastPageRestoredRef = useRef(false);
+  const bridgePrefsHydratedRef = useRef(false);
   const { snapshot, refresh } = useRuntimeSnapshot(10000);
   const pendingApprovalCount = getPendingApprovalCount(snapshot || {});
+
+  const persistShellPrefs = useCallback(
+    async (updates: Partial<Pick<PbkPrefs, 'theme' | 'railCollapsed'>>) => {
+      const next = savePbkPrefs(updates);
+      setPrefs(next);
+      try {
+        await updateRuntimeSettingsRequest({
+          ui: updates,
+          actor: 'ParadiseLayout',
+        });
+        setPrefsSource('Bridge settings');
+        await refresh();
+      } catch (error) {
+        setPrefsSource('Local fallback');
+        showUiToast({
+          tone: 'warning',
+          title: 'Shell preference saved locally',
+          desc:
+            error instanceof Error
+              ? `${error.message}. Using localStorage:pbk:prefs:v1 fallback.`
+              : 'Bridge settings were unavailable. Using localStorage:pbk:prefs:v1 fallback.',
+        });
+      }
+      return next;
+    },
+    [refresh]
+  );
 
   useEffect(() => {
     applyPbkTheme(prefs.theme);
   }, [prefs.theme]);
+
+  useEffect(() => {
+    const bridgePrefs = getBridgeShellPrefs(snapshot);
+    const hasBridgePrefs = bridgePrefs.theme || typeof bridgePrefs.railCollapsed === 'boolean';
+    if (!hasBridgePrefs) return;
+    bridgePrefsHydratedRef.current = true;
+    setPrefsSource('Bridge settings');
+    setPrefs((current) => {
+      const nextUpdates: Partial<PbkPrefs> = {};
+      if (bridgePrefs.theme && bridgePrefs.theme !== current.theme) {
+        nextUpdates.theme = bridgePrefs.theme;
+      }
+      if (
+        typeof bridgePrefs.railCollapsed === 'boolean' &&
+        bridgePrefs.railCollapsed !== current.railCollapsed
+      ) {
+        nextUpdates.railCollapsed = bridgePrefs.railCollapsed;
+      }
+      if (!Object.keys(nextUpdates).length) return current;
+      return savePbkPrefs(nextUpdates);
+    });
+  }, [snapshot]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return undefined;
@@ -91,7 +158,7 @@ export function ParadiseLayout() {
     const onChange = () => {
       const nextSystemTheme = getSystemPbkTheme();
       setSystemTheme(nextSystemTheme);
-      if (!hasStoredPbkThemePreference()) {
+      if (!bridgePrefsHydratedRef.current && !hasStoredPbkThemePreference()) {
         setPrefs((current) => ({ ...current, theme: nextSystemTheme }));
       }
     };
@@ -171,15 +238,11 @@ export function ParadiseLayout() {
         event.preventDefault();
         document.getElementById('pbk-global-search')?.focus();
       } else if (event.key.toLowerCase() === 't') {
-        setPrefs((current) => {
-          const nextTheme = current.theme === 'light' ? 'dark' : 'light';
-          return savePbkPrefs({ theme: nextTheme });
-        });
+        const nextTheme = readPbkPrefs().theme === 'light' ? 'dark' : 'light';
+        void persistShellPrefs({ theme: nextTheme });
       } else if (event.key === '[') {
-        setPrefs((current) => {
-          const nextCollapsed = !current.railCollapsed;
-          return savePbkPrefs({ railCollapsed: nextCollapsed });
-        });
+        const railCollapsed = !readPbkPrefs().railCollapsed;
+        void persistShellPrefs({ railCollapsed });
       } else if (event.key.toLowerCase() === 'c') {
         event.preventDefault();
         dispatchShortcutEvent('pbk:open-compose', 'Compose');
@@ -198,20 +261,15 @@ export function ParadiseLayout() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [persistShellPrefs]);
 
   const updateTheme = () => {
-    setPrefs((current) => {
-      const nextTheme = current.theme === 'light' ? 'dark' : 'light';
-      return savePbkPrefs({ theme: nextTheme });
-    });
+    const nextTheme = prefs.theme === 'light' ? 'dark' : 'light';
+    void persistShellPrefs({ theme: nextTheme });
   };
 
   const toggleRail = () => {
-    setPrefs((current) => {
-      const railCollapsed = !current.railCollapsed;
-      return savePbkPrefs({ railCollapsed });
-    });
+    void persistShellPrefs({ railCollapsed: !prefs.railCollapsed });
   };
 
   return (
@@ -224,10 +282,15 @@ export function ParadiseLayout() {
       <Sidebar
         collapsed={prefs.railCollapsed}
         pendingApprovals={pendingApprovalCount}
+        prefsSource={prefsSource}
         onToggleRail={toggleRail}
       />
       <div className="pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
-        <ShellTopbar theme={prefs.theme} onToggleTheme={updateTheme} />
+        <ShellTopbar
+          theme={prefs.theme}
+          themeDataSource={prefsSource}
+          onToggleTheme={updateTheme}
+        />
         <FavoritesBar snapshot={snapshot} refresh={refresh} />
         <main className="pbk-shell-content relative overflow-auto bg-slate-900">
           {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}

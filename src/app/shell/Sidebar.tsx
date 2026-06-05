@@ -44,10 +44,16 @@ function buildReleaseLabel(collapsed: boolean) {
 interface SidebarProps {
   collapsed: boolean;
   pendingApprovals?: number;
+  prefsSource?: string;
   onToggleRail: () => void;
 }
 
-export function Sidebar({ collapsed, pendingApprovals = 0, onToggleRail }: SidebarProps) {
+export function Sidebar({
+  collapsed,
+  pendingApprovals = 0,
+  prefsSource = 'Local fallback',
+  onToggleRail,
+}: SidebarProps) {
   return (
     <aside className="pbk-shell-sidebar hidden h-full bg-slate-950 border-r border-slate-800 md:flex md:flex-col">
       <div className="pbk-shell-sidebar-head h-14 flex items-center justify-between gap-2 px-4 border-b border-slate-800">
@@ -58,9 +64,11 @@ export function Sidebar({ collapsed, pendingApprovals = 0, onToggleRail }: Sideb
         <button
           type="button"
           onClick={onToggleRail}
+          data-source="PATCH /api/settings ui.railCollapsed"
+          data-fallback="localStorage:pbk:prefs:v1"
           className="pbk-shell-rail-toggle grid h-8 w-8 place-items-center rounded-lg border border-slate-800 text-slate-500 transition hover:border-sky-500/40 hover:text-sky-200"
           aria-label={collapsed ? 'Expand navigation rail' : 'Collapse navigation rail'}
-          title="Collapse/expand rail ([)"
+          title={`Collapse/expand rail ([) - ${prefsSource}`}
         >
           [
         </button>

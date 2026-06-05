@@ -288,6 +288,32 @@ export type GlobalSearchResponse = {
   source?: string;
 };
 
+export type FounderWorkQueueItem = {
+  id: string;
+  tag?: string;
+  body?: string;
+  when?: string;
+  tone?: 'urgent' | 'hot' | 'warm' | 'money';
+  score?: number;
+  source?: string;
+  reason?: string;
+  cta?: string;
+  pulse?: 'default' | 'amber' | 'sky' | 'lime';
+  targetPath?: string;
+  recordKind?: string;
+  recordId?: string;
+};
+
+export type FounderWorkQueueResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  count?: number;
+  items?: FounderWorkQueueItem[];
+  summary?: Record<string, unknown>;
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -866,6 +892,15 @@ export async function fetchGlobalSearchRequest({
   params.set('limit', String(Math.max(1, Math.min(40, limit))));
   return bridgeRequest<GlobalSearchResponse>({
     path: `/api/search?${params.toString()}`,
+  });
+}
+
+export async function fetchFounderWorkQueueRequest({ limit = 8 }: { limit?: number } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(24, limit))),
+  });
+  return bridgeRequest<FounderWorkQueueResponse>({
+    path: `/api/founder/work-queue?${params.toString()}`,
   });
 }
 

@@ -33,15 +33,16 @@ assert(
 });
 
 assert(
-  /snapshot\.approvals \+ snapshot\.calls \+ snapshot\.messages \+ snapshot\.adminTasks \+ snapshot\.leadImports/.test(
-    commandCenter
-  ),
-  'Battlefield data source caption must include all ranked snapshot arrays.'
+  /endpoint="GET \/api\/founder\/work-queue"/.test(commandCenter) &&
+    /fallbackBattlefieldItems/.test(commandCenter),
+  'Battlefield data source caption must use the bridge work queue while retaining snapshot fallback.'
 );
 
 assert(
-  /Battlefield ranked queue[\s\S]*client ranking/.test(dataMap),
-  'Data map must document the Battlefield ranked queue as shipped client ranking.'
+  /Battlefield ranked queue[\s\S]*GET \/api\/founder\/work-queue[\s\S]*fallback `GET \/state`[\s\S]*Ships/.test(
+    dataMap
+  ),
+  'Data map must document the Battlefield ranked queue as bridge-backed with a snapshot fallback.'
 );
 
 console.log('command-battlefield-ranking-smoke: ok');

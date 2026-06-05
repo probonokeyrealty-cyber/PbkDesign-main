@@ -46569,6 +46569,229 @@ function buildLocalCallbackStatus() {
   };
 }
 
+function clampFounderWorkScore(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function getFounderLeadDisplayName(lead = {}) {
+  const seller = lead.seller && typeof lead.seller === 'object' ? lead.seller : {};
+  return String(lead.leadName || lead.name || lead.lead_name || seller.name || 'Unnamed lead');
+}
+
+function getFounderLeadAddress(lead = {}) {
+  const property = lead.property && typeof lead.property === 'object' ? lead.property : {};
+  return String(
+    lead.address ||
+      lead.property_address ||
+      lead.propertyAddress ||
+      property.address ||
+      'No address recorded'
+  );
+}
+
+function getFounderLeadScore(lead = {}) {
+  return toNumber(
+    lead.priorityScore ??
+      lead.priority_score ??
+      lead.engagementScore ??
+      lead.engagement_score ??
+      lead.motivationScore ??
+      lead.motivation_score ??
+      lead.score,
+    0
+  );
+}
+
+function getFounderMessageRecipient(message = {}) {
+  return String(
+    message.leadName ||
+      message.to ||
+      message.from ||
+      message.phone ||
+      message.email ||
+      message.address ||
+      'seller'
+  );
+}
+
+function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
+  const safeLimit = Math.max(1, Math.min(24, Number(limit) || 8));
+  const items = [];
+
+  (state.calls || [])
+    .filter(
+      (call) =>
+        isActiveLiveCall(call) ||
+        ['connected', 'dialing', 'queued', 'on-hold'].includes(
+          String(call.status || '').toLowerCase()
+        )
+    )
+    .slice(0, 3)
+    .forEach((call, index) => {
+      const status = String(call.status || 'Live');
+      const sentiment = toNumber(call.sentiment, null);
+      const sentimentScore =
+        sentiment == null
+          ? ''
+          : ` / sentiment ${Math.round(sentiment <= 1 ? sentiment * 100 : sentiment)}`;
+      items.push({
+        id: `call-${String(call.id || call.callId || index)}`,
+        recordKind: 'call',
+        recordId: String(call.id || call.callId || ''),
+        tag: status,
+        body: `${String(call.leadName || call.name || call.phone || 'Active call')}${sentimentScore}`,
+        when: 'now',
+        tone: 'urgent',
+        score: clampFounderWorkScore(
+          ['live', 'connected'].includes(status.toLowerCase()) ? 99 : 92
+        ),
+        source: 'state.calls',
+        reason: 'Active seller call needs operator awareness.',
+        cta: 'Open live call',
+        pulse: 'default',
+        targetPath: '#live-call',
+      });
+    });
+
+  getPendingRuntimeApprovals(state.approvals || [])
+    .slice(0, 5)
+    .forEach((approval, index) => {
+      const type = String(approval.type || 'Approval');
+      const amount = approval.offerPrice || approval.mao || approval.amount;
+      const isContract = type.toLowerCase().includes('contract');
+      items.push({
+        id: `approval-${String(approval.id || index)}`,
+        recordKind: 'approval',
+        recordId: String(approval.id || ''),
+        tag: type,
+        body: `${amount ? `${formatMoneyCompact(amount)} / ` : ''}${String(
+          approval.leadName || approval.address || 'approval needed'
+        )}`,
+        when: formatRelativeTime(getItemTimestamp(approval)),
+        tone: isContract ? 'money' : 'hot',
+        score: clampFounderWorkScore(
+          (isContract ? 91 : 84) + (toNumber(amount, 0) ? 4 : 0)
+        ),
+        source: 'state.approvals',
+        reason: isContract
+          ? 'Contract approval can trigger DocuSign delivery.'
+          : 'Outbound agent action is waiting on approval.',
+        cta: 'Review approval',
+        pulse: isContract ? 'lime' : undefined,
+        targetPath: '#approvals',
+      });
+    });
+
+  (state.messages || [])
+    .filter((message) =>
+      ['failed', 'delivery_failed', 'error'].includes(String(message.status || '').toLowerCase())
+    )
+    .slice(0, 3)
+    .forEach((message, index) => {
+      items.push({
+        id: `message-failed-${String(message.id || index)}`,
+        recordKind: 'message',
+        recordId: String(message.id || ''),
+        tag: 'Send failed',
+        body: `${String(message.channel || 'message').toUpperCase()} to ${getFounderMessageRecipient(
+          message
+        )}`,
+        when: formatRelativeTime(getItemTimestamp(message)),
+        tone: 'urgent',
+        score: 94,
+        source: 'state.messages',
+        reason: 'Provider marked an outbound send as failed.',
+        cta: 'Open inbox',
+        targetPath: '/inbox',
+      });
+    });
+
+  (state.messages || [])
+    .filter((message) => Boolean(message.unread || message.isUnread))
+    .slice(0, 3)
+    .forEach((message, index) => {
+      items.push({
+        id: `message-unread-${String(message.id || index)}`,
+        recordKind: 'message',
+        recordId: String(message.id || ''),
+        tag: String(message.channel || 'Reply'),
+        body: `${getFounderMessageRecipient(message)} / ${String(
+          message.subject || message.body || 'new seller reply'
+        ).slice(0, 56)}`,
+        when: formatRelativeTime(getItemTimestamp(message)),
+        tone: 'warm',
+        score: 72,
+        source: 'state.messages',
+        reason: 'Unread seller reply is waiting in Inbox.',
+        cta: 'Reply',
+        pulse: 'amber',
+        targetPath: '/inbox',
+      });
+    });
+
+  getPendingAdminTasks(state.adminTasks || [])
+    .slice(0, 3)
+    .forEach((task, index) => {
+      items.push({
+        id: `admin-${String(task.id || index)}`,
+        recordKind: 'admin_task',
+        recordId: String(task.id || ''),
+        tag: 'Admin',
+        body: `${String(task.provider || 'Rex')} / ${String(
+          task.action || task.summary || 'decision'
+        )}`,
+        when: formatRelativeTime(getItemTimestamp(task)),
+        tone: 'hot',
+        score: 86,
+        source: 'state.adminTasks',
+        reason: 'Infrastructure/admin action is approval gated.',
+        cta: 'Review admin task',
+        targetPath: '#admin-activity',
+      });
+    });
+
+  (state.leadImports || [])
+    .filter((lead) => getFounderLeadScore(lead) >= 75)
+    .slice(0, 3)
+    .forEach((lead, index) => {
+      const score = clampFounderWorkScore(getFounderLeadScore(lead));
+      items.push({
+        id: `lead-${String(lead.id || lead.leadId || index)}`,
+        recordKind: 'lead',
+        recordId: String(lead.id || lead.leadId || ''),
+        tag: 'Hot lead',
+        body: `${getFounderLeadDisplayName(lead)} / ${getFounderLeadAddress(lead)}`,
+        when: `${score}`,
+        tone: 'money',
+        score,
+        source: 'state.leadImports',
+        reason: 'Lead score crossed the hot-lead threshold.',
+        cta: 'Open lead',
+        targetPath: '/leads',
+      });
+    });
+
+  const ranked = items.sort((left, right) => right.score - left.score).slice(0, safeLimit);
+  return {
+    ok: true,
+    result: 'live',
+    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    generatedAt: isoNow(),
+    count: ranked.length,
+    summary: {
+      approvals: getPendingRuntimeApprovals(state.approvals || []).length,
+      adminTasks: getPendingAdminTasks(state.adminTasks || []).length,
+      activeCalls: (state.calls || []).filter((call) => isActiveLiveCall(call)).length,
+      failedMessages: (state.messages || []).filter((message) =>
+        ['failed', 'delivery_failed', 'error'].includes(String(message.status || '').toLowerCase())
+      ).length,
+    },
+    items: ranked,
+  };
+}
+
 async function readFetchJsonOrText(fetchResponse) {
   const text = await fetchResponse.text();
   if (!text) return {};
@@ -51797,6 +52020,18 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && matchesPath(pathname, ['/state', '/api/state'])) {
       const compact = /^(1|true|yes)$/i.test(String(url.searchParams.get('compact') || '').trim());
       json(response, 200, buildStateSnapshot({ compact }));
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/founder/work-queue', '/api/v1/founder/work-queue'])
+    ) {
+      json(
+        response,
+        200,
+        buildFounderWorkQueueSnapshot({ limit: url.searchParams.get('limit') || 8 })
+      );
       return;
     }
 

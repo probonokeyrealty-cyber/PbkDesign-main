@@ -10,7 +10,9 @@ import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index';
 import {
   controlRuntimeCall,
+  fetchFounderWorkQueueRequest,
   fetchWebSearchStatusRequest,
+  type FounderWorkQueueItem,
   updateRuntimeSettingsRequest,
   type RuntimeSnapshot,
   updateAdminTaskDecision,
@@ -539,6 +541,31 @@ function buildBattlefieldItems(params: {
   return rankBattlefieldItems(items).slice(0, 8);
 }
 
+function normalizeBridgeBattlefieldItem(
+  item: FounderWorkQueueItem,
+  index: number
+): BattlefieldItem {
+  const tone = ['urgent', 'hot', 'warm', 'money'].includes(String(item.tone))
+    ? (item.tone as BattlefieldTone)
+    : 'warm';
+  const pulse = ['default', 'amber', 'sky', 'lime'].includes(String(item.pulse))
+    ? (item.pulse as BattlefieldItem['pulse'])
+    : undefined;
+  return {
+    id: String(item.id || `bridge-work-${index}`),
+    tag: String(item.tag || 'Work item'),
+    body: String(item.body || 'Bridge-ranked founder action'),
+    when: String(item.when || 'now'),
+    tone,
+    score: clampBattlefieldScore(toNumber(item.score, 0) || 0),
+    source: String(item.source || 'GET /api/founder/work-queue'),
+    reason: String(item.reason || 'Bridge ranked this item for operator attention.'),
+    cta: String(item.cta || 'Open'),
+    pulse,
+    targetPath: String(item.targetPath || '/'),
+  };
+}
+
 function DataSourceCaption({
   endpoint,
   status = 'ships',
@@ -571,6 +598,8 @@ function FounderBattlefield({
   agentsReady,
   agentsTotal,
   mode,
+  sourceLabel,
+  sourceNote,
   onSelect,
 }: {
   items: BattlefieldItem[];
@@ -579,6 +608,8 @@ function FounderBattlefield({
   agentsReady: number;
   agentsTotal: number;
   mode: string;
+  sourceLabel: string;
+  sourceNote: string;
   onSelect: (item: BattlefieldItem) => void;
 }) {
   const urgentCount = items.filter((item) => item.tone === 'urgent' || item.tone === 'hot').length;
@@ -676,8 +707,8 @@ function FounderBattlefield({
         </div>
       </div>
       <DataSourceCaption
-        endpoint="snapshot.approvals + snapshot.calls + snapshot.messages + snapshot.adminTasks + snapshot.leadImports"
-        note="client-ranked snapshot work queue; canonical GET /api/founder/work-queue needs Mastra wiring"
+        endpoint="GET /api/founder/work-queue"
+        note={`${sourceLabel}; ${sourceNote}`}
       />
     </section>
   );
@@ -697,6 +728,11 @@ export function CommandCenter() {
   const [activityLimit, setActivityLimit] = useState(8);
   const [widgetPrefs, setWidgetPrefs] = useState(() => readCommandWidgetPrefs());
   const [widgetPrefsSource, setWidgetPrefsSource] = useState('Local fallback');
+  const [bridgeBattlefieldItems, setBridgeBattlefieldItems] = useState<BattlefieldItem[] | null>(
+    null
+  );
+  const [battlefieldSource, setBattlefieldSource] = useState('client snapshot fallback');
+  const [battlefieldQueueLoading, setBattlefieldQueueLoading] = useState(false);
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
   const announcedCallRef = useRef('');
   const reviewedCallRef = useRef('');
@@ -852,10 +888,14 @@ export function CommandCenter() {
     () => buildHeroStats({ leadImports, calls, messages, contracts }),
     [leadImports, calls, messages, contracts]
   );
-  const battlefieldItems = useMemo(
+  const fallbackBattlefieldItems = useMemo(
     () => buildBattlefieldItems({ approvals, adminTasks, leadImports, messages, calls }),
     [approvals, adminTasks, leadImports, messages, calls]
   );
+  const battlefieldItems = bridgeBattlefieldItems || fallbackBattlefieldItems;
+  const battlefieldSourceNote = bridgeBattlefieldItems
+    ? 'bridge-ranked founder queue'
+    : 'client-ranked snapshot fallback';
   const pendingApprovalCount = approvals.filter((item) => item.status === 'pending').length;
   const pendingAdminCount = adminTasks.filter((item) => item.status === 'pending').length;
   const heroTimeLabel = new Intl.DateTimeFormat('en-US', {
@@ -869,6 +909,35 @@ export function CommandCenter() {
     pendingApprovalCount || pendingAdminCount
       ? 'Approval'
       : String(snapshot?.settings?.mode || snapshot?.status?.mode || 'Auto').replace(/_/g, ' ');
+
+  useEffect(() => {
+    let cancelled = false;
+    setBattlefieldQueueLoading(true);
+    fetchFounderWorkQueueRequest({ limit: 8 })
+      .then((response) => {
+        if (cancelled) return;
+        const items = Array.isArray(response.items)
+          ? response.items.map(normalizeBridgeBattlefieldItem)
+          : [];
+        setBridgeBattlefieldItems(items);
+        setBattlefieldSource(response.source || response.result || 'bridge work queue');
+      })
+      .catch((queueError) => {
+        if (cancelled) return;
+        setBridgeBattlefieldItems(null);
+        setBattlefieldSource(
+          queueError instanceof Error
+            ? `fallback: ${queueError.message}`
+            : 'client snapshot fallback'
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setBattlefieldQueueLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [approvals, adminTasks, leadImports, messages, calls]);
 
   const selectBattlefieldItem = (item: BattlefieldItem) => {
     if (item.targetPath.startsWith('#')) {
@@ -1091,11 +1160,13 @@ export function CommandCenter() {
 
         <FounderBattlefield
           items={battlefieldItems}
-          loading={loading}
+          loading={loading || battlefieldQueueLoading}
           error={error}
           agentsReady={toolingCoreReady}
           agentsTotal={toolingCoreTotal}
           mode={approvalMode}
+          sourceLabel={battlefieldSource}
+          sourceNote={battlefieldSourceNote}
           onSelect={selectBattlefieldItem}
         />
 

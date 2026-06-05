@@ -28347,8 +28347,11 @@ async function buildToolingStatus() {
   const voiceFallbackConfigured = voiceFallbackEndpointConfigured || countManifestItems(upgradeManifest, 'voiceFallback') > 0;
   const voiceFallbackRoundTripReady = isVoiceFallbackRoundTripReady(voiceFallbackLocalStatus);
   const voiceFallbackReady = Boolean(voiceFallbackEndpointConfigured && voiceFallbackRoundTripReady);
-  const desktopCopilotConfigured = hasAnyEnv(['PBK_CLICKUI_BASE_URL']) || countManifestItems(upgradeManifest, 'desktopCopilot') > 0;
-  const desktopCopilotReady = hasAnyEnv(['PBK_CLICKUI_BASE_URL']);
+  const desktopSidecarStatus = buildDesktopSidecarStatus();
+  const desktopSidecarConnected = Boolean(desktopSidecarStatus.connected);
+  const desktopCopilotEndpointConfigured = hasAnyEnv(['PBK_CLICKUI_BASE_URL']);
+  const desktopCopilotConfigured = desktopCopilotEndpointConfigured || desktopSidecarConnected || countManifestItems(upgradeManifest, 'desktopCopilot') > 0;
+  const desktopCopilotReady = Boolean(desktopCopilotEndpointConfigured || desktopSidecarConnected);
   const metricsUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/metrics` : `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}/metrics`;
 
   const sections = {
@@ -28412,8 +28415,12 @@ async function buildToolingStatus() {
       optional: true,
       ready: desktopCopilotReady,
       configured: desktopCopilotConfigured,
+      endpointConfigured: desktopCopilotEndpointConfigured,
+      sidecarConnected: desktopSidecarConnected,
+      sidecarConnectedCount: desktopSidecarStatus.connectedCount || 0,
+      sidecars: desktopSidecarStatus.sidecars || [],
       candidateCount: countManifestItems(upgradeManifest, 'desktopCopilot'),
-      note: desktopCopilotReady ? 'Local desktop copilot endpoint is available for sidecar research.' : desktopCopilotConfigured ? 'ClickUi is documented as an operator sidecar. Keep it separate until an endpoint is explicitly configured.' : 'Optional local sidecar; no production dependency.',
+      note: desktopCopilotReady ? (desktopSidecarConnected ? 'Desktop sidecar is connected for operator-gated copilot actions.' : 'Local desktop copilot endpoint is available for sidecar research.') : desktopCopilotConfigured ? 'ClickUi is documented as an operator sidecar. Start the desktop sidecar or configure PBK_CLICKUI_BASE_URL to enable it.' : 'Optional local sidecar; no production dependency.',
     },
     context7: {
       ready: Boolean(mcpServers.context7),

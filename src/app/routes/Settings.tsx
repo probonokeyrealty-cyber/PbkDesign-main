@@ -28,8 +28,14 @@ function readinessFor(meta: Record<string, unknown> | undefined): ReadinessState
   return 'missing';
 }
 
+function readinessForProvider(meta: Record<string, unknown> | undefined): ReadinessState {
+  if (!meta) return 'unknown';
+  if (meta.ready || meta.configured || meta.deliveredToday !== undefined) return 'ready';
+  return readinessFor(meta);
+}
+
 function describeProvider(meta: Record<string, unknown> | undefined) {
-  const state = readinessFor(meta);
+  const state = readinessForProvider(meta);
   if (state === 'unknown') return 'Waiting for bridge';
   if (state === 'ready') return 'Ready';
   if (state === 'partial') return 'Connected, not tested';
@@ -190,7 +196,7 @@ function SettingsHero({
 }
 
 function SettingsProviderCard({ card }: { card: SettingsRuntimeCard }) {
-  const state = readinessFor(card.meta);
+  const state = readinessForProvider(card.meta);
   return (
     <section className="pbk-settings-provider-card">
       <div className="card-head">
@@ -537,7 +543,7 @@ export function Settings() {
     },
   ];
   const providerReadyCount = providerCards.filter(
-    (card) => readinessFor(card.meta) === 'ready'
+    (card) => readinessForProvider(card.meta) === 'ready'
   ).length;
   const pendingAdminCount = adminTasks.filter(
     (task) => String(task.status || '').toLowerCase() === 'pending'

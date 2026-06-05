@@ -101,6 +101,8 @@ assert.match(bridge, /PBK_SIDECAR_TOKEN/, 'bridge should support a dedicated PBK
 assert.match(bridge, /requiredSidecarToken/, 'bridge should authenticate sidecar sockets with the dedicated sidecar token when configured.');
 assert.match(bridge, /\/api\/desktop-sidecar\/status/, 'bridge should expose a desktop sidecar status endpoint.');
 assert.match(bridge, /\/api\/desktop-sidecar\/command/, 'bridge should expose a desktop sidecar command endpoint.');
+assert.match(bridge, /const desktopSidecarStatus = buildDesktopSidecarStatus\(\)/, 'tooling status should read live desktop sidecar status.');
+assert.match(bridge, /const desktopCopilotReady = Boolean\(desktopCopilotEndpointConfigured \|\| desktopSidecarConnected\)/, 'Desktop Copilot should become ready when the sidecar connects.');
 assert.match(bridge, /async sidecarCommand/, 'bridge should expose sidecarCommand as an Ava/Rex tool.');
 assert.match(bridge, /pendingSidecarCommands/, 'bridge should correlate sidecar command results.');
 assert.match(electronPackage, /"ws"/, 'Electron sidecar should depend on ws for bridge connectivity.');

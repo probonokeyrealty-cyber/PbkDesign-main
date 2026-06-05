@@ -92,6 +92,15 @@ assert(
   'runtimeBridge must contain the Settings endpoint helpers.'
 );
 assert(
+  /function readinessForProvider/.test(settings) &&
+    /meta\.ready \|\| meta\.configured \|\| meta\.deliveredToday !== undefined/.test(settings),
+  'Settings provider cards must treat quota-backed configured providers as ready.'
+);
+assert(
+  /const state = readinessForProvider\(card\.meta\)/.test(settings),
+  'Settings provider cards must use provider-specific readiness for the status dot.'
+);
+assert(
   dataMap.includes('Settings') &&
     dataMap.includes('GET /api/quotas') &&
     dataMap.includes('GET /api/tooling/status') &&

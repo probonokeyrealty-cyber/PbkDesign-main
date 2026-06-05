@@ -201,6 +201,30 @@ export type RuntimeToolingStatus = {
   desktopCopilot?: Record<string, unknown>;
 };
 
+export type AgentHealthProbe = {
+  id?: string;
+  name?: string;
+  status?: string;
+  activity?: string;
+  present?: boolean;
+  ready?: boolean;
+  providerReady?: boolean;
+  missingTools?: string[];
+  healthProbe?: string;
+  lastSeen?: string;
+  source?: string;
+};
+
+export type AgentHealthResponse = {
+  ok: boolean;
+  result?: string;
+  agents?: AgentHealthProbe[];
+  registry?: Record<string, unknown>;
+  agentRegistry?: Record<string, unknown>;
+  mcp?: Record<string, unknown>;
+  safety?: Record<string, unknown>;
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -753,6 +777,12 @@ export async function fetchRuntimeToolingStatus() {
   } finally {
     clearTimeout(handle);
   }
+}
+
+export async function fetchAgentHealthRequest() {
+  return bridgeRequest<AgentHealthResponse>({
+    path: '/api/agents/health',
+  });
 }
 
 export function getSnnWorkerStatus(): { ava: boolean; rex: boolean } {

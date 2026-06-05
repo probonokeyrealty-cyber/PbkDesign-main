@@ -3,11 +3,13 @@ import { AlertCircle, Check, ChevronDown, ChevronUp, Loader2, Phone, X } from 'l
 import { showUiToast } from '../utils/uiFeedback';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
+  fetchAgentHealthRequest,
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
   getSnnWorkerStatus,
   invokeRuntimeTool,
   startLeadCallRequest,
+  type AgentHealthProbe,
 } from '../utils/runtimeBridge';
 import { AGENT_REGISTRY, type RegistryAgent } from '../utils/agentRegistry';
 
@@ -256,6 +258,16 @@ function getBridgeSnnWorkerForAgent(workers: BridgeSnnWorker[], agentId = '') {
   );
 }
 
+function getHealthProbeForAgent(probes: AgentHealthProbe[], agent: FleetAgent) {
+  const id = normalizeFleetAgentId(agent.id);
+  const name = normalizeFleetAgentId(agent.name);
+  return probes.find((probe) => {
+    const probeId = normalizeFleetAgentId(probe.id || '');
+    const probeName = normalizeFleetAgentId(probe.name || '');
+    return probeId === id || probeName === id || probeId === name || probeName === name;
+  });
+}
+
 function formatAgentPreviewAction(value = '') {
   return String(value || 'inspect_lead_profile').replace(/_/g, ' ');
 }
@@ -337,6 +349,7 @@ function AgentFleetSourceRail() {
   return (
     <div className="pbk-fleet-source-rail" aria-label="Agent Fleet data sources">
       <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
+      <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
       <PbkDataSource endpoint="GET /state" status="ships" />
       <PbkDataSource endpoint="POST /invoke: getSnnWorkerStatus" status="ships" />
       <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
@@ -429,6 +442,7 @@ function AgentFleetCard({
   agent,
   selected,
   bridgeWorker,
+  healthProbe,
   localSnnActive,
   transferFeedback,
   lastOutcome,
@@ -437,6 +451,7 @@ function AgentFleetCard({
   agent: FleetAgent;
   selected: boolean;
   bridgeWorker?: BridgeSnnWorker;
+  healthProbe?: AgentHealthProbe;
   localSnnActive: boolean;
   transferFeedback?: string;
   lastOutcome: string;
@@ -444,6 +459,15 @@ function AgentFleetCard({
 }) {
   const activityState = getAgentActivityState(agent, bridgeWorker);
   const ready = localSnnActive || Boolean(bridgeWorker?.ready);
+  const healthReady = Boolean(healthProbe?.ready);
+  const healthState = healthProbe ? (healthReady ? 'ready' : 'degraded') : 'local';
+  const missingTools = Array.isArray(healthProbe?.missingTools) ? healthProbe.missingTools : [];
+  const healthSource = healthProbe
+    ? healthProbe.healthProbe || healthProbe.source || 'GET /api/agents/health'
+    : 'local registry';
+  const healthLastSeen = healthProbe?.lastSeen
+    ? formatAgentPreviewAction(healthProbe.lastSeen)
+    : '';
   const topSkills = agent.skills.slice(0, 3);
   return (
     <article className={`pbk-agent-card ${selected ? 'selected' : ''}`.trim()}>
@@ -485,6 +509,21 @@ function AgentFleetCard({
               />
             </span>
           </span>
+        </span>
+
+        <span className="pbk-agent-health-strip" data-source="GET /api/agents/health">
+          <span className={`pbk-agent-health-state ${healthState}`}>
+            {healthState === 'ready'
+              ? 'health ready'
+              : healthState === 'degraded'
+                ? 'degraded'
+                : 'local catalog'}
+          </span>
+          <span>{missingTools.length ? `${missingTools.length} tool gaps` : 'tools clear'}</span>
+          <span className="pbk-agent-health-source" title={healthSource}>
+            {healthSource}
+          </span>
+          {healthLastSeen && <span title={healthProbe?.lastSeen}>seen {healthLastSeen}</span>}
         </span>
 
         <span className="pbk-agent-skill-chips">
@@ -850,6 +889,7 @@ export function AgentFleet() {
     rex: false,
   });
   const [bridgeSnnWorkers, setBridgeSnnWorkers] = useState<BridgeSnnWorker[]>([]);
+  const [agentHealthProbes, setAgentHealthProbes] = useState<AgentHealthProbe[]>([]);
   const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
   const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
@@ -906,41 +946,55 @@ export function AgentFleet() {
   useEffect(() => {
     let cancelled = false;
     setAgentsLoading(true);
-    fetchRuntimeToolingStatus()
-      .then((tooling) => {
+    Promise.allSettled([fetchRuntimeToolingStatus(), fetchAgentHealthRequest()])
+      .then(([toolingResult, healthResult]) => {
         if (cancelled) return;
-        const raw = tooling as Record<string, unknown>;
-        const bridgeAgents = Array.isArray(raw.agents)
-          ? (raw.agents as Array<Record<string, unknown>>)
-          : [];
-        setAgents((prev) => {
-          const merged = mergeAgentStatuses(prev, bridgeAgents);
-          flushTransferQueue(pendingTransferQueueRef.current, merged)
-            .catch((error) => {
-              console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
-              if (!cancelled) {
-                showUiToast({
-                  tone: 'warning',
-                  title: 'Transfer retry failed',
-                  desc:
-                    error instanceof Error
-                      ? error.message
-                      : 'Queued skill transfer could not reach the bridge.',
-                });
-              }
-            })
-            .finally(() => {
-              if (!cancelled) syncPendingTransferCount();
-            });
-          return merged;
-        });
-        setBridgeConnected(true);
-      })
-      .catch((error) => {
-        if (!cancelled) {
+        let bridgeAgents: Array<Record<string, unknown>> = [];
+        if (toolingResult.status === 'fulfilled') {
+          const raw = toolingResult.value as Record<string, unknown>;
+          bridgeAgents = Array.isArray(raw.agents)
+            ? (raw.agents as Array<Record<string, unknown>>)
+            : [];
+        } else {
+          console.warn('[PBK AgentFleet] tooling status unavailable', toolingResult.reason);
+        }
+        if (healthResult.status === 'fulfilled') {
+          setAgentHealthProbes(
+            Array.isArray(healthResult.value.agents) ? healthResult.value.agents : []
+          );
+        } else {
+          console.warn('[PBK AgentFleet] agent health unavailable', healthResult.reason);
+          setAgentHealthProbes([]);
+        }
+        if (toolingResult.status === 'fulfilled' || healthResult.status === 'fulfilled') {
+          setAgents((prev) => {
+            const merged = mergeAgentStatuses(prev, bridgeAgents);
+            flushTransferQueue(pendingTransferQueueRef.current, merged)
+              .catch((error) => {
+                console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
+                if (!cancelled) {
+                  showUiToast({
+                    tone: 'warning',
+                    title: 'Transfer retry failed',
+                    desc:
+                      error instanceof Error
+                        ? error.message
+                        : 'Queued skill transfer could not reach the bridge.',
+                  });
+                }
+              })
+              .finally(() => {
+                if (!cancelled) syncPendingTransferCount();
+              });
+            return merged;
+          });
+          setBridgeConnected(true);
+        } else {
           setBridgeConnected(false);
           setPreviewError(
-            error instanceof Error ? error.message : 'Agent registry could not reach the bridge.'
+            toolingResult.reason instanceof Error
+              ? toolingResult.reason.message
+              : 'Agent registry could not reach the bridge.'
           );
           showUiToast({
             tone: 'warning',
@@ -1187,6 +1241,7 @@ export function AgentFleet() {
                     agent={agent}
                     selected={activeAgent.id === agent.id}
                     bridgeWorker={bridgeWorker}
+                    healthProbe={getHealthProbeForAgent(agentHealthProbes, agent)}
                     localSnnActive={localSnnActive}
                     transferFeedback={transferFeedbackByAgentId[agent.id]}
                     lastOutcome={lastCallOutcomeByAgentId[agent.id] || 'No call outcome yet'}

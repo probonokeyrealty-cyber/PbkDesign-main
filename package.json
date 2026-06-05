@@ -108,6 +108,7 @@
     "test:shell-prototype-modern": "node ./scripts/shell-prototype-modern-smoke.mjs",
     "test:command-approval-preview": "node ./scripts/command-approval-preview-smoke.mjs",
     "test:command-battlefield-ranking": "node ./scripts/command-battlefield-ranking-smoke.mjs",
+    "test:agent-health-modern": "node ./scripts/agent-health-modern-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

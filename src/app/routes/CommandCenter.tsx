@@ -11,8 +11,10 @@ import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index
 import {
   controlRuntimeCall,
   fetchFounderWorkQueueRequest,
+  fetchIntelligenceStreamRequest,
   fetchWebSearchStatusRequest,
   type FounderWorkQueueItem,
+  type IntelligenceStreamItem,
   updateRuntimeSettingsRequest,
   type RuntimeSnapshot,
   updateAdminTaskDecision,
@@ -566,6 +568,26 @@ function normalizeBridgeBattlefieldItem(
   };
 }
 
+function normalizeIntelligenceStreamItem(
+  item: IntelligenceStreamItem,
+  index: number
+): RuntimeRecord {
+  return {
+    id: item.id || `intelligence-${index}`,
+    actor: item.actor || item.title || 'PBK Agent',
+    text: item.text || item.title || 'Agent intelligence event',
+    category: item.category || item.kind || 'INTELLIGENCE',
+    source: item.source || 'GET /api/intelligence/stream',
+    status: item.status || '',
+    at: item.at || item.createdAt || '',
+    createdAt: item.createdAt || item.at || '',
+    confidence: item.confidence,
+    leadId: item.leadId,
+    callId: item.callId,
+    metadata: item.metadata || {},
+  };
+}
+
 function DataSourceCaption({
   endpoint,
   status = 'ships',
@@ -733,6 +755,12 @@ export function CommandCenter() {
   );
   const [battlefieldSource, setBattlefieldSource] = useState('client snapshot fallback');
   const [battlefieldQueueLoading, setBattlefieldQueueLoading] = useState(false);
+  const [intelligenceStreamItems, setIntelligenceStreamItems] = useState<RuntimeRecord[] | null>(
+    null
+  );
+  const [intelligenceStreamSource, setIntelligenceStreamSource] = useState(
+    'snapshot activity fallback'
+  );
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
   const announcedCallRef = useRef('');
   const reviewedCallRef = useRef('');
@@ -740,7 +768,8 @@ export function CommandCenter() {
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
   const leadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
-  const activityItems = Array.isArray(snapshot?.activity) ? snapshot.activity : [];
+  const fallbackActivityItems = Array.isArray(snapshot?.activity) ? snapshot.activity : [];
+  const activityItems = intelligenceStreamItems || fallbackActivityItems;
   const visibleActivity = activityItems.slice(0, activityLimit);
   const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
   const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
@@ -808,6 +837,31 @@ export function CommandCenter() {
   useEffect(() => {
     setActivityLimit(8);
   }, [activityItems.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchIntelligenceStreamRequest({ limit: 40 })
+      .then((response) => {
+        if (cancelled) return;
+        const items = Array.isArray(response.items)
+          ? response.items.map(normalizeIntelligenceStreamItem)
+          : [];
+        setIntelligenceStreamItems(items);
+        setIntelligenceStreamSource(response.source || response.result || 'bridge intelligence');
+      })
+      .catch((streamError) => {
+        if (cancelled) return;
+        setIntelligenceStreamItems(null);
+        setIntelligenceStreamSource(
+          streamError instanceof Error
+            ? `fallback: ${streamError.message}`
+            : 'snapshot activity fallback'
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackActivityItems.length]);
 
   useEffect(() => {
     const bridgePrefs = getBridgeCommandWidgetPrefs(snapshot);
@@ -1544,7 +1598,10 @@ export function CommandCenter() {
                     </button>
                   )}
                 </div>
-                <DataSourceCaption endpoint="snapshot.activity" />
+                <DataSourceCaption
+                  endpoint="GET /api/intelligence/stream"
+                  note={`${intelligenceStreamSource}; snapshot.activity fallback`}
+                />
               </section>
             )}
 

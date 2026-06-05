@@ -35641,6 +35641,49 @@ function buildAgentThoughtStream({ agentId = '', limit = 50 } = {}) {
   };
 }
 
+function buildIntelligenceStreamSnapshot({ limit = 24, agentId = '' } = {}) {
+  const safeLimit = Math.max(1, Math.min(80, Number(limit || 24)));
+  const thoughtBundle = buildAgentThoughtStream({
+    agentId,
+    limit: safeLimit,
+  });
+  const items = (thoughtBundle.thoughts || []).map((thought) => {
+    const source = String(thought.source || 'agent_thought');
+    const title = String(thought.thoughtType || source).replace(/[_-]/g, ' ');
+    return {
+      id: thought.id,
+      kind: source,
+      actor: thought.agentName || thought.agentId || 'PBK Agent',
+      title,
+      text: thought.summary || title,
+      category: source.toUpperCase().replace(/_/g, ' '),
+      source,
+      status: thought.status || '',
+      at: thought.timestamp || isoNow(),
+      createdAt: thought.timestamp || isoNow(),
+      confidence: thought.confidence ?? null,
+      leadId: thought.leadId || '',
+      callId: thought.callId || '',
+      metadata: thought.metadata || {},
+    };
+  });
+  return {
+    ok: true,
+    result: 'intelligence_stream',
+    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    generatedAt: isoNow(),
+    count: items.length,
+    summary: {
+      agentDecisions: (state.agentDecisions || []).length,
+      rexDecisions: (state.rexDecisions || []).length,
+      agentTasks: (state.agentTasks || []).length,
+      activity: (state.activity || []).length,
+      filter: thoughtBundle.filter || 'all',
+    },
+    items,
+  };
+}
+
 function buildAgentStatusBundle() {
   updateDerivedStatus(state);
   const today = isoNow().slice(0, 10);
@@ -52773,6 +52816,21 @@ const server = createServer(async (request, response) => {
         buildAgentThoughtStream({
           agentId: url.searchParams.get('agent') || url.searchParams.get('agentId') || '',
           limit: url.searchParams.get('limit') || 50,
+        })
+      );
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/intelligence/stream', '/api/v1/intelligence/stream'])
+    ) {
+      json(
+        response,
+        200,
+        buildIntelligenceStreamSnapshot({
+          agentId: url.searchParams.get('agent') || url.searchParams.get('agentId') || '',
+          limit: url.searchParams.get('limit') || 24,
         })
       );
       return;

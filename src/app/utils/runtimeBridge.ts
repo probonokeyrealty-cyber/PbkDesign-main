@@ -314,6 +314,33 @@ export type FounderWorkQueueResponse = {
   summary?: Record<string, unknown>;
 };
 
+export type IntelligenceStreamItem = {
+  id?: string;
+  kind?: string;
+  actor?: string;
+  title?: string;
+  text?: string;
+  category?: string;
+  source?: string;
+  status?: string;
+  at?: string;
+  createdAt?: string;
+  confidence?: number | null;
+  leadId?: string;
+  callId?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type IntelligenceStreamResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  count?: number;
+  items?: IntelligenceStreamItem[];
+  summary?: Record<string, unknown>;
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -901,6 +928,15 @@ export async function fetchFounderWorkQueueRequest({ limit = 8 }: { limit?: numb
   });
   return bridgeRequest<FounderWorkQueueResponse>({
     path: `/api/founder/work-queue?${params.toString()}`,
+  });
+}
+
+export async function fetchIntelligenceStreamRequest({ limit = 24 }: { limit?: number } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(80, limit))),
+  });
+  return bridgeRequest<IntelligenceStreamResponse>({
+    path: `/api/intelligence/stream?${params.toString()}`,
   });
 }
 

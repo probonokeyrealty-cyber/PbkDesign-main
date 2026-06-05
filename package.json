@@ -112,6 +112,7 @@
     "test:founder-work-queue-bridge": "node ./scripts/founder-work-queue-bridge-smoke.mjs",
     "test:intelligence-stream-bridge": "node ./scripts/intelligence-stream-bridge-smoke.mjs",
     "test:system-source-labels-bridge": "node ./scripts/system-source-labels-bridge-smoke.mjs",
+    "test:release-status-bridge": "node ./scripts/release-status-bridge-smoke.mjs",
     "test:agent-health-modern": "node ./scripts/agent-health-modern-smoke.mjs",
     "test:agent-registry-canonical": "node ./scripts/agent-registry-canonical-smoke.mjs",
     "test:shell-global-search-bridge": "node ./scripts/shell-global-search-bridge-smoke.mjs",

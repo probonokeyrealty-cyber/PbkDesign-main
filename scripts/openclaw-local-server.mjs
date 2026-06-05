@@ -35838,6 +35838,162 @@ function buildSystemSourceLabelsSnapshot() {
   };
 }
 
+function readGitCommitShort() {
+  const envCommit = String(
+    process.env.RENDER_GIT_COMMIT ||
+      process.env.COMMIT_REF ||
+      process.env.VERCEL_GIT_COMMIT_SHA ||
+      process.env.GIT_COMMIT ||
+      ''
+  ).trim();
+  if (envCommit) return envCommit.slice(0, 12);
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+      cwd: ROOT_DIR,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 2000,
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function buildReleaseStatusSnapshot() {
+  const generatedAt = isoNow();
+  const renderMeta = getRenderProviderMeta();
+  const observability = getPbkObservabilityStatus();
+  const toolingReady = existsSync(TOOLING_VERIFY_WORKFLOW_FILE);
+  const netlifyConfigured = Boolean(
+    process.env.NETLIFY ||
+      process.env.DEPLOY_ID ||
+      process.env.NETLIFY_SITE_ID ||
+      process.env.PBK_NETLIFY_SITE_ID ||
+      process.env.URL
+  );
+  const netlifyDeployId = String(process.env.DEPLOY_ID || process.env.NETLIFY_DEPLOY_ID || '').trim();
+  const netlifySite = String(process.env.SITE_NAME || process.env.NETLIFY_SITE_NAME || process.env.PBK_NETLIFY_SITE_ID || '').trim();
+  const commit = readGitCommitShort();
+  const pendingAdminTasks = getPendingAdminTasks(state.adminTasks).filter((task) =>
+    /(render|netlify|deploy|env|migration|supabase|schema)/i.test(
+      `${task.provider || ''} ${task.action || ''} ${task.summary || ''} ${task.command || ''}`
+    )
+  );
+  const migrationSignals = [
+    ...((state.adminAudit || []).filter((item) => /migration|schema|supabase/i.test(`${item.action || ''} ${item.summary || ''} ${item.text || ''}`)) || []),
+    ...((state.activity || []).filter((item) => /migration|schema|supabase/i.test(`${item.category || ''} ${item.text || ''} ${item.source || ''}`)) || []),
+  ];
+  const component = ({ id, label, ready = false, configured = false, detail = '', source = '' }) => ({
+    id,
+    label,
+    ready: Boolean(ready),
+    configured: Boolean(configured || ready),
+    status: ready ? 'ready' : configured ? 'configured' : 'missing',
+    detail,
+    source,
+  });
+  const components = [
+    component({
+      id: 'bridge-revision',
+      label: 'Bridge revision',
+      ready: Boolean(BUILD_REVISION),
+      configured: true,
+      detail: BUILD_REVISION,
+      source: 'BUILD_REVISION',
+    }),
+    component({
+      id: 'git-commit',
+      label: 'Git commit',
+      ready: Boolean(commit),
+      configured: Boolean(commit),
+      detail: commit || 'not exposed',
+      source: 'git/env',
+    }),
+    component({
+      id: 'state-backend',
+      label: 'State backend',
+      ready: STATE_BACKEND === 'postgres' || !IS_HOSTED,
+      configured: Boolean(STATE_BACKEND),
+      detail: STATE_BACKEND,
+      source: 'runtime',
+    }),
+    component({
+      id: 'render',
+      label: 'Render deploy controls',
+      ready: Boolean(renderMeta.ready || (RENDER_API_KEY && RENDER_SERVICE_ID)),
+      configured: Boolean(renderMeta.configured || RENDER_SERVICE_ID),
+      detail: renderMeta.note || (RENDER_SERVICE_ID ? `service ${RENDER_SERVICE_ID}` : 'Render service not configured'),
+      source: 'env/render',
+    }),
+    component({
+      id: 'netlify',
+      label: 'Netlify production deploy',
+      ready: netlifyConfigured,
+      configured: netlifyConfigured,
+      detail: netlifyDeployId || netlifySite || (netlifyConfigured ? 'Netlify env present' : 'Netlify env not exposed to bridge'),
+      source: 'env/netlify',
+    }),
+    component({
+      id: 'observability',
+      label: 'Observability',
+      ready: Boolean(observability?.ok !== false),
+      configured: true,
+      detail: observability?.status || observability?.result || 'status endpoint available',
+      source: 'GET /api/observability/status',
+    }),
+    component({
+      id: 'migration-readiness',
+      label: 'Migration readiness',
+      ready: pendingAdminTasks.length === 0,
+      configured: true,
+      detail: pendingAdminTasks.length
+        ? `${pendingAdminTasks.length} deploy/schema admin task(s) pending`
+        : migrationSignals.length
+          ? `${migrationSignals.length} migration/schema signal(s) recorded`
+          : 'no pending migration admin tasks',
+      source: 'admin tasks/audit',
+    }),
+    component({
+      id: 'github-verification',
+      label: 'GitHub verification',
+      ready: toolingReady,
+      configured: toolingReady,
+      detail: toolingReady ? 'workflow file present' : 'workflow file missing',
+      source: 'repo',
+    }),
+  ];
+  const warnings = [
+    ...components
+      .filter((item) => !item.ready)
+      .map((item) => `${item.label}: ${item.detail || item.status}`),
+    ...(IS_HOSTED && STATE_BACKEND !== 'postgres' ? ['Hosted bridge is not reporting postgres state backend.'] : []),
+  ];
+  return {
+    ok: true,
+    result: warnings.length ? 'release_readiness_review' : 'release_ready',
+    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    generatedAt,
+    release: {
+      bridgeRevision: BUILD_REVISION,
+      commit,
+      hosted: IS_HOSTED,
+      stateBackend: STATE_BACKEND,
+      renderServiceId: RENDER_SERVICE_ID || '',
+      netlifyDeployId,
+      netlifySite,
+      publicBaseUrl: PUBLIC_BASE_URL || '',
+    },
+    summary: {
+      ready: components.filter((item) => item.ready).length,
+      total: components.length,
+      pendingAdminTasks: pendingAdminTasks.length,
+      warnings: warnings.length,
+    },
+    components,
+    warnings,
+  };
+}
+
 function buildAgentStatusBundle() {
   updateDerivedStatus(state);
   const today = isoNow().slice(0, 10);
@@ -52995,6 +53151,14 @@ const server = createServer(async (request, response) => {
       matchesPath(pathname, ['/api/system/source-labels', '/api/v1/system/source-labels'])
     ) {
       json(response, 200, buildSystemSourceLabelsSnapshot());
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/release/status', '/api/v1/release/status'])
+    ) {
+      json(response, 200, buildReleaseStatusSnapshot());
       return;
     }
 

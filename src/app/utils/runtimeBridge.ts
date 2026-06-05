@@ -366,6 +366,27 @@ export type SystemSourceLabelsResponse = {
   summary?: Record<string, unknown>;
 };
 
+export type ReleaseStatusComponent = {
+  id: string;
+  label: string;
+  status?: 'ready' | 'configured' | 'missing' | 'unknown' | 'degraded';
+  ready?: boolean;
+  configured?: boolean;
+  detail?: string;
+  source?: string;
+};
+
+export type ReleaseStatusResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  release?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  components?: ReleaseStatusComponent[];
+  warnings?: string[];
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -968,6 +989,12 @@ export async function fetchIntelligenceStreamRequest({ limit = 24 }: { limit?: n
 export async function fetchSystemSourceLabelsRequest() {
   return bridgeRequest<SystemSourceLabelsResponse>({
     path: '/api/system/source-labels',
+  });
+}
+
+export async function fetchReleaseStatusRequest() {
+  return bridgeRequest<ReleaseStatusResponse>({
+    path: '/api/release/status',
   });
 }
 

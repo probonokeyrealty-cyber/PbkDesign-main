@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { Activity, Database, ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
-import { updateAdminTaskDecision } from '../utils/runtimeBridge';
+import {
+  fetchReleaseStatusRequest,
+  updateAdminTaskDecision,
+  type ReleaseStatusComponent,
+  type ReleaseStatusResponse,
+} from '../utils/runtimeBridge';
 
 type ReadinessState = 'ready' | 'partial' | 'missing' | 'unknown';
 
@@ -113,6 +118,11 @@ function SettingsSourceRail() {
         endpoint="GET /api/observability/status"
         status="needs-wiring"
         note="canonical metrics dashboard health"
+      />
+      <PbkDataSource
+        endpoint="GET /api/release/status"
+        status="ships"
+        note="deploy/release readiness"
       />
     </div>
   );
@@ -255,11 +265,184 @@ function SettingsSafetyRail({ status }: { status: Record<string, unknown> }) {
   );
 }
 
+function buildFallbackReleaseStatus({
+  error,
+  stateBackend,
+  toolingCoreReady,
+  toolingCoreTotal,
+  metricsUrl,
+}: {
+  error: string | null | undefined;
+  stateBackend: string;
+  toolingCoreReady: number;
+  toolingCoreTotal: number;
+  metricsUrl: string;
+}): ReleaseStatusResponse {
+  const components: ReleaseStatusComponent[] = [
+    {
+      id: 'runtime-snapshot',
+      label: 'Runtime snapshot',
+      status: error ? 'degraded' : 'configured',
+      ready: !error,
+      configured: true,
+      detail: error || stateBackend,
+      source: 'GET /state',
+    },
+    {
+      id: 'tooling-status',
+      label: 'Tooling status',
+      status: toolingCoreReady >= toolingCoreTotal && toolingCoreTotal > 0 ? 'ready' : 'configured',
+      ready: toolingCoreReady >= toolingCoreTotal && toolingCoreTotal > 0,
+      configured: toolingCoreTotal > 0,
+      detail: `${toolingCoreReady}/${toolingCoreTotal || 0} core tooling ready`,
+      source: 'GET /api/tooling/status',
+    },
+    {
+      id: 'observability-url',
+      label: 'Observability URL',
+      status: metricsUrl ? 'ready' : 'unknown',
+      ready: Boolean(metricsUrl),
+      configured: Boolean(metricsUrl),
+      detail: metricsUrl || 'waiting for bridge tooling summary',
+      source: 'tooling.summary.metricsUrl',
+    },
+  ];
+  return {
+    ok: !error,
+    result: error ? 'release_status_fallback' : 'release_status_client_fallback',
+    source: 'client snapshot fallback',
+    generatedAt: new Date().toISOString(),
+    release: {
+      stateBackend,
+      hosted: false,
+    },
+    summary: {
+      ready: components.filter((component) => component.ready).length,
+      total: components.length,
+      warnings: error ? 1 : 0,
+    },
+    components,
+    warnings: error ? [error] : [],
+  };
+}
+
+function SettingsReleasePanel({
+  releaseStatus,
+  fallback,
+}: {
+  releaseStatus: ReleaseStatusResponse | null;
+  fallback: ReleaseStatusResponse;
+}) {
+  const model = releaseStatus || fallback;
+  const components = Array.isArray(model.components) ? model.components : [];
+  const release = model.release || {};
+  const summary = model.summary || {};
+  const readyCount = toNumber(summary.ready);
+  const totalCount = toNumber(summary.total, components.length);
+  const warnings = Array.isArray(model.warnings) ? model.warnings : [];
+  const tone = warnings.length ? 'amber' : readyCount >= totalCount && totalCount ? 'lime' : 'sky';
+
+  return (
+    <section className="pbk-settings-card span-2">
+      <div className="pbk-settings-card-head">
+        <div>
+          <span className="pbk-kicker">Release control</span>
+          <h2>Production deploy readiness</h2>
+          <p>
+            Commit, bridge revision, state backend, provider readiness, and migration/admin signals
+            summarized before production publish.
+          </p>
+        </div>
+        <PbkDataSource endpoint="GET /api/release/status" status="ships" note={model.source} />
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Readiness</div>
+          <strong
+            className={[
+              'text-2xl',
+              tone === 'lime'
+                ? 'text-emerald-200'
+                : tone === 'amber'
+                  ? 'text-amber-200'
+                  : 'text-sky-200',
+            ].join(' ')}
+          >
+            {readyCount}/{totalCount || 0}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">release checks ready</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Bridge</div>
+          <strong
+            className="block truncate text-sm text-slate-100"
+            title={String(release.bridgeRevision || '')}
+          >
+            {String(release.bridgeRevision || 'runtime')}
+          </strong>
+          <div className="mt-1 truncate text-xs text-slate-400">
+            {String(release.stateBackend || 'unknown backend')}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Commit</div>
+          <strong className="block truncate text-sm text-slate-100">
+            {String(release.commit || 'not exposed')}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">
+            {release.hosted ? 'hosted bridge' : 'local/dev bridge'}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Deploy IDs</div>
+          <strong className="block truncate text-sm text-slate-100">
+            {String(release.netlifyDeployId || release.renderServiceId || 'not exposed')}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">Render / Netlify</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {components.map((component) => {
+          const state = component.ready ? 'ready' : component.configured ? 'partial' : 'missing';
+          return (
+            <div
+              key={component.id}
+              className="rounded-2xl border border-slate-800/90 bg-slate-950/40 p-3"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="truncate text-sm font-semibold text-slate-100">
+                  {component.label}
+                </span>
+                <StatusDot state={state} />
+              </div>
+              <p
+                className="mt-1 line-clamp-2 text-xs text-slate-400"
+                title={component.detail || ''}
+              >
+                {component.detail || component.source || 'No detail reported'}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {warnings.length > 0 && (
+        <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3 text-xs text-amber-100">
+          {warnings.slice(0, 3).join(' / ')}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Settings() {
   const { snapshot, quotas, tooling, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
   const [actionStatus, setActionStatus] = useState('');
   const [refreshingDecision, setRefreshingDecision] = useState(false);
+  const [releaseStatus, setReleaseStatus] = useState<ReleaseStatusResponse | null>(null);
   const [settingsAdminDecisionDraft, setSettingsAdminDecisionDraft] =
     useState<SettingsAdminDecisionDraft | null>(null);
   const status = (snapshot?.status || {}) as Record<string, unknown>;
@@ -375,12 +558,35 @@ export function Settings() {
       tone: Number(status.pendingApprovals || 0) ? 'amber' : 'sky',
     },
   ];
+  const releaseFallback = buildFallbackReleaseStatus({
+    error,
+    stateBackend,
+    toolingCoreReady,
+    toolingCoreTotal,
+    metricsUrl,
+  });
 
   useEffect(() => {
     if (!actionStatus) return undefined;
     const handle = window.setTimeout(() => setActionStatus(''), 5000);
     return () => window.clearTimeout(handle);
   }, [actionStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchReleaseStatusRequest()
+      .then((response) => {
+        if (cancelled) return;
+        setReleaseStatus(response);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReleaseStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stateBackend, toolingCoreReady, toolingCoreTotal]);
 
   const confirmSettingsAdminDecision = (
     task: Record<string, unknown>,
@@ -453,6 +659,8 @@ export function Settings() {
       </div>
 
       <div className="pbk-settings-layout">
+        <SettingsReleasePanel releaseStatus={releaseStatus} fallback={releaseFallback} />
+
         <section className="pbk-settings-card span-2">
           <div className="pbk-settings-card-head">
             <div>

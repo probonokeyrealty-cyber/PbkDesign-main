@@ -22,6 +22,8 @@ import { ShellTopbar } from './ShellTopbar';
 
 const VALID_SHELL_PATHS = new Set([
   '/',
+  '/command-center',
+  '/dashboard',
   '/leads',
   '/deal',
   '/inbox',

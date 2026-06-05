@@ -43,6 +43,8 @@ const router = createBrowserRouter(
       Component: ParadiseLayout,
       children: [
         { index: true, element: <CommandCenter /> },
+        { path: 'command-center', element: <CommandCenter /> },
+        { path: 'dashboard', element: <CommandCenter /> },
         { path: 'leads', element: <Leads /> },
         { path: 'deal', element: <DealView /> },
         { path: 'deal/:id', element: <DealView /> },

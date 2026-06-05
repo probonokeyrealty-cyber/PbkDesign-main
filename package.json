@@ -125,6 +125,7 @@
     "test:agent-registry-canonical": "node ./scripts/agent-registry-canonical-smoke.mjs",
     "test:agent-fleet-lead-context-roster": "node ./scripts/agent-fleet-lead-context-roster-smoke.mjs",
     "test:shell-global-search-bridge": "node ./scripts/shell-global-search-bridge-smoke.mjs",
+    "test:shell-route-aliases": "node ./scripts/shell-route-aliases-smoke.mjs",
     "test:shell-favorites-bridge": "node ./scripts/shell-favorites-bridge-smoke.mjs",
     "test:shell-prefs-bridge": "node ./scripts/shell-prefs-bridge-smoke.mjs",
     "test:deal-analyzer-modern-mobile": "node ./scripts/deal-analyzer-modern-mobile-smoke.mjs",

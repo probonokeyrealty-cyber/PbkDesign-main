@@ -13,6 +13,8 @@ assert.match(server, /VOICE_FALLBACK_LOCAL_STATUS_FILE/, 'voice fallback must re
 assert.match(server, /function isVoiceFallbackRoundTripReady/, 'voice fallback must require an audio round-trip helper');
 assert.match(server, /voiceFallbackEndpointConfigured && voiceFallbackRoundTripReady/, 'voice fallback must not mark ready from URL configuration alone');
 assert.match(server, /localAudioRoundTripPassed: voiceFallbackRoundTripReady/, 'voice fallback status must expose the local round-trip gate');
+assert.match(server, /CREATE TABLE IF NOT EXISTS public\.calls/, 'bridge schema self-ensure must create the calls table used by startup call joins');
+assert.match(server, /'lead_profiles', 'lead_imports', 'calls'/, 'schema status must verify calls alongside lead tables');
 
 assert.equal(pkg.scripts['voice-fallback:smoke'], 'node ./scripts/voice-fallback-smoke.mjs', 'package.json must expose the voice fallback smoke command');
 assert.equal(pkg.scripts['test:pipeline-voice-readiness'], 'node ./scripts/pipeline-voice-readiness-smoke.mjs', 'package.json must expose the readiness regression smoke');

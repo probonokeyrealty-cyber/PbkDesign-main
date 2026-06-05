@@ -5253,6 +5253,122 @@ async function ensurePbkOperationalTables(pool) {
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+    CREATE TABLE IF NOT EXISTS public.lead_profiles (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      external_id TEXT,
+      streak_box_key TEXT,
+      source TEXT NOT NULL DEFAULT 'manual',
+      status TEXT NOT NULL DEFAULT 'new',
+      stage TEXT NOT NULL DEFAULT 'cold',
+      temperature TEXT NOT NULL DEFAULT 'cold',
+      lead_name TEXT NOT NULL DEFAULT '',
+      first_name TEXT NOT NULL DEFAULT '',
+      last_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      city TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT '',
+      postal_code TEXT NOT NULL DEFAULT '',
+      owner_type TEXT NOT NULL DEFAULT '',
+      participant_role TEXT NOT NULL DEFAULT '',
+      participant_expertise TEXT NOT NULL DEFAULT '',
+      engagement_score NUMERIC NOT NULL DEFAULT 0,
+      motivation_score NUMERIC NOT NULL DEFAULT 0,
+      dnc BOOLEAN NOT NULL DEFAULT FALSE,
+      dnc_reason TEXT NOT NULL DEFAULT '',
+      assigned_agent TEXT NOT NULL DEFAULT '',
+      next_action_at TIMESTAMPTZ,
+      raw JSONB NOT NULL DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.lead_profiles
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS external_id TEXT,
+      ADD COLUMN IF NOT EXISTS streak_box_key TEXT,
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new',
+      ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'cold',
+      ADD COLUMN IF NOT EXISTS temperature TEXT NOT NULL DEFAULT 'cold',
+      ADD COLUMN IF NOT EXISTS lead_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS address TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS owner_type TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS participant_role TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS participant_expertise TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS engagement_score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS motivation_score NUMERIC NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS dnc BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS dnc_reason TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS assigned_agent TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS next_action_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS raw JSONB NOT NULL DEFAULT '{}'::JSONB,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    CREATE TABLE IF NOT EXISTS public.calls (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      direction TEXT NOT NULL DEFAULT 'outbound',
+      status TEXT NOT NULL DEFAULT 'queued',
+      provider TEXT NOT NULL DEFAULT 'telnyx',
+      assistant_id TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      from_number TEXT NOT NULL DEFAULT '',
+      participant_role TEXT NOT NULL DEFAULT '',
+      participant_expertise TEXT NOT NULL DEFAULT '',
+      participant_confidence NUMERIC,
+      telnyx_call_control_id TEXT NOT NULL DEFAULT '',
+      telnyx_call_leg_id TEXT NOT NULL DEFAULT '',
+      telnyx_call_session_id TEXT NOT NULL DEFAULT '',
+      sentiment NUMERIC,
+      yell_risk NUMERIC,
+      human_joined BOOLEAN NOT NULL DEFAULT FALSE,
+      ai_muted BOOLEAN NOT NULL DEFAULT FALSE,
+      transcript JSONB NOT NULL DEFAULT '[]'::JSONB,
+      notes TEXT NOT NULL DEFAULT '',
+      started_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.calls
+      ADD COLUMN IF NOT EXISTS lead_id TEXT REFERENCES public.lead_profiles(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'outbound',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'queued',
+      ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'telnyx',
+      ADD COLUMN IF NOT EXISTS assistant_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS from_number TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS participant_role TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS participant_expertise TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS participant_confidence NUMERIC,
+      ADD COLUMN IF NOT EXISTS telnyx_call_control_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS telnyx_call_leg_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS telnyx_call_session_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS sentiment NUMERIC,
+      ADD COLUMN IF NOT EXISTS yell_risk NUMERIC,
+      ADD COLUMN IF NOT EXISTS human_joined BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS ai_muted BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS transcript JSONB NOT NULL DEFAULT '[]'::JSONB,
+      ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
     CREATE TABLE IF NOT EXISTS public.agent_registry (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL DEFAULT 'pbk',
@@ -5550,6 +5666,8 @@ async function ensurePbkOperationalTables(pool) {
 
     CREATE INDEX IF NOT EXISTS agent_registry_status_idx
       ON public.agent_registry (tenant_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS calls_lead_started_idx
+      ON public.calls (lead_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS pbk_qa_audit_tool_idx
       ON public.pbk_qa_audit (tenant_id, tool_name, created_at DESC);
     CREATE INDEX IF NOT EXISTS event_dead_letters_type_idx
@@ -56192,7 +56310,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
       if (!pool) {
         json(response, 200, {
           ok: false,

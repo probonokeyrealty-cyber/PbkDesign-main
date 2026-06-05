@@ -15,6 +15,7 @@ import {
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
+import { getApprovalPreview } from './inboxRuntimeLogic.js';
 
 function formatRelative(value?: string) {
   if (!value) return 'just now';
@@ -1363,7 +1364,14 @@ export function CommandCenter() {
                     .map((approval) => (
                       <div
                         key={String(approval.id)}
-                        className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-3"
+                        className={`pbk-command-approval-card ${
+                          String(approval.type || '')
+                            .toLowerCase()
+                            .includes('contract')
+                            ? 'contract'
+                            : ''
+                        }`}
+                        data-source="snapshot.approvals payload"
                       >
                         <div className="text-[11px] uppercase tracking-[0.16em] text-amber-300">
                           {String(approval.type || 'approval')}
@@ -1373,6 +1381,14 @@ export function CommandCenter() {
                         </div>
                         <div className="mt-1 text-xs text-slate-400">
                           {String(approval.address || 'No address recorded')}
+                        </div>
+                        <div
+                          className="approval-preview"
+                          aria-label={`Approval payload preview for ${String(
+                            approval.leadName || approval.address || 'PBK approval'
+                          )}`}
+                        >
+                          {getApprovalPreview(approval)}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
@@ -1414,7 +1430,10 @@ export function CommandCenter() {
                     </div>
                   )}
                 </div>
-                <DataSourceCaption endpoint="snapshot.approvals + POST /api/approvals/:id/decision" />
+                <DataSourceCaption
+                  endpoint="snapshot.approvals payload + PUT /api/approvals/:id"
+                  note="preview uses message/body/text/content/payload/metadata fields"
+                />
               </section>
             )}
           </div>

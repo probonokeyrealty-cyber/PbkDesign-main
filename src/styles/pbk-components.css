@@ -661,6 +661,34 @@
 .pbk-bf-mini-stat .v.crimson {
   color: var(--crimson);
 }
+
+.pbk-command-approval-card {
+  border: 1px solid rgba(255, 176, 32, 0.22);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 176, 32, 0.08), rgba(6, 8, 11, 0.66)), var(--bg-panel);
+  padding: var(--s-3);
+}
+
+.pbk-command-approval-card.contract {
+  border-color: rgba(248, 113, 113, 0.3);
+  border-left-color: var(--crimson);
+}
+
+.pbk-command-approval-card .approval-preview {
+  max-height: 150px;
+  overflow: auto;
+  margin-top: var(--s-3);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius);
+  background: rgba(6, 8, 11, 0.72);
+  color: var(--text-secondary);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
 @media (max-width: 900px) {
   .pbk-command-hero-top,
   .pbk-battlefield {

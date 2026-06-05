@@ -4,12 +4,15 @@ import { showUiToast } from '../utils/uiFeedback';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchAgentHealthRequest,
+  fetchAgentRegistryRequest,
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
   getSnnWorkerStatus,
   invokeRuntimeTool,
   startLeadCallRequest,
   type AgentHealthProbe,
+  type AgentRegistryRecord,
+  type AgentRegistryResponse,
 } from '../utils/runtimeBridge';
 import { AGENT_REGISTRY, type RegistryAgent } from '../utils/agentRegistry';
 
@@ -24,6 +27,10 @@ type AgentSkill = {
 
 type FleetAgent = RegistryAgent & {
   skills: AgentSkill[];
+  registryEndpoint?: string;
+  registrySource?: string;
+  healthCheckedAt?: string;
+  lastError?: string;
 };
 
 type PendingTransfer = {
@@ -164,11 +171,112 @@ const AGENT_SKILLS: Record<string, AgentSkill[]> = {
   ],
 };
 
+function cloneAgentSkills(agentId: string) {
+  return (AGENT_SKILLS[agentId] || []).map((skill) => ({ ...skill }));
+}
+
 function buildFleetAgents(): FleetAgent[] {
   return AGENT_REGISTRY.map((agent) => ({
     ...agent,
-    skills: (AGENT_SKILLS[agent.id] || []).map((s) => ({ ...s })),
+    registrySource: 'local fallback',
+    skills: cloneAgentSkills(agent.id),
   }));
+}
+
+function normalizeAgentStatus(
+  value: unknown,
+  fallback: FleetAgent['status'] = 'standby'
+): FleetAgent['status'] {
+  const status = String(value || fallback).toLowerCase();
+  if (status === 'active') return 'active';
+  if (status === 'standby') return 'standby';
+  if (status === 'inactive' || status === 'degraded' || status === 'offline') return 'inactive';
+  return fallback;
+}
+
+function normalizeRegistryCapabilities(value: unknown, fallback: string[] = []) {
+  const list = Array.isArray(value) ? value : fallback;
+  return list.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function normalizeRegistryMetadata(
+  record: AgentRegistryRecord,
+  fallback?: RegistryAgent
+): RegistryAgent['metadata'] {
+  const raw = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+  const orchestrationRole =
+    raw.orchestrationRole === 'supervisor' || raw.orchestrationRole === 'worker'
+      ? raw.orchestrationRole
+      : fallback?.metadata.orchestrationRole;
+  return {
+    ...(fallback?.metadata || {}),
+    ...(orchestrationRole ? { orchestrationRole } : {}),
+    ...(Array.isArray(raw.supervises)
+      ? { supervises: raw.supervises.map((item) => String(item || '')).filter(Boolean) }
+      : {}),
+    ...(typeof raw.supervisor === 'string' ? { supervisor: raw.supervisor } : {}),
+    ...(typeof raw.approvalGated === 'boolean'
+      ? { approvalGated: raw.approvalGated }
+      : typeof raw.approval_gated === 'boolean'
+        ? { approvalGated: raw.approval_gated }
+        : {}),
+    ...(typeof raw.suggestOnly === 'boolean'
+      ? { suggestOnly: raw.suggestOnly }
+      : typeof raw.suggest_only === 'boolean'
+        ? { suggestOnly: raw.suggest_only }
+        : {}),
+  };
+}
+
+function getRegistryResponseAgents(response?: AgentRegistryResponse | null) {
+  if (Array.isArray(response?.registry?.agents) && response.registry.agents.length) {
+    return response.registry.agents;
+  }
+  if (Array.isArray(response?.matches) && response.matches.length) return response.matches;
+  return [];
+}
+
+function normalizeRegistryAgents(response?: AgentRegistryResponse | null): FleetAgent[] {
+  const source = response?.source || response?.result || 'GET /api/agents/registry';
+  const agents: FleetAgent[] = [];
+  for (const record of getRegistryResponseAgents(response)) {
+    const id = normalizeFleetAgentId(record.id || record.agentId || record.name || '');
+    if (!id) continue;
+    const fallback = AGENT_REGISTRY.find(
+      (agent) => normalizeFleetAgentId(agent.id) === id || normalizeFleetAgentId(agent.name) === id
+    );
+    const name = String(record.name || fallback?.name || id).trim();
+    agents.push({
+      ...(fallback || {
+        id,
+        name,
+        initial: name[0]?.toUpperCase() || '?',
+        role: 'Registered agent',
+        description: 'Bridge-registered PBK agent.',
+        capabilities: [],
+        status: 'standby' as FleetAgent['status'],
+        version: 'v1.0',
+        metadata: {},
+      }),
+      id,
+      name,
+      initial: String(record.initial || fallback?.initial || name[0] || '?').slice(0, 2),
+      role: String(record.role || fallback?.role || 'Registered agent'),
+      description: String(
+        record.description || fallback?.description || 'Bridge-registered PBK agent.'
+      ),
+      capabilities: normalizeRegistryCapabilities(record.capabilities, fallback?.capabilities),
+      status: normalizeAgentStatus(record.status, fallback?.status || 'standby'),
+      version: String(record.version || fallback?.version || 'v1.0'),
+      metadata: normalizeRegistryMetadata(record, fallback),
+      registryEndpoint: String(record.endpoint || ''),
+      registrySource: source,
+      healthCheckedAt: String(record.healthCheckedAt || record.health_checked_at || ''),
+      lastError: String(record.lastError || record.last_error || ''),
+      skills: cloneAgentSkills(id),
+    });
+  }
+  return agents;
 }
 
 function mergeAgentStatuses(
@@ -177,13 +285,10 @@ function mergeAgentStatuses(
 ): FleetAgent[] {
   const byId = new Map(agents.map((a) => [a.id, a]));
   for (const ba of bridgeAgents) {
-    const id = String(ba.id || ba.agentId || ba.name || '').toLowerCase();
+    const id = normalizeFleetAgentId(String(ba.id || ba.agentId || ba.name || ''));
     const existing = byId.get(id);
     if (existing) {
-      const s = String(ba.status || existing.status).toLowerCase();
-      existing.status = (
-        ['active', 'standby', 'inactive'].includes(s) ? s : existing.status
-      ) as FleetAgent['status'];
+      existing.status = normalizeAgentStatus(ba.status, existing.status);
     }
   }
   return [...byId.values()];
@@ -348,6 +453,7 @@ async function flushTransferQueue(queue: PendingTransfer[], agents: FleetAgent[]
 function AgentFleetSourceRail() {
   return (
     <div className="pbk-fleet-source-rail" aria-label="Agent Fleet data sources">
+      <PbkDataSource endpoint="GET /api/agents/registry" status="ships" />
       <PbkDataSource endpoint="GET /api/tooling/status" status="ships" />
       <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
       <PbkDataSource endpoint="GET /state" status="ships" />
@@ -355,11 +461,6 @@ function AgentFleetSourceRail() {
       <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
       <PbkDataSource endpoint="POST /invoke: pbk_transfer_agent_skill" status="ships" />
       <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" />
-      <PbkDataSource
-        endpoint="GET /api/agents/registry"
-        status="needs-wiring"
-        note="canonical remote registry if agents move out of the bridge process"
-      />
       <PbkDataSource
         endpoint="GET /api/agents/snn-status"
         status="needs-wiring"
@@ -372,12 +473,14 @@ function AgentFleetSourceRail() {
 function AgentFleetHero({
   agents,
   bridgeConnected,
+  agentRegistrySource,
   pendingTransferCount,
   leadCount,
   callCount,
 }: {
   agents: FleetAgent[];
   bridgeConnected: boolean | null;
+  agentRegistrySource: string;
   pendingTransferCount: number;
   leadCount: number;
   callCount: number;
@@ -409,7 +512,7 @@ function AgentFleetHero({
           <small>
             {pendingTransferCount
               ? `${pendingTransferCount} queued transfer retries`
-              : 'No queued transfers'}
+              : `${agentRegistrySource} roster`}
           </small>
         </div>
       </div>
@@ -460,14 +563,21 @@ function AgentFleetCard({
   const activityState = getAgentActivityState(agent, bridgeWorker);
   const ready = localSnnActive || Boolean(bridgeWorker?.ready);
   const healthReady = Boolean(healthProbe?.ready);
-  const healthState = healthProbe ? (healthReady ? 'ready' : 'degraded') : 'local';
+  const registryBacked = Boolean(agent.registrySource && agent.registrySource !== 'local fallback');
+  const healthState = healthProbe
+    ? healthReady
+      ? 'ready'
+      : 'degraded'
+    : agent.lastError
+      ? 'degraded'
+      : registryBacked
+        ? 'ready'
+        : 'local';
   const missingTools = Array.isArray(healthProbe?.missingTools) ? healthProbe.missingTools : [];
   const healthSource = healthProbe
     ? healthProbe.healthProbe || healthProbe.source || 'GET /api/agents/health'
-    : 'local registry';
-  const healthLastSeen = healthProbe?.lastSeen
-    ? formatAgentPreviewAction(healthProbe.lastSeen)
-    : '';
+    : agent.registryEndpoint || agent.registrySource || 'local registry';
+  const healthLastSeen = healthProbe?.lastSeen || agent.healthCheckedAt;
   const topSkills = agent.skills.slice(0, 3);
   return (
     <article className={`pbk-agent-card ${selected ? 'selected' : ''}`.trim()}>
@@ -890,6 +1000,7 @@ export function AgentFleet() {
   });
   const [bridgeSnnWorkers, setBridgeSnnWorkers] = useState<BridgeSnnWorker[]>([]);
   const [agentHealthProbes, setAgentHealthProbes] = useState<AgentHealthProbe[]>([]);
+  const [agentRegistrySource, setAgentRegistrySource] = useState('local fallback');
   const [leadOptions, setLeadOptions] = useState<RuntimeLeadOption[]>([]);
   const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
@@ -946,10 +1057,15 @@ export function AgentFleet() {
   useEffect(() => {
     let cancelled = false;
     setAgentsLoading(true);
-    Promise.allSettled([fetchRuntimeToolingStatus(), fetchAgentHealthRequest()])
-      .then(([toolingResult, healthResult]) => {
+    Promise.allSettled([
+      fetchRuntimeToolingStatus(),
+      fetchAgentHealthRequest(),
+      fetchAgentRegistryRequest(),
+    ])
+      .then(([toolingResult, healthResult, registryResult]) => {
         if (cancelled) return;
         let bridgeAgents: Array<Record<string, unknown>> = [];
+        let registryAgents: FleetAgent[] = [];
         if (toolingResult.status === 'fulfilled') {
           const raw = toolingResult.value as Record<string, unknown>;
           bridgeAgents = Array.isArray(raw.agents)
@@ -966,9 +1082,27 @@ export function AgentFleet() {
           console.warn('[PBK AgentFleet] agent health unavailable', healthResult.reason);
           setAgentHealthProbes([]);
         }
-        if (toolingResult.status === 'fulfilled' || healthResult.status === 'fulfilled') {
+        if (registryResult.status === 'fulfilled') {
+          registryAgents = normalizeRegistryAgents(registryResult.value);
+          setAgentRegistrySource(
+            registryAgents.length ? 'bridge registry' : 'bridge registry empty'
+          );
+        } else {
+          console.warn('[PBK AgentFleet] agent registry unavailable', registryResult.reason);
+          setAgentRegistrySource('local fallback');
+        }
+        if (
+          toolingResult.status === 'fulfilled' ||
+          healthResult.status === 'fulfilled' ||
+          registryResult.status === 'fulfilled'
+        ) {
           setAgents((prev) => {
-            const merged = mergeAgentStatuses(prev, bridgeAgents);
+            const baseAgents = registryAgents.length
+              ? registryAgents
+              : prev.length
+                ? prev
+                : buildFleetAgents();
+            const merged = mergeAgentStatuses(baseAgents, bridgeAgents);
             flushTransferQueue(pendingTransferQueueRef.current, merged)
               .catch((error) => {
                 console.warn('[PBK AgentFleet] queued skill transfer flush failed', error);
@@ -1220,6 +1354,7 @@ export function AgentFleet() {
         <AgentFleetHero
           agents={agents}
           bridgeConnected={bridgeConnected}
+          agentRegistrySource={agentRegistrySource}
           pendingTransferCount={pendingTransferCount}
           leadCount={leadOptions.length}
           callCount={runtimeCalls.length}

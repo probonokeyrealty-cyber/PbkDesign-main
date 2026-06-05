@@ -225,6 +225,45 @@ export type AgentHealthResponse = {
   safety?: Record<string, unknown>;
 };
 
+export type AgentRegistryRecord = {
+  id?: string;
+  agentId?: string;
+  name?: string;
+  initial?: string;
+  role?: string;
+  description?: string;
+  capabilities?: string[];
+  status?: string;
+  version?: string;
+  endpoint?: string;
+  healthCheckedAt?: string;
+  health_checked_at?: string;
+  lastError?: string;
+  last_error?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type AgentRegistrySnapshot = {
+  ok?: boolean;
+  result?: string;
+  generatedAt?: string;
+  count?: number;
+  agents?: AgentRegistryRecord[];
+  capabilities?: string[];
+  required?: Record<string, unknown>;
+  degraded?: Array<Record<string, unknown>>;
+};
+
+export type AgentRegistryResponse = {
+  ok: boolean;
+  result?: string;
+  loadedAt?: string;
+  source?: string;
+  capability?: string;
+  matches?: AgentRegistryRecord[];
+  registry?: AgentRegistrySnapshot;
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -782,6 +821,12 @@ export async function fetchRuntimeToolingStatus() {
 export async function fetchAgentHealthRequest() {
   return bridgeRequest<AgentHealthResponse>({
     path: '/api/agents/health',
+  });
+}
+
+export async function fetchAgentRegistryRequest() {
+  return bridgeRequest<AgentRegistryResponse>({
+    path: '/api/agents/registry',
   });
 }
 

@@ -132,6 +132,11 @@ timeout = 25
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
+  for = "/agents"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
   for = "/memory"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
@@ -212,6 +217,12 @@ force = true
 
 [[redirects]]
 from = "/fleet"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/agents"
 to = "/index.shell.html"
 status = 200
 force = true

@@ -6,7 +6,6 @@ import {
   deployAgentRequest,
   fetchAgentHealthRequest,
   fetchAgentRegistryRequest,
-  fetchAgentSnnStatusRequest,
   fetchLeadsRequest,
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
@@ -1036,7 +1035,9 @@ export function AgentFleet() {
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      fetchAgentSnnStatusRequest(),
+      invokeRuntimeTool<{ workers?: BridgeSnnWorker[] }>('getSnnWorkerStatus', {
+        source: 'agent-fleet-ui',
+      }),
       fetchLeadsRequest(),
       fetchRuntimeState(),
     ]).then(([snnResult, rosterResult, stateResult]) => {

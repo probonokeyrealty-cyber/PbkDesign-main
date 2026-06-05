@@ -35684,6 +35684,160 @@ function buildIntelligenceStreamSnapshot({ limit = 24, agentId = '' } = {}) {
   };
 }
 
+function buildSystemSourceLabelsSnapshot() {
+  const generatedAt = isoNow();
+  const nowMs = Date.parse(generatedAt);
+  const backendSource = STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state';
+  const latestFrom = (records = [], keys = ['updatedAt', 'createdAt', 'at', 'timestamp']) => {
+    let latest = 0;
+    for (const record of Array.isArray(records) ? records : []) {
+      if (!record || typeof record !== 'object') continue;
+      for (const key of keys) {
+        const parsed = Date.parse(record[key] || '');
+        if (Number.isFinite(parsed) && parsed > latest) latest = parsed;
+      }
+    }
+    return latest ? new Date(latest).toISOString() : '';
+  };
+  const stalenessFor = (lastUpdatedAt) => {
+    const parsed = Date.parse(lastUpdatedAt || '');
+    return Number.isFinite(parsed) ? Math.max(0, nowMs - parsed) : null;
+  };
+  const statusFor = ({ endpointReady = true, recordCount = 0, lastUpdatedAt = '', fallbackReason = '' }) => {
+    if (!endpointReady) return 'needs-wiring';
+    if (fallbackReason) return 'fallback';
+    if (!recordCount && !lastUpdatedAt) return 'stale';
+    const stalenessMs = stalenessFor(lastUpdatedAt);
+    if (stalenessMs != null && stalenessMs > 6 * 60 * 60 * 1000) return 'stale';
+    return 'live';
+  };
+  const confidenceFor = ({ status, recordCount = 0, lastUpdatedAt = '' }) => {
+    if (status === 'needs-wiring') return 0.15;
+    if (status === 'offline') return 0.1;
+    const stalenessMs = stalenessFor(lastUpdatedAt);
+    const freshness =
+      stalenessMs == null ? 0.55 : stalenessMs < 10 * 60 * 1000 ? 1 : stalenessMs < 60 * 60 * 1000 ? 0.82 : 0.62;
+    const density = recordCount > 20 ? 1 : recordCount > 4 ? 0.88 : recordCount > 0 ? 0.74 : 0.5;
+    const fallbackPenalty = status === 'fallback' ? 0.2 : status === 'stale' ? 0.28 : 0;
+    return Number(Math.max(0.05, Math.min(0.99, freshness * density - fallbackPenalty)).toFixed(2));
+  };
+  const makeLabel = ({
+    id,
+    label,
+    endpoint,
+    category,
+    source = backendSource,
+    records = [],
+    recordCount = records.length,
+    lastUpdatedAt = latestFrom(records),
+    fallbackReason = '',
+    note = '',
+    endpointReady = true,
+  }) => {
+    const status = statusFor({ endpointReady, recordCount, lastUpdatedAt, fallbackReason });
+    return {
+      id,
+      label,
+      endpoint,
+      category,
+      status,
+      source,
+      confidence: confidenceFor({ status, recordCount, lastUpdatedAt }),
+      stalenessMs: stalenessFor(lastUpdatedAt),
+      lastUpdatedAt,
+      fallbackReason,
+      recordCount,
+      note,
+    };
+  };
+  const items = [
+    makeLabel({
+      id: 'runtime-snapshot',
+      label: 'Runtime snapshot',
+      endpoint: 'GET /state',
+      category: 'runtime',
+      records: [
+        ...(state.leadImports || []),
+        ...(state.calls || []),
+        ...(state.messages || []),
+        ...(state.contracts || []),
+      ],
+      note: 'Primary shell fallback for every route.',
+    }),
+    makeLabel({
+      id: 'founder-work-queue',
+      label: 'Founder work queue',
+      endpoint: 'GET /api/founder/work-queue',
+      category: 'operator',
+      records: [
+        ...(state.approvals || []),
+        ...(state.adminTasks || []),
+        ...(state.messages || []),
+        ...(state.calls || []),
+      ],
+      note: 'Ranked from approvals, failed sends, calls, and lead signals.',
+    }),
+    makeLabel({
+      id: 'intelligence-stream',
+      label: 'Ava/Rex intelligence',
+      endpoint: 'GET /api/intelligence/stream',
+      category: 'agent',
+      records: [
+        ...(state.agentDecisions || []),
+        ...(state.rexDecisions || []),
+        ...(state.agentTasks || []),
+        ...(state.activity || []),
+      ],
+      note: 'Agent-authored decision stream with activity fallback.',
+    }),
+    makeLabel({
+      id: 'agent-registry',
+      label: 'Agent registry',
+      endpoint: 'GET /api/agents/registry',
+      category: 'agent',
+      records: buildDefaultAgentRegistry().agents || [],
+      lastUpdatedAt: latestFrom(buildDefaultAgentRegistry().agents || [], [
+        'healthCheckedAt',
+        'updatedAt',
+        'createdAt',
+      ]),
+      source: 'agent-registry',
+      note: 'Canonical remote/local roster for Agent Fleet.',
+    }),
+    makeLabel({
+      id: 'campaigns',
+      label: 'Campaigns',
+      endpoint: 'GET /api/campaigns',
+      category: 'growth',
+      records: state.campaigns || [],
+      note: 'Campaign wizard and premium campaign panels.',
+    }),
+    makeLabel({
+      id: 'observability',
+      label: 'Observability',
+      endpoint: 'GET /api/tooling/status',
+      category: 'ops',
+      records: state.activity || [],
+      fallbackReason: state.toolingStatus ? '' : 'tooling status has not reported yet',
+      note: 'Provider/tool readiness overlay.',
+    }),
+  ];
+  return {
+    ok: true,
+    result: 'system_source_labels',
+    source: backendSource,
+    generatedAt,
+    count: items.length,
+    summary: {
+      live: items.filter((item) => item.status === 'live').length,
+      fallback: items.filter((item) => item.status === 'fallback').length,
+      stale: items.filter((item) => item.status === 'stale').length,
+      needsWiring: items.filter((item) => item.status === 'needs-wiring').length,
+    },
+    items,
+  };
+}
+
 function buildAgentStatusBundle() {
   updateDerivedStatus(state);
   const today = isoNow().slice(0, 10);
@@ -52833,6 +52987,14 @@ const server = createServer(async (request, response) => {
           limit: url.searchParams.get('limit') || 24,
         })
       );
+      return;
+    }
+
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/system/source-labels', '/api/v1/system/source-labels'])
+    ) {
+      json(response, 200, buildSystemSourceLabelsSnapshot());
       return;
     }
 

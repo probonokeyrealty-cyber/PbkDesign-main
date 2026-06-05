@@ -341,6 +341,31 @@ export type IntelligenceStreamResponse = {
   summary?: Record<string, unknown>;
 };
 
+export type SystemSourceLabel = {
+  id: string;
+  label: string;
+  endpoint: string;
+  category?: string;
+  status?: 'live' | 'fallback' | 'stale' | 'offline' | 'needs-wiring';
+  source?: string;
+  confidence?: number | null;
+  stalenessMs?: number | null;
+  lastUpdatedAt?: string;
+  fallbackReason?: string;
+  recordCount?: number;
+  note?: string;
+};
+
+export type SystemSourceLabelsResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  count?: number;
+  items?: SystemSourceLabel[];
+  summary?: Record<string, unknown>;
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -937,6 +962,12 @@ export async function fetchIntelligenceStreamRequest({ limit = 24 }: { limit?: n
   });
   return bridgeRequest<IntelligenceStreamResponse>({
     path: `/api/intelligence/stream?${params.toString()}`,
+  });
+}
+
+export async function fetchSystemSourceLabelsRequest() {
+  return bridgeRequest<SystemSourceLabelsResponse>({
+    path: '/api/system/source-labels',
   });
 }
 

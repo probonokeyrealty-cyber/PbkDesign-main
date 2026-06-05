@@ -12,11 +12,13 @@ import {
   controlRuntimeCall,
   fetchFounderWorkQueueRequest,
   fetchIntelligenceStreamRequest,
+  fetchSystemSourceLabelsRequest,
   fetchWebSearchStatusRequest,
   type FounderWorkQueueItem,
   type IntelligenceStreamItem,
   updateRuntimeSettingsRequest,
   type RuntimeSnapshot,
+  type SystemSourceLabel,
   updateAdminTaskDecision,
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
@@ -588,6 +590,88 @@ function normalizeIntelligenceStreamItem(
   };
 }
 
+function normalizeSystemSourceLabel(item: SystemSourceLabel, index: number): SystemSourceLabel {
+  return {
+    id: item.id || `source-${index}`,
+    label: item.label || item.endpoint || 'Runtime source',
+    endpoint: item.endpoint || 'unknown',
+    category: item.category || 'runtime',
+    status: item.status || 'fallback',
+    source: item.source || 'bridge',
+    confidence:
+      typeof item.confidence === 'number' && Number.isFinite(item.confidence)
+        ? Math.max(0, Math.min(1, item.confidence))
+        : null,
+    stalenessMs:
+      typeof item.stalenessMs === 'number' && Number.isFinite(item.stalenessMs)
+        ? Math.max(0, item.stalenessMs)
+        : null,
+    lastUpdatedAt: item.lastUpdatedAt || '',
+    fallbackReason: item.fallbackReason || '',
+    recordCount: Number.isFinite(Number(item.recordCount)) ? Number(item.recordCount) : 0,
+    note: item.note || '',
+  };
+}
+
+function buildFallbackSourceLabels({
+  loading,
+  error,
+  leadCount,
+  activityCount,
+  battlefieldSource,
+  intelligenceStreamSource,
+}: {
+  loading: boolean;
+  error: string;
+  leadCount: number;
+  activityCount: number;
+  battlefieldSource: string;
+  intelligenceStreamSource: string;
+}): SystemSourceLabel[] {
+  const runtimeStatus = loading ? 'fallback' : error ? 'offline' : 'live';
+  const fallbackReason = error || '';
+  return [
+    {
+      id: 'runtime-snapshot-fallback',
+      label: 'Runtime snapshot',
+      endpoint: 'GET /state',
+      category: 'runtime',
+      status: runtimeStatus,
+      source: 'client runtime snapshot',
+      confidence: error ? 0.2 : loading ? 0.58 : 0.82,
+      recordCount: leadCount,
+      fallbackReason,
+      note: 'Client fallback used until /api/system/source-labels responds.',
+    },
+    {
+      id: 'founder-work-queue-fallback',
+      label: 'Founder work queue',
+      endpoint: 'GET /api/founder/work-queue',
+      category: 'operator',
+      status: battlefieldSource.startsWith('fallback') ? 'fallback' : 'live',
+      source: battlefieldSource,
+      confidence: battlefieldSource.startsWith('fallback') ? 0.52 : 0.86,
+      recordCount: activityCount,
+      fallbackReason: battlefieldSource.startsWith('fallback') ? battlefieldSource : '',
+      note: 'Falls back to client-ranked snapshot work.',
+    },
+    {
+      id: 'intelligence-stream-fallback',
+      label: 'Ava/Rex intelligence',
+      endpoint: 'GET /api/intelligence/stream',
+      category: 'agent',
+      status: intelligenceStreamSource.startsWith('fallback') ? 'fallback' : 'live',
+      source: intelligenceStreamSource,
+      confidence: intelligenceStreamSource.startsWith('fallback') ? 0.5 : 0.84,
+      recordCount: activityCount,
+      fallbackReason: intelligenceStreamSource.startsWith('fallback')
+        ? intelligenceStreamSource
+        : '',
+      note: 'Falls back to snapshot.activity when protected bridge calls are unavailable.',
+    },
+  ];
+}
+
 function DataSourceCaption({
   endpoint,
   status = 'ships',
@@ -598,6 +682,49 @@ function DataSourceCaption({
   note?: string;
 }) {
   return <PbkDataSource endpoint={endpoint} status={status} note={note} />;
+}
+
+function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; source: string }) {
+  const visibleItems = items.slice(0, 6);
+  const statusTone = (status?: string) => {
+    if (status === 'live') return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100';
+    if (status === 'fallback') return 'border-sky-400/25 bg-sky-500/10 text-sky-100';
+    if (status === 'stale') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
+    return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
+  };
+
+  return (
+    <PbkPanel className="pbk-command-source-rail space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="pbk-eyebrow">Source confidence</div>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">
+            Runtime truth labels
+          </h2>
+        </div>
+        <DataSourceCaption endpoint="GET /api/system/source-labels" note={source} />
+      </div>
+      <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+        {visibleItems.map((item) => {
+          const confidence =
+            typeof item.confidence === 'number' ? `${Math.round(item.confidence * 100)}%` : 'n/a';
+          return (
+            <div
+              key={item.id}
+              className={`rounded-2xl border p-3 ${statusTone(item.status)}`}
+              title={[item.endpoint, item.fallbackReason, item.note].filter(Boolean).join(' - ')}
+            >
+              <div className="truncate text-[10px] uppercase tracking-[0.18em] opacity-70">
+                {item.status || 'unknown'} / {confidence}
+              </div>
+              <div className="mt-1 truncate text-sm font-semibold">{item.label}</div>
+              <code className="mt-1 block truncate text-[10px] opacity-70">{item.endpoint}</code>
+            </div>
+          );
+        })}
+      </div>
+    </PbkPanel>
+  );
 }
 
 function StatSpark({ tone }: { tone: string }) {
@@ -761,6 +888,10 @@ export function CommandCenter() {
   const [intelligenceStreamSource, setIntelligenceStreamSource] = useState(
     'snapshot activity fallback'
   );
+  const [sourceConfidenceItems, setSourceConfidenceItems] = useState<SystemSourceLabel[] | null>(
+    null
+  );
+  const [sourceConfidenceSource, setSourceConfidenceSource] = useState('client source fallback');
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
   const announcedCallRef = useRef('');
   const reviewedCallRef = useRef('');
@@ -774,6 +905,29 @@ export function CommandCenter() {
   const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
   const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
   const contracts = Array.isArray(snapshot?.contracts) ? snapshot.contracts : [];
+  const fallbackSourceConfidenceItems = useMemo(
+    () =>
+      buildFallbackSourceLabels({
+        loading,
+        error,
+        leadCount: leadImports.length,
+        activityCount: fallbackActivityItems.length,
+        battlefieldSource,
+        intelligenceStreamSource,
+      }),
+    [
+      battlefieldSource,
+      error,
+      fallbackActivityItems.length,
+      intelligenceStreamSource,
+      leadImports.length,
+      loading,
+    ]
+  );
+  const displayedSourceConfidenceItems =
+    sourceConfidenceItems && sourceConfidenceItems.length
+      ? sourceConfidenceItems
+      : fallbackSourceConfidenceItems;
   const isWidgetVisible = (id: CommandWidgetId) => widgetPrefs[id] !== false;
   const runtimeProviders = (snapshot?.status?.providers || {}) as Record<
     string,
@@ -862,6 +1016,29 @@ export function CommandCenter() {
       cancelled = true;
     };
   }, [fallbackActivityItems.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSystemSourceLabelsRequest()
+      .then((response) => {
+        if (cancelled) return;
+        const items = Array.isArray(response.items)
+          ? response.items.map(normalizeSystemSourceLabel)
+          : [];
+        setSourceConfidenceItems(items);
+        setSourceConfidenceSource(response.source || response.result || 'bridge source labels');
+      })
+      .catch((sourceError) => {
+        if (cancelled) return;
+        setSourceConfidenceItems(null);
+        setSourceConfidenceSource(
+          sourceError instanceof Error ? `fallback: ${sourceError.message}` : 'client fallback'
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackActivityItems.length, leadImports.length]);
 
   useEffect(() => {
     const bridgePrefs = getBridgeCommandWidgetPrefs(snapshot);
@@ -1186,6 +1363,11 @@ export function CommandCenter() {
             note="stats ribbon only uses live runtime arrays"
           />
         </section>
+
+        <SourceConfidenceRail
+          items={displayedSourceConfidenceItems}
+          source={sourceConfidenceSource}
+        />
 
         {actionStatus && (
           <div

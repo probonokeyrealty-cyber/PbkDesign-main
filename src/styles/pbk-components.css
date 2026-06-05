@@ -3898,6 +3898,7 @@
   margin-top: 10px;
 }
 .pbk-inbox-message-row .msg-reply,
+.pbk-inbox-message-row .msg-lead,
 .pbk-inbox-message-row .msg-archive {
   display: inline-flex;
   align-items: center;
@@ -3910,9 +3911,14 @@
   font-weight: 700;
 }
 .pbk-inbox-message-row .msg-reply:hover,
+.pbk-inbox-message-row .msg-lead:hover,
 .pbk-inbox-message-row .msg-archive:hover {
   border-color: var(--sky-dim);
   color: var(--sky);
+}
+.pbk-inbox-message-row .msg-lead {
+  border-color: rgba(125, 211, 252, 0.18);
+  background: rgba(125, 211, 252, 0.06);
 }
 .pbk-inbox-message-row .msg-archive {
   border-color: rgba(148, 163, 184, 0.18);
@@ -5231,6 +5237,10 @@ html[data-theme='light'] .pbk-mobile-shell-menu-link.active {
   scrollbar-width: none;
 }
 
+.pbk-analyzer-tab-shell {
+  display: block;
+}
+
 .pbk-analyzer-tabs::-webkit-scrollbar {
   display: none;
 }
@@ -5254,6 +5264,14 @@ html[data-theme='light'] .pbk-mobile-shell-menu-link.active {
   border-color: rgba(125, 211, 252, 0.56);
   background: rgba(125, 211, 252, 0.13);
   color: var(--sky-bright);
+}
+
+.pbk-analyzer-mobile-toggle {
+  display: none;
+}
+
+.pbk-analyzer-mobile-quick-actions {
+  display: none;
 }
 
 .pbk-deal-surface .pbk-analyzer-card {
@@ -5402,6 +5420,13 @@ html[data-theme='light'] .pbk-analyzer-mobile-rail button {
   color: #0f172a;
 }
 
+html[data-theme='light'] .pbk-analyzer-mobile-toggle,
+html[data-theme='light'] .pbk-analyzer-mobile-quick-actions .pbk-btn {
+  border-color: rgba(100, 116, 139, 0.2);
+  background: rgba(255, 255, 255, 0.88);
+  color: #0f172a;
+}
+
 @media (max-width: 720px) {
   .pbk-analyzer-command-main {
     flex-direction: column;
@@ -5429,8 +5454,101 @@ html[data-theme='light'] .pbk-analyzer-mobile-rail button {
     grid-column: 1 / -1;
   }
 
+  .pbk-analyzer-mobile-toggle {
+    display: flex;
+    width: calc(100% - 24px);
+    min-height: 46px;
+    align-items: center;
+    gap: 10px;
+    margin: 0 12px 10px;
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.72);
+    color: var(--text-primary);
+    padding: 8px 10px;
+    text-align: left;
+  }
+
+  .pbk-analyzer-mobile-toggle .toggle-icon {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 10px;
+    background: rgba(125, 211, 252, 0.12);
+    color: var(--sky);
+  }
+
+  .pbk-analyzer-mobile-toggle .toggle-copy {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .pbk-analyzer-mobile-toggle .toggle-copy span,
+  .pbk-analyzer-mobile-toggle .toggle-copy strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pbk-analyzer-mobile-toggle .toggle-copy span {
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .pbk-analyzer-mobile-toggle .toggle-copy strong {
+    margin-top: 2px;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .pbk-analyzer-mobile-toggle .toggle-chevron {
+    flex: 0 0 auto;
+    transition: transform 160ms ease;
+  }
+
+  .pbk-analyzer-mobile-toggle[aria-expanded='true'] .toggle-chevron {
+    transform: rotate(180deg);
+  }
+
+  .pbk-analyzer-tab-shell[data-open='false'] {
+    display: none;
+  }
+
+  .pbk-analyzer-tab-shell[data-open='true'] {
+    display: block;
+    padding-bottom: 12px;
+  }
+
   .pbk-analyzer-tabs {
-    padding: 0 12px 12px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    padding: 0 12px 10px;
+  }
+
+  .pbk-analyzer-tabs button {
+    min-width: 0;
+  }
+
+  .pbk-analyzer-mobile-quick-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .pbk-analyzer-mobile-quick-actions .pbk-btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 38px;
+    border-radius: 12px;
   }
 
   .pbk-analyzer-main {
@@ -5645,7 +5763,7 @@ html[data-theme='light'] .pbk-analyzer-mobile-rail button {
 
 .pbk-leads-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
   gap: 14px;
   margin-top: 16px;
 }

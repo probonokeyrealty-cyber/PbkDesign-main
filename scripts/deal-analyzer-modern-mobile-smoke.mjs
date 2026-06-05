@@ -26,6 +26,8 @@ assert(/DealAnalyzerMobileRail/.test(app), 'Deal Analyzer should render the mobi
 assert(/setLeftPanelOpen\(true\)/.test(app), 'Mobile rail should open the analyzer snapshot drawer.');
 assert(/setRightPanelOpen\(true\)/.test(app), 'Mobile rail should open the workflow/documents drawer.');
 assert(/pbk-deal-content-with-mobile-rail/.test(app), 'Scrollable analyzer content should reserve room for the mobile rail.');
+assert(/handleCreateLeadFromAnalyzer/.test(app), 'Deal Analyzer should expose a create-lead handoff from the current analyzer state.');
+assert(/\/leads\?new=1/.test(app), 'Analyzer create-lead handoff should route to the bridge-backed lead portal.');
 assert(/pbk-analyzer-side-panel/.test(leftPanel), 'Analyzer snapshot side panel should use modern side-panel styling.');
 assert(/pbk-analyzer-workflow-panel/.test(rightPanel), 'Analyzer workflow side panel should use modern workflow-panel styling.');
 
@@ -39,10 +41,17 @@ assert(/Open analyzer snapshot/.test(chrome), 'Command chrome should expose the 
 assert(/Open analyzer workflow/.test(chrome), 'Command chrome should expose the workflow drawer accessibly.');
 assert(/Analyze deal/.test(chrome), 'Command chrome should expose analyzer CTA accessibly.');
 assert(/aria-label=\{`Switch analyzer tab to/.test(chrome), 'Command chrome tab controls should have contextual aria labels.');
+assert(/getPathControlMetric/.test(chrome), 'Command chrome should derive the top control number from the active path.');
+assert(!/<span>MAO RBP<\/span>\s*<strong>\{formatCurrency\(deal\.maoRBP\)\}/.test(chrome), 'Top deal metric must not be hard-coded to MAO RBP.');
+assert(/pbk-analyzer-mobile-toggle/.test(chrome), 'Command chrome should provide a compact mobile controls disclosure.');
+assert(/pbk-analyzer-tab-shell/.test(chrome) && /data-open/.test(chrome), 'Analyzer tabs should collapse behind a mobile-safe controls shell.');
+assert(/onCreateLead/.test(chrome), 'Command chrome should include a create-lead action wired by the engine.');
 
 assert(/\.pbk-deal-surface/.test(css), 'PBK CSS should define the deal surface.');
 assert(/\.pbk-analyzer-command/.test(css), 'PBK CSS should define analyzer command chrome.');
 assert(/\.pbk-analyzer-mobile-rail/.test(css), 'PBK CSS should define the mobile rail.');
+assert(/\.pbk-analyzer-mobile-toggle/.test(css), 'PBK CSS should define the mobile controls toggle.');
+assert(/\.pbk-analyzer-tab-shell\[data-open='false'\]/.test(css), 'PBK CSS should collapse analyzer tabs on mobile by default.');
 assert(/\.pbk-analyzer-ribbon \.pbk-data-source[\s\S]*grid-column: 1 \/ -1/.test(css), 'Analyzer source label should span the ribbon instead of squeezing beside metrics.');
 assert(/\.pbk-analyzer-side-panel/.test(css), 'PBK CSS should define analyzer side panel styles.');
 assert(/\.pbk-analyzer-workflow-panel/.test(css), 'PBK CSS should define analyzer workflow panel styles.');

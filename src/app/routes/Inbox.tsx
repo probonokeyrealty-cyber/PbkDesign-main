@@ -13,6 +13,7 @@ import {
   Reply,
   Send,
   ShieldCheck,
+  UserRound,
   X,
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
@@ -210,6 +211,14 @@ function getMessageTimestamp(message: Record<string, unknown>) {
 
 function getMessageTitle(message: Record<string, unknown>) {
   return String(message.leadName || message.address || message.from || message.to || 'Message');
+}
+
+function getMessageLeadId(message: Record<string, unknown>) {
+  const payload =
+    message.payload && typeof message.payload === 'object'
+      ? (message.payload as Record<string, unknown>)
+      : {};
+  return String(message.leadId || message.lead_id || payload.leadId || payload.lead_id || '');
 }
 
 function getMessageBody(message: Record<string, unknown>) {
@@ -506,6 +515,15 @@ function InboxMessageRow({
   const unread = isUnreadMessage(message);
   const timestamp = getMessageTimestamp(message);
   const title = getMessageTitle(message);
+  const leadId = getMessageLeadId(message);
+  const openLeadPortal = () => {
+    if (leadId) {
+      window.location.assign(`/leads?lead=${encodeURIComponent(leadId)}`);
+      return;
+    }
+    window.location.assign(`/leads?search=${encodeURIComponent(title)}`);
+  };
+
   return (
     <div className={`pbk-inbox-message-row ${unread ? 'unread' : ''}`.trim()}>
       <div className="msg-channel">
@@ -529,6 +547,15 @@ function InboxMessageRow({
           >
             <Reply size={13} />
             Reply
+          </button>
+          <button
+            type="button"
+            onClick={openLeadPortal}
+            className="msg-lead"
+            aria-label={`Open lead portal for ${title}`}
+          >
+            <UserRound size={13} />
+            Open lead
           </button>
           <button
             type="button"

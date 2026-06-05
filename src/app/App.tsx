@@ -696,6 +696,20 @@ export default function App({ engineOnly = false }: AppProps) {
     setRightPanelOpen(true);
   };
 
+  const handleCreateLeadFromAnalyzer = useCallback(() => {
+    writeAnalyzerDeal(activeDeal);
+    window.dispatchEvent(
+      new CustomEvent('pbk:lead-portal-seed', {
+        detail: {
+          deal: activeDeal,
+          selectedPath: activeSelectedPath,
+        },
+      })
+    );
+    setAnalyzeStatus(`Opening the lead portal with ${getPathLabel(activeSelectedPath)} context.`);
+    window.location.assign('/leads?new=1');
+  }, [activeDeal, activeSelectedPath]);
+
   const handlePreview = () => {
     const popup = openMasterPackageWindow(activeDeal, branding, false);
     if (!popup) {
@@ -988,6 +1002,7 @@ export default function App({ engineOnly = false }: AppProps) {
             onAnalyze={() => void handleAnalyzeDeal()}
             onSaveDeal={() => void handleSaveDeal()}
             onOpenDocuments={() => handleOpenDocuments('report')}
+            onCreateLead={handleCreateLeadFromAnalyzer}
           />
 
           {/* Tab Content */}

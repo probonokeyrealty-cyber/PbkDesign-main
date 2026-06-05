@@ -76,6 +76,10 @@ assert(
   'Inbox must mark message archive/swipe persistence as shipped once the bridge route exists.'
 );
 
+assert(/getMessageLeadId/.test(inbox), 'Inbox should resolve lead ids from message rows.');
+assert(/Open lead/.test(inbox), 'Inbox message rows should expose an Open lead portal action.');
+assert(/\/leads\?lead=/.test(inbox), 'Inbox Open lead action should deep-link to the bridge-backed lead portal.');
+
 assert(
   !/John Smith|Diane Kowalski|123 Main St|Approve Offer|UI-only|SAMPLE_MESSAGES|MOCK_MESSAGES/.test(inbox),
   'Inbox must not port prototype sample people, addresses, or mock labels.'

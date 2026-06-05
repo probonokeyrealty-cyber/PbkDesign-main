@@ -1,4 +1,16 @@
-import { BarChart3, FileText, PanelLeft, PhoneCall, Save, Sparkles, Workflow } from 'lucide-react';
+import { useState } from 'react';
+import {
+  BarChart3,
+  ChevronDown,
+  FileText,
+  PanelLeft,
+  PhoneCall,
+  Save,
+  SlidersHorizontal,
+  Sparkles,
+  UserPlus,
+  Workflow,
+} from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { DealData, PBKPath } from '../types';
 import { formatCurrency } from '../utils/formatting';
@@ -17,6 +29,7 @@ type DealAnalyzerChromeProps = {
   onAnalyze: () => void | Promise<void>;
   onSaveDeal: () => void | Promise<void>;
   onOpenDocuments: () => void;
+  onCreateLead: () => void;
 };
 
 const TAB_ITEMS: Array<{ id: AnalyzerTabId; label: string }> = [
@@ -39,6 +52,54 @@ function getShortAddress(address = '') {
   return trimmed.length > 54 ? `${trimmed.slice(0, 51)}...` : trimmed;
 }
 
+function valueOrZero(value?: number | null) {
+  return Number.isFinite(value as number) ? Number(value) : 0;
+}
+
+function getPathControlMetric(deal: DealData, selectedPath: PBKPath) {
+  const agreedPrice = valueOrZero(deal.agreedPrice) || valueOrZero(deal.price);
+
+  if (selectedPath === 'cash') {
+    return {
+      label: 'MAO Cash',
+      value: valueOrZero(deal.mao60),
+    };
+  }
+
+  if (selectedPath === 'rbp') {
+    return {
+      label: 'MAO RBP',
+      value: valueOrZero(deal.rbpPriceConfirm) || valueOrZero(deal.maoRBP),
+    };
+  }
+
+  if (selectedPath === 'cf') {
+    return {
+      label: 'CF Control',
+      value: agreedPrice || valueOrZero(deal.maoRBP),
+    };
+  }
+
+  if (selectedPath === 'mt') {
+    return {
+      label: 'MT Control',
+      value: valueOrZero(deal.mtUpfront) || agreedPrice || valueOrZero(deal.maoRBP),
+    };
+  }
+
+  if (selectedPath === 'rbp-land') {
+    return {
+      label: 'Land RBP',
+      value: valueOrZero(deal.builderTotal) || valueOrZero(deal.maoRBP),
+    };
+  }
+
+  return {
+    label: 'Land Offer',
+    value: valueOrZero(deal.offer) || valueOrZero(deal.mao60),
+  };
+}
+
 export function DealAnalyzerCommandHeader({
   deal,
   selectedPath,
@@ -50,9 +111,17 @@ export function DealAnalyzerCommandHeader({
   onAnalyze,
   onSaveDeal,
   onOpenDocuments,
+  onCreateLead,
 }: DealAnalyzerChromeProps) {
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const verdictMeta = getVerdictMeta(deal.verdict);
   const pathLabel = getPathLabel(selectedPath);
+  const pathControl = getPathControlMetric(deal, selectedPath);
+
+  const handleTabChange = (tab: AnalyzerTabId) => {
+    onTabChange(tab);
+    setMobileControlsOpen(false);
+  };
 
   return (
     <header className="pbk-analyzer-command">
@@ -95,6 +164,10 @@ export function DealAnalyzerCommandHeader({
             <Save size={14} />
             Save
           </button>
+          <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onCreateLead}>
+            <UserPlus size={14} />
+            Lead
+          </button>
           <button type="button" className="pbk-btn pbk-btn-success pbk-btn-sm" onClick={onAnalyze}>
             <Sparkles size={14} />
             Analyze
@@ -112,8 +185,8 @@ export function DealAnalyzerCommandHeader({
           <strong>{formatCurrency(deal.arv)}</strong>
         </div>
         <div className="pbk-analyzer-metric">
-          <span>MAO RBP</span>
-          <strong>{formatCurrency(deal.maoRBP)}</strong>
+          <span>{pathControl.label}</span>
+          <strong>{formatCurrency(pathControl.value)}</strong>
         </div>
         <div className={`pbk-analyzer-verdict ${verdictMeta.className}`}>
           <span>Verdict</span>
@@ -126,20 +199,71 @@ export function DealAnalyzerCommandHeader({
         />
       </div>
 
-      <nav className="pbk-analyzer-tabs" aria-label="Deal analyzer sections">
-        {TAB_ITEMS.map((tab) => (
+      <button
+        type="button"
+        className="pbk-analyzer-mobile-toggle"
+        aria-expanded={mobileControlsOpen}
+        aria-controls="pbk-analyzer-mobile-controls"
+        onClick={() => setMobileControlsOpen((open) => !open)}
+      >
+        <span className="toggle-icon" aria-hidden="true">
+          <SlidersHorizontal size={15} />
+        </span>
+        <span className="toggle-copy">
+          <span>Controls</span>
+          <strong>
+            {TAB_ITEMS.find((tab) => tab.id === activeTab)?.label || 'Analyzer'} / {pathLabel}
+          </strong>
+        </span>
+        <ChevronDown size={16} className="toggle-chevron" aria-hidden="true" />
+      </button>
+
+      <div
+        id="pbk-analyzer-mobile-controls"
+        className="pbk-analyzer-tab-shell"
+        data-open={mobileControlsOpen ? 'true' : 'false'}
+      >
+        <nav className="pbk-analyzer-tabs" aria-label="Deal analyzer sections">
+          {TAB_ITEMS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              aria-label={`Switch analyzer tab to ${tab.label}`}
+              aria-pressed={activeTab === tab.id}
+              data-active={activeTab === tab.id}
+              onClick={() => handleTabChange(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="pbk-analyzer-mobile-quick-actions">
           <button
-            key={tab.id}
             type="button"
-            aria-label={`Switch analyzer tab to ${tab.label}`}
-            aria-pressed={activeTab === tab.id}
-            data-active={activeTab === tab.id}
-            onClick={() => onTabChange(tab.id)}
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+            onClick={onOpenWorkflow}
           >
-            {tab.label}
+            <Workflow size={14} />
+            Workflow
           </button>
-        ))}
-      </nav>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+            onClick={onOpenDocuments}
+          >
+            <FileText size={14} />
+            Docs
+          </button>
+          <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onCreateLead}>
+            <UserPlus size={14} />
+            Create Lead
+          </button>
+          <button type="button" className="pbk-btn pbk-btn-success pbk-btn-sm" onClick={onAnalyze}>
+            <Sparkles size={14} />
+            Analyze
+          </button>
+        </div>
+      </div>
     </header>
   );
 }

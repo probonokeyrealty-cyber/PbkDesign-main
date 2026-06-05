@@ -29,6 +29,9 @@ assert(/New PBK lead/.test(leads), 'Leads should render the New PBK lead portal.
 assert(/createLeadRequest/.test(leads), 'Leads page should submit new leads through createLeadRequest.');
 assert(/seedNewLeadFromAnalyzer/.test(leads), 'New lead portal should seed from current analyzer state.');
 assert(/ANALYZER_CURRENT_DEAL_KEY/.test(leads), 'New lead portal should read analyzer storage for deal/path sync.');
+assert(/useSearchParams/.test(leads), 'Lead portal should support deep-linking from the analyzer with search params.');
+assert(/searchParams\.get\('new'\) === '1'/.test(leads), 'Lead portal should open the new lead form when /leads?new=1 is loaded.');
+assert(/searchParams\.get\('lead'\)/.test(leads), 'Lead portal should select a lead when /leads?lead=:id is loaded.');
 assert(/source:\s*newLeadForm\.leadSource/.test(leads), 'New lead payload should preserve lead source.');
 assert(/preferredChannel/.test(leads), 'New lead form should capture preferred channel.');
 assert(/tcpaConsent/.test(leads) && /dncStatus/.test(leads), 'New lead form should capture compliance checks.');

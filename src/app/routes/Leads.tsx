@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 import {
   AlertCircle,
   CheckCircle2,
@@ -882,6 +883,7 @@ const softPanelClass =
 
 export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
+  const [searchParams, setSearchParams] = useSearchParams();
   const snapshotLeads = useMemo(
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
     [snapshot?.leadImports]
@@ -938,6 +940,42 @@ export function Leads() {
     () => getContractLiveValidation(contractForm),
     [contractForm]
   );
+
+  useEffect(() => {
+    const requestedLeadId = searchParams.get('lead');
+    const requestedSearch = searchParams.get('search');
+
+    if (requestedLeadId) {
+      setSelectedLeadId(requestedLeadId);
+    } else if (requestedSearch && leads.length) {
+      const needle = requestedSearch.toLowerCase();
+      const match = leads.find((lead) =>
+        [getSellerName(lead), getLeadAddress(lead), getLeadPhone(lead), getLeadEmail(lead)]
+          .join(' ')
+          .toLowerCase()
+          .includes(needle)
+      );
+      if (match) setSelectedLeadId(getLeadId(match));
+    }
+
+    if (searchParams.get('new') === '1') {
+      setNewLeadForm(seedNewLeadFromAnalyzer());
+      setNewLeadOpen(true);
+      setNewLeadStatus({
+        tone: 'info',
+        text: 'Seeded from the current Deal Analyzer path and live call details.',
+      });
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete('new');
+          return next;
+        },
+        { replace: true }
+      );
+    }
+  }, [leads, searchParams, setSearchParams]);
+
   const beginLeadAction = useCallback((key: string) => {
     if (leadActionLockRef.current) return false;
     leadActionLockRef.current = true;

@@ -26,6 +26,7 @@ const agentFleet = read('src/app/routes/AgentFleet.tsx');
 const topBar = read('src/app/components/TopBar.tsx');
 const callFloor = read('src/app/components/CallFloorPanel.tsx');
 const analytics = read('src/app/routes/Analytics.tsx');
+const css = read('src/styles/pbk-components.css');
 const packageJson = read('package.json');
 
 expectContains(packageJson, 'test:ui-feedback-truncation-responsive', 'Package exposes the UI feedback/truncation/responsive smoke test');
@@ -93,8 +94,8 @@ expectMatches(
 );
 
 expectContains(
-  leads,
-  'xl:grid-cols-[minmax(280px,420px)_minmax(0,1fr)]',
+  css,
+  'grid-template-columns: minmax(280px, 420px) minmax(0, 1fr)',
   'Leads main grid uses a bounded responsive sidebar track'
 );
 expectContains(

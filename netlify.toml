@@ -111,6 +111,12 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/ava-chat"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
 from = "/health"
 to = "/.netlify/functions/pbk-bridge-proxy?path=/health"
 status = 200

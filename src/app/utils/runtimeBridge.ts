@@ -264,6 +264,51 @@ export type AgentRegistryResponse = {
   registry?: AgentRegistrySnapshot;
 };
 
+export type DesktopSidecarStatusResponse = {
+  ok: boolean;
+  result?: string;
+  connected?: boolean;
+  connectedCount?: number;
+  pendingCommands?: number;
+  sidecars?: Array<Record<string, unknown>>;
+  recentEvents?: Array<Record<string, unknown>>;
+};
+
+export type LocalCommandRecord = {
+  id: string;
+  tenantId?: string;
+  command?: string;
+  action?: string;
+  params?: Record<string, unknown>;
+  requestedBy?: string;
+  source?: string;
+  status?: string;
+  requiresApproval?: boolean;
+  approvalId?: string;
+  sidecarId?: string;
+  result?: Record<string, unknown>;
+  error?: string;
+  createdAt?: string;
+  approvedAt?: string | null;
+  dispatchedAt?: string | null;
+  completedAt?: string | null;
+  updatedAt?: string;
+};
+
+export type LocalCommandsResponse = {
+  ok: boolean;
+  result?: string;
+  count?: number;
+  commands?: LocalCommandRecord[];
+  command?: LocalCommandRecord;
+  commandId?: string;
+  message?: string;
+  approval?: ApprovalRecord | null;
+  sidecarStatus?: DesktopSidecarStatusResponse;
+  state?: RuntimeSnapshot;
+  error?: string;
+};
+
 export type GlobalSearchResult = {
   id?: string;
   recordId?: string;
@@ -1088,6 +1133,51 @@ export async function fetchAgentSnnStatusRequest() {
     providers?: Record<string, unknown>;
   }>({
     path: '/api/agents/snn-status',
+  });
+}
+
+export async function fetchDesktopSidecarStatusRequest() {
+  return bridgeRequest<DesktopSidecarStatusResponse>({
+    path: '/api/desktop-sidecar/status',
+  });
+}
+
+export async function fetchLocalCommandsRequest({
+  status = 'all',
+  limit = 40,
+}: {
+  status?: string;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams({
+    status,
+    limit: String(Math.max(1, Math.min(200, limit))),
+  });
+  return bridgeRequest<LocalCommandsResponse>({
+    path: `/api/local/commands?${params.toString()}`,
+  });
+}
+
+export async function queueLocalCommandRequest(body: Record<string, unknown>) {
+  return bridgeRequest<LocalCommandsResponse>({
+    method: 'POST',
+    path: '/api/local/commands',
+    body,
+  });
+}
+
+export async function executeLocalCommandRequest(body: Record<string, unknown>) {
+  return invokeRuntimeTool<LocalCommandsResponse>('executeLocalCommand', body);
+}
+
+export async function completeLocalCommandRequest(
+  commandId: string,
+  body: Record<string, unknown>
+) {
+  return bridgeRequest<LocalCommandsResponse>({
+    method: 'POST',
+    path: `/api/local/commands/${encodeURIComponent(commandId)}/result`,
+    body,
   });
 }
 

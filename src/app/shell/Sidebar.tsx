@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Menu,
   Megaphone,
+  Mic2,
   Settings as SettingsIcon,
   Users,
   X,
@@ -23,6 +24,7 @@ export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof La
   { to: '/memory', label: 'Memory', icon: BrainCircuit },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
+  { to: '/ava-chat', label: 'Ava Chat', icon: Mic2 },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
 

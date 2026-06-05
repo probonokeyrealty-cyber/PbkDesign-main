@@ -560,7 +560,7 @@ const STATE_BACKEND = DATABASE_URL ? 'postgres' : 'file';
 
 const SHOULD_RESET = IS_RESET;
 
-const TOOL_NAMES = ['analyzeDeal', 'getPropertyData', 'cachePropertyData', 'scrape_property', 'import_leads', 'classifyParticipant', 'getParticipantProfile', 'getBrainEmailContext', 'pbk_retrieve_closing_intelligence', 'retrieveClosingIntelligence', 'pbk_ava_conversation_intelligence', 'getAvaConversationIntelligence', 'getProsodyAdvice', 'retrieveSimilarDeals', 'recallConversationMemory', 'upsertCallEmbeddingFromTranscript', 'scoreCallQuality', 'recordSkillOutcome', 'runRexSkillAutopilot', 'runAutonomousRexGoalDiscovery', 'handleRexLeadImported', 'runCoworkerHeartbeat', 'runYouTubeTrainingPipeline', 'runYouTubeTrainingEvalSuite', 'generateSyntheticEdgeCases', 'trainEmotionWorldModel', 'selectContextAwareScript', 'recordContextAwareScriptOutcome', 'validateProviderActionSafety', 'runAvaCanonicalEvalSuite', 'getObservabilityStatus', 'getSnnWorkerStatus', 'previewAgentDealContext', 'humanHandoff', 'webSearch', 'getReplyTemplates', 'getAdminPersistenceStatus', 'getDocuSignProviderStatus', 'inspectStreakPipeline', 'getStreakBootstrapPlan', 'bootstrapStreakPipeline', 'routeAdminCommand', 'admin_check_health', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var', 'createApproval', 'createApprovalTask', 'handleReplyIntent', 'updateCRM', 'ingestResearchDoc', 'createBrainBlogPost', 'trainBrainBlogPost', 'harvestBrainBlog', 'recordMarketIntel', 'planLeadNurture', 'consultNurtureAgent', 'startNurtureSequence', 'processDueNurtureSteps', 'simulateDealConfidence', 'matchBuyers', 'runSystemAudit', 'getBrainState', 'checkDNC', 'sendColdEmail', 'scheduleAppointment', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'routeInboundCall', 'runAvaMemoryLearning', 'addPbkMemory', 'recallPbkMemory', 'rememberPersonalFact', 'getPersonalContext', 'avaAskStrategist', 'askStrategist', 'pbk_teach_ava', 'recordRepairs', 'pbkRecordRepairs', 'sendNegotiationApproval', 'pbkSendNegotiationApproval', 'avaOverrideOffer', 'pbk_test_skill', 'pbk_script_test', 'scriptTest', 'pbk_outcome_analyzer', 'outcomeAnalyzer', 'pbk_suggestion_engine', 'suggestionEngine', 'pbk_knowledge_verifier', 'knowledgeVerifier', 'pbk_learn', 'pbk_learn_from_chat', 'recordPbkFeedback', 'detectPbkIntent', 'recordPbkKnowledge', 'queryPbkKnowledge', 'runPbkAgentPipeline', 'getReadableSummary', 'openAiWebSearch', 'pbk_send_update', 'pbk_call_operator', 'pbk_kill_switch', 'pbk_send_slack_reply', 'generatePersona', 'scoreAgentLikability', 'prepare_and_send_contract', 'sendDocuSign', 'sendContract', 'skipTrace', 'detectYelling', 'slackNotify', 'sendSellerDocs', 'prepareContract', 'contractLawyerReview', 'reloadContractTemplates', 'requestAdminAction', 'launchBrowserResearch', 'runAgentCommand'];
+const TOOL_NAMES = ['analyzeDeal', 'getPropertyData', 'cachePropertyData', 'scrape_property', 'import_leads', 'classifyParticipant', 'getParticipantProfile', 'getBrainEmailContext', 'pbk_retrieve_closing_intelligence', 'retrieveClosingIntelligence', 'pbk_ava_conversation_intelligence', 'getAvaConversationIntelligence', 'getProsodyAdvice', 'retrieveSimilarDeals', 'recallConversationMemory', 'upsertCallEmbeddingFromTranscript', 'scoreCallQuality', 'recordSkillOutcome', 'runRexSkillAutopilot', 'runAutonomousRexGoalDiscovery', 'handleRexLeadImported', 'runCoworkerHeartbeat', 'runYouTubeTrainingPipeline', 'runYouTubeTrainingEvalSuite', 'generateSyntheticEdgeCases', 'trainEmotionWorldModel', 'selectContextAwareScript', 'recordContextAwareScriptOutcome', 'validateProviderActionSafety', 'runAvaCanonicalEvalSuite', 'getObservabilityStatus', 'getSnnWorkerStatus', 'previewAgentDealContext', 'humanHandoff', 'webSearch', 'getReplyTemplates', 'getAdminPersistenceStatus', 'getDocuSignProviderStatus', 'inspectStreakPipeline', 'getStreakBootstrapPlan', 'bootstrapStreakPipeline', 'routeAdminCommand', 'admin_check_health', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var', 'createApproval', 'createApprovalTask', 'handleReplyIntent', 'updateCRM', 'ingestResearchDoc', 'createBrainBlogPost', 'trainBrainBlogPost', 'harvestBrainBlog', 'recordMarketIntel', 'planLeadNurture', 'consultNurtureAgent', 'startNurtureSequence', 'processDueNurtureSteps', 'simulateDealConfidence', 'matchBuyers', 'runSystemAudit', 'getBrainState', 'checkDNC', 'sendColdEmail', 'scheduleAppointment', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'routeInboundCall', 'runAvaMemoryLearning', 'addPbkMemory', 'recallPbkMemory', 'rememberPersonalFact', 'getPersonalContext', 'avaAskStrategist', 'askStrategist', 'pbk_teach_ava', 'recordRepairs', 'pbkRecordRepairs', 'sendNegotiationApproval', 'pbkSendNegotiationApproval', 'avaOverrideOffer', 'pbk_test_skill', 'pbk_script_test', 'scriptTest', 'pbk_outcome_analyzer', 'outcomeAnalyzer', 'pbk_suggestion_engine', 'suggestionEngine', 'pbk_knowledge_verifier', 'knowledgeVerifier', 'pbk_learn', 'pbk_learn_from_chat', 'recordPbkFeedback', 'detectPbkIntent', 'recordPbkKnowledge', 'queryPbkKnowledge', 'runPbkAgentPipeline', 'getReadableSummary', 'openAiWebSearch', 'pbk_send_update', 'pbk_call_operator', 'pbk_kill_switch', 'pbk_send_slack_reply', 'generatePersona', 'scoreAgentLikability', 'prepare_and_send_contract', 'sendDocuSign', 'sendContract', 'skipTrace', 'detectYelling', 'slackNotify', 'sendSellerDocs', 'prepareContract', 'contractLawyerReview', 'reloadContractTemplates', 'requestAdminAction', 'launchBrowserResearch', 'runAgentCommand', 'executeLocalCommand'];
 
 const runtimeBrowserSockets = new Set();
 const runtimeBrowserSessions = new Map();
@@ -642,6 +642,7 @@ function scheduleRuntimeStateBroadcast(reason = 'state') {
 
 const LIMITS = {
   approvals: 60,
+  localCommands: 160,
   activity: 160,
   brainDocs: 90,
   brainBlogPosts: 160,
@@ -4837,6 +4838,7 @@ function buildDefaultState() {
       },
     },
     approvals: buildDefaultApprovals(),
+    localCommands: [],
     activity: buildDefaultActivity(),
     brainDocs: buildDefaultBrainDocs(),
     brainBlogPosts: buildDefaultBrainBlogPosts(),
@@ -5187,8 +5189,66 @@ async function ensureFuzzyLeadLookupSchema(pool) {
   return true;
 }
 
+async function ensureLocalCommandQueueSchema(pool) {
+  if (!pool) return false;
+  await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS public.pbk_local_commands (
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      command TEXT NOT NULL,
+      action TEXT NOT NULL DEFAULT 'operator_command',
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      requested_by TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'ava-chat',
+      status TEXT NOT NULL DEFAULT 'pending_approval',
+      requires_approval BOOLEAN NOT NULL DEFAULT TRUE,
+      approval_id TEXT NOT NULL DEFAULT '',
+      sidecar_id TEXT NOT NULL DEFAULT '',
+      result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      error TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      approved_at TIMESTAMPTZ,
+      dispatched_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE public.pbk_local_commands
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'pbk',
+      ADD COLUMN IF NOT EXISTS command TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'operator_command',
+      ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS requested_by TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'ava-chat',
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_approval',
+      ADD COLUMN IF NOT EXISTS requires_approval BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS approval_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS sidecar_id TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS result JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS error TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+    ALTER TABLE public.pbk_local_commands ENABLE ROW LEVEL SECURITY;
+
+    CREATE INDEX IF NOT EXISTS pbk_local_commands_status_idx
+      ON public.pbk_local_commands (tenant_id, status, created_at ASC);
+    CREATE INDEX IF NOT EXISTS pbk_local_commands_approval_idx
+      ON public.pbk_local_commands (tenant_id, approval_id);
+    CREATE INDEX IF NOT EXISTS pbk_local_commands_source_idx
+      ON public.pbk_local_commands (tenant_id, source, created_at DESC);
+  `);
+  return true;
+}
+
 async function ensurePbkOperationalTables(pool) {
   if (!pool) return false;
+  await ensureLocalCommandQueueSchema(pool);
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -5535,6 +5595,9 @@ async function ensurePbkOperationalTables(pool) {
   });
   await ensureFuzzyLeadLookupSchema(pool).catch((error) => {
     console.warn('[postgres] fuzzy lead lookup schema ensure skipped', error?.message || error);
+  });
+  await ensureLocalCommandQueueSchema(pool).catch((error) => {
+    console.warn('[postgres] local command queue schema ensure skipped', error?.message || error);
   });
   return true;
 }
@@ -9516,6 +9579,7 @@ function hydrateState(raw = {}) {
       },
     },
     approvals: trimArray(raw.approvals || defaults.approvals, LIMITS.approvals),
+    localCommands: trimArray(raw.localCommands || raw.local_commands || defaults.localCommands, LIMITS.localCommands),
     activity: trimArray(raw.activity || defaults.activity, LIMITS.activity),
     brainDocs: trimArray(raw.brainDocs || defaults.brainDocs, LIMITS.brainDocs),
     brainBlogPosts: trimArray(raw.brainBlogPosts || defaults.brainBlogPosts, LIMITS.brainBlogPosts),
@@ -10388,6 +10452,364 @@ function upsertById(stateRef, collectionName, item) {
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
   return item;
+}
+
+function normalizeLocalCommandStatus(value = '') {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  if (['approved', 'ready', 'queued', 'pending'].includes(normalized)) return 'approved';
+  if (['pending_approval', 'approval_required', 'needs_approval'].includes(normalized)) {
+    return 'pending_approval';
+  }
+  if (['declined', 'denied', 'reject', 'rejected'].includes(normalized)) return 'rejected';
+  if (['complete', 'completed', 'success', 'succeeded'].includes(normalized)) return 'completed';
+  if (['failed', 'error'].includes(normalized)) return 'failed';
+  if (['dispatched', 'running', 'in_progress'].includes(normalized)) return 'dispatched';
+  return normalized || 'pending_approval';
+}
+
+function normalizeLocalCommandAction(params = {}) {
+  const raw = String(params.action || params.commandAction || params.command_action || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (raw) return raw;
+  const command = String(params.command || params.text || params.transcript || '').trim().toLowerCase();
+  if (/^clickui[:\s]/.test(command)) return 'clickui';
+  if (/^openclaw[:\s]/.test(command)) return 'operator_command';
+  if (/\bscreenshot\b|\bscreen shot\b|\bwhat.*screen\b/.test(command)) return 'screenshot';
+  if (/\bstatus\b|\bhealth\b|\bcheck sidecar\b/.test(command)) return 'status';
+  if (/\bping\b/.test(command)) return 'ping';
+  if (/^type\s+/.test(command)) return 'type_text';
+  return 'operator_command';
+}
+
+function isLocalCommandSidecarAction(action = '') {
+  try {
+    return DESKTOP_SIDECAR_ALLOWED_ACTIONS.has(String(action || '').trim().toLowerCase());
+  } catch {
+    return ['ping', 'status', 'read_file', 'list_dir', 'screenshot', 'screenshot_ocr', 'type_text', 'llm_query', 'watch_folder'].includes(String(action || '').trim().toLowerCase());
+  }
+}
+
+function isLowRiskLocalCommandAction(action = '') {
+  return ['ping', 'status'].includes(String(action || '').trim().toLowerCase());
+}
+
+function buildLocalCommandRecord(params = {}) {
+  const command = String(params.command || params.text || params.transcript || '').trim();
+  const action = normalizeLocalCommandAction(params);
+  const lowRisk = isLowRiskLocalCommandAction(action);
+  const requiresApproval = params.requiresApproval === false && lowRisk ? false : true;
+  const now = isoNow();
+  const id = String(params.id || params.commandId || `local-command-${Date.now()}-${randomUUID().slice(0, 8)}`).trim();
+  const sidecarParams = params.params && typeof params.params === 'object' ? params.params : {};
+  return {
+    id,
+    tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
+    command,
+    action,
+    params: {
+      ...sidecarParams,
+      ...(action === 'type_text' && !sidecarParams.text ? { text: command.replace(/^type\s+/i, '') } : {}),
+      rawCommand: command,
+      sidecarSafeAction: isLocalCommandSidecarAction(action),
+    },
+    requestedBy: String(params.requestedBy || params.requested_by || params.actor || 'ava-chat-page').trim(),
+    source: String(params.source || 'ava-chat').trim(),
+    status: requiresApproval ? 'pending_approval' : 'approved',
+    requiresApproval,
+    approvalId: String(params.approvalId || params.approval_id || '').trim(),
+    sidecarId: String(params.sidecarId || params.sidecar_id || '').trim(),
+    result: params.result && typeof params.result === 'object' ? params.result : {},
+    error: String(params.error || '').trim(),
+    createdAt: params.createdAt || params.created_at || now,
+    approvedAt: params.approvedAt || params.approved_at || null,
+    dispatchedAt: params.dispatchedAt || params.dispatched_at || null,
+    completedAt: params.completedAt || params.completed_at || null,
+    updatedAt: params.updatedAt || params.updated_at || now,
+  };
+}
+
+function mapLocalCommandRow(row = {}) {
+  return {
+    id: String(row.id || ''),
+    tenantId: normalizeTenantId(row.tenant_id || row.tenantId || 'pbk'),
+    command: String(row.command || ''),
+    action: String(row.action || 'operator_command'),
+    params: row.params && typeof row.params === 'object' ? row.params : {},
+    requestedBy: String(row.requested_by || row.requestedBy || ''),
+    source: String(row.source || 'ava-chat'),
+    status: normalizeLocalCommandStatus(row.status),
+    requiresApproval: row.requires_approval ?? row.requiresApproval ?? true,
+    approvalId: String(row.approval_id || row.approvalId || ''),
+    sidecarId: String(row.sidecar_id || row.sidecarId || ''),
+    result: row.result && typeof row.result === 'object' ? row.result : {},
+    error: String(row.error || ''),
+    createdAt: row.created_at || row.createdAt || '',
+    approvedAt: row.approved_at || row.approvedAt || null,
+    dispatchedAt: row.dispatched_at || row.dispatchedAt || null,
+    completedAt: row.completed_at || row.completedAt || null,
+    updatedAt: row.updated_at || row.updatedAt || '',
+  };
+}
+
+function upsertLocalCommandState(record = {}) {
+  const mapped = {
+    ...record,
+    status: normalizeLocalCommandStatus(record.status),
+    updatedAt: record.updatedAt || isoNow(),
+  };
+  return upsertById(state, 'localCommands', mapped);
+}
+
+async function persistLocalCommandRecordToPg(record = {}) {
+  const pool = getPgPool();
+  if (!pool || !record.id) return { ok: false, reason: 'postgres_unavailable' };
+  try {
+    await ensureLocalCommandQueueSchema(pool);
+    await pool.query(
+      `INSERT INTO public.pbk_local_commands (
+        id, tenant_id, command, action, params, requested_by, source, status,
+        requires_approval, approval_id, sidecar_id, result, error, created_at,
+        approved_at, dispatched_at, completed_at, updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18)
+      ON CONFLICT (id) DO UPDATE SET
+        tenant_id = EXCLUDED.tenant_id,
+        command = EXCLUDED.command,
+        action = EXCLUDED.action,
+        params = EXCLUDED.params,
+        requested_by = EXCLUDED.requested_by,
+        source = EXCLUDED.source,
+        status = EXCLUDED.status,
+        requires_approval = EXCLUDED.requires_approval,
+        approval_id = EXCLUDED.approval_id,
+        sidecar_id = EXCLUDED.sidecar_id,
+        result = EXCLUDED.result,
+        error = EXCLUDED.error,
+        approved_at = EXCLUDED.approved_at,
+        dispatched_at = EXCLUDED.dispatched_at,
+        completed_at = EXCLUDED.completed_at,
+        updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+        record.command || '',
+        record.action || 'operator_command',
+        JSON.stringify(record.params || {}),
+        record.requestedBy || record.requested_by || '',
+        record.source || 'ava-chat',
+        normalizeLocalCommandStatus(record.status),
+        record.requiresApproval !== false && record.requires_approval !== false,
+        record.approvalId || record.approval_id || '',
+        record.sidecarId || record.sidecar_id || '',
+        JSON.stringify(record.result || {}),
+        record.error || '',
+        record.createdAt || record.created_at || isoNow(),
+        record.approvedAt || record.approved_at || null,
+        record.dispatchedAt || record.dispatched_at || null,
+        record.completedAt || record.completed_at || null,
+        record.updatedAt || record.updated_at || isoNow(),
+      ]
+    );
+    return { ok: true };
+  } catch (error) {
+    console.warn('[pbk-local-openclaw] local command persistence skipped:', error?.message || error);
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+async function listLocalCommands({ status = 'all', limit = 40, pendingOnly = false } = {}) {
+  const normalizedStatus = normalizeLocalCommandStatus(status);
+  const cappedLimit = Math.max(1, Math.min(200, Number(limit || 40)));
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      await ensureLocalCommandQueueSchema(pool);
+      const statuses = pendingOnly
+        ? ['approved', 'dispatched']
+        : normalizedStatus && normalizedStatus !== 'all'
+          ? [normalizedStatus]
+          : [];
+      const { rows } = statuses.length
+        ? await pool.query(
+            `SELECT * FROM public.pbk_local_commands
+             WHERE tenant_id = $1 AND status = ANY($2::text[])
+             ORDER BY created_at ASC
+             LIMIT $3`,
+            ['pbk', statuses, cappedLimit]
+          )
+        : await pool.query(
+            `SELECT * FROM public.pbk_local_commands
+             WHERE tenant_id = $1
+             ORDER BY created_at DESC
+             LIMIT $2`,
+            ['pbk', cappedLimit]
+          );
+      return { ok: true, result: 'postgres_local_commands', commands: rows.map(mapLocalCommandRow) };
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] local command read fell back to state:', error?.message || error);
+    }
+  }
+  const commands = sortNewest(state.localCommands || [])
+    .filter((item) => {
+      const itemStatus = normalizeLocalCommandStatus(item.status);
+      if (pendingOnly) return itemStatus === 'approved' || itemStatus === 'dispatched';
+      return !normalizedStatus || normalizedStatus === 'all' || itemStatus === normalizedStatus;
+    })
+    .slice(0, cappedLimit);
+  return { ok: true, result: 'state_local_commands', commands };
+}
+
+async function queueLocalCommand(params = {}) {
+  const record = buildLocalCommandRecord(params);
+  if (!record.command) {
+    return { ok: false, result: 'missing_command', error: 'A local command transcript is required.' };
+  }
+  if (params.dryRun === true) {
+    return {
+      ok: true,
+      result: 'local_command_dry_run',
+      command: record,
+      sidecarStatus: buildDesktopSidecarStatus(),
+    };
+  }
+  upsertLocalCommandState(record);
+  await persistLocalCommandRecordToPg(record);
+  let approvalResult = null;
+  if (record.requiresApproval) {
+    approvalResult = await toolHandlers.createApproval({
+      type: 'local_command',
+      leadName: 'Ava local command',
+      address: record.action,
+      provider: 'openclaw-sidecar',
+      source: record.source,
+      approvalAction: 'executeLocalCommand',
+      notes: `Approve local desktop command requested by ${record.requestedBy}: ${record.command}`,
+      metadata: {
+        kind: 'local_command',
+        commandId: record.id,
+        command: record.command,
+        action: record.action,
+        params: record.params,
+        sidecarId: record.sidecarId,
+        requestedBy: record.requestedBy,
+        source: record.source,
+      },
+    });
+    record.approvalId = approvalResult?.approval?.id || '';
+    record.updatedAt = isoNow();
+    upsertLocalCommandState(record);
+    await persistLocalCommandRecordToPg(record);
+  } else {
+    addActivity(
+      state,
+      makeActivity({
+        actor: 'Ava',
+        category: 'LOCAL',
+        status: 'queued',
+        text: `Queued low-risk local command: ${record.action}`,
+        target: record.id,
+      })
+    );
+  }
+  await persistState(state);
+  return {
+    ok: true,
+    result: record.requiresApproval ? 'queued_for_approval' : 'queued_for_local_agent',
+    message: record.requiresApproval
+      ? 'Command queued for approval before OpenClaw/ClickUI execution.'
+      : 'Low-risk command queued for the local OpenClaw worker.',
+    commandId: record.id,
+    command: record,
+    approval: approvalResult?.approval || null,
+    sidecarStatus: buildDesktopSidecarStatus(),
+    state: buildStateSnapshot({ compact: true }),
+  };
+}
+
+async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
+  const metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  const commandId = String(metadata.commandId || metadata.command_id || approval.commandId || '').trim();
+  if (!commandId) return { ok: false, result: 'local_command_missing_id' };
+  const approved = normalizeLocalCommandStatus(approval.status) === 'approved';
+  const nextStatus = approved ? 'approved' : 'rejected';
+  const existing =
+    (state.localCommands || []).find((item) => String(item.id || '') === commandId) ||
+    buildLocalCommandRecord({
+      id: commandId,
+      command: metadata.command || approval.notes || '',
+      action: metadata.action || '',
+      params: metadata.params || {},
+      requestedBy: metadata.requestedBy || approval.actor || '',
+      source: metadata.source || approval.source || 'approval-callback',
+      requiresApproval: true,
+      approvalId: approval.id,
+      createdAt: approval.createdAt || isoNow(),
+    });
+  const patched = {
+    ...existing,
+    approvalId: approval.id || existing.approvalId || '',
+    status: nextStatus,
+    approvedAt: approved ? approval.actedAt || isoNow() : existing.approvedAt || null,
+    error: approved ? '' : approval.notes || 'Rejected by operator.',
+    updatedAt: isoNow(),
+  };
+  upsertLocalCommandState(patched);
+  await persistLocalCommandRecordToPg(patched);
+  addActivity(
+    state,
+    makeActivity({
+      actor: options.actor || approval.actor || 'PBK Approval',
+      category: 'LOCAL',
+      status: approved ? 'approved' : 'rejected',
+      text: `${approved ? 'Approved' : 'Rejected'} local command ${patched.action}: ${patched.command}`,
+      target: patched.id,
+    })
+  );
+  return {
+    ok: true,
+    result: approved ? 'local_command_approved' : 'local_command_rejected',
+    command: patched,
+  };
+}
+
+async function completeLocalCommand(commandId = '', payload = {}) {
+  const id = String(commandId || payload.id || payload.commandId || payload.command_id || '').trim();
+  if (!id) return { ok: false, result: 'missing_command_id', error: 'Command id is required.' };
+  const existing = (state.localCommands || []).find((item) => String(item.id || '') === id);
+  const ok = payload.ok !== false && String(payload.status || '').toLowerCase() !== 'failed';
+  const patched = {
+    ...(existing || buildLocalCommandRecord({ id, command: payload.command || 'reported command result' })),
+    status: ok ? 'completed' : 'failed',
+    result: payload.result && typeof payload.result === 'object' ? payload.result : { output: payload.result || payload.stdout || '' },
+    error: ok ? '' : String(payload.error || payload.stderr || 'Local command failed.'),
+    completedAt: payload.completedAt || payload.completed_at || isoNow(),
+    updatedAt: isoNow(),
+  };
+  upsertLocalCommandState(patched);
+  await persistLocalCommandRecordToPg(patched);
+  addActivity(
+    state,
+    makeActivity({
+      actor: payload.actor || 'OpenClaw local worker',
+      category: 'LOCAL',
+      status: ok ? 'success' : 'error',
+      text: `${ok ? 'Completed' : 'Failed'} local command ${patched.action}`,
+      target: patched.id,
+    })
+  );
+  await persistState(state);
+  return {
+    ok,
+    result: ok ? 'local_command_completed' : 'local_command_failed',
+    command: patched,
+    state: buildStateSnapshot({ compact: true }),
+  };
 }
 
 function addLeadImport(stateRef, leadImport) {
@@ -41027,6 +41449,11 @@ const toolHandlers = {
     return sendDesktopSidecarCommand(params);
   },
 
+  async executeLocalCommand(params = {}) {
+    recordToolUse('executeLocalCommand');
+    return queueLocalCommand(params);
+  },
+
   async activateAvaCallIntelligence(params = {}) {
     recordToolUse('activateAvaCallIntelligence');
     return activateAvaCallIntelligence(params);
@@ -45749,6 +46176,7 @@ async function handleEvent(eventType, payload = {}) {
     let rexDecisionResult = null;
     let providerActionResult = null;
     let nurtureResult = null;
+    let localCommandResult = null;
     if (approval.type === 'contract' && approval.contractId) {
       const contract = state.contracts.find((item) => item.id === approval.contractId);
       if (contract) {
@@ -45931,6 +46359,22 @@ async function handleEvent(eventType, payload = {}) {
       }
     }
 
+    {
+      const approvalType = String(approval.type || '').toLowerCase();
+      const approvalMetadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+      const approvalAction = String(approval.approvalAction || approval.action || approvalMetadata.approvalAction || approvalMetadata.action || approvalMetadata.toolName || approvalMetadata.requestedTool || '').toLowerCase();
+      const isLocalCommandApproval =
+        approvalType === 'local_command' ||
+        approvalMetadata.kind === 'local_command' ||
+        approvalAction === 'executelocalcommand' ||
+        approvalAction === 'execute_local_command';
+      if (isLocalCommandApproval) {
+        localCommandResult = await syncLocalCommandApprovalDecision(approval, {
+          actor: incomingActor,
+        });
+      }
+    }
+
     addActivity(
       state,
       makeActivity({
@@ -45953,6 +46397,7 @@ async function handleEvent(eventType, payload = {}) {
       rexDecisionResult,
       providerActionResult,
       nurtureResult,
+      localCommandResult,
     };
   }
 
@@ -46413,6 +46858,7 @@ function buildStateSnapshot(options = {}) {
       revenueEngine: buildRevenueEngineStatus({ requestedBy: 'state-snapshot' }),
     },
     approvals: list(state.approvals, 80),
+    localCommands: list(state.localCommands || [], 80),
     activity: list(state.activity, 80),
     brainDocs: list(state.brainDocs, 80),
     brainBlogPosts: list(state.brainBlogPosts || [], 80),
@@ -52758,6 +53204,47 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/local/commands', '/api/v1/local/commands'])) {
+      const result = await listLocalCommands({
+        status: url.searchParams.get('status') || 'all',
+        limit: url.searchParams.get('limit') || 40,
+      });
+      json(response, 200, {
+        ...result,
+        count: result.commands?.length || 0,
+        sidecarStatus: buildDesktopSidecarStatus(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/local/commands', '/api/v1/local/commands'])) {
+      const body = await readBody(request);
+      const result = await toolHandlers.executeLocalCommand(body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/local/commands/pending', '/api/v1/local/commands/pending'])) {
+      const result = await listLocalCommands({
+        pendingOnly: true,
+        limit: url.searchParams.get('limit') || 20,
+      });
+      json(response, 200, {
+        ...result,
+        result: 'pending_local_commands',
+        count: result.commands?.length || 0,
+      });
+      return;
+    }
+
+    const localCommandResultMatch = matchPath(pathname, '/api/local/commands/:id/result') || matchPath(pathname, '/api/v1/local/commands/:id/result');
+    if (localCommandResultMatch && request.method === 'POST') {
+      const body = await readBody(request);
+      const result = await completeLocalCommand(localCommandResultMatch.groups.id, body);
+      json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/revenue/engine/status', '/api/v1/revenue/engine/status'])) {
       json(response, 200, buildRevenueEngineStatus(Object.fromEntries(url.searchParams.entries())));
       return;
@@ -55668,7 +56155,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
       if (!pool) {
         json(response, 200, {
           ok: false,
@@ -57806,7 +58293,7 @@ const server = createServer(async (request, response) => {
     json(response, 404, {
       ok: false,
       error: `No route for ${request.method} ${pathname}`,
-      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
+      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
     });
   } catch (error) {
     json(response, 500, {

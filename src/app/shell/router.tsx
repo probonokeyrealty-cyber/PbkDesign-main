@@ -25,6 +25,9 @@ const Analytics = lazy(() =>
 const Campaigns = lazy(() =>
   import('../routes/Campaigns').then((module) => ({ default: module.Campaigns }))
 );
+const AvaChat = lazy(() =>
+  import('../routes/AvaChat').then((module) => ({ default: module.AvaChat }))
+);
 
 const shellBasename =
   typeof window !== 'undefined' &&
@@ -48,6 +51,7 @@ const router = createBrowserRouter(
         { path: 'memory', element: <MemoryAnalytics /> },
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
+        { path: 'ava-chat', element: <AvaChat /> },
         { path: 'settings', element: <Settings /> },
       ],
     },

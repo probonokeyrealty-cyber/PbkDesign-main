@@ -29,6 +29,7 @@ const VALID_SHELL_PATHS = new Set([
   '/memory',
   '/analytics',
   '/campaigns',
+  '/ava-chat',
   '/settings',
 ]);
 

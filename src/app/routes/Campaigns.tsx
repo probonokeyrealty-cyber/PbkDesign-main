@@ -26,12 +26,15 @@ import {
 } from '../../components/pbk/index';
 import {
   createCampaignRequest,
+  fetchCampaignDrilldownRequest,
   fetchCampaignLeadSourcesRequest,
   fetchCampaignsRequest,
   fetchReplyTemplatesRequest,
   patchCampaignRequest,
   requestCampaignApprovalRequest,
   runCampaignActionRequest,
+  type CampaignDrilldownResponse,
+  type CampaignDrilldownRow,
   type CampaignLeadSource,
   type CampaignRecord,
   type ReplyTemplateRecord,
@@ -174,6 +177,17 @@ function getSourceLabel(sourceId: string, sources: CampaignLeadSource[]) {
   return sources.find((source) => source.id === sourceId)?.label || sourceId || 'Lead source';
 }
 
+function getCampaignSourceId(campaign: CampaignRecord) {
+  const leadFilter = campaign.leadFilter || {};
+  const source =
+    campaign.leadSource ||
+    leadFilter.source ||
+    leadFilter.leadSource ||
+    leadFilter.importSource ||
+    'all-imports';
+  return String(source || 'all-imports');
+}
+
 function getCampaignProgress(campaign: CampaignRecord) {
   const leads = asNumber(campaign.leadCount || metric(campaign, 'leads'));
   const completed = asNumber(
@@ -185,6 +199,187 @@ function getCampaignProgress(campaign: CampaignRecord) {
     completed,
     percent,
     label: leads ? `${formatNumber(completed)} / ${formatNumber(leads)}` : 'no lead count',
+  };
+}
+
+function getDrilldownRowCost(row: CampaignDrilldownRow) {
+  const channel = String(row.channel || '').toLowerCase();
+  if (channel === 'sms') return 0.021;
+  if (channel === 'call') return 0.014;
+  if (channel === 'mixed') return 0.01;
+  return 0.01;
+}
+
+type CampaignPerformanceRow = {
+  id: string;
+  label: string;
+  leads: number;
+  sent: number;
+  replied: number;
+  connected: number;
+  cost: number;
+  latestAt?: string;
+};
+
+function sortPerformanceRows(rows: CampaignPerformanceRow[]) {
+  return rows.sort((left, right) => {
+    const leftScore = left.replied * 4 + left.connected * 3 + left.sent + left.leads;
+    const rightScore = right.replied * 4 + right.connected * 3 + right.sent + right.leads;
+    return rightScore - leftScore;
+  });
+}
+
+function buildSourcePerformanceRows(
+  drilldown: CampaignDrilldownResponse | null,
+  campaigns: CampaignRecord[],
+  sources: CampaignLeadSource[]
+) {
+  const grouped = new Map<string, CampaignPerformanceRow>();
+  const rows = drilldown?.rows || [];
+  if (rows.length) {
+    for (const row of rows) {
+      const id = String(row.source || 'unassigned');
+      const current =
+        grouped.get(id) ||
+        ({
+          id,
+          label: id || 'Unassigned source',
+          leads: 0,
+          sent: 0,
+          replied: 0,
+          connected: 0,
+          cost: 0,
+          latestAt: '',
+        } satisfies CampaignPerformanceRow);
+      current.leads += 1;
+      current.sent += row.sent ? 1 : 0;
+      current.replied += row.replied ? 1 : 0;
+      current.connected += row.connected ? 1 : 0;
+      current.cost += getDrilldownRowCost(row);
+      current.latestAt = row.lastEventAt || row.updatedAt || current.latestAt;
+      grouped.set(id, current);
+    }
+    return sortPerformanceRows(Array.from(grouped.values())).slice(0, 5);
+  }
+
+  for (const campaign of campaigns) {
+    const id = getCampaignSourceId(campaign);
+    const progress = getCampaignProgress(campaign);
+    const current =
+      grouped.get(id) ||
+      ({
+        id,
+        label: getSourceLabel(id, sources),
+        leads: 0,
+        sent: 0,
+        replied: 0,
+        connected: 0,
+        cost: 0,
+        latestAt: '',
+      } satisfies CampaignPerformanceRow);
+    current.leads += progress.leads;
+    current.sent += progress.completed;
+    current.replied += asNumber(
+      metricFirst(campaign, ['replied', 'replies', 'verbal', 'verbalYes'])
+    );
+    current.connected += asNumber(metricFirst(campaign, ['connected', 'answered']));
+    current.cost += asNumber(metricFirst(campaign, ['estimatedCost', 'cost']));
+    current.latestAt = campaign.updatedAt || campaign.createdAt || current.latestAt;
+    grouped.set(id, current);
+  }
+  return sortPerformanceRows(Array.from(grouped.values())).slice(0, 5);
+}
+
+function buildChannelPerformanceRows(
+  drilldown: CampaignDrilldownResponse | null,
+  campaigns: CampaignRecord[]
+) {
+  const grouped = new Map<string, CampaignPerformanceRow>();
+  const rows = drilldown?.rows || [];
+  if (rows.length) {
+    for (const row of rows) {
+      const id = campaignChannel({ channel: row.channel || 'email' });
+      const current =
+        grouped.get(id) ||
+        ({
+          id,
+          label: channelLabel(id),
+          leads: 0,
+          sent: 0,
+          replied: 0,
+          connected: 0,
+          cost: 0,
+          latestAt: '',
+        } satisfies CampaignPerformanceRow);
+      current.leads += 1;
+      current.sent += row.sent ? 1 : 0;
+      current.replied += row.replied ? 1 : 0;
+      current.connected += row.connected ? 1 : 0;
+      current.cost += getDrilldownRowCost(row);
+      current.latestAt = row.lastEventAt || row.updatedAt || current.latestAt;
+      grouped.set(id, current);
+    }
+    return sortPerformanceRows(Array.from(grouped.values()));
+  }
+
+  for (const campaign of campaigns) {
+    const id = campaignChannel(campaign);
+    const progress = getCampaignProgress(campaign);
+    const current =
+      grouped.get(id) ||
+      ({
+        id,
+        label: channelLabel(id),
+        leads: 0,
+        sent: 0,
+        replied: 0,
+        connected: 0,
+        cost: 0,
+        latestAt: '',
+      } satisfies CampaignPerformanceRow);
+    current.leads += progress.leads;
+    current.sent += progress.completed;
+    current.replied += asNumber(
+      metricFirst(campaign, ['replied', 'replies', 'verbal', 'verbalYes'])
+    );
+    current.connected += asNumber(metricFirst(campaign, ['connected', 'answered']));
+    current.cost += asNumber(metricFirst(campaign, ['estimatedCost', 'cost']));
+    current.latestAt = campaign.updatedAt || campaign.createdAt || current.latestAt;
+    grouped.set(id, current);
+  }
+  return sortPerformanceRows(Array.from(grouped.values()));
+}
+
+function getDrilldownSummary(
+  drilldown: CampaignDrilldownResponse | null,
+  campaigns: CampaignRecord[],
+  sourceRows: CampaignPerformanceRow[]
+) {
+  const fallbackLeads = sourceRows.reduce((sum, row) => sum + row.leads, 0);
+  const fallbackSent = sourceRows.reduce((sum, row) => sum + row.sent, 0);
+  const fallbackReplied = sourceRows.reduce((sum, row) => sum + row.replied, 0);
+  const fallbackConnected = sourceRows.reduce((sum, row) => sum + row.connected, 0);
+  const fallbackCost = sourceRows.reduce((sum, row) => sum + row.cost, 0);
+  const summary = drilldown?.summary || {};
+  return {
+    campaigns: asNumber(summary.campaigns, campaigns.length),
+    leads: asNumber(summary.leads, fallbackLeads),
+    sent: asNumber(summary.sent, fallbackSent),
+    replied: asNumber(summary.replied, fallbackReplied),
+    connected: asNumber(summary.connected, fallbackConnected),
+    estimatedCost: asNumber(summary.estimatedCost, fallbackCost),
+    replyRate:
+      summary.replyRate !== undefined
+        ? asNumber(summary.replyRate)
+        : fallbackLeads
+          ? (fallbackReplied / fallbackLeads) * 100
+          : 0,
+    connectRate:
+      summary.connectRate !== undefined
+        ? asNumber(summary.connectRate)
+        : fallbackLeads
+          ? (fallbackConnected / fallbackLeads) * 100
+          : 0,
   };
 }
 
@@ -252,6 +447,149 @@ function ChannelBadge({ channel }: { channel: string }) {
       <Icon size={12} />
       {channelLabel(normalized)}
     </span>
+  );
+}
+
+function CampaignPerformanceList({
+  title,
+  rows,
+  emptyLabel,
+}: {
+  title: string;
+  rows: CampaignPerformanceRow[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="pbk-camp-drilldown-list">
+      <h3>{title}</h3>
+      {rows.length ? (
+        rows.map((row) => {
+          const replyRate = row.leads ? (row.replied / row.leads) * 100 : 0;
+          return (
+            <div className="pbk-camp-drilldown-row" key={row.id}>
+              <div className="min-w-0">
+                <strong title={row.label}>{row.label}</strong>
+                <span>
+                  {formatNumber(row.sent)} sent - {formatNumber(row.replied)} replies -{' '}
+                  {formatMoney(row.cost)} spend
+                </span>
+              </div>
+              <div className="pbk-camp-drilldown-rate">
+                <span>{formatPercent(replyRate)}</span>
+                <div className="pbk-camp-progress" aria-hidden="true">
+                  <div
+                    className="pbk-camp-progress-fill"
+                    style={{ width: `${Math.min(100, Math.max(0, replyRate))}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <div className="pbk-camp-drilldown-empty">{emptyLabel}</div>
+      )}
+    </div>
+  );
+}
+
+function CampaignDrilldownPanel({
+  drilldown,
+  campaigns,
+  sources,
+  loading,
+}: {
+  drilldown: CampaignDrilldownResponse | null;
+  campaigns: CampaignRecord[];
+  sources: CampaignLeadSource[];
+  loading: boolean;
+}) {
+  const sourceRows = useMemo(
+    () => buildSourcePerformanceRows(drilldown, campaigns, sources),
+    [campaigns, drilldown, sources]
+  );
+  const channelRows = useMemo(
+    () => buildChannelPerformanceRows(drilldown, campaigns),
+    [campaigns, drilldown]
+  );
+  const drilldownSummary = useMemo(
+    () => getDrilldownSummary(drilldown, campaigns, sourceRows),
+    [campaigns, drilldown, sourceRows]
+  );
+  const generatedLabel = drilldown?.generatedAt ? formatDate(drilldown.generatedAt) : 'waiting';
+  const bridgeRows = drilldown?.rows?.length || 0;
+  const sourceNote = bridgeRows
+    ? `${formatNumber(bridgeRows)} lead drilldown rows - ${drilldown?.source || 'bridge state'}`
+    : 'fallback aggregation from bridge campaign records until lead rows exist';
+
+  if (loading && !campaigns.length && !drilldown) {
+    return (
+      <PbkPanel className="pbk-camp-drilldown" elevated>
+        <PbkSkeleton variant="title" />
+        <PbkSkeleton variant="card" />
+        <PbkSkeleton variant="text" />
+      </PbkPanel>
+    );
+  }
+
+  return (
+    <PbkPanel className="pbk-camp-drilldown" elevated priority="money">
+      <div className="pbk-camp-drilldown-head">
+        <div>
+          <span className="pbk-eyebrow">Premium campaign analytics</span>
+          <h2>Source-ranked campaign drilldown</h2>
+          <p>
+            Ranks source and channel performance from live campaign leads, delivery events, replies,
+            and connected-call signals.
+          </p>
+        </div>
+        <span className={`pbk-camp-status-pill ${bridgeRows ? 'active' : 'draft'}`}>
+          {bridgeRows ? 'live rows' : 'campaign fallback'}
+        </span>
+      </div>
+
+      <div className="pbk-camp-drilldown-summary">
+        <div>
+          <span>Campaigns</span>
+          <strong>{formatNumber(drilldownSummary.campaigns)}</strong>
+        </div>
+        <div>
+          <span>Leads scored</span>
+          <strong>{formatNumber(drilldownSummary.leads)}</strong>
+        </div>
+        <div>
+          <span>Reply rate</span>
+          <strong>{formatPercent(drilldownSummary.replyRate)}</strong>
+        </div>
+        <div>
+          <span>Connect rate</span>
+          <strong>{formatPercent(drilldownSummary.connectRate)}</strong>
+        </div>
+        <div>
+          <span>Est. spend</span>
+          <strong>{formatMoney(drilldownSummary.estimatedCost)}</strong>
+        </div>
+      </div>
+
+      <div className="pbk-camp-drilldown-grid">
+        <CampaignPerformanceList
+          title="Source ranking"
+          rows={sourceRows}
+          emptyLabel="No source rows returned yet."
+        />
+        <CampaignPerformanceList
+          title="Channel performance"
+          rows={channelRows}
+          emptyLabel="No channel rows returned yet."
+        />
+      </div>
+
+      <PbkDataSource
+        endpoint="GET /api/analytics/campaign-drilldown"
+        status="ships"
+        note={`${sourceNote} - generated ${generatedLabel}`}
+      />
+    </PbkPanel>
   );
 }
 
@@ -1015,24 +1353,33 @@ export function Campaigns() {
   const [templateStatus, setTemplateStatus] = useState<TemplateStatus>('idle');
   const [saving, setSaving] = useState<WizardMode | null>(null);
   const [busyCampaignId, setBusyCampaignId] = useState('');
+  const [drilldown, setDrilldown] = useState<CampaignDrilldownResponse | null>(null);
 
   const loadCampaigns = useCallback(async () => {
     setStatus('loading');
     setError('');
     try {
-      const [campaignResponse, sourceResponse] = await Promise.all([
+      const [campaignResponse, sourceResponse, drilldownResponse] = await Promise.all([
         fetchCampaignsRequest({
           search,
           status: statusFilter,
           channel: 'all',
         }),
         fetchCampaignLeadSourcesRequest(),
+        fetchCampaignDrilldownRequest({
+          range: '30d',
+          status: statusFilter,
+          channel: 'all',
+          limit: 120,
+        }).catch(() => null),
       ]);
       setCampaigns(campaignResponse.campaigns || []);
       setSources(sourceResponse.sources || campaignResponse.sources || []);
+      setDrilldown(drilldownResponse);
       setStatus('ready');
     } catch (loadError) {
       setStatus('error');
+      setDrilldown(null);
       setError(loadError instanceof Error ? loadError.message : 'Campaign bridge request failed.');
     }
   }, [search, statusFilter]);
@@ -1243,6 +1590,13 @@ export function Campaigns() {
           summary={summary}
           loading={status === 'loading'}
           onNewCampaign={() => setWizardOpen(true)}
+        />
+
+        <CampaignDrilldownPanel
+          drilldown={drilldown}
+          campaigns={campaigns}
+          sources={sources}
+          loading={status === 'loading'}
         />
 
         <PbkPanel className="pbk-camp-toolbar">

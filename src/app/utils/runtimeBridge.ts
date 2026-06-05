@@ -541,6 +541,63 @@ export type CampaignLeadSource = {
   note?: string;
 };
 
+export type CampaignDrilldownRow = {
+  id?: string;
+  campaignId?: string;
+  campaignName?: string;
+  campaignStatus?: string;
+  channel?: string;
+  provider?: string;
+  leadId?: string;
+  leadName?: string;
+  address?: string;
+  source?: string;
+  email?: string;
+  phone?: string;
+  leadStatus?: string;
+  tags?: string[];
+  events?: number;
+  sent?: boolean;
+  opened?: boolean;
+  replied?: boolean;
+  connected?: boolean;
+  dnc?: boolean;
+  lastEventType?: string;
+  lastEventAt?: string;
+  updatedAt?: string;
+  routeContext?: string;
+  [key: string]: unknown;
+};
+
+export type CampaignDrilldownSummary = {
+  campaigns?: number;
+  leads?: number;
+  sent?: number;
+  opened?: number;
+  replied?: number;
+  connected?: number;
+  dnc?: number;
+  estimatedCost?: number;
+  replyRate?: number;
+  connectRate?: number;
+  [key: string]: unknown;
+};
+
+export type CampaignDrilldownResponse = {
+  ok: boolean;
+  result?: string;
+  range?: string;
+  generatedAt?: string;
+  source?: string;
+  filters?: Record<string, unknown>;
+  summary?: CampaignDrilldownSummary;
+  campaigns?: Array<Record<string, unknown>>;
+  sources?: string[];
+  rows?: CampaignDrilldownRow[];
+  warning?: string;
+  error?: string;
+};
+
 export type CampaignsResponse = {
   ok: boolean;
   result?: string;
@@ -1116,6 +1173,34 @@ export async function fetchCampaignLeadSourcesRequest() {
     state?: RuntimeSnapshot;
   }>({
     path: '/api/campaigns/lead-sources',
+  });
+}
+
+export async function fetchCampaignDrilldownRequest({
+  range = '30d',
+  campaignId = 'all',
+  source = 'all',
+  channel = 'all',
+  status = 'all',
+  limit = 120,
+}: {
+  range?: string;
+  campaignId?: string;
+  source?: string;
+  channel?: string;
+  status?: string;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams({
+    range,
+    campaignId,
+    source,
+    channel,
+    status,
+    limit: String(Math.max(1, Math.min(500, limit))),
+  });
+  return bridgeRequest<CampaignDrilldownResponse>({
+    path: `/api/analytics/campaign-drilldown?${params.toString()}`,
   });
 }
 

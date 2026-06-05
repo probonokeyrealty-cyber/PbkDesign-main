@@ -861,6 +861,131 @@
   font-size: 14px;
   line-height: 1.7;
 }
+.pbk-camp-drilldown {
+  display: grid;
+  gap: var(--s-4);
+  border-color: rgba(163, 230, 53, 0.2);
+  background:
+    linear-gradient(135deg, rgba(6, 8, 11, 0.86), rgba(11, 18, 16, 0.9)),
+    radial-gradient(circle at top right, var(--lime-glow), transparent 36%);
+}
+.pbk-camp-drilldown-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.pbk-camp-drilldown-head h2 {
+  margin: 4px 0 6px;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3vw, 38px);
+  line-height: 1.02;
+}
+.pbk-camp-drilldown-head p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.pbk-camp-drilldown-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  background: rgba(6, 8, 11, 0.55);
+}
+.pbk-camp-drilldown-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border-right: 1px solid var(--border-dim);
+  padding: var(--s-3);
+}
+.pbk-camp-drilldown-summary > div:last-child {
+  border-right: none;
+}
+.pbk-camp-drilldown-summary span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.pbk-camp-drilldown-summary strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 600;
+  line-height: 1;
+}
+.pbk-camp-drilldown-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: var(--s-4);
+}
+.pbk-camp-drilldown-list {
+  min-width: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.pbk-camp-drilldown-list h3 {
+  margin: 0 0 2px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.pbk-camp-drilldown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 132px);
+  gap: var(--s-3);
+  align-items: center;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+  background: rgba(6, 8, 11, 0.58);
+  padding: var(--s-3);
+}
+.pbk-camp-drilldown-row strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pbk-camp-drilldown-row span {
+  display: block;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pbk-camp-drilldown-rate {
+  display: grid;
+  gap: 6px;
+  text-align: right;
+}
+.pbk-camp-drilldown-rate > span {
+  color: var(--lime);
+  font-size: 12px;
+}
+.pbk-camp-drilldown-empty {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: var(--s-4);
+}
 .pbk-camp-toolbar {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(280px, auto) minmax(150px, auto) auto auto;
@@ -1553,12 +1678,29 @@
   .pbk-camp-toolbar {
     grid-template-columns: minmax(0, 1fr);
   }
+  .pbk-camp-drilldown-grid {
+    grid-template-columns: 1fr;
+  }
 }
 @media (max-width: 900px) {
   .pbk-campaign-hero-top,
+  .pbk-camp-drilldown-head,
   .pbk-wiz-foot {
     flex-direction: column;
     align-items: stretch;
+  }
+  .pbk-camp-drilldown-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pbk-camp-drilldown-summary > div {
+    border-top: 1px solid var(--border-dim);
+  }
+  .pbk-camp-drilldown-summary > div:nth-child(1),
+  .pbk-camp-drilldown-summary > div:nth-child(2) {
+    border-top: none;
+  }
+  .pbk-camp-drilldown-summary > div:nth-child(2n) {
+    border-right: none;
   }
   .pbk-wiz-stepper {
     grid-template-columns: 1fr;
@@ -1586,6 +1728,21 @@
 @media (max-width: 560px) {
   .pbk-campaign-hero {
     padding: var(--s-5) var(--s-4) var(--s-4);
+  }
+  .pbk-camp-drilldown-summary {
+    grid-template-columns: 1fr;
+  }
+  .pbk-camp-drilldown-summary > div {
+    border-right: none;
+  }
+  .pbk-camp-drilldown-summary > div:nth-child(2) {
+    border-top: 1px solid var(--border-dim);
+  }
+  .pbk-camp-drilldown-row {
+    grid-template-columns: 1fr;
+  }
+  .pbk-camp-drilldown-rate {
+    text-align: left;
   }
   .pbk-camp-grid {
     grid-template-columns: 1fr;

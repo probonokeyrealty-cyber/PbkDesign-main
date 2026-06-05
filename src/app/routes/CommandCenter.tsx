@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { CallFloorPanel } from '../components/CallFloorPanel';
@@ -10,6 +10,7 @@ import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index';
 import {
   controlRuntimeCall,
+  fetchLeadsRequest,
   fetchFounderWorkQueueRequest,
   fetchIntelligenceStreamRequest,
   fetchSystemSourceLabelsRequest,
@@ -893,12 +894,18 @@ export function CommandCenter() {
   );
   const [sourceConfidenceSource, setSourceConfidenceSource] = useState('client source fallback');
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
+  const [bridgeLeadRoster, setBridgeLeadRoster] = useState<RuntimeRecord[]>([]);
+  const [leadRosterSource, setLeadRosterSource] = useState('GET /api/leads pending');
   const announcedCallRef = useRef('');
   const reviewedCallRef = useRef('');
 
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
-  const leadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
+  const snapshotLeadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
+  const leadImports = useMemo(
+    () => (bridgeLeadRoster.length ? bridgeLeadRoster : snapshotLeadImports),
+    [bridgeLeadRoster, snapshotLeadImports]
+  );
   const fallbackActivityItems = Array.isArray(snapshot?.activity) ? snapshot.activity : [];
   const activityItems = intelligenceStreamItems || fallbackActivityItems;
   const visibleActivity = activityItems.slice(0, activityLimit);
@@ -991,6 +998,25 @@ export function CommandCenter() {
   useEffect(() => {
     setActivityLimit(8);
   }, [activityItems.length]);
+
+  const loadCommandLeadRoster = useCallback(async () => {
+    try {
+      const roster = await fetchLeadsRequest();
+      setBridgeLeadRoster(Array.isArray(roster) ? (roster as RuntimeRecord[]) : []);
+      setLeadRosterSource('GET /api/leads full roster');
+    } catch (rosterError) {
+      setBridgeLeadRoster([]);
+      setLeadRosterSource(
+        rosterError instanceof Error
+          ? `snapshot fallback: ${rosterError.message}`
+          : 'snapshot fallback'
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCommandLeadRoster();
+  }, [loadCommandLeadRoster]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1359,8 +1385,8 @@ export function CommandCenter() {
             </div>
           )}
           <DataSourceCaption
-            endpoint="snapshot.leadImports + snapshot.calls + snapshot.messages + snapshot.contracts"
-            note="stats ribbon only uses live runtime arrays"
+            endpoint="GET /api/leads + snapshot.calls + snapshot.messages + snapshot.contracts"
+            note={`${leadRosterSource}; non-lead stats use live runtime arrays`}
           />
         </section>
 
@@ -1497,7 +1523,13 @@ export function CommandCenter() {
               </div>
             )}
 
-            {isWidgetVisible('callFloor') && <CallFloorPanel leads={leadImports} calls={calls} />}
+            {isWidgetVisible('callFloor') && (
+              <CallFloorPanel
+                leads={leadImports}
+                calls={calls}
+                leadSourceEndpoint={leadRosterSource}
+              />
+            )}
 
             {isWidgetVisible('adminActivity') && (
               <section

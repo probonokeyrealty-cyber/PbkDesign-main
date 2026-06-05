@@ -111,6 +111,7 @@
     "test:command-battlefield-ranking": "node ./scripts/command-battlefield-ranking-smoke.mjs",
     "test:command-widgets-bridge": "node ./scripts/command-widgets-bridge-smoke.mjs",
     "test:founder-work-queue-bridge": "node ./scripts/founder-work-queue-bridge-smoke.mjs",
+    "test:command-center-lead-roster": "node ./scripts/command-center-lead-roster-smoke.mjs",
     "test:intelligence-stream-bridge": "node ./scripts/intelligence-stream-bridge-smoke.mjs",
     "test:system-source-labels-bridge": "node ./scripts/system-source-labels-bridge-smoke.mjs",
     "test:release-status-bridge": "node ./scripts/release-status-bridge-smoke.mjs",

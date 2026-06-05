@@ -155,10 +155,16 @@ function isActiveCall(call: BridgeRecord) {
 interface CallFloorPanelProps {
   leads: BridgeRecord[];
   calls: BridgeRecord[];
+  leadSourceEndpoint?: string;
   onSelectLead?: (lead: BridgeRecord) => void;
 }
 
-export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelProps) {
+export function CallFloorPanel({
+  leads,
+  calls,
+  leadSourceEndpoint = 'snapshot.leadImports',
+  onSelectLead,
+}: CallFloorPanelProps) {
   const [query, setQuery] = useState('');
   const [dialingId, setDialingId] = useState('');
   const [selectedLeadId, setSelectedLeadId] = useState('');
@@ -664,7 +670,7 @@ export function CallFloorPanel({ leads, calls, onSelectLead }: CallFloorPanelPro
       </div>
 
       <PbkDataSource
-        endpoint="snapshot.leadImports + POST /api/leads/:id/call + GET/POST /api/appointments"
+        endpoint={`${leadSourceEndpoint} + POST /api/leads/:id/call + GET/POST /api/appointments`}
         status="ships"
       />
 

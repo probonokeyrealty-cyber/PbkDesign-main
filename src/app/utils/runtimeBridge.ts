@@ -817,12 +817,16 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   if (fromHost?.endpoint) return fromHost;
 
+  if (isNetlifyHostedRuntimeShell()) {
+    // Production and deploy previews should always use the same-origin Netlify
+    // proxy first. It keeps the bridge API key server-side and avoids mobile
+    // browsers getting stuck on stale localhost/LAN/direct-Render settings.
+    return { endpoint: window.location.origin };
+  }
+
   const stored = readRuntimeConfigFromStorage();
   if (stored?.endpoint) {
     const localFallback = buildLocalBridgeFallback();
-    if (isNetlifyHostedRuntimeShell() && !stored.apiKey) {
-      return { endpoint: window.location.origin };
-    }
     if (
       localFallback &&
       !stored.apiKey &&
@@ -835,8 +839,6 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   const localFallback = buildLocalBridgeFallback();
   if (localFallback) return localFallback;
-
-  if (isNetlifyHostedRuntimeShell()) return { endpoint: window.location.origin };
 
   const envConfig = getEnvRuntimeConfig();
   if (envConfig?.endpoint) return envConfig;

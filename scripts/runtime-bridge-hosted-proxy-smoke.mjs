@@ -10,11 +10,23 @@ assert(
   'runtimeBridge must be able to identify Netlify-hosted production shells.',
 );
 
+const getRuntimeConfigStart = source.indexOf('export function getRuntimeConfig()');
+const getRuntimeConfigEnd = source.indexOf('function isAuthOptionalRuntimePath', getRuntimeConfigStart);
+const getRuntimeConfigBody =
+  getRuntimeConfigStart >= 0 && getRuntimeConfigEnd > getRuntimeConfigStart
+    ? source.slice(getRuntimeConfigStart, getRuntimeConfigEnd)
+    : '';
+const hostedProxyIndex = getRuntimeConfigBody.indexOf('if (isNetlifyHostedRuntimeShell())');
+const storageIndex = getRuntimeConfigBody.indexOf('readRuntimeConfigFromStorage()');
+const sameOriginReturnIndex = getRuntimeConfigBody.indexOf('return { endpoint: window.location.origin }');
 assert(
-  /if\s*\(\s*isNetlifyHostedRuntimeShell\(\)\s*\)\s*return\s*\{\s*endpoint:\s*window\.location\.origin\s*\}/.test(
-    source
-  ),
+  hostedProxyIndex >= 0 && sameOriginReturnIndex > hostedProxyIndex,
   'Netlify-hosted shell must default runtime calls to the same-origin bridge proxy.',
+);
+
+assert(
+  hostedProxyIndex >= 0 && storageIndex >= 0 && hostedProxyIndex < storageIndex,
+  'Netlify-hosted shell must prefer the mobile-safe same-origin proxy before stale browser storage.',
 );
 
 assert(

@@ -98,6 +98,7 @@
     "test:runtime-bridge-hosted-proxy": "node ./scripts/runtime-bridge-hosted-proxy-smoke.mjs",
     "test:root-shell-promotion": "node ./scripts/root-shell-promotion-smoke.mjs",
     "test:netlify-cache-headers": "node ./scripts/netlify-cache-headers-smoke.mjs",
+    "test:docker-render-config": "node ./scripts/docker-render-config-smoke.mjs",
     "test:campaigns-shell": "node ./scripts/campaigns-shell-smoke.mjs",
     "test:campaigns-prototype-modern": "node ./scripts/campaigns-prototype-modern-smoke.mjs",
     "test:agent-fleet-prototype-modern": "node ./scripts/agent-fleet-prototype-modern-smoke.mjs",

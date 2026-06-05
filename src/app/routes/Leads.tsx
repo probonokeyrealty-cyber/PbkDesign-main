@@ -17,6 +17,7 @@ import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchLeadFullRequest,
   fetchLeadLastCallRequest,
+  fetchLeadsRequest,
   patchLeadRequest,
   sendLeadContractRequest,
   startLeadCallRequest,
@@ -404,12 +405,8 @@ function buildLeadsStats(leads: BridgeRecord[]): LeadsStats {
 function LeadsSourceRail() {
   return (
     <div className="pbk-leads-source-rail" aria-label="Leads data sources">
-      <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.leadImports pipeline" />
-      <PbkDataSource
-        endpoint="GET /api/leads"
-        status="needs-wiring"
-        note="replace snapshot roster for full production list"
-      />
+      <PbkDataSource endpoint="GET /api/leads" status="ships" note="full lead roster" />
+      <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback" />
       <PbkDataSource endpoint="GET /api/leads/:id/full" status="ships" note="lead detail" />
       <PbkDataSource endpoint="GET /api/leads/:id/last-call" status="ships" note="call memory" />
       <PbkDataSource endpoint="PATCH /api/leads/:id" status="ships" note="CRM corrections" />
@@ -419,12 +416,12 @@ function LeadsSourceRail() {
   );
 }
 
-function LeadsStatRibbon({ stats }: { stats: LeadsStats }) {
+function LeadsStatRibbon({ stats, sourceLabel }: { stats: LeadsStats; sourceLabel: string }) {
   const cards = [
     {
       label: 'Bridge leads',
       value: String(stats.total),
-      detail: 'from runtime snapshot',
+      detail: sourceLabel,
       tone: 'sky',
     },
     {
@@ -464,11 +461,13 @@ function LeadsHero({
   loading,
   error,
   stats,
+  rosterSourceLabel,
   onRefresh,
 }: {
   loading: boolean;
   error: string | null | undefined;
   stats: LeadsStats;
+  rosterSourceLabel: string;
   onRefresh: () => void;
 }) {
   return (
@@ -484,8 +483,8 @@ function LeadsHero({
           </h1>
           <p>
             Seller pipeline, call memory, CRM corrections, and path-aware contract handoff in one
-            operator cockpit. The full-roster endpoint is labeled until this page switches off the
-            runtime snapshot feed.
+            operator cockpit. The seller roster is pulled from the bridge first, with the runtime
+            snapshot labeled as a fallback when the full roster is unavailable.
           </p>
         </div>
         <button type="button" className="pbk-leads-refresh" onClick={onRefresh} disabled={loading}>
@@ -493,7 +492,7 @@ function LeadsHero({
           {loading ? 'Refreshing' : 'Refresh leads'}
         </button>
       </div>
-      <LeadsStatRibbon stats={stats} />
+      <LeadsStatRibbon stats={stats} sourceLabel={rosterSourceLabel} />
       <LeadsSourceRail />
     </section>
   );
@@ -503,11 +502,13 @@ function LeadsPipelineRail({
   children,
   total,
   visible,
+  sourceNote,
   onLoadMore,
 }: {
   children: ReactNode;
   total: number;
   visible: number;
+  sourceNote: string;
   onLoadMore: () => void;
 }) {
   return (
@@ -518,7 +519,7 @@ function LeadsPipelineRail({
           <h2>Seller roster</h2>
           <p>Tap a lead to load bridge detail and call memory.</p>
         </div>
-        <PbkDataSource endpoint="GET /state" status="ships" note="snapshot.leadImports" />
+        <PbkDataSource endpoint="GET /api/leads" status="ships" note={sourceNote} />
       </div>
       {children}
       {total > visible && (
@@ -548,10 +549,15 @@ const softPanelClass =
 
 export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
-  const leads = useMemo(
+  const snapshotLeads = useMemo(
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
     [snapshot?.leadImports]
   );
+  const [leadRoster, setLeadRoster] = useState<BridgeRecord[]>([]);
+  const [leadRosterStatus, setLeadRosterStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
+    'idle'
+  );
+  const [leadRosterError, setLeadRosterError] = useState('');
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [leadDetail, setLeadDetail] = useState<BridgeRecord | null>(null);
   const [lastCall, setLastCall] = useState<BridgeRecord | null>(null);
@@ -574,6 +580,10 @@ export function Leads() {
   const reloadInFlightRef = useRef(false);
   const leadActionLockRef = useRef(false);
   const isLeadActionBusy = saving || Boolean(leadActionPending);
+  const leads = useMemo(
+    () => (leadRoster.length ? leadRoster : snapshotLeads),
+    [leadRoster, snapshotLeads]
+  );
 
   const selectedLead = useMemo(
     () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
@@ -604,6 +614,32 @@ export function Leads() {
     setLeadActionPending('');
     setSaving(false);
   }, []);
+  const loadLeadRoster = useCallback(async () => {
+    setLeadRosterStatus('loading');
+    setLeadRosterError('');
+    try {
+      const roster = await fetchLeadsRequest();
+      setLeadRoster(Array.isArray(roster) ? (roster as BridgeRecord[]) : []);
+      setLeadRosterStatus('ready');
+    } catch (nextError) {
+      setLeadRoster([]);
+      setLeadRosterStatus('error');
+      setLeadRosterError(
+        nextError instanceof Error ? nextError.message : 'GET /api/leads unavailable.'
+      );
+    }
+  }, []);
+  const rosterSourceLabel =
+    leadRosterStatus === 'ready'
+      ? 'GET /api/leads full roster'
+      : leadRosterStatus === 'loading'
+        ? 'loading GET /api/leads'
+        : leadRosterStatus === 'error'
+          ? 'snapshot fallback'
+          : 'pending full roster';
+  const handleRefreshLeads = useCallback(() => {
+    void Promise.all([refresh().catch(() => null), loadLeadRoster()]);
+  }, [loadLeadRoster, refresh]);
   const leadActivity = Array.isArray(activeLead?.activity)
     ? (activeLead.activity as BridgeRecord[])
     : Array.isArray(snapshot?.activity)
@@ -624,8 +660,15 @@ export function Leads() {
       : [];
 
   useEffect(() => {
-    if (!selectedLeadId && leads[0]) setSelectedLeadId(getLeadId(leads[0]));
+    if (!leads.length) return;
+    if (!selectedLeadId || !leads.some((lead) => getLeadId(lead) === selectedLeadId)) {
+      setSelectedLeadId(getLeadId(leads[0]));
+    }
   }, [leads, selectedLeadId]);
+
+  useEffect(() => {
+    void loadLeadRoster();
+  }, [loadLeadRoster]);
 
   useEffect(() => {
     if (!selectedLeadId) return;
@@ -679,7 +722,7 @@ export function Leads() {
       setLeadDetail(unwrapLeadResponse(fullResponse));
       setLastCall(callResponse as BridgeRecord | null);
       setDetailStatus({ tone: 'success', text: 'Lead refreshed.' });
-      await refresh().catch(() => null);
+      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
       setDetailStatus({
         tone: 'error',
@@ -691,7 +734,7 @@ export function Leads() {
       reloadInFlightRef.current = false;
       setReloading(false);
     }
-  }, [refresh, selectedLeadId]);
+  }, [loadLeadRoster, refresh, selectedLeadId]);
 
   const reloadLeadDetail = useCallback(() => {
     if (reloadTimerRef.current) window.clearTimeout(reloadTimerRef.current);
@@ -760,7 +803,7 @@ export function Leads() {
         title: 'Lead updated',
         desc: `${getSellerName(lead)} was saved to the bridge.`,
       });
-      await refresh().catch(() => null);
+      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
       setDetailStatus({
         tone: 'error',
@@ -813,7 +856,7 @@ export function Leads() {
           ? `${getSellerName(lead)} needs approval before Telnyx dials.`
           : `${getSellerName(lead)} was handed to the Telnyx call lane.`,
       });
-      await refresh().catch(() => null);
+      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
       showUiToast({
         tone: 'error',
@@ -923,7 +966,7 @@ export function Leads() {
             ? text(response.error, 'Contract request failed.')
             : 'Contract request captured. Activity is attached to this lead.'
       );
-      await Promise.all([reloadLeadDetailNow(), refresh().catch(() => null)]);
+      await Promise.all([reloadLeadDetailNow(), refresh().catch(() => null), loadLeadRoster()]);
     } catch (nextError) {
       const message =
         nextError instanceof Error ? `Contract failed: ${nextError.message}` : 'Contract failed.';
@@ -947,10 +990,11 @@ export function Leads() {
   return (
     <div className="pbk-leads-surface">
       <LeadsHero
-        loading={loading}
+        loading={loading || leadRosterStatus === 'loading'}
         error={error}
         stats={leadsStats}
-        onRefresh={() => void refresh()}
+        rosterSourceLabel={rosterSourceLabel}
+        onRefresh={handleRefreshLeads}
       />
 
       {error && (
@@ -960,10 +1004,21 @@ export function Leads() {
         </div>
       )}
 
+      {leadRosterStatus === 'error' && leadRosterError && (
+        <div
+          className="pbk-leads-status border-amber-300/25 bg-amber-500/10 text-amber-100"
+          aria-live="polite"
+        >
+          <AlertCircle size={15} aria-hidden="true" />
+          GET /api/leads unavailable, using runtime snapshot fallback: {leadRosterError}
+        </div>
+      )}
+
       <div className="pbk-leads-layout">
         <LeadsPipelineRail
           total={leads.length}
           visible={visibleLeads.length}
+          sourceNote={rosterSourceLabel}
           onLoadMore={() => setDisplayLimit((current) => current + 50)}
         >
           <div className="leads-mobile-cards">

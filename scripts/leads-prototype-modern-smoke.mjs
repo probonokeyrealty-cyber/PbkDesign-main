@@ -55,12 +55,12 @@ assert(
 });
 
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/state"[\s\S]*status="ships"/.test(leads),
-  'Leads must mark GET /state as the shipped lead snapshot source.'
+  /PbkDataSource[\s\S]*endpoint="GET \/state"[\s\S]*snapshot fallback/.test(leads),
+  'Leads must mark GET /state as the fallback lead snapshot source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/leads"[\s\S]*status="needs-wiring"/.test(leads),
-  'Leads must honestly mark GET /api/leads as the full-roster wiring upgrade.'
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/leads"[\s\S]*status="ships"/.test(leads),
+  'Leads must mark GET /api/leads as the shipped full-roster source.'
 );
 assert(
   /PbkDataSource[\s\S]*endpoint="GET \/api\/leads\/:id\/full"[\s\S]*status="ships"/.test(leads),
@@ -86,7 +86,7 @@ assert(
   dataMap.includes('GET /api/leads/:id/full') &&
     dataMap.includes('POST /api/contract/send') &&
     dataMap.includes('GET /api/leads'),
-  'Bridge data map must document Leads runtime sources and full-roster gap.'
+  'Bridge data map must document Leads runtime sources and shipped full-roster endpoint.'
 );
 
 [

@@ -11,6 +11,8 @@ import { PbkDataSource, PbkPanel, PbkPulseDot } from '../../components/pbk/index
 import {
   controlRuntimeCall,
   fetchWebSearchStatusRequest,
+  updateRuntimeSettingsRequest,
+  type RuntimeSnapshot,
   updateAdminTaskDecision,
   updateApprovalDecision,
 } from '../utils/runtimeBridge';
@@ -163,6 +165,34 @@ const DEFAULT_COMMAND_WIDGETS = COMMAND_WIDGETS.reduce(
   (prefs, widget) => ({ ...prefs, [widget.id]: true }),
   {} as Record<CommandWidgetId, boolean>
 );
+type CommandWidgetPrefs = Record<CommandWidgetId, boolean>;
+
+function normalizeCommandWidgetPrefs(value: unknown): CommandWidgetPrefs | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  let foundWidget = false;
+  const next = { ...DEFAULT_COMMAND_WIDGETS };
+  for (const widget of COMMAND_WIDGETS) {
+    const visible = record[widget.id];
+    if (typeof visible === 'boolean') {
+      next[widget.id] = visible;
+      foundWidget = true;
+    }
+  }
+  return foundWidget ? next : null;
+}
+
+function areCommandWidgetPrefsEqual(left: CommandWidgetPrefs, right: CommandWidgetPrefs) {
+  return COMMAND_WIDGETS.every((widget) => left[widget.id] === right[widget.id]);
+}
+
+function getBridgeCommandWidgetPrefs(snapshot?: RuntimeSnapshot | null) {
+  const settings =
+    snapshot?.settings && typeof snapshot.settings === 'object' ? snapshot.settings : {};
+  const ui =
+    settings.ui && typeof settings.ui === 'object' ? (settings.ui as Record<string, unknown>) : {};
+  return normalizeCommandWidgetPrefs(ui.commandCenterWidgets);
+}
 
 function readCommandWidgetPrefs() {
   if (typeof window === 'undefined') return DEFAULT_COMMAND_WIDGETS;
@@ -170,18 +200,19 @@ function readCommandWidgetPrefs() {
     const parsed = JSON.parse(
       window.localStorage.getItem(COMMAND_WIDGET_PREFS_KEY) || '{}'
     ) as Partial<Record<CommandWidgetId, boolean>> | null;
-    return {
-      ...DEFAULT_COMMAND_WIDGETS,
-      ...(parsed || {}),
-    };
+    return normalizeCommandWidgetPrefs(parsed) || DEFAULT_COMMAND_WIDGETS;
   } catch {
     return DEFAULT_COMMAND_WIDGETS;
   }
 }
 
-function writeCommandWidgetPrefs(prefs: Record<CommandWidgetId, boolean>) {
+function writeCommandWidgetPrefs(prefs: CommandWidgetPrefs) {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem(COMMAND_WIDGET_PREFS_KEY, JSON.stringify(prefs));
+    try {
+      window.localStorage.setItem(COMMAND_WIDGET_PREFS_KEY, JSON.stringify(prefs));
+    } catch {
+      // localStorage is a fallback, so private-mode failures should not block bridge writes.
+    }
   }
   return prefs;
 }
@@ -665,6 +696,7 @@ export function CommandCenter() {
   );
   const [activityLimit, setActivityLimit] = useState(8);
   const [widgetPrefs, setWidgetPrefs] = useState(() => readCommandWidgetPrefs());
+  const [widgetPrefsSource, setWidgetPrefsSource] = useState('Local fallback');
   const [qualityReviewCall, setQualityReviewCall] = useState<Record<string, unknown> | null>(null);
   const announcedCallRef = useRef('');
   const reviewedCallRef = useRef('');
@@ -711,17 +743,46 @@ export function CommandCenter() {
   );
 
   const toggleWidget = (id: CommandWidgetId) => {
-    setWidgetPrefs((current) =>
-      writeCommandWidgetPrefs({
-        ...current,
-        [id]: current[id] === false,
+    const next = writeCommandWidgetPrefs({
+      ...widgetPrefs,
+      [id]: widgetPrefs[id] === false,
+    });
+    setWidgetPrefs(next);
+    updateRuntimeSettingsRequest({
+      ui: { commandCenterWidgets: next },
+      actor: 'CommandCenter',
+    })
+      .then(() => {
+        setWidgetPrefsSource('Bridge settings');
+        return refresh();
       })
-    );
+      .catch((nextError) => {
+        setWidgetPrefsSource('Local fallback');
+        showUiToast({
+          tone: 'warning',
+          title: 'Widget layout saved locally',
+          desc:
+            nextError instanceof Error
+              ? `${nextError.message}. Using localStorage:pbk:command-center:widgets fallback.`
+              : 'Bridge settings were unavailable. Using localStorage:pbk:command-center:widgets fallback.',
+        });
+      });
   };
 
   useEffect(() => {
     setActivityLimit(8);
   }, [activityItems.length]);
+
+  useEffect(() => {
+    const bridgePrefs = getBridgeCommandWidgetPrefs(snapshot);
+    if (!bridgePrefs) return;
+    setWidgetPrefsSource('Bridge settings');
+    setWidgetPrefs((current) =>
+      areCommandWidgetPrefsEqual(current, bridgePrefs)
+        ? current
+        : writeCommandWidgetPrefs(bridgePrefs)
+    );
+  }, [snapshot]);
 
   useEffect(() => {
     if (!actionStatus) return undefined;
@@ -1043,7 +1104,7 @@ export function CommandCenter() {
             <div>
               <h2 className="text-sm font-semibold text-slate-100">Widget controls</h2>
               <p className="text-xs text-slate-500">
-                Personalise this dashboard locally without changing bridge data or operator policy.
+                Personalise this dashboard across operators without changing runtime policy.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1054,6 +1115,8 @@ export function CommandCenter() {
                     key={widget.id}
                     type="button"
                     onClick={() => toggleWidget(widget.id)}
+                    data-source="PATCH /api/settings ui.commandCenterWidgets"
+                    data-fallback="localStorage:pbk:command-center:widgets"
                     className={[
                       'rounded-full border px-3 py-1.5 text-[11px] font-semibold transition',
                       active
@@ -1069,8 +1132,8 @@ export function CommandCenter() {
             </div>
           </div>
           <DataSourceCaption
-            endpoint="localStorage pbk:command-center:widgets"
-            note="operator display preference only"
+            endpoint="PATCH /api/settings ui.commandCenterWidgets"
+            note={`${widgetPrefsSource}; localStorage:pbk:command-center:widgets fallback`}
           />
         </PbkPanel>
 

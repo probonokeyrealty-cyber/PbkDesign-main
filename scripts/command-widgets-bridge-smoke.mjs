@@ -1,0 +1,58 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const root = process.cwd();
+const read = (path) => readFileSync(resolve(root, path), 'utf8');
+
+const packageJson = read('package.json');
+const commandCenter = read('src/app/routes/CommandCenter.tsx');
+const dataMap = read('docs/modern-shell-bridge-data-map.md');
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+assert(
+  packageJson.includes('"test:command-widgets-bridge"'),
+  'package.json must expose test:command-widgets-bridge.'
+);
+
+assert(
+  /updateRuntimeSettingsRequest/.test(commandCenter),
+  'Command Center widget controls must persist through updateRuntimeSettingsRequest.'
+);
+
+assert(
+  /settings\.ui\.commandCenterWidgets|ui\.commandCenterWidgets/.test(commandCenter),
+  'Command Center must hydrate widget prefs from settings.ui.commandCenterWidgets.'
+);
+
+assert(
+  /ui:\s*\{\s*commandCenterWidgets/.test(commandCenter),
+  'Command Center must write widget prefs under settings.ui.commandCenterWidgets.'
+);
+
+assert(
+  /data-source="PATCH \/api\/settings ui\.commandCenterWidgets"/.test(commandCenter),
+  'Widget controls must annotate bridge writes as PATCH /api/settings ui.commandCenterWidgets.'
+);
+
+assert(
+  /data-fallback="localStorage:pbk:command-center:widgets"/.test(commandCenter) &&
+    /Local fallback|Bridge settings|bridge unavailable/i.test(commandCenter),
+  'Widget controls must retain and label the localStorage fallback.'
+);
+
+assert(
+  /Personalise this dashboard across operators/.test(commandCenter),
+  'Widget controls copy must no longer describe personalization as local-only.'
+);
+
+assert(
+  /Command Center widget controls[\s\S]*settings\.ui\.commandCenterWidgets[\s\S]*Ships/.test(
+    dataMap
+  ),
+  'Data map must mark Command Center widget controls as shipped through bridge settings.'
+);
+
+console.log('command-widgets-bridge-smoke: ok');

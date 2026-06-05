@@ -4,6 +4,11 @@ import { LeftPanel } from './components/LeftPanel';
 import { RightPanel } from './components/RightPanel';
 import { AnalyzerTab } from './components/AnalyzerTab';
 import { CallModeTab } from './components/CallModeTab';
+import {
+  DealAnalyzerCommandHeader,
+  DealAnalyzerMobileRail,
+  type AnalyzerTabId,
+} from './components/DealAnalyzerChrome';
 import { PathDeliverables } from './components/PathDeliverables';
 import { CRMFeatures } from './components/CRMFeatures';
 import { DealData, QuickDocumentType } from './types';
@@ -34,6 +39,7 @@ import {
 } from './utils/analyzerStorage';
 import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
+import { applyPbkTheme, readPbkPrefs, savePbkPrefs } from './utils/uiPrefs';
 
 const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'address',
@@ -59,7 +65,7 @@ const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'repairs',
 ];
 
-type AppTab = 'analyzer' | 'callmode' | 'documents' | 'crm';
+type AppTab = AnalyzerTabId;
 
 const initialDealData: DealData = {
   address: '',
@@ -150,13 +156,25 @@ type AppProps = {
   engineOnly?: boolean;
 };
 
+function getInitialDarkMode() {
+  if (typeof window === 'undefined') return true;
+  try {
+    const legacyMode = window.localStorage.getItem('pbk-dark-mode');
+    if (legacyMode === 'true') return true;
+    if (legacyMode === 'false') return false;
+    return readPbkPrefs().theme !== 'light';
+  } catch {
+    return document.documentElement.classList.contains('dark');
+  }
+}
+
 export default function App({ engineOnly = false }: AppProps) {
   const [deal, setDeal] = useState<DealData>(initialDealData);
   const [activeTab, setActiveTab] = useState<AppTab>('analyzer');
   const [activeDocument, setActiveDocument] = useState<QuickDocumentType>('report');
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(getInitialDarkMode);
   const [branding, setBranding] = useState<PBKBranding>(DEFAULT_BRANDING);
   const [exportStatus, setExportStatus] = useState(
     'Select a path and complete seller info to generate.'
@@ -283,10 +301,14 @@ export default function App({ engineOnly = false }: AppProps) {
       }
     }
 
-    // Check for dark mode preference
-    const savedDarkMode = localStorage.getItem('pbk-dark-mode');
-    if (savedDarkMode === 'true') {
-      setDarkMode(true);
+    try {
+      const savedDarkMode = localStorage.getItem('pbk-dark-mode');
+      const prefsTheme = readPbkPrefs().theme;
+      setDarkMode(
+        savedDarkMode === 'true' || (savedDarkMode !== 'false' && prefsTheme !== 'light')
+      );
+    } catch (e) {
+      console.error('Failed to load theme preference', e);
     }
 
     const savedBranding = localStorage.getItem(BRANDING_STORAGE_KEY);
@@ -376,11 +398,9 @@ export default function App({ engineOnly = false }: AppProps) {
 
   // Apply dark mode class to body
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    const nextTheme = darkMode ? 'dark' : 'light';
+    applyPbkTheme(nextTheme);
+    savePbkPrefs({ theme: nextTheme });
     localStorage.setItem('pbk-dark-mode', darkMode.toString());
   }, [darkMode]);
 
@@ -668,6 +688,10 @@ export default function App({ engineOnly = false }: AppProps) {
     setRightPanelOpen(true);
   };
 
+  const handleOpenWorkflowDrawer = () => {
+    setRightPanelOpen(true);
+  };
+
   const handlePreview = () => {
     const popup = openMasterPackageWindow(activeDeal, branding, false);
     if (!popup) {
@@ -910,7 +934,7 @@ export default function App({ engineOnly = false }: AppProps) {
     <div
       className={[
         engineOnly ? 'relative h-full w-full' : 'h-screen w-screen',
-        'overflow-hidden bg-[#EDF0F7] dark:bg-slate-950',
+        'pbk-deal-surface overflow-hidden bg-[#EDF0F7] dark:bg-slate-950',
       ].join(' ')}
     >
       {!engineOnly && (
@@ -948,53 +972,22 @@ export default function App({ engineOnly = false }: AppProps) {
         <LeftPanel deal={activeDeal} isOpen={leftPanelOpen} />
 
         {/* Main Content */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-          {/* Tabs */}
-          <div className="flex bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 overflow-x-auto flex-shrink-0">
-            <button
-              onClick={() => setActiveTab('analyzer')}
-              className={`px-4 py-3 text-[12px] font-medium border-b-2 transition-all whitespace-nowrap ${
-                activeTab === 'analyzer'
-                  ? 'text-blue-500 border-blue-500'
-                  : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
-            >
-              Analyzer
-            </button>
-            <button
-              onClick={() => setActiveTab('callmode')}
-              className={`px-4 py-3 text-[12px] font-medium border-b-2 transition-all whitespace-nowrap ${
-                activeTab === 'callmode'
-                  ? 'text-blue-500 border-blue-500'
-                  : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
-            >
-              Call Mode
-            </button>
-            <button
-              onClick={() => setActiveTab('documents')}
-              className={`px-4 py-3 text-[12px] font-medium border-b-2 transition-all whitespace-nowrap ${
-                activeTab === 'documents'
-                  ? 'text-blue-500 border-blue-500'
-                  : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
-            >
-              Documents
-            </button>
-            <button
-              onClick={() => setActiveTab('crm')}
-              className={`px-4 py-3 text-[12px] font-medium border-b-2 transition-all whitespace-nowrap ${
-                activeTab === 'crm'
-                  ? 'text-blue-500 border-blue-500'
-                  : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-300'
-              }`}
-            >
-              CRM Features
-            </button>
-          </div>
+        <div className="relative flex-1 min-w-0 flex flex-col overflow-hidden">
+          <DealAnalyzerCommandHeader
+            deal={activeDeal}
+            selectedPath={activeSelectedPath}
+            activeTab={activeTab}
+            analyzeStatus={analyzeStatus}
+            onTabChange={setActiveTab}
+            onOpenSnapshot={() => setLeftPanelOpen(true)}
+            onOpenWorkflow={handleOpenWorkflowDrawer}
+            onAnalyze={() => void handleAnalyzeDeal()}
+            onSaveDeal={() => void handleSaveDeal()}
+            onOpenDocuments={() => handleOpenDocuments('report')}
+          />
 
           {/* Tab Content */}
-          <div className="flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
+          <div className="pbk-deal-content pbk-deal-content-with-mobile-rail flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
             {activeTab === 'analyzer' && (
               <AnalyzerTab
                 deal={activeDeal}
@@ -1039,6 +1032,14 @@ export default function App({ engineOnly = false }: AppProps) {
               <CRMFeatures deal={activeDeal} onLoadDeal={handleLoadSavedDeal} />
             )}
           </div>
+          <DealAnalyzerMobileRail
+            deal={activeDeal}
+            selectedPath={activeSelectedPath}
+            onOpenSnapshot={() => setLeftPanelOpen(true)}
+            onOpenWorkflow={handleOpenWorkflowDrawer}
+            onAnalyze={() => void handleAnalyzeDeal()}
+            onTabChange={setActiveTab}
+          />
         </div>
 
         <RightPanel

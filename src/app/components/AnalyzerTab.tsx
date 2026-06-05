@@ -9,6 +9,7 @@ import { HelpTooltip } from './HelpTooltip';
 import { formatCurrency } from '../utils/formatting';
 import { calculateARV } from '../utils/dealCalculations';
 import { getAnalyzeReadiness } from '../utils/pbk';
+import { PbkDataSource } from '../../components/pbk/index';
 
 interface AnalyzerTabProps {
   deal: DealData;
@@ -101,8 +102,8 @@ export function AnalyzerTab({
           };
 
   return (
-    <div className="p-3.5">
-      <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+    <div className="pbk-analyzer-main p-3.5">
+      <div className="pbk-analyzer-card pbk-analyzer-hero bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
@@ -287,11 +288,16 @@ export function AnalyzerTab({
             />
           </div>
         </div>
+        <PbkDataSource
+          endpoint="POST /api/analyzeDeal + local analyzer formulas"
+          status="ships"
+          note="bridge sync with deterministic local fallback"
+        />
       </div>
 
       {deal.type === 'house' && (
         <>
-          <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+          <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
               <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
@@ -434,7 +440,7 @@ export function AnalyzerTab({
 
       {deal.type === 'land' && <LandAnalysis deal={deal} onDealChange={onDealChange} />}
 
-      <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
           <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
@@ -496,7 +502,7 @@ export function AnalyzerTab({
       </div>
 
       {arv > 0 && (
-        <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+        <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
             <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">

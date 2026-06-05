@@ -35,7 +35,7 @@ export function RightPanel({
     <aside
       className={`
         fixed md:relative top-[54px] md:top-0 right-0 bottom-0 z-40
-        w-[300px] bg-white/96 dark:bg-slate-900/96 border-l border-gray-200 dark:border-slate-700
+        pbk-analyzer-workflow-panel w-[300px] bg-white/96 dark:bg-slate-900/96 border-l border-gray-200 dark:border-slate-700
         overflow-y-auto p-3 transition-transform duration-250 backdrop-blur-lg
         ${isOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
       `}

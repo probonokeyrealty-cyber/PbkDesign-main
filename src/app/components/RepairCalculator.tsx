@@ -30,10 +30,12 @@ export function RepairCalculator({ onRepairChange }: RepairCalculatorProps) {
   };
 
   const calculateTotals = (selected: Set<string>) => {
-    let low = 0, mid = 0, high = 0;
-    
-    selected.forEach(id => {
-      const item = REPAIR_ITEMS.find(r => r.id === id);
+    let low = 0,
+      mid = 0,
+      high = 0;
+
+    selected.forEach((id) => {
+      const item = REPAIR_ITEMS.find((r) => r.id === id);
       if (item) {
         low += item.low;
         mid += item.mid;
@@ -56,7 +58,17 @@ export function RepairCalculator({ onRepairChange }: RepairCalculatorProps) {
     const commonRepairs = {
       low: ['paint', 'landscaping', 'debris', 'water-heater'],
       mid: ['paint', 'flooring', 'kitchen-cosmetic', 'bath-cosmetic', 'landscaping'],
-      high: ['roof', 'hvac', 'kitchen', 'bath', 'flooring', 'paint', 'plumbing-full', 'electric', 'foundation'],
+      high: [
+        'roof',
+        'hvac',
+        'kitchen',
+        'bath',
+        'flooring',
+        'paint',
+        'plumbing-full',
+        'electric',
+        'foundation',
+      ],
     };
 
     const newSelected = new Set(commonRepairs[level]);
@@ -67,21 +79,21 @@ export function RepairCalculator({ onRepairChange }: RepairCalculatorProps) {
 
   const totals = {
     low: Array.from(selectedItems).reduce((sum, id) => {
-      const item = REPAIR_ITEMS.find(r => r.id === id);
+      const item = REPAIR_ITEMS.find((r) => r.id === id);
       return sum + (item?.low || 0);
     }, 0),
     mid: Array.from(selectedItems).reduce((sum, id) => {
-      const item = REPAIR_ITEMS.find(r => r.id === id);
+      const item = REPAIR_ITEMS.find((r) => r.id === id);
       return sum + (item?.mid || 0);
     }, 0),
     high: Array.from(selectedItems).reduce((sum, id) => {
-      const item = REPAIR_ITEMS.find(r => r.id === id);
+      const item = REPAIR_ITEMS.find((r) => r.id === id);
       return sum + (item?.high || 0);
     }, 0),
   };
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+    <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
       <div className="flex items-center gap-2 mb-3">
         <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
         <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
@@ -190,7 +202,17 @@ export function RepairCalculator({ onRepairChange }: RepairCalculatorProps) {
         </div>
         <div className="bg-gray-50 dark:bg-slate-900 rounded-lg p-3 text-center">
           <div className="text-[16px] font-semibold text-gray-900 dark:text-gray-100">
-            {noRepairs ? 'No Repairs' : totals.mid === 0 ? 'C3' : totals.mid < 5000 ? 'C3' : totals.mid < 20000 ? 'C4' : totals.mid < 50000 ? 'C5' : 'C6'}
+            {noRepairs
+              ? 'No Repairs'
+              : totals.mid === 0
+                ? 'C3'
+                : totals.mid < 5000
+                  ? 'C3'
+                  : totals.mid < 20000
+                    ? 'C4'
+                    : totals.mid < 50000
+                      ? 'C5'
+                      : 'C6'}
           </div>
           <div className="text-[9.5px] text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide mt-0.5">
             Condition

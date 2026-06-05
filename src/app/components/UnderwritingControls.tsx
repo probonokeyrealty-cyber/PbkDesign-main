@@ -88,8 +88,7 @@ export function UnderwritingControls({ deal, onDealChange }: UnderwritingControl
     assignFeePct: deal.underwriting?.assignFeePct || 30,
   };
 
-  const grossSpread =
-    deal.price > 0 && deal.maoRBP > 0 ? Math.max(0, deal.maoRBP - deal.price) : 0;
+  const grossSpread = deal.price > 0 && deal.maoRBP > 0 ? Math.max(0, deal.maoRBP - deal.price) : 0;
   const projectedAssignment =
     grossSpread > 0 ? Math.round(grossSpread * (underwriting.assignFeePct / 100)) : 0;
   const maoAfterRepairs =
@@ -97,8 +96,10 @@ export function UnderwritingControls({ deal, onDealChange }: UnderwritingControl
       ? Math.max(
           0,
           Math.round(
-            deal.arv * (underwriting.maoRepairPct / 100) - (deal.repairs.mid || 0) - (deal.fee || 8000),
-          ),
+            deal.arv * (underwriting.maoRepairPct / 100) -
+              (deal.repairs.mid || 0) -
+              (deal.fee || 8000)
+          )
         )
       : 0;
 
@@ -112,7 +113,7 @@ export function UnderwritingControls({ deal, onDealChange }: UnderwritingControl
   };
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+    <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
       <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
@@ -127,17 +128,23 @@ export function UnderwritingControls({ deal, onDealChange }: UnderwritingControl
       </div>
 
       <div className="text-[11.5px] leading-5 text-gray-500 dark:text-gray-400 mb-4">
-        This restores the v5 underwriting knobs inside the modern shell. Defaults stay aligned to the current PBK engine until you intentionally change them.
+        This restores the v5 underwriting knobs inside the modern shell. Defaults stay aligned to
+        the current PBK engine until you intentionally change them.
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-2 xl:grid-cols-4">
         {MATH_HELP.map((item) => (
-          <div key={item.label} className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-900">
+          <div
+            key={item.label}
+            className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-900"
+          >
             <div className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <span>{item.label}</span>
               <HelpTooltip text={item.text} />
             </div>
-            <div className="mt-2 text-[13px] font-semibold text-gray-900 dark:text-gray-100">{item.value}</div>
+            <div className="mt-2 text-[13px] font-semibold text-gray-900 dark:text-gray-100">
+              {item.value}
+            </div>
           </div>
         ))}
       </div>

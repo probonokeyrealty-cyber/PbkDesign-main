@@ -7,12 +7,11 @@ interface LeftPanelProps {
 }
 
 export function LeftPanel({ deal, isOpen }: LeftPanelProps) {
-
   return (
     <div
       className={`
         fixed md:relative top-[54px] md:top-0 left-0 bottom-0 z-40
-        w-[224px] bg-white dark:bg-slate-900/95 border-r border-gray-200 dark:border-slate-700
+        pbk-analyzer-side-panel w-[224px] bg-white dark:bg-slate-900/95 border-r border-gray-200 dark:border-slate-700
         overflow-y-auto p-3 transition-transform duration-250
         ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         backdrop-blur-lg
@@ -24,7 +23,9 @@ export function LeftPanel({ deal, isOpen }: LeftPanelProps) {
           Property
         </div>
         <div className="flex justify-between gap-1 mb-1 items-start">
-          <span className="text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0">Address</span>
+          <span className="text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0">
+            Address
+          </span>
           <span className="text-[11px] font-semibold text-gray-900 dark:text-gray-100 text-right break-words">
             {deal.address || '—'}
           </span>

@@ -260,7 +260,7 @@ export function CallModeTab({
 
   return (
     <div className="p-3.5">
-      <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-1 h-3 bg-purple-500 rounded-sm"></div>
@@ -340,7 +340,7 @@ export function CallModeTab({
 
       <LiveDealTrackerPanel deal={deal} activePath={activePath} />
 
-      <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
           <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">
@@ -368,7 +368,7 @@ export function CallModeTab({
         canonicalPath={activePath}
       />
 
-      <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
+      <div className="pbk-analyzer-card bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-4 mb-3 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-1 h-3 bg-blue-500 rounded-sm"></div>
           <h3 className="text-[10px] font-bold uppercase tracking-wide text-blue-500">

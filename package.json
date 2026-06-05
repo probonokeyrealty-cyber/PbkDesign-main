@@ -123,6 +123,7 @@
     "test:shell-global-search-bridge": "node ./scripts/shell-global-search-bridge-smoke.mjs",
     "test:shell-favorites-bridge": "node ./scripts/shell-favorites-bridge-smoke.mjs",
     "test:shell-prefs-bridge": "node ./scripts/shell-prefs-bridge-smoke.mjs",
+    "test:deal-analyzer-modern-mobile": "node ./scripts/deal-analyzer-modern-mobile-smoke.mjs",
     "validate:scripts": "node ./scripts/validate-package-scripts.mjs",
     "test:load:bridge": "node ./scripts/load-bridge-smoke.mjs",
     "test:tooling": "node ./scripts/tooling-verify.mjs",

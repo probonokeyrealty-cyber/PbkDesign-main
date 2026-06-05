@@ -28,6 +28,7 @@ import {
   createCampaignRequest,
   fetchCampaignDrilldownRequest,
   fetchCampaignLeadSourcesRequest,
+  fetchCampaignRankedTemplatesRequest,
   fetchCampaignsRequest,
   fetchReplyTemplatesRequest,
   patchCampaignRequest,
@@ -1108,8 +1109,8 @@ function CampaignWizard({
               Pick a <em>template</em>.
             </h3>
             <p>
-              Starter copy comes from the real reply-template catalog. Campaign-specific template
-              ranking is called out below until Mastra owns that model.
+              Starter copy is ranked by the campaign bridge using channel, lead source, and recorded
+              campaign outcomes. The generic reply catalog remains the fallback source.
             </p>
             {templateStatus === 'loading' && (
               <div className="grid gap-3 sm:grid-cols-2">
@@ -1155,14 +1156,14 @@ function CampaignWizard({
             {templateStatus === 'ready' && templateOptions.length === 0 && (
               <PbkEmpty
                 title="No reply templates returned"
-                description="Use custom copy for now. Campaign-specific template ranking needs Mastra wiring."
+                description="Use custom copy for now. The bridge returned no ranked or catalog templates."
               />
             )}
             <PbkDataSource endpoint="GET /api/replies/templates" status="ships" />
             <PbkDataSource
               endpoint="GET /api/campaigns/templates/ranked"
-              status="needs-wiring"
-              note="needed for campaign-specific performance ranking"
+              status="ships"
+              note="campaign-specific performance ranking"
             />
 
             <div className="mt-4 grid gap-4">
@@ -1388,15 +1389,25 @@ export function Campaigns() {
     async (channel = draft.channel) => {
       setTemplateStatus('loading');
       try {
-        const response = await fetchReplyTemplatesRequest({ channel });
+        const response = await fetchCampaignRankedTemplatesRequest({
+          channel,
+          leadSource: draft.leadSource,
+          limit: 8,
+        });
         setTemplates(response.templates || null);
         setTemplateStatus('ready');
       } catch {
-        setTemplates(null);
-        setTemplateStatus('error');
+        try {
+          const fallbackResponse = await fetchReplyTemplatesRequest({ channel });
+          setTemplates(fallbackResponse.templates || null);
+          setTemplateStatus('ready');
+        } catch {
+          setTemplates(null);
+          setTemplateStatus('error');
+        }
       }
     },
-    [draft.channel]
+    [draft.channel, draft.leadSource]
   );
 
   useEffect(() => {
@@ -1406,7 +1417,7 @@ export function Campaigns() {
   useEffect(() => {
     if (!wizardOpen) return;
     void loadTemplates(draft.channel);
-  }, [draft.channel, loadTemplates, wizardOpen]);
+  }, [draft.channel, draft.leadSource, loadTemplates, wizardOpen]);
 
   useEffect(() => {
     if (!wizardOpen || typeof window === 'undefined') return;

@@ -1,4 +1,8 @@
-import type { SkillOutcomesResponse, SkillTrendsResponse } from '../utils/runtimeBridge';
+import type {
+  MemoryEventsResponse,
+  SkillOutcomesResponse,
+  SkillTrendsResponse,
+} from '../utils/runtimeBridge';
 
 export type MemorySkillMetric = {
   id: string;
@@ -22,11 +26,22 @@ export type MemoryExperimentMetric = {
   variants: Array<Record<string, unknown>>;
 };
 
+export type MemoryEventMetric = {
+  id: string;
+  type: string;
+  title: string;
+  detail: string;
+  agentName: string;
+  createdAt: string;
+  source: string;
+};
+
 export type MemoryAnalyticsViewModel = {
   source: string;
   generatedAt: string;
   warning: string;
   skills: MemorySkillMetric[];
+  events: MemoryEventMetric[];
   experiments: MemoryExperimentMetric[];
 };
 
@@ -38,4 +53,5 @@ export function buildMemoryAnalyticsViewModel(options?: {
   outcomesResponse?: SkillOutcomesResponse;
   trendsBySkillId?: Record<string, SkillTrendsResponse | Record<string, unknown>>;
   experimentsResponse?: Record<string, unknown>;
+  memoryEventsResponse?: MemoryEventsResponse | Record<string, unknown>;
 }): MemoryAnalyticsViewModel;

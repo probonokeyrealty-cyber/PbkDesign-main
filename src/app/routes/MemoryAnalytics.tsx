@@ -3,6 +3,7 @@ import { Database, RefreshCw } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchActiveExperimentsRequest,
+  fetchMemoryEventsRequest,
   fetchSkillOutcomesRequest,
   fetchSkillTrendsRequest,
 } from '../utils/runtimeBridge';
@@ -83,7 +84,7 @@ function MemorySourceRail() {
       <PbkDataSource endpoint="GET /api/skills/trends" status="ships" />
       <PbkDataSource
         endpoint="GET /api/memory/events"
-        status="needs-wiring"
+        status="ships"
         note="premium memory timeline and agent learning events"
       />
       <PbkDataSource
@@ -304,9 +305,17 @@ export function MemoryAnalytics() {
         })
       );
       const trendsBySkillId = Object.fromEntries(trendPairs.filter(([key]) => Boolean(key)));
-      const experimentsResponse = await fetchActiveExperimentsRequest();
+      const [experimentsResponse, memoryEventsResponse] = await Promise.all([
+        fetchActiveExperimentsRequest(),
+        fetchMemoryEventsRequest({ limit: 24 }),
+      ]);
       setModel(
-        buildMemoryAnalyticsViewModel({ outcomesResponse, trendsBySkillId, experimentsResponse })
+        buildMemoryAnalyticsViewModel({
+          outcomesResponse,
+          trendsBySkillId,
+          experimentsResponse,
+          memoryEventsResponse,
+        })
       );
       setStatus('ready');
     } catch (loadError) {
@@ -388,9 +397,41 @@ export function MemoryAnalytics() {
               </div>
               <PbkDataSource
                 endpoint="GET /api/memory/events"
-                status="needs-wiring"
-                note="timeline requires canonical event feed"
+                status="ships"
+                note="canonical memory timeline"
               />
+            </div>
+          </div>
+
+          <div className="pbk-memory-card">
+            <div className="mem-card-head">
+              <h3>Recent memory events</h3>
+              <span className="more">GET /api/memory/events</span>
+            </div>
+            <div className="mem-card-body">
+              {model.events.length ? (
+                model.events.slice(0, 5).map((event) => (
+                  <div
+                    key={event.id || `${event.type}-${event.createdAt}`}
+                    className="pbk-memory-event"
+                  >
+                    <span>{event.type}</span>
+                    <strong>{event.title}</strong>
+                    <small>
+                      {event.agentName ? `${event.agentName} - ` : ''}
+                      {event.createdAt ? new Date(event.createdAt).toLocaleString() : event.source}
+                    </small>
+                  </div>
+                ))
+              ) : (
+                <div className="pbk-memory-empty">
+                  <Database size={18} />
+                  {status === 'loading'
+                    ? 'Loading memory timeline...'
+                    : 'No memory events returned by the bridge yet.'}
+                </div>
+              )}
+              <PbkDataSource endpoint="GET /api/memory/events" status="ships" />
             </div>
           </div>
 

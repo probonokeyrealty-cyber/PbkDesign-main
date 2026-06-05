@@ -49,17 +49,41 @@ export function buildMemoryAnalyticsViewModel({
   outcomesResponse = {},
   trendsBySkillId = {},
   experimentsResponse = {},
+  memoryEventsResponse = {},
 } = {}) {
   const skills = arrayOr(outcomesResponse.skills).map((skill) => {
     const id = String(skill.id || skill.skillId || skill.skill_id || skill.name || '').trim();
     const trend = trendsBySkillId[id] || trendsBySkillId[skill.name] || {};
     return normalizeSkillMetric(skill, trend);
   });
+  const events = arrayOr(memoryEventsResponse.events).map((event) => ({
+    id: String(
+      event.id || event.eventId || event.event_id || event.createdAt || event.created_at || ''
+    ).trim(),
+    type: String(
+      event.type || event.eventType || event.event_type || event.category || 'memory_event'
+    ).trim(),
+    title: String(
+      event.title ||
+        event.summary ||
+        event.text ||
+        event.skillName ||
+        event.skill_name ||
+        'Memory event'
+    ).trim(),
+    detail: String(event.detail || event.description || event.reason || event.outcome || '').trim(),
+    agentName: String(event.agentName || event.agent_name || event.agent || '').trim(),
+    createdAt: String(
+      event.createdAt || event.created_at || event.at || event.timestamp || ''
+    ).trim(),
+    source: String(event.source || memoryEventsResponse.source || '').trim(),
+  }));
   return {
     source: outcomesResponse.source || 'runtime',
     generatedAt: outcomesResponse.generatedAt || '',
-    warning: outcomesResponse.warning || '',
+    warning: outcomesResponse.warning || memoryEventsResponse.warning || '',
     skills,
+    events,
     experiments: arrayOr(experimentsResponse.experiments || experimentsResponse.tests).map(
       (experiment) => {
         const stats =

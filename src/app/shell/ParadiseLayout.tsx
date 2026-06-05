@@ -17,7 +17,7 @@ import { updateRuntimeSettingsRequest, type RuntimeSnapshot } from '../utils/run
 import { getPendingApprovalCount } from '../routes/inboxRuntimeLogic.js';
 import { showUiToast } from '../utils/uiFeedback';
 import { FavoritesBar } from './FavoritesBar';
-import { Sidebar } from './Sidebar';
+import { MobileShellNavigation, Sidebar } from './Sidebar';
 import { ShellTopbar } from './ShellTopbar';
 
 const VALID_SHELL_PATHS = new Set([
@@ -307,6 +307,7 @@ export function ParadiseLayout() {
           </ErrorBoundary>
         </main>
       </div>
+      <MobileShellNavigation pendingApprovals={pendingApprovalCount} />
       <ShortcutCheatSheet open={shortcutOpen} onClose={() => setShortcutOpen(false)} />
       <SessionTimeoutWarning
         onStayActive={() =>

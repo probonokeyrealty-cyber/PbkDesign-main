@@ -108,6 +108,7 @@
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",
     "test:leads-new-lead-portal": "node ./scripts/leads-new-lead-portal-smoke.mjs",
     "test:agent-memory-wiring": "node ./scripts/agent-memory-wiring-smoke.mjs",
+    "test:mobile-wiring-lead-portal": "node ./scripts/mobile-wiring-lead-portal-smoke.mjs",
     "test:shell-prototype-modern": "node ./scripts/shell-prototype-modern-smoke.mjs",
     "test:command-approval-preview": "node ./scripts/command-approval-preview-smoke.mjs",
     "test:command-battlefield-ranking": "node ./scripts/command-battlefield-ranking-smoke.mjs",

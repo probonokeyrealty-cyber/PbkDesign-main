@@ -70,10 +70,10 @@ assert(
   'Inbox must mark GET /api/leads as a shipped compose lead source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="PATCH \/api\/messages\/:id\/archive"[\s\S]*status="needs-wiring"/.test(
+  /PbkDataSource[\s\S]*endpoint="PATCH \/api\/messages\/:id\/archive"[\s\S]*status="ships"/.test(
     inbox
   ),
-  'Inbox must honestly mark message archive/swipe persistence as needs-wiring.'
+  'Inbox must mark message archive/swipe persistence as shipped once the bridge route exists.'
 );
 
 assert(
@@ -82,7 +82,8 @@ assert(
 );
 
 assert(
-  runtimeBridge.includes('/api/messages') &&
+    runtimeBridge.includes('/api/messages') &&
+    runtimeBridge.includes('archiveMessageRequest') &&
     runtimeBridge.includes('/api/leads') &&
     runtimeBridge.includes('/api/lead/send-message') &&
     runtimeBridge.includes('/api/approvals/'),

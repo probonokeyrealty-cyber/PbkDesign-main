@@ -44,17 +44,19 @@ assert(
 
 assert(/const\s+\[viewMode,\s*setViewMode\]/.test(campaigns), 'Campaigns should support card/table view mode.');
 assert(/fetchReplyTemplatesRequest/.test(campaigns), 'Campaign wizard template step must use the real reply-template endpoint helper.');
+assert(/fetchCampaignRankedTemplatesRequest/.test(campaigns), 'Campaign wizard template step must use the ranked campaign-template endpoint helper.');
 assert(
   /PbkDataSource[\s\S]*endpoint="GET \/api\/replies\/templates"[\s\S]*status="ships"/.test(campaigns),
   'Campaign template step must mark GET /api/replies/templates as a shipped data source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/campaigns\/templates\/ranked"[\s\S]*status="needs-wiring"/.test(campaigns),
-  'Campaign template step must honestly mark ranked campaign-template wiring gaps.'
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/campaigns\/templates\/ranked"[\s\S]*status="ships"/.test(campaigns),
+  'Campaign template step must mark ranked campaign-template wiring as shipped.'
 );
 assert(!/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|probate-warmup-q2|absentee-akron-batch/.test(campaigns), 'Campaigns page must not port prototype mock campaign rows.');
 
 assert(/export\s+async\s+function\s+fetchReplyTemplatesRequest/.test(runtimeBridge), 'runtimeBridge must expose fetchReplyTemplatesRequest.');
+assert(/export\s+async\s+function\s+fetchCampaignRankedTemplatesRequest/.test(runtimeBridge), 'runtimeBridge must expose fetchCampaignRankedTemplatesRequest.');
 assert(/\/api\/replies\/templates/.test(runtimeBridge), 'fetchReplyTemplatesRequest must target GET /api/replies/templates.');
 assert(dataMap.includes('/api/replies/templates'), 'Bridge data map must document the campaign wizard template source.');
 

@@ -33113,6 +33113,93 @@ async function buildSkillTrendAnalytics({ skillId = '', skillName = '', days = 3
   };
 }
 
+async function buildMemoryEventsTimeline({ limit = 40 } = {}) {
+  const safeLimit = Math.max(1, Math.min(200, toNumber(limit, 40)));
+  const [curationResult, usageResult] = await Promise.all([
+    queryPgRows(
+      `SELECT id, summary, delete_ids, dry_run, source, created_at
+       FROM public.pbk_memory_curation_events
+       WHERE COALESCE(tenant_id, 'pbk') = 'pbk'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [safeLimit]
+    ),
+    queryPgRows(
+      `SELECT id, skill_id, skill_name, agent_id, agent_name, outcome, success,
+              confidence::float AS confidence, metadata, used_at, created_at
+       FROM public.skill_usage
+       WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
+       ORDER BY used_at DESC, created_at DESC
+       LIMIT $1`,
+      [safeLimit]
+    ),
+  ]);
+
+  const curationEvents = (curationResult.rows || []).map((row) => ({
+    id: row.id,
+    type: 'memory_curation',
+    title: row.dry_run ? 'Memory curation dry run' : 'Memory curation applied',
+    summary:
+      typeof row.summary === 'string'
+        ? row.summary
+        : JSON.stringify(row.summary || {}).slice(0, 360),
+    source: row.source || 'pbk_memory_curation_events',
+    score: null,
+    createdAt: row.created_at,
+    metadata: {
+      deleteIds: row.delete_ids || [],
+      dryRun: Boolean(row.dry_run),
+    },
+  }));
+
+  const usageEvents = (usageResult.rows || []).map((row) => ({
+    id: row.id,
+    type: 'skill_usage',
+    title: row.skill_name || 'Skill usage recorded',
+    summary: row.outcome || (row.success === true ? 'successful skill outcome' : row.success === false ? 'unsuccessful skill outcome' : 'skill outcome recorded'),
+    source: 'skill_usage',
+    agentId: row.agent_id || '',
+    agentName: row.agent_name || '',
+    skillId: row.skill_id || '',
+    skillName: row.skill_name || '',
+    success: row.success,
+    score: row.confidence ?? null,
+    createdAt: row.used_at || row.created_at,
+    metadata: row.metadata || {},
+  }));
+
+  const fallbackEvents = (state.activity || [])
+    .filter((item) => /memory|skill|learning|ava|rex/i.test([item.category, item.type, item.text, item.summary].filter(Boolean).join(' ')))
+    .slice(0, safeLimit)
+    .map((item) => ({
+      id: item.id || `activity-${hashString(JSON.stringify(item))}`,
+      type: item.category || item.type || 'activity',
+      title: item.summary || item.text || 'Runtime learning event',
+      summary: item.text || item.summary || '',
+      source: 'bridge-state:activity',
+      agentName: item.actor || '',
+      createdAt: item.createdAt || item.at || isoNow(),
+      metadata: item,
+    }));
+
+  const events = sortNewest([...curationEvents, ...usageEvents, ...fallbackEvents])
+    .slice(0, safeLimit)
+    .map((event) => ({
+      ...event,
+      createdAt: event.createdAt || isoNow(),
+    }));
+  const postgresOk = curationResult.ok || usageResult.ok;
+  return {
+    ok: true,
+    result: postgresOk ? 'live' : 'local_view_only',
+    source: postgresOk ? 'postgres:pbk_memory_curation_events+skill_usage' : 'bridge-state:activity',
+    generatedAt: isoNow(),
+    count: events.length,
+    events,
+    warning: postgresOk ? '' : `Postgres memory event tables unavailable (${curationResult.error || usageResult.error || 'postgres_unavailable'}); showing bridge-state learning activity.`,
+  };
+}
+
 function getCampaignLeadKey(lead = {}) {
   return String(lead.leadId || lead.id || lead.email || lead.phone || lead.address || lead.leadName || '')
     .trim()
@@ -37223,6 +37310,86 @@ function calculateCampaignMetrics(campaign = {}) {
     dnc: count([/dnc/, /unsubscribe/, /\bstop\b/, /opt_out/]),
     estimatedTouches: touches,
     estimatedCost: Number((touches * unit).toFixed(2)),
+  };
+}
+
+function buildRankedCampaignTemplates(params = {}) {
+  const channel = normalizeCampaignChannel(params.channel || 'email');
+  const leadSource = String(params.leadSource || params.lead_source || 'all-imports').trim();
+  const campaignId = String(params.campaignId || params.campaign_id || '').trim();
+  const safeLimit = Math.max(1, Math.min(24, toNumber(params.limit, 8)));
+  const catalog = buildReplyTemplateCatalog({
+    ...params,
+    channel,
+    provider: 'campaign-ranked-templates',
+  });
+  const campaigns = (state.campaigns || []).filter((campaign) => {
+    if (campaignId && String(campaign.id || '') !== campaignId) return false;
+    if (channel && normalizeCampaignChannel(campaign.channel) !== channel) return false;
+    if (leadSource && leadSource !== 'all-imports' && getCampaignSourceId(campaign) !== leadSource)
+      return false;
+    return true;
+  });
+  const performanceByTemplate = new Map();
+  for (const campaign of campaigns) {
+    const templateKey = String(campaign.templateId || campaign.template_id || '').trim();
+    if (!templateKey) continue;
+    const metrics = calculateCampaignMetrics(campaign);
+    const current =
+      performanceByTemplate.get(templateKey) ||
+      {
+        campaigns: 0,
+        leads: 0,
+        sent: 0,
+        replied: 0,
+        connected: 0,
+        dnc: 0,
+      };
+    current.campaigns += 1;
+    current.leads += toNumber(metrics.leads, 0);
+    current.sent += toNumber(metrics.sent, 0);
+    current.replied += toNumber(metrics.replied, 0);
+    current.connected += toNumber(metrics.connected, 0);
+    current.dnc += toNumber(metrics.dnc, 0);
+    performanceByTemplate.set(templateKey, current);
+  }
+  const ranked = Object.entries(catalog).map(([key, template], index) => {
+    const performance = performanceByTemplate.get(key) || {};
+    const leads = toNumber(performance.leads, 0);
+    const replied = toNumber(performance.replied, 0);
+    const connected = toNumber(performance.connected, 0);
+    const dnc = toNumber(performance.dnc, 0);
+    const responseScore = leads ? (replied * 4 + connected * 3 - dnc * 2) / Math.max(1, leads) : 0;
+    const channelScore = normalizeCampaignChannel(template.channel || channel) === channel ? 8 : 0;
+    const recencyScore = Math.max(0, 4 - index);
+    const score = Number((channelScore + recencyScore + responseScore * 10).toFixed(2));
+    return {
+      key,
+      ...template,
+      rank: 0,
+      score,
+      performance,
+      source: leads ? 'campaign_events' : 'reply_template_catalog',
+    };
+  });
+  ranked.sort((left, right) => toNumber(right.score, 0) - toNumber(left.score, 0));
+  ranked.forEach((template, index) => {
+    template.rank = index + 1;
+  });
+  const limited = ranked.slice(0, safeLimit);
+  return {
+    ok: true,
+    result: 'live',
+    source: performanceByTemplate.size ? 'bridge:campaign-events+reply-templates' : 'bridge:reply-templates',
+    generatedAt: isoNow(),
+    channel,
+    leadSource,
+    count: limited.length,
+    rankedTemplates: limited,
+    templates: Object.fromEntries(limited.map((template) => [template.key, template])),
+    warning: performanceByTemplate.size
+      ? ''
+      : 'No campaign performance rows matched this filter yet; ranking uses the live reply-template catalog order.',
   };
 }
 
@@ -53256,6 +53423,13 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/memory/events', '/api/v1/memory/events'])) {
+      json(response, 200, await buildMemoryEventsTimeline({
+        limit: url.searchParams.get('limit') || 40,
+      }));
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/api/skills/reload', '/api/v1/skills/reload'])) {
       const body = await readBody(request);
       const result = await reloadActiveSkillsIntoBridgeState({
@@ -55030,6 +55204,16 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/campaigns/templates/ranked') {
+      json(response, 200, buildRankedCampaignTemplates({
+        channel: url.searchParams.get('channel') || 'email',
+        leadSource: url.searchParams.get('leadSource') || url.searchParams.get('lead_source') || 'all-imports',
+        campaignId: url.searchParams.get('campaignId') || url.searchParams.get('campaign_id') || '',
+        limit: url.searchParams.get('limit') || 8,
+      }));
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/campaigns') {
       const campaigns = queryCampaignRecords(url.searchParams);
       json(response, 200, {
@@ -56044,6 +56228,59 @@ const server = createServer(async (request, response) => {
       const result = await toolHandlers.telnyx_sms(body);
       json(response, result.ok === false ? 409 : 200, {
         ...result,
+        state: buildStateSnapshot(),
+      });
+      return;
+    }
+
+    const messageArchiveMatch = matchPath(pathname, '/api/messages/:id/archive');
+    if (messageArchiveMatch && request.method === 'PATCH') {
+      const id = decodeURIComponent(messageArchiveMatch.groups.id || '');
+      const body = await readBody(request);
+      const existing = findMessageById(id);
+      if (!existing) {
+        json(response, 404, {
+          ok: false,
+          result: 'unavailable',
+          archived: false,
+          messageId: id,
+          error: 'Message not found.',
+          state: buildStateSnapshot(),
+        });
+        return;
+      }
+      const archivedAt = body.archivedAt || body.archived_at || isoNow();
+      const message = {
+        ...existing,
+        status: 'archived',
+        archivedAt,
+        updatedAt: isoNow(),
+        payload: {
+          ...(existing.payload || {}),
+          archived: true,
+          archivedAt,
+          archivedBy: body.actor || 'PBK Command Center',
+          archiveReason: body.reason || body.archiveReason || 'operator_archive',
+        },
+      };
+      upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
+      addActivity(
+        state,
+        makeActivity({
+          actor: body.actor || 'Command Center',
+          category: 'INBOX',
+          status: 'archived',
+          text: `Archived inbox item for ${existing.leadName || existing.from || existing.email || id}.`,
+          target: existing.address || existing.subject || id,
+        })
+      );
+      await persistState(state);
+      json(response, 200, {
+        ok: true,
+        result: 'archived',
+        archived: true,
+        message,
         state: buildStateSnapshot(),
       });
       return;
@@ -57569,7 +57806,7 @@ const server = createServer(async (request, response) => {
     json(response, 404, {
       ok: false,
       error: `No route for ${request.method} ${pathname}`,
-      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/DELETE /api/messages', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
+      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
     });
   } catch (error) {
     json(response, 500, {

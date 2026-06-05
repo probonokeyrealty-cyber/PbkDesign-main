@@ -489,6 +489,32 @@ export type ActiveExperimentsResponse = {
   warning?: string;
 };
 
+export type MemoryEventRecord = {
+  id: string;
+  type?: string;
+  title?: string;
+  summary?: string;
+  source?: string;
+  agentId?: string;
+  agentName?: string;
+  skillId?: string;
+  skillName?: string;
+  success?: boolean | null;
+  score?: number | null;
+  createdAt?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type MemoryEventsResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  count?: number;
+  events?: MemoryEventRecord[];
+  warning?: string;
+};
+
 export type ObservabilityStatusResponse = {
   ok: boolean;
   enabled?: boolean;
@@ -648,6 +674,19 @@ export type ReplyTemplatesResponse = {
   calendarEvent?: Record<string, unknown> | null;
   selected?: ReplyTemplateRecord;
   templates?: Record<string, ReplyTemplateRecord>;
+  error?: string;
+};
+
+export type CampaignRankedTemplatesResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  channel?: string;
+  leadSource?: string;
+  templates?: Record<string, ReplyTemplateRecord & { rank?: number; score?: number }>;
+  rankedTemplates?: Array<ReplyTemplateRecord & { key?: string; rank?: number; score?: number }>;
+  warning?: string;
   error?: string;
 };
 
@@ -1208,6 +1247,15 @@ export async function fetchActiveExperimentsRequest() {
   });
 }
 
+export async function fetchMemoryEventsRequest({ limit = 40 } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(200, limit))),
+  });
+  return bridgeRequest<MemoryEventsResponse>({
+    path: `/api/memory/events?${params.toString()}`,
+  });
+}
+
 export async function fetchCampaignsRequest({
   search = '',
   status = 'all',
@@ -1235,6 +1283,28 @@ export async function fetchCampaignLeadSourcesRequest() {
     state?: RuntimeSnapshot;
   }>({
     path: '/api/campaigns/lead-sources',
+  });
+}
+
+export async function fetchCampaignRankedTemplatesRequest({
+  channel = 'email',
+  leadSource = 'all-imports',
+  campaignId = '',
+  limit = 8,
+}: {
+  channel?: string;
+  leadSource?: string;
+  campaignId?: string;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams({
+    channel,
+    leadSource,
+    limit: String(Math.max(1, Math.min(24, limit))),
+  });
+  if (campaignId.trim()) params.set('campaignId', campaignId.trim());
+  return bridgeRequest<CampaignRankedTemplatesResponse>({
+    path: `/api/campaigns/templates/ranked?${params.toString()}`,
   });
 }
 
@@ -1349,6 +1419,24 @@ export async function fetchMessagesRequest({ limit = 80, offset = 0 } = {}) {
     messages?: MessageRecord[];
   }>({
     path: `/api/messages?${params.toString()}`,
+  });
+}
+
+export async function archiveMessageRequest(messageId: string, body: Record<string, unknown> = {}) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    message?: MessageRecord;
+    state?: RuntimeSnapshot;
+    error?: string;
+  }>({
+    method: 'PATCH',
+    path: `/api/messages/${encodeURIComponent(messageId)}/archive`,
+    body: {
+      archived: true,
+      actor: 'PBK React shell',
+      ...body,
+    },
   });
 }
 

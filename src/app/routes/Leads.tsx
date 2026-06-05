@@ -465,7 +465,130 @@ function buildNewLeadPayload(newLeadForm: NewLeadFormState): BridgeRecord {
   const selectedPath = newLeadForm.selectedPath;
   const askingPrice = numberOrNull(newLeadForm.askingPrice);
   const leadScore = numberOrNull(newLeadForm.leadScore);
+  const arv = numberOrNull(newLeadForm.arv);
+  const mao = numberOrNull(newLeadForm.mao);
+  const estimatedRepairs = numberOrNull(newLeadForm.estimatedRepairs);
+  const mortgageBalance = numberOrNull(newLeadForm.mortgageBalance);
   const tags = splitTags(newLeadForm.tags);
+  const seller = {
+    name: newLeadForm.sellerName,
+    phone: newLeadForm.phone,
+    email: newLeadForm.email,
+    preferredChannel: newLeadForm.preferredChannel,
+    bestTimeToCall: newLeadForm.bestTimeToCall,
+    relationshipToProperty: newLeadForm.relationship,
+    notes: newLeadForm.sellerNotes,
+  };
+  const property = {
+    address: newLeadForm.propertyAddress,
+    city: newLeadForm.city,
+    state: newLeadForm.state,
+    zip: newLeadForm.zip,
+    occupancy: newLeadForm.occupancy,
+    condition: newLeadForm.condition,
+    beds: numberOrNull(newLeadForm.beds),
+    baths: numberOrNull(newLeadForm.baths),
+    sqft: numberOrNull(newLeadForm.sqft),
+    yearBuilt: numberOrNull(newLeadForm.yearBuilt),
+    estimatedRepairs,
+    arv,
+    mao,
+    mortgageBalance,
+    askingPrice,
+    propertyType: 'house',
+  };
+  const motivation = {
+    summary: newLeadForm.motivation,
+    timeline: newLeadForm.timeline,
+    askingPrice,
+  };
+  const compliance = {
+    consentStatus: newLeadForm.tcpaConsent,
+    tcpaConsent: newLeadForm.tcpaConsent,
+    dncStatus: newLeadForm.dncStatus,
+  };
+  const assignment = {
+    assignedAgent: newLeadForm.assignedAgent,
+    campaign: newLeadForm.leadSource,
+    stage: newLeadForm.stage,
+  };
+  const analyzer = {
+    selectedPath,
+    selected_path: selectedPath,
+    selectedPathLabel: PATH_LABELS[selectedPath],
+    askingPrice,
+    arv,
+    mao,
+    estimatedRepairs,
+    mortgageBalance,
+    leadScore,
+    source: 'new-lead-portal',
+  };
+  const liveCallDetails = {
+    preferredChannel: newLeadForm.preferredChannel,
+    bestTimeToCall: newLeadForm.bestTimeToCall,
+    relationship: newLeadForm.relationship,
+    selectedPath,
+    selectedPathLabel: PATH_LABELS[selectedPath],
+    assignedAgent: newLeadForm.assignedAgent,
+    tcpaConsent: newLeadForm.tcpaConsent,
+    dncStatus: newLeadForm.dncStatus,
+    syncedFrom: 'path-and-deal-analyzer',
+  };
+  const contracts = {
+    sellerName: newLeadForm.sellerName,
+    sellerEmail: newLeadForm.email,
+    sellerPhone: newLeadForm.phone,
+    propertyAddress: newLeadForm.propertyAddress,
+    askingPrice,
+    arv,
+    mao,
+    estimatedRepairs,
+    selectedPath,
+    readyForDraft: Boolean(newLeadForm.email && newLeadForm.propertyAddress),
+  };
+  const approvals = {
+    requiredForContract: true,
+    requiredForFirstOutbound:
+      newLeadForm.tcpaConsent !== 'yes' || newLeadForm.dncStatus !== 'clear',
+    compliance,
+  };
+  const leadProfile = {
+    seller,
+    property,
+    motivation,
+    compliance,
+    assignment,
+    tags,
+    notes: {
+      seller: newLeadForm.sellerNotes,
+      internal: newLeadForm.internalNotes,
+    },
+    score: leadScore,
+    source: newLeadForm.leadSource,
+    stage: newLeadForm.stage,
+  };
+  const portalRecord = {
+    portalVersion: 'pbk-lead-portal-v1',
+    source: 'new-lead-portal',
+    leadProfile,
+    analyzer,
+    contracts,
+    approvals,
+    ava: {
+      assignedAgent: newLeadForm.assignedAgent || 'Ava',
+      notes: newLeadForm.sellerNotes,
+      nextAction: 'first_contact',
+      callContext: liveCallDetails,
+    },
+    rex: {
+      score: leadScore,
+      stage: newLeadForm.stage,
+      underwritingContext: newLeadForm.internalNotes,
+    },
+    liveCallDetails,
+    createdBy: 'PBK Command Center',
+  };
 
   return {
     source: newLeadForm.leadSource,
@@ -473,52 +596,26 @@ function buildNewLeadPayload(newLeadForm: NewLeadFormState): BridgeRecord {
     stage: newLeadForm.stage,
     status: newLeadForm.stage,
     score: leadScore,
-    seller: {
-      name: newLeadForm.sellerName,
-      phone: newLeadForm.phone,
-      email: newLeadForm.email,
-      preferredChannel: newLeadForm.preferredChannel,
-      bestTimeToCall: newLeadForm.bestTimeToCall,
-      relationshipToProperty: newLeadForm.relationship,
-      notes: newLeadForm.sellerNotes,
-    },
-    property: {
-      address: newLeadForm.propertyAddress,
-      city: newLeadForm.city,
-      state: newLeadForm.state,
-      zip: newLeadForm.zip,
-      occupancy: newLeadForm.occupancy,
-      condition: newLeadForm.condition,
-      beds: numberOrNull(newLeadForm.beds),
-      baths: numberOrNull(newLeadForm.baths),
-      sqft: numberOrNull(newLeadForm.sqft),
-      yearBuilt: numberOrNull(newLeadForm.yearBuilt),
-      estimatedRepairs: numberOrNull(newLeadForm.estimatedRepairs),
-      arv: numberOrNull(newLeadForm.arv),
-      mao: numberOrNull(newLeadForm.mao),
-      mortgageBalance: numberOrNull(newLeadForm.mortgageBalance),
-      askingPrice,
-      propertyType: 'house',
-    },
-    motivation: {
-      summary: newLeadForm.motivation,
-      timeline: newLeadForm.timeline,
-      askingPrice,
-    },
-    compliance: {
-      consentStatus: newLeadForm.tcpaConsent,
-      dncStatus: newLeadForm.dncStatus,
-    },
-    assignment: {
-      assignedAgent: newLeadForm.assignedAgent,
-      campaign: newLeadForm.leadSource,
-    },
+    seller,
+    property,
+    motivation,
+    compliance,
+    assignment,
     tags,
     notes: newLeadForm.internalNotes,
     sellerNotes: newLeadForm.sellerNotes,
     internalNotes: newLeadForm.internalNotes,
     selectedPath,
     selected_path: selectedPath,
+    leadProfile,
+    lead_profile: leadProfile,
+    portalRecord,
+    portal_record: portalRecord,
+    contracts,
+    approvals,
+    analyzer,
+    liveCallDetails,
+    live_call_details: liveCallDetails,
     callContext: {
       selectedPath,
       selected_path: selectedPath,
@@ -532,10 +629,10 @@ function buildNewLeadPayload(newLeadForm: NewLeadFormState): BridgeRecord {
       source: 'new-lead-portal',
       liveCallDetailsSynced: true,
       askingPrice,
-      arv: numberOrNull(newLeadForm.arv),
-      mao: numberOrNull(newLeadForm.mao),
-      estimatedRepairs: numberOrNull(newLeadForm.estimatedRepairs),
-      mortgageBalance: numberOrNull(newLeadForm.mortgageBalance),
+      arv,
+      mao,
+      estimatedRepairs,
+      mortgageBalance,
       leadScore,
     },
     bant: {
@@ -628,7 +725,7 @@ function LeadsSourceRail() {
   return (
     <div className="pbk-leads-source-rail" aria-label="Leads data sources">
       <PbkDataSource endpoint="GET /api/leads" status="ships" note="full lead roster" />
-      <PbkDataSource endpoint="POST /api/leads" status="ships" note="new lead portal" />
+      <PbkDataSource endpoint="POST /api/leads" status="ships" note="canonical seller portal" />
       <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback" />
       <PbkDataSource endpoint="GET /api/leads/:id/full" status="ships" note="lead detail" />
       <PbkDataSource endpoint="GET /api/leads/:id/last-call" status="ships" note="call memory" />
@@ -1733,7 +1830,7 @@ export function Leads() {
                 <PbkDataSource
                   endpoint="POST /api/leads"
                   status="ships"
-                  note="create canonical lead"
+                  note="create canonical seller portal"
                 />
                 <PbkDataSource
                   endpoint="localStorage:PBKAnalyzer"

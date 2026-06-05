@@ -18,6 +18,7 @@ import {
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
+  archiveMessageRequest,
   fetchLeadsRequest,
   fetchMessagesRequest,
   scheduleMessageRequest,
@@ -261,8 +262,8 @@ function InboxSourceRail() {
       <PbkDataSource endpoint="POST /api/messages" status="ships" note="send later queue" />
       <PbkDataSource
         endpoint="PATCH /api/messages/:id/archive"
-        status="needs-wiring"
-        note="prototype swipe/archive persistence"
+        status="ships"
+        note="archive persistence through unified message records"
       />
     </div>
   );
@@ -496,12 +497,15 @@ function InboxApprovalCard({
 function InboxMessageRow({
   message,
   onReply,
+  onArchive,
 }: {
   message: Record<string, unknown>;
   onReply: (message: Record<string, unknown>) => void;
+  onArchive: (message: Record<string, unknown>) => void;
 }) {
   const unread = isUnreadMessage(message);
   const timestamp = getMessageTimestamp(message);
+  const title = getMessageTitle(message);
   return (
     <div className={`pbk-inbox-message-row ${unread ? 'unread' : ''}`.trim()}>
       <div className="msg-channel">
@@ -516,10 +520,25 @@ function InboxMessageRow({
           )}
         </div>
         <div className="msg-preview">{getMessageBody(message)}</div>
-        <button type="button" onClick={() => onReply(message)} className="msg-reply">
-          <Reply size={13} />
-          Reply
-        </button>
+        <div className="msg-actions">
+          <button
+            type="button"
+            onClick={() => onReply(message)}
+            className="msg-reply"
+            aria-label={`Reply to ${title}`}
+          >
+            <Reply size={13} />
+            Reply
+          </button>
+          <button
+            type="button"
+            onClick={() => onArchive(message)}
+            className="msg-archive"
+            aria-label={`Archive message from ${title}`}
+          >
+            Archive
+          </button>
+        </div>
       </div>
       <div className="msg-meta">
         <span>{formatRuntimeStatus(message.status)}</span>
@@ -1227,6 +1246,43 @@ export function Inbox() {
     setComposeOpen(true);
   };
 
+  const archiveMessage = async (message: Record<string, unknown>) => {
+    const messageId = String(
+      message.id ||
+        message.messageId ||
+        message.message_id ||
+        message.callId ||
+        message.call_id ||
+        ''
+    ).trim();
+    if (!messageId) {
+      setActionStatus({
+        tone: 'error',
+        text: 'This message is missing an id, so the bridge cannot archive it.',
+      });
+      return;
+    }
+    setPendingAction(`archive:${messageId}`);
+    setActionStatus(null);
+    try {
+      await archiveMessageRequest(messageId, { actor: 'Inbox' });
+      await refreshInbox();
+      setActionStatus({ tone: 'success', text: 'Message archived.' });
+      showUiToast({
+        tone: 'success',
+        title: 'Inbox updated',
+        desc: 'Message archived in the bridge.',
+      });
+    } catch (nextError) {
+      setActionStatus({
+        tone: 'error',
+        text: nextError instanceof Error ? nextError.message : 'Message archive failed.',
+      });
+    } finally {
+      setPendingAction('');
+    }
+  };
+
   const statusCopy = loading
     ? 'Loading inbox...'
     : `Showing ${visibleMessages.length} of ${totalMessages || visibleMessages.length} messages`;
@@ -1356,6 +1412,7 @@ export function Inbox() {
                   key={String(message.id || index)}
                   message={message}
                   onReply={openReply}
+                  onArchive={archiveMessage}
                 />
               ))}
               {!visibleMessages.length && (
@@ -1377,8 +1434,8 @@ export function Inbox() {
             <PbkDataSource endpoint="GET /api/messages" status="ships" note="paged bridge list" />
             <PbkDataSource
               endpoint="PATCH /api/messages/:id/archive"
-              status="needs-wiring"
-              note="archive/swipe action is not shipped yet"
+              status="ships"
+              note="archive/swipe action persists through the bridge"
             />
           </section>
         </section>

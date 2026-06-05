@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink } from 'react-router';
 import {
   BarChart3,
@@ -6,12 +7,14 @@ import {
   Briefcase,
   Inbox as InboxIcon,
   LayoutDashboard,
+  Menu,
   Megaphone,
   Settings as SettingsIcon,
   Users,
+  X,
 } from 'lucide-react';
 
-const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard }> = [
+export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof LayoutDashboard }> = [
   { to: '/', label: 'Command Center', icon: LayoutDashboard },
   { to: '/leads', label: 'Leads', icon: Users },
   { to: '/deal', label: 'Deal', icon: Briefcase },
@@ -75,7 +78,7 @@ export function Sidebar({
       </div>
 
       <nav className="pbk-shell-nav flex-1 py-3">
-        {NAV.map(({ to, label, icon: Icon }) => {
+        {SHELL_NAV_ITEMS.map(({ to, label, icon: Icon }) => {
           const showBadge = to === '/inbox' && pendingApprovals > 0;
           return (
             <NavLink
@@ -123,5 +126,103 @@ export function Sidebar({
         {buildReleaseLabel(collapsed)}
       </div>
     </aside>
+  );
+}
+
+export function MobileShellNavigation({ pendingApprovals = 0 }: { pendingApprovals?: number }) {
+  const [open, setOpen] = useState(false);
+  const primaryItems = SHELL_NAV_ITEMS.slice(0, 4);
+  const overflowItems = SHELL_NAV_ITEMS.slice(4);
+
+  return (
+    <>
+      <nav className="pbk-mobile-shell-nav md:hidden" aria-label="Mobile shell navigation">
+        {primaryItems.map(({ to, label, icon: Icon }) => {
+          const showBadge = to === '/inbox' && pendingApprovals > 0;
+          return (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={({ isActive }) =>
+                `pbk-mobile-shell-nav-item ${isActive ? 'active' : ''}`.trim()
+              }
+              aria-label={label}
+            >
+              <span className="pbk-mobile-shell-nav-icon">
+                <Icon size={17} />
+                {showBadge && (
+                  <span className="pbk-mobile-shell-nav-badge">
+                    {pendingApprovals > 9 ? '9+' : pendingApprovals}
+                  </span>
+                )}
+              </span>
+              <span>{label === 'Command Center' ? 'Command' : label}</span>
+            </NavLink>
+          );
+        })}
+        <button
+          type="button"
+          className="pbk-mobile-shell-nav-item"
+          onClick={() => setOpen(true)}
+          aria-expanded={open}
+          aria-controls="pbk-mobile-shell-menu"
+          aria-label="Open all dashboard pages"
+        >
+          <span className="pbk-mobile-shell-nav-icon">
+            <Menu size={18} />
+          </span>
+          <span>More</span>
+        </button>
+      </nav>
+
+      {open && (
+        <div
+          className="pbk-mobile-shell-menu-backdrop md:hidden"
+          role="presentation"
+          onMouseDown={() => setOpen(false)}
+        >
+          <section
+            id="pbk-mobile-shell-menu"
+            className="pbk-mobile-shell-menu"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pbk-mobile-shell-menu-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="pbk-mobile-shell-menu-head">
+              <div>
+                <div className="pbk-mobile-shell-menu-kicker">PBK navigation</div>
+                <h2 id="pbk-mobile-shell-menu-title">All dashboard pages</h2>
+              </div>
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close navigation">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="pbk-mobile-shell-menu-grid">
+              {overflowItems.map(({ to, label, icon: Icon }) => {
+                const showBadge = to === '/inbox' && pendingApprovals > 0;
+                return (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    className={({ isActive }) =>
+                      `pbk-mobile-shell-menu-link ${isActive ? 'active' : ''}`.trim()
+                    }
+                    onClick={() => setOpen(false)}
+                  >
+                    <Icon size={17} />
+                    <span>{label}</span>
+                    {showBadge && (
+                      <strong>{pendingApprovals > 99 ? '99+' : pendingApprovals}</strong>
+                    )}
+                  </NavLink>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
+    </>
   );
 }

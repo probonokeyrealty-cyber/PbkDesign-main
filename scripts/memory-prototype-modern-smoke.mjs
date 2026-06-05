@@ -49,6 +49,7 @@ assert(
 [
   'GET /api/skills/outcomes',
   'GET /api/skills/trends',
+  'GET /api/memory/events',
 ].forEach((endpoint) => {
   assert(memory.includes(endpoint), `Memory Analytics should surface data source ${endpoint}.`);
 });
@@ -62,10 +63,10 @@ assert(
   'Memory Analytics must mark GET /api/skills/trends as a shipped data source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/memory\/events"[\s\S]*status="needs-wiring"/.test(
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/memory\/events"[\s\S]*status="ships"/.test(
     memory
   ),
-  'Memory Analytics must honestly mark the premium memory timeline as needs-wiring.'
+  'Memory Analytics must mark the premium memory timeline as shipped once the bridge feed exists.'
 );
 assert(
   /PbkDataSource[\s\S]*endpoint="GET \/api\/emotion\/policies\/experiments"[\s\S]*status="ships"/.test(
@@ -81,16 +82,20 @@ assert(
 assert(
   /fetchSkillOutcomesRequest/.test(memory) &&
     /fetchSkillTrendsRequest/.test(memory) &&
+    /fetchMemoryEventsRequest/.test(memory) &&
     /fetchActiveExperimentsRequest/.test(memory),
-  'Memory Analytics must keep using real skill outcome, trend, and experiment endpoint helpers.'
+  'Memory Analytics must keep using real skill outcome, trend, memory-event, and experiment endpoint helpers.'
 );
 assert(
-  runtimeBridge.includes('/api/skills/outcomes') && runtimeBridge.includes('/api/skills/trends'),
+  runtimeBridge.includes('/api/skills/outcomes') &&
+    runtimeBridge.includes('/api/skills/trends') &&
+    runtimeBridge.includes('/api/memory/events'),
   'runtimeBridge must contain the Memory Analytics endpoint helpers.'
 );
 assert(
   dataMap.includes('/api/skills/outcomes') &&
     dataMap.includes('/api/skills/trends') &&
+    dataMap.includes('/api/memory/events') &&
     dataMap.includes('/api/emotion/policies/experiments') &&
     dataMap.includes('Active memory experiments'),
   'Bridge data map must document Memory Analytics runtime sources.'

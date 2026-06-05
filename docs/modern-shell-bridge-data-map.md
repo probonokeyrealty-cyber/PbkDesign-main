@@ -99,12 +99,13 @@ Components using `useRuntimeSnapshot()` are fed by this polling bundle:
 
 ## Analytics
 
-| Component / section            | Data source                                         | Endpoint exists?                                     | Ship status                                             |
-| ------------------------------ | --------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| Funnel cards and drill-down    | `fetchLeadStagesRequest()`                          | Yes: `GET /api/leads/stages?groupBy=stage&limit=500` | Ships.                                                  |
-| Daily deals timeline           | `fetchDealTimelineRequest()`                        | Yes: `GET /api/deals/timeline?days=30`               | Ships.                                                  |
-| ROI and AI performance metrics | `fetchAiMetricsRequest()` plus analytics view model | Yes: `GET /api/observability/ai-metrics?days=30`     | Ships if bridge returns spend/revenue/latency fields.   |
-| CSV export                     | Client-generated from loaded endpoint data          | No separate endpoint required                        | Ships. Export is not mock; it serializes current model. |
+| Component / section            | Data source                                         | Endpoint exists?                                     | Ship status                                                                                                    |
+| ------------------------------ | --------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Funnel cards and drill-down    | `fetchLeadStagesRequest()`                          | Yes: `GET /api/leads/stages?groupBy=stage&limit=500` | Ships.                                                                                                         |
+| Daily deals timeline           | `fetchDealTimelineRequest()`                        | Yes: `GET /api/deals/timeline?days=30`               | Ships.                                                                                                         |
+| ROI and AI performance metrics | `fetchAiMetricsRequest()` plus analytics view model | Yes: `GET /api/observability/ai-metrics?days=30`     | Ships if bridge returns spend/revenue/latency fields.                                                          |
+| Campaign attribution           | `fetchCampaignDrilldownRequest()`                   | Yes: `GET /api/analytics/campaign-drilldown`         | Ships. Source and channel rankings use bridge campaign leads/events, with honest empty state if no rows exist. |
+| CSV export                     | Client-generated from loaded endpoint data          | No separate endpoint required                        | Ships. Export is not mock; it serializes current model.                                                        |
 
 ## Memory & Analytics
 

@@ -4,9 +4,12 @@ import { BarChart3, Database, Download, RefreshCw, TrendingUp, X } from 'lucide-
 import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchAiMetricsRequest,
+  fetchCampaignDrilldownRequest,
   fetchDealTimelineRequest,
   fetchLeadStagesRequest,
   type AnalyticsLead,
+  type CampaignDrilldownResponse,
+  type CampaignDrilldownRow,
 } from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 import { buildAnalyticsCsv, buildAnalyticsViewModel } from './analyticsRuntimeLogic.js';
@@ -24,6 +27,16 @@ type AnalyticsStats = {
   roiMultiple: number;
   aiSpend: number;
   generatedAt: string;
+};
+type CampaignAttributionRow = {
+  id: string;
+  label: string;
+  leads: number;
+  sent: number;
+  opened: number;
+  replied: number;
+  connected: number;
+  cost: number;
 };
 
 interface DrillDownPanelProps {
@@ -102,6 +115,188 @@ function buildAnalyticsStats(model: AnalyticsViewModel): AnalyticsStats {
   };
 }
 
+function campaignRowCost(row: CampaignDrilldownRow) {
+  const channel = String(row.channel || '').toLowerCase();
+  if (channel === 'sms') return 0.021;
+  if (channel === 'call') return 0.014;
+  return 0.01;
+}
+
+function addCampaignAttributionRow(
+  grouped: Map<string, CampaignAttributionRow>,
+  id: string,
+  label: string,
+  row: CampaignDrilldownRow
+) {
+  const current =
+    grouped.get(id) ||
+    ({
+      id,
+      label,
+      leads: 0,
+      sent: 0,
+      opened: 0,
+      replied: 0,
+      connected: 0,
+      cost: 0,
+    } satisfies CampaignAttributionRow);
+  current.leads += 1;
+  current.sent += row.sent ? 1 : 0;
+  current.opened += row.opened ? 1 : 0;
+  current.replied += row.replied ? 1 : 0;
+  current.connected += row.connected ? 1 : 0;
+  current.cost += campaignRowCost(row);
+  grouped.set(id, current);
+}
+
+function sortCampaignAttributionRows(rows: CampaignAttributionRow[]) {
+  return rows.sort((left, right) => {
+    const leftScore = left.replied * 4 + left.connected * 3 + left.opened + left.sent;
+    const rightScore = right.replied * 4 + right.connected * 3 + right.opened + right.sent;
+    return rightScore - leftScore;
+  });
+}
+
+function buildCampaignAttributionRows(
+  drilldown: CampaignDrilldownResponse | null,
+  groupBy: 'source' | 'channel'
+) {
+  const grouped = new Map<string, CampaignAttributionRow>();
+  for (const row of drilldown?.rows || []) {
+    const id =
+      groupBy === 'source'
+        ? String(row.source || 'unassigned')
+        : String(row.channel || 'email').toLowerCase();
+    const label =
+      groupBy === 'source'
+        ? id || 'Unassigned source'
+        : id === 'sms'
+          ? 'SMS'
+          : id === 'call'
+            ? 'Calls'
+            : id === 'mixed'
+              ? 'Mixed'
+              : 'Email';
+    addCampaignAttributionRow(grouped, id || 'unassigned', label, row);
+  }
+  return sortCampaignAttributionRows(Array.from(grouped.values())).slice(
+    0,
+    groupBy === 'source' ? 5 : 4
+  );
+}
+
+function CampaignAttributionList({
+  title,
+  rows,
+  empty,
+}: {
+  title: string;
+  rows: CampaignAttributionRow[];
+  empty: string;
+}) {
+  return (
+    <div className="pbk-analytics-attribution-list">
+      <h3>{title}</h3>
+      {rows.length ? (
+        rows.map((row) => {
+          const replyRate = row.leads ? (row.replied / row.leads) * 100 : 0;
+          return (
+            <div className="pbk-analytics-attribution-row" key={row.id}>
+              <div className="min-w-0">
+                <strong title={row.label}>{row.label}</strong>
+                <span>
+                  {shortNumber(row.sent)} sent - {shortNumber(row.replied)} replies -{' '}
+                  {money(row.cost)} spend
+                </span>
+              </div>
+              <div className="rate">{formatPercent(replyRate)}</div>
+            </div>
+          );
+        })
+      ) : (
+        <div className="pbk-analytics-empty compact">{empty}</div>
+      )}
+    </div>
+  );
+}
+
+function CampaignAttributionPanel({
+  drilldown,
+  loading,
+}: {
+  drilldown: CampaignDrilldownResponse | null;
+  loading: boolean;
+}) {
+  const sourceRows = useMemo(() => buildCampaignAttributionRows(drilldown, 'source'), [drilldown]);
+  const channelRows = useMemo(
+    () => buildCampaignAttributionRows(drilldown, 'channel'),
+    [drilldown]
+  );
+  const summary = drilldown?.summary || {};
+  const leadRows = drilldown?.rows?.length || 0;
+  const replyRate = Number(summary.replyRate || 0);
+  const connectRate = Number(summary.connectRate || 0);
+  const generated = drilldown?.generatedAt ? formatGeneratedAt(drilldown.generatedAt) : 'waiting';
+
+  return (
+    <div className="pbk-analytics-card pbk-analytics-premium-card pbk-analytics-attribution-card">
+      <div className="pbk-analytics-card-head">
+        <div>
+          <h2>Campaign attribution</h2>
+          <p>Source, channel, reply, and connected-call signals from campaign drilldown rows.</p>
+        </div>
+        <span className="tf">{loading && !drilldown ? 'syncing' : 'bridge drilldown'}</span>
+      </div>
+
+      <div className="pbk-analytics-attribution-summary">
+        <div>
+          <span>Lead rows</span>
+          <strong>{shortNumber(Number(summary.leads || leadRows || 0))}</strong>
+        </div>
+        <div>
+          <span>Replies</span>
+          <strong>{shortNumber(Number(summary.replied || 0))}</strong>
+        </div>
+        <div>
+          <span>Reply rate</span>
+          <strong>{formatPercent(replyRate)}</strong>
+        </div>
+        <div>
+          <span>Connect</span>
+          <strong>{formatPercent(connectRate)}</strong>
+        </div>
+      </div>
+
+      <div className="pbk-analytics-attribution-grid">
+        <CampaignAttributionList
+          title="Source ranking"
+          rows={sourceRows}
+          empty={
+            loading
+              ? 'Loading campaign attribution from the bridge...'
+              : 'No campaign lead rows returned yet.'
+          }
+        />
+        <CampaignAttributionList
+          title="Channel ranking"
+          rows={channelRows}
+          empty={
+            loading
+              ? 'Loading channel attribution from the bridge...'
+              : 'No channel attribution rows returned yet.'
+          }
+        />
+      </div>
+
+      <PbkDataSource
+        endpoint="GET /api/analytics/campaign-drilldown"
+        status="ships"
+        note={`${leadRows ? `${shortNumber(leadRows)} rows` : 'no rows yet'} - generated ${generated}`}
+      />
+    </div>
+  );
+}
+
 function AnalyticsSourceRail() {
   return (
     <div className="pbk-analytics-source-rail" aria-label="Analytics data sources">
@@ -122,7 +317,7 @@ function AnalyticsSourceRail() {
       />
       <PbkDataSource
         endpoint="GET /api/analytics/campaign-drilldown"
-        status="needs-wiring"
+        status="ships"
         note="premium source-ranked campaign attribution"
       />
     </div>
@@ -184,8 +379,7 @@ function AnalyticsHero({
           </h1>
           <p>
             Funnel, deal revenue, ROI, and AI performance are pulled from the PBK bridge. Premium
-            campaign attribution is shown as an honest wiring gap until the Mastra summary endpoint
-            exists.
+            campaign attribution now reads the same bridge drilldown contract used by Campaigns.
           </p>
         </div>
         <div className="pbk-analytics-hero-actions">
@@ -383,6 +577,9 @@ export function Analytics() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
   const [model, setModel] = useState<AnalyticsViewModel>(EMPTY_ANALYTICS);
+  const [campaignAttribution, setCampaignAttribution] = useState<CampaignDrilldownResponse | null>(
+    null
+  );
   const [drillDownPanel, setDrillDownPanel] = useState<{
     open: boolean;
     title: string;
@@ -399,15 +596,19 @@ export function Analytics() {
     setStatus('loading');
     setError('');
     try {
-      const [stagesResponse, timelineResponse, aiMetricsResponse] = await Promise.all([
-        fetchLeadStagesRequest({ limit: 500 }),
-        fetchDealTimelineRequest({ days: 30 }),
-        fetchAiMetricsRequest({ days: 30 }),
-      ]);
+      const [stagesResponse, timelineResponse, aiMetricsResponse, campaignAttributionResponse] =
+        await Promise.all([
+          fetchLeadStagesRequest({ limit: 500 }),
+          fetchDealTimelineRequest({ days: 30 }),
+          fetchAiMetricsRequest({ days: 30 }),
+          fetchCampaignDrilldownRequest({ range: '30d', limit: 120 }).catch(() => null),
+        ]);
       setModel(buildAnalyticsViewModel({ stagesResponse, timelineResponse, aiMetricsResponse }));
+      setCampaignAttribution(campaignAttributionResponse);
       setStatus('ready');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
+      setCampaignAttribution(null);
       setStatus('error');
     }
   }, []);
@@ -605,25 +806,10 @@ export function Analytics() {
             <PbkDataSource endpoint="GET /api/observability/ai-metrics" status="ships" />
           </div>
 
-          <div className="pbk-analytics-card pbk-analytics-premium-card">
-            <div className="pbk-analytics-card-head">
-              <div>
-                <h2>Campaign attribution</h2>
-                <p>Premium panels stay disabled until Mastra owns the ranked summary.</p>
-              </div>
-              <span className="tf needs">needs wiring</span>
-            </div>
-            <div className="premium-copy">
-              Route-level campaign data ships from the Campaigns page. This Analytics panel needs a
-              canonical campaign drill-down endpoint before it can rank source, template, channel,
-              and agent contribution without guessing.
-            </div>
-            <PbkDataSource
-              endpoint="GET /api/analytics/campaign-drilldown"
-              status="needs-wiring"
-              note="source, campaign, channel, and template attribution"
-            />
-          </div>
+          <CampaignAttributionPanel
+            drilldown={campaignAttribution}
+            loading={status === 'loading'}
+          />
         </section>
 
         <DrillDownPanel

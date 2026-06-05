@@ -77,10 +77,10 @@ assert(
   'Analytics must mark GET /api/observability/ai-metrics as a shipped data source.'
 );
 assert(
-  /PbkDataSource[\s\S]*endpoint="GET \/api\/analytics\/campaign-drilldown"[\s\S]*status="needs-wiring"/.test(
+  /PbkDataSource[\s\S]*endpoint="GET \/api\/analytics\/campaign-drilldown"[\s\S]*status="ships"/.test(
     analytics
   ),
-  'Analytics must honestly mark premium campaign drill-down analytics as needs-wiring.'
+  'Analytics must mark premium campaign drill-down analytics as a shipped data source.'
 );
 
 assert(

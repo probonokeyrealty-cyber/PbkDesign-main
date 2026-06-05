@@ -36,6 +36,27 @@ export function hasStoredPbkThemePreference() {
   }
 }
 
+export function readLegacyPbkDarkModePreference(): boolean | null {
+  if (!canUseStorage()) return null;
+  try {
+    const raw = window.localStorage.getItem('pbk-dark-mode');
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function writeLegacyPbkDarkModePreference(theme: PbkPrefs['theme']) {
+  if (!canUseStorage()) return;
+  try {
+    window.localStorage.setItem('pbk-dark-mode', String(theme !== 'light'));
+  } catch {
+    // Legacy compatibility is best-effort; pbk:prefs:v1 remains canonical.
+  }
+}
+
 function getDefaultPbkPrefs(): PbkPrefs {
   return {
     ...DEFAULT_PBK_PREFS,
@@ -69,7 +90,11 @@ export function savePbkPrefs(updates: Partial<PbkPrefs>) {
     ...readPbkPrefs(),
     ...updates,
   };
-  window.localStorage.setItem(PBK_PREFS_KEY, JSON.stringify(next));
+  try {
+    window.localStorage.setItem(PBK_PREFS_KEY, JSON.stringify(next));
+  } catch {
+    return next;
+  }
   return next;
 }
 
@@ -83,5 +108,6 @@ export function applyPbkTheme(theme: PbkPrefs['theme']) {
 export function hydratePbkPrefsBeforeRender() {
   const prefs = readPbkPrefs();
   applyPbkTheme(prefs.theme);
+  writeLegacyPbkDarkModePreference(prefs.theme);
   return prefs;
 }

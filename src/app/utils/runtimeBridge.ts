@@ -1093,6 +1093,14 @@ export async function fetchLeadsRequest() {
   return response.leads || response.leadImports || [];
 }
 
+export async function createLeadRequest(body: Record<string, unknown>) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'POST',
+    path: '/api/leads',
+    body,
+  });
+}
+
 export async function fetchLeadStagesRequest({ limit = 500 } = {}) {
   const params = new URLSearchParams({
     limit: String(limit),

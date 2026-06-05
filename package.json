@@ -106,6 +106,7 @@
     "test:settings-prototype-modern": "node ./scripts/settings-prototype-modern-smoke.mjs",
     "test:leads-prototype-modern": "node ./scripts/leads-prototype-modern-smoke.mjs",
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",
+    "test:leads-new-lead-portal": "node ./scripts/leads-new-lead-portal-smoke.mjs",
     "test:shell-prototype-modern": "node ./scripts/shell-prototype-modern-smoke.mjs",
     "test:command-approval-preview": "node ./scripts/command-approval-preview-smoke.mjs",
     "test:command-battlefield-ranking": "node ./scripts/command-battlefield-ranking-smoke.mjs",

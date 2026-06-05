@@ -7,6 +7,7 @@ import {
   Loader2,
   Mail,
   Phone,
+  Plus,
   RefreshCw,
   Save,
   Send,
@@ -14,7 +15,9 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
+import { ANALYZER_CURRENT_DEAL_KEY } from '../utils/analyzerStorage';
 import {
+  createLeadRequest,
   fetchLeadFullRequest,
   fetchLeadLastCallRequest,
   fetchLeadsRequest,
@@ -40,6 +43,42 @@ type LeadFormState = {
   sentiment: string;
   summary: string;
   bant: string;
+};
+
+type NewLeadFormState = {
+  sellerName: string;
+  phone: string;
+  email: string;
+  preferredChannel: 'phone' | 'sms' | 'email' | 'unknown';
+  bestTimeToCall: string;
+  relationship: 'owner' | 'agent' | 'family' | 'executor' | 'unknown';
+  propertyAddress: string;
+  city: string;
+  state: string;
+  zip: string;
+  occupancy: 'unknown' | 'owner_occupied' | 'tenant_occupied' | 'vacant';
+  condition: 'unknown' | 'light' | 'moderate' | 'heavy';
+  motivation: string;
+  timeline: string;
+  askingPrice: string;
+  tags: string;
+  leadSource: string;
+  stage: string;
+  tcpaConsent: 'unknown' | 'yes' | 'no';
+  dncStatus: 'needs_review' | 'clear' | 'blocked';
+  beds: string;
+  baths: string;
+  sqft: string;
+  yearBuilt: string;
+  estimatedRepairs: string;
+  arv: string;
+  mao: string;
+  mortgageBalance: string;
+  leadScore: string;
+  assignedAgent: string;
+  sellerNotes: string;
+  internalNotes: string;
+  selectedPath: CanonicalPath;
 };
 
 type CanonicalPath = 'cash' | 'rbp' | 'cf' | 'mt' | 'land';
@@ -106,6 +145,25 @@ const PROPERTY_TYPES = [
 
 function text(value: unknown, fallback = '') {
   return String(value ?? fallback).trim();
+}
+
+function numberText(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? String(Math.round(numeric)) : '';
+}
+
+function numberOrNull(value: unknown) {
+  const raw = text(value);
+  if (!raw) return null;
+  const numeric = Number(raw.replace(/[$,\s]/g, ''));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function splitTags(value: unknown) {
+  return text(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function money(value: unknown) {
@@ -327,6 +385,170 @@ function formFromLead(lead: BridgeRecord): LeadFormState {
   };
 }
 
+function readAnalyzerSeedDeal(): BridgeRecord {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(ANALYZER_CURRENT_DEAL_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as BridgeRecord) : {};
+  } catch {
+    return {};
+  }
+}
+
+function seedNewLeadFromAnalyzer(): NewLeadFormState {
+  const deal = readAnalyzerSeedDeal();
+  const repairs = asBridgeRecord(deal.repairs);
+  const path = normalizePath(deal.selectedPath || deal.selected_path, {
+    property: { type: deal.type },
+  });
+  const motivationScore = Number(deal.motivationScore || 0);
+  const leadScore =
+    Number.isFinite(motivationScore) && motivationScore > 0
+      ? String(Math.max(1, Math.min(100, Math.round(motivationScore * 20))))
+      : '';
+
+  return {
+    sellerName: text(deal.sellerName),
+    phone: text(deal.sellerPhone),
+    email: text(deal.sellerEmail),
+    preferredChannel: text(deal.sellerPhone)
+      ? 'phone'
+      : text(deal.sellerEmail)
+        ? 'email'
+        : 'unknown',
+    bestTimeToCall: '',
+    relationship:
+      deal.contact === 'realtor' ? 'agent' : deal.contact === 'owner' ? 'owner' : 'unknown',
+    propertyAddress: text(deal.address),
+    city: '',
+    state: '',
+    zip: text(deal.zipCode),
+    occupancy: 'unknown',
+    condition: text(repairs.condition).toLowerCase().includes('heavy')
+      ? 'heavy'
+      : text(repairs.condition).toLowerCase().includes('moderate')
+        ? 'moderate'
+        : text(repairs.condition)
+          ? 'light'
+          : 'unknown',
+    motivation: text(deal.motivationLevel),
+    timeline: text(deal.timeline, 'Unknown'),
+    askingPrice: numberText(deal.agreedPrice || deal.price),
+    tags: ['manual-new-lead', PATH_LABELS[path].toLowerCase().replace(/\s+/g, '-')].join(', '),
+    leadSource: 'manual-new-lead',
+    stage: 'new',
+    tcpaConsent: 'unknown',
+    dncStatus: 'needs_review',
+    beds: numberText(deal.beds),
+    baths: numberText(deal.baths),
+    sqft: numberText(deal.sqft),
+    yearBuilt: numberText(deal.year),
+    estimatedRepairs: numberText(repairs.mid),
+    arv: numberText(deal.arv),
+    mao: numberText(deal.mao60 || deal.maoRBP),
+    mortgageBalance: numberText(deal.balance),
+    leadScore,
+    assignedAgent: 'Ava',
+    sellerNotes: text(deal.notes),
+    internalNotes: text(deal.address) ? `Seeded from Deal Analyzer path ${PATH_LABELS[path]}.` : '',
+    selectedPath: path,
+  };
+}
+
+function asBridgeRecord(value: unknown): BridgeRecord {
+  return value && typeof value === 'object' ? (value as BridgeRecord) : {};
+}
+
+function buildNewLeadPayload(newLeadForm: NewLeadFormState): BridgeRecord {
+  const selectedPath = newLeadForm.selectedPath;
+  const askingPrice = numberOrNull(newLeadForm.askingPrice);
+  const leadScore = numberOrNull(newLeadForm.leadScore);
+  const tags = splitTags(newLeadForm.tags);
+
+  return {
+    source: newLeadForm.leadSource,
+    leadSource: newLeadForm.leadSource,
+    stage: newLeadForm.stage,
+    status: newLeadForm.stage,
+    score: leadScore,
+    seller: {
+      name: newLeadForm.sellerName,
+      phone: newLeadForm.phone,
+      email: newLeadForm.email,
+      preferredChannel: newLeadForm.preferredChannel,
+      bestTimeToCall: newLeadForm.bestTimeToCall,
+      relationshipToProperty: newLeadForm.relationship,
+      notes: newLeadForm.sellerNotes,
+    },
+    property: {
+      address: newLeadForm.propertyAddress,
+      city: newLeadForm.city,
+      state: newLeadForm.state,
+      zip: newLeadForm.zip,
+      occupancy: newLeadForm.occupancy,
+      condition: newLeadForm.condition,
+      beds: numberOrNull(newLeadForm.beds),
+      baths: numberOrNull(newLeadForm.baths),
+      sqft: numberOrNull(newLeadForm.sqft),
+      yearBuilt: numberOrNull(newLeadForm.yearBuilt),
+      estimatedRepairs: numberOrNull(newLeadForm.estimatedRepairs),
+      arv: numberOrNull(newLeadForm.arv),
+      mao: numberOrNull(newLeadForm.mao),
+      mortgageBalance: numberOrNull(newLeadForm.mortgageBalance),
+      askingPrice,
+      propertyType: 'house',
+    },
+    motivation: {
+      summary: newLeadForm.motivation,
+      timeline: newLeadForm.timeline,
+      askingPrice,
+    },
+    compliance: {
+      consentStatus: newLeadForm.tcpaConsent,
+      dncStatus: newLeadForm.dncStatus,
+    },
+    assignment: {
+      assignedAgent: newLeadForm.assignedAgent,
+      campaign: newLeadForm.leadSource,
+    },
+    tags,
+    notes: newLeadForm.internalNotes,
+    sellerNotes: newLeadForm.sellerNotes,
+    internalNotes: newLeadForm.internalNotes,
+    selectedPath,
+    selected_path: selectedPath,
+    callContext: {
+      selectedPath,
+      selected_path: selectedPath,
+      selectedPathLabel: PATH_LABELS[selectedPath],
+      preferredChannel: newLeadForm.preferredChannel,
+      bestTimeToCall: newLeadForm.bestTimeToCall,
+      relationship: newLeadForm.relationship,
+      tcpaConsent: newLeadForm.tcpaConsent,
+      dncStatus: newLeadForm.dncStatus,
+      assignedAgent: newLeadForm.assignedAgent,
+      source: 'new-lead-portal',
+      liveCallDetailsSynced: true,
+      askingPrice,
+      arv: numberOrNull(newLeadForm.arv),
+      mao: numberOrNull(newLeadForm.mao),
+      estimatedRepairs: numberOrNull(newLeadForm.estimatedRepairs),
+      mortgageBalance: numberOrNull(newLeadForm.mortgageBalance),
+      leadScore,
+    },
+    bant: {
+      motivation: newLeadForm.motivation,
+      timeline: newLeadForm.timeline,
+      authority: newLeadForm.relationship,
+      budget: askingPrice,
+      score: leadScore,
+    },
+    actor: 'New PBK lead portal',
+  };
+}
+
 function contractFormFromLead(
   lead: BridgeRecord,
   lastCall?: BridgeRecord | null
@@ -406,6 +628,7 @@ function LeadsSourceRail() {
   return (
     <div className="pbk-leads-source-rail" aria-label="Leads data sources">
       <PbkDataSource endpoint="GET /api/leads" status="ships" note="full lead roster" />
+      <PbkDataSource endpoint="POST /api/leads" status="ships" note="new lead portal" />
       <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback" />
       <PbkDataSource endpoint="GET /api/leads/:id/full" status="ships" note="lead detail" />
       <PbkDataSource endpoint="GET /api/leads/:id/last-call" status="ships" note="call memory" />
@@ -463,12 +686,14 @@ function LeadsHero({
   stats,
   rosterSourceLabel,
   onRefresh,
+  onCreateLead,
 }: {
   loading: boolean;
   error: string | null | undefined;
   stats: LeadsStats;
   rosterSourceLabel: string;
   onRefresh: () => void;
+  onCreateLead: () => void;
 }) {
   return (
     <section className="pbk-leads-hero">
@@ -487,10 +712,21 @@ function LeadsHero({
             snapshot labeled as a fallback when the full roster is unavailable.
           </p>
         </div>
-        <button type="button" className="pbk-leads-refresh" onClick={onRefresh} disabled={loading}>
-          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          {loading ? 'Refreshing' : 'Refresh leads'}
-        </button>
+        <div className="pbk-leads-hero-actions">
+          <button type="button" className="pbk-leads-create" onClick={onCreateLead}>
+            <Plus size={15} />
+            New PBK lead
+          </button>
+          <button
+            type="button"
+            className="pbk-leads-refresh"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            {loading ? 'Refreshing' : 'Refresh leads'}
+          </button>
+        </div>
       </div>
       <LeadsStatRibbon stats={stats} sourceLabel={rosterSourceLabel} />
       <LeadsSourceRail />
@@ -564,6 +800,9 @@ export function Leads() {
   const [detailStatus, setDetailStatus] = useState<DetailStatus | null>(null);
   const [leadDetailLoading, setLeadDetailLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [newLeadOpen, setNewLeadOpen] = useState(false);
+  const [newLeadForm, setNewLeadForm] = useState<NewLeadFormState>(() => seedNewLeadFromAnalyzer());
+  const [newLeadStatus, setNewLeadStatus] = useState<DetailStatus | null>(null);
   const [contractOpen, setContractOpen] = useState(false);
   const [contractConfirmOpen, setContractConfirmOpen] = useState(false);
   const [leadCallConfirmDraft, setLeadCallConfirmDraft] = useState<LeadCallConfirmDraft | null>(
@@ -755,6 +994,12 @@ export function Leads() {
     setEditOpen(true);
   };
 
+  const openNewLeadModal = () => {
+    setNewLeadForm(seedNewLeadFromAnalyzer());
+    setNewLeadStatus(null);
+    setNewLeadOpen(true);
+  };
+
   const openContractModal = () => {
     if (!activeLead) return;
     setContractForm(contractFormFromLead(activeLead, lastCall));
@@ -808,6 +1053,52 @@ export function Leads() {
       setDetailStatus({
         tone: 'error',
         text: nextError instanceof Error ? `Save failed: ${nextError.message}` : 'Save failed.',
+      });
+    } finally {
+      endLeadAction();
+    }
+  };
+
+  const createLead = async () => {
+    if (!newLeadForm.sellerName.trim()) {
+      setNewLeadStatus({ tone: 'error', text: 'Seller name is required.' });
+      return;
+    }
+    if (!newLeadForm.phone.trim() && !newLeadForm.email.trim()) {
+      setNewLeadStatus({ tone: 'error', text: 'Add a phone or email before creating the lead.' });
+      return;
+    }
+    if (!newLeadForm.propertyAddress.trim()) {
+      setNewLeadStatus({ tone: 'error', text: 'Property address is required.' });
+      return;
+    }
+    if (!beginLeadAction('create-lead')) return;
+    setNewLeadStatus({ tone: 'info', text: 'Creating bridge lead record...' });
+    try {
+      const response = await createLeadRequest(buildNewLeadPayload(newLeadForm));
+      const lead = unwrapLeadResponse(response);
+      const nextLeadId = getLeadId(lead);
+      setLeadDetail(lead);
+      setSelectedLeadId(nextLeadId);
+      setNewLeadOpen(false);
+      setNewLeadStatus(null);
+      setDetailStatus({ tone: 'success', text: 'New PBK lead created on the bridge.' });
+      window.dispatchEvent(new CustomEvent('pbk:lead-created', { detail: { lead } }));
+      showUiToast({
+        tone: 'success',
+        title: 'New PBK lead created',
+        desc: `${getSellerName(lead)} is ready for Ava, Rex, approvals, analyzer, and contracts.`,
+      });
+      await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error ? `Create failed: ${nextError.message}` : 'Create failed.';
+      setNewLeadStatus({ tone: 'error', text: message });
+      showUiToast({
+        tone: 'error',
+        title: 'Lead create failed',
+        desc: message,
+        critical: true,
       });
     } finally {
       endLeadAction();
@@ -995,6 +1286,7 @@ export function Leads() {
         stats={leadsStats}
         rosterSourceLabel={rosterSourceLabel}
         onRefresh={handleRefreshLeads}
+        onCreateLead={openNewLeadModal}
       />
 
       {error && (
@@ -1404,6 +1696,470 @@ export function Leads() {
           )}
         </LeadsDetailShell>
       </div>
+
+      {newLeadOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-3 backdrop-blur-sm sm:p-4">
+          <div
+            className={`${softPanelClass} flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-pbk-lead-title"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-4">
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-300">
+                  New PBK lead
+                </div>
+                <h3 id="new-pbk-lead-title" className="mt-1 text-xl font-semibold text-slate-100">
+                  Capture the full seller profile once.
+                </h3>
+                <p className="mt-1 max-w-3xl text-xs text-slate-500">
+                  Ava, Rex, approvals, analyzer, and contracts will all read this same bridge
+                  record. Analyzer and path fields are prefilled when a current deal exists.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNewLeadOpen(false)}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-100"
+                aria-label="Close new lead form"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-4 py-4">
+              <div className="mb-4 flex flex-wrap gap-2">
+                <PbkDataSource
+                  endpoint="POST /api/leads"
+                  status="ships"
+                  note="create canonical lead"
+                />
+                <PbkDataSource
+                  endpoint="localStorage:PBKAnalyzer"
+                  status="ships"
+                  note="deal/path seed only"
+                />
+                <PbkDataSource
+                  endpoint="GET /api/leads/:id/full"
+                  status="ships"
+                  note="portal readback"
+                />
+              </div>
+
+              {newLeadStatus && (
+                <div
+                  className={[
+                    'mb-4 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs',
+                    newLeadStatus.tone === 'error'
+                      ? 'border-rose-400/30 bg-rose-500/10 text-rose-100'
+                      : newLeadStatus.tone === 'success'
+                        ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+                        : 'border-sky-500/20 bg-sky-500/10 text-sky-100',
+                  ].join(' ')}
+                  aria-live="polite"
+                >
+                  {newLeadStatus.tone === 'info' ? (
+                    <Loader2 size={15} className="animate-spin" />
+                  ) : (
+                    <AlertCircle size={15} />
+                  )}
+                  {newLeadStatus.text}
+                </div>
+              )}
+
+              <div className="new-lead-portal-grid">
+                <section className="new-lead-section">
+                  <div className="new-lead-section-head">
+                    <span>Seller</span>
+                    <strong>Personal info</strong>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <Field label="Seller name">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.sellerName}
+                        placeholder="Seller full name"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, sellerName: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Phone">
+                      <input
+                        className={inputClass}
+                        type="tel"
+                        value={newLeadForm.phone}
+                        placeholder="+1 (555) 555-0199"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, phone: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Email">
+                      <input
+                        className={inputClass}
+                        type="email"
+                        value={newLeadForm.email}
+                        placeholder="seller@example.com"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, email: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Preferred channel">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.preferredChannel}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            preferredChannel: event.target
+                              .value as NewLeadFormState['preferredChannel'],
+                          })
+                        }
+                      >
+                        <option value="phone">Phone</option>
+                        <option value="sms">SMS</option>
+                        <option value="email">Email</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </Field>
+                    <Field label="Best time to call">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.bestTimeToCall}
+                        placeholder="Weekdays after 3 PM"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, bestTimeToCall: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Relationship">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.relationship}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            relationship: event.target.value as NewLeadFormState['relationship'],
+                          })
+                        }
+                      >
+                        <option value="owner">Owner</option>
+                        <option value="agent">Agent</option>
+                        <option value="family">Family</option>
+                        <option value="executor">Executor</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </Field>
+                  </div>
+                </section>
+
+                <section className="new-lead-section">
+                  <div className="new-lead-section-head">
+                    <span>Property</span>
+                    <strong>Address and asset details</strong>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <Field label="Property address">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.propertyAddress}
+                        placeholder="Property street address"
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            propertyAddress: event.target.value,
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="City">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.city}
+                        placeholder="Columbus"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, city: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="State">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.state}
+                        placeholder="OH"
+                        maxLength={2}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            state: event.target.value.toUpperCase(),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="ZIP">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.zip}
+                        placeholder="43215"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, zip: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Occupancy">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.occupancy}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            occupancy: event.target.value as NewLeadFormState['occupancy'],
+                          })
+                        }
+                      >
+                        <option value="unknown">Unknown</option>
+                        <option value="owner_occupied">Owner occupied</option>
+                        <option value="tenant_occupied">Tenant occupied</option>
+                        <option value="vacant">Vacant</option>
+                      </select>
+                    </Field>
+                    <Field label="Condition">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.condition}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            condition: event.target.value as NewLeadFormState['condition'],
+                          })
+                        }
+                      >
+                        <option value="unknown">Unknown</option>
+                        <option value="light">Light</option>
+                        <option value="moderate">Moderate</option>
+                        <option value="heavy">Heavy</option>
+                      </select>
+                    </Field>
+                  </div>
+                </section>
+
+                <section className="new-lead-section">
+                  <div className="new-lead-section-head">
+                    <span>Motivation</span>
+                    <strong>Deal context</strong>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <Field label="Motivation">
+                      <textarea
+                        className={`${inputClass} min-h-24 resize-y`}
+                        value={newLeadForm.motivation}
+                        placeholder="Needs quick close, inherited property, tired landlord..."
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, motivation: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Timeline">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.timeline}
+                        placeholder="Unknown"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, timeline: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Asking price">
+                      <input
+                        className={inputClass}
+                        inputMode="numeric"
+                        value={newLeadForm.askingPrice}
+                        placeholder="$145,000"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, askingPrice: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Tags">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.tags}
+                        placeholder="probate, high-equity"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, tags: event.target.value })
+                        }
+                      />
+                      <span className="mt-1 block text-[11px] text-slate-500">
+                        Comma-separated tags. These persist on the lead record.
+                      </span>
+                    </Field>
+                    <Field label="Lead source">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.leadSource}
+                        placeholder="manual-new-lead"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, leadSource: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Stage">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.stage}
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, stage: event.target.value })
+                        }
+                      >
+                        <option value="new">New</option>
+                        <option value="contacted">Contacted</option>
+                        <option value="qualified">Qualified</option>
+                        <option value="contract_sent">Contract sent</option>
+                        <option value="closed">Closed</option>
+                      </select>
+                    </Field>
+                  </div>
+                </section>
+
+                <section className="new-lead-section">
+                  <div className="new-lead-section-head">
+                    <span>Compliance</span>
+                    <strong>Safety checks</strong>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <Field label="TCPA consent">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.tcpaConsent}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            tcpaConsent: event.target.value as NewLeadFormState['tcpaConsent'],
+                          })
+                        }
+                      >
+                        <option value="unknown">Unknown</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </Field>
+                    <Field label="DNC status">
+                      <select
+                        className={inputClass}
+                        value={newLeadForm.dncStatus}
+                        onChange={(event) =>
+                          setNewLeadForm({
+                            ...newLeadForm,
+                            dncStatus: event.target.value as NewLeadFormState['dncStatus'],
+                          })
+                        }
+                      >
+                        <option value="needs_review">Needs review</option>
+                        <option value="clear">Clear</option>
+                        <option value="blocked">Blocked</option>
+                      </select>
+                    </Field>
+                  </div>
+                </section>
+
+                <section className="new-lead-section new-lead-section-wide">
+                  <div className="new-lead-section-head">
+                    <span>Advanced</span>
+                    <strong>Numbers and assignments</strong>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                    {[
+                      ['Beds', 'beds', '3'],
+                      ['Baths', 'baths', '2'],
+                      ['Sq ft', 'sqft', '1540'],
+                      ['Year built', 'yearBuilt', '1974'],
+                      ['Est. repairs', 'estimatedRepairs', '$28,000'],
+                      ['ARV', 'arv', '$220,000'],
+                      ['MAO', 'mao', '$118,000'],
+                      ['Mortgage balance', 'mortgageBalance', '$82,000'],
+                      ['Lead score', 'leadScore', '78'],
+                    ].map(([label, key, placeholder]) => (
+                      <Field key={key} label={label}>
+                        <input
+                          className={inputClass}
+                          value={String(newLeadForm[key as keyof NewLeadFormState] || '')}
+                          placeholder={placeholder}
+                          onChange={(event) =>
+                            setNewLeadForm({ ...newLeadForm, [key]: event.target.value })
+                          }
+                        />
+                      </Field>
+                    ))}
+                    <Field label="Assigned agent">
+                      <input
+                        className={inputClass}
+                        value={newLeadForm.assignedAgent}
+                        placeholder="Ava"
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, assignedAgent: event.target.value })
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <Field label="Seller notes">
+                      <textarea
+                        className={`${inputClass} min-h-24 resize-y`}
+                        value={newLeadForm.sellerNotes}
+                        placeholder="Anything Ava should know before the first call."
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, sellerNotes: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label="Internal notes">
+                      <textarea
+                        className={`${inputClass} min-h-24 resize-y`}
+                        value={newLeadForm.internalNotes}
+                        placeholder="Underwriting, comp, or disposition context."
+                        onChange={(event) =>
+                          setNewLeadForm({ ...newLeadForm, internalNotes: event.target.value })
+                        }
+                      />
+                    </Field>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-[11px] text-slate-500">
+                Source: Deal Analyzer seed + operator edits to bridge lead portal.
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setNewLeadOpen(false)}
+                  className="rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isLeadActionBusy}
+                  onClick={createLead}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isLeadActionBusy ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Plus size={15} />
+                  )}
+                  Create lead
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editOpen && editForm && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4 backdrop-blur-sm">

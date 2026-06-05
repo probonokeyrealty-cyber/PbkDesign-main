@@ -314,45 +314,58 @@ export function ShellTopbar({
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={() => void handleAutopilotToggle()}
-        disabled={autopilotPending}
-        data-source="PATCH /api/settings"
-        className={[
-          'pbk-shell-autopilot inline-flex items-center gap-2 px-3 h-9 rounded-md text-xs font-medium transition-colors disabled:cursor-wait disabled:opacity-60',
-          autopilot
-            ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-            : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200',
-        ].join(' ')}
-        aria-pressed={autopilot}
-      >
-        <Power size={14} />
-        {autopilotPending ? 'Saving...' : `Autopilot ${autopilot ? 'ON' : 'OFF'}`}
-      </button>
+      <div className="pbk-shell-topbar-actions flex items-center gap-2 min-w-0">
+        <button
+          type="button"
+          onClick={() => void handleAutopilotToggle()}
+          disabled={autopilotPending}
+          data-source="PATCH /api/settings"
+          className={[
+            'pbk-shell-autopilot inline-flex items-center gap-2 px-3 h-9 rounded-md text-xs font-medium transition-colors disabled:cursor-wait disabled:opacity-60',
+            autopilot
+              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+              : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200',
+          ].join(' ')}
+          aria-pressed={autopilot}
+        >
+          <Power size={14} />
+          <span className="pbk-shell-autopilot-label">
+            {autopilotPending ? 'Saving...' : `Autopilot ${autopilot ? 'ON' : 'OFF'}`}
+          </span>
+        </button>
 
-      <button
-        type="button"
-        onClick={onToggleTheme}
-        data-source="PATCH /api/settings ui.theme"
-        data-fallback="localStorage:pbk:prefs:v1"
-        className="pbk-shell-theme-button inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-800 bg-slate-900 text-slate-400 transition-colors hover:text-sky-200"
-        aria-label="Toggle theme"
-        title={`Toggle theme (T) - ${themeDataSource}`}
-      >
-        {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
-      </button>
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          data-source="PATCH /api/settings ui.theme"
+          data-fallback="localStorage:pbk:prefs:v1"
+          className="pbk-shell-theme-button inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-800 bg-slate-900 text-slate-400 transition-colors hover:text-sky-200"
+          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          title={`Toggle theme (T) - ${themeDataSource}`}
+        >
+          {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
+        </button>
 
-      <div
-        className="pbk-shell-account hidden sm:flex items-center gap-2 pl-3 border-l border-slate-800 min-w-0"
-        data-source="GET /state"
-      >
-        <div className="pbk-shell-account-avatar h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-300 grid place-items-center text-xs font-semibold">
-          {initials(companyName)}
+        <div
+          className="pbk-shell-account hidden sm:flex items-center gap-2 pl-3 border-l border-slate-800 min-w-0"
+          data-source="GET /state"
+        >
+          <div className="pbk-shell-account-avatar h-7 w-7 rounded-full bg-emerald-500/20 text-emerald-300 grid place-items-center text-xs font-semibold">
+            {initials(companyName)}
+          </div>
+          <div className="min-w-0 text-xs leading-tight">
+            <div className="truncate text-slate-100">{companyName}</div>
+            <div className="truncate text-slate-500">{accountEmail}</div>
+          </div>
         </div>
-        <div className="min-w-0 text-xs leading-tight">
-          <div className="truncate text-slate-100">{companyName}</div>
-          <div className="truncate text-slate-500">{accountEmail}</div>
+
+        <div
+          className="pbk-shell-account-compact sm:hidden grid h-9 w-9 place-items-center rounded-md border border-slate-800 bg-slate-900 text-xs font-semibold text-emerald-300"
+          title={`${companyName} - ${accountEmail}`}
+          data-source="GET /state"
+          aria-label={`${companyName} account`}
+        >
+          {initials(companyName)}
         </div>
       </div>
     </header>

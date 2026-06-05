@@ -39,7 +39,13 @@ import {
 } from './utils/analyzerStorage';
 import { buildAgentDealContext, type AgentDealContext } from './utils/agentDealContext';
 import { appendSavedDealActivity, upsertSavedDeal } from './utils/dealStorage';
-import { applyPbkTheme, readPbkPrefs, savePbkPrefs } from './utils/uiPrefs';
+import {
+  applyPbkTheme,
+  readLegacyPbkDarkModePreference,
+  readPbkPrefs,
+  savePbkPrefs,
+  writeLegacyPbkDarkModePreference,
+} from './utils/uiPrefs';
 
 const ANALYSIS_IMPACT_FIELDS: Array<keyof DealData> = [
   'address',
@@ -159,13 +165,14 @@ type AppProps = {
 function getInitialDarkMode() {
   if (typeof window === 'undefined') return true;
   try {
-    const legacyMode = window.localStorage.getItem('pbk-dark-mode');
-    if (legacyMode === 'true') return true;
-    if (legacyMode === 'false') return false;
-    return readPbkPrefs().theme !== 'light';
+    const prefsTheme = readPbkPrefs().theme;
+    if (prefsTheme === 'light' || prefsTheme === 'dark') return prefsTheme !== 'light';
+    const legacyMode = readLegacyPbkDarkModePreference();
+    if (legacyMode !== null) return legacyMode;
   } catch {
     return document.documentElement.classList.contains('dark');
   }
+  return true;
 }
 
 export default function App({ engineOnly = false }: AppProps) {
@@ -302,11 +309,8 @@ export default function App({ engineOnly = false }: AppProps) {
     }
 
     try {
-      const savedDarkMode = localStorage.getItem('pbk-dark-mode');
       const prefsTheme = readPbkPrefs().theme;
-      setDarkMode(
-        savedDarkMode === 'true' || (savedDarkMode !== 'false' && prefsTheme !== 'light')
-      );
+      setDarkMode(prefsTheme !== 'light');
     } catch (e) {
       console.error('Failed to load theme preference', e);
     }
@@ -401,7 +405,7 @@ export default function App({ engineOnly = false }: AppProps) {
     const nextTheme = darkMode ? 'dark' : 'light';
     applyPbkTheme(nextTheme);
     savePbkPrefs({ theme: nextTheme });
-    localStorage.setItem('pbk-dark-mode', darkMode.toString());
+    writeLegacyPbkDarkModePreference(nextTheme);
   }, [darkMode]);
 
   useEffect(() => {

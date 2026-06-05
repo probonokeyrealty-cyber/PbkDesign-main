@@ -37,8 +37,12 @@ assert(
 });
 
 assert(
-  /data-source="GET \/state"/.test(topbar),
-  'ShellTopbar must annotate global search/account source as GET /state.'
+  /data-source="GET \/api\/search"/.test(topbar),
+  'ShellTopbar must annotate global search source as GET /api/search.'
+);
+assert(
+  /pbk-shell-account[\s\S]*data-source="GET \/state"/.test(topbar),
+  'ShellTopbar must annotate account source as GET /state.'
 );
 assert(
   /data-source="PATCH \/api\/settings"/.test(topbar),

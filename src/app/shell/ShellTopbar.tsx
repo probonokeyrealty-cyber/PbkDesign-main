@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Moon, Power, Search, Sun } from 'lucide-react';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
-import { AGENT_REGISTRY } from '../utils/agentRegistry';
-import { updateRuntimeSettingsRequest } from '../utils/runtimeBridge';
+import {
+  fetchGlobalSearchRequest,
+  updateRuntimeSettingsRequest,
+  type GlobalSearchResult,
+} from '../utils/runtimeBridge';
 import { showUiToast } from '../utils/uiFeedback';
 
 interface ShellTopbarProps {
@@ -16,6 +19,8 @@ type SearchResult = {
   label: string;
   meta: string;
   to: string;
+  source?: string;
+  kind?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -41,6 +46,45 @@ function getLeadAddress(lead: Record<string, unknown>) {
   return text(lead.address || property.address, 'Unknown property');
 }
 
+function getBridgeSearchRoute(result: GlobalSearchResult, query = '') {
+  const target = text(result.target);
+  if (target.startsWith('/')) return target;
+  const kind = text(result.kind || result.recordKind).toLowerCase();
+  const page = text(result.page).toLowerCase();
+  const id = text(result.recordId || result.id);
+  if (kind === 'agent' || page === 'agent-fleet') return `/fleet?agent=${encodeURIComponent(id)}`;
+  if (kind === 'lead' || page === 'lead-detail') return `/leads?lead=${encodeURIComponent(id)}`;
+  if (kind === 'message' || page === 'inbox') return `/inbox?message=${encodeURIComponent(id)}`;
+  if (kind === 'contract' || page === 'contracts')
+    return `/leads?contract=${encodeURIComponent(id)}`;
+  if (kind === 'brain' || page === 'brain') return `/memory?doc=${encodeURIComponent(id)}`;
+  if (kind === 'activity' || page === 'activity-log') {
+    return `/command-center?activity=${encodeURIComponent(id)}`;
+  }
+  if (kind === 'call' || page === 'calls') return `/leads?call=${encodeURIComponent(id)}`;
+  return `/command-center?search=${encodeURIComponent(query)}`;
+}
+
+function normalizeBridgeSearchResults(
+  results: GlobalSearchResult[] = [],
+  query = '',
+  source = 'bridge'
+): SearchResult[] {
+  return results.slice(0, 6).map((result, index) => {
+    const kind = text(result.kind || result.recordKind, 'result').toLowerCase();
+    const title = text(result.title, 'Untitled result');
+    const subtitle = text(result.subtitle || result.body, kind);
+    return {
+      id: `bridge:${kind}:${text(result.recordId || result.id, String(index))}`,
+      label: title,
+      meta: `${kind} - ${subtitle}`,
+      to: getBridgeSearchRoute(result, query),
+      source,
+      kind,
+    };
+  });
+}
+
 function initials(label: string) {
   const letters = label
     .split(/\s+/)
@@ -58,6 +102,10 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
   const [autopilotPending, setAutopilotPending] = useState(false);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchPending, setSearchPending] = useState(false);
+  const [searchSource, setSearchSource] = useState('');
+  const [searchError, setSearchError] = useState('');
 
   const settings = asRecord(snapshot?.settings);
   const settingsUi = asRecord(settings.ui);
@@ -83,7 +131,7 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
     setAutopilot(mode === 'autopilot');
   }, [settings.operatingMode, settingsUi.operatingMode, status.mode]);
 
-  const searchResults = useMemo<SearchResult[]>(() => {
+  const fallbackSearchResults = useMemo<SearchResult[]>(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
     const leadResults = (Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [])
@@ -99,14 +147,64 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
         };
       })
       .filter((item) => `${item.label} ${item.meta}`.toLowerCase().includes(needle));
-    const agentResults = AGENT_REGISTRY.map((agent) => ({
-      id: `agent:${agent.id}`,
-      label: agent.name,
-      meta: agent.role,
-      to: `/fleet?agent=${encodeURIComponent(agent.id)}`,
-    })).filter((item) => `${item.label} ${item.meta}`.toLowerCase().includes(needle));
+    const snapshotRecord = asRecord(snapshot);
+    const agentRegistry = Array.isArray(snapshotRecord.agentRegistry)
+      ? snapshotRecord.agentRegistry
+      : [];
+    const agentResults = agentRegistry
+      .map((agent) => {
+        const record = asRecord(agent);
+        const id = text(record.id || record.agentId || record.name, 'agent');
+        const label = text(record.name || record.id, 'Agent');
+        const meta = text(record.role || record.status || record.description, 'Registered agent');
+        return {
+          id: `agent:${id}`,
+          label,
+          meta,
+          to: `/fleet?agent=${encodeURIComponent(id)}`,
+          source: 'local fallback',
+          kind: 'agent',
+        };
+      })
+      .filter((item) => `${item.label} ${item.meta}`.toLowerCase().includes(needle));
     return [...leadResults, ...agentResults].slice(0, 6);
-  }, [query, snapshot?.leadImports]);
+  }, [query, snapshot]);
+
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle) {
+      setSearchResults([]);
+      setSearchSource('');
+      setSearchError('');
+      setSearchPending(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSearchPending(true);
+    setSearchError('');
+    const timer = window.setTimeout(() => {
+      fetchGlobalSearchRequest({ query: needle, limit: 8 })
+        .then((response) => {
+          if (cancelled) return;
+          const source = response.source || response.result || 'bridge';
+          setSearchResults(normalizeBridgeSearchResults(response.results || [], needle, source));
+          setSearchSource('Bridge search');
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setSearchResults(fallbackSearchResults);
+          setSearchSource('Local fallback');
+          setSearchError(error instanceof Error ? error.message : 'Bridge search unavailable.');
+        })
+        .finally(() => {
+          if (!cancelled) setSearchPending(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [fallbackSearchResults, query]);
 
   const openSearchResult = (result: SearchResult) => {
     setSearchOpen(false);
@@ -149,7 +247,10 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
 
   return (
     <header className="pbk-shell-topbar h-14 px-3 sm:px-4 flex items-center gap-2 sm:gap-4 bg-slate-950 border-b border-slate-800 min-w-0">
-      <div className="pbk-shell-search flex-1 max-w-xl min-w-0 relative" data-source="GET /state">
+      <div
+        className="pbk-shell-search flex-1 max-w-xl min-w-0 relative"
+        data-source="GET /api/search"
+      >
         <Search
           size={14}
           className="pbk-shell-search-icon absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
@@ -182,6 +283,12 @@ export function ShellTopbar({ theme, onToggleTheme }: ShellTopbarProps) {
             role="listbox"
             className="pbk-shell-search-results absolute left-0 right-0 top-11 z-50 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-2xl"
           >
+            <div className="pbk-shell-search-source border-b border-slate-800/80 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+              {searchPending
+                ? 'Searching bridge'
+                : searchSource || (searchError ? 'Local fallback' : 'Bridge search')}
+              {searchError ? ` - ${searchError}` : ''}
+            </div>
             {searchResults.map((result) => (
               <button
                 key={result.id}

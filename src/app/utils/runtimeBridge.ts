@@ -264,6 +264,30 @@ export type AgentRegistryResponse = {
   registry?: AgentRegistrySnapshot;
 };
 
+export type GlobalSearchResult = {
+  id?: string;
+  recordId?: string;
+  recordKind?: string;
+  routeContext?: string;
+  kind?: string;
+  title?: string;
+  subtitle?: string;
+  body?: string;
+  target?: string;
+  page?: string;
+  createdAt?: string;
+  tags?: string[];
+};
+
+export type GlobalSearchResponse = {
+  ok: boolean;
+  result?: string;
+  query?: string;
+  count?: number;
+  results?: GlobalSearchResult[];
+  source?: string;
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -827,6 +851,21 @@ export async function fetchAgentHealthRequest() {
 export async function fetchAgentRegistryRequest() {
   return bridgeRequest<AgentRegistryResponse>({
     path: '/api/agents/registry',
+  });
+}
+
+export async function fetchGlobalSearchRequest({
+  query = '',
+  limit = 8,
+}: {
+  query?: string;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams();
+  params.set('q', query.trim());
+  params.set('limit', String(Math.max(1, Math.min(40, limit))));
+  return bridgeRequest<GlobalSearchResponse>({
+    path: `/api/search?${params.toString()}`,
   });
 }
 

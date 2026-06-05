@@ -36397,6 +36397,21 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
     });
   };
 
+  getCurrentAgentRegistry().forEach((agent) =>
+    add({
+      kind: 'agent',
+      id: agent.id,
+      title: agent.name || agent.id || 'Agent',
+      subtitle: [agent.role, agent.status].filter(Boolean).join(' - '),
+      body: [agent.description, agent.endpoint, ...(agent.capabilities || [])].filter(Boolean).join(' '),
+      page: 'agent-fleet',
+      recordId: agent.id,
+      routeContext: `agent:${agent.id || ''}`,
+      createdAt: agent.healthCheckedAt || agent.health_checked_at || agent.updatedAt || agent.createdAt,
+      tags: agent.capabilities || [],
+    })
+  );
+
   (state.leadImports || []).forEach((lead) =>
     add({
       kind: 'lead',

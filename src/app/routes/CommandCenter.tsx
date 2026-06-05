@@ -214,6 +214,10 @@ type BattlefieldItem = {
   body: string;
   when: string;
   tone: BattlefieldTone;
+  score: number;
+  source: string;
+  reason: string;
+  cta: string;
   pulse?: 'default' | 'amber' | 'sky' | 'lime';
   targetPath: string;
 };
@@ -297,6 +301,15 @@ function getMessageRecipient(message: RuntimeRecord) {
   );
 }
 
+function clampBattlefieldScore(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function rankBattlefieldItems(items: BattlefieldItem[]) {
+  return [...items].sort((left, right) => right.score - left.score);
+}
+
 function buildHeroStats(params: {
   leadImports: RuntimeRecord[];
   calls: RuntimeRecord[];
@@ -366,16 +379,23 @@ function buildBattlefieldItems(params: {
     .slice(0, 2)
     .forEach((call, index) => {
       const sentiment = toNumber(call.sentiment, null);
+      const status = String(call.status || 'Live');
+      const sentimentScore =
+        sentiment == null ? 0 : Math.round(sentiment <= 1 ? sentiment * 100 : sentiment);
       items.push({
         id: `call-${String(call.id || call.callId || index)}`,
-        tag: String(call.status || 'Live'),
+        tag: status,
         body: `${String(call.leadName || call.name || call.phone || 'Active call')} ${
-          sentiment == null
-            ? ''
-            : `/ sentiment ${Math.round(sentiment <= 1 ? sentiment * 100 : sentiment)}`
+          sentiment == null ? '' : `/ sentiment ${sentimentScore}`
         }`.trim(),
         when: 'now',
         tone: 'urgent',
+        score: clampBattlefieldScore(
+          ['live', 'connected'].includes(status.toLowerCase()) ? 99 : 92
+        ),
+        source: 'snapshot.calls',
+        reason: 'Active seller call needs operator awareness.',
+        cta: 'Open live call',
         pulse: 'default',
         targetPath: '#live-call',
       });
@@ -387,6 +407,7 @@ function buildBattlefieldItems(params: {
     .forEach((approval, index) => {
       const type = String(approval.type || 'Approval');
       const amount = approval.offerPrice || approval.mao || approval.amount;
+      const isContract = type.toLowerCase().includes('contract');
       items.push({
         id: `approval-${String(approval.id || index)}`,
         tag: type,
@@ -394,8 +415,14 @@ function buildBattlefieldItems(params: {
           approval.leadName || approval.address || 'approval needed'
         )}`,
         when: formatRelative(getRuntimeDate(approval)),
-        tone: type.toLowerCase().includes('contract') ? 'money' : 'hot',
-        pulse: type.toLowerCase().includes('contract') ? 'lime' : undefined,
+        tone: isContract ? 'money' : 'hot',
+        score: clampBattlefieldScore((isContract ? 91 : 84) + (toNumber(amount, 0) ? 4 : 0)),
+        source: 'snapshot.approvals',
+        reason: isContract
+          ? 'Contract approval can trigger DocuSign delivery.'
+          : 'Outbound agent action is waiting on approval.',
+        cta: 'Review approval',
+        pulse: isContract ? 'lime' : undefined,
         targetPath: '#approvals',
       });
     });
@@ -412,6 +439,10 @@ function buildBattlefieldItems(params: {
         body: `${String(message.channel || 'message').toUpperCase()} to ${getMessageRecipient(message)}`,
         when: formatRelative(getRuntimeDate(message)),
         tone: 'urgent',
+        score: 94,
+        source: 'snapshot.messages',
+        reason: 'Provider marked an outbound send as failed.',
+        cta: 'Open inbox',
         targetPath: '/inbox',
       });
     });
@@ -428,6 +459,10 @@ function buildBattlefieldItems(params: {
         ).slice(0, 56)}`,
         when: formatRelative(getRuntimeDate(message)),
         tone: 'warm',
+        score: 72,
+        source: 'snapshot.messages',
+        reason: 'Unread seller reply is waiting in Inbox.',
+        cta: 'Reply',
         pulse: 'amber',
         targetPath: '/inbox',
       });
@@ -443,6 +478,10 @@ function buildBattlefieldItems(params: {
         body: `${String(task.provider || 'Rex')} / ${String(task.action || task.summary || 'decision')}`,
         when: formatRelative(getRuntimeDate(task)),
         tone: 'hot',
+        score: 86,
+        source: 'snapshot.adminTasks',
+        reason: 'Infrastructure/admin action is approval gated.',
+        cta: 'Review admin task',
         targetPath: '#admin-activity',
       });
     });
@@ -451,17 +490,22 @@ function buildBattlefieldItems(params: {
     .filter((lead) => getLeadScore(lead) >= 75)
     .slice(0, 2)
     .forEach((lead, index) => {
+      const score = clampBattlefieldScore(getLeadScore(lead));
       items.push({
         id: `lead-${String(lead.id || lead.leadId || index)}`,
         tag: 'Hot lead',
         body: `${getLeadDisplayName(lead)} / ${getLeadDisplayAddress(lead)}`,
-        when: `${Math.round(getLeadScore(lead))}`,
+        when: `${score}`,
         tone: 'money',
+        score,
+        source: 'snapshot.leadImports',
+        reason: 'Lead score crossed the hot-lead threshold.',
+        cta: 'Open lead',
         targetPath: '/leads',
       });
     });
 
-  return items.slice(0, 8);
+  return rankBattlefieldItems(items).slice(0, 8);
 }
 
 function DataSourceCaption({
@@ -532,28 +576,54 @@ function FounderBattlefield({
         </div>
         <div className="pbk-battlefield-center" aria-label="Ranked work queue">
           {items.length ? (
-            items.map((item) => (
+            items.map((item, index) => (
               <button
                 key={item.id}
                 type="button"
                 className={`pbk-bf-chip ${item.tone}`}
-                title={`${item.tag}: ${item.body}`}
+                title={`${item.tag}: ${item.body} / ${item.reason}`}
+                aria-label={`Rank ${index + 1}, score ${item.score}, ${item.tag}: ${item.body}. ${item.reason}`}
                 onClick={() => onSelect(item)}
               >
-                {item.pulse && <PbkPulseDot color={item.pulse} />}
-                <span className="pbk-bf-chip-tag">{item.tag}</span>
-                <span className="pbk-bf-chip-body">{item.body}</span>
-                <span className="pbk-bf-chip-when">{item.when}</span>
+                <span className="pbk-bf-rank">#{index + 1}</span>
+                <span className="pbk-bf-chip-main">
+                  <span className="pbk-bf-chip-line">
+                    {item.pulse && <PbkPulseDot color={item.pulse} />}
+                    <span className="pbk-bf-chip-tag">{item.tag}</span>
+                    <span className="pbk-bf-chip-body">{item.body}</span>
+                  </span>
+                  <span className="pbk-bf-reason">{item.reason}</span>
+                </span>
+                <span className="pbk-bf-chip-meta">
+                  <span className="pbk-bf-score">{item.score}</span>
+                  <span className="pbk-bf-source">{item.source}</span>
+                  <span className="pbk-bf-chip-when">{item.when}</span>
+                </span>
               </button>
             ))
           ) : (
-            <button type="button" className="pbk-bf-chip warm" onClick={() => undefined}>
-              <PbkPulseDot color="sky" />
-              <span className="pbk-bf-chip-tag">Clear</span>
-              <span className="pbk-bf-chip-body">
-                No urgent approvals, live calls, or failed sends in the bridge snapshot
+            <button
+              type="button"
+              className="pbk-bf-chip warm"
+              aria-label="Ranked queue is clear"
+              onClick={() => undefined}
+            >
+              <span className="pbk-bf-rank">#0</span>
+              <span className="pbk-bf-chip-main">
+                <span className="pbk-bf-chip-line">
+                  <PbkPulseDot color="sky" />
+                  <span className="pbk-bf-chip-tag">Clear</span>
+                  <span className="pbk-bf-chip-body">
+                    No urgent approvals, live calls, or failed sends in the bridge snapshot
+                  </span>
+                </span>
+                <span className="pbk-bf-reason">Bridge returned no waiting work items.</span>
               </span>
-              <span className="pbk-bf-chip-when">now</span>
+              <span className="pbk-bf-chip-meta">
+                <span className="pbk-bf-score">0</span>
+                <span className="pbk-bf-source">GET /state</span>
+                <span className="pbk-bf-chip-when">now</span>
+              </span>
             </button>
           )}
         </div>
@@ -575,8 +645,8 @@ function FounderBattlefield({
         </div>
       </div>
       <DataSourceCaption
-        endpoint="snapshot.approvals + snapshot.calls + snapshot.messages + snapshot.leadImports"
-        note="canonical GET /api/founder/work-queue needs Mastra wiring"
+        endpoint="snapshot.approvals + snapshot.calls + snapshot.messages + snapshot.adminTasks + snapshot.leadImports"
+        note="client-ranked snapshot work queue; canonical GET /api/founder/work-queue needs Mastra wiring"
       />
     </section>
   );

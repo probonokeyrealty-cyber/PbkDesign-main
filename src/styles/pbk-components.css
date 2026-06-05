@@ -557,10 +557,12 @@
 }
 .pbk-bf-chip {
   flex: 0 0 auto;
-  min-width: min(220px, 76vw);
-  display: flex;
+  min-width: min(340px, 82vw);
+  max-width: min(460px, 88vw);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: 1px solid var(--border-dim);
   border-left: 3px solid var(--text-tertiary);
   border-radius: var(--radius);
@@ -593,6 +595,29 @@
 .pbk-bf-chip.money {
   border-left-color: var(--lime);
 }
+.pbk-bf-rank {
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+}
+.pbk-bf-chip-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.pbk-bf-chip-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
 .pbk-bf-chip-tag {
   flex-shrink: 0;
   font-size: 9px;
@@ -617,6 +642,41 @@
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pbk-bf-reason {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pbk-bf-chip-meta {
+  display: grid;
+  flex-shrink: 0;
+  justify-items: end;
+  gap: 2px;
+  min-width: 74px;
+}
+.pbk-bf-score {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+}
+.pbk-bf-score::after {
+  content: ' pts';
+  color: var(--text-ghost);
+  font-size: 8px;
+  font-weight: 600;
+}
+.pbk-bf-source {
+  max-width: 104px;
+  overflow: hidden;
+  color: var(--sky);
+  font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

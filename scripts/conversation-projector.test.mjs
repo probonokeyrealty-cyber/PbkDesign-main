@@ -326,6 +326,8 @@ describe('approval projection', () => {
     ['declined', 'approval.decided'],
     ['rejected', 'approval.decided'],
     ['decided', 'approval.decided'],
+    ['needs_revision', 'approval.decided'],
+    ['cancelled', 'approval.decided'],
   ])('maps approval status %s to %s', (status, eventType) => {
     expect(
       projectApprovalEvent({
@@ -413,6 +415,139 @@ describe('activity projection', () => {
           crmId: 'crm-1',
         },
       },
+    });
+  });
+});
+
+describe('persisted snake_case records', () => {
+  test('projects a persisted message row', () => {
+    expect(
+      projectMessageEvent({
+        source_id: 'message-db',
+        workspace_id: 'workspace-db',
+        lead_id: 'lead-db',
+        channel: 'sms',
+        direction: 'inbound',
+        from_phone: '+16145550199',
+        to_phone: '+16145550101',
+        provider_message_id: 'provider-message-db',
+        created_at: '2026-06-06T17:00:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-db',
+      leadId: 'lead-db',
+      sourceId: 'message-db',
+      senderAddress: '+16145550199',
+      recipientAddress: '+16145550101',
+      occurredAt: '2026-06-06T17:00:00.000Z',
+      payload: { providerMessageId: 'provider-message-db' },
+    });
+  });
+
+  test('projects a persisted call row', () => {
+    expect(
+      projectCallEvent({
+        id: 'call-db',
+        workspace_id: 'workspace-db',
+        lead_id: 'lead-db',
+        direction: 'outbound',
+        from_number: '+16145550101',
+        phone: '+16145550199',
+        recording_url: 'https://recordings.example/call-db.mp3',
+        storage_path: 'calls/call-db.mp3',
+        duration_seconds: 31,
+        updated_at: '2026-06-06T17:01:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-db',
+      leadId: 'lead-db',
+      eventType: 'call.recording',
+      senderAddress: '+16145550101',
+      recipientAddress: '+16145550199',
+      occurredAt: '2026-06-06T17:01:00.000Z',
+      payload: {
+        recordingUrl: 'https://recordings.example/call-db.mp3',
+        storagePath: 'calls/call-db.mp3',
+        durationSeconds: 31,
+      },
+    });
+  });
+
+  test('projects a persisted contract row', () => {
+    expect(
+      projectContractEvent({
+        id: 'contract-db',
+        workspace_id: 'workspace-db',
+        lead_id: 'lead-db',
+        status: 'viewed',
+        envelope_id: 'envelope-db',
+        document_title: 'Persisted Contract',
+        template_id: 'template-db',
+        updated_at: '2026-06-06T17:02:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-db',
+      leadId: 'lead-db',
+      provider: 'docusign',
+      subject: 'Persisted Contract',
+      occurredAt: '2026-06-06T17:02:00.000Z',
+      payload: {
+        envelopeId: 'envelope-db',
+        documentTitle: 'Persisted Contract',
+        template: 'template-db',
+      },
+    });
+  });
+
+  test('projects a persisted approval row with acted timestamp', () => {
+    expect(
+      projectApprovalEvent({
+        id: 'approval-db',
+        workspace_id: 'workspace-db',
+        lead_id: 'lead-db',
+        status: 'needs_revision',
+        approval_type: 'offer',
+        action: 'revise',
+        decision: 'needs_revision',
+        actor_name: 'Morgan',
+        acted_at: '2026-06-06T17:03:00.000Z',
+        created_at: '2026-06-06T16:00:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-db',
+      leadId: 'lead-db',
+      eventType: 'approval.decided',
+      actorName: 'Morgan',
+      status: 'needs_revision',
+      occurredAt: '2026-06-06T17:03:00.000Z',
+      payload: {
+        approvalType: 'offer',
+        action: 'revise',
+        decision: 'needs_revision',
+      },
+    });
+  });
+
+  test('projects a persisted activity row', () => {
+    expect(
+      projectActivityEvent({
+        id: 'activity-db',
+        workspace_id: 'workspace-db',
+        lead_id: 'lead-db',
+        actor_type: 'agent',
+        actor_name: 'Ava',
+        category: 'NOTE',
+        text: 'Persisted note',
+        occurred_at: '2026-06-06T17:04:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-db',
+      leadId: 'lead-db',
+      eventType: 'lead.note',
+      actorType: 'agent',
+      actorName: 'Ava',
+      body: 'Persisted note',
+      occurredAt: '2026-06-06T17:04:00.000Z',
     });
   });
 });

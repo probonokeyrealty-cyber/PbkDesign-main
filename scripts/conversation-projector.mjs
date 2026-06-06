@@ -24,7 +24,73 @@ const STARTED_CALL_STATUSES = new Set([
 ]);
 
 const APPROVAL_CREATED_STATUSES = new Set(['pending', 'created', 'requested']);
-const APPROVAL_DECIDED_STATUSES = new Set(['approved', 'declined', 'rejected', 'decided']);
+const APPROVAL_DECIDED_STATUSES = new Set([
+  'approved',
+  'declined',
+  'rejected',
+  'decided',
+  'needs_revision',
+  'cancelled',
+]);
+
+const RECORD_ALIASES = {
+  id: ['sourceId', 'source_id'],
+  workspaceId: ['workspace_id'],
+  leadId: ['lead_id'],
+  providerId: ['provider_id'],
+  providerMessageId: ['provider_message_id'],
+  providerCallId: ['provider_call_id'],
+  senderIdentityId: ['sender_identity_id'],
+  fromPhone: ['from_phone'],
+  toPhone: ['to_phone'],
+  fromEmail: ['from_email'],
+  toEmail: ['to_email'],
+  fromNumber: ['from_number'],
+  toNumber: ['to_number'],
+  senderAddress: ['sender_address'],
+  recipientAddress: ['recipient_address'],
+  actorType: ['actor_type'],
+  actorName: ['actor_name'],
+  senderName: ['sender_name'],
+  fromName: ['from_name'],
+  sellerName: ['seller_name'],
+  agentName: ['agent_name'],
+  participantName: ['participant_name'],
+  sellerPhone: ['seller_phone'],
+  occurredAt: ['occurred_at'],
+  sentAt: ['sent_at'],
+  createdAt: ['created_at'],
+  updatedAt: ['updated_at'],
+  actedAt: ['acted_at'],
+  decidedAt: ['decided_at'],
+  startedAt: ['started_at'],
+  endedAt: ['ended_at'],
+  completedAt: ['completed_at'],
+  signedAt: ['signed_at'],
+  viewedAt: ['viewed_at'],
+  recordingAt: ['recording_at'],
+  recordedAt: ['recorded_at'],
+  transcriptAt: ['transcript_at'],
+  envelopeId: ['envelope_id'],
+  docusignEnvelopeId: ['docusign_envelope_id'],
+  documentTitle: ['document_title'],
+  templateId: ['template_id'],
+  templatePath: ['template_path'],
+  selectedPath: ['selected_path'],
+  approvalType: ['approval_type'],
+  requestedBy: ['requested_by'],
+  decidedBy: ['decided_by'],
+  recordingUrl: ['recording_url'],
+  storagePath: ['storage_path'],
+  recordingPath: ['recording_path'],
+  durationSeconds: ['duration_seconds'],
+  transcriptText: ['transcript_text'],
+  transcriptChunk: ['transcript_chunk'],
+  currentTranscriptChunk: ['current_transcript_chunk'],
+  telnyxCallControlId: ['telnyx_call_control_id'],
+  telnyxCallLegId: ['telnyx_call_leg_id'],
+  telnyxCallSessionId: ['telnyx_call_session_id'],
+};
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -34,6 +100,20 @@ function assertRecord(record) {
   if (!isRecord(record)) {
     throw new TypeError('record must be an object');
   }
+}
+
+function normalizeRecord(record) {
+  const normalizedRecord = { ...record };
+
+  for (const [camelKey, aliases] of Object.entries(RECORD_ALIASES)) {
+    if (record[camelKey] === undefined) {
+      const alias = aliases.find((key) => record[key] !== undefined);
+      if (alias) normalizedRecord[camelKey] = record[alias];
+    }
+    for (const alias of aliases) delete normalizedRecord[alias];
+  }
+
+  return normalizedRecord;
 }
 
 function requiredSourceId(record) {
@@ -87,7 +167,15 @@ function cleanValue(value) {
 }
 
 function payloadFrom(record, excludedKeys, additions = {}) {
-  const excluded = new Set(['id', 'workspaceId', 'leadId', 'payload', ...excludedKeys]);
+  const excluded = new Set([
+    'id',
+    'workspaceId',
+    'leadId',
+    'actorType',
+    'actorName',
+    'payload',
+    ...excludedKeys,
+  ]);
   const payload = isRecord(record.payload) ? cleanValue(record.payload) : {};
 
   for (const key of excluded) {
@@ -149,6 +237,7 @@ function commonEvent(record, options) {
 
 export function projectMessageEvent(record) {
   assertRecord(record);
+  record = normalizeRecord(record);
   requiredSourceId(record);
 
   const channel = normalized(record.channel);
@@ -180,7 +269,7 @@ export function projectMessageEvent(record) {
     provider: record.provider,
     senderAddress,
     recipientAddress,
-    actorType: actorTypeForDirection(direction),
+    actorType: firstText(record.actorType) || actorTypeForDirection(direction),
     actorName,
     subject: record.subject,
     body: record.body ?? record.text,
@@ -335,6 +424,7 @@ function callAddresses(record, direction) {
 
 export function projectCallEvent(record, kind) {
   assertRecord(record);
+  record = normalizeRecord(record);
   requiredSourceId(record);
 
   const explicitKind = kind === undefined ? '' : normalizeCallKind(kind);
@@ -359,7 +449,7 @@ export function projectCallEvent(record, kind) {
     provider: record.provider,
     senderAddress,
     recipientAddress,
-    actorType: actorTypeForDirection(direction),
+    actorType: firstText(record.actorType) || actorTypeForDirection(direction),
     actorName: firstText(record.senderName, record.actorName, record.participantName),
     subject: record.subject,
     body: callKind === 'transcript' ? transcriptBody(record) : record.notes,
@@ -427,6 +517,7 @@ function contractEventType(status) {
 
 export function projectContractEvent(record) {
   assertRecord(record);
+  record = normalizeRecord(record);
   requiredSourceId(record);
 
   const status = normalized(record.status);
@@ -456,7 +547,7 @@ export function projectContractEvent(record) {
     direction: 'internal',
     sourceTable: 'contracts',
     provider,
-    actorType: 'system',
+    actorType: firstText(record.actorType) || 'system',
     actorName: firstText(record.actorName, provider),
     subject: documentTitle,
     body: firstText(record.notes, record.summary),
@@ -509,6 +600,7 @@ function approvalEventType(status) {
 
 export function projectApprovalEvent(record) {
   assertRecord(record);
+  record = normalizeRecord(record);
   requiredSourceId(record);
 
   const status = normalized(record.status);
@@ -517,7 +609,7 @@ export function projectApprovalEvent(record) {
   const action = firstText(record.action, record.payload?.action);
   const decision =
     firstText(record.decision, record.payload?.decision) ||
-    (['approved', 'declined', 'rejected'].includes(status) ? status : '');
+    (APPROVAL_DECIDED_STATUSES.has(status) ? status : '');
   const actorName =
     eventType === 'approval.decided'
       ? firstText(record.decidedBy, record.actorName, record.actor, record.requestedBy)
@@ -529,13 +621,13 @@ export function projectApprovalEvent(record) {
     direction: 'internal',
     sourceTable: 'approvals',
     provider: record.provider,
-    actorType: actorName ? 'agent' : 'system',
+    actorType: firstText(record.actorType) || (actorName ? 'agent' : 'system'),
     actorName,
     subject: record.subject,
     body: firstText(record.summary, record.notes),
     status: record.status,
     occurredAt: firstTimestamp(
-      eventType === 'approval.decided' ? record.decidedAt : record.createdAt,
+      eventType === 'approval.decided' ? (record.actedAt ?? record.decidedAt) : record.createdAt,
       record.updatedAt,
       record.createdAt
     ),
@@ -555,6 +647,7 @@ export function projectApprovalEvent(record) {
         'subject',
         'summary',
         'notes',
+        'actedAt',
         'decidedAt',
         'createdAt',
         'updatedAt',
@@ -588,11 +681,14 @@ function activityEventType(record) {
 
 export function projectActivityEvent(record) {
   assertRecord(record);
+  record = normalizeRecord(record);
   requiredSourceId(record);
 
   const eventType = activityEventType(record);
   const actorName = firstText(record.actorName, record.actor);
-  const actorType = !actorName || normalized(actorName) === 'system' ? 'system' : 'agent';
+  const actorType =
+    firstText(record.actorType) ||
+    (!actorName || normalized(actorName) === 'system' ? 'system' : 'agent');
   const category = firstText(record.category);
   const target = firstText(record.target);
   const source = firstText(record.source);

@@ -171,6 +171,33 @@ export function mapSenderIdentityRow(row) {
   };
 }
 
+function mapScheduledUnifiedMessageRow(row) {
+  if (!row) return null;
+  const payload = jsonValue(row.payload);
+  return {
+    id: row.id,
+    leadId: row.lead_id ?? null,
+    workspaceId: row.workspace_id,
+    channel: row.channel,
+    direction: row.direction,
+    status: row.status,
+    provider: row.provider,
+    fromEmail: row.from_email || '',
+    toEmail: row.to_email || '',
+    fromPhone: row.from_phone || '',
+    toPhone: row.to_phone || '',
+    subject: row.subject || '',
+    body: row.body || '',
+    payload,
+    senderIdentityId: payload.senderIdentityId || '',
+    conversationThreadId: payload.conversationThreadId || '',
+    conversationEventId: payload.conversationEventId || '',
+    scheduledFor: payload.scheduledFor || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapSafeSenderIdentityRow(row) {
   if (!row) return null;
   return {
@@ -1588,6 +1615,154 @@ export function createConversationStore(pool) {
     });
   }
 
+  async function updateEventOutcome(
+    eventId,
+    {
+      workspaceId: workspaceInput,
+      status: statusInput,
+      payload: payloadPatch = {},
+    } = {}
+  ) {
+    const id = requiredText(eventId, 'eventId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const status = requiredText(statusInput, 'status');
+    if (
+      !payloadPatch ||
+      typeof payloadPatch !== 'object' ||
+      Array.isArray(payloadPatch) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(payloadPatch))
+    ) {
+      throw new Error('Event outcome payload patch must be a plain object');
+    }
+
+    return withTransaction(pool, async (client) => {
+      const currentResult = await client.query(
+        `
+          SELECT event.*
+          FROM public.conversation_events AS event
+          JOIN public.conversation_threads AS thread
+            ON thread.id = event.thread_id
+            AND thread.workspace_id = event.workspace_id
+          WHERE event.id = $1
+            AND thread.workspace_id = $2
+            AND thread.merged_into_thread_id IS NULL
+          LIMIT 1
+          FOR UPDATE OF event, thread
+        `,
+        [id, workspace]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
+      const nextPayload = {
+        ...jsonValue(current.payload),
+        ...payloadPatch,
+      };
+      const result = await client.query(
+        `
+          UPDATE public.conversation_events
+          SET status = $3,
+              payload = $4::jsonb,
+              updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+          RETURNING *
+        `,
+        [id, workspace, status, JSON.stringify(nextPayload)]
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      await recomputeThreadAggregates(client, [row.thread_id], workspace);
+      return mapConversationEventRow(row);
+    });
+  }
+
+  async function claimDueScheduledMessages({
+    workspaceId: workspaceInput,
+    claimId: claimInput,
+    now = new Date().toISOString(),
+    limit = 25,
+  } = {}) {
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const claimId = requiredText(claimInput, 'claimId');
+    const claimedAt = requiredText(now, 'now');
+    const bounded = boundedLimit(limit, 100);
+    const result = await pool.query(
+      `
+        WITH due AS (
+          SELECT message.id
+          FROM public.unified_messages AS message
+          WHERE message.workspace_id = $1
+            AND message.status = 'scheduled'
+            AND message.direction = 'outbound'
+            AND message.channel IN ('sms', 'email')
+            AND COALESCE(message.payload->>'requestedFrom', '') = 'unified-conversation'
+            AND CASE
+              WHEN COALESCE(message.payload->>'scheduledFor', '') ~
+                '^\\d{4}-\\d{2}-\\d{2}T'
+              THEN (message.payload->>'scheduledFor')::timestamptz
+              ELSE NULL
+            END <= $2::timestamptz
+          ORDER BY (message.payload->>'scheduledFor')::timestamptz, message.id
+          FOR UPDATE SKIP LOCKED
+          LIMIT $3
+        )
+        UPDATE public.unified_messages AS message
+        SET status = 'processing',
+            payload = COALESCE(message.payload, '{}'::jsonb) ||
+              jsonb_build_object(
+                'schedulerClaimId', $4,
+                'schedulerClaimedAt', $2::text
+              ),
+            updated_at = $2::timestamptz
+        FROM due
+        WHERE message.id = due.id
+        RETURNING message.*
+      `,
+      [workspace, claimedAt, bounded, claimId]
+    );
+    return result.rows.map(mapScheduledUnifiedMessageRow);
+  }
+
+  async function completeScheduledMessage(
+    messageId,
+    {
+      workspaceId: workspaceInput,
+      claimId: claimInput,
+      status: statusInput,
+      provider = '',
+      payload: payloadPatch = {},
+    } = {}
+  ) {
+    const id = requiredText(messageId, 'messageId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const claimId = requiredText(claimInput, 'claimId');
+    const status = requiredText(statusInput, 'status');
+    if (
+      !payloadPatch ||
+      typeof payloadPatch !== 'object' ||
+      Array.isArray(payloadPatch) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(payloadPatch))
+    ) {
+      throw new Error('Scheduled message payload patch must be a plain object');
+    }
+    const result = await pool.query(
+      `
+        UPDATE public.unified_messages
+        SET status = $4,
+            payload = COALESCE(payload, '{}'::jsonb) || $5::jsonb,
+            provider = COALESCE(NULLIF($6, ''), provider),
+            updated_at = NOW()
+        WHERE id = $1
+          AND workspace_id = $2
+          AND status = 'processing'
+          AND payload->>'schedulerClaimId' = $3
+        RETURNING *
+      `,
+      [id, workspace, claimId, status, JSON.stringify(payloadPatch), provider]
+    );
+    return mapScheduledUnifiedMessageRow(result.rows[0]);
+  }
+
   async function reportEventSpam(
     eventId,
     { workspaceId: workspaceInput, reportedAt = new Date().toISOString() } = {}
@@ -2315,6 +2490,9 @@ export function createConversationStore(pool) {
     upsertEvent,
     getEvent,
     patchEvent,
+    updateEventOutcome,
+    claimDueScheduledMessages,
+    completeScheduledMessage,
     reportEventSpam,
     patchThread,
     mergeThreads,

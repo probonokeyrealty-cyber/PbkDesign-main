@@ -380,3 +380,49 @@ export function rankEligibleSenderIdentities(identities = [], context = {}) {
         (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
     );
 }
+
+export function evaluateConversationSenderRecommendationCompliance({
+  channel = '',
+  dncBlocked = false,
+  consentStatus = '',
+} = {}) {
+  if (dncBlocked) {
+    return {
+      allowed: false,
+      reasonCodes: ['dnc_blocked'],
+    };
+  }
+  if (String(channel || '').trim().toLowerCase() !== 'sms') {
+    return {
+      allowed: true,
+      reasonCodes: [],
+    };
+  }
+  const normalizedConsent =
+    String(consentStatus || 'unknown')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_') || 'unknown';
+  const approvedConsentStatuses = new Set([
+    'true',
+    'yes',
+    'valid',
+    'granted',
+    'consented',
+    'opted_in',
+    'verified',
+  ]);
+  if (approvedConsentStatuses.has(normalizedConsent)) {
+    return {
+      allowed: true,
+      reasonCodes: [],
+    };
+  }
+  return {
+    allowed: false,
+    reasonCodes: [
+      `consent_${normalizedConsent === 'unknown' ? 'unknown' : normalizedConsent}`,
+      'approval_required',
+    ],
+  };
+}

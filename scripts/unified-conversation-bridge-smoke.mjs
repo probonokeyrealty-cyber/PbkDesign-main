@@ -504,6 +504,7 @@ assert(
 for (const route of [
   '/api/conversations/:threadId/sender-recommendation',
   '/api/conversations/:threadId/messages',
+  '/api/conversations/messages/run-due',
   '/api/conversations/:threadId/refine-draft',
   '/api/conversation-events/:eventId',
   '/api/conversation-events/:eventId/restore',
@@ -534,12 +535,48 @@ assert(
 );
 
 assert(
+  /new Set\(\[[\s\S]*'requestedBy'[\s\S]*\]\)/.test(bridge) &&
+    !/new Set\(\[[\s\S]{0,300}'approvalId'[\s\S]{0,300}\]\),\s*'conversation send'/.test(
+      bridge
+    ) &&
+    !/approvalId:\s*String\(body\.approvalId/.test(bridge) &&
+    !/approvalId:\s*parsed\.approvalId/.test(conversationRoutes),
+  'Public conversation sends must not accept or forward an arbitrary approvalId.'
+);
+
+assert(
+  /evaluateConversationSenderRecommendationCompliance\(\{[\s\S]*channel,[\s\S]*dncBlocked:\s*dnc\.blocked,[\s\S]*consentStatus:\s*getConversationConsentStatus/.test(
+    conversationRoutes
+  ) &&
+    /if \(!compliance\.allowed\)/.test(conversationRoutes) &&
+    /reasonCodes:\s*compliance\.reasonCodes/.test(conversationRoutes) &&
+    /recommended:\s*null,[\s\S]*alternatives:\s*\[\]/.test(conversationRoutes),
+  'Sender recommendations must fail closed for DNC and non-consented SMS recipients.'
+);
+
+assert(
   /persistUnifiedMessageRecord\(message\)/.test(conversationRoutes) &&
     /senderIdentityId/.test(conversationRoutes) &&
     /scheduledFor/.test(conversationRoutes) &&
+    /runDueConversationMessages\(parsed\)/.test(conversationRoutes) &&
+    /claimDueScheduledMessages/.test(bridge) &&
+    /completeScheduledMessage/.test(bridge) &&
+    /FOR UPDATE SKIP LOCKED/.test(storeSource) &&
+    /senderIdentityId:\s*scheduledMessage\.senderIdentityId/.test(
+      bridge
+    ) &&
     /projectConversationSendOutcome\(store/.test(conversationRoutes) &&
     /store\.upsertEvent/.test(bridge),
-  'Scheduled and provider send outcomes must persist real messages and project conversation events.'
+  'Scheduled messages must be claimed idempotently, retain their selected sender, execute, and project outcomes.'
+);
+
+assert(
+  /conversationSendBinding/.test(bridge) &&
+    /conversationEventId/.test(bridge) &&
+    /validateConversationApprovalBinding/.test(bridge) &&
+    /updateEventOutcome/.test(bridge) &&
+    /approval_projection_failed/.test(bridge),
+  'Approval replay must validate its exact conversation binding and update the original event outcome.'
 );
 
 assert(
@@ -547,6 +584,11 @@ assert(
     /Rewrite only the operator's draft/.test(bridge) &&
     /Preserve factual claims, numbers, consent boundaries, and requested channel/.test(bridge) &&
     /slice\(0,\s*12\)/.test(conversationRoutes) &&
+    !/leadName:\s*recipientContext\.leadName/.test(
+      conversationRoutes.slice(
+        conversationRoutes.indexOf('/api/conversations/:threadId/refine-draft')
+      )
+    ) &&
     /rawDraft:\s*parsed\.draft,[\s\S]*refinedDraft:/.test(conversationRoutes),
   'Ava refinement must use the strategist with bounded visible context and never auto-send.'
 );

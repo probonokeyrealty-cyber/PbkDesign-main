@@ -956,6 +956,176 @@ describe('conversation event persistence', () => {
     ).rejects.toThrow('Event payload patch must be a plain object');
     expect(pool.connect).not.toHaveBeenCalled();
   });
+
+  test('updates an approval-bound event outcome without exposing status to public patches', async () => {
+    const current = eventRow({
+      id: EVENT_UUID,
+      thread_id: THREAD_UUID,
+      status: 'approval_required',
+      payload: { approvalId: 'approval-1', requestId: 'request-1' },
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (
+        sql.includes('FROM public.conversation_events AS event') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return { rows: [current] };
+      }
+      if (
+        sql.includes('UPDATE public.conversation_events') &&
+        sql.includes('status = $3')
+      ) {
+        return {
+          rows: [
+            eventRow({
+              ...current,
+              status: params[2],
+              payload: JSON.parse(params[3]),
+            }),
+          ],
+        };
+      }
+      if (sql.includes('WITH target_threads AS')) return { rows: [threadRow()] };
+      return { rows: [] };
+    });
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.updateEventOutcome(
+        EVENT_UUID,
+        {
+          workspaceId: 'pbk',
+          status: 'sent',
+          payload: {
+            providerOutcome: { ok: true, result: 'live' },
+            approvalResolvedAt: '2026-06-06T15:00:00.000Z',
+          },
+        }
+      )
+    ).resolves.toMatchObject({
+      id: EVENT_UUID,
+      status: 'sent',
+      payload: {
+        approvalId: 'approval-1',
+        requestId: 'request-1',
+        providerOutcome: { ok: true, result: 'live' },
+        approvalResolvedAt: '2026-06-06T15:00:00.000Z',
+      },
+    });
+
+    expect(queries[1].sql).toContain('FOR UPDATE OF event, thread');
+    expect(queries[2].sql).toContain('status = $3');
+    expect(queries[2].sql).toContain('workspace_id = $2');
+    expect(queries[3].sql).toContain('WITH target_threads AS');
+  });
+});
+
+describe('scheduled conversation message execution persistence', () => {
+  test('claims due unified messages atomically with row skipping and preserves sender binding', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return {
+          rows: [
+            {
+              id: 'scheduled-1',
+              lead_id: 'lead-1',
+              workspace_id: 'pbk',
+              channel: 'sms',
+              direction: 'outbound',
+              status: 'processing',
+              provider: 'PBK Scheduler',
+              from_phone: '+16145550000',
+              to_phone: '+16145550199',
+              from_email: '',
+              to_email: '',
+              subject: '',
+              body: 'Hello',
+              payload: {
+                scheduledFor: '2026-06-06T14:00:00.000Z',
+                senderIdentityId: 'sender-1',
+                conversationThreadId: THREAD_UUID,
+                conversationEventId: EVENT_UUID,
+                schedulerClaimId: 'claim-1',
+              },
+              created_at: '2026-06-06T13:00:00.000Z',
+              updated_at: '2026-06-06T14:00:00.000Z',
+            },
+          ],
+        };
+      },
+    };
+
+    const claimed = await createConversationStore(pool).claimDueScheduledMessages({
+      workspaceId: 'pbk',
+      claimId: 'claim-1',
+      now: '2026-06-06T14:00:00.000Z',
+      limit: 10,
+    });
+
+    expect(claimed).toEqual([
+      expect.objectContaining({
+        id: 'scheduled-1',
+        status: 'processing',
+        senderIdentityId: 'sender-1',
+        conversationThreadId: THREAD_UUID,
+        conversationEventId: EVENT_UUID,
+      }),
+    ]);
+    expect(queries[0].sql).toContain('FOR UPDATE SKIP LOCKED');
+    expect(queries[0].sql).toContain("message.status = 'scheduled'");
+    expect(queries[0].sql).toContain("SET status = 'processing'");
+    expect(queries[0].sql).toContain('schedulerClaimId');
+    expect(queries[0].params).toEqual([
+      'pbk',
+      '2026-06-06T14:00:00.000Z',
+      10,
+      'claim-1',
+    ]);
+  });
+
+  test('completes only the message owned by the active scheduler claim', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return {
+          rows: [
+            {
+              id: 'scheduled-1',
+              workspace_id: 'pbk',
+              status: params[3],
+              payload: JSON.parse(params[4]),
+            },
+          ],
+        };
+      },
+    };
+
+    await createConversationStore(pool).completeScheduledMessage(
+      'scheduled-1',
+      {
+        workspaceId: 'pbk',
+        claimId: 'claim-1',
+        status: 'sent',
+        provider: 'Telnyx',
+        payload: {
+          providerOutcome: { ok: true, result: 'live' },
+        },
+      }
+    );
+
+    expect(queries[0].sql).toContain("status = 'processing'");
+    expect(queries[0].sql).toContain("payload->>'schedulerClaimId' = $3");
+    expect(queries[0].sql).toContain('status = $4');
+    expect(queries[0].params.slice(0, 4)).toEqual([
+      'scheduled-1',
+      'pbk',
+      'claim-1',
+      'sent',
+    ]);
+  });
 });
 
 describe('conversation queries and pagination', () => {

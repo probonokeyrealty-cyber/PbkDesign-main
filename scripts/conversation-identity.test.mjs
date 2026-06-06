@@ -1,4 +1,5 @@
 import {
+  evaluateConversationSenderRecommendationCompliance,
   normalizeConversationEmail,
   normalizeConversationPhone,
   normalizeInstantlySenderIdentity,
@@ -589,5 +590,68 @@ describe('sender identity ranking', () => {
     expect(identities[0]).not.toHaveProperty('recommendationScore');
     expect(ranked.map(({ id }) => id)).toEqual(['first', 'second']);
     expect(ranked[0]).not.toBe(identities[1]);
+  });
+});
+
+describe('sender recommendation compliance', () => {
+  test.each(['sms', 'email'])('blocks every %s recommendation for DNC leads', (channel) => {
+    expect(
+      evaluateConversationSenderRecommendationCompliance({
+        channel,
+        dncBlocked: true,
+        consentStatus: 'granted',
+      })
+    ).toEqual({
+      allowed: false,
+      reasonCodes: ['dnc_blocked'],
+    });
+  });
+
+  test.each([
+    ['', 'consent_unknown'],
+    ['unknown', 'consent_unknown'],
+    ['denied', 'consent_denied'],
+    ['revoked', 'consent_revoked'],
+    ['needs review', 'consent_needs_review'],
+  ])('fails SMS consent %p closed', (consentStatus, reasonCode) => {
+    expect(
+      evaluateConversationSenderRecommendationCompliance({
+        channel: 'sms',
+        dncBlocked: false,
+        consentStatus,
+      })
+    ).toEqual({
+      allowed: false,
+      reasonCodes: [reasonCode, 'approval_required'],
+    });
+  });
+
+  test.each(['true', 'yes', 'valid', 'granted', 'consented', 'opted_in', 'verified'])(
+    'allows SMS recommendation for approved consent %p',
+    (consentStatus) => {
+      expect(
+        evaluateConversationSenderRecommendationCompliance({
+          channel: 'sms',
+          dncBlocked: false,
+          consentStatus,
+        })
+      ).toEqual({
+        allowed: true,
+        reasonCodes: [],
+      });
+    }
+  );
+
+  test('allows email recommendations when DNC is clear without applying SMS consent rules', () => {
+    expect(
+      evaluateConversationSenderRecommendationCompliance({
+        channel: 'email',
+        dncBlocked: false,
+        consentStatus: 'unknown',
+      })
+    ).toEqual({
+      allowed: true,
+      reasonCodes: [],
+    });
   });
 });

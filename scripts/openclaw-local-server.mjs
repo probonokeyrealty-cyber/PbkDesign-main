@@ -33,7 +33,7 @@ import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSch
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
-import { normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity, rankEligibleSenderIdentities } from './conversation-identity.mjs';
+import { evaluateConversationSenderRecommendationCompliance, normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity, rankEligibleSenderIdentities } from './conversation-identity.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
 import { createConversationStore } from './conversation-store.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -46562,19 +46562,88 @@ async function handleEvent(eventType, payload = {}) {
         approval.metadata.providerActionResult = summarizeProviderActionResult(providerActionResult);
       } else {
         const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object' ? approval.metadata.executionParams : {};
-        const qaProviderExecution = await executeToolHandlerWithQa(
+        const bindingValidation = validateConversationApprovalBinding(
+          approval,
           toolName,
-          {
-            ...executionParams,
-            approvalId: approval.id,
-            actor: incomingActor || executionParams.actor || 'PBK Approval',
-          },
-          'approval-replay'
+          executionParams
         );
-        providerActionResult = qaProviderExecution.result;
-        approval.metadata.providerActionAttemptedAt = isoNow();
-        approval.metadata.providerActionResult = summarizeProviderActionResult(providerActionResult);
-        approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
+        if (!bindingValidation.ok) {
+          providerActionResult = {
+            ok: false,
+            result: 'approval_binding_mismatch',
+            error: 'The approved provider action no longer matches its bound conversation send.',
+          };
+          approval.metadata.providerActionAttemptedAt = isoNow();
+          approval.metadata.providerActionResult =
+            summarizeProviderActionResult(providerActionResult);
+          approval.metadata.providerActionBindingValidation = bindingValidation;
+        } else {
+          const qaProviderExecution = await executeToolHandlerWithQa(
+            toolName,
+            {
+              ...executionParams,
+              approvalId: approval.id,
+              actor: incomingActor || executionParams.actor || 'PBK Approval',
+            },
+            'approval-replay'
+          );
+          providerActionResult = qaProviderExecution.result;
+          approval.metadata.providerActionAttemptedAt = isoNow();
+          approval.metadata.providerActionResult =
+            summarizeProviderActionResult(providerActionResult);
+          approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
+          approval.metadata.providerActionBindingValidation = bindingValidation;
+        }
+      }
+
+      const conversationBinding = approval.metadata.conversationSendBinding;
+      if (
+        conversationBinding?.conversationEventId &&
+        providerActionResult &&
+        providerActionResult.replayed !== true
+      ) {
+        try {
+          const store = createConversationStore(getPgPool());
+          const classification = classifyConversationSendResult(
+            conversationBinding.channel,
+            providerActionResult
+          );
+          const projectedEvent = await store.updateEventOutcome(
+            conversationBinding.conversationEventId,
+            {
+              workspaceId:
+                conversationBinding.workspaceId || CONVERSATION_WORKSPACE_ID,
+              status: classification.status,
+              payload: {
+                approvalId: approval.id,
+                approvalResolvedAt: isoNow(),
+                result: classification.result,
+                providerOutcome: summarizeProviderActionResult(
+                  providerActionResult
+                ),
+              },
+            }
+          );
+          approval.metadata.conversationProjection = {
+            ok: Boolean(projectedEvent),
+            result: projectedEvent ? 'projected' : 'event_not_found',
+            eventId: conversationBinding.conversationEventId,
+            status: classification.status,
+            projectedAt: isoNow(),
+          };
+        } catch (error) {
+          console.warn(
+            '[pbk-local-openclaw] approval conversation outcome projection failed:',
+            error?.message || error
+          );
+          approval.metadata.conversationProjection = {
+            ok: false,
+            result: 'approval_projection_failed',
+            eventId: conversationBinding.conversationEventId,
+            error: error?.message || String(error),
+            attemptedAt: isoNow(),
+          };
+        }
       }
     }
 
@@ -49691,6 +49760,35 @@ function parseConversationSenderRecommendationBody(body) {
   return { channel };
 }
 
+function parseConversationRunDueBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation due-message body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(
+    body,
+    new Set(['limit', 'actor']),
+    'conversation due-message'
+  );
+  const numericLimit = Number(body.limit ?? 25);
+  if (!Number.isInteger(numericLimit) || numericLimit < 1 || numericLimit > 100) {
+    throw Object.assign(new Error('limit must be an integer from 1 to 100.'), {
+      statusCode: 400,
+    });
+  }
+  if (Object.hasOwn(body, 'actor') && typeof body.actor !== 'string') {
+    throw Object.assign(new Error('actor must be a string when provided.'), {
+      statusCode: 400,
+    });
+  }
+  return {
+    limit: numericLimit,
+    actor:
+      String(body.actor || '').trim().slice(0, 200) ||
+      'PBK Conversation Scheduler',
+  };
+}
+
 function parseConversationSendBody(body) {
   requirePlainConversationActionBody(
     body,
@@ -49708,7 +49806,6 @@ function parseConversationSendBody(body) {
       'sendAt',
       'actor',
       'requestedBy',
-      'approvalId',
     ]),
     'conversation send'
   );
@@ -49767,7 +49864,7 @@ function parseConversationSendBody(body) {
       });
     }
   }
-  for (const field of ['actor', 'requestedBy', 'approvalId']) {
+  for (const field of ['actor', 'requestedBy']) {
     if (Object.hasOwn(body, field) && typeof body[field] !== 'string') {
       throw Object.assign(new Error(`${field} must be a string when provided.`), {
         statusCode: 400,
@@ -49781,7 +49878,6 @@ function parseConversationSendBody(body) {
     subject,
     scheduledFor,
     actor: String(body.actor || body.requestedBy || '').trim().slice(0, 200),
-    approvalId: String(body.approvalId || '').trim(),
   };
 }
 
@@ -49983,6 +50079,88 @@ function getConversationDncStatus(recipientContext = {}) {
   };
 }
 
+function buildConversationSendBinding({
+  workspaceId = CONVERSATION_WORKSPACE_ID,
+  threadId = '',
+  channel = '',
+  senderIdentityId = '',
+  senderAddress = '',
+  recipient = '',
+  subject = '',
+  body = '',
+  requestId = '',
+} = {}) {
+  const normalized = {
+    workspaceId: String(workspaceId || '').trim(),
+    threadId: String(threadId || '').trim(),
+    channel: String(channel || '').trim().toLowerCase(),
+    senderIdentityId: String(senderIdentityId || '').trim(),
+    senderAddress: String(senderAddress || '').trim().toLowerCase(),
+    recipient: String(recipient || '').trim().toLowerCase(),
+    subject: String(subject || '').trim(),
+    bodyHash: createHash('sha256').update(String(body || '')).digest('hex'),
+    requestId: String(requestId || '').trim(),
+  };
+  return {
+    ...normalized,
+    bindingHash: createHash('sha256')
+      .update(
+        JSON.stringify([
+          normalized.workspaceId,
+          normalized.threadId,
+          normalized.channel,
+          normalized.senderIdentityId,
+          normalized.senderAddress,
+          normalized.recipient,
+          normalized.subject,
+          normalized.bodyHash,
+          normalized.requestId,
+        ])
+      )
+      .digest('hex'),
+  };
+}
+
+function validateConversationApprovalBinding(approval, toolName, executionParams = {}) {
+  const binding = approval?.metadata?.conversationSendBinding;
+  if (!binding || typeof binding !== 'object') {
+    return { ok: true, skipped: true };
+  }
+  const channel = toolName === 'telnyx_sms' ? 'sms' : toolName === 'sendColdEmail' ? 'email' : '';
+  if (!channel || binding.channel !== channel) {
+    return { ok: false, reason: 'approval_binding_channel_mismatch' };
+  }
+  const recomputed = buildConversationSendBinding({
+    workspaceId: binding.workspaceId,
+    threadId: binding.threadId,
+    channel,
+    senderIdentityId: executionParams.senderIdentityId,
+    senderAddress:
+      channel === 'sms'
+        ? executionParams.from || executionParams.fromNumber
+        : executionParams.fromEmail || executionParams.senderEmail,
+    recipient:
+      channel === 'sms'
+        ? executionParams.phone || executionParams.to
+        : executionParams.email || executionParams.to,
+    subject: executionParams.subject,
+    body:
+      executionParams.body ||
+      executionParams.message ||
+      executionParams.customBody,
+    requestId: binding.requestId,
+  });
+  return {
+    ok: recomputed.bindingHash === binding.bindingHash,
+    reason:
+      recomputed.bindingHash === binding.bindingHash
+        ? ''
+        : 'approval_binding_mismatch',
+    binding,
+    recomputed,
+  };
+}
+
 function buildConversationSendEventPayload({
   requestId,
   result,
@@ -50006,6 +50184,48 @@ function buildConversationSendEventPayload({
     recipient,
     reason: reason || result?.reason || result?.error || result?.message || '',
   };
+}
+
+async function bindConversationApprovalToEvent(
+  store,
+  { providerResult, event, conversationSendBinding }
+) {
+  const approval = providerResult?.approval;
+  if (!approval?.id || !event?.id) return event;
+  const bound = {
+    ...conversationSendBinding,
+    conversationEventId: event.id,
+  };
+  approval.metadata =
+    approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  approval.metadata.conversationSendBinding = bound;
+  try {
+    const updatedEvent = await store.updateEventOutcome(event.id, {
+      workspaceId: bound.workspaceId || CONVERSATION_WORKSPACE_ID,
+      status: event.status || 'approval_required',
+      payload: {
+        approvalId: approval.id,
+        conversationEventId: event.id,
+        conversationSendBinding: bound,
+      },
+    });
+    await persistState(state);
+    return updatedEvent || event;
+  } catch (error) {
+    console.warn(
+      '[pbk-local-openclaw] approval conversation event binding projection failed:',
+      error?.message || error
+    );
+    approval.metadata.conversationProjection = {
+      ok: false,
+      result: 'approval_projection_failed',
+      eventId: event.id,
+      error: error?.message || String(error),
+      attemptedAt: isoNow(),
+    };
+    await persistState(state);
+    return event;
+  }
 }
 
 function classifyConversationSendResult(channel, result = {}) {
@@ -50099,6 +50319,422 @@ async function projectConversationSendOutcome(
       reason,
     }),
   });
+}
+
+async function updateScheduledConversationEvent(
+  store,
+  {
+    scheduledMessage,
+    thread,
+    senderIdentity,
+    recipient,
+    actor,
+    status,
+    result,
+  }
+) {
+  const payload = buildConversationSendEventPayload({
+    requestId:
+      scheduledMessage.payload?.requestId ||
+      scheduledMessage.payload?.conversationSendBinding?.requestId ||
+      scheduledMessage.id,
+    result,
+    channel: scheduledMessage.channel,
+    scheduledFor: scheduledMessage.scheduledFor,
+    senderIdentity,
+    recipient,
+    reason: result?.reason || result?.error || '',
+  });
+  if (scheduledMessage.conversationEventId) {
+    return store.updateEventOutcome(scheduledMessage.conversationEventId, {
+      workspaceId: scheduledMessage.workspaceId || CONVERSATION_WORKSPACE_ID,
+      status,
+      payload: {
+        ...payload,
+        schedulerCompletedAt: isoNow(),
+      },
+    });
+  }
+  return projectConversationSendOutcome(store, {
+    thread,
+    requestId: payload.requestId,
+    channel: scheduledMessage.channel,
+    senderIdentity,
+    recipient,
+    body: scheduledMessage.body,
+    subject: scheduledMessage.subject,
+    status,
+    result,
+    scheduledFor: scheduledMessage.scheduledFor,
+    sourceTable: 'unified_messages',
+    sourceId: scheduledMessage.id,
+    actor,
+  });
+}
+
+async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversation Scheduler' } = {}) {
+  const pool = getPgPool();
+  if (!pool) {
+    return {
+      ok: false,
+      result: 'postgres_unavailable',
+      claimed: 0,
+      processed: 0,
+      items: [],
+    };
+  }
+  const store = createConversationStore(pool);
+  const claimId = randomUUID();
+  const claimedAt = isoNow();
+  const scheduledMessages = await store.claimDueScheduledMessages({
+    workspaceId: CONVERSATION_WORKSPACE_ID,
+    claimId,
+    now: claimedAt,
+    limit,
+  });
+  const items = [];
+
+  for (const scheduledMessage of scheduledMessages) {
+    const finish = async ({
+      thread = null,
+      senderIdentity = null,
+      recipient = '',
+      result,
+      classification,
+      conversationSendBinding = null,
+    }) => {
+      let event = null;
+      try {
+        event = await updateScheduledConversationEvent(store, {
+          scheduledMessage,
+          thread,
+          senderIdentity,
+          recipient,
+          actor,
+          status: classification.status,
+          result,
+        });
+        if (classification.status === 'approval_required' && conversationSendBinding) {
+          event = await bindConversationApprovalToEvent(store, {
+            providerResult: result,
+            event,
+            conversationSendBinding: {
+              ...conversationSendBinding,
+              scheduledMessageId: scheduledMessage.id,
+            },
+          });
+        }
+      } catch (error) {
+        console.warn(
+          '[pbk-local-openclaw] scheduled conversation event projection failed:',
+          error?.message || error
+        );
+      }
+
+      const completed = await store.completeScheduledMessage(scheduledMessage.id, {
+        workspaceId: CONVERSATION_WORKSPACE_ID,
+        claimId,
+        status: classification.status,
+        provider: senderIdentity?.provider || scheduledMessage.provider || '',
+        payload: {
+          schedulerCompletedAt: isoNow(),
+          schedulerResult: classification.result,
+          providerOutcome: summarizeProviderActionResult(result),
+          conversationEventId:
+            event?.id || scheduledMessage.conversationEventId || '',
+        },
+      });
+      const localMessage = findMessageById(scheduledMessage.id);
+      if (localMessage) {
+        upsertMessage(state, {
+          ...localMessage,
+          status: classification.status,
+          provider: senderIdentity?.provider || localMessage.provider,
+          payload: {
+            ...(localMessage.payload || {}),
+            schedulerClaimId: claimId,
+            schedulerClaimedAt: claimedAt,
+            schedulerCompletedAt: isoNow(),
+            schedulerResult: classification.result,
+            providerOutcome: summarizeProviderActionResult(result),
+          },
+          updatedAt: isoNow(),
+        });
+        await persistState(state);
+      }
+      return {
+        id: scheduledMessage.id,
+        ok: classification.ok,
+        result: classification.result,
+        status: classification.status,
+        eventId: event?.id || scheduledMessage.conversationEventId || '',
+        completed: Boolean(completed),
+      };
+    };
+
+    try {
+      const thread = scheduledMessage.conversationThreadId
+        ? await store.getThread(scheduledMessage.conversationThreadId, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          })
+        : null;
+      if (!thread) {
+        items.push(
+          await finish({
+            result: {
+              ok: false,
+              blocked: true,
+              result: 'conversation_thread_unavailable',
+              error: 'The scheduled conversation thread is no longer canonical.',
+            },
+            classification: {
+              ok: false,
+              result: 'conversation_thread_unavailable',
+              status: 'failed',
+            },
+          })
+        );
+        continue;
+      }
+
+      const [senderIdentity, recipientContext] = await Promise.all([
+        store.getSenderIdentity(scheduledMessage.senderIdentityId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        }),
+        buildConversationRecipientContext(store, pool, thread),
+      ]);
+      const currentRecipient =
+        scheduledMessage.channel === 'sms'
+          ? recipientContext.phone
+          : recipientContext.email;
+      const scheduledRecipient = String(
+        scheduledMessage.payload?.recipient ||
+          (scheduledMessage.channel === 'sms'
+            ? scheduledMessage.toPhone
+            : scheduledMessage.toEmail) ||
+          ''
+      )
+        .trim()
+        .toLowerCase();
+      if (
+        !senderIdentity ||
+        senderIdentity.channel !== scheduledMessage.channel ||
+        !rankEligibleSenderIdentities([senderIdentity]).length
+      ) {
+        items.push(
+          await finish({
+            thread,
+            senderIdentity,
+            recipient: currentRecipient,
+            result: {
+              ok: false,
+              blocked: true,
+              result: 'sender_ineligible',
+              error: 'The selected sender identity is no longer eligible.',
+            },
+            classification: {
+              ok: false,
+              result: 'sender_ineligible',
+              status: 'blocked',
+            },
+          })
+        );
+        continue;
+      }
+      if (!currentRecipient || scheduledRecipient !== currentRecipient.toLowerCase()) {
+        items.push(
+          await finish({
+            thread,
+            senderIdentity,
+            recipient: currentRecipient,
+            result: {
+              ok: false,
+              blocked: true,
+              result: 'recipient_changed',
+              error: 'The canonical recipient changed after this message was scheduled.',
+            },
+            classification: {
+              ok: false,
+              result: 'recipient_changed',
+              status: 'blocked',
+            },
+          })
+        );
+        continue;
+      }
+
+      const dnc = getConversationDncStatus(recipientContext);
+      if (dnc.blocked) {
+        const result = {
+          ok: false,
+          blocked: true,
+          dnc: dnc.entry || { status: dnc.status || 'dnc' },
+          result: 'dnc_blocked',
+          reason: dnc.entry?.reason || 'The lead is marked do not contact.',
+        };
+        items.push(
+          await finish({
+            thread,
+            senderIdentity,
+            recipient: currentRecipient,
+            result,
+            classification: classifyConversationSendResult(
+              scheduledMessage.channel,
+              result
+            ),
+          })
+        );
+        continue;
+      }
+
+      const conversationSendBinding =
+        scheduledMessage.payload?.conversationSendBinding ||
+        buildConversationSendBinding({
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+          threadId: thread.id,
+          channel: scheduledMessage.channel,
+          senderIdentityId: scheduledMessage.senderIdentityId,
+          senderAddress: senderIdentity.address,
+          recipient: currentRecipient,
+          subject: scheduledMessage.subject,
+          body: scheduledMessage.body,
+          requestId:
+            scheduledMessage.payload?.requestId || scheduledMessage.id,
+        });
+      const providerParams = {
+        leadId: thread.leadId || '',
+        leadName: recipientContext.leadName,
+        address: recipientContext.address,
+        body: scheduledMessage.body,
+        message: scheduledMessage.body,
+        subject: scheduledMessage.subject,
+        actor,
+        requestedBy: actor,
+        senderIdentityId: scheduledMessage.senderIdentityId,
+        metadata: {
+          conversationSendBinding,
+        },
+        ...(scheduledMessage.channel === 'sms'
+          ? {
+              phone: currentRecipient,
+              to: currentRecipient,
+              from: senderIdentity.address,
+              fromNumber: senderIdentity.address,
+              consentStatus: getConversationConsentStatus(
+                recipientContext.runtimeLead
+              ),
+            }
+          : {
+              email: currentRecipient,
+              to: currentRecipient,
+              fromEmail: senderIdentity.address,
+              senderEmail: senderIdentity.address,
+              customBody: scheduledMessage.body,
+              templateId: 'custom',
+              allowResendFallback: false,
+              requireSelectedProvider: true,
+            }),
+      };
+
+      let execution;
+      if (
+        scheduledMessage.channel === 'sms' &&
+        !['true', 'yes', 'valid', 'granted', 'consented', 'opted_in', 'verified'].includes(
+          providerParams.consentStatus
+        )
+      ) {
+        const guarded = await enforceOperatingModeForTool('telnyx_sms', {
+          ...providerParams,
+          forceApproval: true,
+        });
+        execution = {
+          result:
+            guarded || {
+              ok: false,
+              blocked: true,
+              result: 'consent_unverified',
+              error: 'SMS consent is not verified.',
+            },
+        };
+      } else {
+        execution =
+          scheduledMessage.channel === 'sms'
+            ? await executeRouteToolHandler(
+                'telnyx_sms',
+                {
+                  ...providerParams,
+                  from: senderIdentity.address,
+                  fromNumber: senderIdentity.address,
+                },
+                'unified-conversation-scheduled-send'
+              )
+            : await executeRouteToolHandler(
+                'sendColdEmail',
+                {
+                  ...providerParams,
+                  fromEmail: senderIdentity.address,
+                  senderEmail: senderIdentity.address,
+                  requireSelectedProvider: true,
+                },
+                'unified-conversation-scheduled-send'
+              );
+      }
+      const providerResult = execution.result;
+      const classification = classifyConversationSendResult(
+        scheduledMessage.channel,
+        providerResult
+      );
+      items.push(
+        await finish({
+          thread,
+          senderIdentity,
+          recipient: currentRecipient,
+          result: providerResult,
+          classification,
+          conversationSendBinding,
+        })
+      );
+    } catch (error) {
+      const result = {
+        ok: false,
+        result: 'scheduled_execution_failed',
+        error: error?.message || String(error),
+      };
+      try {
+        items.push(
+          await finish({
+            result,
+            classification: {
+              ok: false,
+              result: result.result,
+              status: 'failed',
+            },
+          })
+        );
+      } catch (completionError) {
+        console.warn(
+          '[pbk-local-openclaw] scheduled conversation claim completion failed:',
+          completionError?.message || completionError
+        );
+        items.push({
+          id: scheduledMessage.id,
+          ok: false,
+          result: 'claim_completion_failed',
+          status: 'processing',
+          error: completionError?.message || String(completionError),
+        });
+      }
+    }
+  }
+
+  return {
+    ok: items.every((item) => item.ok !== false),
+    result: 'processed',
+    claimId,
+    claimed: scheduledMessages.length,
+    processed: items.length,
+    items,
+  };
 }
 
 function isExplicitConversationOptOut(event, explicitOptOut) {
@@ -57351,6 +57987,32 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (
+      request.method === 'POST' &&
+      pathname === '/api/conversations/messages/run-due'
+    ) {
+      try {
+        const parsed = parseConversationRunDueBody(await readBody(request));
+        const result = await runDueConversationMessages(parsed);
+        json(
+          response,
+          result.result === 'postgres_unavailable'
+            ? 503
+            : result.ok
+              ? 200
+              : 207,
+          result
+        );
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to run due conversation messages.'
+        );
+      }
+      return;
+    }
+
     const conversationSenderRecommendationMatch = matchPath(
       pathname,
       '/api/conversations/:threadId/sender-recommendation'
@@ -57392,6 +58054,24 @@ const server = createServer(async (request, response) => {
             }),
             buildConversationRecipientContext(store, pool, thread),
           ]);
+        const dnc = getConversationDncStatus(recipientContext);
+        const compliance = evaluateConversationSenderRecommendationCompliance({
+          channel,
+          dncBlocked: dnc.blocked,
+          consentStatus: getConversationConsentStatus(
+            recipientContext.runtimeLead
+          ),
+        });
+        if (!compliance.allowed) {
+          json(response, 200, {
+            ok: true,
+            result: 'postgres',
+            recommended: null,
+            alternatives: [],
+            reasonCodes: compliance.reasonCodes,
+          });
+          return;
+        }
         const ranked = rankEligibleSenderIdentities(identities, {
           previousSenderIdentityId,
           leadRegion: recipientContext.leadRegion,
@@ -57523,6 +58203,17 @@ const server = createServer(async (request, response) => {
           return;
         }
 
+        const conversationSendBinding = buildConversationSendBinding({
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+          threadId: thread.id,
+          channel: parsed.channel,
+          senderIdentityId: senderIdentity.id,
+          senderAddress: senderIdentity.address,
+          recipient,
+          subject: parsed.subject,
+          body: parsed.body,
+          requestId,
+        });
         const providerParams = {
           leadId: thread.leadId || '',
           leadName: recipientContext.leadName,
@@ -57532,8 +58223,10 @@ const server = createServer(async (request, response) => {
           subject: parsed.subject,
           actor,
           requestedBy: actor,
-          approvalId: parsed.approvalId,
           senderIdentityId: senderIdentity.id,
+          metadata: {
+            conversationSendBinding,
+          },
           ...(parsed.channel === 'sms'
             ? {
                 phone: recipient,
@@ -57560,15 +58253,14 @@ const server = createServer(async (request, response) => {
           parsed.channel === 'sms' &&
           !['true', 'yes', 'valid', 'granted', 'consented', 'opted_in', 'verified'].includes(
             providerParams.consentStatus
-          ) &&
-          !parsed.approvalId
+          )
         ) {
           const guarded = await enforceOperatingModeForTool('telnyx_sms', {
             ...providerParams,
             forceApproval: true,
           });
           if (guarded) {
-            const event = await projectConversationSendOutcome(store, {
+            let event = await projectConversationSendOutcome(store, {
               thread,
               requestId,
               channel: parsed.channel,
@@ -57581,6 +58273,11 @@ const server = createServer(async (request, response) => {
               result: guarded,
               scheduledFor: parsed.scheduledFor,
               actor,
+            });
+            event = await bindConversationApprovalToEvent(store, {
+              providerResult: guarded,
+              event,
+              conversationSendBinding,
             });
             json(response, guarded.ok === false ? 409 : 202, {
               ...guarded,
@@ -57622,6 +58319,11 @@ const server = createServer(async (request, response) => {
               scheduledFor: parsed.scheduledFor,
               senderIdentityId: senderIdentity.id,
               senderAddress: senderIdentity.address,
+              recipient,
+              requestId,
+              actor,
+              conversationThreadId: thread.id,
+              conversationSendBinding,
               requestedFrom: 'unified-conversation',
             },
           });
@@ -57675,6 +58377,11 @@ const server = createServer(async (request, response) => {
             sourceId: message.id,
             actor,
           });
+          message.payload = {
+            ...(message.payload || {}),
+            conversationEventId: event.id,
+          };
+          await persistUnifiedMessageRecord(message);
           json(response, 202, {
             ...scheduledResult,
             providerDeliveryClaimed: false,
@@ -57713,7 +58420,7 @@ const server = createServer(async (request, response) => {
           parsed.channel,
           providerResult
         );
-        const event = await projectConversationSendOutcome(store, {
+        let event = await projectConversationSendOutcome(store, {
           thread,
           requestId,
           channel: parsed.channel,
@@ -57725,6 +58432,13 @@ const server = createServer(async (request, response) => {
           result: providerResult,
           actor,
         });
+        if (classification.status === 'approval_required') {
+          event = await bindConversationApprovalToEvent(store, {
+            providerResult,
+            event,
+            conversationSendBinding,
+          });
+        }
         json(response, classification.httpStatus, {
           ok: classification.ok,
           result: classification.result,
@@ -57797,7 +58511,7 @@ const server = createServer(async (request, response) => {
         const strategist = await askStrategistRecord({
           agentName: 'Ava',
           leadId: thread.leadId || '',
-          leadName: recipientContext.leadName,
+          firstName,
           address: recipientContext.address,
           responseFormat: 'text',
           temperature: 0.2,

@@ -3659,7 +3659,24 @@
   border-left: 3px solid var(--sky);
   border-radius: var(--radius);
   background: var(--bg-void);
+  color: inherit;
+  font: inherit;
   padding: 10px 12px;
+  text-align: left;
+  transition:
+    border-color var(--transition),
+    background var(--transition),
+    transform var(--transition);
+  width: 100%;
+}
+.pbk-inbox-thread-rail .rail-lane:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-hover);
+  transform: translateY(-1px);
+}
+.pbk-inbox-thread-rail .rail-lane:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
 }
 .pbk-inbox-thread-rail .rail-lane.amber {
   border-left-color: var(--amber);

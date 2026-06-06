@@ -1,22 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import {
   AlertCircle,
   CheckCircle2,
-  Clock3,
   Database,
   Inbox as InboxIcon,
   Loader2,
   Mail,
   MessageSquare,
+  MessagesSquare,
   Plus,
   RefreshCw,
   Reply,
   Send,
-  ShieldCheck,
   UserRound,
   X,
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
+import {
+  InboxSignalLanes,
+  type InboxSignalLane,
+} from '../components/inbox/InboxSignalLanes';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   archiveMessageRequest,
@@ -310,12 +314,14 @@ function InboxHero({
   stats,
   source,
   onCompose,
+  onOpenInbox,
   onRefresh,
 }: {
   loading: boolean;
   stats: InboxStats;
   source: string;
   onCompose: () => void;
+  onOpenInbox: () => void;
   onRefresh: () => void;
 }) {
   return (
@@ -351,6 +357,14 @@ function InboxHero({
           <button
             type="button"
             className="pbk-btn pbk-btn-sky-gradient pbk-btn-sm"
+            onClick={onOpenInbox}
+          >
+            <MessagesSquare size={14} />
+            Open Unified Inbox
+          </button>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
             onClick={onCompose}
           >
             <Plus size={14} />
@@ -369,36 +383,14 @@ function InboxThreadRail({
   statusCopy,
   leadStatus,
   onCompose,
+  onSelectLane,
 }: {
   stats: InboxStats;
   statusCopy: string;
   leadStatus: string;
   onCompose: () => void;
+  onSelectLane: (lane: InboxSignalLane) => void;
 }) {
-  const lanes = [
-    {
-      label: 'Approvals',
-      value: stats.pendingApprovals,
-      note: 'Ava/Rex waiting',
-      icon: <ShieldCheck size={15} />,
-      tone: 'amber',
-    },
-    {
-      label: 'Unread',
-      value: stats.unreadMessages,
-      note: 'seller replies',
-      icon: <MessageSquare size={15} />,
-      tone: 'sky',
-    },
-    {
-      label: 'Scheduled',
-      value: stats.scheduledMessages,
-      note: 'send later queue',
-      icon: <Clock3 size={15} />,
-      tone: 'lime',
-    },
-  ];
-
   return (
     <aside className="pbk-inbox-thread-rail">
       <div className="rail-head">
@@ -411,18 +403,12 @@ function InboxThreadRail({
           New
         </button>
       </div>
-      <div className="rail-lanes">
-        {lanes.map((lane) => (
-          <div key={lane.label} className={`rail-lane ${lane.tone}`}>
-            <span className="lane-icon">{lane.icon}</span>
-            <span className="lane-body">
-              <strong>{lane.label}</strong>
-              <span>{lane.note}</span>
-            </span>
-            <span className="lane-count">{lane.value}</span>
-          </div>
-        ))}
-      </div>
+      <InboxSignalLanes
+        approvals={stats.pendingApprovals}
+        unread={stats.unreadMessages}
+        scheduled={stats.scheduledMessages}
+        onSelect={onSelectLane}
+      />
       <div className="rail-foot">
         <div className="l">Lead lookup</div>
         <div className="v">{leadStatus || `${stats.composeLeadCount} leads ready for compose`}</div>
@@ -1104,6 +1090,7 @@ function ApprovalDecisionConfirm({
 }
 
 export function Inbox() {
+  const navigate = useNavigate();
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
   const [actionStatus, setActionStatus] = useState<InboxActionStatus | null>(null);
@@ -1318,6 +1305,13 @@ export function Inbox() {
     snapshot && typeof snapshot === 'object'
       ? String((snapshot as unknown as Record<string, unknown>).source || 'runtime')
       : 'runtime';
+  const selectSignalLane = useCallback((lane: InboxSignalLane) => {
+    const sectionId = lane === 'approvals' ? 'inbox-approvals' : 'inbox-messages';
+    document.getElementById(sectionId)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }, []);
 
   return (
     <div className="pbk-inbox-surface min-h-full text-slate-100">
@@ -1327,6 +1321,7 @@ export function Inbox() {
           stats={inboxStats}
           source={snapshotSource}
           onCompose={() => setComposeOpen(true)}
+          onOpenInbox={() => navigate('/inbox/conversations')}
           onRefresh={() => void refreshInbox()}
         />
 
@@ -1381,9 +1376,10 @@ export function Inbox() {
             statusCopy={statusCopy}
             leadStatus={leadStatus}
             onCompose={() => setComposeOpen(true)}
+            onSelectLane={selectSignalLane}
           />
 
-          <section className="pbk-inbox-card">
+          <section id="inbox-approvals" className="pbk-inbox-card">
             <div className="pbk-inbox-card-head">
               <div>
                 <h2>Approvals needed</h2>
@@ -1416,7 +1412,7 @@ export function Inbox() {
             <PbkDataSource endpoint="PUT /api/approvals/:id" status="ships" />
           </section>
 
-          <section className="pbk-inbox-card pbk-inbox-message-card">
+          <section id="inbox-messages" className="pbk-inbox-card pbk-inbox-message-card">
             <div className="pbk-inbox-card-head">
               <div>
                 <h2>Message stream</h2>

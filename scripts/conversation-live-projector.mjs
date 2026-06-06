@@ -1,6 +1,6 @@
 import { createConversationStore } from './conversation-store.mjs';
 
-function sellerContactFromEvent(event = {}) {
+export function sellerContactFromEvent(event = {}) {
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
   if (event.channel === 'email') {
     return {
@@ -32,7 +32,7 @@ function sellerContactFromEvent(event = {}) {
   };
 }
 
-function threadTitle(record = {}) {
+export function conversationThreadTitle(record = {}) {
   const leadName = String(record.leadName || record.sellerName || '').trim();
   const address = String(record.address || record.propertyAddress || '').trim();
   return [leadName, address].filter(Boolean).join(' - ');
@@ -75,7 +75,7 @@ export function createLiveConversationProjector({
         leadId: event.leadId || null,
         phone: contact.phone,
         email: contact.email,
-        title: threadTitle(record),
+        title: conversationThreadTitle(record),
         source,
         metadata: {
           projectionSource: source,

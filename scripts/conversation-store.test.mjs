@@ -337,6 +337,9 @@ describe('conversation thread resolution', () => {
         identitySelected = true;
         return { rows: [threadRow({ id: 'provisional-1', lead_id: null })] };
       }
+      if (sql.includes('WHERE id = ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+        return { rows: [threadRow({ id: 'provisional-1', lead_id: null })] };
+      }
       if (sql.includes('UPDATE public.conversation_threads') && sql.includes('lead_id = $3')) {
         return { rows: [] };
       }
@@ -515,6 +518,135 @@ describe('conversation thread resolution', () => {
       })
     ).rejects.toThrow('different lead');
 
+    expect(
+      queries.some(({ sql }) => sql.includes('INSERT INTO public.conversation_thread_identities'))
+    ).toBe(false);
+    expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
+  });
+
+  test('follows a merged identity candidate and rejects its different-lead destination', async () => {
+    const staleCandidate = threadRow({
+      id: 'thread-stale',
+      lead_id: null,
+      merged_into_thread_id: null,
+    });
+    const mergedCandidate = {
+      ...staleCandidate,
+      merged_into_thread_id: 'thread-destination',
+    };
+    const destination = threadRow({
+      id: 'thread-destination',
+      lead_id: 'lead-a',
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('lead_id = $2') && sql.includes('FROM public.conversation_threads')) {
+        return { rows: [] };
+      }
+      if (sql.includes('JOIN public.conversation_threads AS t')) {
+        return { rows: [staleCandidate] };
+      }
+      if (sql.includes('WHERE id = ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+        if (params[0].includes('thread-destination')) return { rows: [destination] };
+        return { rows: [mergedCandidate] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).resolveThread({
+        leadId: 'lead-b',
+        email: 'seller@example.com',
+      })
+    ).rejects.toThrow('different lead');
+
+    expect(
+      queries.some(
+        ({ sql, params }) =>
+          sql.includes('WHERE id = ANY($1::uuid[])') &&
+          sql.includes('FOR UPDATE') &&
+          params[0].includes('thread-destination')
+      )
+    ).toBe(true);
+    expect(
+      queries.some(({ sql }) => sql.includes('INSERT INTO public.conversation_thread_identities'))
+    ).toBe(false);
+    expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
+  });
+
+  test('follows a merged lead candidate and rejects its different-lead destination', async () => {
+    const staleLeadCandidate = threadRow({
+      id: 'thread-stale',
+      lead_id: 'lead-b',
+      merged_into_thread_id: null,
+    });
+    const destination = threadRow({
+      id: 'thread-destination',
+      lead_id: 'lead-a',
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('lead_id = $2') && sql.includes('FROM public.conversation_threads')) {
+        return { rows: [staleLeadCandidate] };
+      }
+      if (sql.includes('WHERE id = ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+        if (params[0].includes('thread-destination')) return { rows: [destination] };
+        return {
+          rows: [
+            {
+              ...staleLeadCandidate,
+              merged_into_thread_id: 'thread-destination',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).resolveThread({
+        leadId: 'lead-b',
+        email: 'seller@example.com',
+      })
+    ).rejects.toThrow('different lead');
+
+    expect(
+      queries.some(({ sql }) => sql.includes('INSERT INTO public.conversation_thread_identities'))
+    ).toBe(false);
+    expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
+  });
+
+  test('rejects a merged identity candidate whose canonical destination cannot be loaded', async () => {
+    const staleCandidate = threadRow({
+      id: 'thread-stale',
+      lead_id: null,
+      merged_into_thread_id: null,
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('JOIN public.conversation_threads AS t')) {
+        return { rows: [staleCandidate] };
+      }
+      if (sql.includes('WHERE id = ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+        if (params[0].includes('thread-destination')) return { rows: [] };
+        return {
+          rows: [
+            {
+              ...staleCandidate,
+              merged_into_thread_id: 'thread-destination',
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).resolveThread({
+        email: 'seller@example.com',
+      })
+    ).rejects.toThrow('canonical destination');
+
+    expect(queries.some(({ sql }) => sql.includes('INSERT INTO public.conversation_threads'))).toBe(
+      false
+    );
     expect(
       queries.some(({ sql }) => sql.includes('INSERT INTO public.conversation_thread_identities'))
     ).toBe(false);
@@ -814,6 +946,29 @@ describe('conversation mutation allowlists and merging', () => {
 
   test('locks merge rows in stable ID order and dedupes source events and identities', async () => {
     const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (
+        sql.includes('LEFT JOIN public.conversation_thread_identities AS identity') &&
+        !sql.includes('FOR UPDATE')
+      ) {
+        return {
+          rows: [
+            {
+              id: 'thread-a',
+              workspace_id: 'pbk',
+              lead_id: null,
+              identity_type: 'email',
+              normalized_value: 'seller@example.com',
+            },
+            {
+              id: 'thread-z',
+              workspace_id: 'pbk',
+              lead_id: 'lead-a',
+              identity_type: 'phone',
+              normalized_value: '+16145550199',
+            },
+          ],
+        };
+      }
       if (sql.includes('SELECT *') && sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
         return {
           rows: [
@@ -841,9 +996,28 @@ describe('conversation mutation allowlists and merging', () => {
     });
 
     expect(result).toMatchObject({ id: 'thread-z', unreadCount: 3 });
+    const snapshotIndex = queries.findIndex(
+      ({ sql }) =>
+        sql.includes('LEFT JOIN public.conversation_thread_identities AS identity') &&
+        !sql.includes('FOR UPDATE')
+    );
+    const advisoryLocks = queries
+      .map(({ sql, params }, index) => ({ sql, params, index }))
+      .filter(({ sql }) => sql.includes('pg_advisory_xact_lock'));
     const lockQuery = queries.find(
       ({ sql }) => sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')
     );
+    const lockQueryIndex = queries.indexOf(lockQuery);
+
+    expect(snapshotIndex).toBeGreaterThan(-1);
+    expect(queries[snapshotIndex].params).toEqual([['thread-a', 'thread-z']]);
+    expect(advisoryLocks.map(({ params }) => params[0])).toEqual([
+      'conversation-identity:pbk:email:seller@example.com',
+      'conversation-identity:pbk:phone:+16145550199',
+      'conversation-thread:pbk:lead-a',
+    ]);
+    expect(advisoryLocks.every(({ index }) => index > snapshotIndex)).toBe(true);
+    expect(advisoryLocks.every(({ index }) => index < lockQueryIndex)).toBe(true);
     expect(lockQuery.params).toEqual([['thread-a', 'thread-z']]);
     expect(queries.some(({ sql }) => sql.includes('DELETE FROM public.conversation_events'))).toBe(
       true
@@ -884,13 +1058,25 @@ describe('conversation mutation allowlists and merging', () => {
     expect(pool.connect).not.toHaveBeenCalled();
   });
 
-  test('rejects merges across workspaces while both rows are locked', async () => {
+  test('rejects merges across workspaces from the pre-lock snapshot', async () => {
     const { pool, queries } = createRecordingTransaction(async (sql) => {
-      if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
+      if (sql.includes('LEFT JOIN public.conversation_thread_identities AS identity')) {
         return {
           rows: [
-            threadRow({ id: 'thread-a', workspace_id: 'other' }),
-            threadRow({ id: 'thread-z', workspace_id: 'pbk' }),
+            {
+              id: 'thread-a',
+              workspace_id: 'other',
+              lead_id: 'lead-1',
+              identity_type: null,
+              normalized_value: null,
+            },
+            {
+              id: 'thread-z',
+              workspace_id: 'pbk',
+              lead_id: 'lead-1',
+              identity_type: null,
+              normalized_value: null,
+            },
           ],
         };
       }
@@ -904,6 +1090,48 @@ describe('conversation mutation allowlists and merging', () => {
         actor: 'user-1',
       })
     ).rejects.toThrow('workspace');
+    expect(queries.some(({ sql }) => sql.includes('pg_advisory_xact_lock'))).toBe(false);
+    expect(queries.some(({ sql }) => sql.includes('FOR UPDATE'))).toBe(false);
+    expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
+  });
+
+  test('rejects a merge when lead ownership changes after the advisory-lock snapshot', async () => {
+    const snapshotCanonical = threadRow({ id: 'thread-z', lead_id: 'lead-a' });
+    const lockedCanonical = threadRow({ id: 'thread-z', lead_id: 'lead-b' });
+    const merged = threadRow({ id: 'thread-a', lead_id: null });
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('LEFT JOIN public.conversation_thread_identities AS identity')) {
+        return {
+          rows: [merged, snapshotCanonical]
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .map((row) => ({
+              id: row.id,
+              workspace_id: row.workspace_id,
+              lead_id: row.lead_id,
+              identity_type: null,
+              normalized_value: null,
+            })),
+        };
+      }
+      if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
+        return {
+          rows: [merged, lockedCanonical].sort((left, right) => left.id.localeCompare(right.id)),
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).mergeThreads({
+        canonicalThreadId: 'thread-z',
+        mergedThreadId: 'thread-a',
+        actor: 'user-1',
+      })
+    ).rejects.toThrow('changed after merge lock snapshot');
+
+    expect(queries.some(({ sql }) => sql.includes('DELETE FROM public.conversation_events'))).toBe(
+      false
+    );
     expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
   });
 
@@ -928,6 +1156,19 @@ describe('conversation mutation allowlists and merging', () => {
     'rejects an already-merged $name input before moving data',
     async ({ canonical, merged, message }) => {
       const { pool, queries } = createRecordingTransaction(async (sql) => {
+        if (sql.includes('LEFT JOIN public.conversation_thread_identities AS identity')) {
+          return {
+            rows: [merged, canonical]
+              .sort((left, right) => left.id.localeCompare(right.id))
+              .map((row) => ({
+                id: row.id,
+                workspace_id: row.workspace_id,
+                lead_id: row.lead_id,
+                identity_type: null,
+                normalized_value: null,
+              })),
+          };
+        }
         if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
           return {
             rows: [merged, canonical].sort((left, right) => left.id.localeCompare(right.id)),
@@ -971,6 +1212,19 @@ describe('conversation mutation allowlists and merging', () => {
     },
   ])('rejects merge ownership violation: $name', async ({ canonical, merged, message }) => {
     const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('LEFT JOIN public.conversation_thread_identities AS identity')) {
+        return {
+          rows: [merged, canonical]
+            .sort((left, right) => left.id.localeCompare(right.id))
+            .map((row) => ({
+              id: row.id,
+              workspace_id: row.workspace_id,
+              lead_id: row.lead_id,
+              identity_type: null,
+              normalized_value: null,
+            })),
+        };
+      }
       if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
         return {
           rows: [merged, canonical].sort((left, right) => left.id.localeCompare(right.id)),
@@ -1354,6 +1608,194 @@ describe('conversation store Postgres integration', () => {
           workspaceId,
         ]);
         await pool.query(`DELETE FROM public.lead_profiles WHERE id = $1`, [leadId]);
+        await pool.end();
+      }
+    },
+    30_000
+  );
+
+  postgresIntegrationTest(
+    'serializes explicit merge with lead resolution for an attached identity',
+    async () => {
+      const { Pool } = await import('pg');
+      const pool = new Pool({
+        connectionString: process.env.PBK_TEST_DATABASE_URL,
+        max: 4,
+      });
+      const workspaceId = `conversation-merge-race-${randomUUID()}`;
+      const leadA = `lead-${randomUUID()}`;
+      const leadB = `lead-${randomUUID()}`;
+      const email = `seller-${randomUUID()}@example.com`;
+      let releaseResolution;
+      let releaseMerge;
+      let identitySelectedResolve;
+      let mergeAdvisoryAttemptedResolve;
+      let mergeRowsLockedResolve;
+      const identitySelected = new Promise((resolve) => {
+        identitySelectedResolve = resolve;
+      });
+      const mergeAdvisoryAttempted = new Promise((resolve) => {
+        mergeAdvisoryAttemptedResolve = resolve;
+      });
+      const mergeRowsLocked = new Promise((resolve) => {
+        mergeRowsLockedResolve = resolve;
+      });
+      const continueResolution = new Promise((resolve) => {
+        releaseResolution = resolve;
+      });
+      const continueMerge = new Promise((resolve) => {
+        releaseMerge = resolve;
+      });
+
+      try {
+        await ensureConversationSchema(pool);
+        await pool.query(
+          `
+            INSERT INTO public.lead_profiles (id)
+            VALUES ($1), ($2)
+            ON CONFLICT (id) DO NOTHING
+          `,
+          [leadA, leadB]
+        );
+        const threadRows = await pool.query(
+          `
+            INSERT INTO public.conversation_threads (workspace_id, lead_id, title)
+            VALUES
+              ($1, $2, 'lead-a'),
+              ($1, $3, 'lead-b'),
+              ($1, NULL, 'provisional')
+            RETURNING id, title
+          `,
+          [workspaceId, leadA, leadB]
+        );
+        const leadAThreadId = threadRows.rows.find((row) => row.title === 'lead-a').id;
+        const leadBThreadId = threadRows.rows.find((row) => row.title === 'lead-b').id;
+        const provisionalThreadId = threadRows.rows.find((row) => row.title === 'provisional').id;
+        await pool.query(
+          `
+            INSERT INTO public.conversation_thread_identities (
+              workspace_id,
+              thread_id,
+              identity_type,
+              normalized_value,
+              display_value
+            )
+            VALUES ($1, $2, 'email', $3, $3)
+          `,
+          [workspaceId, provisionalThreadId, email]
+        );
+
+        const resolutionPool = {
+          async connect() {
+            const client = await pool.connect();
+            return {
+              release: client.release.bind(client),
+              async query(sql, params) {
+                const result = await client.query(sql, params);
+                if (sql.includes('JOIN public.conversation_threads AS t')) {
+                  identitySelectedResolve();
+                  await continueResolution;
+                }
+                return result;
+              },
+            };
+          },
+        };
+        const mergePool = {
+          async connect() {
+            const client = await pool.connect();
+            return {
+              release: client.release.bind(client),
+              async query(sql, params) {
+                if (sql.includes('pg_advisory_xact_lock')) {
+                  mergeAdvisoryAttemptedResolve();
+                }
+                const result = await client.query(sql, params);
+                if (
+                  sql.includes('SELECT *') &&
+                  sql.includes('ORDER BY id') &&
+                  sql.includes('FOR UPDATE')
+                ) {
+                  mergeRowsLockedResolve();
+                  await continueMerge;
+                }
+                return result;
+              },
+            };
+          },
+        };
+
+        const resolution = createConversationStore(resolutionPool).resolveThread({
+          workspaceId,
+          leadId: leadB,
+          email,
+        });
+        await identitySelected;
+        const merge = createConversationStore(mergePool).mergeThreads({
+          canonicalThreadId: leadAThreadId,
+          mergedThreadId: provisionalThreadId,
+          actor: 'integration-race',
+        });
+
+        const firstMergeLock = await Promise.race([
+          mergeAdvisoryAttempted.then(() => 'advisory'),
+          mergeRowsLocked.then(() => 'row'),
+        ]);
+        releaseResolution();
+        if (firstMergeLock === 'row') {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        releaseMerge();
+        await Promise.allSettled([resolution, merge]);
+
+        const duplicateDestinations = await pool.query(
+          `
+            SELECT
+              identity.normalized_value,
+              COUNT(DISTINCT identity.thread_id)::integer AS active_thread_count,
+              COUNT(DISTINCT thread.lead_id) FILTER (
+                WHERE thread.lead_id IS NOT NULL
+              )::integer AS active_lead_count
+            FROM public.conversation_thread_identities AS identity
+            JOIN public.conversation_threads AS thread ON thread.id = identity.thread_id
+            WHERE identity.workspace_id = $1
+              AND identity.identity_type = 'email'
+              AND identity.normalized_value = $2
+              AND thread.merged_into_thread_id IS NULL
+            GROUP BY identity.normalized_value
+          `,
+          [workspaceId, email]
+        );
+
+        expect(duplicateDestinations.rows).toEqual([
+          {
+            normalized_value: email,
+            active_thread_count: 1,
+            active_lead_count: 1,
+          },
+        ]);
+        const activeIdentity = await pool.query(
+          `
+            SELECT identity.thread_id, thread.lead_id
+            FROM public.conversation_thread_identities AS identity
+            JOIN public.conversation_threads AS thread ON thread.id = identity.thread_id
+            WHERE identity.workspace_id = $1
+              AND identity.identity_type = 'email'
+              AND identity.normalized_value = $2
+              AND thread.merged_into_thread_id IS NULL
+          `,
+          [workspaceId, email]
+        );
+        expect([leadAThreadId, leadBThreadId]).toContain(activeIdentity.rows[0].thread_id);
+      } finally {
+        releaseResolution?.();
+        releaseMerge?.();
+        await pool.query(`DELETE FROM public.conversation_threads WHERE workspace_id = $1`, [
+          workspaceId,
+        ]);
+        await pool.query(`DELETE FROM public.lead_profiles WHERE id = ANY($1::text[])`, [
+          [leadA, leadB],
+        ]);
         await pool.end();
       }
     },

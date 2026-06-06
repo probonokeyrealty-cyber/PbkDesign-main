@@ -208,18 +208,41 @@ async function selectIdentityThreads(client, workspace, phone, email) {
   return result.rows;
 }
 
-async function lockConversationResolution(client, workspace, leadId, phone, email) {
-  const lockKeys = [
-    email ? `conversation-identity:${workspace}:email:${email}` : '',
-    phone ? `conversation-identity:${workspace}:phone:${phone}` : '',
-    leadId ? `conversation-thread:${workspace}:${leadId}` : '',
+function conversationIdentityLockKey(workspace, type, value) {
+  return value ? `conversation-identity:${workspace}:${type}:${value}` : '';
+}
+
+function conversationLeadLockKey(workspace, leadId) {
+  return leadId ? `conversation-thread:${workspace}:${leadId}` : '';
+}
+
+function conversationLockKeys(workspace, { identities = [], leadIds = [] } = {}) {
+  return [
+    ...identities.map(({ type, value }) => conversationIdentityLockKey(workspace, type, value)),
+    ...leadIds.map((leadId) => conversationLeadLockKey(workspace, leadId)),
   ]
     .filter(Boolean)
+    .filter((lockKey, index, lockKeys) => lockKeys.indexOf(lockKey) === index)
     .sort();
+}
 
+async function lockConversationKeys(client, lockKeys) {
   for (const lockKey of lockKeys) {
     await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [lockKey]);
   }
+}
+
+async function lockConversationResolution(client, workspace, leadId, phone, email) {
+  await lockConversationKeys(
+    client,
+    conversationLockKeys(workspace, {
+      identities: [
+        { type: 'phone', value: phone },
+        { type: 'email', value: email },
+      ],
+      leadIds: [leadId],
+    })
+  );
 }
 
 async function lockConversationThreads(client, threadIds) {
@@ -236,6 +259,128 @@ async function lockConversationThreads(client, threadIds) {
     [ids]
   );
   return result.rows;
+}
+
+async function lockCurrentThreadDestinations(client, threadIds) {
+  const requestedIds = [...new Set(threadIds.filter(Boolean))].sort();
+  const rowsById = new Map();
+  let pendingIds = requestedIds;
+
+  while (pendingIds.length) {
+    const lockedRows = await lockConversationThreads(client, pendingIds);
+    for (const row of lockedRows) rowsById.set(row.id, row);
+    pendingIds = [
+      ...new Set(
+        lockedRows.map((row) => row.merged_into_thread_id).filter((id) => id && !rowsById.has(id))
+      ),
+    ].sort();
+  }
+
+  const destinations = new Map();
+  for (const requestedId of requestedIds) {
+    let row = rowsById.get(requestedId) ?? null;
+    const visited = new Set();
+    while (row?.merged_into_thread_id) {
+      if (visited.has(row.id)) throw new Error('Conversation thread merge cycle detected');
+      visited.add(row.id);
+      row = rowsById.get(row.merged_into_thread_id) ?? null;
+    }
+    destinations.set(requestedId, row);
+  }
+  return destinations;
+}
+
+async function selectMergeLockSnapshot(client, threadIds) {
+  const stableIds = [...new Set(threadIds.filter(Boolean))].sort();
+  const result = await client.query(
+    `
+      SELECT
+        thread.id,
+        thread.workspace_id,
+        thread.lead_id,
+        identity.identity_type,
+        identity.normalized_value
+      FROM public.conversation_threads AS thread
+      LEFT JOIN public.conversation_thread_identities AS identity
+        ON identity.thread_id = thread.id
+        AND identity.workspace_id = thread.workspace_id
+      WHERE thread.id = ANY($1::uuid[])
+      ORDER BY thread.id, identity.identity_type, identity.normalized_value
+    `,
+    [stableIds]
+  );
+
+  const threads = new Map();
+  const identities = [];
+  for (const row of result.rows) {
+    if (!threads.has(row.id)) {
+      threads.set(row.id, {
+        id: row.id,
+        workspace_id: row.workspace_id,
+        lead_id: row.lead_id,
+      });
+    }
+    if (row.identity_type && row.normalized_value) {
+      identities.push({
+        type: row.identity_type,
+        value: row.normalized_value,
+      });
+    }
+  }
+  if (threads.size !== stableIds.length) {
+    throw new Error('Both conversation threads must exist');
+  }
+
+  const workspaces = new Set([...threads.values()].map((thread) => thread.workspace_id));
+  if (workspaces.size !== 1) {
+    throw new Error('Conversation threads must belong to the same workspace');
+  }
+
+  return {
+    workspace: workspaces.values().next().value,
+    threads: [...threads.values()],
+    identities,
+  };
+}
+
+async function selectIdentityDestinationThreadIds(client, workspace, identities) {
+  if (!identities.length) return [];
+  const result = await client.query(
+    `
+      WITH requested(identity_type, normalized_value) AS (
+        SELECT *
+        FROM unnest($2::text[], $3::text[])
+      )
+      SELECT DISTINCT identity.thread_id
+      FROM requested
+      JOIN public.conversation_thread_identities AS identity
+        ON identity.workspace_id = $1
+        AND identity.identity_type = requested.identity_type
+        AND identity.normalized_value = requested.normalized_value
+      ORDER BY identity.thread_id
+    `,
+    [
+      workspace,
+      identities.map((identity) => identity.type),
+      identities.map((identity) => identity.value),
+    ]
+  );
+  return result.rows.map((row) => row.thread_id);
+}
+
+function validateMergeLockSnapshot(snapshot, threads) {
+  const snapshotById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
+  for (const thread of threads) {
+    if (!thread) continue;
+    const previous = snapshotById.get(thread.id);
+    if (
+      !previous ||
+      previous.workspace_id !== thread.workspace_id ||
+      previous.lead_id !== thread.lead_id
+    ) {
+      throw new Error(`Conversation thread ${thread.id} changed after merge lock snapshot`);
+    }
+  }
 }
 
 async function findSourceEvent(client, event, { lock = false } = {}) {
@@ -616,20 +761,29 @@ export function createConversationStore(pool) {
 
       const leadCandidate = leadId ? await selectLeadThread(client, workspace, leadId) : null;
       const identityCandidates = await selectIdentityThreads(client, workspace, phone, email);
-      const lockedRows = await lockConversationThreads(client, [
+      const candidateDestinations = await lockCurrentThreadDestinations(client, [
         leadCandidate?.id,
         ...identityCandidates.map((candidate) => candidate.id),
       ]);
-      const lockedById = new Map(lockedRows.map((row) => [row.id, row]));
-      const activeIdentityThreads = identityCandidates
-        .map((candidate) => lockedById.get(candidate.id))
-        .filter((candidate) => candidate && !candidate.merged_into_thread_id);
-      let thread =
-        leadCandidate && !lockedById.get(leadCandidate.id)?.merged_into_thread_id
-          ? lockedById.get(leadCandidate.id)
-          : null;
+      const identityThreadsById = new Map();
+      for (const candidate of identityCandidates) {
+        const destination = candidateDestinations.get(candidate.id);
+        if (!destination) {
+          throw new Error(
+            `Conversation identity thread ${candidate.id} has no canonical destination`
+          );
+        }
+        identityThreadsById.set(destination.id, destination);
+      }
+      const activeIdentityThreads = [...identityThreadsById.values()];
+      let thread = leadCandidate ? (candidateDestinations.get(leadCandidate.id) ?? null) : null;
 
       if (leadId) {
+        if (thread?.lead_id && thread.lead_id !== leadId) {
+          throw new Error(
+            `Conversation lead thread resolves to a different lead on thread ${thread.id}`
+          );
+        }
         const conflictingThread = activeIdentityThreads.find(
           (candidate) => candidate.lead_id && candidate.lead_id !== leadId
         );
@@ -1035,9 +1189,27 @@ export function createConversationStore(pool) {
       throw new Error('Canonical and merged thread IDs must be different');
 
     return withTransaction(pool, async (client) => {
-      const locked = await lockConversationThreads(client, [canonicalId, mergedId]);
+      const snapshot = await selectMergeLockSnapshot(client, [canonicalId, mergedId]);
+      await lockConversationKeys(
+        client,
+        conversationLockKeys(snapshot.workspace, {
+          identities: snapshot.identities,
+          leadIds: snapshot.threads.map((thread) => thread.lead_id),
+        })
+      );
+      const identityDestinationIds = await selectIdentityDestinationThreadIds(
+        client,
+        snapshot.workspace,
+        snapshot.identities
+      );
+      const locked = await lockConversationThreads(client, [
+        canonicalId,
+        mergedId,
+        ...identityDestinationIds,
+      ]);
       const canonical = locked.find((row) => row.id === canonicalId);
       const merged = locked.find((row) => row.id === mergedId);
+      validateMergeLockSnapshot(snapshot, [canonical, merged]);
       const result = await mergeConversationThreadRows(client, canonical, merged, actor);
       return mapConversationThreadRow(result);
     });

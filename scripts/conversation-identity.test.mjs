@@ -9,10 +9,15 @@ describe('conversation identity normalization', () => {
     ['(614) 555-0199', '+16145550199'],
     ['6145550199', '+16145550199'],
     ['16145550199', '+16145550199'],
+    ['+1 (614) 555-0199', '+16145550199'],
     ['44 20 7946 0958', '+442079460958'],
     ['', ''],
     [null, ''],
     ['not a phone', ''],
+    ['abc123', ''],
+    ['6145550199 x22', ''],
+    ['123', ''],
+    ['1234567890123456', ''],
   ])('normalizes phone value %p', (value, expected) => {
     expect(normalizeConversationPhone(value)).toBe(expected);
   });
@@ -27,7 +32,7 @@ describe('conversation identity normalization', () => {
 });
 
 describe('sender identity ranking', () => {
-  test('excludes every blocked lifecycle status while keeping active and otherwise eligible identities', () => {
+  test('fails closed unless lifecycle status normalizes to active', () => {
     const blockedStatuses = [
       'warming',
       'paused',
@@ -38,14 +43,30 @@ describe('sender identity ranking', () => {
     ];
     const identities = [
       { id: 'active', lifecycleStatus: 'active' },
-      { id: 'eligible-without-status' },
+      { id: 'normalized-active', lifecycleStatus: ' Active ' },
+      { id: 'missing-status' },
+      { id: 'misspelled-status', lifecycleStatus: 'actve' },
+      { id: 'future-status', lifecycleStatus: 'provisioned' },
       ...blockedStatuses.map((lifecycleStatus) => ({ id: lifecycleStatus, lifecycleStatus })),
     ];
 
     expect(rankEligibleSenderIdentities(identities).map(({ id }) => id)).toEqual([
       'active',
-      'eligible-without-status',
+      'normalized-active',
     ]);
+  });
+
+  test('rejects identities without a nonempty string id', () => {
+    const ranked = rankEligibleSenderIdentities([
+      { id: 'usable', lifecycleStatus: 'active' },
+      { id: '', lifecycleStatus: 'active' },
+      { id: '   ', lifecycleStatus: 'active' },
+      { lifecycleStatus: 'active' },
+      { id: null, lifecycleStatus: 'active' },
+      { id: 42, lifecycleStatus: 'active' },
+    ]);
+
+    expect(ranked.map(({ id }) => id)).toEqual(['usable']);
   });
 
   test('prefers the previous sender identity using camelCase frontend fields', () => {
@@ -61,6 +82,18 @@ describe('sender identity ranking', () => {
     expect(ranked.map(({ recommendationScore }) => recommendationScore)).toEqual([1001, 109]);
   });
 
+  test('does not grant prior-sender preference for an empty context id', () => {
+    const ranked = rankEligibleSenderIdentities(
+      [
+        { id: 'healthy', lifecycleStatus: 'active', healthScore: 80 },
+        { id: 'lower', lifecycleStatus: 'active', healthScore: 20 },
+      ],
+      { previousSenderIdentityId: '' }
+    );
+
+    expect(ranked.map(({ recommendationScore }) => recommendationScore)).toEqual([80, 20]);
+  });
+
   test('ranks workspace defaults and numeric health scores in descending order', () => {
     const ranked = rankEligibleSenderIdentities([
       { id: 'default', lifecycleStatus: 'active', healthScore: '50', isWorkspaceDefault: true },
@@ -70,6 +103,30 @@ describe('sender identity ranking', () => {
 
     expect(ranked.map(({ id }) => id)).toEqual(['default', 'healthiest', 'lower']);
     expect(ranked.map(({ recommendationScore }) => recommendationScore)).toEqual([60, 59, 20]);
+  });
+
+  test('bounds health scores so prior-sender preference remains dominant', () => {
+    const ranked = rankEligibleSenderIdentities(
+      [
+        { id: 'over-limit', lifecycleStatus: 'active', healthScore: 5000 },
+        { id: 'previous', lifecycleStatus: 'active', healthScore: -20 },
+        { id: 'not-a-number', lifecycleStatus: 'active', healthScore: Number.NaN },
+      ],
+      { previousSenderIdentityId: 'previous' }
+    );
+
+    expect(ranked.map(({ id }) => id)).toEqual(['previous', 'over-limit', 'not-a-number']);
+    expect(ranked.map(({ recommendationScore }) => recommendationScore)).toEqual([1000, 100, 0]);
+  });
+
+  test('breaks equal-score ties by string id ascending', () => {
+    const ranked = rankEligibleSenderIdentities([
+      { id: 'zeta', lifecycleStatus: 'active', healthScore: 50 },
+      { id: 'alpha', lifecycleStatus: 'active', healthScore: 50 },
+      { id: 'middle', lifecycleStatus: 'active', healthScore: 50 },
+    ]);
+
+    expect(ranked.map(({ id }) => id)).toEqual(['alpha', 'middle', 'zeta']);
   });
 
   test('handles empty and malformed identity inputs', () => {

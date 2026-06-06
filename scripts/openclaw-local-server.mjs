@@ -36,6 +36,10 @@ import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicM
 import { evaluateConversationSenderRecommendationCompliance, normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity, rankEligibleSenderIdentities } from './conversation-identity.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
 import { createConversationStore } from './conversation-store.mjs';
+import {
+  ensureProviderActionDispatchSchema as ensureProviderActionDispatchSchemaCore,
+  executeProviderActionWithSharedLease as executeProviderActionWithSharedLeaseCore,
+} from './provider-action-dispatch.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -5028,6 +5032,16 @@ function getPgPool() {
   return __pgPool;
 }
 
+function executeProviderActionWithSharedLease(options) {
+  return executeProviderActionWithSharedLeaseCore({
+    ...options,
+    pool: getPgPool(),
+    isHosted: IS_HOSTED,
+    now: isoNow,
+    logger: console,
+  });
+}
+
 async function ensureFuzzyLeadLookupSchema(pool) {
   if (!pool) return false;
   await pool.query(`
@@ -5821,6 +5835,7 @@ async function ensurePbkOperationalTables(pool) {
       ON public.pbk_research_additive_provider_checks (tenant_id, additive_id, provider_id, created_at DESC);
   `);
   await ensureConversationSchema(pool);
+  await ensureProviderActionDispatchSchemaCore(pool);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
   });
@@ -46423,6 +46438,11 @@ async function handleEvent(eventType, payload = {}) {
       String(approval.type || '').toLowerCase() === 'provider-action' &&
       approval.metadata?.providerActionDispatch?.status === 'dispatching' &&
       !approval.metadata?.providerActionResult;
+    const retryUnavailableProviderLease =
+      exactApprovalReplay &&
+      String(approval.type || '').toLowerCase() === 'provider-action' &&
+      approval.metadata?.providerActionDispatch?.status ===
+        'lease_unavailable';
     const retryConversationProjectionOnly =
       exactApprovalReplay &&
       String(approval.type || '').toLowerCase() === 'provider-action' &&
@@ -46432,7 +46452,8 @@ async function handleEvent(eventType, payload = {}) {
     if (
       exactApprovalReplay &&
       !retryConversationProjectionOnly &&
-      !reconcileUnknownProviderDispatch
+      !reconcileUnknownProviderDispatch &&
+      !retryUnavailableProviderLease
     ) {
       return {
         ok: true,
@@ -46570,15 +46591,26 @@ async function handleEvent(eventType, payload = {}) {
         typeof approval.metadata.providerActionDispatch === 'object'
           ? approval.metadata.providerActionDispatch
           : null;
+      const retryableProviderLeaseUnavailable =
+        providerActionDispatch?.status === 'lease_unavailable';
+      if (retryableProviderLeaseUnavailable) {
+        delete approval.metadata.providerActionAttemptedAt;
+        delete approval.metadata.providerActionResult;
+        delete approval.metadata.providerActionQa;
+        delete approval.metadata.providerActionClassification;
+        delete approval.metadata.conversationProjection;
+      }
       const unresolvedProviderDispatch =
         providerActionDispatch?.status === 'dispatching' &&
         !approval.metadata.providerActionResult;
-      const alreadyAttempted = Boolean(
-        approval.metadata.providerActionAttemptedAt ||
-          approval.metadata.providerActionResult ||
-          providerActionDispatch?.status === 'completed' ||
-          providerActionDispatch?.status === 'reconciliation_required'
-      );
+      let alreadyAttempted =
+        !retryableProviderLeaseUnavailable &&
+        Boolean(
+          approval.metadata.providerActionAttemptedAt ||
+            approval.metadata.providerActionResult ||
+            providerActionDispatch?.status === 'completed' ||
+            providerActionDispatch?.status === 'reconciliation_required'
+        );
       if (unresolvedProviderDispatch) {
         const reconciliationRequiredAt = isoNow();
         providerActionResult = {
@@ -46633,37 +46665,116 @@ async function handleEvent(eventType, payload = {}) {
               summarizeProviderActionResult(providerActionResult);
             approval.metadata.providerActionBindingValidation = bindingValidation;
           } else {
+            const dispatchExecution =
+              await executeProviderActionWithSharedLease({
+                approvalId: approval.id,
+                workspaceId:
+                  approval.workspaceId || approval.workspace_id || 'pbk',
+                toolName,
+                bindingHash:
+                  approval.metadata.conversationSendBinding?.bindingHash ||
+                  bindingValidation.binding?.bindingHash ||
+                  '',
+                execute: async ({ attemptToken, dispatchStartedAt }) => {
+                  approval.metadata.providerActionDispatch = {
+                    attemptToken,
+                    status: 'dispatching',
+                    dispatchStartedAt,
+                    leasePolicy: 'manual_reconciliation',
+                    leaseExpiresAt: null,
+                    reclaimable: false,
+                  };
+                  await persistState(state);
+                  const qaProviderExecution =
+                    await executeToolHandlerWithQa(
+                      toolName,
+                      {
+                        ...executionParams,
+                        approvalId: approval.id,
+                        actor:
+                          incomingActor ||
+                          executionParams.actor ||
+                          'PBK Approval',
+                      },
+                      'approval-replay'
+                    );
+                  return {
+                    providerActionResult: qaProviderExecution.result,
+                    providerActionQa:
+                      qaProviderExecution.qaValidation?.qa || null,
+                    providerActionBindingValidation: bindingValidation,
+                  };
+                },
+              });
+            const sharedDispatchValue =
+              dispatchExecution.value &&
+              typeof dispatchExecution.value === 'object'
+                ? dispatchExecution.value
+                : {};
+            providerActionResult =
+              sharedDispatchValue.providerActionResult ||
+              {
+                ok: false,
+                result: 'provider_delivery_unknown',
+                status: 'reconciliation_required',
+                error:
+                  dispatchExecution.dispatch?.error ||
+                  'Provider dispatch result was unavailable.',
+                reconciliationRequired: true,
+                attemptToken:
+                  dispatchExecution.dispatch?.attemptToken || '',
+                dispatchStartedAt:
+                  dispatchExecution.dispatch?.dispatchStartedAt || '',
+                providerAttempted:
+                  dispatchExecution.dispatch?.status !==
+                  'lease_unavailable',
+              };
+            const providerLeaseUnavailable =
+              dispatchExecution.dispatch?.status === 'lease_unavailable';
+            if (!dispatchExecution.executed && !providerLeaseUnavailable) {
+              alreadyAttempted = true;
+              providerActionResult = {
+                ...providerActionResult,
+                replayed: true,
+                skipped: true,
+                providerAttempted: false,
+              };
+            }
+            if (!providerLeaseUnavailable) {
+              approval.metadata.providerActionAttemptedAt =
+                dispatchExecution.dispatch?.completedAt ||
+                dispatchExecution.dispatch?.reconciliationRequiredAt ||
+                dispatchExecution.dispatch?.dispatchStartedAt ||
+                isoNow();
+            }
+            approval.metadata.providerActionResult =
+              summarizeProviderActionResult(providerActionResult);
+            approval.metadata.providerActionQa =
+              sharedDispatchValue.providerActionQa || null;
+            approval.metadata.providerActionBindingValidation =
+              sharedDispatchValue.providerActionBindingValidation ||
+              bindingValidation;
             approval.metadata.providerActionDispatch = {
-              attemptToken: randomUUID(),
-              status: 'dispatching',
-              dispatchStartedAt: isoNow(),
+              attemptToken:
+                dispatchExecution.dispatch?.attemptToken || '',
+              status:
+                dispatchExecution.dispatch?.status ||
+                'reconciliation_required',
+              dispatchStartedAt:
+                dispatchExecution.dispatch?.dispatchStartedAt || '',
+              completedAt:
+                dispatchExecution.dispatch?.completedAt || null,
+              reconciliationRequiredAt:
+                dispatchExecution.dispatch?.reconciliationRequiredAt ||
+                null,
               leasePolicy: 'manual_reconciliation',
               leaseExpiresAt: null,
               reclaimable: false,
-            };
-            await persistState(state);
-            const qaProviderExecution = await executeToolHandlerWithQa(
-              toolName,
-              {
-                ...executionParams,
-                approvalId: approval.id,
-                actor: incomingActor || executionParams.actor || 'PBK Approval',
-              },
-              'approval-replay'
-            );
-            providerActionResult = qaProviderExecution.result;
-            approval.metadata.providerActionAttemptedAt = isoNow();
-            approval.metadata.providerActionResult =
-              summarizeProviderActionResult(providerActionResult);
-            approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
-            approval.metadata.providerActionBindingValidation = bindingValidation;
-            approval.metadata.providerActionDispatch = {
-              ...approval.metadata.providerActionDispatch,
-              status: 'completed',
-              completedAt: approval.metadata.providerActionAttemptedAt,
               result:
                 approval.metadata.providerActionResult?.result ||
-                (providerActionResult?.ok === false ? 'provider_error' : 'provider_completed'),
+                (providerActionResult?.ok === false
+                  ? 'provider_error'
+                  : 'provider_completed'),
             };
             await persistState(state);
           }
@@ -50916,8 +51027,11 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
     } catch (error) {
       const result = {
         ok: false,
-        result: 'scheduled_execution_failed',
+        result: dispatchStarted
+          ? 'provider_delivery_unknown'
+          : 'scheduled_execution_failed',
         error: error?.message || String(error),
+        reconciliationRequired: dispatchStarted,
       };
       try {
         items.push(
@@ -50926,7 +51040,7 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
             classification: {
               ok: false,
               result: result.result,
-              status: 'failed',
+              status: dispatchStarted ? 'delivery_unknown' : 'failed',
             },
             dispatched: dispatchStarted,
           })
@@ -59559,7 +59673,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities', 'provider_action_dispatches'];
       if (!pool) {
         json(response, 200, {
           ok: false,

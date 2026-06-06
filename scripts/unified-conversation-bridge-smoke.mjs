@@ -8,6 +8,13 @@ const packageJson = JSON.parse(read('package.json'));
 const bridge = read('scripts/openclaw-local-server.mjs');
 const storeSource = read('scripts/conversation-store.mjs');
 const identitySource = read('scripts/conversation-identity.mjs');
+const providerDispatchSource = read('scripts/provider-action-dispatch.mjs');
+const providerDispatchPolicySource = read(
+  'scripts/provider-action-dispatch-policy.mjs'
+);
+const providerDispatchMigration = read(
+  'supabase/migrations/20260606194638_pbk_provider_action_dispatch_leases.sql'
+);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -17,6 +24,16 @@ assert(
   packageJson.scripts?.['test:unified-conversation-bridge'] ===
     'node ./scripts/unified-conversation-bridge-smoke.mjs',
   'package.json must expose the exact test:unified-conversation-bridge script.'
+);
+
+assert(
+  packageJson.scripts?.['test:provider-action-dispatch']?.includes(
+    'provider-action-dispatch.test.mjs'
+  ) &&
+    packageJson.scripts?.['test:founder']?.includes(
+      'test:provider-action-dispatch'
+    ),
+  'Provider action dispatch behavior tests must remain in the founder verification gate.'
 );
 
 assert(
@@ -51,6 +68,7 @@ for (const table of [
   'conversation_thread_identities',
   'conversation_events',
   'communication_sender_identities',
+  'provider_action_dispatches',
 ]) {
   assert(
     new RegExp(`requiredTables\\s*=\\s*\\[[\\s\\S]*['"]${table}['"]`).test(bridge),
@@ -76,6 +94,13 @@ const providerApprovalEnd = bridge.indexOf(
 const providerApprovalSource = bridge.slice(
   providerApprovalStart,
   providerApprovalEnd
+);
+const providerLeaseStart = providerDispatchSource.indexOf(
+  'async function executeProviderActionWithSharedLease'
+);
+const providerLeaseEnd = providerDispatchSource.length;
+const providerLeaseSource = providerDispatchSource.slice(
+  providerLeaseStart
 );
 
 assert(
@@ -596,6 +621,14 @@ assert(
     /providerActionAttemptedAt/.test(bridge) &&
     /providerActionClassification/.test(bridge) &&
     /conversationProjection\?\.projectedAt/.test(bridge) &&
+    /retryUnavailableProviderLease/.test(bridge) &&
+    /providerActionDispatch\?\.status === 'lease_unavailable'/.test(bridge) &&
+    /delete approval\.metadata\.providerActionClassification/.test(
+      providerApprovalSource
+    ) &&
+    /delete approval\.metadata\.conversationProjection/.test(
+      providerApprovalSource
+    ) &&
     /if\s*\(!alreadyAttempted\)/.test(bridge) &&
     /retryConversationProjectionOnly/.test(bridge) &&
     /providerActionResult[\s\S]*!approval\.metadata\.conversationProjection\?\.projectedAt/.test(
@@ -613,7 +646,7 @@ assert(
 );
 
 const providerDispatchMarkerIndex = providerApprovalSource.indexOf(
-  'attemptToken: randomUUID()'
+  "status: 'dispatching'"
 );
 const providerDispatchPersistIndex = providerApprovalSource.indexOf(
   'await persistState(state);',
@@ -623,10 +656,31 @@ const providerDispatchExecuteIndex = providerApprovalSource.indexOf(
   'executeToolHandlerWithQa('
 );
 assert(
-  /providerActionDispatch/.test(providerApprovalSource) &&
-    /attemptToken:\s*randomUUID\(\)/.test(providerApprovalSource) &&
+    /providerActionDispatch/.test(providerApprovalSource) &&
+    /executeProviderActionWithSharedLease/.test(providerApprovalSource) &&
+    /executeProviderActionWithSharedLeaseCore/.test(bridge) &&
+    /resolveProviderActionDispatchBackend/.test(providerDispatchSource) &&
+    /return isHosted \? 'unavailable' : 'local'/.test(
+      providerDispatchPolicySource
+    ) &&
+    /backend === 'unavailable'/.test(providerLeaseSource) &&
+    /provider_dispatch_lease_unavailable/.test(providerDispatchSource) &&
+    /backend === 'local'/.test(providerLeaseSource) &&
+    providerLeaseStart >= 0 &&
+    providerLeaseEnd > providerLeaseStart &&
+    /provider_action_dispatches/.test(providerLeaseSource) &&
+    /pg_advisory_lock\(hashtextextended\(\$1,\s*0\)\)/.test(
+      providerLeaseSource
+    ) &&
+    /pg_advisory_unlock\(hashtextextended\(\$1,\s*0\)\)/.test(
+      providerLeaseSource
+    ) &&
+    /const attemptToken = createId\(\)/.test(providerLeaseSource) &&
+    providerLeaseSource.indexOf(
+      'INSERT INTO public.provider_action_dispatches'
+    ) < providerLeaseSource.lastIndexOf('const value = await execute(') &&
     /status:\s*'dispatching'/.test(providerApprovalSource) &&
-    /dispatchStartedAt:\s*isoNow\(\)/.test(providerApprovalSource) &&
+    /dispatchStartedAt/.test(providerApprovalSource) &&
     /leasePolicy:\s*'manual_reconciliation'/.test(providerApprovalSource) &&
     /leaseExpiresAt:\s*null/.test(providerApprovalSource) &&
     /reclaimable:\s*false/.test(providerApprovalSource) &&
@@ -642,6 +696,40 @@ assert(
       "providerActionDispatch?.status === 'dispatching'"
     ) < providerDispatchExecuteIndex,
   'Approval replay must durably lease provider dispatch before execution and never replay an unresolved dispatch.'
+);
+
+assert(
+  /CREATE TABLE IF NOT EXISTS public\.provider_action_dispatches/.test(
+    providerDispatchMigration
+  ) &&
+    /approval_id TEXT PRIMARY KEY/.test(providerDispatchMigration) &&
+    /ALTER TABLE public\.provider_action_dispatches ENABLE ROW LEVEL SECURITY/.test(
+      providerDispatchMigration
+    ) &&
+    /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'anon'\)/.test(
+      providerDispatchMigration
+    ) &&
+    /REVOKE ALL ON public\.provider_action_dispatches FROM anon/.test(
+      providerDispatchMigration
+    ) &&
+    /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname = 'authenticated'\)/.test(
+      providerDispatchMigration
+    ) &&
+    /REVOKE ALL ON public\.provider_action_dispatches FROM authenticated/.test(
+      providerDispatchMigration
+    ),
+  'Provider dispatch lease schema must ship as a server-only Supabase migration.'
+);
+
+assert(
+  /dispatchStarted\s*\?\s*'provider_delivery_unknown'\s*:\s*'scheduled_execution_failed'/.test(
+    bridge
+  ) &&
+    /status:\s*dispatchStarted\s*\?\s*'delivery_unknown'\s*:\s*'failed'/.test(
+      bridge
+    ) &&
+    /reconciliationRequired:\s*dispatchStarted/.test(bridge),
+  'Scheduled send exceptions after provider dispatch starts must be finalized as delivery unknown, never as retryable failures.'
 );
 
 assert(

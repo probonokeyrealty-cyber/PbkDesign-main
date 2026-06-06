@@ -114,10 +114,25 @@ export const CONVERSATION_SCHEMA_SQL = `
   ALTER TABLE public.conversation_events ENABLE ROW LEVEL SECURITY;
   ALTER TABLE public.communication_sender_identities ENABLE ROW LEVEL SECURITY;
 
-  REVOKE ALL ON public.conversation_threads FROM anon, authenticated;
-  REVOKE ALL ON public.conversation_thread_identities FROM anon, authenticated;
-  REVOKE ALL ON public.conversation_events FROM anon, authenticated;
-  REVOKE ALL ON public.communication_sender_identities FROM anon, authenticated;
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      REVOKE ALL ON public.conversation_threads FROM anon;
+      REVOKE ALL ON public.conversation_thread_identities FROM anon;
+      REVOKE ALL ON public.conversation_events FROM anon;
+      REVOKE ALL ON public.communication_sender_identities FROM anon;
+    END IF;
+  END $$;
+
+  DO $$
+  BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+      REVOKE ALL ON public.conversation_threads FROM authenticated;
+      REVOKE ALL ON public.conversation_thread_identities FROM authenticated;
+      REVOKE ALL ON public.conversation_events FROM authenticated;
+      REVOKE ALL ON public.communication_sender_identities FROM authenticated;
+    END IF;
+  END $$;
 `;
 
 export async function ensureConversationSchema(pool) {

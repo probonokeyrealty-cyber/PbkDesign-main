@@ -313,18 +313,32 @@ export function rankEligibleSenderIdentities(identities = [], context = {}) {
     typeof context?.previousSenderIdentityId === 'string' && context.previousSenderIdentityId.trim()
       ? context.previousSenderIdentityId
       : '';
+  const leadRegion =
+    typeof context?.leadRegion === 'string' ? context.leadRegion.trim().toLowerCase() : '';
+  const unsafeHealthStatus =
+    /(?:^|_)(?:blocked|quarantined|error|failed|failure|banned|suspended|disabled|disconnected|retired|released|release_pending|sending_error|connection_error|soft_bounce|permanent_suspension)(?:_|$)/;
 
   return identities
     .filter(
-      (identity) =>
-        identity &&
-        typeof identity === 'object' &&
-        !Array.isArray(identity) &&
-        typeof identity.id === 'string' &&
-        Boolean(identity.id.trim()) &&
-        String(identity.lifecycleStatus ?? '')
+      (identity) => {
+        if (
+          !identity ||
+          typeof identity !== 'object' ||
+          Array.isArray(identity) ||
+          typeof identity.id !== 'string' ||
+          !identity.id.trim() ||
+          String(identity.lifecycleStatus ?? '')
+            .trim()
+            .toLowerCase() !== 'active'
+        ) {
+          return false;
+        }
+        const healthStatus = String(identity.healthStatus ?? '')
           .trim()
-          .toLowerCase() === 'active'
+          .toLowerCase()
+          .replace(/[\s-]+/g, '_');
+        return !unsafeHealthStatus.test(healthStatus);
+      }
     )
     .map((identity) => {
       let numericHealthScore = 0;
@@ -337,12 +351,28 @@ export function rankEligibleSenderIdentities(identities = [], context = {}) {
       const healthScore = Number.isFinite(numericHealthScore)
         ? Math.min(100, Math.max(0, numericHealthScore))
         : 0;
+      const regionMatches =
+        Boolean(leadRegion) &&
+        typeof identity.region === 'string' &&
+        identity.region.trim().toLowerCase() === leadRegion;
+      const reasonCodes = [];
+      if (previousSenderIdentityId && identity.id === previousSenderIdentityId) {
+        reasonCodes.push('previous_successful_sender');
+      }
+      if (regionMatches) reasonCodes.push('lead_region_match');
+      if (identity.isWorkspaceDefault) reasonCodes.push('workspace_default');
+      if (healthScore > 0 || /^(?:active|connected|healthy|ready|enabled)$/.test(
+        String(identity.healthStatus ?? '').trim().toLowerCase()
+      )) {
+        reasonCodes.push('healthy');
+      }
       const recommendationScore =
         (previousSenderIdentityId && identity.id === previousSenderIdentityId ? 1000 : 0) +
+        (regionMatches ? 25 : 0) +
         healthScore +
         (identity.isWorkspaceDefault ? 10 : 0);
 
-      return { ...identity, recommendationScore };
+      return { ...identity, recommendationScore, reasonCodes };
     })
     .sort(
       (left, right) =>

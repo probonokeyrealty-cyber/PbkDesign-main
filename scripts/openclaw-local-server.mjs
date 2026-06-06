@@ -33,7 +33,7 @@ import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSch
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
-import { normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity } from './conversation-identity.mjs';
+import { normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity, rankEligibleSenderIdentities } from './conversation-identity.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
 import { createConversationStore } from './conversation-store.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -23783,6 +23783,7 @@ function buildStrategistMessages(params = {}) {
   const attemptedActions = normalizeAttemptedActions(params.attemptedActions || params.attempted_actions || params.actions);
   const resolvedCallContext = params.resolvedCallContext || params.resolved_call_context || null;
   const phrasingEnginePrompt = String(params.phrasingEnginePrompt || params.phrasing_engine_prompt || '').trim();
+  const textOnlyInstruction = String(params.textOnlyInstruction || '').trim();
   const dealContext = {
     leadId: params.leadId || context.leadId || '',
     leadName: params.leadName || context.leadName || '',
@@ -23794,6 +23795,20 @@ function buildStrategistMessages(params = {}) {
     motivation: params.sellerMotivation || params.motivation || '',
     confidence: toNumber(params.confidence, 0.5),
   };
+  if (textOnlyInstruction) {
+    return {
+      messages: [
+        { role: 'system', content: textOnlyInstruction },
+        { role: 'user', content: situation },
+      ],
+      context,
+      situation,
+      transcript,
+      contextSummary,
+      attemptedActions,
+      dealContext,
+    };
+  }
   const system = ['You are the PBK strategist coaching Ava, an approval-gated real estate acquisition agent.', 'Give Ava the answer a 10-plus-year wholesale acquisitions operator would use on a live call.', resolvedCallContext?.exactNextMove ? 'Ava phrasing engine mode: the exact next move was already selected by contextResolver. Do not change the strategy. Only phrase it.' : '', resolvedCallContext?.exactNextMove ? 'If exactNextMove.strategyLocked is true, immediateScript must follow exactNextMove.text and must not invent a different plan.' : '', 'Mission: listen more than talk, protect PBK capital, keep the seller respected, and move toward a clean next step.', 'Ava identity: warm senior negotiator at Probono Key Realty, not a search engine. She acknowledges first, speaks with calm authority, and asks one useful probe.', 'Active listening rule: treat the last seller sentence as sacred. Mirror or label their exact concern before strategy, ask one question, then wait for the seller. Never monologue.', 'Hook rule: every non-boundary live-call response should end with a question or clear next step that requires the seller to answer.', 'Caller-role rule: first separate owner, real estate agent, and decision-maker/helper. If agent, keep the agent in the deal, say their full commission is protected, then probe listing/property details. If owner, continue owner-safe probing.', 'Audience guard: Creative Finance and Multi-Family are agent-only. Never pitch, explain, or hint at CF/MF to a homeowner or unknown caller.', 'For voice/browser conversations, immediateScript must sound natural and conversational: 2-4 sentences, usually 35-90 words, never a robotic one-line status update.', 'Use the call-state summary as the source of truth when it is provided; do not expose that summary to the seller.', 'Full intelligence mode: use the best seller context in the call-state summary. If the latest transcript is weak, answer from the strongest recent seller context and do not repeat prior questions.', 'Do not say "new inbound caller" or "I routed this" to the caller unless the operator specifically asked for internal routing status.', 'Never speak phone numbers, call_control_id values, stream_id values, lead IDs, request IDs, JSON keys, tool names, debug labels, or internal routing notes.', 'Use PBK masterclass behavior: emotional intelligence, phone EQ, ego handling, sensitive-topic deflection, BANT+ discipline, and path discipline across Cash Offer, Land, RBP/novation, Creative Finance, and Mortgage Takeover.', 'Never authorize calls, contracts, SMS, email, or offer increases directly. If money or provider writes are sensitive, set approvalNeeded true.', 'Truth boundary: Ava must not pretend to be human if asked. Offers and actions are real but approval-gated.', 'Return JSON only with keys: immediateScript, strategy, risk, rule, nextQuestion, returnToBusiness, approvalNeeded, confidence.'].join(' ');
   const user = [`Situation: ${situation || 'Ava is uncertain during a seller conversation.'}`, contextSummary ? `Call state summary:\n${contextSummary.slice(0, 1800)}` : '', phrasingEnginePrompt ? `Resolved fast context:\n${phrasingEnginePrompt.slice(0, 1400)}` : '', `Transcript: ${transcript || '(none provided)'}`, `Attempted actions: ${attemptedActions.join('; ') || '(none)'}`, `Deal context: ${JSON.stringify(dealContext)}`, 'Write natural language Ava can say immediately. Start by acknowledging the human. Include one smart question and one transition back to business.'].join('\n\n');
   return {
@@ -44719,7 +44734,10 @@ const toolHandlers = {
       delivery = await fireInstantlyRequest(instantlyEndpoint, instantlyPayload);
     }
 
-    if (!delivery || (!delivery.ok && params.allowResendFallback !== false)) {
+    if (
+      (!delivery && params.requireSelectedProvider !== true) ||
+      (!delivery?.ok && params.allowResendFallback !== false)
+    ) {
       provider = 'Resend';
       endpoint = 'https://api.resend.com/emails';
       delivery = await sendTransactionalEmail({
@@ -49636,6 +49654,472 @@ async function buildConversationSenderSummary(store, thread) {
 function getConversationRequestActor(request) {
   const teamAuth = getTeamAuthMeta(request);
   return teamAuth.ok && teamAuth.actor ? teamAuth.actor : 'operator';
+}
+
+function requirePlainConversationActionBody(body, message) {
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(body))
+  ) {
+    throw Object.assign(new Error(message), { statusCode: 400 });
+  }
+  return body;
+}
+
+function rejectUnknownConversationFields(body, allowedFields, label) {
+  const unknownFields = Object.keys(body).filter((field) => !allowedFields.has(field));
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(`Unknown ${label} fields: ${unknownFields.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+}
+
+function parseConversationSenderRecommendationBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation sender recommendation body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(body, new Set(['channel']), 'sender recommendation');
+  const channel = String(body.channel || '').trim().toLowerCase();
+  if (!['sms', 'email'].includes(channel)) {
+    throw Object.assign(new Error('channel must be sms or email.'), { statusCode: 400 });
+  }
+  return { channel };
+}
+
+function parseConversationSendBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation send body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(
+    body,
+    new Set([
+      'channel',
+      'senderIdentityId',
+      'body',
+      'message',
+      'subject',
+      'scheduledFor',
+      'sendAt',
+      'actor',
+      'requestedBy',
+      'approvalId',
+    ]),
+    'conversation send'
+  );
+  const channel = String(body.channel || '').trim().toLowerCase();
+  if (!['sms', 'email'].includes(channel)) {
+    throw Object.assign(new Error('channel must be sms or email.'), { statusCode: 400 });
+  }
+  const senderIdentityId = String(body.senderIdentityId || '').trim();
+  if (!senderIdentityId) {
+    throw Object.assign(new Error('senderIdentityId is required.'), { statusCode: 400 });
+  }
+  const bodyText = String(body.body ?? body.message ?? '').trim();
+  if (!bodyText) {
+    throw Object.assign(new Error('Message body is required.'), { statusCode: 400 });
+  }
+  if (bodyText.length > 12_000) {
+    throw Object.assign(new Error('Message body must be 12000 characters or fewer.'), {
+      statusCode: 400,
+    });
+  }
+  if (
+    Object.hasOwn(body, 'body') &&
+    Object.hasOwn(body, 'message') &&
+    String(body.body).trim() !== String(body.message).trim()
+  ) {
+    throw Object.assign(new Error('body and message must match when both are provided.'), {
+      statusCode: 400,
+    });
+  }
+  const subject = String(body.subject || '').trim();
+  if (channel === 'sms' && subject) {
+    throw Object.assign(new Error('subject is supported only for email.'), {
+      statusCode: 400,
+    });
+  }
+  if (subject.length > 500) {
+    throw Object.assign(new Error('subject must be 500 characters or fewer.'), {
+      statusCode: 400,
+    });
+  }
+  const scheduledFor = String(body.scheduledFor || body.sendAt || '').trim();
+  if (
+    body.scheduledFor &&
+    body.sendAt &&
+    String(body.scheduledFor).trim() !== String(body.sendAt).trim()
+  ) {
+    throw Object.assign(new Error('scheduledFor and sendAt must match when both are provided.'), {
+      statusCode: 400,
+    });
+  }
+  if (scheduledFor) {
+    const scheduledTime = Date.parse(scheduledFor);
+    if (!Number.isFinite(scheduledTime) || scheduledTime <= Date.now()) {
+      throw Object.assign(new Error('scheduledFor must be a valid future datetime.'), {
+        statusCode: 400,
+      });
+    }
+  }
+  for (const field of ['actor', 'requestedBy', 'approvalId']) {
+    if (Object.hasOwn(body, field) && typeof body[field] !== 'string') {
+      throw Object.assign(new Error(`${field} must be a string when provided.`), {
+        statusCode: 400,
+      });
+    }
+  }
+  return {
+    channel,
+    senderIdentityId,
+    body: bodyText,
+    subject,
+    scheduledFor,
+    actor: String(body.actor || body.requestedBy || '').trim().slice(0, 200),
+    approvalId: String(body.approvalId || '').trim(),
+  };
+}
+
+function parseConversationRefineDraftBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation refinement body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(
+    body,
+    new Set(['draft', 'channel', 'subject']),
+    'conversation refinement'
+  );
+  const draft = String(body.draft || '').trim();
+  if (!draft) {
+    throw Object.assign(new Error('draft is required.'), { statusCode: 400 });
+  }
+  if (draft.length > 4_000) {
+    throw Object.assign(new Error('draft must be 4000 characters or fewer.'), {
+      statusCode: 400,
+    });
+  }
+  const channel = String(body.channel || '').trim().toLowerCase();
+  if (channel && !['sms', 'email'].includes(channel)) {
+    throw Object.assign(new Error('channel must be sms or email when provided.'), {
+      statusCode: 400,
+    });
+  }
+  const subject = String(body.subject || '').trim();
+  if (subject && channel !== 'email') {
+    throw Object.assign(new Error('subject is supported only for email refinement.'), {
+      statusCode: 400,
+    });
+  }
+  if (subject.length > 500) {
+    throw Object.assign(new Error('subject must be 500 characters or fewer.'), {
+      statusCode: 400,
+    });
+  }
+  return { draft, channel: channel || 'sms', subject };
+}
+
+function parseConversationEventPatchBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation event patch body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(
+    body,
+    new Set(['hidden', 'important', 'read']),
+    'conversation event patch'
+  );
+  if (!Object.keys(body).length) {
+    throw Object.assign(new Error('No conversation event patch fields provided.'), {
+      statusCode: 400,
+    });
+  }
+  const now = isoNow();
+  const patch = {};
+  for (const field of ['hidden', 'important', 'read']) {
+    if (Object.hasOwn(body, field) && typeof body[field] !== 'boolean') {
+      throw Object.assign(new Error(`${field} must be a boolean.`), {
+        statusCode: 400,
+      });
+    }
+  }
+  if (Object.hasOwn(body, 'hidden')) patch.hiddenAt = body.hidden ? now : null;
+  if (Object.hasOwn(body, 'read')) patch.readAt = body.read ? now : null;
+  if (Object.hasOwn(body, 'important')) patch.payload = { important: body.important };
+  return patch;
+}
+
+function parseConversationRestoreBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation event restore body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(body, new Set(), 'conversation event restore');
+  return {};
+}
+
+function parseConversationReportSpamBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation spam report body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(
+    body,
+    new Set(['explicitOptOut', 'reason', 'actor']),
+    'conversation spam report'
+  );
+  if (
+    Object.hasOwn(body, 'explicitOptOut') &&
+    typeof body.explicitOptOut !== 'boolean'
+  ) {
+    throw Object.assign(new Error('explicitOptOut must be a boolean.'), {
+      statusCode: 400,
+    });
+  }
+  for (const field of ['reason', 'actor']) {
+    if (Object.hasOwn(body, field) && typeof body[field] !== 'string') {
+      throw Object.assign(new Error(`${field} must be a string when provided.`), {
+        statusCode: 400,
+      });
+    }
+  }
+  return {
+    explicitOptOut: body.explicitOptOut === true,
+    reason: String(body.reason || '').trim().slice(0, 500),
+    actor: String(body.actor || '').trim().slice(0, 200),
+  };
+}
+
+function mapPublicConversationSenderIdentity(identity = {}) {
+  return {
+    id: identity.id,
+    provider: identity.provider,
+    channel: identity.channel,
+    address: identity.address,
+    label: identity.label,
+    region: identity.region,
+    lifecycleStatus: identity.lifecycleStatus,
+    healthStatus: identity.healthStatus,
+    healthScore: identity.healthScore,
+    isWorkspaceDefault: Boolean(identity.isWorkspaceDefault),
+  };
+}
+
+function getConversationLeadRegion(leadSummary = {}) {
+  const stateCode = String(leadSummary.state || '').trim().toUpperCase();
+  if (!stateCode) return '';
+  return stateCode.includes('-') ? stateCode : `US-${stateCode}`;
+}
+
+function getConversationRuntimeLead(thread) {
+  return thread?.leadId ? buildLeadFullView(thread.leadId)?.lead || null : null;
+}
+
+async function buildConversationRecipientContext(store, pool, thread) {
+  const [leadSummary, identities] = await Promise.all([
+    buildConversationLeadSummary(pool, thread),
+    store.getThreadContactIdentities(thread.id, {
+      workspaceId: CONVERSATION_WORKSPACE_ID,
+    }),
+  ]);
+  const runtimeLead = getConversationRuntimeLead(thread);
+  return {
+    leadSummary,
+    runtimeLead,
+    phone: normalizePhone(identities.phone || leadSummary?.phone || runtimeLead?.phone || ''),
+    email: String(identities.email || leadSummary?.email || runtimeLead?.email || '')
+      .trim()
+      .toLowerCase(),
+    leadName:
+      leadSummary?.leadName ||
+      runtimeLead?.leadName ||
+      runtimeLead?.name ||
+      runtimeLead?.seller?.name ||
+      '',
+    address:
+      leadSummary?.address ||
+      runtimeLead?.address ||
+      runtimeLead?.property?.address ||
+      '',
+    leadRegion: getConversationLeadRegion(leadSummary || runtimeLead?.property || {}),
+  };
+}
+
+function getConversationConsentStatus(runtimeLead = {}) {
+  return String(
+    runtimeLead?.compliance?.consentStatus ||
+      runtimeLead?.consentStatus ||
+      runtimeLead?.tcpaConsent ||
+      'unknown'
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function getConversationDncStatus(recipientContext = {}) {
+  const runtimeLead = recipientContext.runtimeLead || {};
+  const dncStatus = String(
+    runtimeLead?.compliance?.dncStatus || runtimeLead?.dncStatus || ''
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  const dncEntry = recipientContext.phone
+    ? findDncEntryByPhone(recipientContext.phone)
+    : null;
+  return {
+    blocked:
+      recipientContext.leadSummary?.dnc === true ||
+      Boolean(dncEntry) ||
+      ['dnc', 'blocked', 'do_not_contact', 'opted_out', 'revoked'].includes(dncStatus),
+    status: dncStatus,
+    entry: dncEntry,
+  };
+}
+
+function buildConversationSendEventPayload({
+  requestId,
+  result,
+  channel,
+  scheduledFor,
+  senderIdentity,
+  recipient,
+  reason,
+}) {
+  return {
+    requestId,
+    result: result?.result || result?.outcome || '',
+    approvalId: result?.approval?.id || '',
+    providerLive: Boolean(result?.telnyx?.live || result?.delivery?.live),
+    providerConfigured: Boolean(
+      result?.telnyx?.configured || result?.delivery?.configured || result?.delivery?.ok
+    ),
+    scheduledFor: scheduledFor || '',
+    senderIdentityId: senderIdentity?.id || '',
+    senderAddress: senderIdentity?.address || '',
+    recipient,
+    reason: reason || result?.reason || result?.error || result?.message || '',
+  };
+}
+
+function classifyConversationSendResult(channel, result = {}) {
+  const normalizedResult = String(result.result || result.outcome || '').trim().toLowerCase();
+  if (result.requiresApproval || normalizedResult === 'queued_for_approval' || result.approval?.id) {
+    return {
+      status: 'approval_required',
+      httpStatus: 202,
+      ok: true,
+      result: 'queued_for_approval',
+    };
+  }
+  if (
+    result.blocked ||
+    result.providerWritesBlocked ||
+    ['provider_writes_disabled', 'safety_blocked', 'unavailable'].includes(normalizedResult)
+  ) {
+    return {
+      status: result.dnc ? 'dnc_blocked' : 'blocked',
+      httpStatus: 409,
+      ok: false,
+      result: normalizedResult || 'blocked',
+    };
+  }
+  const providerLive =
+    channel === 'sms'
+      ? result.telnyx?.live === true && result.telnyx?.simulated !== true
+      : result.delivery?.ok === true && result.delivery?.live !== false;
+  if (result.ok === false || !providerLive) {
+    return {
+      status: 'failed',
+      httpStatus: 503,
+      ok: false,
+      result: normalizedResult || 'provider_not_live',
+    };
+  }
+  return {
+    status:
+      channel === 'sms'
+        ? result.message?.status || 'queued'
+        : result.message?.status || 'sent',
+    httpStatus: 200,
+    ok: true,
+    result: normalizedResult || 'live',
+  };
+}
+
+async function projectConversationSendOutcome(
+  store,
+  {
+    thread,
+    requestId,
+    channel,
+    senderIdentity,
+    recipient,
+    body,
+    subject,
+    status,
+    result,
+    scheduledFor = '',
+    sourceTable = 'conversation_send_requests',
+    sourceId = '',
+    actor = 'operator',
+    reason = '',
+  }
+) {
+  return store.upsertEvent({
+    workspaceId: CONVERSATION_WORKSPACE_ID,
+    threadId: thread.id,
+    leadId: thread.leadId,
+    eventType: `message.${channel}`,
+    channel,
+    direction: 'outbound',
+    sourceTable,
+    sourceId: sourceId || requestId,
+    provider: senderIdentity?.provider || '',
+    senderIdentityId: senderIdentity?.id || null,
+    actorType: 'user',
+    actorName: actor,
+    subject: subject || '',
+    body,
+    status,
+    occurredAt: isoNow(),
+    payload: buildConversationSendEventPayload({
+      requestId,
+      result,
+      channel,
+      scheduledFor,
+      senderIdentity,
+      recipient,
+      reason,
+    }),
+  });
+}
+
+function isExplicitConversationOptOut(event, explicitOptOut) {
+  if (explicitOptOut === true) return true;
+  if (String(event?.direction || '').toLowerCase() !== 'inbound') return false;
+  const normalized = String(event?.body || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?,;:]+$/g, '')
+    .replace(/\s+/g, ' ');
+  return new Set([
+    'stop',
+    'stop all',
+    'unsubscribe',
+    'cancel',
+    'end',
+    'quit',
+    'remove me',
+    'do not contact me',
+    'do not call me',
+  ]).has(normalized);
 }
 
 function isConversationPostgresUnavailableError(error) {
@@ -56863,6 +57347,659 @@ const server = createServer(async (request, response) => {
         });
       } catch (error) {
         sendConversationStoreError(response, error, 'Unable to list unified conversations.');
+      }
+      return;
+    }
+
+    const conversationSenderRecommendationMatch = matchPath(
+      pathname,
+      '/api/conversations/:threadId/sender-recommendation'
+    );
+    if (conversationSenderRecommendationMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(
+          conversationSenderRecommendationMatch.groups.threadId
+        );
+        const { channel } = parseConversationSenderRecommendationBody(
+          await readBody(request)
+        );
+        const store = createConversationStore(pool);
+        const thread = await store.getThread(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!thread) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation thread not found.',
+          });
+          return;
+        }
+        const [identities, previousSenderIdentityId, recipientContext] =
+          await Promise.all([
+            store.listSenderIdentities({
+              workspaceId: CONVERSATION_WORKSPACE_ID,
+              channel,
+              limit: 100,
+            }),
+            store.getPreviousSuccessfulSenderIdentityId(threadId, channel, {
+              workspaceId: CONVERSATION_WORKSPACE_ID,
+            }),
+            buildConversationRecipientContext(store, pool, thread),
+          ]);
+        const ranked = rankEligibleSenderIdentities(identities, {
+          previousSenderIdentityId,
+          leadRegion: recipientContext.leadRegion,
+        });
+        const publicRanked = ranked.map((identity) => ({
+          ...mapPublicConversationSenderIdentity(identity),
+          reasonCodes: identity.reasonCodes || [],
+        }));
+        const recommended = publicRanked[0] || null;
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          recommended,
+          alternatives: publicRanked.slice(1),
+          reasonCodes: recommended?.reasonCodes || ['no_eligible_sender'],
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to recommend a conversation sender.'
+        );
+      }
+      return;
+    }
+
+    const conversationMessagesMatch = matchPath(
+      pathname,
+      '/api/conversations/:threadId/messages'
+    );
+    if (conversationMessagesMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(
+          conversationMessagesMatch.groups.threadId
+        );
+        const parsed = parseConversationSendBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const thread = await store.getThread(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!thread) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation thread not found.',
+          });
+          return;
+        }
+        const [senderIdentity, recipientContext] = await Promise.all([
+          store.getSenderIdentity(parsed.senderIdentityId, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          }),
+          buildConversationRecipientContext(store, pool, thread),
+        ]);
+        if (!senderIdentity) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Communication identity not found.',
+          });
+          return;
+        }
+        if (senderIdentity.channel !== parsed.channel) {
+          json(response, 400, {
+            ok: false,
+            result: 'invalid_sender_channel',
+            error: 'Selected sender identity does not match the requested channel.',
+          });
+          return;
+        }
+        if (!rankEligibleSenderIdentities([senderIdentity]).length) {
+          json(response, 409, {
+            ok: false,
+            result: 'sender_ineligible',
+            error: 'Selected sender identity is not currently eligible.',
+          });
+          return;
+        }
+        const recipient =
+          parsed.channel === 'sms' ? recipientContext.phone : recipientContext.email;
+        if (!recipient) {
+          json(response, 409, {
+            ok: false,
+            result: 'recipient_unavailable',
+            error:
+              parsed.channel === 'sms'
+                ? 'The canonical conversation has no destination phone number.'
+                : 'The canonical conversation has no destination email address.',
+          });
+          return;
+        }
+
+        const requestId = randomUUID();
+        const actor = parsed.actor || getConversationRequestActor(request);
+        const dnc = getConversationDncStatus(recipientContext);
+        if (dnc.blocked) {
+          const providerResult = {
+            ok: false,
+            blocked: true,
+            dnc: dnc.entry || { status: dnc.status || 'dnc' },
+            result: 'dnc_blocked',
+            reason: dnc.entry?.reason || 'The lead is marked do not contact.',
+          };
+          const event = await projectConversationSendOutcome(store, {
+            thread,
+            requestId,
+            channel: parsed.channel,
+            senderIdentity,
+            recipient,
+            body: parsed.body,
+            subject: parsed.subject,
+            status: 'dnc_blocked',
+            result: providerResult,
+            scheduledFor: parsed.scheduledFor,
+            actor,
+            reason: providerResult.reason,
+          });
+          json(response, 409, {
+            ok: false,
+            result: 'dnc_blocked',
+            error: providerResult.reason,
+            event,
+          });
+          return;
+        }
+
+        const providerParams = {
+          leadId: thread.leadId || '',
+          leadName: recipientContext.leadName,
+          address: recipientContext.address,
+          body: parsed.body,
+          message: parsed.body,
+          subject: parsed.subject,
+          actor,
+          requestedBy: actor,
+          approvalId: parsed.approvalId,
+          senderIdentityId: senderIdentity.id,
+          ...(parsed.channel === 'sms'
+            ? {
+                phone: recipient,
+                to: recipient,
+                from: senderIdentity.address,
+                fromNumber: senderIdentity.address,
+                consentStatus: getConversationConsentStatus(
+                  recipientContext.runtimeLead
+                ),
+              }
+            : {
+                email: recipient,
+                to: recipient,
+                fromEmail: senderIdentity.address,
+                senderEmail: senderIdentity.address,
+                customBody: parsed.body,
+                templateId: 'custom',
+                allowResendFallback: false,
+                requireSelectedProvider: true,
+              }),
+        };
+
+        if (
+          parsed.channel === 'sms' &&
+          !['true', 'yes', 'valid', 'granted', 'consented', 'opted_in', 'verified'].includes(
+            providerParams.consentStatus
+          ) &&
+          !parsed.approvalId
+        ) {
+          const guarded = await enforceOperatingModeForTool('telnyx_sms', {
+            ...providerParams,
+            forceApproval: true,
+          });
+          if (guarded) {
+            const event = await projectConversationSendOutcome(store, {
+              thread,
+              requestId,
+              channel: parsed.channel,
+              senderIdentity,
+              recipient,
+              body: parsed.body,
+              subject: parsed.subject,
+              status:
+                guarded.ok === false ? 'blocked' : 'approval_required',
+              result: guarded,
+              scheduledFor: parsed.scheduledFor,
+              actor,
+            });
+            json(response, guarded.ok === false ? 409 : 202, {
+              ...guarded,
+              event,
+            });
+            return;
+          }
+        }
+
+        if (parsed.scheduledFor) {
+          const message = createMessageRecord({
+            id: `conversation-scheduled-${requestId}`,
+            leadId: thread.leadId || '',
+            leadProfileId: thread.leadId || null,
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+            leadName: recipientContext.leadName,
+            address: recipientContext.address,
+            channel: parsed.channel,
+            direction: 'outbound',
+            body: parsed.body,
+            subject: parsed.subject,
+            status: 'scheduled',
+            provider: 'PBK Scheduler',
+            senderIdentityId: senderIdentity.id,
+            ...(parsed.channel === 'sms'
+              ? {
+                  phone: recipient,
+                  from: senderIdentity.address,
+                  fromPhone: senderIdentity.address,
+                  toPhone: recipient,
+                }
+              : {
+                  email: recipient,
+                  fromEmail: senderIdentity.address,
+                  toEmail: recipient,
+                }),
+            payload: {
+              scheduled: true,
+              scheduledFor: parsed.scheduledFor,
+              senderIdentityId: senderIdentity.id,
+              senderAddress: senderIdentity.address,
+              requestedFrom: 'unified-conversation',
+            },
+          });
+          message.scheduledFor = parsed.scheduledFor;
+          message.sendAt = parsed.scheduledFor;
+          message.senderIdentityId = senderIdentity.id;
+          upsertMessage(state, message);
+          const persisted = await persistUnifiedMessageRecord(message);
+          await persistState(state);
+          if (!persisted) {
+            const failedResult = {
+              ok: false,
+              result: 'schedule_persistence_failed',
+              error: 'Unable to persist the scheduled message.',
+            };
+            const event = await projectConversationSendOutcome(store, {
+              thread,
+              requestId,
+              channel: parsed.channel,
+              senderIdentity,
+              recipient,
+              body: parsed.body,
+              subject: parsed.subject,
+              status: 'failed',
+              result: failedResult,
+              scheduledFor: parsed.scheduledFor,
+              actor,
+            });
+            json(response, 503, { ...failedResult, event });
+            return;
+          }
+          const scheduledResult = {
+            ok: true,
+            result: 'scheduled',
+            scheduled: true,
+            scheduledFor: parsed.scheduledFor,
+            message,
+          };
+          const event = await projectConversationSendOutcome(store, {
+            thread,
+            requestId,
+            channel: parsed.channel,
+            senderIdentity,
+            recipient,
+            body: parsed.body,
+            subject: parsed.subject,
+            status: 'scheduled',
+            result: scheduledResult,
+            scheduledFor: parsed.scheduledFor,
+            sourceTable: 'unified_messages',
+            sourceId: message.id,
+            actor,
+          });
+          json(response, 202, {
+            ...scheduledResult,
+            providerDeliveryClaimed: false,
+            event,
+          });
+          return;
+        }
+
+        const execution =
+          parsed.channel === 'sms'
+            ? await executeRouteToolHandler(
+                'telnyx_sms',
+                {
+                  ...providerParams,
+                  from: senderIdentity.address,
+                  fromNumber: senderIdentity.address,
+                },
+                'unified-conversation-send'
+              )
+            : await executeRouteToolHandler(
+                'sendColdEmail',
+                {
+                  ...providerParams,
+                  fromEmail: senderIdentity.address,
+                  senderEmail: senderIdentity.address,
+                  requireSelectedProvider: true,
+                },
+                'unified-conversation-send'
+              );
+        const {
+          result: providerResult,
+          qaValidation,
+          safetyValidation,
+        } = execution;
+        const classification = classifyConversationSendResult(
+          parsed.channel,
+          providerResult
+        );
+        const event = await projectConversationSendOutcome(store, {
+          thread,
+          requestId,
+          channel: parsed.channel,
+          senderIdentity,
+          recipient,
+          body: parsed.body,
+          subject: parsed.subject,
+          status: classification.status,
+          result: providerResult,
+          actor,
+        });
+        json(response, classification.httpStatus, {
+          ok: classification.ok,
+          result: classification.result,
+          providerResult,
+          qaValidation,
+          safetyValidation,
+          event,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to send the conversation message.'
+        );
+      }
+      return;
+    }
+
+    const conversationRefineDraftMatch = matchPath(
+      pathname,
+      '/api/conversations/:threadId/refine-draft'
+    );
+    if (conversationRefineDraftMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(
+          conversationRefineDraftMatch.groups.threadId
+        );
+        const parsed = parseConversationRefineDraftBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const thread = await store.getThread(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!thread) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation thread not found.',
+          });
+          return;
+        }
+        const [recipientContext, timeline] = await Promise.all([
+          buildConversationRecipientContext(store, pool, thread),
+          store.listTimeline(threadId, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+            limit: 12,
+            includeHidden: false,
+          }),
+        ]);
+        const visibleEvents = timeline.items.slice(0, 12).map((event) => ({
+          eventType: event.eventType,
+          channel: event.channel,
+          direction: event.direction,
+          subject: event.subject,
+          body: event.body,
+          status: event.status,
+          occurredAt: event.occurredAt,
+        }));
+        const firstName =
+          String(recipientContext.leadName || '').trim().split(/\s+/)[0] || '';
+        const instruction =
+          "You are Ava, PBK's sales assistant. Rewrite only the operator's draft. " +
+          'Preserve factual claims, numbers, consent boundaries, and requested channel. ' +
+          'Improve grammar, warmth, clarity, and persuasion without inventing promises. ' +
+          'Return only the revised draft.';
+        const strategist = await askStrategistRecord({
+          agentName: 'Ava',
+          leadId: thread.leadId || '',
+          leadName: recipientContext.leadName,
+          address: recipientContext.address,
+          responseFormat: 'text',
+          temperature: 0.2,
+          maxTokens: 500,
+          storeRule: false,
+          source: 'unified-conversation-refine-draft',
+          textOnlyInstruction: instruction,
+          situation: [
+            instruction,
+            `Channel: ${parsed.channel}`,
+            parsed.subject ? `Subject: ${parsed.subject}` : '',
+            `Lead: ${JSON.stringify({ firstName, address: recipientContext.address })}`,
+            `Latest visible events: ${JSON.stringify(visibleEvents)}`,
+            `Operator draft: ${parsed.draft}`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        const rawAnswer = String(
+          strategist?.request?.metadata?.rawAnswer ||
+            strategist?.rawAnswer ||
+            ''
+        ).trim();
+        const degraded =
+          !rawAnswer || String(strategist?.result || '').toLowerCase() === 'local_fallback';
+        json(response, degraded ? 503 : 200, {
+          ok: !degraded,
+          result: degraded ? 'strategist_unavailable' : strategist.result || 'live',
+          degraded,
+          rawDraft: parsed.draft,
+          refinedDraft: degraded ? parsed.draft : rawAnswer,
+          provider: strategist?.provider || null,
+          contextEventCount: visibleEvents.length,
+          sent: false,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to refine the conversation draft.'
+        );
+      }
+      return;
+    }
+
+    const conversationEventRestoreMatch = matchPath(
+      pathname,
+      '/api/conversation-events/:eventId/restore'
+    );
+    if (conversationEventRestoreMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const eventId = decodeConversationPathId(
+          conversationEventRestoreMatch.groups.eventId
+        );
+        parseConversationRestoreBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const current = await store.getEvent(eventId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!current) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation event not found.',
+          });
+          return;
+        }
+        const event = await store.patchEvent(
+          eventId,
+          { hiddenAt: null },
+          { workspaceId: CONVERSATION_WORKSPACE_ID }
+        );
+        json(response, 200, {
+          ok: true,
+          result: 'restored',
+          event,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to restore the conversation event.'
+        );
+      }
+      return;
+    }
+
+    const conversationEventReportSpamMatch = matchPath(
+      pathname,
+      '/api/conversation-events/:eventId/report-spam'
+    );
+    if (conversationEventReportSpamMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const eventId = decodeConversationPathId(
+          conversationEventReportSpamMatch.groups.eventId
+        );
+        const parsed = parseConversationReportSpamBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const current = await store.getEvent(eventId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!current) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation event not found.',
+          });
+          return;
+        }
+        const report = await store.reportEventSpam(eventId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+          reportedAt: isoNow(),
+        });
+        const explicitOptOut = isExplicitConversationOptOut(
+          current,
+          parsed.explicitOptOut
+        );
+        let dnc = null;
+        if (explicitOptOut) {
+          const contacts = await store.getThreadContactIdentities(current.threadId, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          });
+          if (contacts.phone) {
+            dnc = await handleEvent('dnc-add', {
+              phone: contacts.phone,
+              reason:
+                parsed.reason ||
+                `Explicit opt-out recorded from conversation event ${eventId}.`,
+              source: 'conversation-spam-report',
+              actor: parsed.actor || getConversationRequestActor(request),
+            });
+          }
+        }
+        json(response, 200, {
+          ok: true,
+          result: 'spam_reported',
+          ...report,
+          explicitOptOut,
+          dncCreated: Boolean(dnc?.ok),
+          dnc: dnc?.entry || null,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to report the conversation event.'
+        );
+      }
+      return;
+    }
+
+    const conversationEventMatch = matchPath(
+      pathname,
+      '/api/conversation-events/:eventId'
+    );
+    if (conversationEventMatch && request.method === 'PATCH') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const eventId = decodeConversationPathId(
+          conversationEventMatch.groups.eventId
+        );
+        const patch = parseConversationEventPatchBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const current = await store.getEvent(eventId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!current) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation event not found.',
+          });
+          return;
+        }
+        const event = await store.patchEvent(eventId, patch, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        json(response, 200, {
+          ok: true,
+          result: 'updated',
+          event,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to update the conversation event.'
+        );
       }
       return;
     }

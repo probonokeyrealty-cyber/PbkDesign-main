@@ -501,4 +501,73 @@ assert(
   'Conversation routes must remain behind the existing bridge authentication gate.'
 );
 
+for (const route of [
+  '/api/conversations/:threadId/sender-recommendation',
+  '/api/conversations/:threadId/messages',
+  '/api/conversations/:threadId/refine-draft',
+  '/api/conversation-events/:eventId',
+  '/api/conversation-events/:eventId/restore',
+  '/api/conversation-events/:eventId/report-spam',
+]) {
+  assert(
+    bridge.includes(route),
+    `Bridge must expose the authenticated unified conversation route ${route}.`
+  );
+}
+
+assert(
+    /rankEligibleSenderIdentities/.test(bridge) &&
+    /getPreviousSuccessfulSenderIdentityId/.test(bridge) &&
+    /leadRegion/.test(bridge) &&
+    /recommended,[\s\S]*alternatives:\s*publicRanked\.slice\(1\),[\s\S]*reasonCodes:/.test(bridge),
+  'Sender recommendations must rank safe eligible identities using continuity and lead region.'
+);
+
+assert(
+  /executeRouteToolHandler\(\s*'telnyx_sms'/.test(conversationRoutes) &&
+    /from:\s*senderIdentity\.address/.test(conversationRoutes) &&
+    /fromNumber:\s*senderIdentity\.address/.test(conversationRoutes) &&
+    /executeRouteToolHandler\(\s*'sendColdEmail'/.test(conversationRoutes) &&
+    /fromEmail:\s*senderIdentity\.address/.test(conversationRoutes) &&
+    /senderEmail:\s*senderIdentity\.address/.test(conversationRoutes),
+  'Conversation sends must reuse provider tools and propagate the explicitly selected sender.'
+);
+
+assert(
+  /persistUnifiedMessageRecord\(message\)/.test(conversationRoutes) &&
+    /senderIdentityId/.test(conversationRoutes) &&
+    /scheduledFor/.test(conversationRoutes) &&
+    /projectConversationSendOutcome\(store/.test(conversationRoutes) &&
+    /store\.upsertEvent/.test(bridge),
+  'Scheduled and provider send outcomes must persist real messages and project conversation events.'
+);
+
+assert(
+  /askStrategistRecord\(\{[\s\S]*responseFormat:\s*'text'/.test(conversationRoutes) &&
+    /Rewrite only the operator's draft/.test(bridge) &&
+    /Preserve factual claims, numbers, consent boundaries, and requested channel/.test(bridge) &&
+    /slice\(0,\s*12\)/.test(conversationRoutes) &&
+    /rawDraft:\s*parsed\.draft,[\s\S]*refinedDraft:/.test(conversationRoutes),
+  'Ava refinement must use the strategist with bounded visible context and never auto-send.'
+);
+
+assert(
+  /store\.patchEvent/.test(conversationRoutes) &&
+    /store\.reportEventSpam/.test(conversationRoutes) &&
+    /explicitOptOut/.test(conversationRoutes) &&
+    /hiddenAt/.test(bridge) &&
+    /important/.test(bridge) &&
+    /readAt/.test(bridge),
+  'Event actions must be reversible, workspace-safe, and create DNC only from explicit opt-out.'
+);
+
+assert(
+  /async function getEvent/.test(storeSource) &&
+    /async function patchEvent/.test(storeSource) &&
+    /async function reportEventSpam/.test(storeSource) &&
+    /async function getThreadContactIdentities/.test(storeSource) &&
+    /async function getPreviousSuccessfulSenderIdentityId/.test(storeSource),
+  'Conversation store must expose workspace-safe contact, continuity, and event mutation helpers.'
+);
+
 console.log('unified-conversation-bridge-smoke: ok');

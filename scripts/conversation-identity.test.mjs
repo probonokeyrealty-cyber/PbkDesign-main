@@ -490,6 +490,62 @@ describe('sender identity ranking', () => {
     expect(ranked.map(({ recommendationScore }) => recommendationScore)).toEqual([60, 59, 20]);
   });
 
+  test('rejects active identities whose health status is blocked or unsafe', () => {
+    const ranked = rankEligibleSenderIdentities([
+      { id: 'healthy', lifecycleStatus: 'active', healthStatus: 'healthy', healthScore: 90 },
+      { id: 'blocked', lifecycleStatus: 'active', healthStatus: 'blocked', healthScore: 100 },
+      {
+        id: 'quarantined-health',
+        lifecycleStatus: 'active',
+        healthStatus: 'quarantined',
+        healthScore: 100,
+      },
+      { id: 'provider-error', lifecycleStatus: 'active', healthStatus: 'sending_error' },
+      { id: 'released-health', lifecycleStatus: 'active', healthStatus: 'released' },
+    ]);
+
+    expect(ranked.map(({ id }) => id)).toEqual(['healthy']);
+  });
+
+  test('uses lead region after prior-sender continuity and exposes public reason codes', () => {
+    const ranked = rankEligibleSenderIdentities(
+      [
+        {
+          id: 'regional',
+          lifecycleStatus: 'active',
+          healthStatus: 'healthy',
+          healthScore: 80,
+          region: 'US-OH',
+        },
+        {
+          id: 'default',
+          lifecycleStatus: 'active',
+          healthStatus: 'healthy',
+          healthScore: 90,
+          isWorkspaceDefault: true,
+          region: 'US-FL',
+        },
+        {
+          id: 'previous',
+          lifecycleStatus: 'active',
+          healthStatus: 'healthy',
+          healthScore: 1,
+          region: 'US-TX',
+        },
+      ],
+      { previousSenderIdentityId: 'previous', leadRegion: 'us-oh' }
+    );
+
+    expect(ranked.map(({ id }) => id)).toEqual(['previous', 'regional', 'default']);
+    expect(ranked[0].reasonCodes).toEqual(
+      expect.arrayContaining(['previous_successful_sender', 'healthy'])
+    );
+    expect(ranked[1].reasonCodes).toEqual(expect.arrayContaining(['lead_region_match', 'healthy']));
+    expect(ranked[2].reasonCodes).toEqual(
+      expect.arrayContaining(['workspace_default', 'healthy'])
+    );
+  });
+
   test('bounds health scores so prior-sender preference remains dominant', () => {
     const ranked = rankEligibleSenderIdentities(
       [

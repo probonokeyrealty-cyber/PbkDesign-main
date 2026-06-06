@@ -735,6 +735,9 @@ describe('conversation event persistence', () => {
     expect(aggregateQueries[0].sql).toContain("direction = 'inbound'");
     expect(aggregateQueries[0].sql).toContain('read_at IS NULL');
     expect(aggregateQueries[0].sql).toContain('hidden_at IS NULL');
+    expect(aggregateQueries[0].sql).toContain(
+      'MAX(event.occurred_at) FILTER'
+    );
     expect(aggregateQueries[0].sql).not.toContain('unread_count = unread_count +');
     expect(aggregateQueries[0].params).toEqual([['thread-1'], 'pbk']);
     expect(aggregateQueries[1].params).toEqual([['thread-1'], 'pbk']);
@@ -796,6 +799,162 @@ describe('conversation event persistence', () => {
     expect(aggregateQuery.sql).toContain('MAX(event.occurred_at)');
     expect(aggregateQuery.sql).toContain('COUNT(event.id) FILTER');
     expect(aggregateQuery.sql).toContain('event.workspace_id = $2');
+  });
+
+  test('gets an event only through its canonical workspace thread', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return params[1] === 'pbk'
+          ? { rows: [eventRow({ id: EVENT_UUID, thread_id: THREAD_UUID })] }
+          : { rows: [] };
+      },
+    };
+    const store = createConversationStore(pool);
+
+    await expect(store.getEvent(EVENT_UUID, { workspaceId: 'pbk' })).resolves.toMatchObject({
+      id: EVENT_UUID,
+      threadId: THREAD_UUID,
+    });
+    await expect(store.getEvent(EVENT_UUID, { workspaceId: 'other' })).resolves.toBeNull();
+
+    expect(queries[0].sql).toContain('JOIN public.conversation_threads AS thread');
+    expect(queries[0].sql).toContain('thread.workspace_id = $2');
+    expect(queries[0].sql).toContain('thread.merged_into_thread_id IS NULL');
+  });
+
+  test('patches event semantics under row locks and recomputes thread aggregates', async () => {
+    const current = eventRow({
+      id: EVENT_UUID,
+      thread_id: THREAD_UUID,
+      payload: { providerStatus: 'received' },
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (
+        sql.includes('FROM public.conversation_events AS event') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return { rows: [current] };
+      }
+      if (sql.includes('UPDATE public.conversation_events')) {
+        return {
+          rows: [
+            eventRow({
+              ...current,
+              hidden_at: params[2],
+              read_at: params[3],
+              payload: JSON.parse(params[4]),
+            }),
+          ],
+        };
+      }
+      if (sql.includes('WITH target_threads AS')) return { rows: [threadRow()] };
+      return { rows: [] };
+    });
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.patchEvent(
+        EVENT_UUID,
+        {
+          hiddenAt: '2026-06-06T13:00:00.000Z',
+          readAt: '2026-06-06T13:00:00.000Z',
+          payload: { important: true },
+        },
+        { workspaceId: 'pbk' }
+      )
+    ).resolves.toMatchObject({
+      id: EVENT_UUID,
+      hiddenAt: '2026-06-06T13:00:00.000Z',
+      readAt: '2026-06-06T13:00:00.000Z',
+      payload: { providerStatus: 'received', important: true },
+    });
+
+    expect(queries[0].sql).toBe('BEGIN');
+    expect(queries[1].sql).toContain('FOR UPDATE');
+    expect(queries[2].sql).toContain('UPDATE public.conversation_events');
+    expect(queries[2].sql).toContain('workspace_id = $2');
+    expect(queries[3].sql).toContain('WITH target_threads AS');
+    expect(queries.at(-1).sql).toBe('COMMIT');
+  });
+
+  test('restores hidden events and reports spam on both event and canonical thread', async () => {
+    const hidden = eventRow({
+      id: EVENT_UUID,
+      thread_id: THREAD_UUID,
+      hidden_at: '2026-06-06T12:30:00.000Z',
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (
+        sql.includes('FROM public.conversation_events AS event') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return { rows: [hidden] };
+      }
+      if (
+        sql.includes('UPDATE public.conversation_events') &&
+        sql.includes('hidden_at = $3')
+      ) {
+        return { rows: [eventRow({ ...hidden, hidden_at: params[2] })] };
+      }
+      if (
+        sql.includes('UPDATE public.conversation_events') &&
+        sql.includes('spam_reported_at = $3')
+      ) {
+        return {
+          rows: [
+            eventRow({
+              ...hidden,
+              spam_reported_at: params[2],
+            }),
+          ],
+        };
+      }
+      if (sql.includes('UPDATE public.conversation_threads')) {
+        return { rows: [threadRow({ spam_reported_at: params[2] })] };
+      }
+      if (sql.includes('WITH target_threads AS')) return { rows: [threadRow()] };
+      return { rows: [] };
+    });
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.patchEvent(EVENT_UUID, { hiddenAt: null }, { workspaceId: 'pbk' })
+    ).resolves.toMatchObject({ hiddenAt: null });
+    await expect(
+      store.reportEventSpam(EVENT_UUID, {
+        workspaceId: 'pbk',
+        reportedAt: '2026-06-06T14:00:00.000Z',
+      })
+    ).resolves.toMatchObject({
+      event: { spamReportedAt: '2026-06-06T14:00:00.000Z' },
+      thread: { spamReportedAt: '2026-06-06T14:00:00.000Z' },
+    });
+
+    expect(
+      queries.some(
+        ({ sql }) =>
+          sql.includes('UPDATE public.conversation_threads') &&
+          sql.includes('spam_reported_at')
+      )
+    ).toBe(true);
+  });
+
+  test('rejects empty or unknown event patches before opening a transaction', async () => {
+    const pool = { connect: jest.fn() };
+    const store = createConversationStore(pool);
+
+    await expect(store.patchEvent(EVENT_UUID, {}, { workspaceId: 'pbk' })).rejects.toThrow(
+      'No editable event fields provided'
+    );
+    await expect(
+      store.patchEvent(EVENT_UUID, { body: 'mutated source text' }, { workspaceId: 'pbk' })
+    ).rejects.toThrow('Unknown event patch fields: body');
+    await expect(
+      store.patchEvent(EVENT_UUID, { payload: [] }, { workspaceId: 'pbk' })
+    ).rejects.toThrow('Event payload patch must be a plain object');
+    expect(pool.connect).not.toHaveBeenCalled();
   });
 });
 
@@ -1074,6 +1233,50 @@ describe('conversation queries and pagination', () => {
         includeHidden: false,
       })
     ).rejects.toThrow('visibility');
+  });
+
+  test('loads canonical contact identities and the last successful sender for recommendation', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        if (sql.includes('conversation_thread_identities')) {
+          return {
+            rows: [
+              {
+                identity_type: 'phone',
+                normalized_value: '+16145550199',
+                display_value: '(614) 555-0199',
+              },
+              {
+                identity_type: 'email',
+                normalized_value: 'seller@example.com',
+                display_value: 'Seller@example.com',
+              },
+            ],
+          };
+        }
+        return { rows: [{ sender_identity_id: 'sender-previous' }] };
+      },
+    };
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.getThreadContactIdentities(THREAD_UUID, { workspaceId: 'pbk' })
+    ).resolves.toEqual({
+      phone: '+16145550199',
+      email: 'seller@example.com',
+    });
+    await expect(
+      store.getPreviousSuccessfulSenderIdentityId(THREAD_UUID, 'sms', {
+        workspaceId: 'pbk',
+      })
+    ).resolves.toBe('sender-previous');
+
+    expect(queries[0].sql).toContain('thread.merged_into_thread_id IS NULL');
+    expect(queries[1].sql).toContain("event.direction = 'outbound'");
+    expect(queries[1].sql).toContain('event.sender_identity_id IS NOT NULL');
+    expect(queries[1].sql).toContain('event.hidden_at IS NULL');
   });
 });
 

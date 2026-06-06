@@ -672,12 +672,16 @@ async function recomputeThreadAggregates(client, threadIds, workspace) {
       aggregates AS (
         SELECT
           target.thread_id,
-          MAX(event.occurred_at) AS last_event_at,
+          MAX(event.occurred_at) FILTER (
+            WHERE event.hidden_at IS NULL
+          ) AS last_event_at,
           MAX(event.occurred_at) FILTER (
             WHERE event.direction = 'inbound'
+              AND event.hidden_at IS NULL
           ) AS last_inbound_at,
           MAX(event.occurred_at) FILTER (
             WHERE event.direction = 'outbound'
+              AND event.hidden_at IS NULL
           ) AS last_outbound_at,
           COUNT(event.id) FILTER (
             WHERE event.direction = 'inbound'
@@ -1289,6 +1293,82 @@ export function createConversationStore(pool) {
     };
   }
 
+  async function getThreadContactIdentities(
+    threadId,
+    options = { workspaceId: 'pbk' }
+  ) {
+    const id = requiredText(threadId, 'threadId');
+    const workspace = requiredWorkspaceId(options?.workspaceId);
+    const result = await pool.query(
+      `
+        SELECT identity.identity_type, identity.normalized_value, identity.display_value
+        FROM public.conversation_thread_identities AS identity
+        JOIN public.conversation_threads AS thread
+          ON thread.id = identity.thread_id
+          AND thread.workspace_id = identity.workspace_id
+        WHERE identity.thread_id = $1
+          AND thread.workspace_id = $2
+          AND thread.merged_into_thread_id IS NULL
+          AND identity.identity_type IN ('phone', 'email')
+        ORDER BY
+          CASE identity.identity_type WHEN 'phone' THEN 0 ELSE 1 END,
+          identity.created_at,
+          identity.normalized_value
+      `,
+      [id, workspace]
+    );
+    const contacts = { phone: '', email: '' };
+    for (const row of result.rows) {
+      if (row.identity_type === 'phone' && !contacts.phone) {
+        contacts.phone = normalizeConversationPhone(row.normalized_value || row.display_value || '');
+      }
+      if (row.identity_type === 'email' && !contacts.email) {
+        contacts.email = normalizeConversationEmail(row.normalized_value || row.display_value || '');
+      }
+    }
+    return contacts;
+  }
+
+  async function getPreviousSuccessfulSenderIdentityId(
+    threadId,
+    channel,
+    options = { workspaceId: 'pbk' }
+  ) {
+    const id = requiredText(threadId, 'threadId');
+    const workspace = requiredWorkspaceId(options?.workspaceId);
+    const normalizedChannel = requiredText(channel, 'channel').toLowerCase();
+    if (!['sms', 'email'].includes(normalizedChannel)) {
+      throw new Error('channel must be sms or email');
+    }
+    const result = await pool.query(
+      `
+        SELECT event.sender_identity_id
+        FROM public.conversation_events AS event
+        JOIN public.conversation_threads AS thread
+          ON thread.id = event.thread_id
+          AND thread.workspace_id = event.workspace_id
+        WHERE event.thread_id = $1
+          AND thread.workspace_id = $2
+          AND thread.merged_into_thread_id IS NULL
+          AND event.channel = $3
+          AND event.direction = 'outbound'
+          AND event.sender_identity_id IS NOT NULL
+          AND event.hidden_at IS NULL
+          AND LOWER(event.status) IN (
+            'accepted',
+            'completed',
+            'delivered',
+            'provider_managed',
+            'sent'
+          )
+        ORDER BY event.occurred_at DESC, event.id DESC
+        LIMIT 1
+      `,
+      [id, workspace, normalizedChannel]
+    );
+    return result.rows[0]?.sender_identity_id || '';
+  }
+
   async function upsertEvent(event = {}) {
     const threadId = requiredText(event.threadId, 'threadId');
     const eventType = requiredText(event.eventType, 'eventType');
@@ -1403,6 +1483,162 @@ export function createConversationStore(pool) {
       );
 
       return { ...mapConversationEventRow(row), inserted };
+    });
+  }
+
+  async function getEvent(eventId, options = { workspaceId: 'pbk' }) {
+    const id = requiredText(eventId, 'eventId');
+    const workspace = requiredWorkspaceId(options?.workspaceId);
+    const result = await pool.query(
+      `
+        SELECT event.*
+        FROM public.conversation_events AS event
+        JOIN public.conversation_threads AS thread
+          ON thread.id = event.thread_id
+          AND thread.workspace_id = event.workspace_id
+        WHERE event.id = $1
+          AND thread.workspace_id = $2
+          AND thread.merged_into_thread_id IS NULL
+        LIMIT 1
+      `,
+      [id, workspace]
+    );
+    return mapConversationEventRow(result.rows[0]);
+  }
+
+  async function patchEvent(
+    eventId,
+    patch = {},
+    options = { workspaceId: 'pbk' }
+  ) {
+    const id = requiredText(eventId, 'eventId');
+    const workspace = requiredWorkspaceId(options?.workspaceId);
+    const allowedFields = new Set(['hiddenAt', 'readAt', 'spamReportedAt', 'payload']);
+    const unknownFields = Object.keys(patch).filter((property) => !allowedFields.has(property));
+    if (unknownFields.length) {
+      throw new Error(`Unknown event patch fields: ${unknownFields.join(', ')}`);
+    }
+    if (
+      Object.hasOwn(patch, 'payload') &&
+      (!patch.payload ||
+        typeof patch.payload !== 'object' ||
+        Array.isArray(patch.payload) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(patch.payload)))
+    ) {
+      throw new Error('Event payload patch must be a plain object');
+    }
+    const includedFields = [...allowedFields].filter(
+      (property) => Object.hasOwn(patch, property) && patch[property] !== undefined
+    );
+    if (!includedFields.length) throw new Error('No editable event fields provided');
+
+    return withTransaction(pool, async (client) => {
+      const currentResult = await client.query(
+        `
+          SELECT event.*
+          FROM public.conversation_events AS event
+          JOIN public.conversation_threads AS thread
+            ON thread.id = event.thread_id
+            AND thread.workspace_id = event.workspace_id
+          WHERE event.id = $1
+            AND thread.workspace_id = $2
+            AND thread.merged_into_thread_id IS NULL
+          LIMIT 1
+          FOR UPDATE OF event, thread
+        `,
+        [id, workspace]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
+
+      const nextPayload = Object.hasOwn(patch, 'payload')
+        ? {
+            ...jsonValue(current.payload),
+            ...jsonValue(patch.payload),
+          }
+        : jsonValue(current.payload);
+      const hiddenAt = Object.hasOwn(patch, 'hiddenAt') ? patch.hiddenAt : current.hidden_at;
+      const readAt = Object.hasOwn(patch, 'readAt') ? patch.readAt : current.read_at;
+      const spamReportedAt = Object.hasOwn(patch, 'spamReportedAt')
+        ? patch.spamReportedAt
+        : current.spam_reported_at;
+      const result = await client.query(
+        `
+          UPDATE public.conversation_events
+          SET hidden_at = $3,
+              read_at = $4,
+              payload = $5::jsonb,
+              spam_reported_at = $6,
+              updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+          RETURNING *
+        `,
+        [id, workspace, hiddenAt, readAt, JSON.stringify(nextPayload), spamReportedAt]
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      if (
+        Object.hasOwn(patch, 'hiddenAt') ||
+        Object.hasOwn(patch, 'readAt')
+      ) {
+        await recomputeThreadAggregates(client, [row.thread_id], workspace);
+      }
+      return mapConversationEventRow(row);
+    });
+  }
+
+  async function reportEventSpam(
+    eventId,
+    { workspaceId: workspaceInput, reportedAt = new Date().toISOString() } = {}
+  ) {
+    const id = requiredText(eventId, 'eventId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    return withTransaction(pool, async (client) => {
+      const currentResult = await client.query(
+        `
+          SELECT event.*
+          FROM public.conversation_events AS event
+          JOIN public.conversation_threads AS thread
+            ON thread.id = event.thread_id
+            AND thread.workspace_id = event.workspace_id
+          WHERE event.id = $1
+            AND thread.workspace_id = $2
+            AND thread.merged_into_thread_id IS NULL
+          LIMIT 1
+          FOR UPDATE OF event, thread
+        `,
+        [id, workspace]
+      );
+      const current = currentResult.rows[0];
+      if (!current) return null;
+      const eventResult = await client.query(
+        `
+          UPDATE public.conversation_events
+          SET spam_reported_at = $3,
+              updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+          RETURNING *
+        `,
+        [id, workspace, reportedAt]
+      );
+      const threadResult = await client.query(
+        `
+          UPDATE public.conversation_threads
+          SET spam_reported_at = $3,
+              updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+            AND merged_into_thread_id IS NULL
+          RETURNING *
+        `,
+        [current.thread_id, workspace, reportedAt]
+      );
+      return {
+        event: mapConversationEventRow(eventResult.rows[0]),
+        thread: mapConversationThreadRow(threadResult.rows[0]),
+      };
     });
   }
 
@@ -2074,7 +2310,12 @@ export function createConversationStore(pool) {
     listThreads,
     getThread,
     listTimeline,
+    getThreadContactIdentities,
+    getPreviousSuccessfulSenderIdentityId,
     upsertEvent,
+    getEvent,
+    patchEvent,
+    reportEventSpam,
     patchThread,
     mergeThreads,
     listSenderIdentities,

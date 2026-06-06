@@ -6,6 +6,7 @@ const read = (filePath) => readFileSync(resolve(root, filePath), 'utf8');
 
 const packageJson = JSON.parse(read('package.json'));
 const bridge = read('scripts/openclaw-local-server.mjs');
+const storeSource = read('scripts/conversation-store.mjs');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -83,9 +84,17 @@ assert(
       conversationRoutes
     ) &&
     /channel:\s*url\.searchParams\.get\('channel'\)/.test(conversationRoutes) &&
+    /assignedAgent:\s*url\.searchParams\.get\('assignedAgent'\)/.test(conversationRoutes) &&
     /unread:\s*parseConversationBooleanQuery/.test(conversationRoutes) &&
     /pinned:\s*parseConversationBooleanQuery/.test(conversationRoutes),
   'Conversation list route must map supported query filters without forwarding raw query objects.'
+);
+
+assert(
+  /typeof filters\.assignedAgent === 'string' && filters\.assignedAgent\.trim\(\)/.test(
+    storeSource
+  ) && /t\.assigned_agent = \$\{addParam\(filters\.assignedAgent\.trim\(\)\)\}/.test(storeSource),
+  'Conversation store must apply an exact parameterized assigned-agent filter.'
 );
 
 assert(
@@ -100,8 +109,83 @@ assert(
 assert(
   /matchPath\(pathname,\s*'\/api\/conversations\/:threadId'\)/.test(conversationRoutes) &&
     /store\.getThread\(threadId\)/.test(conversationRoutes) &&
-    /thread\s*\?\s*200\s*:\s*404/.test(conversationRoutes),
-  'GET /api/conversations/:threadId must return a real store thread and 404 when absent.'
+    /buildConversationLeadSummary\(pool,\s*thread\)/.test(conversationRoutes) &&
+    /buildConversationSenderSummary\(store,\s*thread\)/.test(conversationRoutes) &&
+    /thread,[\s\S]*leadSummary,[\s\S]*senderSummary/.test(conversationRoutes) &&
+    /if \(!thread\)[\s\S]*leadSummary:\s*null,[\s\S]*senderSummary:\s*null/.test(
+      conversationRoutes
+    ),
+  'GET /api/conversations/:threadId must return real thread, lead, and sender summaries.'
+);
+
+assert(
+  /function buildConversationLeadSummary\(pool,\s*thread\)/.test(bridge) &&
+    /FROM public\.lead_profiles/.test(bridge) &&
+    /WHERE id = \$1[\s\S]*AND workspace_id = \$2/.test(bridge) &&
+    /'postgres:lead_profiles'/.test(bridge) &&
+    /buildLeadFullView\(thread\.leadId\)\?\.lead/.test(bridge) &&
+    /mapConversationLeadSummary\(bridgeLead,\s*'bridge_state'\)/.test(bridge),
+  'Conversation detail must load lead summaries from Postgres with a real bridge-state fallback.'
+);
+
+const leadSummaryStart = bridge.indexOf(
+  'async function buildConversationLeadSummary(pool, thread)'
+);
+const leadSummaryEnd = bridge.indexOf(
+  '\nfunction incrementConversationSummaryCount',
+  leadSummaryStart
+);
+const leadSummaryHelper = bridge.slice(leadSummaryStart, leadSummaryEnd);
+
+assert(
+  leadSummaryStart >= 0 &&
+    leadSummaryEnd > leadSummaryStart &&
+    [
+      'id',
+      'lead_name',
+      'phone',
+      'email',
+      'address',
+      'city',
+      'state',
+      'postal_code',
+      'stage',
+      'status',
+      'assigned_agent',
+      'engagement_score',
+      'motivation_score',
+      'dnc',
+      'raw',
+    ].every((column) => new RegExp(`\\b${column}\\b`).test(leadSummaryHelper)) &&
+    !/SELECT\s+\*/i.test(leadSummaryHelper),
+  'Conversation lead summary must select only the reviewed stable lead columns.'
+);
+
+assert(
+  /function buildConversationSenderSummary\(store,\s*thread\)/.test(bridge) &&
+    /store\.listSenderIdentities\(\{\s*workspaceId:\s*thread\.workspaceId,?\s*\}\)/.test(bridge) &&
+    /source:\s*'postgres:communication_sender_identities'/.test(bridge) &&
+    /byChannel/.test(bridge) &&
+    /byProvider/.test(bridge) &&
+    /byLifecycle/.test(bridge) &&
+    /isWorkspaceDefault/.test(bridge),
+  'Conversation detail must summarize real sender identities without provider secrets.'
+);
+
+const senderSummaryStart = bridge.indexOf(
+  'async function buildConversationSenderSummary(store, thread)'
+);
+const senderSummaryEnd = bridge.indexOf(
+  '\nfunction getConversationRequestActor',
+  senderSummaryStart
+);
+const senderSummaryHelper = bridge.slice(senderSummaryStart, senderSummaryEnd);
+
+assert(
+  senderSummaryStart >= 0 &&
+    senderSummaryEnd > senderSummaryStart &&
+    !/providerIdentityId|normalizedAddress|metadata|token|apiKey|secret/i.test(senderSummaryHelper),
+  'Conversation sender summary must expose only the approved non-secret identity fields.'
 );
 
 assert(
@@ -138,10 +222,21 @@ assert(
 );
 
 assert(
-  /Canonical thread ID must match the path thread ID/.test(conversationRoutes) &&
-    /Canonical and merged thread IDs must be different/.test(conversationRoutes) &&
+  /parseConversationMergeBody\(body,\s*threadId\)/.test(conversationRoutes) &&
     /getConversationRequestActor\(request\)/.test(conversationRoutes),
-  'Conversation merge route must validate IDs and derive a safe request actor.'
+  'Conversation merge route must strictly validate IDs and derive a safe request actor.'
+);
+
+assert(
+  /function parseConversationMergeBody\(body,\s*threadId\)/.test(bridge) &&
+    /Conversation merge body must be a plain JSON object/.test(bridge) &&
+    /const allowedFields = new Set\(\['canonicalThreadId', 'mergedThreadId'\]\)/.test(bridge) &&
+    /Unknown conversation merge fields/.test(bridge) &&
+    /canonicalThreadId is required/.test(bridge) &&
+    /mergedThreadId is required/.test(bridge) &&
+    /Canonical thread ID must match the path thread ID/.test(bridge) &&
+    /Canonical and merged thread IDs must be different/.test(bridge),
+  'Conversation merge body must require exactly canonicalThreadId and mergedThreadId.'
 );
 
 assert(
@@ -150,6 +245,23 @@ assert(
     /degraded:\s*true/.test(bridge) &&
     /Unified conversations require the Postgres conversation schema\./.test(bridge),
   'All conversation routes must share the required Postgres-unavailable response.'
+);
+
+assert(
+  /function isConversationPostgresUnavailableError\(error\)/.test(bridge) &&
+    /42P01/.test(bridge) &&
+    /3F000/.test(bridge) &&
+    /0800\[0-6\]/.test(bridge) &&
+    /57P01[\s\S]*57P02[\s\S]*57P03/.test(bridge) &&
+    /ECONNREFUSED/.test(bridge) &&
+    /ECONNRESET/.test(bridge) &&
+    /ETIMEDOUT/.test(bridge) &&
+    /ENOTFOUND/.test(bridge) &&
+    /relation.*does not exist/.test(bridge) &&
+    /isConversationPostgresUnavailableError\(error\)[\s\S]*sendConversationPostgresUnavailable\(response\)/.test(
+      bridge
+    ),
+  'Conversation store errors must degrade safely for connectivity and missing-schema failures.'
 );
 
 assert(

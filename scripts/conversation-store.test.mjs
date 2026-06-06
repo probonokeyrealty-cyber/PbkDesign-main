@@ -795,6 +795,26 @@ describe('conversation event persistence', () => {
 });
 
 describe('conversation queries and pagination', () => {
+  test('parameterizes an exact trimmed assigned-agent thread filter', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+
+    await createConversationStore(pool).listThreads({
+      workspaceId: 'pbk',
+      assignedAgent: '  Ava  ',
+    });
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain('t.assigned_agent = $2');
+    expect(queries[0].sql).not.toContain('Ava');
+    expect(queries[0].params).toEqual(['pbk', 'Ava', 51]);
+  });
+
   test('parameterizes thread filters, bounds limits, and emits a deterministic cursor', async () => {
     const maliciousSearch = "%' OR TRUE; --";
     const rows = Array.from({ length: 101 }, (_, index) =>

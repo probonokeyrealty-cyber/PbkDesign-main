@@ -49327,9 +49327,187 @@ function buildConversationThreadPatch(body = {}, currentThread = null) {
   return patch;
 }
 
+function parseConversationMergeBody(body, threadId) {
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(body))
+  ) {
+    throw Object.assign(new Error('Conversation merge body must be a plain JSON object.'), {
+      statusCode: 400,
+    });
+  }
+  const allowedFields = new Set(['canonicalThreadId', 'mergedThreadId']);
+  const unknownFields = Object.keys(body).filter((key) => !allowedFields.has(key));
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(`Unknown conversation merge fields: ${unknownFields.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+  if (typeof body.canonicalThreadId !== 'string' || !body.canonicalThreadId.trim()) {
+    throw Object.assign(
+      new Error('canonicalThreadId is required and must be a nonempty string.'),
+      { statusCode: 400 }
+    );
+  }
+  if (typeof body.mergedThreadId !== 'string' || !body.mergedThreadId.trim()) {
+    throw Object.assign(
+      new Error('mergedThreadId is required and must be a nonempty string.'),
+      { statusCode: 400 }
+    );
+  }
+  const canonicalThreadId = body.canonicalThreadId.trim();
+  const mergedThreadId = body.mergedThreadId.trim();
+  if (canonicalThreadId !== threadId) {
+    throw Object.assign(new Error('Canonical thread ID must match the path thread ID.'), {
+      statusCode: 400,
+    });
+  }
+  if (canonicalThreadId === mergedThreadId) {
+    throw Object.assign(new Error('Canonical and merged thread IDs must be different.'), {
+      statusCode: 400,
+    });
+  }
+  return { canonicalThreadId, mergedThreadId };
+}
+
+function conversationSummaryNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function mapConversationLeadSummary(row, source) {
+  if (!row) return null;
+  const seller = row.seller && typeof row.seller === 'object' ? row.seller : {};
+  const property = row.property && typeof row.property === 'object' ? row.property : {};
+  return {
+    source,
+    id: row.id ?? row.leadId ?? null,
+    leadName: row.lead_name ?? row.leadName ?? row.name ?? seller.name ?? null,
+    phone: row.phone ?? seller.phone ?? null,
+    email: row.email ?? seller.email ?? null,
+    address: row.address ?? property.address ?? null,
+    city: row.city ?? property.city ?? null,
+    state: row.state ?? property.state ?? null,
+    postalCode:
+      row.postal_code ??
+      row.postalCode ??
+      property.postalCode ??
+      property.postal_code ??
+      property.zip ??
+      null,
+    stage: row.stage ?? null,
+    status: row.status ?? null,
+    assignedAgent: row.assigned_agent ?? row.assignedAgent ?? null,
+    engagementScore: conversationSummaryNumber(
+      row.engagement_score ?? row.engagementScore
+    ),
+    motivationScore: conversationSummaryNumber(
+      row.motivation_score ?? row.motivationScore
+    ),
+    dnc: typeof row.dnc === 'boolean' ? row.dnc : null,
+    raw: row.raw && typeof row.raw === 'object' && !Array.isArray(row.raw) ? row.raw : null,
+  };
+}
+
+async function buildConversationLeadSummary(pool, thread) {
+  if (!thread?.leadId) return null;
+  const workspaceId = thread.workspaceId || 'pbk';
+  const result = await pool.query(
+    `
+      SELECT
+        id,
+        lead_name,
+        phone,
+        email,
+        address,
+        city,
+        state,
+        postal_code,
+        stage,
+        status,
+        assigned_agent,
+        engagement_score,
+        motivation_score,
+        dnc,
+        raw
+      FROM public.lead_profiles
+      WHERE id = $1
+        AND workspace_id = $2
+      LIMIT 1
+    `,
+    [thread.leadId, workspaceId]
+  );
+  if (result.rows[0]) {
+    return mapConversationLeadSummary(result.rows[0], 'postgres:lead_profiles');
+  }
+  const bridgeLead = buildLeadFullView(thread.leadId)?.lead;
+  return bridgeLead ? mapConversationLeadSummary(bridgeLead, 'bridge_state') : null;
+}
+
+function incrementConversationSummaryCount(counts, key) {
+  const normalized = typeof key === 'string' && key.trim() ? key.trim() : 'unknown';
+  counts[normalized] = (counts[normalized] || 0) + 1;
+}
+
+async function buildConversationSenderSummary(store, thread) {
+  const identities = await store.listSenderIdentities({
+    workspaceId: thread.workspaceId,
+  });
+  const counts = {
+    total: identities.length,
+    byChannel: {},
+    byProvider: {},
+    byLifecycle: {},
+  };
+  for (const identity of identities) {
+    incrementConversationSummaryCount(counts.byChannel, identity.channel);
+    incrementConversationSummaryCount(counts.byProvider, identity.provider);
+    incrementConversationSummaryCount(counts.byLifecycle, identity.lifecycleStatus);
+  }
+  return {
+    source: 'postgres:communication_sender_identities',
+    counts,
+    items: identities
+      .filter(
+        (identity) => identity.lifecycleStatus === 'active' || identity.isWorkspaceDefault === true
+      )
+      .map((identity) => ({
+        id: identity.id,
+        channel: identity.channel,
+        provider: identity.provider,
+        address: identity.address,
+        label: identity.label,
+        lifecycleStatus: identity.lifecycleStatus,
+        healthStatus: identity.healthStatus,
+        isWorkspaceDefault: identity.isWorkspaceDefault,
+      })),
+  };
+}
+
 function getConversationRequestActor(request) {
   const teamAuth = getTeamAuthMeta(request);
   return teamAuth.ok && teamAuth.actor ? teamAuth.actor : 'operator';
+}
+
+function isConversationPostgresUnavailableError(error) {
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  if (
+    ['42P01', '3F000', '57P01', '57P02', '57P03'].includes(code) ||
+    /^0800[0-6]$/.test(code) ||
+    ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND'].includes(code)
+  ) {
+    return true;
+  }
+  const message = String(error?.message || error?.cause?.message || '').toLowerCase();
+  return (
+    /relation .* does not exist/.test(message) ||
+    /connection (?:terminated|refused)/.test(message) ||
+    /\b(?:timeout|timed out)\b/.test(message)
+  );
 }
 
 function getConversationStoreError(error, fallbackMessage) {
@@ -49352,6 +49530,10 @@ function getConversationStoreError(error, fallbackMessage) {
 }
 
 function sendConversationStoreError(response, error, fallbackMessage) {
+  if (isConversationPostgresUnavailableError(error)) {
+    sendConversationPostgresUnavailable(response);
+    return;
+  }
   const failure = getConversationStoreError(error, fallbackMessage);
   json(response, failure.statusCode, {
     ok: false,
@@ -56106,6 +56288,7 @@ const server = createServer(async (request, response) => {
           archived: parseConversationBooleanQuery(url.searchParams, 'archived'),
           channel: url.searchParams.get('channel') || undefined,
           status: url.searchParams.get('status') || url.searchParams.get('stage') || undefined,
+          assignedAgent: url.searchParams.get('assignedAgent') || undefined,
           limit: url.searchParams.get('limit') || undefined,
         };
         const page = await store.listThreads(filters);
@@ -56156,37 +56339,7 @@ const server = createServer(async (request, response) => {
       try {
         const threadId = decodeConversationPathId(conversationMergeMatch.groups.threadId);
         const body = await readBody(request);
-        if (
-          Object.hasOwn(body, 'canonicalThreadId') &&
-          typeof body.canonicalThreadId !== 'string'
-        ) {
-          throw Object.assign(new Error('canonicalThreadId must be a string.'), {
-            statusCode: 400,
-          });
-        }
-        const canonicalThreadId =
-          typeof body.canonicalThreadId === 'string' && body.canonicalThreadId.trim()
-            ? body.canonicalThreadId.trim()
-            : threadId;
-        const mergedThreadId =
-          typeof body.mergedThreadId === 'string' ? body.mergedThreadId.trim() : '';
-        if (body.canonicalThreadId && canonicalThreadId !== threadId) {
-          throw Object.assign(
-            new Error('Canonical thread ID must match the path thread ID.'),
-            { statusCode: 400 }
-          );
-        }
-        if (!mergedThreadId) {
-          throw Object.assign(new Error('mergedThreadId is required.'), {
-            statusCode: 400,
-          });
-        }
-        if (canonicalThreadId === mergedThreadId) {
-          throw Object.assign(
-            new Error('Canonical and merged thread IDs must be different.'),
-            { statusCode: 400 }
-          );
-        }
+        const { canonicalThreadId, mergedThreadId } = parseConversationMergeBody(body, threadId);
         const actor = getConversationRequestActor(request);
         const store = createConversationStore(pool);
         const thread = await store.mergeThreads({
@@ -56216,11 +56369,27 @@ const server = createServer(async (request, response) => {
         const threadId = decodeConversationPathId(conversationThreadMatch.groups.threadId);
         const store = createConversationStore(pool);
         const thread = await store.getThread(threadId);
-        json(response, thread ? 200 : 404, {
-          ok: Boolean(thread),
+        if (!thread) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            thread: null,
+            leadSummary: null,
+            senderSummary: null,
+            error: 'Conversation thread not found.',
+          });
+          return;
+        }
+        const [leadSummary, senderSummary] = await Promise.all([
+          buildConversationLeadSummary(pool, thread),
+          buildConversationSenderSummary(store, thread),
+        ]);
+        json(response, 200, {
+          ok: true,
           result: 'postgres',
           thread,
-          error: thread ? undefined : 'Conversation thread not found.',
+          leadSummary,
+          senderSummary,
         });
       } catch (error) {
         sendConversationStoreError(response, error, 'Unable to load the conversation thread.');

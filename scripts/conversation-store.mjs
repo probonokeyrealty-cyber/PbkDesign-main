@@ -883,6 +883,9 @@ export function createConversationStore(pool) {
     if (typeof filters.status === 'string' && filters.status.trim()) {
       conditions.push(`t.status = ${addParam(filters.status.trim())}`);
     }
+    if (typeof filters.assignedAgent === 'string' && filters.assignedAgent.trim()) {
+      conditions.push(`t.assigned_agent = ${addParam(filters.assignedAgent.trim())}`);
+    }
     if (typeof filters.channel === 'string' && filters.channel.trim()) {
       const channelParam = addParam(filters.channel.trim());
       conditions.push(`

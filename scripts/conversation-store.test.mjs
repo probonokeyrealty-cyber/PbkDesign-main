@@ -284,11 +284,10 @@ describe('conversation store row mapping', () => {
 describe('conversation thread resolution', () => {
   test('resolves lead-first and upserts normalized phone and email identities in one transaction', async () => {
     const { client, pool, queries } = createRecordingTransaction(async (sql) => {
-      if (
-        sql.includes('FROM public.conversation_threads') &&
-        sql.includes('lead_id = $2') &&
-        sql.includes('FOR UPDATE')
-      ) {
+      if (sql.includes('FROM public.conversation_threads') && sql.includes('lead_id = $2')) {
+        return { rows: [threadRow()] };
+      }
+      if (sql.includes('WHERE id = ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
         return { rows: [threadRow()] };
       }
       return { rows: [] };
@@ -373,6 +372,9 @@ describe('conversation thread resolution', () => {
       if (sql.includes('JOIN public.conversation_threads AS t')) {
         return { rows: [threadRow({ id: 'identity-thread', lead_id: null })] };
       }
+      if (sql.includes('WHERE id = ANY($1::uuid[])') && sql.includes('FOR UPDATE')) {
+        return { rows: [threadRow({ id: 'identity-thread', lead_id: null })] };
+      }
       return { rows: [] };
     });
 
@@ -405,6 +407,118 @@ describe('conversation thread resolution', () => {
     ]);
     expect(identityLocks.every(({ index }) => index < identitySelectIndex)).toBe(true);
     expect(provisionalInsertIndex).toBe(-1);
+  });
+
+  test('locks lead and identities before queries and merges a provisional identity thread into canonical', async () => {
+    const canonical = threadRow({ id: 'thread-canonical', lead_id: 'lead-1' });
+    const provisional = threadRow({ id: 'thread-provisional', lead_id: null });
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('lead_id = $2') && sql.includes('FROM public.conversation_threads')) {
+        return { rows: [canonical] };
+      }
+      if (sql.includes('JOIN public.conversation_threads AS t')) {
+        return { rows: [provisional] };
+      }
+      if (
+        sql.includes('WHERE id = ANY($1::uuid[])') &&
+        sql.includes('ORDER BY id') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return {
+          rows: [canonical, provisional].sort((left, right) => left.id.localeCompare(right.id)),
+        };
+      }
+      if (sql.includes('WITH target_threads AS')) {
+        return { rows: [canonical] };
+      }
+      if (
+        sql.includes('UPDATE public.conversation_threads AS canonical') &&
+        sql.includes('RETURNING canonical.*')
+      ) {
+        return { rows: [canonical] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).resolveThread({
+        leadId: 'lead-1',
+        phone: '(614) 555-0199',
+        email: 'seller@example.com',
+      })
+    ).resolves.toMatchObject({ id: 'thread-canonical', leadId: 'lead-1' });
+
+    const resolutionLocks = queries
+      .map(({ sql, params }, index) => ({ sql, params, index }))
+      .filter(({ sql }) => sql.includes('pg_advisory_xact_lock'));
+    expect(resolutionLocks.map(({ params }) => params[0])).toEqual([
+      'conversation-identity:pbk:email:seller@example.com',
+      'conversation-identity:pbk:phone:+16145550199',
+      'conversation-thread:pbk:lead-1',
+    ]);
+
+    const firstResolutionQuery = queries.findIndex(
+      ({ sql }) =>
+        sql.includes('lead_id = $2') || sql.includes('JOIN public.conversation_threads AS t')
+    );
+    expect(resolutionLocks.every(({ index }) => index < firstResolutionQuery)).toBe(true);
+    expect(queries.some(({ sql }) => sql.includes('JOIN public.conversation_threads AS t'))).toBe(
+      true
+    );
+
+    const mergedMarkerIndex = queries.findIndex(
+      ({ sql }) =>
+        sql.includes('merged_into_thread_id = $2') &&
+        sql.includes('UPDATE public.conversation_threads')
+    );
+    const firstIdentityUpsertIndex = queries.findIndex(({ sql }) =>
+      sql.includes('INSERT INTO public.conversation_thread_identities')
+    );
+    expect(mergedMarkerIndex).toBeGreaterThan(-1);
+    expect(mergedMarkerIndex).toBeLessThan(firstIdentityUpsertIndex);
+    expect(
+      queries.some(
+        ({ sql, params }) =>
+          sql.includes("'thread.merged'") &&
+          params.includes('thread-provisional') &&
+          params.includes('thread-canonical')
+      )
+    ).toBe(true);
+  });
+
+  test('rejects a different-lead identity conflict without stealing the identity', async () => {
+    const canonical = threadRow({ id: 'thread-canonical', lead_id: 'lead-1' });
+    const conflicting = threadRow({ id: 'thread-conflict', lead_id: 'lead-2' });
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('lead_id = $2') && sql.includes('FROM public.conversation_threads')) {
+        return { rows: [canonical] };
+      }
+      if (sql.includes('JOIN public.conversation_threads AS t')) {
+        return { rows: [conflicting] };
+      }
+      if (
+        sql.includes('WHERE id = ANY($1::uuid[])') &&
+        sql.includes('ORDER BY id') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return {
+          rows: [canonical, conflicting].sort((left, right) => left.id.localeCompare(right.id)),
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).resolveThread({
+        leadId: 'lead-1',
+        email: 'seller@example.com',
+      })
+    ).rejects.toThrow('different lead');
+
+    expect(
+      queries.some(({ sql }) => sql.includes('INSERT INTO public.conversation_thread_identities'))
+    ).toBe(false);
+    expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
   });
 });
 
@@ -1165,6 +1279,83 @@ describe('conversation store Postgres integration', () => {
           })
         ).rejects.toThrow('different leads');
       });
+    },
+    30_000
+  );
+
+  postgresIntegrationTest(
+    'converges concurrent lead and identity resolution onto one canonical thread',
+    async () => {
+      const { Pool } = await import('pg');
+      const pool = new Pool({
+        connectionString: process.env.PBK_TEST_DATABASE_URL,
+        max: 4,
+      });
+      const workspaceId = `conversation-convergence-${randomUUID()}`;
+      const leadId = `lead-${randomUUID()}`;
+      const email = `seller-${randomUUID()}@example.com`;
+
+      try {
+        await ensureConversationSchema(pool);
+        await pool.query(
+          `
+            INSERT INTO public.lead_profiles (id)
+            VALUES ($1)
+            ON CONFLICT (id) DO NOTHING
+          `,
+          [leadId]
+        );
+        const canonicalResult = await pool.query(
+          `
+            INSERT INTO public.conversation_threads (workspace_id, lead_id, title)
+            VALUES ($1, $2, 'canonical')
+            RETURNING id
+          `,
+          [workspaceId, leadId]
+        );
+        const canonicalThreadId = canonicalResult.rows[0].id;
+        const store = createConversationStore(pool);
+
+        await Promise.all([
+          store.resolveThread({ workspaceId, leadId, email }),
+          store.resolveThread({ workspaceId, email }),
+        ]);
+
+        const activeThreads = await pool.query(
+          `
+            SELECT id, lead_id
+            FROM public.conversation_threads
+            WHERE workspace_id = $1
+              AND merged_into_thread_id IS NULL
+            ORDER BY id
+          `,
+          [workspaceId]
+        );
+        const activeIdentities = await pool.query(
+          `
+            SELECT identity.thread_id, COUNT(*)::integer AS identity_count
+            FROM public.conversation_thread_identities AS identity
+            JOIN public.conversation_threads AS thread ON thread.id = identity.thread_id
+            WHERE identity.workspace_id = $1
+              AND identity.identity_type = 'email'
+              AND identity.normalized_value = $2
+              AND thread.merged_into_thread_id IS NULL
+            GROUP BY identity.thread_id
+          `,
+          [workspaceId, email]
+        );
+
+        expect(activeThreads.rows).toEqual([{ id: canonicalThreadId, lead_id: leadId }]);
+        expect(activeIdentities.rows).toEqual([
+          { thread_id: canonicalThreadId, identity_count: 1 },
+        ]);
+      } finally {
+        await pool.query(`DELETE FROM public.conversation_threads WHERE workspace_id = $1`, [
+          workspaceId,
+        ]);
+        await pool.query(`DELETE FROM public.lead_profiles WHERE id = $1`, [leadId]);
+        await pool.end();
+      }
     },
     30_000
   );

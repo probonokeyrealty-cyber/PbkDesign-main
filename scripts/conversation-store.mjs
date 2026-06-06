@@ -176,48 +176,43 @@ async function selectLeadThread(client, workspace, leadId) {
         AND lead_id = $2
         AND merged_into_thread_id IS NULL
       LIMIT 1
-      FOR UPDATE
     `,
     [workspace, leadId]
   );
   return result.rows[0] ?? null;
 }
 
-async function selectIdentityThread(client, workspace, phone, email) {
-  if (!phone && !email) return null;
+async function selectIdentityThreads(client, workspace, phone, email) {
+  if (!phone && !email) return [];
   const result = await client.query(
     `
-      SELECT t.*
-      FROM public.conversation_thread_identities AS identity
-      JOIN public.conversation_threads AS t ON t.id = identity.thread_id
-      WHERE identity.workspace_id = $1
-        AND (
-          ($2 <> '' AND identity.identity_type = 'phone' AND identity.normalized_value = $2)
-          OR ($3 <> '' AND identity.identity_type = 'email' AND identity.normalized_value = $3)
-        )
-        AND t.merged_into_thread_id IS NULL
+      SELECT matched.*
+      FROM (
+        SELECT DISTINCT t.*
+        FROM public.conversation_thread_identities AS identity
+        JOIN public.conversation_threads AS t ON t.id = identity.thread_id
+        WHERE identity.workspace_id = $1
+          AND (
+            ($2 <> '' AND identity.identity_type = 'phone' AND identity.normalized_value = $2)
+            OR ($3 <> '' AND identity.identity_type = 'email' AND identity.normalized_value = $3)
+          )
+          AND t.merged_into_thread_id IS NULL
+      ) AS matched
       ORDER BY
-        (t.lead_id IS NOT NULL) DESC,
-        t.last_event_at DESC NULLS LAST,
-        t.id DESC
-      LIMIT 1
-      FOR UPDATE OF t
+        (matched.lead_id IS NOT NULL) DESC,
+        matched.last_event_at DESC NULLS LAST,
+        matched.id DESC
     `,
     [workspace, phone, email]
   );
-  return result.rows[0] ?? null;
+  return result.rows;
 }
 
-async function lockLeadResolution(client, workspace, leadId) {
-  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-    `conversation-thread:${workspace}:${leadId}`,
-  ]);
-}
-
-async function lockIdentityResolution(client, workspace, phone, email) {
+async function lockConversationResolution(client, workspace, leadId, phone, email) {
   const lockKeys = [
     email ? `conversation-identity:${workspace}:email:${email}` : '',
     phone ? `conversation-identity:${workspace}:phone:${phone}` : '',
+    leadId ? `conversation-thread:${workspace}:${leadId}` : '',
   ]
     .filter(Boolean)
     .sort();
@@ -225,6 +220,22 @@ async function lockIdentityResolution(client, workspace, phone, email) {
   for (const lockKey of lockKeys) {
     await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [lockKey]);
   }
+}
+
+async function lockConversationThreads(client, threadIds) {
+  const ids = [...new Set(threadIds.filter(Boolean))].sort();
+  if (!ids.length) return [];
+  const result = await client.query(
+    `
+      SELECT *
+      FROM public.conversation_threads
+      WHERE id = ANY($1::uuid[])
+      ORDER BY id
+      FOR UPDATE
+    `,
+    [ids]
+  );
+  return result.rows;
 }
 
 async function findSourceEvent(client, event, { lock = false } = {}) {
@@ -323,6 +334,176 @@ function mergeActorFields(actor) {
     };
   }
   return { actorType: 'system', actorName: '' };
+}
+
+function validateThreadMerge(canonical, merged) {
+  if (!canonical || !merged) throw new Error('Both conversation threads must exist');
+  if (canonical.id === merged.id) {
+    throw new Error('Canonical and merged thread IDs must be different');
+  }
+  if (canonical.workspace_id !== merged.workspace_id) {
+    throw new Error('Conversation threads must belong to the same workspace');
+  }
+  if (canonical.merged_into_thread_id) {
+    throw new Error(
+      `Thread ${canonical.id} is already merged into ${canonical.merged_into_thread_id} and cannot be canonical`
+    );
+  }
+  if (merged.merged_into_thread_id) {
+    throw new Error(
+      `Thread ${merged.id} is already merged into ${merged.merged_into_thread_id} and cannot be merged`
+    );
+  }
+  if (!canonical.lead_id && merged.lead_id) {
+    throw new Error(`Lead-bound thread ${merged.id} must be canonical`);
+  }
+  if (canonical.lead_id && merged.lead_id && canonical.lead_id !== merged.lead_id) {
+    throw new Error('Conversation threads belong to different leads');
+  }
+}
+
+async function mergeConversationThreadRows(client, canonical, merged, actor) {
+  validateThreadMerge(canonical, merged);
+  const canonicalId = canonical.id;
+  const mergedId = merged.id;
+
+  await client.query(
+    `
+      DELETE FROM public.conversation_events AS duplicate
+      USING public.conversation_events AS kept
+      WHERE duplicate.thread_id = $1
+        AND kept.thread_id = $2
+        AND duplicate.workspace_id = kept.workspace_id
+        AND duplicate.source_table <> ''
+        AND duplicate.source_id <> ''
+        AND duplicate.source_table = kept.source_table
+        AND duplicate.source_id = kept.source_id
+        AND duplicate.event_type = kept.event_type
+    `,
+    [mergedId, canonicalId]
+  );
+  await client.query(
+    `
+      UPDATE public.conversation_events
+      SET
+        thread_id = $2,
+        lead_id = COALESCE($3, lead_id),
+        updated_at = NOW()
+      WHERE thread_id = $1
+    `,
+    [mergedId, canonicalId, canonical.lead_id ?? null]
+  );
+  await client.query(
+    `
+      DELETE FROM public.conversation_thread_identities AS duplicate
+      USING public.conversation_thread_identities AS kept
+      WHERE duplicate.thread_id = $1
+        AND kept.thread_id = $2
+        AND duplicate.workspace_id = kept.workspace_id
+        AND duplicate.identity_type = kept.identity_type
+        AND duplicate.normalized_value = kept.normalized_value
+    `,
+    [mergedId, canonicalId]
+  );
+  await client.query(
+    `
+      UPDATE public.conversation_thread_identities
+      SET
+        thread_id = $2,
+        lead_id = COALESCE($3, lead_id),
+        updated_at = NOW()
+      WHERE thread_id = $1
+    `,
+    [mergedId, canonicalId, canonical.lead_id ?? null]
+  );
+
+  const mergedAt = new Date().toISOString();
+  const mergeMetadata = JSON.stringify({
+    mergedThreadId: mergedId,
+    actor: actor ?? null,
+    mergedAt,
+  });
+  await client.query(
+    `
+      UPDATE public.conversation_threads AS canonical
+      SET
+        metadata = COALESCE(canonical.metadata, '{}'::jsonb)
+          || jsonb_build_object('lastMerge', $2::jsonb),
+        updated_at = NOW()
+      WHERE canonical.id = $1
+      RETURNING canonical.*
+    `,
+    [canonicalId, mergeMetadata]
+  );
+  await client.query(
+    `
+      UPDATE public.conversation_threads
+      SET
+        merged_into_thread_id = $2,
+        archived_at = COALESCE(archived_at, NOW()),
+        unread_count = 0,
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+    [mergedId, canonicalId]
+  );
+
+  const { actorType, actorName } = mergeActorFields(actor);
+  const auditPayload = JSON.stringify({
+    canonicalThreadId: canonicalId,
+    mergedThreadId: mergedId,
+    actor: actor ?? null,
+  });
+  await client.query(
+    `
+      INSERT INTO public.conversation_events (
+        workspace_id,
+        thread_id,
+        lead_id,
+        event_type,
+        channel,
+        direction,
+        source_table,
+        source_id,
+        actor_type,
+        actor_name,
+        body,
+        status,
+        occurred_at,
+        payload
+      )
+      VALUES (
+        $1, $2, $3, 'thread.merged', 'system', 'internal',
+        'conversation_threads', $4, $5, $6, $7, 'completed', $8, $9::jsonb
+      )
+      ON CONFLICT (workspace_id, source_table, source_id, event_type)
+      WHERE source_table <> '' AND source_id <> ''
+      DO UPDATE SET
+        thread_id = EXCLUDED.thread_id,
+        lead_id = EXCLUDED.lead_id,
+        actor_type = EXCLUDED.actor_type,
+        actor_name = EXCLUDED.actor_name,
+        body = EXCLUDED.body,
+        status = EXCLUDED.status,
+        occurred_at = EXCLUDED.occurred_at,
+        payload = EXCLUDED.payload,
+        updated_at = NOW()
+    `,
+    [
+      canonical.workspace_id,
+      canonicalId,
+      canonical.lead_id ?? null,
+      mergedId,
+      actorType,
+      actorName,
+      `Merged conversation thread ${mergedId} into ${canonicalId}`,
+      mergedAt,
+      auditPayload,
+    ]
+  );
+
+  const aggregateRows = await recomputeThreadAggregates(client, [canonicalId]);
+  return aggregateRows[0] ?? canonical;
 }
 
 async function insertLeadThread(client, input) {
@@ -431,31 +612,43 @@ export function createConversationStore(pool) {
       typeof input.source === 'string' && input.source.trim() ? input.source.trim() : 'bridge';
 
     return withTransaction(pool, async (client) => {
-      let thread = leadId ? await selectLeadThread(client, workspace, leadId) : null;
+      await lockConversationResolution(client, workspace, leadId, phone, email);
 
-      if (!thread && (phone || email)) {
-        await lockIdentityResolution(client, workspace, phone, email);
-        thread = await selectIdentityThread(client, workspace, phone, email);
-      }
+      const leadCandidate = leadId ? await selectLeadThread(client, workspace, leadId) : null;
+      const identityCandidates = await selectIdentityThreads(client, workspace, phone, email);
+      const lockedRows = await lockConversationThreads(client, [
+        leadCandidate?.id,
+        ...identityCandidates.map((candidate) => candidate.id),
+      ]);
+      const lockedById = new Map(lockedRows.map((row) => [row.id, row]));
+      const activeIdentityThreads = identityCandidates
+        .map((candidate) => lockedById.get(candidate.id))
+        .filter((candidate) => candidate && !candidate.merged_into_thread_id);
+      let thread =
+        leadCandidate && !lockedById.get(leadCandidate.id)?.merged_into_thread_id
+          ? lockedById.get(leadCandidate.id)
+          : null;
 
-      if (leadId && (!thread || thread.lead_id !== leadId)) {
-        await lockLeadResolution(client, workspace, leadId);
-        const canonical = await selectLeadThread(client, workspace, leadId);
-        if (canonical) {
-          thread = canonical;
-        } else if (thread && !thread.lead_id) {
-          thread = await attachLeadToProvisionalThread(client, thread.id, workspace, leadId);
-          if (!thread) {
-            thread =
-              (await selectLeadThread(client, workspace, leadId)) ??
-              (await insertLeadThread(client, {
-                workspace,
-                leadId,
-                title,
-                metadata: input.metadata,
-              }));
+      if (leadId) {
+        const conflictingThread = activeIdentityThreads.find(
+          (candidate) => candidate.lead_id && candidate.lead_id !== leadId
+        );
+        if (conflictingThread) {
+          throw new Error(
+            `Conversation identity belongs to a different lead on thread ${conflictingThread.id}`
+          );
+        }
+
+        if (!thread) {
+          thread = activeIdentityThreads.find((candidate) => candidate.lead_id === leadId) ?? null;
+        }
+        if (!thread) {
+          const provisional = activeIdentityThreads.find((candidate) => !candidate.lead_id);
+          if (provisional) {
+            thread = await attachLeadToProvisionalThread(client, provisional.id, workspace, leadId);
           }
-        } else {
+        }
+        if (!thread) {
           thread = await insertLeadThread(client, {
             workspace,
             leadId,
@@ -463,13 +656,31 @@ export function createConversationStore(pool) {
             metadata: input.metadata,
           });
         }
+      } else {
+        thread = activeIdentityThreads[0] ?? null;
+        const conflictingThread = activeIdentityThreads.find(
+          (candidate) =>
+            thread?.lead_id && candidate.lead_id && candidate.lead_id !== thread.lead_id
+        );
+        if (conflictingThread) {
+          throw new Error(
+            `Conversation identity belongs to different leads on threads ${thread.id} and ${conflictingThread.id}`
+          );
+        }
+        if (!thread) {
+          thread = await insertProvisionalThread(client, {
+            workspace,
+            title,
+            metadata: input.metadata,
+          });
+        }
       }
 
-      if (!thread) {
-        thread = await insertProvisionalThread(client, {
-          workspace,
-          title,
-          metadata: input.metadata,
+      for (const identityThread of activeIdentityThreads) {
+        if (identityThread.id === thread.id) continue;
+        thread = await mergeConversationThreadRows(client, thread, identityThread, {
+          type: 'system',
+          name: 'conversation-resolver',
         });
       }
 
@@ -824,177 +1035,11 @@ export function createConversationStore(pool) {
       throw new Error('Canonical and merged thread IDs must be different');
 
     return withTransaction(pool, async (client) => {
-      const stableIds = [canonicalId, mergedId].sort();
-      const locked = await client.query(
-        `
-          SELECT *
-          FROM public.conversation_threads
-          WHERE id = ANY($1::uuid[])
-          ORDER BY id
-          FOR UPDATE
-        `,
-        [stableIds]
-      );
-      const canonical = locked.rows.find((row) => row.id === canonicalId);
-      const merged = locked.rows.find((row) => row.id === mergedId);
-      if (!canonical || !merged) throw new Error('Both conversation threads must exist');
-      if (canonical.workspace_id !== merged.workspace_id) {
-        throw new Error('Conversation threads must belong to the same workspace');
-      }
-      if (canonical.merged_into_thread_id) {
-        throw new Error(
-          `Thread ${canonical.id} is already merged into ${canonical.merged_into_thread_id} and cannot be canonical`
-        );
-      }
-      if (merged.merged_into_thread_id) {
-        throw new Error(
-          `Thread ${merged.id} is already merged into ${merged.merged_into_thread_id} and cannot be merged`
-        );
-      }
-      if (!canonical.lead_id && merged.lead_id) {
-        throw new Error(`Lead-bound thread ${merged.id} must be canonical`);
-      }
-      if (canonical.lead_id && merged.lead_id && canonical.lead_id !== merged.lead_id) {
-        throw new Error('Conversation threads belong to different leads');
-      }
-
-      await client.query(
-        `
-          DELETE FROM public.conversation_events AS duplicate
-          USING public.conversation_events AS kept
-          WHERE duplicate.thread_id = $1
-            AND kept.thread_id = $2
-            AND duplicate.workspace_id = kept.workspace_id
-            AND duplicate.source_table <> ''
-            AND duplicate.source_id <> ''
-            AND duplicate.source_table = kept.source_table
-            AND duplicate.source_id = kept.source_id
-            AND duplicate.event_type = kept.event_type
-        `,
-        [mergedId, canonicalId]
-      );
-      await client.query(
-        `
-          UPDATE public.conversation_events
-          SET
-            thread_id = $2,
-            lead_id = COALESCE($3, lead_id),
-            updated_at = NOW()
-          WHERE thread_id = $1
-        `,
-        [mergedId, canonicalId, canonical.lead_id ?? null]
-      );
-      await client.query(
-        `
-          DELETE FROM public.conversation_thread_identities AS duplicate
-          USING public.conversation_thread_identities AS kept
-          WHERE duplicate.thread_id = $1
-            AND kept.thread_id = $2
-            AND duplicate.workspace_id = kept.workspace_id
-            AND duplicate.identity_type = kept.identity_type
-            AND duplicate.normalized_value = kept.normalized_value
-        `,
-        [mergedId, canonicalId]
-      );
-      await client.query(
-        `
-          UPDATE public.conversation_thread_identities
-          SET
-            thread_id = $2,
-            lead_id = COALESCE($3, lead_id),
-            updated_at = NOW()
-          WHERE thread_id = $1
-        `,
-        [mergedId, canonicalId, canonical.lead_id ?? null]
-      );
-
-      const mergeMetadata = JSON.stringify({
-        mergedThreadId: mergedId,
-        actor: actor ?? null,
-        mergedAt: new Date().toISOString(),
-      });
-      await client.query(
-        `
-          UPDATE public.conversation_threads AS canonical
-          SET
-            metadata = COALESCE(canonical.metadata, '{}'::jsonb)
-              || jsonb_build_object('lastMerge', $2::jsonb),
-            updated_at = NOW()
-          WHERE canonical.id = $1
-          RETURNING canonical.*
-        `,
-        [canonicalId, mergeMetadata]
-      );
-      await client.query(
-        `
-          UPDATE public.conversation_threads
-          SET
-            merged_into_thread_id = $2,
-            archived_at = COALESCE(archived_at, NOW()),
-            unread_count = 0,
-            updated_at = NOW()
-          WHERE id = $1
-        `,
-        [mergedId, canonicalId]
-      );
-
-      const mergedAt = JSON.parse(mergeMetadata).mergedAt;
-      const { actorType, actorName } = mergeActorFields(actor);
-      const auditPayload = JSON.stringify({
-        canonicalThreadId: canonicalId,
-        mergedThreadId: mergedId,
-        actor: actor ?? null,
-      });
-      await client.query(
-        `
-          INSERT INTO public.conversation_events (
-            workspace_id,
-            thread_id,
-            lead_id,
-            event_type,
-            channel,
-            direction,
-            source_table,
-            source_id,
-            actor_type,
-            actor_name,
-            body,
-            status,
-            occurred_at,
-            payload
-          )
-          VALUES (
-            $1, $2, $3, 'thread.merged', 'system', 'internal',
-            'conversation_threads', $4, $5, $6, $7, 'completed', $8, $9::jsonb
-          )
-          ON CONFLICT (workspace_id, source_table, source_id, event_type)
-          WHERE source_table <> '' AND source_id <> ''
-          DO UPDATE SET
-            thread_id = EXCLUDED.thread_id,
-            lead_id = EXCLUDED.lead_id,
-            actor_type = EXCLUDED.actor_type,
-            actor_name = EXCLUDED.actor_name,
-            body = EXCLUDED.body,
-            status = EXCLUDED.status,
-            occurred_at = EXCLUDED.occurred_at,
-            payload = EXCLUDED.payload,
-            updated_at = NOW()
-        `,
-        [
-          canonical.workspace_id,
-          canonicalId,
-          canonical.lead_id ?? null,
-          mergedId,
-          actorType,
-          actorName,
-          `Merged conversation thread ${mergedId} into ${canonicalId}`,
-          mergedAt,
-          auditPayload,
-        ]
-      );
-
-      const aggregateRows = await recomputeThreadAggregates(client, [canonicalId]);
-      return mapConversationThreadRow(aggregateRows[0]);
+      const locked = await lockConversationThreads(client, [canonicalId, mergedId]);
+      const canonical = locked.find((row) => row.id === canonicalId);
+      const merged = locked.find((row) => row.id === mergedId);
+      const result = await mergeConversationThreadRows(client, canonical, merged, actor);
+      return mapConversationThreadRow(result);
     });
   }
 

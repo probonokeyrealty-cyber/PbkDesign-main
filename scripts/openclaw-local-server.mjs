@@ -46411,7 +46411,18 @@ async function handleEvent(eventType, payload = {}) {
     const incomingStatus = String(payload.status || approval.status || 'pending').replace(/-/g, '_');
     const incomingActor = payload.actor || approval.actor || 'n8n';
     const incomingActedAt = payload.actedAt || approval.actedAt || null;
-    if (approval.status === incomingStatus && approval.actor === incomingActor && incomingActedAt && approval.actedAt === incomingActedAt) {
+    const exactApprovalReplay =
+      approval.status === incomingStatus &&
+      approval.actor === incomingActor &&
+      incomingActedAt &&
+      approval.actedAt === incomingActedAt;
+    const retryConversationProjectionOnly =
+      exactApprovalReplay &&
+      String(approval.type || '').toLowerCase() === 'provider-action' &&
+      Boolean(approval.metadata?.providerActionAttemptedAt) &&
+      Boolean(approval.metadata?.conversationSendBinding?.conversationEventId) &&
+      !approval.metadata?.conversationProjection?.projectedAt;
+    if (exactApprovalReplay && !retryConversationProjectionOnly) {
       return {
         ok: true,
         replayed: true,
@@ -46544,70 +46555,85 @@ async function handleEvent(eventType, payload = {}) {
       approval.metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
       const toolName = String(approval.approvalAction || approval.metadata.requestedTool || approval.metadata.toolName || '').trim();
       const alreadyAttempted = Boolean(approval.metadata.providerActionAttemptedAt);
-      if (alreadyAttempted) {
-        providerActionResult = {
-          ok: true,
-          replayed: true,
-          skipped: true,
-          result: 'provider_action_already_attempted',
-          summary: approval.metadata.providerActionResult || null,
-        };
-      } else if (!APPROVAL_REPLAYABLE_PROVIDER_TOOLS.has(toolName) || typeof toolHandlers[toolName] !== 'function') {
-        providerActionResult = {
-          ok: false,
-          result: 'provider_action_not_replayable',
-          error: `Provider action ${toolName || '(missing)'} is not allowlisted for approval replay.`,
-        };
-        approval.metadata.providerActionAttemptedAt = isoNow();
-        approval.metadata.providerActionResult = summarizeProviderActionResult(providerActionResult);
-      } else {
-        const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object' ? approval.metadata.executionParams : {};
-        const bindingValidation = validateConversationApprovalBinding(
-          approval,
-          toolName,
-          executionParams
-        );
-        if (!bindingValidation.ok) {
+      if (!alreadyAttempted) {
+        if (!APPROVAL_REPLAYABLE_PROVIDER_TOOLS.has(toolName) || typeof toolHandlers[toolName] !== 'function') {
           providerActionResult = {
             ok: false,
-            result: 'approval_binding_mismatch',
-            error: 'The approved provider action no longer matches its bound conversation send.',
+            result: 'provider_action_not_replayable',
+            error: `Provider action ${toolName || '(missing)'} is not allowlisted for approval replay.`,
           };
           approval.metadata.providerActionAttemptedAt = isoNow();
           approval.metadata.providerActionResult =
             summarizeProviderActionResult(providerActionResult);
-          approval.metadata.providerActionBindingValidation = bindingValidation;
         } else {
-          const qaProviderExecution = await executeToolHandlerWithQa(
+          const executionParams = approval.metadata.executionParams && typeof approval.metadata.executionParams === 'object' ? approval.metadata.executionParams : {};
+          const bindingValidation = validateConversationApprovalBinding(
+            approval,
             toolName,
-            {
-              ...executionParams,
-              approvalId: approval.id,
-              actor: incomingActor || executionParams.actor || 'PBK Approval',
-            },
-            'approval-replay'
+            executionParams
           );
-          providerActionResult = qaProviderExecution.result;
-          approval.metadata.providerActionAttemptedAt = isoNow();
-          approval.metadata.providerActionResult =
-            summarizeProviderActionResult(providerActionResult);
-          approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
-          approval.metadata.providerActionBindingValidation = bindingValidation;
+          if (!bindingValidation.ok) {
+            providerActionResult = {
+              ok: false,
+              result: 'approval_binding_mismatch',
+              error: 'The approved provider action no longer matches its bound conversation send.',
+            };
+            approval.metadata.providerActionAttemptedAt = isoNow();
+            approval.metadata.providerActionResult =
+              summarizeProviderActionResult(providerActionResult);
+            approval.metadata.providerActionBindingValidation = bindingValidation;
+          } else {
+            const qaProviderExecution = await executeToolHandlerWithQa(
+              toolName,
+              {
+                ...executionParams,
+                approvalId: approval.id,
+                actor: incomingActor || executionParams.actor || 'PBK Approval',
+              },
+              'approval-replay'
+            );
+            providerActionResult = qaProviderExecution.result;
+            approval.metadata.providerActionAttemptedAt = isoNow();
+            approval.metadata.providerActionResult =
+              summarizeProviderActionResult(providerActionResult);
+            approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
+            approval.metadata.providerActionBindingValidation = bindingValidation;
+          }
         }
+      } else {
+        providerActionResult = {
+          ...(approval.metadata.providerActionResult || {}),
+          replayed: true,
+          skipped: true,
+          providerAttempted: false,
+        };
       }
 
       const conversationBinding = approval.metadata.conversationSendBinding;
-      if (
-        conversationBinding?.conversationEventId &&
-        providerActionResult &&
-        providerActionResult.replayed !== true
-      ) {
-        try {
-          const store = createConversationStore(getPgPool());
+      if (conversationBinding?.conversationEventId && providerActionResult) {
+        if (!approval.metadata.providerActionClassification) {
           const classification = classifyConversationSendResult(
             conversationBinding.channel,
             providerActionResult
           );
+          approval.metadata.providerActionClassification = {
+            ok: classification.ok,
+            result: classification.result,
+            status: classification.status,
+          };
+        }
+        if (!alreadyAttempted) {
+          await persistState(state);
+        }
+      }
+      if (
+        conversationBinding?.conversationEventId &&
+        providerActionResult &&
+        !approval.metadata.conversationProjection?.projectedAt
+      ) {
+        try {
+          const store = createConversationStore(getPgPool());
+          const classification = approval.metadata.providerActionClassification;
           const projectedEvent = await store.updateEventOutcome(
             conversationBinding.conversationEventId,
             {
@@ -46618,15 +46644,18 @@ async function handleEvent(eventType, payload = {}) {
                 approvalId: approval.id,
                 approvalResolvedAt: isoNow(),
                 result: classification.result,
-                providerOutcome: summarizeProviderActionResult(
-                  providerActionResult
-                ),
+                providerOutcome:
+                  approval.metadata.providerActionResult ||
+                  summarizeProviderActionResult(providerActionResult),
               },
             }
           );
+          if (!projectedEvent) {
+            throw new Error('Conversation event was not found for approval projection.');
+          }
           approval.metadata.conversationProjection = {
-            ok: Boolean(projectedEvent),
-            result: projectedEvent ? 'projected' : 'event_not_found',
+            ok: true,
+            result: 'projected',
             eventId: conversationBinding.conversationEventId,
             status: classification.status,
             projectedAt: isoNow(),
@@ -46645,6 +46674,16 @@ async function handleEvent(eventType, payload = {}) {
           };
         }
       }
+    }
+
+    if (retryConversationProjectionOnly) {
+      await persistState(state);
+      return {
+        ok: true,
+        replayed: true,
+        approval,
+        providerActionResult,
+      };
     }
 
     if (approval.status === 'approved') {
@@ -50379,6 +50418,7 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
       ok: false,
       result: 'postgres_unavailable',
       claimed: 0,
+      reconciled: 0,
       processed: 0,
       items: [],
     };
@@ -50386,15 +50426,61 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
   const store = createConversationStore(pool);
   const claimId = randomUUID();
   const claimedAt = isoNow();
+  const staleDispatches = await store.reconcileStaleDispatchingMessages({
+    workspaceId: CONVERSATION_WORKSPACE_ID,
+    now: claimedAt,
+    staleAfterSeconds: 900,
+    limit,
+  });
+  const items = [];
+  for (const staleMessage of staleDispatches) {
+    let eventProjected = false;
+    let projectionError = '';
+    try {
+      if (staleMessage.conversationEventId) {
+        const event = await store.updateEventOutcome(
+          staleMessage.conversationEventId,
+          {
+            workspaceId:
+              staleMessage.workspaceId || CONVERSATION_WORKSPACE_ID,
+            status: 'delivery_unknown',
+            payload: {
+              schedulerReconciliationRequiredAt: claimedAt,
+              schedulerResult: 'reconciliation_required',
+              reason:
+                'Provider dispatch may have started before scheduler state was finalized. Verify provider delivery before retrying.',
+            },
+          }
+        );
+        eventProjected = Boolean(event);
+      }
+    } catch (error) {
+      projectionError = error?.message || String(error);
+      console.warn(
+        '[pbk-local-openclaw] stale dispatch reconciliation projection failed:',
+        projectionError
+      );
+    }
+    items.push({
+      id: staleMessage.id,
+      ok: false,
+      result: 'reconciliation_required',
+      status: 'delivery_unknown',
+      eventId: staleMessage.conversationEventId || '',
+      eventProjected,
+      error: projectionError,
+    });
+  }
   const scheduledMessages = await store.claimDueScheduledMessages({
     workspaceId: CONVERSATION_WORKSPACE_ID,
     claimId,
     now: claimedAt,
+    leaseSeconds: 300,
     limit,
   });
-  const items = [];
 
   for (const scheduledMessage of scheduledMessages) {
+    let dispatchStarted = false;
     const finish = async ({
       thread = null,
       senderIdentity = null,
@@ -50402,7 +50488,42 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
       result,
       classification,
       conversationSendBinding = null,
+      dispatched = false,
     }) => {
+      const completionPayload = {
+        schedulerCompletedAt: isoNow(),
+        schedulerResult: classification.result,
+        providerOutcome: summarizeProviderActionResult(result),
+        conversationEventId: scheduledMessage.conversationEventId || '',
+      };
+      const completed = dispatched
+        ? await store.completeScheduledMessage(scheduledMessage.id, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+            claimId,
+            status: classification.status,
+            provider:
+              senderIdentity?.provider || scheduledMessage.provider || '',
+            payload: completionPayload,
+          })
+        : await store.completeClaimedScheduledMessage(scheduledMessage.id, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+            claimId,
+            status: classification.status,
+            provider:
+              senderIdentity?.provider || scheduledMessage.provider || '',
+            payload: completionPayload,
+          });
+      if (!completed) {
+        return {
+          id: scheduledMessage.id,
+          ok: false,
+          result: 'scheduler_lease_lost',
+          status: dispatched ? 'dispatching' : 'processing',
+          eventId: scheduledMessage.conversationEventId || '',
+          completed: false,
+        };
+      }
+
       let event = null;
       try {
         event = await updateScheduledConversationEvent(store, {
@@ -50431,36 +50552,32 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
         );
       }
 
-      const completed = await store.completeScheduledMessage(scheduledMessage.id, {
-        workspaceId: CONVERSATION_WORKSPACE_ID,
-        claimId,
-        status: classification.status,
-        provider: senderIdentity?.provider || scheduledMessage.provider || '',
-        payload: {
-          schedulerCompletedAt: isoNow(),
-          schedulerResult: classification.result,
-          providerOutcome: summarizeProviderActionResult(result),
-          conversationEventId:
-            event?.id || scheduledMessage.conversationEventId || '',
-        },
-      });
       const localMessage = findMessageById(scheduledMessage.id);
       if (localMessage) {
-        upsertMessage(state, {
-          ...localMessage,
-          status: classification.status,
-          provider: senderIdentity?.provider || localMessage.provider,
-          payload: {
-            ...(localMessage.payload || {}),
-            schedulerClaimId: claimId,
-            schedulerClaimedAt: claimedAt,
-            schedulerCompletedAt: isoNow(),
-            schedulerResult: classification.result,
-            providerOutcome: summarizeProviderActionResult(result),
-          },
-          updatedAt: isoNow(),
-        });
-        await persistState(state);
+        try {
+          upsertMessage(state, {
+            ...localMessage,
+            status: classification.status,
+            provider: senderIdentity?.provider || localMessage.provider,
+            payload: {
+              ...(localMessage.payload || {}),
+              schedulerClaimId: claimId,
+              schedulerClaimedAt: claimedAt,
+              schedulerCompletedAt: isoNow(),
+              schedulerResult: classification.result,
+              providerOutcome: summarizeProviderActionResult(result),
+              conversationEventId:
+                event?.id || scheduledMessage.conversationEventId || '',
+            },
+            updatedAt: isoNow(),
+          });
+          await persistState(state);
+        } catch (error) {
+          console.warn(
+            '[pbk-local-openclaw] scheduled local state mirror failed:',
+            error?.message || error
+          );
+        }
       }
       return {
         id: scheduledMessage.id,
@@ -50636,6 +50753,27 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
             }),
       };
 
+      const dispatchClaim = await store.beginScheduledMessageDispatch(
+        scheduledMessage.id,
+        {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+          claimId,
+          dispatchedAt: isoNow(),
+        }
+      );
+      if (!dispatchClaim) {
+        items.push({
+          id: scheduledMessage.id,
+          ok: false,
+          result: 'scheduler_lease_lost',
+          status: 'processing',
+          eventId: scheduledMessage.conversationEventId || '',
+          completed: false,
+        });
+        continue;
+      }
+      dispatchStarted = true;
+
       let execution;
       if (
         scheduledMessage.channel === 'sms' &&
@@ -50692,6 +50830,7 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
           result: providerResult,
           classification,
           conversationSendBinding,
+          dispatched: true,
         })
       );
     } catch (error) {
@@ -50709,6 +50848,7 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
               result: result.result,
               status: 'failed',
             },
+            dispatched: dispatchStarted,
           })
         );
       } catch (completionError) {
@@ -50720,7 +50860,7 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
           id: scheduledMessage.id,
           ok: false,
           result: 'claim_completion_failed',
-          status: 'processing',
+          status: dispatchStarted ? 'dispatching' : 'processing',
           error: completionError?.message || String(completionError),
         });
       }
@@ -50732,7 +50872,8 @@ async function runDueConversationMessages({ limit = 25, actor = 'PBK Conversatio
     result: 'processed',
     claimId,
     claimed: scheduledMessages.length,
-    processed: items.length,
+    reconciled: staleDispatches.length,
+    processed: scheduledMessages.length,
     items,
   };
 }

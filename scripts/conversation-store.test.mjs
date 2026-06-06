@@ -1021,7 +1021,7 @@ describe('conversation event persistence', () => {
 });
 
 describe('scheduled conversation message execution persistence', () => {
-  test('claims due unified messages atomically with row skipping and preserves sender binding', async () => {
+  test('claims due scheduled and stale pre-dispatch messages while excluding fresh processing leases', async () => {
     const queries = [];
     const pool = {
       async query(sql, params) {
@@ -1048,6 +1048,8 @@ describe('scheduled conversation message execution persistence', () => {
                 conversationThreadId: THREAD_UUID,
                 conversationEventId: EVENT_UUID,
                 schedulerClaimId: 'claim-1',
+                schedulerClaimedAt: '2026-06-06T14:00:00.000Z',
+                schedulerClaimExpiresAt: '2026-06-06T14:05:00.000Z',
               },
               created_at: '2026-06-06T13:00:00.000Z',
               updated_at: '2026-06-06T14:00:00.000Z',
@@ -1061,6 +1063,7 @@ describe('scheduled conversation message execution persistence', () => {
       workspaceId: 'pbk',
       claimId: 'claim-1',
       now: '2026-06-06T14:00:00.000Z',
+      leaseSeconds: 300,
       limit: 10,
     });
 
@@ -1075,17 +1078,64 @@ describe('scheduled conversation message execution persistence', () => {
     ]);
     expect(queries[0].sql).toContain('FOR UPDATE SKIP LOCKED');
     expect(queries[0].sql).toContain("message.status = 'scheduled'");
+    expect(queries[0].sql).toContain("message.status = 'processing'");
+    expect(queries[0].sql).toContain("payload->>'schedulerClaimExpiresAt'");
+    expect(queries[0].sql).toContain('message.updated_at');
     expect(queries[0].sql).toContain("SET status = 'processing'");
     expect(queries[0].sql).toContain('schedulerClaimId');
+    expect(queries[0].sql).toContain('schedulerClaimExpiresAt');
     expect(queries[0].params).toEqual([
       'pbk',
       '2026-06-06T14:00:00.000Z',
       10,
       'claim-1',
+      300,
     ]);
   });
 
-  test('completes only the message owned by the active scheduler claim', async () => {
+  test('moves only the active processing lease into dispatching', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return {
+          rows: [
+            {
+              id: 'scheduled-1',
+              workspace_id: 'pbk',
+              status: 'dispatching',
+              payload: {
+                schedulerClaimId: params[2],
+                schedulerDispatchStartedAt: params[3],
+              },
+            },
+          ],
+        };
+      },
+    };
+
+    await createConversationStore(pool).beginScheduledMessageDispatch(
+      'scheduled-1',
+      {
+        workspaceId: 'pbk',
+        claimId: 'claim-1',
+        dispatchedAt: '2026-06-06T14:01:00.000Z',
+      }
+    );
+
+    expect(queries[0].sql).toContain("status = 'processing'");
+    expect(queries[0].sql).toContain("payload->>'schedulerClaimId' = $3");
+    expect(queries[0].sql).toContain("SET status = 'dispatching'");
+    expect(queries[0].sql).toContain('schedulerDispatchStartedAt');
+    expect(queries[0].params).toEqual([
+      'scheduled-1',
+      'pbk',
+      'claim-1',
+      '2026-06-06T14:01:00.000Z',
+    ]);
+  });
+
+  test('finalizes provider outcomes only for the matching dispatch claim token', async () => {
     const queries = [];
     const pool = {
       async query(sql, params) {
@@ -1116,7 +1166,7 @@ describe('scheduled conversation message execution persistence', () => {
       }
     );
 
-    expect(queries[0].sql).toContain("status = 'processing'");
+    expect(queries[0].sql).toContain("status = 'dispatching'");
     expect(queries[0].sql).toContain("payload->>'schedulerClaimId' = $3");
     expect(queries[0].sql).toContain('status = $4');
     expect(queries[0].params.slice(0, 4)).toEqual([
@@ -1124,6 +1174,55 @@ describe('scheduled conversation message execution persistence', () => {
       'pbk',
       'claim-1',
       'sent',
+    ]);
+  });
+
+  test('reconciles stale dispatching messages without making them eligible for replay', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return {
+          rows: [
+            {
+              id: 'scheduled-1',
+              workspace_id: 'pbk',
+              status: 'delivery_unknown',
+              payload: {
+                schedulerClaimId: 'claim-old',
+                schedulerDispatchStartedAt: '2026-06-06T13:00:00.000Z',
+                schedulerReconciliationRequiredAt: params[1],
+              },
+            },
+          ],
+        };
+      },
+    };
+
+    const reconciled = await createConversationStore(pool).reconcileStaleDispatchingMessages({
+      workspaceId: 'pbk',
+      now: '2026-06-06T14:00:00.000Z',
+      staleAfterSeconds: 900,
+      limit: 10,
+    });
+
+    expect(reconciled).toEqual([
+      expect.objectContaining({
+        id: 'scheduled-1',
+        status: 'delivery_unknown',
+      }),
+    ]);
+    expect(queries[0].sql).toContain("message.status = 'dispatching'");
+    expect(queries[0].sql).toContain('schedulerDispatchStartedAt');
+    expect(queries[0].sql).toContain('FOR UPDATE SKIP LOCKED');
+    expect(queries[0].sql).toContain("SET status = 'delivery_unknown'");
+    expect(queries[0].sql).toContain('schedulerReconciliationRequiredAt');
+    expect(queries[0].sql).not.toContain("SET status = 'processing'");
+    expect(queries[0].params).toEqual([
+      'pbk',
+      '2026-06-06T14:00:00.000Z',
+      10,
+      900,
     ]);
   });
 });

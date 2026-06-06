@@ -66,6 +66,17 @@ const conversationRoutesEnd = bridge.indexOf(
   conversationRoutesStart
 );
 const conversationRoutes = bridge.slice(conversationRoutesStart, conversationRoutesEnd);
+const providerApprovalStart = bridge.indexOf(
+  "if (approval.status === 'approved' && String(approval.type || '').toLowerCase() === 'provider-action')"
+);
+const providerApprovalEnd = bridge.indexOf(
+  '\n    if (retryConversationProjectionOnly)',
+  providerApprovalStart
+);
+const providerApprovalSource = bridge.slice(
+  providerApprovalStart,
+  providerApprovalEnd
+);
 
 assert(
   conversationRoutesStart >= 0 && conversationRoutesEnd > conversationRoutesStart,
@@ -560,8 +571,14 @@ assert(
     /scheduledFor/.test(conversationRoutes) &&
     /runDueConversationMessages\(parsed\)/.test(conversationRoutes) &&
     /claimDueScheduledMessages/.test(bridge) &&
+    /beginScheduledMessageDispatch/.test(bridge) &&
     /completeScheduledMessage/.test(bridge) &&
+    /reconcileStaleDispatchingMessages/.test(bridge) &&
     /FOR UPDATE SKIP LOCKED/.test(storeSource) &&
+    /schedulerClaimExpiresAt/.test(storeSource) &&
+    /schedulerDispatchStartedAt/.test(storeSource) &&
+    /delivery_unknown/.test(storeSource) &&
+    /reconciliation_required/.test(bridge) &&
     /senderIdentityId:\s*scheduledMessage\.senderIdentityId/.test(
       bridge
     ) &&
@@ -575,8 +592,24 @@ assert(
     /conversationEventId/.test(bridge) &&
     /validateConversationApprovalBinding/.test(bridge) &&
     /updateEventOutcome/.test(bridge) &&
-    /approval_projection_failed/.test(bridge),
-  'Approval replay must validate its exact conversation binding and update the original event outcome.'
+    /approval_projection_failed/.test(bridge) &&
+    /providerActionAttemptedAt/.test(bridge) &&
+    /providerActionClassification/.test(bridge) &&
+    /conversationProjection\?\.projectedAt/.test(bridge) &&
+    /if\s*\(!alreadyAttempted\)/.test(bridge) &&
+    /retryConversationProjectionOnly/.test(bridge) &&
+    /providerActionResult[\s\S]*!approval\.metadata\.conversationProjection\?\.projectedAt/.test(
+      bridge
+    ) &&
+    providerApprovalStart >= 0 &&
+    providerApprovalEnd > providerApprovalStart &&
+    (providerApprovalSource.match(/executeToolHandlerWithQa\(/g) || []).length === 1 &&
+    providerApprovalSource.indexOf('if (!alreadyAttempted)') <
+      providerApprovalSource.indexOf('executeToolHandlerWithQa(') &&
+    /status:\s*classification\.status/.test(providerApprovalSource) &&
+    /if\s*\(!projectedEvent\)/.test(providerApprovalSource) &&
+    /projectedAt:\s*isoNow\(\)/.test(providerApprovalSource),
+  'Approval replay must execute the provider once and retry only the original event projection until projected.'
 );
 
 assert(

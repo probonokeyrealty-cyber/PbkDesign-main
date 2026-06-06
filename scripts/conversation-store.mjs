@@ -239,6 +239,12 @@ function boundedLimit(value, fallback = DEFAULT_PAGE_LIMIT) {
   return Math.min(parsed, MAX_PAGE_LIMIT);
 }
 
+function boundedSeconds(value, fallback, maximum = 86_400) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, maximum);
+}
+
 function encodeCursor(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
@@ -1680,11 +1686,13 @@ export function createConversationStore(pool) {
     workspaceId: workspaceInput,
     claimId: claimInput,
     now = new Date().toISOString(),
+    leaseSeconds = 300,
     limit = 25,
   } = {}) {
     const workspace = requiredWorkspaceId(workspaceInput);
     const claimId = requiredText(claimInput, 'claimId');
     const claimedAt = requiredText(now, 'now');
+    const leaseDuration = boundedSeconds(leaseSeconds, 300, 3_600);
     const bounded = boundedLimit(limit, 100);
     const result = await pool.query(
       `
@@ -1692,17 +1700,44 @@ export function createConversationStore(pool) {
           SELECT message.id
           FROM public.unified_messages AS message
           WHERE message.workspace_id = $1
-            AND message.status = 'scheduled'
             AND message.direction = 'outbound'
             AND message.channel IN ('sms', 'email')
             AND COALESCE(message.payload->>'requestedFrom', '') = 'unified-conversation'
-            AND CASE
-              WHEN COALESCE(message.payload->>'scheduledFor', '') ~
-                '^\\d{4}-\\d{2}-\\d{2}T'
-              THEN (message.payload->>'scheduledFor')::timestamptz
-              ELSE NULL
-            END <= $2::timestamptz
-          ORDER BY (message.payload->>'scheduledFor')::timestamptz, message.id
+            AND (
+              (
+                message.status = 'scheduled'
+                AND CASE
+                  WHEN COALESCE(message.payload->>'scheduledFor', '') ~
+                    '^\\d{4}-\\d{2}-\\d{2}T'
+                  THEN (message.payload->>'scheduledFor')::timestamptz
+                  ELSE NULL
+                END <= $2::timestamptz
+              )
+              OR (
+                message.status = 'processing'
+                AND COALESCE(message.payload->>'schedulerDispatchStartedAt', '') = ''
+                AND CASE
+                  WHEN COALESCE(message.payload->>'schedulerClaimExpiresAt', '') ~
+                    '^\\d{4}-\\d{2}-\\d{2}T'
+                  THEN (message.payload->>'schedulerClaimExpiresAt')::timestamptz
+                    <= $2::timestamptz
+                  ELSE message.updated_at
+                    <= $2::timestamptz - make_interval(secs => $5)
+                END
+              )
+            )
+          ORDER BY
+            CASE WHEN message.status = 'scheduled' THEN 0 ELSE 1 END,
+            COALESCE(
+              CASE
+                WHEN COALESCE(message.payload->>'scheduledFor', '') ~
+                  '^\\d{4}-\\d{2}-\\d{2}T'
+                THEN (message.payload->>'scheduledFor')::timestamptz
+                ELSE NULL
+              END,
+              message.updated_at
+            ),
+            message.id
           FOR UPDATE SKIP LOCKED
           LIMIT $3
         )
@@ -1711,19 +1746,54 @@ export function createConversationStore(pool) {
             payload = COALESCE(message.payload, '{}'::jsonb) ||
               jsonb_build_object(
                 'schedulerClaimId', $4,
-                'schedulerClaimedAt', $2::text
+                'schedulerClaimedAt', $2::text,
+                'schedulerClaimExpiresAt',
+                  ($2::timestamptz + make_interval(secs => $5))::text
               ),
             updated_at = $2::timestamptz
         FROM due
         WHERE message.id = due.id
         RETURNING message.*
       `,
-      [workspace, claimedAt, bounded, claimId]
+      [workspace, claimedAt, bounded, claimId, leaseDuration]
     );
     return result.rows.map(mapScheduledUnifiedMessageRow);
   }
 
-  async function completeScheduledMessage(
+  async function beginScheduledMessageDispatch(
+    messageId,
+    {
+      workspaceId: workspaceInput,
+      claimId: claimInput,
+      dispatchedAt = new Date().toISOString(),
+    } = {}
+  ) {
+    const id = requiredText(messageId, 'messageId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const claimId = requiredText(claimInput, 'claimId');
+    const dispatchStartedAt = requiredText(dispatchedAt, 'dispatchedAt');
+    const result = await pool.query(
+      `
+        UPDATE public.unified_messages
+        SET status = 'dispatching',
+            payload = COALESCE(payload, '{}'::jsonb) ||
+              jsonb_build_object(
+                'schedulerDispatchStartedAt', $4,
+                'schedulerDispatchClaimId', $3
+              ),
+            updated_at = $4::timestamptz
+        WHERE id = $1
+          AND workspace_id = $2
+          AND status = 'processing'
+          AND payload->>'schedulerClaimId' = $3
+        RETURNING *
+      `,
+      [id, workspace, claimId, dispatchStartedAt]
+    );
+    return mapScheduledUnifiedMessageRow(result.rows[0]);
+  }
+
+  async function completeClaimedScheduledMessage(
     messageId,
     {
       workspaceId: workspaceInput,
@@ -1761,6 +1831,97 @@ export function createConversationStore(pool) {
       [id, workspace, claimId, status, JSON.stringify(payloadPatch), provider]
     );
     return mapScheduledUnifiedMessageRow(result.rows[0]);
+  }
+
+  async function completeScheduledMessage(
+    messageId,
+    {
+      workspaceId: workspaceInput,
+      claimId: claimInput,
+      status: statusInput,
+      provider = '',
+      payload: payloadPatch = {},
+    } = {}
+  ) {
+    const id = requiredText(messageId, 'messageId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const claimId = requiredText(claimInput, 'claimId');
+    const status = requiredText(statusInput, 'status');
+    if (
+      !payloadPatch ||
+      typeof payloadPatch !== 'object' ||
+      Array.isArray(payloadPatch) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(payloadPatch))
+    ) {
+      throw new Error('Scheduled message payload patch must be a plain object');
+    }
+    const result = await pool.query(
+      `
+        UPDATE public.unified_messages
+        SET status = $4,
+            payload = COALESCE(payload, '{}'::jsonb) || $5::jsonb,
+            provider = COALESCE(NULLIF($6, ''), provider),
+            updated_at = NOW()
+        WHERE id = $1
+          AND workspace_id = $2
+          AND status = 'dispatching'
+          AND payload->>'schedulerClaimId' = $3
+        RETURNING *
+      `,
+      [id, workspace, claimId, status, JSON.stringify(payloadPatch), provider]
+    );
+    return mapScheduledUnifiedMessageRow(result.rows[0]);
+  }
+
+  async function reconcileStaleDispatchingMessages({
+    workspaceId: workspaceInput,
+    now = new Date().toISOString(),
+    staleAfterSeconds = 900,
+    limit = 25,
+  } = {}) {
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const reconciledAt = requiredText(now, 'now');
+    const bounded = boundedLimit(limit, 100);
+    const staleDuration = boundedSeconds(staleAfterSeconds, 900, 86_400);
+    const result = await pool.query(
+      `
+        WITH stale AS (
+          SELECT message.id
+          FROM public.unified_messages AS message
+          WHERE message.workspace_id = $1
+            AND message.status = 'dispatching'
+            AND message.direction = 'outbound'
+            AND message.channel IN ('sms', 'email')
+            AND COALESCE(message.payload->>'requestedFrom', '') =
+              'unified-conversation'
+            AND CASE
+              WHEN COALESCE(message.payload->>'schedulerDispatchStartedAt', '') ~
+                '^\\d{4}-\\d{2}-\\d{2}T'
+              THEN (message.payload->>'schedulerDispatchStartedAt')::timestamptz
+                <= $2::timestamptz - make_interval(secs => $4)
+              ELSE message.updated_at
+                <= $2::timestamptz - make_interval(secs => $4)
+            END
+          ORDER BY message.updated_at, message.id
+          FOR UPDATE SKIP LOCKED
+          LIMIT $3
+        )
+        UPDATE public.unified_messages AS message
+        SET status = 'delivery_unknown',
+            payload = COALESCE(message.payload, '{}'::jsonb) ||
+              jsonb_build_object(
+                'schedulerReconciliationRequiredAt', $2::text,
+                'schedulerReconciliationReason', 'reconciliation_required'
+              ),
+            updated_at = $2::timestamptz
+        FROM stale
+        WHERE message.id = stale.id
+          AND message.status = 'dispatching'
+        RETURNING message.*
+      `,
+      [workspace, reconciledAt, bounded, staleDuration]
+    );
+    return result.rows.map(mapScheduledUnifiedMessageRow);
   }
 
   async function reportEventSpam(
@@ -2492,7 +2653,10 @@ export function createConversationStore(pool) {
     patchEvent,
     updateEventOutcome,
     claimDueScheduledMessages,
+    beginScheduledMessageDispatch,
+    completeClaimedScheduledMessage,
     completeScheduledMessage,
+    reconcileStaleDispatchingMessages,
     reportEventSpam,
     patchThread,
     mergeThreads,

@@ -12,6 +12,7 @@ dist/
 brain-export/
 .pbk-training/
 .superpowers/
+.worktrees/
 
 PBK_React_Preview_Code_*/
 PBK_React_Preview_Code_*.zip

@@ -82,6 +82,8 @@ const RECORD_ALIASES = {
   decidedBy: ['decided_by'],
   recordingUrl: ['recording_url'],
   storagePath: ['storage_path'],
+  storageBucket: ['storage_bucket'],
+  audioContentType: ['audio_content_type'],
   recordingPath: ['recording_path'],
   durationSeconds: ['duration_seconds'],
   transcriptText: ['transcript_text'],
@@ -138,6 +140,18 @@ function normalized(value) {
   return text(value).toLowerCase();
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === 'string') {
+      if (value.trim()) return value.trim();
+      continue;
+    }
+    return value;
+  }
+  return undefined;
+}
+
 function firstText(...values) {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -150,7 +164,7 @@ function firstText(...values) {
 }
 
 function firstTimestamp(...values) {
-  return firstText(...values) || null;
+  return firstNonEmpty(...values) ?? null;
 }
 
 function cleanValue(value) {
@@ -230,7 +244,7 @@ function commonEvent(record, options) {
     subject: firstText(options.subject),
     body: firstText(options.body),
     status: firstText(options.status),
-    occurredAt: options.occurredAt || null,
+    occurredAt: options.occurredAt ?? null,
     payload: options.payload || {},
   };
 }
@@ -241,6 +255,66 @@ export function projectMessageEvent(record) {
   requiredSourceId(record);
 
   const channel = normalized(record.channel);
+  const nativeRecording = channel === 'call' && normalized(record.direction) === 'recording';
+  if (nativeRecording) {
+    const senderAddress = firstText(record.fromPhone, record.senderAddress, record.from);
+    const recipientAddress = firstText(record.toPhone, record.recipientAddress, record.to);
+
+    return commonEvent(record, {
+      eventType: 'call.recording',
+      channel: 'call',
+      direction: 'internal',
+      sourceTable: 'unified_messages',
+      provider: record.provider,
+      senderAddress,
+      recipientAddress,
+      actorType: firstText(record.actorType) || 'system',
+      actorName: record.actorName,
+      subject: record.subject,
+      body: record.body,
+      status: record.status,
+      occurredAt: firstTimestamp(
+        record.occurredAt,
+        record.sentAt,
+        record.createdAt,
+        record.updatedAt
+      ),
+      payload: payloadFrom(
+        record,
+        [
+          'channel',
+          'direction',
+          'provider',
+          'fromPhone',
+          'toPhone',
+          'senderAddress',
+          'recipientAddress',
+          'from',
+          'to',
+          'subject',
+          'body',
+          'status',
+          'storagePath',
+          'storageBucket',
+          'audioContentType',
+          'durationSeconds',
+          'duration',
+          'recordingUrl',
+          'occurredAt',
+          'sentAt',
+          'createdAt',
+          'updatedAt',
+        ],
+        {
+          storagePath: firstNonEmpty(record.storagePath),
+          storageBucket: firstNonEmpty(record.storageBucket),
+          audioContentType: firstNonEmpty(record.audioContentType),
+          durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
+          recordingUrl: firstNonEmpty(record.recordingUrl),
+        }
+      ),
+    });
+  }
   if (!['sms', 'email'].includes(channel)) {
     throw new TypeError('supported message channel is required');
   }
@@ -326,7 +400,17 @@ function normalizeCallKind(kind) {
 }
 
 function transcriptChunk(record) {
-  return record.transcriptChunk ?? record.currentTranscriptChunk ?? record.chunk;
+  return firstNonEmpty(record.transcriptChunk, record.currentTranscriptChunk, record.chunk);
+}
+
+function transcriptEntryBody(entry) {
+  if (typeof entry === 'string') return entry.trim();
+  if (!isRecord(entry)) return '';
+
+  const entryText = firstText(entry.text, entry.transcript, entry.content, entry.message);
+  if (!entryText) return '';
+  const speaker = firstText(entry.speaker, entry.role, entry.name);
+  return speaker ? `${speaker}: ${entryText}` : entryText;
 }
 
 function transcriptBody(record) {
@@ -340,29 +424,33 @@ function transcriptBody(record) {
   if (directText) return directText;
   if (typeof record.transcript === 'string') return record.transcript;
   if (Array.isArray(record.transcript)) {
-    const latest = record.transcript.at(-1);
-    if (typeof latest === 'string') return latest;
-    if (isRecord(latest)) {
-      return firstText(latest.text, latest.transcript, latest.content, latest.message);
-    }
+    return record.transcript.map(transcriptEntryBody).filter(Boolean).join('\n');
   }
   return '';
 }
 
 function inferCallKind(record) {
-  const state = normalized(record.state || record.status).replace(/^call\./, '');
-  if (FINAL_CALL_STATUSES.has(state)) return 'completed';
-  if (state === 'recording' || state === 'recorded') return 'recording';
-  if (state === 'transcript' || state === 'transcribing') return 'transcript';
+  const states = [record.state, record.status]
+    .map((value) => normalized(value).replace(/^call\./, ''))
+    .filter(Boolean);
   if (
+    states.some((state) => state === 'recording' || state === 'recorded') ||
     firstText(record.recordingUrl, record.recordingURL, record.storagePath, record.recordingPath)
   ) {
     return 'recording';
   }
-  if (transcriptChunk(record) !== undefined || firstText(record.transcriptText)) {
+  if (states.some((state) => FINAL_CALL_STATUSES.has(state))) return 'completed';
+  if (
+    states.some((state) => state === 'transcript' || state === 'transcribing') ||
+    transcriptChunk(record) !== undefined ||
+    firstText(record.transcriptText) ||
+    (Array.isArray(record.transcript) && record.transcript.length > 0) ||
+    firstText(record.transcript)
+  ) {
     return 'transcript';
   }
-  if (STARTED_CALL_STATUSES.has(state) || record.startedAt) return 'started';
+  if (states.some((state) => STARTED_CALL_STATUSES.has(state)) || record.startedAt)
+    return 'started';
   return 'started';
 }
 
@@ -374,7 +462,7 @@ function callOccurredAt(record, kind) {
     const chunk = transcriptChunk(record);
     return firstTimestamp(
       record.transcriptAt,
-      isRecord(chunk) ? (chunk.occurredAt ?? chunk.timestamp ?? chunk.at) : null,
+      isRecord(chunk) ? firstNonEmpty(chunk.occurredAt, chunk.timestamp, chunk.at) : null,
       record.occurredAt,
       record.updatedAt,
       record.createdAt
@@ -485,6 +573,8 @@ export function projectCallEvent(record, kind) {
         'recordingUrl',
         'recordingURL',
         'storagePath',
+        'storageBucket',
+        'audioContentType',
         'recordingPath',
         'durationSeconds',
         'duration',
@@ -500,9 +590,12 @@ export function projectCallEvent(record, kind) {
       ],
       {
         ...chunkContext,
+        transcript: Array.isArray(record.transcript) ? record.transcript : undefined,
         recordingUrl: firstText(record.recordingUrl, record.recordingURL) || undefined,
         storagePath: firstText(record.storagePath, record.recordingPath) || undefined,
-        durationSeconds: record.durationSeconds ?? record.duration,
+        storageBucket: firstNonEmpty(record.storageBucket),
+        audioContentType: firstNonEmpty(record.audioContentType),
+        durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
       }
     ),
   });
@@ -538,7 +631,7 @@ export function projectContractEvent(record) {
       : eventType === 'contract.viewed'
         ? record.viewedAt
         : eventType === 'contract.completed'
-          ? (record.completedAt ?? record.signedAt)
+          ? firstNonEmpty(record.completedAt, record.signedAt)
           : null;
 
   return commonEvent(record, {
@@ -627,7 +720,9 @@ export function projectApprovalEvent(record) {
     body: firstText(record.summary, record.notes),
     status: record.status,
     occurredAt: firstTimestamp(
-      eventType === 'approval.decided' ? (record.actedAt ?? record.decidedAt) : record.createdAt,
+      eventType === 'approval.decided'
+        ? firstNonEmpty(record.actedAt, record.decidedAt)
+        : record.createdAt,
       record.updatedAt,
       record.createdAt
     ),
@@ -704,7 +799,7 @@ export function projectActivityEvent(record) {
     subject: record.subject,
     body: firstText(record.text, record.note, record.body),
     status: record.status,
-    occurredAt: firstTimestamp(record.occurredAt, record.createdAt, record.updatedAt),
+    occurredAt: firstTimestamp(record.occurredAt, record.at, record.createdAt, record.updatedAt),
     payload: payloadFrom(
       record,
       [
@@ -721,6 +816,7 @@ export function projectActivityEvent(record) {
         'source',
         'metadata',
         'occurredAt',
+        'at',
         'createdAt',
         'updatedAt',
       ],

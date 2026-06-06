@@ -127,7 +127,50 @@ describe('message projection', () => {
     });
   });
 
-  test.each(['call', 'recording', 'voice', '', undefined])(
+  test('projects a native unified-message recording row', () => {
+    expect(
+      projectMessageEvent({
+        id: 'recording-message-1',
+        workspace_id: 'workspace-1',
+        lead_id: 'lead-1',
+        channel: 'call',
+        direction: 'recording',
+        provider: 'telnyx',
+        from_phone: '+16145550101',
+        to_phone: '+16145550199',
+        storage_path: 'calls/recording-message-1.mp3',
+        storage_bucket: 'call-recordings',
+        audio_content_type: 'audio/mpeg',
+        duration_seconds: 47,
+        recording_url: 'https://recordings.example/recording-message-1.mp3',
+        provider_id: 'provider-recording-1',
+        created_at: '2026-06-06T13:30:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-1',
+      leadId: 'lead-1',
+      eventType: 'call.recording',
+      channel: 'call',
+      direction: 'internal',
+      sourceTable: 'unified_messages',
+      sourceId: 'recording-message-1',
+      sourceKey: 'unified_messages:recording-message-1:call.recording',
+      provider: 'telnyx',
+      senderAddress: '+16145550101',
+      recipientAddress: '+16145550199',
+      occurredAt: '2026-06-06T13:30:00.000Z',
+      payload: {
+        storagePath: 'calls/recording-message-1.mp3',
+        storageBucket: 'call-recordings',
+        audioContentType: 'audio/mpeg',
+        durationSeconds: 47,
+        recordingUrl: 'https://recordings.example/recording-message-1.mp3',
+        providerId: 'provider-recording-1',
+      },
+    });
+  });
+
+  test.each(['recording', 'voice', '', undefined])(
     'rejects unsupported message channel %p',
     (channel) => {
       expect(() => projectMessageEvent({ id: 'message-1', channel })).toThrow(
@@ -195,8 +238,33 @@ describe('call projection', () => {
       },
     });
     expect(event.body).not.toContain('Earlier words');
-    expect(event.payload).not.toHaveProperty('transcript');
+    expect(event.payload).toMatchObject({
+      transcript: [{ text: 'Earlier words' }],
+    });
     expect(event.payload).not.toHaveProperty('transcriptChunk');
+  });
+
+  test('projects persisted transcript arrays with deterministic speaker text and full payload', () => {
+    const transcript = Object.freeze([
+      Object.freeze({ speaker: 'seller', text: 'I can close Friday.' }),
+      Object.freeze({ speaker: 'agent', text: 'Friday works.' }),
+    ]);
+
+    const event = projectCallEvent({
+      id: 'call-transcript-array',
+      state: 'transcript',
+      transcript,
+      updated_at: '2026-06-06T14:02:00.000Z',
+    });
+
+    expect(event).toMatchObject({
+      eventType: 'call.transcript',
+      body: 'seller: I can close Friday.\nagent: Friday works.',
+      occurredAt: '2026-06-06T14:02:00.000Z',
+      payload: { transcript },
+    });
+    expect(event.payload.transcript).not.toBe(transcript);
+    expect(transcript[0]).toEqual({ speaker: 'seller', text: 'I can close Friday.' });
   });
 
   test('infers a recording event and carries recording details in payload', () => {
@@ -205,7 +273,8 @@ describe('call projection', () => {
         id: 'call-3',
         recordingUrl: 'https://recordings.example/call-3.mp3',
         storagePath: 'calls/call-3.mp3',
-        durationSeconds: 82,
+        durationSeconds: '',
+        duration: 0,
         updatedAt: '2026-06-06T14:03:00.000Z',
       })
     ).toMatchObject({
@@ -214,7 +283,7 @@ describe('call projection', () => {
       payload: {
         recordingUrl: 'https://recordings.example/call-3.mp3',
         storagePath: 'calls/call-3.mp3',
-        durationSeconds: 82,
+        durationSeconds: 0,
       },
     });
   });
@@ -236,6 +305,79 @@ describe('call projection', () => {
       recipientAddress: '+16145550101',
       status: 'completed',
       occurredAt: '2026-06-06T14:05:00.000Z',
+    });
+  });
+
+  test('uses explicit kind before recording and completion evidence', () => {
+    expect(
+      projectCallEvent(
+        {
+          id: 'call-explicit-completed',
+          status: 'completed',
+          recordingUrl: 'https://recordings.example/call-explicit-completed.mp3',
+          transcript: [{ speaker: 'seller', text: 'Done.' }],
+        },
+        'transcript'
+      )
+    ).toMatchObject({
+      eventType: 'call.transcript',
+      body: 'seller: Done.',
+    });
+  });
+
+  test('uses recording evidence before completed status', () => {
+    expect(
+      projectCallEvent({
+        id: 'call-recording-completed',
+        status: 'completed',
+        recordingUrl: 'https://recordings.example/call-recording-completed.mp3',
+        transcript: [{ speaker: 'seller', text: 'Done.' }],
+      })
+    ).toMatchObject({
+      eventType: 'call.recording',
+    });
+  });
+
+  test('uses completed status before transcript arrays', () => {
+    expect(
+      projectCallEvent({
+        id: 'call-completed-transcript',
+        status: 'completed',
+        transcript: [{ speaker: 'seller', text: 'Done.' }],
+      })
+    ).toMatchObject({
+      eventType: 'call.completed',
+    });
+  });
+
+  test('uses completed status before a transcript-like state', () => {
+    expect(
+      projectCallEvent({
+        id: 'call-completed-transcript-state',
+        state: 'transcript',
+        status: 'completed',
+        transcript: [{ speaker: 'seller', text: 'Done.' }],
+      })
+    ).toMatchObject({
+      eventType: 'call.completed',
+    });
+  });
+
+  test('falls through empty transcript chunk timestamps', () => {
+    expect(
+      projectCallEvent(
+        {
+          id: 'call-transcript-time',
+          transcriptChunk: {
+            text: 'Timestamped.',
+            occurredAt: '',
+            timestamp: '2026-06-06T14:04:00.000Z',
+          },
+        },
+        'transcript'
+      )
+    ).toMatchObject({
+      occurredAt: '2026-06-06T14:04:00.000Z',
     });
   });
 
@@ -315,6 +457,19 @@ describe('contract projection', () => {
       }).provider
     ).toBe('pandadoc');
   });
+
+  test('falls through an empty completed timestamp to signed timestamp', () => {
+    expect(
+      projectContractEvent({
+        id: 'contract-completed-time',
+        status: 'completed',
+        completedAt: '',
+        signedAt: '2026-06-06T15:30:00.000Z',
+      })
+    ).toMatchObject({
+      occurredAt: '2026-06-06T15:30:00.000Z',
+    });
+  });
 });
 
 describe('approval projection', () => {
@@ -371,6 +526,19 @@ describe('approval projection', () => {
       },
     });
   });
+
+  test('falls through an empty acted timestamp to decided timestamp', () => {
+    expect(
+      projectApprovalEvent({
+        id: 'approval-decided-time',
+        status: 'approved',
+        actedAt: '',
+        decidedAt: '2026-06-06T16:30:00.000Z',
+      })
+    ).toMatchObject({
+      occurredAt: '2026-06-06T16:30:00.000Z',
+    });
+  });
 });
 
 describe('activity projection', () => {
@@ -416,6 +584,25 @@ describe('activity projection', () => {
         },
       },
     });
+  });
+
+  test('uses native runtime at deterministically across retries', () => {
+    const record = Object.freeze({
+      id: 'activity-at',
+      category: 'NOTE',
+      text: 'Retry-stable note.',
+      at: '2026-06-06T16:45:00.000Z',
+    });
+
+    const first = projectActivityEvent(record);
+    const retry = projectActivityEvent(record);
+
+    expect(first).toEqual(retry);
+    expect(first).toMatchObject({
+      eventType: 'lead.note',
+      occurredAt: '2026-06-06T16:45:00.000Z',
+    });
+    expect(record.at).toBe('2026-06-06T16:45:00.000Z');
   });
 });
 

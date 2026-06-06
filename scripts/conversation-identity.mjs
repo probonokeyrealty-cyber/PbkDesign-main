@@ -79,7 +79,13 @@ function instantlyLifecycleStatus(providerStatus, warmupStatus) {
   if (/(?:^|_)(?:paused|disabled|inactive|suspended)(?:_|$)/.test(combined)) {
     return 'paused';
   }
-  if (/(?:^|_)warm(?:ing|up|ed)?(?:_|$)/.test(combined)) return 'warming';
+  if (
+    /(?:^|_)(?:warming|pending|running|in_progress)(?:_|$)/.test(warmupStatus) ||
+    /(?:^|_)warm(?:ing|up|ed)?(?:_|$)/.test(warmupStatus) ||
+    /(?:^|_)warm(?:ing|up|ed)?(?:_|$)/.test(providerStatus)
+  ) {
+    return 'warming';
+  }
   if (
     [providerStatus, warmupStatus].some((status) =>
       new Set(['active', 'connected', 'healthy', 'enabled', 'ready', 'complete', 'completed']).has(
@@ -185,6 +191,7 @@ export function normalizeInstantlySenderIdentity(value, defaultEmail = '') {
   assignSafeMetadata(metadata, 'providerStatus', providerStatus || 'unknown');
   assignSafeMetadata(metadata, 'warmupStatus', warmupStatus);
   assignSafeMetadata(metadata, 'providerName', providerName);
+  const lifecycleStatus = instantlyLifecycleStatus(providerStatus, warmupStatus);
 
   return {
     provider: 'instantly',
@@ -211,8 +218,11 @@ export function normalizeInstantlySenderIdentity(value, defaultEmail = '') {
       'countryCode',
       'country_code',
     ]),
-    lifecycleStatus: instantlyLifecycleStatus(providerStatus, warmupStatus),
-    healthStatus: providerStatus || warmupStatus || 'unknown',
+    lifecycleStatus,
+    healthStatus:
+      lifecycleStatus === 'warming' && warmupStatus
+        ? warmupStatus
+        : providerStatus || warmupStatus || 'unknown',
     isWorkspaceDefault:
       Boolean(normalizeConversationEmail(defaultEmail)) &&
       address === normalizeConversationEmail(defaultEmail),

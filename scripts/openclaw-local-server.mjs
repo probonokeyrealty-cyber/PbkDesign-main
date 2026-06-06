@@ -28861,11 +28861,14 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
 
 function normalizeInstantlySenderRecord(record = {}) {
   const email = String(record.email || record.email_address || record.address || record.username || record.smtp_username || '').trim();
+  const warmupStatus = String(record.warmupStatus || record.warmup_status || '').trim();
   return {
     id: record.id || record.uuid || email,
     email,
     provider: record.provider || record.provider_name || record.type || record.smtp_provider || 'instantly',
-    status: record.status || record.warmup_status || '',
+    status: record.status || '',
+    warmupStatus,
+    warmup_status: warmupStatus,
   };
 }
 
@@ -49403,10 +49406,13 @@ function buildCommunicationIdentityLifecycleMetadata(
     from: identity?.lifecycleStatus || '',
     to: lifecycleStatus,
     reason: reason || '',
+    source: 'operator',
     at: changedAt,
   });
   return {
     ...currentMetadata,
+    operatorManaged: true,
+    lifecycleSource: 'operator',
     lifecycleHistory,
     lifecycleChangedAt: changedAt,
     ...(reason ? { lifecycleReason: reason } : {}),

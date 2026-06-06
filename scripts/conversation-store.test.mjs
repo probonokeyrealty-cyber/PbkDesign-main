@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CONVERSATION_SCHEMA_SQL, ensureConversationSchema } from './conversation-schema.mjs';
 import {
+  chooseSyncedLifecycle,
   createConversationStore,
   mapConversationEventRow,
   mapConversationThreadRow,
@@ -1457,6 +1458,84 @@ describe('conversation mutation allowlists and merging', () => {
 });
 
 describe('sender identity persistence', () => {
+  test.each([
+    ['new active identity', null, { lifecycleStatus: 'active' }, 'active'],
+    [
+      'active provider identity starts warming',
+      { lifecycleStatus: 'active', metadata: {} },
+      { lifecycleStatus: 'warming' },
+      'warming',
+    ],
+    [
+      'active provider identity becomes quarantined',
+      { lifecycleStatus: 'active', metadata: {} },
+      { lifecycleStatus: 'quarantined' },
+      'quarantined',
+    ],
+    [
+      'active provider identity becomes paused',
+      { lifecycleStatus: 'active', metadata: {} },
+      { lifecycleStatus: 'paused' },
+      'paused',
+    ],
+    [
+      'warming provider identity becomes active',
+      { lifecycleStatus: 'warming', metadata: {} },
+      { lifecycleStatus: 'active' },
+      'active',
+    ],
+    [
+      'provider-managed paused identity cannot auto-upgrade to active',
+      { lifecycleStatus: 'paused', metadata: {} },
+      { lifecycleStatus: 'active' },
+      'paused',
+    ],
+    [
+      'provider-managed quarantined identity cannot auto-upgrade to active',
+      { lifecycleStatus: 'quarantined', metadata: {} },
+      { lifecycleStatus: 'active' },
+      'quarantined',
+    ],
+    [
+      'operator-managed paused identity remains sticky',
+      { lifecycleStatus: 'paused', metadata: { operatorManaged: true } },
+      { lifecycleStatus: 'quarantined' },
+      'paused',
+    ],
+    [
+      'operator-source quarantine remains sticky',
+      { lifecycleStatus: 'quarantined', metadata: { lifecycleSource: 'operator' } },
+      { lifecycleStatus: 'active' },
+      'quarantined',
+    ],
+    [
+      'operator-reason pause remains sticky',
+      { lifecycleStatus: 'paused', metadata: { reason: 'operator' } },
+      { lifecycleStatus: 'warming' },
+      'paused',
+    ],
+    [
+      'retired identity remains terminal',
+      { lifecycleStatus: 'retired', metadata: {} },
+      { lifecycleStatus: 'active' },
+      'retired',
+    ],
+    [
+      'release pending identity remains terminal',
+      { lifecycleStatus: 'release_pending', metadata: {} },
+      { lifecycleStatus: 'quarantined' },
+      'release_pending',
+    ],
+    [
+      'released identity remains terminal',
+      { lifecycleStatus: 'released', metadata: {} },
+      { lifecycleStatus: 'active' },
+      'released',
+    ],
+  ])('chooses synced lifecycle: %s', (_name, existing, incoming, expected) => {
+    expect(chooseSyncedLifecycle(existing, incoming)).toBe(expected);
+  });
+
   test('gets a sender identity only within the requested workspace', async () => {
     const queries = [];
     const pool = {
@@ -1653,22 +1732,39 @@ describe('sender identity persistence', () => {
     expect(queries[0].params[26]).toBe(false);
   });
 
-  test.each(['retired', 'quarantined', 'release_pending', 'released'])(
-    'sync preserves locally managed %s lifecycle and historical metadata',
-    async (lifecycleStatus) => {
+  test.each([
+    ['active', 'quarantined', {}, 'quarantined'],
+    ['active', 'warming', {}, 'warming'],
+    ['retired', 'active', {}, 'retired'],
+    ['quarantined', 'active', { operatorManaged: true }, 'quarantined'],
+  ])(
+    'sync changes %s with incoming %s to %s according to provider/operator policy',
+    async (existingLifecycle, incomingLifecycle, existingMetadata, expectedLifecycle) => {
       const queries = [];
       const pool = {
         async query(sql, params) {
           queries.push({ sql, params });
+          if (sql.includes('SELECT *') && sql.includes('normalized_address = $4')) {
+            return {
+              rows: [
+                senderRow({
+                  lifecycle_status: existingLifecycle,
+                  retired_at: existingLifecycle === 'retired' ? '2026-06-05T00:00:00.000Z' : null,
+                  metadata: {
+                    releaseApprovalId: 'approval-1',
+                    providerStatus: 'active',
+                    ...existingMetadata,
+                  },
+                }),
+              ],
+            };
+          }
           return {
             rows: [
               senderRow({
-                lifecycle_status: lifecycleStatus,
-                retired_at: '2026-06-05T00:00:00.000Z',
-                metadata: {
-                  releaseApprovalId: 'approval-1',
-                  providerStatus: 'active',
-                },
+                lifecycle_status: params[8],
+                retired_at: existingLifecycle === 'retired' ? '2026-06-05T00:00:00.000Z' : null,
+                metadata: JSON.parse(params[15]),
               }),
             ],
           };
@@ -1683,23 +1779,32 @@ describe('sender identity persistence', () => {
           channel: 'sms',
           address: '+16145550199',
           normalizedAddress: '+16145550199',
-          lifecycleStatus: 'active',
-          healthStatus: 'healthy',
-          metadata: { providerStatus: 'healthy' },
+          lifecycleStatus: incomingLifecycle,
+          healthStatus: incomingLifecycle,
+          metadata: { providerStatus: incomingLifecycle },
         })
       ).resolves.toMatchObject({
-        lifecycleStatus,
-        retiredAt: '2026-06-05T00:00:00.000Z',
+        lifecycleStatus: expectedLifecycle,
         metadata: {
           releaseApprovalId: 'approval-1',
-          providerStatus: 'active',
+          providerStatus: incomingLifecycle,
         },
       });
 
-      expect(queries).toHaveLength(1);
-      expect(queries[0].sql).toContain('WHEN $28::boolean THEN existing.lifecycle_status');
-      expect(queries[0].sql).toContain('existing.metadata || EXCLUDED.metadata');
-      expect(queries[0].params[27]).toBe(true);
+      expect(queries).toHaveLength(2);
+      expect(queries[0].params).toEqual(['pbk', 'telnyx', 'sms', '+16145550199']);
+      expect(queries[1].params[8]).toBe(expectedLifecycle);
+      expect(JSON.parse(queries[1].params[15])).toMatchObject({
+        releaseApprovalId: 'approval-1',
+        providerStatus: incomingLifecycle,
+        lifecycleSyncHistory: [
+          expect.objectContaining({
+            previousLifecycleStatus: existingLifecycle,
+            incomingLifecycleStatus: incomingLifecycle,
+            chosenLifecycleStatus: expectedLifecycle,
+          }),
+        ],
+      });
     }
   );
 

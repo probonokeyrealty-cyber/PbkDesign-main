@@ -5,6 +5,14 @@ import {
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 100;
+const SYNCABLE_SENDER_LIFECYCLES = new Set([
+  'active',
+  'warming',
+  'paused',
+  'quarantined',
+  'retired',
+]);
+const TERMINAL_SENDER_LIFECYCLES = new Set(['retired', 'release_pending', 'released']);
 
 function jsonValue(value) {
   return value ?? {};
@@ -14,6 +22,44 @@ function numericValue(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function senderLifecycleStatus(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+function senderIdentityMetadata(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function isOperatorManagedSenderIdentity(identity) {
+  const metadata = senderIdentityMetadata(identity?.metadata);
+  if (metadata.operatorManaged === true || metadata.operatorManaged === 'true') return true;
+  return [
+    metadata.lifecycleSource,
+    metadata.source,
+    metadata.lifecycleReason,
+    metadata.reason,
+    metadata.managedBy,
+  ].some((value) => /^operator(?:$|[\s:_-])/i.test(String(value ?? '').trim()));
+}
+
+export function chooseSyncedLifecycle(existing, incoming) {
+  const current = senderLifecycleStatus(existing?.lifecycleStatus);
+  const next = senderLifecycleStatus(incoming?.lifecycleStatus);
+  const safeNext = SYNCABLE_SENDER_LIFECYCLES.has(next) ? next : 'quarantined';
+
+  if (!current) return safeNext;
+  if (TERMINAL_SENDER_LIFECYCLES.has(current)) return current;
+  if (['paused', 'quarantined'].includes(current) && isOperatorManagedSenderIdentity(existing)) {
+    return current;
+  }
+  if (['paused', 'quarantined'].includes(current) && safeNext === 'active') {
+    return current;
+  }
+  return safeNext;
 }
 
 export function mapConversationThreadRow(row) {
@@ -1520,7 +1566,7 @@ export function createConversationStore(pool) {
     };
   }
 
-  async function upsertSenderIdentity(identity = {}, options = {}) {
+  async function upsertSenderIdentity(identity = {}) {
     const workspace = workspaceId(identity.workspaceId);
     const provider = requiredText(identity.provider, 'provider');
     const channel = requiredText(identity.channel, 'channel');
@@ -1588,9 +1634,7 @@ export function createConversationStore(pool) {
             WHEN $19::boolean THEN EXCLUDED.region
             ELSE existing.region
           END,
-          lifecycle_status = CASE
-            WHEN $28::boolean THEN existing.lifecycle_status
-            WHEN $20::boolean THEN EXCLUDED.lifecycle_status
+          lifecycle_status = CASE WHEN $20::boolean THEN EXCLUDED.lifecycle_status
             ELSE existing.lifecycle_status
           END,
           health_status = CASE
@@ -1617,9 +1661,7 @@ export function createConversationStore(pool) {
             WHEN $26::boolean THEN EXCLUDED.released_at
             ELSE existing.released_at
           END,
-          metadata = CASE
-            WHEN $28::boolean THEN existing.metadata || EXCLUDED.metadata
-            WHEN $27::boolean THEN EXCLUDED.metadata
+          metadata = CASE WHEN $27::boolean THEN EXCLUDED.metadata
             ELSE existing.metadata
           END,
           updated_at = NOW()
@@ -1643,15 +1685,61 @@ export function createConversationStore(pool) {
         identity.releasedAt ?? null,
         JSON.stringify(identity.metadata ?? {}),
         ...provided,
-        options.preserveExistingLifecycle === true,
       ]
     );
     return mapSenderIdentityRow(result.rows[0]);
   }
 
   async function syncSenderIdentity(identity = {}) {
-    return upsertSenderIdentity(identity, {
-      preserveExistingLifecycle: true,
+    const workspace = workspaceId(identity.workspaceId);
+    const provider = requiredText(identity.provider, 'provider');
+    const channel = requiredText(identity.channel, 'channel');
+    const address = requiredText(identity.address, 'address');
+    const normalizedAddress =
+      (typeof identity.normalizedAddress === 'string' && identity.normalizedAddress.trim()) ||
+      (channel === 'email'
+        ? normalizeConversationEmail(address)
+        : normalizeConversationPhone(address));
+    if (!normalizedAddress) throw new Error('A valid sender address is required');
+
+    const existingResult = await pool.query(
+      `
+        SELECT *
+        FROM public.communication_sender_identities
+        WHERE workspace_id = $1
+          AND provider = $2
+          AND channel = $3
+          AND normalized_address = $4
+        LIMIT 1
+      `,
+      [workspace, provider, channel, normalizedAddress]
+    );
+    const existing = mapSenderIdentityRow(existingResult.rows[0]);
+    const lifecycleStatus = chooseSyncedLifecycle(existing, identity);
+    const existingMetadata = senderIdentityMetadata(existing?.metadata);
+    const incomingMetadata = senderIdentityMetadata(identity.metadata);
+    const lifecycleSyncHistory = Array.isArray(existingMetadata.lifecycleSyncHistory)
+      ? existingMetadata.lifecycleSyncHistory.slice(-49)
+      : [];
+    lifecycleSyncHistory.push({
+      previousLifecycleStatus: existing?.lifecycleStatus || '',
+      incomingLifecycleStatus: senderLifecycleStatus(identity.lifecycleStatus),
+      chosenLifecycleStatus: lifecycleStatus,
+      syncedAt: new Date().toISOString(),
+    });
+    return upsertSenderIdentity({
+      ...identity,
+      workspaceId: workspace,
+      provider,
+      channel,
+      address,
+      normalizedAddress,
+      lifecycleStatus,
+      metadata: {
+        ...existingMetadata,
+        ...incomingMetadata,
+        lifecycleSyncHistory,
+      },
     });
   }
 

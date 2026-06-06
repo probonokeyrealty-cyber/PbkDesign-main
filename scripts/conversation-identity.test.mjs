@@ -128,7 +128,7 @@ describe('provider sender identity normalization', () => {
       {
         providerIdentityId: 'instantly-snake',
         lifecycleStatus: 'warming',
-        healthStatus: 'active',
+        healthStatus: 'warming',
         isWorkspaceDefault: true,
       },
     ],
@@ -167,6 +167,45 @@ describe('provider sender identity normalization', () => {
     expect(identity.metadata).not.toHaveProperty('password');
     expect(identity.metadata).not.toHaveProperty('apiKey');
   });
+
+  test('keeps real Instantly adapter status and warmup signals independent', () => {
+    expect(
+      normalizeInstantlySenderIdentity({
+        id: 'instantly-real-shape',
+        email: 'seller@example.com',
+        status: 'active',
+        warmup_status: 'warming',
+      })
+    ).toMatchObject({
+      lifecycleStatus: 'warming',
+      healthStatus: 'warming',
+      metadata: {
+        providerStatus: 'active',
+        warmupStatus: 'warming',
+      },
+    });
+  });
+
+  test.each(['warming', 'pending', 'running', 'in_progress', 'warmup_running'])(
+    'treats warmup signal %p as warming despite active provider status',
+    (warmupStatus) => {
+      expect(
+        normalizeInstantlySenderIdentity({
+          id: `instantly-${warmupStatus}`,
+          email: 'seller@example.com',
+          status: 'active',
+          warmupStatus,
+        })
+      ).toMatchObject({
+        lifecycleStatus: 'warming',
+        healthStatus: warmupStatus,
+        metadata: {
+          providerStatus: 'active',
+          warmupStatus,
+        },
+      });
+    }
+  );
 
   test.each([
     ['warming', 'warming'],

@@ -319,6 +319,24 @@ assert(
   'Bridge must import the provider sender identity normalizers.'
 );
 
+const instantlyAdapterStart = bridge.indexOf(
+  'function normalizeInstantlySenderRecord(record = {})'
+);
+const instantlyAdapterEnd = bridge.indexOf(
+  '\nasync function getInstantlySenderOptions()',
+  instantlyAdapterStart
+);
+const instantlyAdapter = bridge.slice(instantlyAdapterStart, instantlyAdapterEnd);
+assert(
+  instantlyAdapterStart >= 0 &&
+    instantlyAdapterEnd > instantlyAdapterStart &&
+    /status:\s*record\.status\s*\|\|\s*''/.test(instantlyAdapter) &&
+    /warmupStatus/.test(instantlyAdapter) &&
+    /warmup_status/.test(instantlyAdapter) &&
+    !/status:\s*record\.status\s*\|\|\s*record\.warmup_status/.test(instantlyAdapter),
+  'Instantly adapter must preserve status and warmup status as independent normalizer inputs.'
+);
+
 const identityRoutesStart = bridge.indexOf(
   "if (request.method === 'GET' && pathname === '/api/communication-identities')"
 );
@@ -369,6 +387,8 @@ assert(
     /store\.patchSenderIdentity\(identityId,\s*patch,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID/.test(
       identityRoutes
     ) &&
+    /operatorManaged:\s*true/.test(bridge) &&
+    /lifecycleSource:\s*'operator'/.test(bridge) &&
     /inboundGraceUntil/.test(identityRoutes) &&
     /retiredAt/.test(identityRoutes),
   'Lifecycle PATCH must decode paths, validate the exact body, preserve the row, and scope reads/writes.'
@@ -422,6 +442,7 @@ assert(
   /async function getSenderIdentity\(identityId,\s*options = \{ workspaceId: 'pbk' \}\)/.test(
     storeSource
   ) &&
+    /function chooseSyncedLifecycle\(existing,\s*incoming\)/.test(storeSource) &&
     /async function syncSenderIdentity\(identity = \{\}\)/.test(storeSource) &&
     /async function patchSenderIdentity\(\s*identityId,\s*patch = \{\},\s*options = \{ workspaceId: 'pbk' \}\s*\)/.test(
       storeSource
@@ -431,14 +452,10 @@ assert(
 );
 
 const senderListStart = storeSource.indexOf('async function listSenderIdentities(filters = {})');
-const senderListEnd = storeSource.indexOf(
-  '\n  async function getSenderIdentity(',
-  senderListStart
-);
+const senderListEnd = storeSource.indexOf('\n  async function getSenderIdentity(', senderListStart);
 const senderListSource = storeSource.slice(senderListStart, senderListEnd);
 const senderListProjection =
-  senderListSource.match(/SELECT([\s\S]*?)FROM public\.communication_sender_identities/)?.[1] ||
-  '';
+  senderListSource.match(/SELECT([\s\S]*?)FROM public\.communication_sender_identities/)?.[1] || '';
 assert(
   senderListStart >= 0 &&
     senderListEnd > senderListStart &&

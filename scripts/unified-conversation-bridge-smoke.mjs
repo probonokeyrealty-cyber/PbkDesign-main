@@ -7,6 +7,7 @@ const read = (filePath) => readFileSync(resolve(root, filePath), 'utf8');
 const packageJson = JSON.parse(read('package.json'));
 const bridge = read('scripts/openclaw-local-server.mjs');
 const storeSource = read('scripts/conversation-store.mjs');
+const identitySource = read('scripts/conversation-identity.mjs');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -309,6 +310,149 @@ assert(
       storeSource
     ),
   'Sender identity summary must use exact aggregate SQL and an unbounded safe item query.'
+);
+
+assert(
+  /normalizeTelnyxSenderIdentity/.test(identitySource) &&
+    /normalizeInstantlySenderIdentity/.test(identitySource) &&
+    /normalizeTelnyxSenderIdentity,\s*normalizeInstantlySenderIdentity/.test(bridge),
+  'Bridge must import the provider sender identity normalizers.'
+);
+
+const identityRoutesStart = bridge.indexOf(
+  "if (request.method === 'GET' && pathname === '/api/communication-identities')"
+);
+const identityRoutesEnd = bridge.indexOf(
+  "if (request.method === 'GET' && pathname === '/api/conversations')",
+  identityRoutesStart
+);
+const identityRoutes = bridge.slice(identityRoutesStart, identityRoutesEnd);
+
+assert(
+  identityRoutesStart >= 0 && identityRoutesEnd > identityRoutesStart,
+  'Communication identity routes must be grouped before conversation routes.'
+);
+
+assert(
+  /getPgPool\(\)/.test(identityRoutes) &&
+    /sendConversationPostgresUnavailable\(response\)/.test(identityRoutes) &&
+    /store\.getSenderIdentitySummary\(\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID/.test(
+      identityRoutes
+    ) &&
+    /store\.listSenderIdentities\(\{[\s\S]*workspaceId:\s*CONVERSATION_WORKSPACE_ID[\s\S]*channel:[\s\S]*provider:[\s\S]*lifecycleStatus:/.test(
+      identityRoutes
+    ),
+  'GET /api/communication-identities must be degraded-safe, workspace scoped, and filter through the store.'
+);
+
+assert(
+  /pathname === '\/api\/communication-identities\/sync'/.test(identityRoutes) &&
+    /Promise\.allSettled\(\[\s*getTelnyxNumberOptions\(\),\s*getInstantlySenderOptions\(\)/.test(
+      identityRoutes
+    ) &&
+    /normalizeTelnyxSenderIdentity/.test(identityRoutes) &&
+    /normalizeInstantlySenderIdentity/.test(identityRoutes) &&
+    /store\.syncSenderIdentity/.test(identityRoutes) &&
+    /providers:\s*providerSync/.test(identityRoutes),
+  'Sender identity sync must isolate provider failures and persist through the lifecycle-preserving helper.'
+);
+
+assert(
+  /function parseCommunicationIdentityPatchBody/.test(bridge) &&
+    /new Set\(\['active', 'paused', 'quarantined', 'retired'\]\)/.test(bridge) &&
+    /const allowedFields = new Set\(\['lifecycleStatus', 'reason'\]\)/.test(bridge) &&
+    /Unknown communication identity patch fields/.test(bridge) &&
+    /decodeCommunicationIdentityPathId/.test(identityRoutes) &&
+    /store\.getSenderIdentity\(identityId,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID/.test(
+      identityRoutes
+    ) &&
+    /store\.patchSenderIdentity\(identityId,\s*patch,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID/.test(
+      identityRoutes
+    ) &&
+    /inboundGraceUntil/.test(identityRoutes) &&
+    /retiredAt/.test(identityRoutes),
+  'Lifecycle PATCH must decode paths, validate the exact body, preserve the row, and scope reads/writes.'
+);
+
+const identityPatchStart = identityRoutes.indexOf(
+  "if (communicationIdentityMatch && request.method === 'PATCH')"
+);
+const identityPatchEnd = identityRoutes.indexOf(
+  "if (communicationIdentityReleaseRequestMatch && request.method === 'POST')",
+  identityPatchStart
+);
+const identityPatchRoute = identityRoutes.slice(identityPatchStart, identityPatchEnd);
+assert(
+  identityPatchStart >= 0 &&
+    identityPatchEnd > identityPatchStart &&
+    !/delete|releaseTelnyx|updateTelnyxPhoneNumber|fireTelnyxRequest|fireInstantlyRequest/i.test(
+      identityPatchRoute
+    ),
+  'Lifecycle PATCH must never invoke provider release or delete operations.'
+);
+
+assert(
+  /parseCommunicationIdentityReleaseRequestBody/.test(bridge) &&
+    /type:\s*'provider_identity_release'/.test(identityRoutes) &&
+    /approvalAction:\s*'release_communication_identity'/.test(identityRoutes) &&
+    /payload:\s*\{\s*identityId,\s*provider:\s*identity\.provider,\s*address:\s*identity\.address/.test(
+      identityRoutes
+    ) &&
+    /lifecycleStatus:\s*'release_pending'/.test(identityRoutes) &&
+    /releaseApprovalId:\s*approval\.id/.test(identityRoutes),
+  'Release requests must create the dedicated approval and preserve its ID on release_pending identities.'
+);
+
+assert(
+  /parseCommunicationIdentityReleaseBody/.test(bridge) &&
+    /const allowedFields = new Set\(\['approvalId'\]\)/.test(bridge) &&
+    /approval\.status[\s\S]*approved/.test(identityRoutes) &&
+    /approval\.type[\s\S]*provider_identity_release/.test(identityRoutes) &&
+    /approval\.approvalAction[\s\S]*release_communication_identity/.test(identityRoutes) &&
+    /approval\.payload\?\.identityId[\s\S]*identityId/.test(identityRoutes) &&
+    /approval\.payload\?\.provider[\s\S]*identity\.provider/.test(identityRoutes) &&
+    /approval\.payload\?\.address[\s\S]*identity\.address/.test(identityRoutes) &&
+    /json\(response,\s*501,\s*\{\s*ok:\s*false,\s*result:\s*'provider_release_not_configured',?\s*\}\)/.test(
+      identityRoutes
+    ),
+  'Internal release must verify the exact approved payload and return 501 without faking provider success.'
+);
+
+assert(
+  /async function getSenderIdentity\(identityId,\s*options = \{ workspaceId: 'pbk' \}\)/.test(
+    storeSource
+  ) &&
+    /async function syncSenderIdentity\(identity = \{\}\)/.test(storeSource) &&
+    /async function patchSenderIdentity\(\s*identityId,\s*patch = \{\},\s*options = \{ workspaceId: 'pbk' \}\s*\)/.test(
+      storeSource
+    ) &&
+    /WHERE id = \$1[\s\S]*workspace_id = \$2/.test(storeSource),
+  'Sender identity get/patch/sync store operations must preserve lifecycle and workspace scope.'
+);
+
+const senderListStart = storeSource.indexOf('async function listSenderIdentities(filters = {})');
+const senderListEnd = storeSource.indexOf(
+  '\n  async function getSenderIdentity(',
+  senderListStart
+);
+const senderListSource = storeSource.slice(senderListStart, senderListEnd);
+const senderListProjection =
+  senderListSource.match(/SELECT([\s\S]*?)FROM public\.communication_sender_identities/)?.[1] ||
+  '';
+assert(
+  senderListStart >= 0 &&
+    senderListEnd > senderListStart &&
+    senderListProjection &&
+    !/\*/.test(senderListProjection) &&
+    !/provider_identity_id|normalized_address|metadata/.test(senderListProjection),
+  'Communication identity lists must project only approved safe fields.'
+);
+
+assert(
+  !/(?:PUBLIC_(?:READ_)?PATHS|isPublicBridgeRequest)[\s\S]{0,400}\/api\/communication-identities/.test(
+    bridge
+  ),
+  'Communication identity routes must remain behind the existing bridge authentication gate.'
 );
 
 assert(

@@ -93,6 +93,27 @@ export function mapSenderIdentityRow(row) {
   };
 }
 
+function mapSafeSenderIdentityRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    provider: row.provider,
+    channel: row.channel,
+    address: row.address,
+    label: row.label,
+    region: row.region,
+    lifecycleStatus: row.lifecycle_status,
+    healthStatus: row.health_status,
+    healthScore: numericValue(row.health_score),
+    isWorkspaceDefault: row.is_workspace_default,
+    inboundGraceUntil: row.inbound_grace_until,
+    retiredAt: row.retired_at,
+    releasedAt: row.released_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function requiredText(value, name) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) throw new Error(`${name} is required`);
@@ -1370,7 +1391,22 @@ export function createConversationStore(pool) {
     params.push(boundedLimit(filters.limit, MAX_PAGE_LIMIT));
     const result = await pool.query(
       `
-        SELECT *
+        SELECT
+          id,
+          provider,
+          channel,
+          address,
+          label,
+          region,
+          lifecycle_status,
+          health_status,
+          health_score,
+          is_workspace_default,
+          inbound_grace_until,
+          retired_at,
+          released_at,
+          created_at,
+          updated_at
         FROM public.communication_sender_identities
         WHERE ${conditions.join('\n          AND ')}
         ORDER BY is_workspace_default DESC, health_score DESC NULLS LAST, id
@@ -1378,7 +1414,23 @@ export function createConversationStore(pool) {
       `,
       params
     );
-    return result.rows.map(mapSenderIdentityRow);
+    return result.rows.map(mapSafeSenderIdentityRow);
+  }
+
+  async function getSenderIdentity(identityId, options = { workspaceId: 'pbk' }) {
+    const id = requiredText(identityId, 'identityId');
+    const workspace = requiredWorkspaceId(options.workspaceId);
+    const result = await pool.query(
+      `
+        SELECT *
+        FROM public.communication_sender_identities
+        WHERE id = $1
+          AND workspace_id = $2
+        LIMIT 1
+      `,
+      [id, workspace]
+    );
+    return mapSenderIdentityRow(result.rows[0]);
   }
 
   async function getSenderIdentitySummary({ workspaceId: workspaceInput } = {}) {
@@ -1468,7 +1520,7 @@ export function createConversationStore(pool) {
     };
   }
 
-  async function upsertSenderIdentity(identity = {}) {
+  async function upsertSenderIdentity(identity = {}, options = {}) {
     const workspace = workspaceId(identity.workspaceId);
     const provider = requiredText(identity.provider, 'provider');
     const channel = requiredText(identity.channel, 'channel');
@@ -1536,7 +1588,9 @@ export function createConversationStore(pool) {
             WHEN $19::boolean THEN EXCLUDED.region
             ELSE existing.region
           END,
-          lifecycle_status = CASE WHEN $20::boolean THEN EXCLUDED.lifecycle_status
+          lifecycle_status = CASE
+            WHEN $28::boolean THEN existing.lifecycle_status
+            WHEN $20::boolean THEN EXCLUDED.lifecycle_status
             ELSE existing.lifecycle_status
           END,
           health_status = CASE
@@ -1563,7 +1617,9 @@ export function createConversationStore(pool) {
             WHEN $26::boolean THEN EXCLUDED.released_at
             ELSE existing.released_at
           END,
-          metadata = CASE WHEN $27::boolean THEN EXCLUDED.metadata
+          metadata = CASE
+            WHEN $28::boolean THEN existing.metadata || EXCLUDED.metadata
+            WHEN $27::boolean THEN EXCLUDED.metadata
             ELSE existing.metadata
           END,
           updated_at = NOW()
@@ -1587,13 +1643,29 @@ export function createConversationStore(pool) {
         identity.releasedAt ?? null,
         JSON.stringify(identity.metadata ?? {}),
         ...provided,
+        options.preserveExistingLifecycle === true,
       ]
     );
     return mapSenderIdentityRow(result.rows[0]);
   }
 
-  async function patchSenderIdentity(identityId, patch = {}) {
+  async function syncSenderIdentity(identity = {}) {
+    return upsertSenderIdentity(identity, {
+      preserveExistingLifecycle: true,
+    });
+  }
+
+  async function patchSenderIdentity(identityId, patch = {}, options = { workspaceId: 'pbk' }) {
     const id = requiredText(identityId, 'identityId');
+    const workspace = requiredWorkspaceId(options.workspaceId);
+    if (
+      !patch ||
+      typeof patch !== 'object' ||
+      Array.isArray(patch) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(patch))
+    ) {
+      throw new Error('Sender identity patch must be a plain object');
+    }
     const fields = [
       ['label', 'label'],
       ['region', 'region'],
@@ -1611,7 +1683,7 @@ export function createConversationStore(pool) {
     if (unknownFields.length) {
       throw new Error(`Unknown sender identity patch fields: ${unknownFields.join(', ')}`);
     }
-    const params = [id];
+    const params = [id, workspace];
     const assignments = [];
     for (const [property, column] of fields) {
       if (!Object.hasOwn(patch, property) || patch[property] === undefined) continue;
@@ -1626,6 +1698,7 @@ export function createConversationStore(pool) {
         UPDATE public.communication_sender_identities
         SET ${assignments.join(', ')}, updated_at = NOW()
         WHERE id = $1
+          AND workspace_id = $2
         RETURNING *
       `,
       params
@@ -1642,8 +1715,10 @@ export function createConversationStore(pool) {
     patchThread,
     mergeThreads,
     listSenderIdentities,
+    getSenderIdentity,
     getSenderIdentitySummary,
     upsertSenderIdentity,
+    syncSenderIdentity,
     patchSenderIdentity,
   };
 }

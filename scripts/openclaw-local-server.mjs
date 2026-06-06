@@ -33,6 +33,7 @@ import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSch
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
+import { normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity } from './conversation-identity.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
 import { createConversationStore } from './conversation-store.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -43888,6 +43889,13 @@ const toolHandlers = {
       reviewerEmail: params.reviewerEmail || '',
       reviewerName: params.reviewerName || '',
       sellerNotice: params.sellerNotice || '',
+      payload:
+        params.payload &&
+        typeof params.payload === 'object' &&
+        !Array.isArray(params.payload) &&
+        [Object.prototype, null].includes(Object.getPrototypeOf(params.payload))
+          ? params.payload
+          : {},
       metadata: params.metadata && typeof params.metadata === 'object' ? params.metadata : {},
       notes: params.notes || '',
       status: 'pending',
@@ -49234,6 +49242,17 @@ function sendConversationPostgresUnavailable(response) {
 }
 
 const CONVERSATION_WORKSPACE_ID = 'pbk';
+const COMMUNICATION_IDENTITY_INBOUND_GRACE_DAYS = Math.max(
+  1,
+  Math.min(
+    365,
+    Number(
+      process.env.PBK_COMMUNICATION_IDENTITY_INBOUND_GRACE_DAYS ||
+        process.env.PBK_SENDER_IDENTITY_INBOUND_GRACE_DAYS ||
+        30
+    ) || 30
+  )
+);
 
 function decodeConversationPathId(rawValue = '') {
   try {
@@ -49245,6 +49264,153 @@ function decodeConversationPathId(rawValue = '') {
       statusCode: 400,
     });
   }
+}
+
+function decodeCommunicationIdentityPathId(rawValue = '') {
+  try {
+    const decoded = decodeURIComponent(String(rawValue || '')).trim();
+    if (!decoded || decoded.includes('/') || /[\u0000-\u001f\u007f]/.test(decoded)) {
+      throw new Error('invalid communication identity ID');
+    }
+    return decoded;
+  } catch {
+    throw Object.assign(new Error('Invalid encoded communication identity ID.'), {
+      statusCode: 400,
+    });
+  }
+}
+
+function requirePlainCommunicationIdentityBody(body, message) {
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(body))
+  ) {
+    throw Object.assign(new Error(message), { statusCode: 400 });
+  }
+  return body;
+}
+
+function parseCommunicationIdentitySyncBody(body) {
+  requirePlainCommunicationIdentityBody(
+    body,
+    'Communication identity sync body must be a plain JSON object.'
+  );
+  const unknownFields = Object.keys(body);
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(`Unknown communication identity sync fields: ${unknownFields.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+}
+
+function parseCommunicationIdentityPatchBody(body) {
+  requirePlainCommunicationIdentityBody(
+    body,
+    'Communication identity patch body must be a plain JSON object.'
+  );
+  const allowedFields = new Set(['lifecycleStatus', 'reason']);
+  const unknownFields = Object.keys(body).filter((key) => !allowedFields.has(key));
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(`Unknown communication identity patch fields: ${unknownFields.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+  const lifecycleStatuses = new Set(['active', 'paused', 'quarantined', 'retired']);
+  if (
+    typeof body.lifecycleStatus !== 'string' ||
+    !lifecycleStatuses.has(body.lifecycleStatus.trim().toLowerCase())
+  ) {
+    throw Object.assign(
+      new Error('lifecycleStatus must be active, paused, quarantined, or retired.'),
+      { statusCode: 400 }
+    );
+  }
+  if (Object.hasOwn(body, 'reason') && typeof body.reason !== 'string') {
+    throw Object.assign(new Error('reason must be a string when provided.'), {
+      statusCode: 400,
+    });
+  }
+  return {
+    lifecycleStatus: body.lifecycleStatus.trim().toLowerCase(),
+    reason: typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : '',
+  };
+}
+
+function parseCommunicationIdentityReleaseRequestBody(body) {
+  requirePlainCommunicationIdentityBody(
+    body,
+    'Communication identity release request body must be a plain JSON object.'
+  );
+  const allowedFields = new Set(['reason']);
+  const unknownFields = Object.keys(body).filter((key) => !allowedFields.has(key));
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(
+        `Unknown communication identity release request fields: ${unknownFields.join(', ')}`
+      ),
+      { statusCode: 400 }
+    );
+  }
+  if (Object.hasOwn(body, 'reason') && typeof body.reason !== 'string') {
+    throw Object.assign(new Error('reason must be a string when provided.'), {
+      statusCode: 400,
+    });
+  }
+  return {
+    reason: typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : '',
+  };
+}
+
+function parseCommunicationIdentityReleaseBody(body) {
+  requirePlainCommunicationIdentityBody(
+    body,
+    'Communication identity release body must be a plain JSON object.'
+  );
+  const allowedFields = new Set(['approvalId']);
+  const unknownFields = Object.keys(body).filter((key) => !allowedFields.has(key));
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(`Unknown communication identity release fields: ${unknownFields.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+  if (typeof body.approvalId !== 'string' || !body.approvalId.trim()) {
+    throw Object.assign(new Error('approvalId is required.'), {
+      statusCode: 400,
+    });
+  }
+  return { approvalId: body.approvalId.trim() };
+}
+
+function buildCommunicationIdentityLifecycleMetadata(
+  identity,
+  lifecycleStatus,
+  reason,
+  changedAt
+) {
+  const currentMetadata =
+    identity?.metadata && typeof identity.metadata === 'object' && !Array.isArray(identity.metadata)
+      ? identity.metadata
+      : {};
+  const lifecycleHistory = Array.isArray(currentMetadata.lifecycleHistory)
+    ? currentMetadata.lifecycleHistory.slice(-49)
+    : [];
+  lifecycleHistory.push({
+    from: identity?.lifecycleStatus || '',
+    to: lifecycleStatus,
+    reason: reason || '',
+    at: changedAt,
+  });
+  return {
+    ...currentMetadata,
+    lifecycleHistory,
+    lifecycleChangedAt: changedAt,
+    ...(reason ? { lifecycleReason: reason } : {}),
+  };
 }
 
 function parseConversationBooleanQuery(searchParams, key) {
@@ -56241,6 +56407,387 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && pathname === '/api/instantly/senders') {
       const result = await getInstantlySenderOptions();
       json(response, 200, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/communication-identities') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const store = createConversationStore(pool);
+        const [summary, items] = await Promise.all([
+          store.getSenderIdentitySummary({
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          }),
+          store.listSenderIdentities({
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+            channel: url.searchParams.get('channel') || undefined,
+            provider: url.searchParams.get('provider') || undefined,
+            lifecycleStatus:
+              url.searchParams.get('lifecycle') ||
+              url.searchParams.get('lifecycleStatus') ||
+              undefined,
+          }),
+        ]);
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          summary,
+          items,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to list communication identities.'
+        );
+      }
+      return;
+    }
+
+    if (
+      request.method === 'POST' &&
+      pathname === '/api/communication-identities/sync'
+    ) {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        parseCommunicationIdentitySyncBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const providerResults = await Promise.allSettled([
+          getTelnyxNumberOptions(),
+          getInstantlySenderOptions(),
+        ]);
+        const providerSync = {};
+        const synced = [];
+        const providers = [
+          {
+            name: 'telnyx',
+            settlement: providerResults[0],
+            recordsKey: 'numbers',
+            normalize: normalizeTelnyxSenderIdentity,
+            defaultKey: 'defaultNumber',
+          },
+          {
+            name: 'instantly',
+            settlement: providerResults[1],
+            recordsKey: 'senders',
+            normalize: normalizeInstantlySenderIdentity,
+            defaultKey: 'defaultEmail',
+          },
+        ];
+
+        for (const provider of providers) {
+          if (provider.settlement.status === 'rejected') {
+            providerSync[provider.name] = {
+              ok: false,
+              result: 'provider_error',
+              error:
+                provider.settlement.reason?.message ||
+                `${provider.name} sender inventory failed.`,
+              received: 0,
+              valid: 0,
+              synced: 0,
+            };
+            continue;
+          }
+
+          const providerResult = provider.settlement.value || {};
+          const records = Array.isArray(providerResult[provider.recordsKey])
+            ? providerResult[provider.recordsKey]
+            : [];
+          const identities = records
+            .map((record) =>
+              provider.normalize(record, providerResult[provider.defaultKey] || '')
+            )
+            .filter(Boolean);
+          let syncedCount = 0;
+          for (const identity of identities) {
+            const stored = await store.syncSenderIdentity({
+              ...identity,
+              workspaceId: CONVERSATION_WORKSPACE_ID,
+            });
+            if (stored) {
+              synced.push(stored);
+              syncedCount += 1;
+            }
+          }
+          providerSync[provider.name] = {
+            ok: providerResult.ok !== false,
+            result:
+              providerResult.result ||
+              (providerResult.ok === false ? 'provider_error' : 'live'),
+            error:
+              providerResult.ok === false
+                ? providerResult.error || providerResult.verbiage || ''
+                : '',
+            received: records.length,
+            valid: identities.length,
+            synced: syncedCount,
+          };
+        }
+
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          providers: providerSync,
+          synced,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to sync communication identities.'
+        );
+      }
+      return;
+    }
+
+    const communicationIdentityReleaseRequestMatch = matchPath(
+      pathname,
+      '/api/communication-identities/:identityId/release-request'
+    );
+    const communicationIdentityReleaseMatch = matchPath(
+      pathname,
+      '/api/communication-identities/:identityId/release'
+    );
+    const communicationIdentityMatch = matchPath(
+      pathname,
+      '/api/communication-identities/:identityId'
+    );
+
+    if (communicationIdentityMatch && request.method === 'PATCH') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const identityId = decodeCommunicationIdentityPathId(
+          communicationIdentityMatch.groups.identityId
+        );
+        const requested = parseCommunicationIdentityPatchBody(await readBody(request));
+        const store = createConversationStore(pool);
+        const identity = await store.getSenderIdentity(identityId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!identity) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Communication identity not found.',
+          });
+          return;
+        }
+        if (['released', 'release_pending'].includes(identity.lifecycleStatus)) {
+          throw Object.assign(
+            new Error(
+              `Communication identity in ${identity.lifecycleStatus} cannot be changed by lifecycle PATCH.`
+            ),
+            { statusCode: 409 }
+          );
+        }
+
+        const changedAt = isoNow();
+        const patch = {
+          lifecycleStatus: requested.lifecycleStatus,
+          metadata: buildCommunicationIdentityLifecycleMetadata(
+            identity,
+            requested.lifecycleStatus,
+            requested.reason,
+            changedAt
+          ),
+        };
+        if (requested.lifecycleStatus === 'retired') {
+          patch.retiredAt = changedAt;
+          patch.inboundGraceUntil = new Date(
+            Date.parse(changedAt) +
+              COMMUNICATION_IDENTITY_INBOUND_GRACE_DAYS * 24 * 60 * 60 * 1000
+          ).toISOString();
+        }
+        const updatedIdentity = await store.patchSenderIdentity(identityId, patch, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        json(response, updatedIdentity ? 200 : 404, {
+          ok: Boolean(updatedIdentity),
+          result: 'postgres',
+          identity: updatedIdentity,
+          error: updatedIdentity ? undefined : 'Communication identity not found.',
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to update the communication identity.'
+        );
+      }
+      return;
+    }
+
+    if (communicationIdentityReleaseRequestMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const identityId = decodeCommunicationIdentityPathId(
+          communicationIdentityReleaseRequestMatch.groups.identityId
+        );
+        const { reason } = parseCommunicationIdentityReleaseRequestBody(
+          await readBody(request)
+        );
+        const store = createConversationStore(pool);
+        const identity = await store.getSenderIdentity(identityId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!identity) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Communication identity not found.',
+          });
+          return;
+        }
+        if (!['retired', 'quarantined', 'paused'].includes(identity.lifecycleStatus)) {
+          throw Object.assign(
+            new Error(
+              `Communication identity in ${identity.lifecycleStatus} cannot request provider release.`
+            ),
+            { statusCode: 409 }
+          );
+        }
+
+        const approvalResult = await toolHandlers.createApproval({
+          type: 'provider_identity_release',
+          approvalAction: 'release_communication_identity',
+          provider: identity.provider,
+          address: identity.address,
+          payload: {
+            identityId,
+            provider: identity.provider,
+            address: identity.address,
+          },
+          notes: reason,
+          metadata: {
+            identityId,
+            provider: identity.provider,
+            address: identity.address,
+            reason,
+          },
+        });
+        const approval = approvalResult.approval;
+        const changedAt = isoNow();
+        const updatedIdentity = await store.patchSenderIdentity(
+          identityId,
+          {
+            lifecycleStatus: 'release_pending',
+            metadata: {
+              ...buildCommunicationIdentityLifecycleMetadata(
+                identity,
+                'release_pending',
+                reason,
+                changedAt
+              ),
+              releaseApprovalId: approval.id,
+              releaseRequestedAt: changedAt,
+            },
+          },
+          { workspaceId: CONVERSATION_WORKSPACE_ID }
+        );
+        json(response, 202, {
+          ok: true,
+          result: 'queued_for_approval',
+          approval,
+          identity: updatedIdentity,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to request communication identity release.'
+        );
+      }
+      return;
+    }
+
+    if (communicationIdentityReleaseMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const identityId = decodeCommunicationIdentityPathId(
+          communicationIdentityReleaseMatch.groups.identityId
+        );
+        const { approvalId } = parseCommunicationIdentityReleaseBody(
+          await readBody(request)
+        );
+        const store = createConversationStore(pool);
+        const identity = await store.getSenderIdentity(identityId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!identity) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Communication identity not found.',
+          });
+          return;
+        }
+        if (identity.lifecycleStatus !== 'release_pending') {
+          json(response, 409, {
+            ok: false,
+            result: 'release_not_pending',
+            error: 'Communication identity is not pending provider release.',
+          });
+          return;
+        }
+
+        const approval = state.approvals.find((item) => item.id === approvalId);
+        if (!approval) {
+          json(response, 404, {
+            ok: false,
+            result: 'approval_not_found',
+            error: 'Communication identity release approval was not found.',
+          });
+          return;
+        }
+        const approvalMatches =
+          String(approval.status || '').toLowerCase() === 'approved' &&
+          String(approval.type || '').toLowerCase() === 'provider_identity_release' &&
+          String(approval.approvalAction || '').toLowerCase() ===
+            'release_communication_identity' &&
+          approval.payload?.identityId === identityId &&
+          approval.payload?.provider === identity.provider &&
+          approval.payload?.address === identity.address;
+        if (!approvalMatches) {
+          json(response, 403, {
+            ok: false,
+            result: 'approval_mismatch',
+            error: 'Approved release payload does not match this communication identity.',
+          });
+          return;
+        }
+
+        json(response, 501, {
+          ok: false,
+          result: 'provider_release_not_configured',
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to release the communication identity.'
+        );
+      }
       return;
     }
 

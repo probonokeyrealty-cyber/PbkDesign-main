@@ -1457,6 +1457,26 @@ describe('conversation mutation allowlists and merging', () => {
 });
 
 describe('sender identity persistence', () => {
+  test('gets a sender identity only within the requested workspace', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return { rows: [senderRow()] };
+      },
+    };
+
+    await expect(
+      createConversationStore(pool).getSenderIdentity('sender-1', {
+        workspaceId: 'workspace-a',
+      })
+    ).resolves.toMatchObject({ id: 'sender-1' });
+
+    expect(queries[0].sql).toContain('WHERE id = $1');
+    expect(queries[0].sql).toContain('workspace_id = $2');
+    expect(queries[0].params).toEqual(['sender-1', 'workspace-a']);
+  });
+
   test('returns exact sender counts and all safe active/default items without a 100-row cap', async () => {
     const safeItems = Array.from({ length: 105 }, (_, index) =>
       senderRow({
@@ -1539,11 +1559,15 @@ describe('sender identity persistence', () => {
     ).resolves.toMatchObject({ id: 'sender-1', normalizedAddress: '+16145550199' });
 
     await expect(
-      store.patchSenderIdentity('sender-1', {
-        lifecycleStatus: 'retired',
-        retiredAt: '2026-06-06T13:00:00.000Z',
-        metadata: { reason: "owner's request" },
-      })
+      store.patchSenderIdentity(
+        'sender-1',
+        {
+          lifecycleStatus: 'retired',
+          retiredAt: '2026-06-06T13:00:00.000Z',
+          metadata: { reason: "owner's request" },
+        },
+        { workspaceId: 'workspace-a' }
+      )
     ).resolves.toMatchObject({ id: 'sender-1' });
 
     const upsertQuery = queries.find(({ sql }) =>
@@ -1560,6 +1584,8 @@ describe('sender identity persistence', () => {
         !sql.includes('ON CONFLICT')
     );
     expect(patchQuery.sql).not.toContain("owner's request");
+    expect(patchQuery.sql).toContain('workspace_id = $2');
+    expect(patchQuery.params.slice(0, 2)).toEqual(['sender-1', 'workspace-a']);
     expect(patchQuery.params).toContain(JSON.stringify({ reason: "owner's request" }));
   });
 
@@ -1619,12 +1645,94 @@ describe('sender identity persistence', () => {
     expect(queries[0].sql).toContain(
       'ON CONFLICT (workspace_id, provider, channel, normalized_address)'
     );
-    expect(queries[0].sql).toContain(
-      'lifecycle_status = CASE WHEN $20::boolean THEN EXCLUDED.lifecycle_status'
-    );
-    expect(queries[0].sql).toContain('metadata = CASE WHEN $27::boolean THEN EXCLUDED.metadata');
+    expect(queries[0].sql).toContain('lifecycle_status = CASE');
+    expect(queries[0].sql).toContain('WHEN $20::boolean THEN EXCLUDED.lifecycle_status');
+    expect(queries[0].sql).toContain('metadata = CASE');
+    expect(queries[0].sql).toContain('WHEN $27::boolean THEN EXCLUDED.metadata');
     expect(queries[0].params[19]).toBe(false);
     expect(queries[0].params[26]).toBe(false);
+  });
+
+  test.each(['retired', 'quarantined', 'release_pending', 'released'])(
+    'sync preserves locally managed %s lifecycle and historical metadata',
+    async (lifecycleStatus) => {
+      const queries = [];
+      const pool = {
+        async query(sql, params) {
+          queries.push({ sql, params });
+          return {
+            rows: [
+              senderRow({
+                lifecycle_status: lifecycleStatus,
+                retired_at: '2026-06-05T00:00:00.000Z',
+                metadata: {
+                  releaseApprovalId: 'approval-1',
+                  providerStatus: 'active',
+                },
+              }),
+            ],
+          };
+        },
+      };
+
+      await expect(
+        createConversationStore(pool).syncSenderIdentity({
+          workspaceId: 'pbk',
+          provider: 'telnyx',
+          providerIdentityId: 'provider-1',
+          channel: 'sms',
+          address: '+16145550199',
+          normalizedAddress: '+16145550199',
+          lifecycleStatus: 'active',
+          healthStatus: 'healthy',
+          metadata: { providerStatus: 'healthy' },
+        })
+      ).resolves.toMatchObject({
+        lifecycleStatus,
+        retiredAt: '2026-06-05T00:00:00.000Z',
+        metadata: {
+          releaseApprovalId: 'approval-1',
+          providerStatus: 'active',
+        },
+      });
+
+      expect(queries).toHaveLength(1);
+      expect(queries[0].sql).toContain('WHEN $28::boolean THEN existing.lifecycle_status');
+      expect(queries[0].sql).toContain('existing.metadata || EXCLUDED.metadata');
+      expect(queries[0].params[27]).toBe(true);
+    }
+  );
+
+  test('lifecycle patches preserve historical timestamps unless explicitly changed', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return {
+          rows: [
+            senderRow({
+              lifecycle_status: 'paused',
+              retired_at: '2026-06-05T00:00:00.000Z',
+              inbound_grace_until: '2026-07-05T00:00:00.000Z',
+            }),
+          ],
+        };
+      },
+    };
+
+    await createConversationStore(pool).patchSenderIdentity(
+      'sender-1',
+      {
+        lifecycleStatus: 'paused',
+        metadata: { lifecycleReason: 'manual pause' },
+      },
+      { workspaceId: 'pbk' }
+    );
+
+    expect(queries[0].sql).toContain('lifecycle_status = $3');
+    expect(queries[0].sql).toContain('metadata = $4::jsonb');
+    expect(queries[0].sql).not.toContain('retired_at =');
+    expect(queries[0].sql).not.toContain('inbound_grace_until =');
   });
 });
 

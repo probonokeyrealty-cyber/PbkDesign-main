@@ -1,6 +1,8 @@
 import {
   normalizeConversationEmail,
   normalizeConversationPhone,
+  normalizeInstantlySenderIdentity,
+  normalizeTelnyxSenderIdentity,
   rankEligibleSenderIdentities,
 } from './conversation-identity.mjs';
 
@@ -29,6 +31,198 @@ describe('conversation identity normalization', () => {
     [null, ''],
   ])('normalizes email value %p', (value, expected) => {
     expect(normalizeConversationEmail(value)).toBe(expected);
+  });
+});
+
+describe('provider sender identity normalization', () => {
+  test.each([
+    [
+      {
+        id: 'telnyx-snake',
+        phone_number: '(614) 555-0199',
+        customer_reference: 'Columbus acquisitions',
+        region_code: 'US-OH',
+        status: 'active',
+        connection_id: 'connection-1',
+        messaging_profile_id: 'profile-1',
+        connectionMatchesBridge: true,
+        api_key: 'must-not-leak',
+      },
+      '+16145550199',
+      {
+        providerIdentityId: 'telnyx-snake',
+        label: 'Columbus acquisitions',
+        region: 'US-OH',
+        lifecycleStatus: 'active',
+        healthStatus: 'active',
+        isWorkspaceDefault: true,
+      },
+    ],
+    [
+      {
+        phoneNumber: '+45 12 34 56 78',
+        customerReference: 'Denmark',
+        region: 'DK',
+        status: 'connected',
+        connectionId: 'connection-2',
+        messagingProfileId: 'profile-2',
+        token: 'must-not-leak',
+      },
+      '',
+      {
+        providerIdentityId: '+4512345678',
+        label: 'Denmark',
+        region: 'DK',
+        lifecycleStatus: 'active',
+        healthStatus: 'connected',
+        isWorkspaceDefault: false,
+      },
+    ],
+  ])('normalizes Telnyx snake/camel records safely', (record, defaultNumber, expected) => {
+    const identity = normalizeTelnyxSenderIdentity(record, defaultNumber);
+
+    expect(identity).toMatchObject({
+      provider: 'telnyx',
+      channel: 'sms',
+      address: expected.providerIdentityId.startsWith('+')
+        ? expected.providerIdentityId
+        : '+16145550199',
+      normalizedAddress: expected.providerIdentityId.startsWith('+')
+        ? expected.providerIdentityId
+        : '+16145550199',
+      ...expected,
+    });
+    expect(identity.metadata).not.toHaveProperty('api_key');
+    expect(identity.metadata).not.toHaveProperty('token');
+  });
+
+  test.each([
+    ['deleted', 'retired'],
+    ['disconnected', 'quarantined'],
+    ['disabled', 'quarantined'],
+    ['failed', 'quarantined'],
+    ['mystery-state', 'quarantined'],
+    ['', 'quarantined'],
+  ])('fails Telnyx status %p closed', (status, lifecycleStatus) => {
+    expect(
+      normalizeTelnyxSenderIdentity({
+        id: `telnyx-${status || 'missing'}`,
+        phone_number: '+16145550199',
+        status,
+      })
+    ).toMatchObject({ lifecycleStatus });
+  });
+
+  test.each([
+    [
+      {
+        id: 'instantly-snake',
+        email_address: ' Seller@Example.COM ',
+        display_name: 'Seller inbox',
+        provider_name: 'Google',
+        status: 'active',
+        warmup_status: 'warming',
+        password: 'must-not-leak',
+      },
+      'seller@example.com',
+      {
+        providerIdentityId: 'instantly-snake',
+        lifecycleStatus: 'warming',
+        healthStatus: 'active',
+        isWorkspaceDefault: true,
+      },
+    ],
+    [
+      {
+        uuid: 'instantly-camel',
+        emailAddress: 'ready@example.com',
+        displayName: 'Ready inbox',
+        providerName: 'Microsoft',
+        status: 'healthy',
+        warmupStatus: 'complete',
+        apiKey: 'must-not-leak',
+      },
+      '',
+      {
+        providerIdentityId: 'instantly-camel',
+        lifecycleStatus: 'active',
+        healthStatus: 'healthy',
+        isWorkspaceDefault: false,
+      },
+    ],
+  ])('normalizes Instantly snake/camel records safely', (record, defaultEmail, expected) => {
+    const identity = normalizeInstantlySenderIdentity(record, defaultEmail);
+
+    expect(identity).toMatchObject({
+      provider: 'instantly',
+      channel: 'email',
+      address: String(record.email_address || record.emailAddress)
+        .trim()
+        .toLowerCase(),
+      normalizedAddress: String(record.email_address || record.emailAddress)
+        .trim()
+        .toLowerCase(),
+      ...expected,
+    });
+    expect(identity.metadata).not.toHaveProperty('password');
+    expect(identity.metadata).not.toHaveProperty('apiKey');
+  });
+
+  test.each([
+    ['warming', 'warming'],
+    ['warmup', 'warming'],
+    ['paused', 'paused'],
+    ['disabled', 'paused'],
+    ['error', 'quarantined'],
+    ['failed', 'quarantined'],
+    ['connected', 'active'],
+    ['unknown-state', 'paused'],
+    ['', 'paused'],
+  ])('maps Instantly status %p fail-closed', (status, lifecycleStatus) => {
+    expect(
+      normalizeInstantlySenderIdentity({
+        id: `instantly-${status || 'missing'}`,
+        email: 'sender@example.com',
+        status,
+      })
+    ).toMatchObject({ lifecycleStatus });
+  });
+
+  test.each([
+    [normalizeTelnyxSenderIdentity, {}, ''],
+    [normalizeTelnyxSenderIdentity, { phone_number: 'not-a-phone' }, '+16145550199'],
+    [normalizeInstantlySenderIdentity, {}, ''],
+    [normalizeInstantlySenderIdentity, { email: 'not-an-email' }, 'sender@example.com'],
+  ])('returns null for invalid provider addresses', (normalize, record, fallback) => {
+    expect(normalize(record, fallback)).toBeNull();
+  });
+
+  test('does not mutate provider records and emits only allowlisted metadata', () => {
+    const telnyx = Object.freeze({
+      id: 'telnyx-1',
+      phoneNumber: '+16145550199',
+      status: 'active',
+      connectionId: 'connection-1',
+      nested: Object.freeze({ secret: 'nope' }),
+      raw: Object.freeze({ apiKey: 'nope' }),
+    });
+    const instantly = Object.freeze({
+      id: 'instantly-1',
+      email: 'sender@example.com',
+      status: 'active',
+      smtpPassword: 'nope',
+      raw: Object.freeze({ token: 'nope' }),
+    });
+
+    expect(normalizeTelnyxSenderIdentity(telnyx).metadata).toEqual({
+      providerStatus: 'active',
+      connectionId: 'connection-1',
+    });
+    expect(normalizeInstantlySenderIdentity(instantly).metadata).toEqual({
+      providerStatus: 'active',
+    });
+    expect(telnyx).toHaveProperty('raw');
+    expect(instantly).toHaveProperty('raw');
   });
 });
 

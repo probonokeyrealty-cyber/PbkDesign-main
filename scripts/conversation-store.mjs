@@ -128,6 +128,25 @@ function decodeCursor(value) {
   }
 }
 
+function decodeTimelineCursor(value) {
+  if (!value) return {};
+  if (typeof value === 'string') return decodeCursor(value);
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid cursor');
+  if (!value.cursor) return value;
+
+  const encoded = decodeCursor(value.cursor);
+  if (
+    Object.hasOwn(value, 'includeHidden') &&
+    Boolean(value.includeHidden) !== Boolean(encoded.includeHidden)
+  ) {
+    throw new Error('Timeline cursor visibility does not match the requested visibility');
+  }
+  return {
+    ...encoded,
+    limit: value.limit ?? encoded.limit,
+  };
+}
+
 async function withTransaction(pool, callback) {
   if (typeof pool?.connect !== 'function') {
     if (typeof pool?.query !== 'function') throw new Error('A Postgres pool is required');
@@ -196,11 +215,114 @@ async function lockLeadResolution(client, workspace, leadId) {
 }
 
 async function lockIdentityResolution(client, workspace, phone, email) {
-  const identityType = phone ? 'phone' : 'email';
-  const normalizedValue = phone || email;
-  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-    `conversation-identity:${workspace}:${identityType}:${normalizedValue}`,
-  ]);
+  const lockKeys = [
+    email ? `conversation-identity:${workspace}:email:${email}` : '',
+    phone ? `conversation-identity:${workspace}:phone:${phone}` : '',
+  ]
+    .filter(Boolean)
+    .sort();
+
+  for (const lockKey of lockKeys) {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [lockKey]);
+  }
+}
+
+async function findSourceEvent(client, event, { lock = false } = {}) {
+  if (!event.sourceTable || !event.sourceId) return null;
+  const result = await client.query(
+    `
+      SELECT id, thread_id
+      FROM public.conversation_events
+      WHERE workspace_id = $1
+        AND source_table = $2
+        AND source_id = $3
+        AND event_type = $4
+      LIMIT 1
+      ${lock ? 'FOR UPDATE' : ''}
+    `,
+    [event.workspace, event.sourceTable, event.sourceId, event.eventType]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function lockEventThreads(client, threadIds, workspace, requiredThreadId) {
+  const ids = [...new Set(threadIds.filter(Boolean))].sort();
+  const result = await client.query(
+    `
+      SELECT id, merged_into_thread_id
+      FROM public.conversation_threads
+      WHERE id = ANY($1::uuid[])
+        AND workspace_id = $2
+      ORDER BY id
+      FOR UPDATE
+    `,
+    [ids, workspace]
+  );
+  const requiredThread = result.rows.find((row) => row.id === requiredThreadId);
+  if (!requiredThread || requiredThread.merged_into_thread_id) {
+    throw new Error('Conversation thread is missing or already merged');
+  }
+  return ids;
+}
+
+async function recomputeThreadAggregates(client, threadIds) {
+  const ids = [...new Set(threadIds.filter(Boolean))].sort();
+  if (!ids.length) return [];
+  const result = await client.query(
+    `
+      WITH target_threads AS (
+        SELECT DISTINCT unnest($1::uuid[]) AS thread_id
+      ),
+      aggregates AS (
+        SELECT
+          target.thread_id,
+          MAX(event.occurred_at) AS last_event_at,
+          MAX(event.occurred_at) FILTER (
+            WHERE event.direction = 'inbound'
+          ) AS last_inbound_at,
+          MAX(event.occurred_at) FILTER (
+            WHERE event.direction = 'outbound'
+          ) AS last_outbound_at,
+          COUNT(event.id) FILTER (
+            WHERE event.direction = 'inbound'
+              AND event.read_at IS NULL
+              AND event.hidden_at IS NULL
+          )::integer AS unread_count
+        FROM target_threads AS target
+        LEFT JOIN public.conversation_events AS event
+          ON event.thread_id = target.thread_id
+        GROUP BY target.thread_id
+      )
+      UPDATE public.conversation_threads AS thread
+      SET
+        last_event_at = aggregates.last_event_at,
+        last_inbound_at = aggregates.last_inbound_at,
+        last_outbound_at = aggregates.last_outbound_at,
+        unread_count = aggregates.unread_count,
+        updated_at = NOW()
+      FROM aggregates
+      WHERE thread.id = aggregates.thread_id
+      RETURNING thread.*
+    `,
+    [ids]
+  );
+  return result.rows;
+}
+
+function mergeActorFields(actor) {
+  if (typeof actor === 'string') {
+    return { actorType: 'user', actorName: actor };
+  }
+  if (actor && typeof actor === 'object' && !Array.isArray(actor)) {
+    return {
+      actorType: typeof actor.type === 'string' && actor.type.trim() ? actor.type.trim() : 'user',
+      actorName:
+        (typeof actor.name === 'string' && actor.name.trim()) ||
+        (typeof actor.id === 'string' && actor.id.trim()) ||
+        '',
+    };
+  }
+  return { actorType: 'system', actorName: '' };
 }
 
 async function insertLeadThread(client, input) {
@@ -493,14 +615,15 @@ export function createConversationStore(pool) {
 
   async function listTimeline(threadId, cursorInput) {
     const id = requiredText(threadId, 'threadId');
-    const cursor = decodeCursor(cursorInput);
+    const cursor = decodeTimelineCursor(cursorInput);
+    const includeHidden = Boolean(cursor.includeHidden);
     const params = [id];
     const conditions = ['thread_id = $1'];
     const addParam = (value) => {
       params.push(value);
       return `$${params.length}`;
     };
-    if (!cursor.includeHidden) conditions.push('hidden_at IS NULL');
+    if (!includeHidden) conditions.push('hidden_at IS NULL');
     if (cursor.occurredAt && cursor.id) {
       conditions.push(
         `(occurred_at, id) < (${addParam(cursor.occurredAt)}::timestamptz, ${addParam(
@@ -528,7 +651,11 @@ export function createConversationStore(pool) {
       items,
       nextCursor:
         hasMore && lastItem
-          ? encodeCursor({ occurredAt: lastItem.occurredAt, id: lastItem.id })
+          ? encodeCursor({
+              occurredAt: lastItem.occurredAt,
+              id: lastItem.id,
+              includeHidden,
+            })
           : null,
     };
   }
@@ -538,25 +665,37 @@ export function createConversationStore(pool) {
     const eventType = requiredText(event.eventType, 'eventType');
     const workspace = workspaceId(event.workspaceId);
     const occurredAt = event.occurredAt ?? new Date().toISOString();
+    const sourceTable = event.sourceTable ?? '';
+    const sourceId = event.sourceId ?? '';
     const direction =
       typeof event.direction === 'string' && event.direction.trim()
         ? event.direction.trim()
         : 'internal';
 
     return withTransaction(pool, async (client) => {
-      const lockedThread = await client.query(
-        `
-          SELECT id
-          FROM public.conversation_threads
-          WHERE id = $1
-            AND workspace_id = $2
-            AND merged_into_thread_id IS NULL
-          FOR UPDATE
-        `,
-        [threadId, workspace]
+      const sourceKeyed = Boolean(sourceTable && sourceId);
+      if (sourceKeyed) {
+        await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+          `conversation-event:${workspace}:${sourceTable}:${sourceId}:${eventType}`,
+        ]);
+      }
+
+      const eventIdentity = {
+        workspace,
+        sourceTable,
+        sourceId,
+        eventType,
+      };
+      const previousEvent = await findSourceEvent(client, eventIdentity);
+      const lockedThreadIds = await lockEventThreads(
+        client,
+        [threadId, previousEvent?.thread_id],
+        workspace,
+        threadId
       );
-      if (!lockedThread.rows[0]) {
-        throw new Error('Conversation thread is missing or already merged');
+      const lockedEvent = await findSourceEvent(client, eventIdentity, { lock: true });
+      if (lockedEvent && !lockedThreadIds.includes(lockedEvent.thread_id)) {
+        throw new Error('Conversation event moved during lock acquisition; retry the operation');
       }
 
       const result = await client.query(
@@ -608,8 +747,8 @@ export function createConversationStore(pool) {
           eventType,
           event.channel ?? 'system',
           direction,
-          event.sourceTable ?? '',
-          event.sourceId ?? '',
+          sourceTable,
+          sourceId,
           event.provider ?? '',
           event.senderIdentityId ?? null,
           event.actorType ?? 'system',
@@ -628,37 +767,11 @@ export function createConversationStore(pool) {
       if (!row) throw new Error('Unable to persist conversation event');
       const inserted = row.inserted === true || row.inserted === 't';
 
-      await client.query(
-        `
-          UPDATE public.conversation_threads
-          SET
-            last_event_at = CASE
-              WHEN last_event_at IS NULL OR last_event_at < $2::timestamptz
-                THEN $2::timestamptz
-              ELSE last_event_at
-            END,
-            last_inbound_at = CASE
-              WHEN $3 = 'inbound'
-                AND (last_inbound_at IS NULL OR last_inbound_at < $2::timestamptz)
-                THEN $2::timestamptz
-              ELSE last_inbound_at
-            END,
-            last_outbound_at = CASE
-              WHEN $3 = 'outbound'
-                AND (last_outbound_at IS NULL OR last_outbound_at < $2::timestamptz)
-                THEN $2::timestamptz
-              ELSE last_outbound_at
-            END,
-            unread_count = unread_count + CASE
-              WHEN $4::boolean AND $3 = 'inbound' THEN 1
-              ELSE 0
-            END,
-            updated_at = NOW()
-          WHERE id = $1
-          RETURNING *
-        `,
-        [threadId, row.occurred_at ?? occurredAt, direction, inserted]
-      );
+      await recomputeThreadAggregates(client, [
+        previousEvent?.thread_id,
+        lockedEvent?.thread_id,
+        row.thread_id,
+      ]);
 
       return { ...mapConversationEventRow(row), inserted };
     });
@@ -738,6 +851,12 @@ export function createConversationStore(pool) {
           `Thread ${merged.id} is already merged into ${merged.merged_into_thread_id} and cannot be merged`
         );
       }
+      if (!canonical.lead_id && merged.lead_id) {
+        throw new Error(`Lead-bound thread ${merged.id} must be canonical`);
+      }
+      if (canonical.lead_id && merged.lead_id && canonical.lead_id !== merged.lead_id) {
+        throw new Error('Conversation threads belong to different leads');
+      }
 
       await client.query(
         `
@@ -794,35 +913,17 @@ export function createConversationStore(pool) {
         actor: actor ?? null,
         mergedAt: new Date().toISOString(),
       });
-      const canonicalResult = await client.query(
+      await client.query(
         `
           UPDATE public.conversation_threads AS canonical
           SET
-            last_event_at = CASE
-              WHEN canonical.last_event_at IS NULL THEN merged.last_event_at
-              WHEN merged.last_event_at IS NULL THEN canonical.last_event_at
-              ELSE GREATEST(canonical.last_event_at, merged.last_event_at)
-            END,
-            last_inbound_at = CASE
-              WHEN canonical.last_inbound_at IS NULL THEN merged.last_inbound_at
-              WHEN merged.last_inbound_at IS NULL THEN canonical.last_inbound_at
-              ELSE GREATEST(canonical.last_inbound_at, merged.last_inbound_at)
-            END,
-            last_outbound_at = CASE
-              WHEN canonical.last_outbound_at IS NULL THEN merged.last_outbound_at
-              WHEN merged.last_outbound_at IS NULL THEN canonical.last_outbound_at
-              ELSE GREATEST(canonical.last_outbound_at, merged.last_outbound_at)
-            END,
-            unread_count = canonical.unread_count + merged.unread_count,
             metadata = COALESCE(canonical.metadata, '{}'::jsonb)
-              || jsonb_build_object('lastMerge', $3::jsonb),
+              || jsonb_build_object('lastMerge', $2::jsonb),
             updated_at = NOW()
-          FROM public.conversation_threads AS merged
           WHERE canonical.id = $1
-            AND merged.id = $2
           RETURNING canonical.*
         `,
-        [canonicalId, mergedId, mergeMetadata]
+        [canonicalId, mergeMetadata]
       );
       await client.query(
         `
@@ -836,7 +937,64 @@ export function createConversationStore(pool) {
         `,
         [mergedId, canonicalId]
       );
-      return mapConversationThreadRow(canonicalResult.rows[0]);
+
+      const mergedAt = JSON.parse(mergeMetadata).mergedAt;
+      const { actorType, actorName } = mergeActorFields(actor);
+      const auditPayload = JSON.stringify({
+        canonicalThreadId: canonicalId,
+        mergedThreadId: mergedId,
+        actor: actor ?? null,
+      });
+      await client.query(
+        `
+          INSERT INTO public.conversation_events (
+            workspace_id,
+            thread_id,
+            lead_id,
+            event_type,
+            channel,
+            direction,
+            source_table,
+            source_id,
+            actor_type,
+            actor_name,
+            body,
+            status,
+            occurred_at,
+            payload
+          )
+          VALUES (
+            $1, $2, $3, 'thread.merged', 'system', 'internal',
+            'conversation_threads', $4, $5, $6, $7, 'completed', $8, $9::jsonb
+          )
+          ON CONFLICT (workspace_id, source_table, source_id, event_type)
+          WHERE source_table <> '' AND source_id <> ''
+          DO UPDATE SET
+            thread_id = EXCLUDED.thread_id,
+            lead_id = EXCLUDED.lead_id,
+            actor_type = EXCLUDED.actor_type,
+            actor_name = EXCLUDED.actor_name,
+            body = EXCLUDED.body,
+            status = EXCLUDED.status,
+            occurred_at = EXCLUDED.occurred_at,
+            payload = EXCLUDED.payload,
+            updated_at = NOW()
+        `,
+        [
+          canonical.workspace_id,
+          canonicalId,
+          canonical.lead_id ?? null,
+          mergedId,
+          actorType,
+          actorName,
+          `Merged conversation thread ${mergedId} into ${canonicalId}`,
+          mergedAt,
+          auditPayload,
+        ]
+      );
+
+      const aggregateRows = await recomputeThreadAggregates(client, [canonicalId]);
+      return mapConversationThreadRow(aggregateRows[0]);
     });
   }
 
@@ -893,9 +1051,26 @@ export function createConversationStore(pool) {
         : normalizeConversationPhone(address));
     if (!normalizedAddress) throw new Error('A valid sender address is required');
 
+    const optionalFields = [
+      'providerIdentityId',
+      'label',
+      'region',
+      'lifecycleStatus',
+      'healthStatus',
+      'healthScore',
+      'isWorkspaceDefault',
+      'inboundGraceUntil',
+      'retiredAt',
+      'releasedAt',
+      'metadata',
+    ];
+    const provided = optionalFields.map(
+      (property) => Object.hasOwn(identity, property) && identity[property] !== undefined
+    );
+
     const result = await pool.query(
       `
-        INSERT INTO public.communication_sender_identities (
+        INSERT INTO public.communication_sender_identities AS existing (
           workspace_id,
           provider,
           provider_identity_id,
@@ -919,18 +1094,49 @@ export function createConversationStore(pool) {
         )
         ON CONFLICT (workspace_id, provider, channel, normalized_address)
         DO UPDATE SET
-          provider_identity_id = EXCLUDED.provider_identity_id,
+          provider_identity_id = CASE
+            WHEN $17::boolean THEN EXCLUDED.provider_identity_id
+            ELSE existing.provider_identity_id
+          END,
           address = EXCLUDED.address,
-          label = EXCLUDED.label,
-          region = EXCLUDED.region,
-          lifecycle_status = EXCLUDED.lifecycle_status,
-          health_status = EXCLUDED.health_status,
-          health_score = EXCLUDED.health_score,
-          is_workspace_default = EXCLUDED.is_workspace_default,
-          inbound_grace_until = EXCLUDED.inbound_grace_until,
-          retired_at = EXCLUDED.retired_at,
-          released_at = EXCLUDED.released_at,
-          metadata = EXCLUDED.metadata,
+          label = CASE
+            WHEN $18::boolean THEN EXCLUDED.label
+            ELSE existing.label
+          END,
+          region = CASE
+            WHEN $19::boolean THEN EXCLUDED.region
+            ELSE existing.region
+          END,
+          lifecycle_status = CASE WHEN $20::boolean THEN EXCLUDED.lifecycle_status
+            ELSE existing.lifecycle_status
+          END,
+          health_status = CASE
+            WHEN $21::boolean THEN EXCLUDED.health_status
+            ELSE existing.health_status
+          END,
+          health_score = CASE
+            WHEN $22::boolean THEN EXCLUDED.health_score
+            ELSE existing.health_score
+          END,
+          is_workspace_default = CASE
+            WHEN $23::boolean THEN EXCLUDED.is_workspace_default
+            ELSE existing.is_workspace_default
+          END,
+          inbound_grace_until = CASE
+            WHEN $24::boolean THEN EXCLUDED.inbound_grace_until
+            ELSE existing.inbound_grace_until
+          END,
+          retired_at = CASE
+            WHEN $25::boolean THEN EXCLUDED.retired_at
+            ELSE existing.retired_at
+          END,
+          released_at = CASE
+            WHEN $26::boolean THEN EXCLUDED.released_at
+            ELSE existing.released_at
+          END,
+          metadata = CASE WHEN $27::boolean THEN EXCLUDED.metadata
+            ELSE existing.metadata
+          END,
           updated_at = NOW()
         RETURNING *
       `,
@@ -951,6 +1157,7 @@ export function createConversationStore(pool) {
         identity.retiredAt ?? null,
         identity.releasedAt ?? null,
         JSON.stringify(identity.metadata ?? {}),
+        ...provided,
       ]
     );
     return mapSenderIdentityRow(result.rows[0]);

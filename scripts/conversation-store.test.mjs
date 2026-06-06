@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from '@jest/globals';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -367,7 +368,7 @@ describe('conversation thread resolution', () => {
     ).toBe(true);
   });
 
-  test('locks the preferred normalized identity before reselecting or creating a provisional thread', async () => {
+  test('locks all normalized identities in sorted order before reselecting or creating', async () => {
     const { pool, queries } = createRecordingTransaction(async (sql) => {
       if (sql.includes('JOIN public.conversation_threads AS t')) {
         return { rows: [threadRow({ id: 'identity-thread', lead_id: null })] };
@@ -382,9 +383,14 @@ describe('conversation thread resolution', () => {
       })
     ).resolves.toMatchObject({ id: 'identity-thread', leadId: null });
 
-    const identityLockIndex = queries.findIndex(
-      ({ sql }) => sql.includes('pg_advisory_xact_lock') && sql.includes('hashtextextended($1, 0)')
-    );
+    const identityLocks = queries
+      .map(({ sql, params }, index) => ({ sql, params, index }))
+      .filter(
+        ({ sql, params }) =>
+          sql.includes('pg_advisory_xact_lock') &&
+          sql.includes('hashtextextended($1, 0)') &&
+          params[0]?.startsWith('conversation-identity:')
+      );
     const identitySelectIndex = queries.findIndex(({ sql }) =>
       sql.includes('JOIN public.conversation_threads AS t')
     );
@@ -393,25 +399,34 @@ describe('conversation thread resolution', () => {
         sql.includes('INSERT INTO public.conversation_threads') && !sql.includes('lead_id')
     );
 
-    expect(identityLockIndex).toBeGreaterThan(-1);
-    expect(queries[identityLockIndex].params).toEqual([
+    expect(identityLocks.map(({ params }) => params[0])).toEqual([
+      'conversation-identity:pbk:email:seller@example.com',
       'conversation-identity:pbk:phone:+16145550199',
     ]);
-    expect(identitySelectIndex).toBeGreaterThan(identityLockIndex);
+    expect(identityLocks.every(({ index }) => index < identitySelectIndex)).toBe(true);
     expect(provisionalInsertIndex).toBe(-1);
   });
 });
 
 describe('conversation event persistence', () => {
-  test('uses the partial source conflict target and gates unread increments on inserted inbound events', async () => {
+  test('uses the partial source conflict target and recomputes unchanged retry aggregates', async () => {
     let insertCount = 0;
-    const { pool, queries } = createRecordingTransaction(async (sql) => {
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (
+        sql.includes('FROM public.conversation_events') &&
+        sql.includes('source_table = $2') &&
+        sql.includes('source_id = $3')
+      ) {
+        return {
+          rows: insertCount ? [{ id: 'event-1', thread_id: 'thread-1' }] : [],
+        };
+      }
       if (
         sql.includes('FROM public.conversation_threads') &&
         sql.includes('FOR UPDATE') &&
-        sql.includes('id = $1')
+        sql.includes('ANY($1::uuid[])')
       ) {
-        return { rows: [{ id: 'thread-1' }] };
+        return { rows: params[0].map((id) => ({ id })) };
       }
       if (sql.includes('INSERT INTO public.conversation_events')) {
         insertCount += 1;
@@ -419,7 +434,10 @@ describe('conversation event persistence', () => {
           rows: [eventRow({ inserted: insertCount === 1 })],
         };
       }
-      if (sql.includes('UPDATE public.conversation_threads')) {
+      if (
+        sql.includes('WITH target_threads AS') &&
+        sql.includes('UPDATE public.conversation_threads')
+      ) {
         return { rows: [threadRow()] };
       }
       return { rows: [] };
@@ -453,30 +471,80 @@ describe('conversation event persistence', () => {
       sql.includes('INSERT INTO public.conversation_events')
     );
     expect(eventQueries).toHaveLength(2);
-    const firstThreadLockIndex = queries.findIndex(
-      ({ sql }) =>
-        sql.includes('FROM public.conversation_threads') &&
-        sql.includes('FOR UPDATE') &&
-        sql.includes('id = $1')
-    );
-    const firstEventInsertIndex = queries.findIndex(({ sql }) =>
-      sql.includes('INSERT INTO public.conversation_events')
-    );
-    expect(firstThreadLockIndex).toBeGreaterThan(-1);
-    expect(firstThreadLockIndex).toBeLessThan(firstEventInsertIndex);
     expect(eventQueries[0].sql).toContain(
       'ON CONFLICT (workspace_id, source_table, source_id, event_type)'
     );
     expect(eventQueries[0].sql).toContain("WHERE source_table <> '' AND source_id <> ''");
     expect(eventQueries[0].sql).toContain('(xmax = 0) AS inserted');
 
-    const activityQueries = queries.filter(({ sql }) =>
-      sql.includes('UPDATE public.conversation_threads')
+    const aggregateQueries = queries.filter(
+      ({ sql }) =>
+        sql.includes('WITH target_threads AS') && sql.includes('UPDATE public.conversation_threads')
     );
-    expect(activityQueries).toHaveLength(2);
-    expect(activityQueries[0].sql).toContain('unread_count = unread_count + CASE');
-    expect(activityQueries[0].params).toContain(true);
-    expect(activityQueries[1].params).toContain(false);
+    expect(aggregateQueries).toHaveLength(2);
+    expect(aggregateQueries[0].sql).toContain("direction = 'inbound'");
+    expect(aggregateQueries[0].sql).toContain('read_at IS NULL');
+    expect(aggregateQueries[0].sql).toContain('hidden_at IS NULL');
+    expect(aggregateQueries[0].sql).not.toContain('unread_count = unread_count +');
+    expect(aggregateQueries[0].params).toEqual([['thread-1']]);
+    expect(aggregateQueries[1].params).toEqual([['thread-1']]);
+  });
+
+  test('locks the existing source event and recomputes old and new threads when reassigned', async () => {
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (
+        sql.includes('FROM public.conversation_events') &&
+        sql.includes('source_table = $2') &&
+        sql.includes('source_id = $3')
+      ) {
+        return { rows: [{ id: 'event-1', thread_id: 'thread-old' }] };
+      }
+      if (
+        sql.includes('FROM public.conversation_threads') &&
+        sql.includes('FOR UPDATE') &&
+        sql.includes('ANY($1::uuid[])')
+      ) {
+        return { rows: params[0].map((id) => ({ id })) };
+      }
+      if (sql.includes('INSERT INTO public.conversation_events')) {
+        return {
+          rows: [eventRow({ thread_id: 'thread-new', inserted: false })],
+        };
+      }
+      if (sql.includes('WITH target_threads AS')) {
+        return {
+          rows: [threadRow({ id: 'thread-new' }), threadRow({ id: 'thread-old', unread_count: 0 })],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await createConversationStore(pool).upsertEvent({
+      workspaceId: 'pbk',
+      threadId: 'thread-new',
+      eventType: 'message.sms',
+      direction: 'inbound',
+      sourceTable: 'telnyx_messages',
+      sourceId: 'message-1',
+      occurredAt: '2026-06-06T12:00:00.000Z',
+    });
+
+    const eventLockIndex = queries.findIndex(
+      ({ sql }) =>
+        sql.includes('FROM public.conversation_events') &&
+        sql.includes('source_table = $2') &&
+        sql.includes('FOR UPDATE')
+    );
+    const insertIndex = queries.findIndex(({ sql }) =>
+      sql.includes('INSERT INTO public.conversation_events')
+    );
+    const aggregateQuery = queries.find(({ sql }) => sql.includes('WITH target_threads AS'));
+
+    expect(eventLockIndex).toBeGreaterThan(-1);
+    expect(eventLockIndex).toBeLessThan(insertIndex);
+    expect(aggregateQuery.params).toEqual([['thread-new', 'thread-old']]);
+    expect(aggregateQuery.sql).toContain('MAX(event.occurred_at)');
+    expect(aggregateQuery.sql).toContain('COUNT(event.id) FILTER');
   });
 });
 
@@ -551,6 +619,42 @@ describe('conversation queries and pagination', () => {
     expect(queries[1].sql).toContain('ORDER BY occurred_at DESC, id DESC');
     expect(queries[1].params.at(-1)).toBe(101);
   });
+
+  test('preserves includeHidden visibility in timeline cursors across pages', async () => {
+    const queries = [];
+    const rows = Array.from({ length: 3 }, (_, index) =>
+      eventRow({
+        id: `event-${index}`,
+        occurred_at: `2026-06-06T12:0${2 - index}:00.000Z`,
+        hidden_at: index === 1 ? '2026-06-06T13:00:00.000Z' : null,
+      })
+    );
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return { rows };
+      },
+    };
+    const store = createConversationStore(pool);
+
+    const firstPage = await store.listTimeline('thread-1', {
+      includeHidden: true,
+      limit: 2,
+    });
+    const decoded = JSON.parse(Buffer.from(firstPage.nextCursor, 'base64url').toString('utf8'));
+    expect(decoded.includeHidden).toBe(true);
+
+    await store.listTimeline('thread-1', firstPage.nextCursor);
+    expect(queries[0].sql).not.toContain('hidden_at IS NULL');
+    expect(queries[1].sql).not.toContain('hidden_at IS NULL');
+
+    await expect(
+      store.listTimeline('thread-1', {
+        cursor: firstPage.nextCursor,
+        includeHidden: false,
+      })
+    ).rejects.toThrow('visibility');
+  });
 });
 
 describe('conversation mutation allowlists and merging', () => {
@@ -599,8 +703,8 @@ describe('conversation mutation allowlists and merging', () => {
       if (sql.includes('SELECT *') && sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
         return {
           rows: [
-            threadRow({ id: 'thread-a', lead_id: 'lead-a', unread_count: 1 }),
-            threadRow({ id: 'thread-z', lead_id: null, unread_count: 2 }),
+            threadRow({ id: 'thread-a', lead_id: null, unread_count: 1 }),
+            threadRow({ id: 'thread-z', lead_id: 'lead-a', unread_count: 2 }),
           ],
         };
       }
@@ -608,6 +712,9 @@ describe('conversation mutation allowlists and merging', () => {
         sql.includes('UPDATE public.conversation_threads AS canonical') &&
         sql.includes('RETURNING canonical.*')
       ) {
+        return { rows: [threadRow({ id: 'thread-z', unread_count: 3 })] };
+      }
+      if (sql.includes('WITH target_threads AS')) {
         return { rows: [threadRow({ id: 'thread-z', unread_count: 3 })] };
       }
       return { rows: [] };
@@ -637,6 +744,16 @@ describe('conversation mutation allowlists and merging', () => {
       queries.some(({ sql }) => sql.includes('DELETE FROM public.conversation_thread_identities'))
     ).toBe(true);
     expect(queries.some(({ sql }) => sql.includes('merged_into_thread_id'))).toBe(true);
+    const auditQuery = queries.find(
+      ({ sql }) =>
+        sql.includes('INSERT INTO public.conversation_events') && sql.includes("'thread.merged'")
+    );
+    expect(auditQuery).toBeDefined();
+    expect(auditQuery.sql).toContain(
+      'ON CONFLICT (workspace_id, source_table, source_id, event_type)'
+    );
+    expect(auditQuery.params).toContain('thread-a');
+    expect(auditQuery.params).toContain("O'Brien");
     expect(queries.some(({ sql }) => sql.includes("O'Brien"))).toBe(false);
     expect(queries.flatMap(({ params }) => params).join(' ')).toContain("O'Brien");
   });
@@ -724,6 +841,39 @@ describe('conversation mutation allowlists and merging', () => {
       expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
     }
   );
+
+  test.each([
+    {
+      name: 'lead-bound merged thread with provisional canonical',
+      canonical: threadRow({ id: 'thread-z', lead_id: null }),
+      merged: threadRow({ id: 'thread-a', lead_id: 'lead-a' }),
+      message: 'Lead-bound thread thread-a must be canonical',
+    },
+    {
+      name: 'different nonempty lead IDs',
+      canonical: threadRow({ id: 'thread-z', lead_id: 'lead-z' }),
+      merged: threadRow({ id: 'thread-a', lead_id: 'lead-a' }),
+      message: 'Conversation threads belong to different leads',
+    },
+  ])('rejects merge ownership violation: $name', async ({ canonical, merged, message }) => {
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
+        return {
+          rows: [merged, canonical].sort((left, right) => left.id.localeCompare(right.id)),
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).mergeThreads({
+        canonicalThreadId: canonical.id,
+        mergedThreadId: merged.id,
+        actor: 'user-1',
+      })
+    ).rejects.toThrow(message);
+    expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
+  });
 });
 
 describe('sender identity persistence', () => {
@@ -803,4 +953,219 @@ describe('sender identity persistence', () => {
 
     expect(pool.query).not.toHaveBeenCalled();
   });
+
+  test('preserves omitted sender fields on conflict with explicit presence flags', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return {
+          rows: [
+            senderRow({
+              lifecycle_status: 'retired',
+              retired_at: '2026-06-05T00:00:00.000Z',
+              metadata: { preserved: true },
+            }),
+          ],
+        };
+      },
+    };
+
+    await expect(
+      createConversationStore(pool).upsertSenderIdentity({
+        workspaceId: 'pbk',
+        provider: 'telnyx',
+        channel: 'sms',
+        address: '(614) 555-0199',
+      })
+    ).resolves.toMatchObject({
+      lifecycleStatus: 'retired',
+      retiredAt: '2026-06-05T00:00:00.000Z',
+      metadata: { preserved: true },
+    });
+
+    expect(queries[0].sql).toContain(
+      'ON CONFLICT (workspace_id, provider, channel, normalized_address)'
+    );
+    expect(queries[0].sql).toContain(
+      'lifecycle_status = CASE WHEN $20::boolean THEN EXCLUDED.lifecycle_status'
+    );
+    expect(queries[0].sql).toContain('metadata = CASE WHEN $27::boolean THEN EXCLUDED.metadata');
+    expect(queries[0].params[19]).toBe(false);
+    expect(queries[0].params[26]).toBe(false);
+  });
+});
+
+async function withConversationStoreIntegration(run) {
+  const { Client } = await import('pg');
+  const client = new Client({
+    connectionString: process.env.PBK_TEST_DATABASE_URL,
+  });
+
+  await client.connect();
+  try {
+    await client.query('BEGIN');
+    const leadProfiles = await client.query(
+      `SELECT to_regclass('public.lead_profiles') AS relation`
+    );
+    if (!leadProfiles.rows[0].relation) {
+      await client.query(`
+        CREATE TABLE public.lead_profiles (
+          id TEXT PRIMARY KEY
+        )
+      `);
+    }
+    const queryPool = {
+      query: client.query.bind(client),
+    };
+    await ensureConversationSchema(queryPool);
+    await run({
+      client,
+      store: createConversationStore(queryPool),
+      workspaceId: `conversation-store-test-${randomUUID()}`,
+    });
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    await client.end();
+  }
+}
+
+describe('conversation store Postgres integration', () => {
+  postgresIntegrationTest(
+    'preserves retired sender state and metadata on sparse inventory upsert',
+    async () => {
+      await withConversationStoreIntegration(async ({ store, workspaceId }) => {
+        const provider = `provider-${randomUUID()}`;
+        const address = `sender-${randomUUID()}@example.com`;
+        await store.upsertSenderIdentity({
+          workspaceId,
+          provider,
+          channel: 'email',
+          address,
+          lifecycleStatus: 'retired',
+          retiredAt: '2026-06-05T00:00:00.000Z',
+          metadata: { preserved: true },
+        });
+
+        const sparse = await store.upsertSenderIdentity({
+          workspaceId,
+          provider,
+          channel: 'email',
+          address,
+        });
+
+        expect(sparse).toMatchObject({
+          lifecycleStatus: 'retired',
+          metadata: { preserved: true },
+        });
+        expect(sparse.retiredAt.toISOString()).toBe('2026-06-05T00:00:00.000Z');
+      });
+    },
+    30_000
+  );
+
+  postgresIntegrationTest(
+    'repairs both thread aggregates when a source event is reassigned',
+    async () => {
+      await withConversationStoreIntegration(async ({ client, store, workspaceId }) => {
+        const threadRows = await client.query(
+          `
+            INSERT INTO public.conversation_threads (workspace_id, title)
+            VALUES ($1, 'old'), ($1, 'new')
+            RETURNING id, title
+          `,
+          [workspaceId]
+        );
+        const oldThreadId = threadRows.rows.find((row) => row.title === 'old').id;
+        const newThreadId = threadRows.rows.find((row) => row.title === 'new').id;
+        const sourceId = randomUUID();
+        const event = {
+          workspaceId,
+          threadId: oldThreadId,
+          eventType: 'message.sms',
+          channel: 'sms',
+          direction: 'inbound',
+          sourceTable: 'integration_messages',
+          sourceId,
+          occurredAt: '2026-06-06T12:00:00.000Z',
+        };
+
+        await store.upsertEvent(event);
+        await store.upsertEvent({ ...event, threadId: newThreadId });
+        await store.upsertEvent({ ...event, threadId: newThreadId });
+
+        const aggregates = await client.query(
+          `
+            SELECT id, last_event_at, last_inbound_at, last_outbound_at, unread_count
+            FROM public.conversation_threads
+            WHERE id = ANY($1::uuid[])
+            ORDER BY id
+          `,
+          [[oldThreadId, newThreadId]]
+        );
+        const oldThread = aggregates.rows.find((row) => row.id === oldThreadId);
+        const newThread = aggregates.rows.find((row) => row.id === newThreadId);
+
+        expect(oldThread).toMatchObject({
+          last_event_at: null,
+          last_inbound_at: null,
+          last_outbound_at: null,
+          unread_count: 0,
+        });
+        expect(newThread.last_event_at.toISOString()).toBe('2026-06-06T12:00:00.000Z');
+        expect(newThread.last_inbound_at.toISOString()).toBe('2026-06-06T12:00:00.000Z');
+        expect(newThread.last_outbound_at).toBeNull();
+        expect(newThread.unread_count).toBe(1);
+      });
+    },
+    30_000
+  );
+
+  postgresIntegrationTest(
+    'enforces lead-bound canonical ownership and differing-lead rejection',
+    async () => {
+      await withConversationStoreIntegration(async ({ client, store, workspaceId }) => {
+        const leadA = `lead-${randomUUID()}`;
+        const leadB = `lead-${randomUUID()}`;
+        await client.query(
+          `
+            INSERT INTO public.lead_profiles (id)
+            VALUES ($1), ($2)
+            ON CONFLICT (id) DO NOTHING
+          `,
+          [leadA, leadB]
+        );
+        const threadRows = await client.query(
+          `
+            INSERT INTO public.conversation_threads (workspace_id, lead_id, title)
+            VALUES
+              ($1, NULL, 'provisional'),
+              ($1, $2, 'lead-a'),
+              ($1, $3, 'lead-b')
+            RETURNING id, title
+          `,
+          [workspaceId, leadA, leadB]
+        );
+        const provisional = threadRows.rows.find((row) => row.title === 'provisional').id;
+        const leadAThread = threadRows.rows.find((row) => row.title === 'lead-a').id;
+        const leadBThread = threadRows.rows.find((row) => row.title === 'lead-b').id;
+
+        await expect(
+          store.mergeThreads({
+            canonicalThreadId: provisional,
+            mergedThreadId: leadAThread,
+            actor: 'integration',
+          })
+        ).rejects.toThrow('must be canonical');
+        await expect(
+          store.mergeThreads({
+            canonicalThreadId: leadAThread,
+            mergedThreadId: leadBThread,
+            actor: 'integration',
+          })
+        ).rejects.toThrow('different leads');
+      });
+    },
+    30_000
+  );
 });

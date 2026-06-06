@@ -8,6 +8,7 @@ const packageJson = JSON.parse(read('package.json'));
 const bridge = read('scripts/openclaw-local-server.mjs');
 const storeSource = read('scripts/conversation-store.mjs');
 const identitySource = read('scripts/conversation-identity.mjs');
+const liveProjectorSource = read('scripts/conversation-live-projector.mjs');
 const providerDispatchSource = read('scripts/provider-action-dispatch.mjs');
 const providerDispatchPolicySource = read(
   'scripts/provider-action-dispatch-policy.mjs'
@@ -101,6 +102,40 @@ const providerLeaseStart = providerDispatchSource.indexOf(
 const providerLeaseEnd = providerDispatchSource.length;
 const providerLeaseSource = providerDispatchSource.slice(
   providerLeaseStart
+);
+const telnyxWebhookMapStart = bridge.indexOf('function mapTelnyxWebhook(body = {})');
+const telnyxWebhookMapEnd = bridge.indexOf(
+  '\nfunction mapDocuSignWebhook(body = {})',
+  telnyxWebhookMapStart
+);
+const telnyxWebhookMap = bridge.slice(telnyxWebhookMapStart, telnyxWebhookMapEnd);
+const callStatusHandlerStart = bridge.indexOf(
+  "if (normalizedEvent === 'call-status')"
+);
+const callStatusHandlerEnd = bridge.indexOf(
+  "\n  if (normalizedEvent === 'call-transcript')",
+  callStatusHandlerStart
+);
+const callStatusHandler = bridge.slice(
+  callStatusHandlerStart,
+  callStatusHandlerEnd
+);
+const recordingRouteStart = bridge.indexOf(
+  "if (request.method === 'POST' && pathname === '/api/recordings')"
+);
+const recordingRouteEnd = bridge.indexOf(
+  "\n    if (request.method === 'GET' && pathname === '/api/contracts')",
+  recordingRouteStart
+);
+const recordingRoute = bridge.slice(recordingRouteStart, recordingRouteEnd);
+const docusignWebhookMapStart = telnyxWebhookMapEnd;
+const docusignWebhookMapEnd = bridge.indexOf(
+  '\nfunction normalizeDeepgramLiveSentiment',
+  docusignWebhookMapStart
+);
+const docusignWebhookMap = bridge.slice(
+  docusignWebhookMapStart,
+  docusignWebhookMapEnd
 );
 
 assert(
@@ -763,6 +798,144 @@ assert(
     /async function getThreadContactIdentities/.test(storeSource) &&
     /async function getPreviousSuccessfulSenderIdentityId/.test(storeSource),
   'Conversation store must expose workspace-safe contact, continuity, and event mutation helpers.'
+);
+
+assert(
+  /createLiveConversationProjector/.test(bridge) &&
+    /createConversationStore/.test(liveProjectorSource) &&
+    /store\.resolveThread/.test(liveProjectorSource) &&
+    /store\.upsertEvent/.test(liveProjectorSource) &&
+    /\[pbk-conversations\] live projection failed/.test(liveProjectorSource),
+  'Live conversation projection must resolve canonical threads, upsert idempotently, and isolate failures.'
+);
+
+assert(
+  /event\.channel === 'call' && event\.direction === 'internal'/.test(
+    liveProjectorSource
+  ) &&
+    /payload\.callDirection/.test(liveProjectorSource) &&
+    /contactDirection === 'inbound'[\s\S]*event\.senderAddress/.test(
+      liveProjectorSource
+    ),
+  'Internal recording events must resolve seller identity from their original call direction.'
+);
+
+assert(
+  /persistUnifiedMessageRecord[\s\S]*projectLiveConversationRecord\(\{[\s\S]*projector:\s*projectMessageEvent/.test(
+    bridge
+  ) &&
+    /source:\s*'telnyx-call-start'/.test(bridge) &&
+    /source:\s*'telnyx-inbound-call-start'/.test(bridge) &&
+    /source:\s*'telnyx-call-status'/.test(bridge) &&
+    /source:\s*'telnyx-call-transcript'/.test(bridge) &&
+    /source:\s*'docusign-envelope-send'/.test(bridge) &&
+    /source:\s*'docusign-contract-status'/.test(bridge) &&
+    /source:\s*'instantly-webhook'/.test(bridge) &&
+    /source:\s*'approval-created'/.test(bridge) &&
+    /source:\s*'approval-decided'/.test(bridge) &&
+    /source:\s*'slack-approval-needs-review'/.test(bridge) &&
+    /source:\s*'lead-note'/.test(bridge) &&
+    /source:\s*'lead-updated'/.test(bridge),
+  'Live provider, approval, and lead mutations must project into canonical seller timelines.'
+);
+
+assert(
+  /from:\s*parsed\.from,[\s\S]*to:\s*parsed\.to,[\s\S]*direction:\s*'inbound'/.test(
+    bridge
+  ) &&
+    /await persistState\(state\);[\s\S]*source:\s*'telnyx-inbound-call-start'/.test(
+      bridge
+    ),
+  'Inbound Telnyx routes must preserve seller-to-PBK direction and project call start after persistence.'
+);
+
+assert(
+  /id:\s*body\.id\s*\|\|\s*body\.message_id\s*\|\|\s*body\.messageId\s*\|\|\s*body\.event_id\s*\|\|\s*body\.eventId/.test(
+    bridge
+  ) &&
+    /const message = createMessageRecord\(\{[\s\S]*provider:\s*body\.provider\s*\|\|\s*'email-webhook'/.test(
+      bridge
+    ) &&
+    /await persistUnifiedMessageRecord\(message\)/.test(bridge),
+  'Email webhooks must use retry-stable provider IDs and durable unified-message persistence.'
+);
+
+assert(
+  telnyxWebhookMapStart >= 0 &&
+    telnyxWebhookMapEnd > telnyxWebhookMapStart &&
+    /telnyx-message-\$\{Math\.abs\(/.test(telnyxWebhookMap) &&
+    /telnyx-call-\$\{Math\.abs\(/.test(telnyxWebhookMap) &&
+    docusignWebhookMapStart >= 0 &&
+    docusignWebhookMapEnd > docusignWebhookMapStart &&
+    /docusign-envelope-\$\{Math\.abs\(/.test(docusignWebhookMap) &&
+    !/randomUUID\(\)/.test(docusignWebhookMap),
+  'Provider webhook fallbacks must derive retry-stable source IDs instead of generating random IDs.'
+);
+
+assert(
+  /const callDirection = inbound \? 'inbound' : outbound \? 'outbound' : ''/.test(
+    telnyxWebhookMap
+  ) &&
+    /direction:\s*callDirection/.test(telnyxWebhookMap) &&
+    /const nextDirection = payload\.direction \|\| existingCall\?\.direction \|\| 'outbound'/.test(
+      callStatusHandler
+    ) &&
+    /const nextPhone = normalizePhone\(existingCall\?\.phone \|\| payload\.phone \|\| payload\.to \|\| ''\)/.test(
+      callStatusHandler
+    ),
+  'Directionless Telnyx status callbacks must preserve the existing call direction and seller phone.'
+);
+
+assert(
+  /const envelopeSummary = body\.data\?\.envelopeSummary \|\| \{\}/.test(bridge) &&
+    /envelopeSummary\.envelopeId/.test(docusignWebhookMap) &&
+    /envelopeId,/.test(docusignWebhookMap),
+  'DocuSign Connect must preserve nested envelope IDs across lifecycle callbacks.'
+);
+
+assert(
+  /if \(retryConversationProjectionOnly\)[\s\S]*source:\s*'approval-decided'[\s\S]*replayed:\s*true/.test(
+    bridge
+  ),
+  'Approval outcome recovery must also retry the approval.decided timeline event.'
+);
+
+assert(
+  /lead_id = COALESCE\(EXCLUDED\.lead_id, unified_messages\.lead_id\)/.test(
+    bridge
+  ) &&
+    /if \(\/violates foreign key constraint\/i\.test\(messageText\)\)/.test(
+      bridge
+    ) &&
+    /await pool\.query\(baseSql, retryValues\)/.test(bridge),
+  'Unified message fallback must preserve or later heal lead association while tolerating stale schemas.'
+);
+
+assert(
+  /msg-recording-\$\{Math\.abs\(/.test(bridge) &&
+    /msg-deepgram-live-\$\{slugify\([\s\S]*Math\.abs\(/.test(bridge) &&
+    /callDirection:\s*contextCall\?\.direction/.test(bridge),
+  'Recording and Deepgram transcript events must retain stable IDs and call direction.'
+);
+
+assert(
+  recordingRouteStart >= 0 &&
+    recordingRouteEnd > recordingRouteStart &&
+    /const recordingIdentitySeed = \[/.test(recordingRoute) &&
+    /msg-recording-\$\{Math\.abs\(hashString\(recordingIdentitySeed\)\)\}/.test(
+      recordingRoute
+    ) &&
+    (recordingRoute.match(/direction:\s*'recording'/g) || []).length >= 2 &&
+    !/direction:\s*body\.direction/.test(recordingRoute) &&
+    /callDirection:\s*recordingCallDirection/.test(recordingRoute) &&
+    /const recordingActivityId = `activity-recording-\$\{messageId\}`/.test(
+      recordingRoute
+    ) &&
+    /!state\.activity\.some\(\(entry\) => entry\.id === recordingActivityId\)/.test(
+      recordingRoute
+    ) &&
+    !/Date\.now\(\)/.test(recordingRoute),
+  'Manual recording uploads must be retry-idempotent and preserve call direction.'
 );
 
 console.log('unified-conversation-bridge-smoke: ok');

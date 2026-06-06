@@ -34,6 +34,14 @@ import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
 import { evaluateConversationSenderRecommendationCompliance, normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity, rankEligibleSenderIdentities } from './conversation-identity.mjs';
+import {
+  projectActivityEvent,
+  projectApprovalEvent,
+  projectCallEvent,
+  projectContractEvent,
+  projectMessageEvent,
+} from './conversation-projector.mjs';
+import { createLiveConversationProjector } from './conversation-live-projector.mjs';
 import { ensureConversationSchema } from './conversation-schema.mjs';
 import { createConversationStore } from './conversation-store.mjs';
 import {
@@ -5042,6 +5050,23 @@ function executeProviderActionWithSharedLease(options) {
   });
 }
 
+async function projectLiveConversationRecord({
+  record,
+  projector,
+  kind,
+  source,
+}) {
+  return createLiveConversationProjector({
+    pool: getPgPool(),
+    logger: console,
+  }).project({
+    record,
+    projector,
+    kind,
+    source,
+  });
+}
+
 async function ensureFuzzyLeadLookupSchema(pool) {
   if (!pool) return false;
   await pool.query(`
@@ -9300,7 +9325,7 @@ async function persistUnifiedMessageRecord(message = {}) {
     durationSeconds: message.durationSeconds ?? null,
     recordingUrl: message.recordingUrl || '',
   };
-  const baseValues = [message.id, message.leadProfileId || null, message.workspaceId || 'pbk', message.channel || 'call', message.direction || 'recording', message.status || 'recorded', message.provider || '', message.fromEmail || '', message.toEmail || message.email || '', message.fromPhone || message.from || '', message.toPhone || message.phone || '', message.subject || '', message.body || '', message.intent || '', message.sentiment ?? null, JSON.stringify(payload), message.createdAt || isoNow(), message.updatedAt || isoNow()];
+  const baseValues = [message.id, message.leadProfileId || message.leadId || null, message.workspaceId || 'pbk', message.channel || 'call', message.direction || 'recording', message.status || 'recorded', message.provider || '', message.fromEmail || '', message.toEmail || message.email || '', message.fromPhone || message.from || '', message.toPhone || message.to || message.phone || '', message.subject || '', message.body || '', message.intent || '', message.sentiment ?? null, JSON.stringify(payload), message.createdAt || isoNow(), message.updatedAt || isoNow()];
   const recordingValues = [message.storagePath || '', message.storageBucket || '', message.audioContentType || '', message.durationSeconds ?? null, message.recordingUrl || ''];
   const fullSql = `INSERT INTO public.unified_messages (
       id, lead_id, workspace_id, channel, direction, status, provider,
@@ -9310,6 +9335,7 @@ async function persistUnifiedMessageRecord(message = {}) {
     )
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18,$19,$20,$21,$22,$23)
     ON CONFLICT (id) DO UPDATE SET
+      lead_id = COALESCE(EXCLUDED.lead_id, unified_messages.lead_id),
       workspace_id = EXCLUDED.workspace_id,
       channel = EXCLUDED.channel,
       direction = EXCLUDED.direction,
@@ -9337,6 +9363,7 @@ async function persistUnifiedMessageRecord(message = {}) {
     )
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,$18)
     ON CONFLICT (id) DO UPDATE SET
+      lead_id = COALESCE(EXCLUDED.lead_id, unified_messages.lead_id),
       workspace_id = EXCLUDED.workspace_id,
       channel = EXCLUDED.channel,
       direction = EXCLUDED.direction,
@@ -9354,6 +9381,11 @@ async function persistUnifiedMessageRecord(message = {}) {
       updated_at = EXCLUDED.updated_at`;
   try {
     await pool.query(fullSql, [...baseValues, ...recordingValues]);
+    await projectLiveConversationRecord({
+      record: message,
+      projector: projectMessageEvent,
+      source: 'persistUnifiedMessageRecord',
+    });
     return true;
   } catch (error) {
     const messageText = String(error?.message || error || '');
@@ -9363,8 +9395,32 @@ async function persistUnifiedMessageRecord(message = {}) {
     }
     try {
       const retryValues = [...baseValues];
-      retryValues[1] = null;
-      await pool.query(baseSql, retryValues);
+      if (/violates foreign key constraint/i.test(messageText)) {
+        retryValues[1] = null;
+        try {
+          await pool.query(fullSql, [...retryValues, ...recordingValues]);
+        } catch (retryError) {
+          if (!/column .* does not exist/i.test(String(retryError?.message || retryError || ''))) {
+            throw retryError;
+          }
+          await pool.query(baseSql, retryValues);
+        }
+      } else {
+        try {
+          await pool.query(baseSql, retryValues);
+        } catch (retryError) {
+          if (!/violates foreign key constraint/i.test(String(retryError?.message || retryError || ''))) {
+            throw retryError;
+          }
+          retryValues[1] = null;
+          await pool.query(baseSql, retryValues);
+        }
+      }
+      await projectLiveConversationRecord({
+        record: message,
+        projector: projectMessageEvent,
+        source: 'persistUnifiedMessageRecord:fallback',
+      });
       return true;
     } catch (fallbackError) {
       console.warn('[pbk-local-openclaw] unified message fallback persistence skipped:', fallbackError?.message || fallbackError);
@@ -26489,6 +26545,7 @@ function createCallRecord(params = {}) {
     address: String(params.address || context.address || '').trim(),
     phone: normalizePhone(params.phone || params.to || context.phone),
     from: normalizePhone(params.from || params.fromNumber || ''),
+    to: normalizePhone(params.to || params.toNumber || params.phone || context.phone),
     direction: params.direction || 'outbound',
     status: params.status || 'live',
     assistantId: params.assistantId || 'ava-acquisition-v3',
@@ -26526,16 +26583,51 @@ function createCallRecord(params = {}) {
 
 function createMessageRecord(params = {}) {
   const context = findLeadContext(params);
+  const channel = params.channel || 'sms';
+  const direction = params.direction || 'outbound';
+  const sellerEmail = String(params.email || context.email || '').trim();
+  const sellerPhone = normalizePhone(
+    params.phone || (channel === 'email' ? '' : params.to) || context.phone
+  );
+  const fromEmail =
+    channel === 'email'
+      ? String(
+          params.fromEmail ||
+            params.from_email ||
+            (direction === 'inbound' ? params.from || sellerEmail : params.senderEmail || '')
+        ).trim()
+      : '';
+  const toEmail =
+    channel === 'email'
+      ? String(
+          params.toEmail ||
+            params.to_email ||
+            (direction === 'outbound' ? params.to || sellerEmail : params.to || '')
+        ).trim()
+      : '';
+  const fromPhone =
+    channel === 'sms' || channel === 'call'
+      ? normalizePhone(params.fromPhone || params.from || params.fromNumber || '')
+      : '';
+  const toPhone =
+    channel === 'sms' || channel === 'call'
+      ? normalizePhone(params.toPhone || params.to || params.toNumber || sellerPhone)
+      : '';
   return {
     id: params.id || `msg-${Date.now()}-${slugify(context.leadName || 'lead')}`,
     leadId: params.leadId || context.leadId,
     leadName: context.leadName,
     address: context.address,
-    phone: normalizePhone(params.phone || params.to || context.phone),
-    from: normalizePhone(params.from || params.fromNumber || ''),
-    email: params.email || context.email || '',
-    channel: params.channel || 'sms',
-    direction: params.direction || 'outbound',
+    phone: sellerPhone,
+    from: channel === 'email' ? fromEmail : fromPhone,
+    to: channel === 'email' ? toEmail : toPhone,
+    fromEmail,
+    toEmail,
+    fromPhone,
+    toPhone,
+    email: sellerEmail,
+    channel,
+    direction,
     subject: params.subject || '',
     body: String(params.body || params.message || '').trim(),
     status: params.status || (params.direction === 'inbound' ? 'received' : 'sent'),
@@ -26627,6 +26719,10 @@ function createContractRecord(params = {}) {
     underwritingReviewerEmail: params.underwritingReviewerEmail || '',
     underwritingReviewerName: params.underwritingReviewerName || '',
     sellerNotice: params.sellerNotice || '',
+    sentAt: params.sentAt || params.sent_at || '',
+    viewedAt: params.viewedAt || params.viewed_at || '',
+    signedAt: params.signedAt || params.signed_at || '',
+    completedAt: params.completedAt || params.completed_at || '',
     createdAt: params.createdAt || isoNow(),
     updatedAt: params.updatedAt || isoNow(),
   };
@@ -29578,7 +29674,8 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     leadName: spokenLeadName,
     address: lead.address,
     phone: parsed.from,
-    from: parsed.to,
+    from: parsed.from,
+    to: parsed.to,
     direction: 'inbound',
     provider: 'Telnyx',
     status: route.startsWith('transfer_') ? 'transferring' : route === 'after_hours_voicemail' ? 'voicemail' : 'live',
@@ -29748,6 +29845,12 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     });
   }
   await persistState(state);
+  await projectLiveConversationRecord({
+    record: callRecord,
+    projector: projectCallEvent,
+    kind: 'started',
+    source: 'telnyx-inbound-call-start',
+  });
   return {
     ok: true,
     result,
@@ -31803,7 +31906,19 @@ function normalizeRecordingCapturePayload(input = {}) {
 async function captureRecordingFromPayload(input = {}) {
   const params = normalizeRecordingCapturePayload(input);
   const existingCall = getCallById(params.callId);
-  const messageId = params.messageId || params.recording_id || params.recordingId || `msg-recording-${slugify(params.callId || existingCall?.leadName || 'call')}-${Date.now()}`;
+  const messageId =
+    params.messageId ||
+    params.recording_id ||
+    params.recordingId ||
+    `msg-recording-${Math.abs(
+      hashString(
+        [
+          params.callId || existingCall?.id || '',
+          params.recordingUrl || '',
+          params.eventType || 'recording',
+        ].join('|')
+      )
+    )}`;
   const storagePath = buildRecordingStoragePath({
     ...params,
     messageId,
@@ -31882,6 +31997,13 @@ async function captureRecordingFromPayload(input = {}) {
         leadId: params.leadId || existingCall?.leadId || '',
         leadName: params.leadName || existingCall?.leadName || '',
         address: params.address || existingCall?.address || '',
+        phone: params.phone || existingCall?.phone || '',
+        from: params.from || existingCall?.from || '',
+        to: params.to || existingCall?.to || existingCall?.phone || '',
+        payload: {
+          ...(params.payload && typeof params.payload === 'object' ? params.payload : {}),
+          callDirection: params.direction || existingCall?.direction || '',
+        },
         channel: 'call',
         direction: 'recording',
         provider: 'Telnyx',
@@ -31893,6 +32015,11 @@ async function captureRecordingFromPayload(input = {}) {
     leadId: params.leadId || existingCall?.leadId || '',
     leadName: params.leadName || existingCall?.leadName || 'Unknown seller',
     address: params.address || existingCall?.address || '',
+    phone: params.phone || existingCall?.phone || '',
+    from: params.from || existingCall?.from || '',
+    to: params.to || existingCall?.to || existingCall?.phone || '',
+    fromPhone: params.from || existingCall?.from || '',
+    toPhone: params.to || existingCall?.to || existingCall?.phone || '',
     channel: 'call',
     direction: 'recording',
     provider: params.provider || 'Telnyx',
@@ -31908,6 +32035,7 @@ async function captureRecordingFromPayload(input = {}) {
     sentiment: deepgramSummary?.sentiment?.pbkScore ?? params.sentiment ?? null,
     payload: {
       ...(params.payload && typeof params.payload === 'object' ? params.payload : {}),
+      callDirection: params.direction || existingCall?.direction || '',
       sourceEventType: params.eventType,
       storagePath,
       storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
@@ -43912,7 +44040,7 @@ const toolHandlers = {
     const approval = {
       id: params.id || randomUUID(),
       type: params.type || 'offer',
-      leadId: params.leadId || randomUUID(),
+      leadId: params.leadId || '',
       leadName: params.leadName || params.name || 'Unknown seller',
       address: params.address || 'Unknown property',
       phone: params.phone || '',
@@ -43953,6 +44081,11 @@ const toolHandlers = {
     );
 
     await persistState(state);
+    await projectLiveConversationRecord({
+      record: approval,
+      projector: projectApprovalEvent,
+      source: 'approval-created',
+    });
     const fanout = await fireWebhook(APPROVAL_WEBHOOK_URL, approval);
     if (fanout.ok) {
       addActivity(
@@ -44772,6 +44905,8 @@ const toolHandlers = {
       leadName: context.leadName,
       address: context.address,
       email,
+      fromEmail: senderAddress,
+      toEmail: email,
       channel: 'email',
       direction: 'outbound',
       subject: content.subject,
@@ -44780,6 +44915,7 @@ const toolHandlers = {
       provider,
     });
     upsertMessage(state, message);
+    await persistUnifiedMessageRecord(message);
 
     addActivity(
       state,
@@ -44979,6 +45115,12 @@ const toolHandlers = {
         })
       );
       await persistState(state);
+      await projectLiveConversationRecord({
+        record: call,
+        projector: projectCallEvent,
+        kind: 'started',
+        source: 'telnyx-call-start',
+      });
       return {
         ok: true,
         call,
@@ -45069,6 +45211,7 @@ const toolHandlers = {
     if (params.id) {
       const existing = state.messages.find((item) => item.id === params.id);
       if (existing && existing.status === (params.status || existing.status) && existing.direction === direction && String(existing.body || '').trim() === bodyText) {
+        await persistUnifiedMessageRecord(existing);
         return {
           ok: true,
           replayed: true,
@@ -45150,6 +45293,7 @@ const toolHandlers = {
       });
 
       upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
       addActivity(
         state,
         makeActivity({
@@ -45185,6 +45329,7 @@ const toolHandlers = {
       provider: fromWebhook ? 'Telnyx' : 'Simulated',
     });
     upsertMessage(state, message);
+    await persistUnifiedMessageRecord(message);
     addActivity(
       state,
       makeActivity({
@@ -45461,6 +45606,7 @@ const toolHandlers = {
         envelope = response.envelope;
         contract.envelopeId = envelope?.envelopeId || contract.envelopeId;
         contract.status = envelope?.status === 'created' ? 'draft' : envelope?.status || contract.status;
+        if (contract.status === 'sent') contract.sentAt = contract.sentAt || isoNow();
       } else {
         providerError = response.error || 'DocuSign envelope create failed.';
       }
@@ -45483,6 +45629,13 @@ const toolHandlers = {
     contractActivity.contractId = contract.id;
     addActivity(state, contractActivity);
     await persistState(state);
+    if (live) {
+      await projectLiveConversationRecord({
+        record: contract,
+        projector: projectContractEvent,
+        source: 'docusign-envelope-send',
+      });
+    }
     return {
       ok: live || queueOnly,
       contract,
@@ -46455,6 +46608,11 @@ async function handleEvent(eventType, payload = {}) {
       !reconcileUnknownProviderDispatch &&
       !retryUnavailableProviderLease
     ) {
+      await projectLiveConversationRecord({
+        record: approval,
+        projector: projectApprovalEvent,
+        source: 'approval-decided',
+      });
       return {
         ok: true,
         replayed: true,
@@ -46857,6 +47015,11 @@ async function handleEvent(eventType, payload = {}) {
 
     if (retryConversationProjectionOnly) {
       await persistState(state);
+      await projectLiveConversationRecord({
+        record: approval,
+        projector: projectApprovalEvent,
+        source: 'approval-decided',
+      });
       return {
         ok: true,
         replayed: true,
@@ -46979,6 +47142,11 @@ async function handleEvent(eventType, payload = {}) {
     );
 
     await persistState(state);
+    await projectLiveConversationRecord({
+      record: approval,
+      projector: projectApprovalEvent,
+      source: 'approval-decided',
+    });
     return {
       ok: true,
       approval,
@@ -47184,7 +47352,27 @@ async function handleEvent(eventType, payload = {}) {
   if (normalizedEvent === 'call-status') {
     const existingCall = state.calls.find((item) => item.id === payload.id || item.id === payload.callId || item.id === payload.call_control_id || item.telnyxCallControlId === payload.call_control_id || item.telnyxCallControlId === payload.id || item.telnyxCallLegId === payload.call_leg_id || item.telnyxCallSessionId === payload.call_session_id || (normalizePhone(item.phone) && normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')));
     const nextStatus = payload.status || existingCall?.status || 'live';
-    if (existingCall && existingCall.status === nextStatus && normalizePhone(existingCall.phone) === normalizePhone(payload.phone || payload.to || existingCall.phone || '')) {
+    const nextDirection = payload.direction || existingCall?.direction || 'outbound';
+    const nextPhone = normalizePhone(existingCall?.phone || payload.phone || payload.to || '');
+    const nextFrom = normalizePhone(payload.from || existingCall?.from || existingCall?.fromNumber || '');
+    const nextTo = normalizePhone(payload.to || existingCall?.to || existingCall?.phone || '');
+    const conversationCallKind = /ended|hangup|completed|failed|busy|no-answer|cancel/i.test(
+      String(nextStatus)
+    )
+      ? 'completed'
+      : 'started';
+    if (
+      existingCall &&
+      existingCall.status === nextStatus &&
+      String(existingCall.direction || 'outbound').toLowerCase() === String(nextDirection).toLowerCase() &&
+      normalizePhone(existingCall.phone) === nextPhone
+    ) {
+      await projectLiveConversationRecord({
+        record: existingCall,
+        projector: projectCallEvent,
+        kind: conversationCallKind,
+        source: 'telnyx-call-status',
+      });
       return {
         ok: true,
         replayed: true,
@@ -47197,6 +47385,10 @@ async function handleEvent(eventType, payload = {}) {
       ...payload,
       id: existingCall?.id || payload.id || payload.callId || payload.call_control_id || randomUUID(),
       status: nextStatus,
+      direction: nextDirection,
+      phone: nextPhone,
+      from: nextFrom,
+      to: nextTo,
       endedAt: /ended|hangup|completed|failed|busy|no-answer|cancel/i.test(String(nextStatus)) ? payload.endedAt || isoNow() : existingCall?.endedAt || '',
       telnyxCallControlId: payload.call_control_id || payload.callControlId || existingCall?.telnyxCallControlId || '',
       telnyxCallLegId: payload.call_leg_id || payload.callLegId || existingCall?.telnyxCallLegId || '',
@@ -47234,6 +47426,12 @@ async function handleEvent(eventType, payload = {}) {
       })
     );
     await persistState(state);
+    await projectLiveConversationRecord({
+      record: call,
+      projector: projectCallEvent,
+      kind: conversationCallKind,
+      source: 'telnyx-call-status',
+    });
     return {
       ok: true,
       call,
@@ -47314,6 +47512,12 @@ async function handleEvent(eventType, payload = {}) {
     }
 
     await persistState(state);
+    await projectLiveConversationRecord({
+      record: call,
+      projector: projectCallEvent,
+      kind: 'transcript',
+      source: 'telnyx-call-transcript',
+    });
     return {
       ok: true,
       call,
@@ -47374,6 +47578,11 @@ async function handleEvent(eventType, payload = {}) {
       })
     );
     await persistState(state);
+    await projectLiveConversationRecord({
+      record: contract,
+      projector: projectContractEvent,
+      source: 'docusign-contract-status',
+    });
     return {
       ok: true,
       contract,
@@ -49280,6 +49489,11 @@ async function handleSlackApprovalInteraction(payload = {}) {
         })
       );
       await persistState(state);
+      await projectLiveConversationRecord({
+        record: approval,
+        projector: projectApprovalEvent,
+        source: 'slack-approval-needs-review',
+      });
       result = { ok: true, approval, rexDecisionResult };
     }
   } else {
@@ -51149,16 +51363,39 @@ function mapTelnyxWebhook(body = {}) {
   const payload = body.data?.payload || body.payload || body.data || body;
   const payloadTo = Array.isArray(payload.to) ? payload.to[0]?.phone_number || payload.to[0] : payload.to?.phone_number || payload.to;
   const payloadFrom = Array.isArray(payload.from) ? payload.from[0]?.phone_number || payload.from[0] : payload.from?.phone_number || payload.from;
+  const providerDirection = String(payload.direction || payload.call_direction || '').toLowerCase();
+  const inbound =
+    eventType.includes('received') ||
+    providerDirection === 'incoming' ||
+    providerDirection === 'inbound';
+  const outbound =
+    providerDirection === 'outgoing' ||
+    providerDirection === 'outbound';
 
   if (eventType.includes('message')) {
     return {
-      eventType: eventType.includes('received') ? 'sms-inbound' : 'sms-outbound',
+      eventType: inbound ? 'sms-inbound' : 'sms-outbound',
       payload: {
-        id: payload.id || payload.message_id,
-        phone: payloadTo || payloadFrom || payload.phone_number,
+        id:
+          payload.id ||
+          payload.message_id ||
+          `telnyx-message-${Math.abs(
+            hashString(
+              [
+                eventType,
+                payloadFrom || '',
+                payloadTo || '',
+                payload.text || payload.body || '',
+                payload.occurred_at || payload.timestamp || '',
+              ].join('|')
+            )
+          )}`,
+        phone: (inbound ? payloadFrom : payloadTo) || payload.phone_number,
+        from: payloadFrom || '',
+        to: payloadTo || '',
         body: payload.text || payload.body || '',
-        direction: eventType.includes('received') ? 'inbound' : 'outbound',
-        status: payload.status || (eventType.includes('received') ? 'received' : 'sent'),
+        direction: inbound ? 'inbound' : 'outbound',
+        status: payload.status || (inbound ? 'received' : 'sent'),
         leadName: payload.contact_name || '',
         actor: 'Telnyx',
       },
@@ -51192,11 +51429,34 @@ function mapTelnyxWebhook(body = {}) {
   }
 
   if (eventType.includes('call')) {
+    const callDirection = inbound ? 'inbound' : outbound ? 'outbound' : '';
     return {
       eventType: 'call-status',
       payload: {
-        id: payload.call_control_id || payload.id || randomUUID(),
-        phone: payloadTo || payloadFrom || payload.phone_number,
+        id:
+          payload.call_control_id ||
+          payload.id ||
+          payload.call_leg_id ||
+          payload.call_session_id ||
+          `telnyx-call-${Math.abs(
+            hashString(
+              [
+                eventType,
+                payloadFrom || '',
+                payloadTo || '',
+                payload.occurred_at || payload.timestamp || '',
+              ].join('|')
+            )
+          )}`,
+        phone:
+          (callDirection === 'inbound'
+            ? payloadFrom
+            : callDirection === 'outbound'
+              ? payloadTo
+              : payload.phone_number) || '',
+        from: payloadFrom || '',
+        to: payloadTo || '',
+        direction: callDirection,
         status: eventType.includes('hangup') ? 'ended' : eventType.includes('answered') ? 'live' : eventType.includes('bridged') ? 'transferred' : 'queued',
         leadName: payload.contact_name || '',
         address: payload.address || '',
@@ -51220,17 +51480,48 @@ function mapTelnyxWebhook(body = {}) {
 }
 
 function mapDocuSignWebhook(body = {}) {
-  const status = String(body.status || body.event || body.envelopeStatus || body.data?.envelopeSummary?.status || '').toLowerCase();
+  const envelopeSummary = body.data?.envelopeSummary || {};
+  const status = String(body.status || body.event || body.envelopeStatus || envelopeSummary.status || '').toLowerCase();
+  const envelopeId =
+    body.envelopeId ||
+    body.data?.envelopeId ||
+    envelopeSummary.envelopeId ||
+    envelopeSummary.envelope_id ||
+    '';
 
   return {
     eventType: ['completed', 'signed'].includes(status) ? 'contract-signed' : 'contract-status',
     payload: {
-      id: body.id || body.envelopeId || body.data?.envelopeId || randomUUID(),
-      envelopeId: body.envelopeId || body.data?.envelopeId || '',
+      id:
+        body.id ||
+        envelopeId ||
+        `docusign-envelope-${Math.abs(
+          hashString(
+            [
+              status,
+              body.email || body.signerEmail || '',
+              body.address || '',
+              body.updatedAt || body.timestamp || '',
+            ].join('|')
+          )
+        )}`,
+      envelopeId,
       status: status || 'updated',
+      leadId: body.leadId || body.lead_id || body.data?.leadId || '',
       leadName: body.leadName || body.signerName || '',
       address: body.address || '',
+      email: body.email || body.signerEmail || body.data?.signerEmail || '',
+      phone: body.phone || '',
       amount: body.amount || body.offerPrice || 0,
+      provider: 'DocuSign',
+      sentAt: body.sentAt || body.sent_at || '',
+      viewedAt:
+        body.viewedAt ||
+        body.viewed_at ||
+        (status === 'delivered' ? body.updatedAt || body.timestamp || isoNow() : ''),
+      signedAt: body.signedAt || body.signed_at || '',
+      completedAt: body.completedAt || body.completed_at || '',
+      updatedAt: body.updatedAt || body.updated_at || body.timestamp || isoNow(),
     },
   };
 }
@@ -53522,11 +53813,15 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     }
     const contextCall = getCallById(session.callId);
     const message = createMessageRecord({
-      id: `msg-deepgram-live-${slugify(session.callId || session.streamId || session.id)}-${Date.now()}`,
+      id: `msg-deepgram-live-${slugify(session.callId || session.streamId || session.id)}-${Math.abs(
+        hashString([session.streamId || '', session.startedAt || '', reason].join('|'))
+      )}`,
       leadId: contextCall?.leadId || '',
       leadName: contextCall?.leadName || 'Unknown seller',
       address: contextCall?.address || '',
       phone: contextCall?.phone || '',
+      from: contextCall?.from || '',
+      to: contextCall?.to || contextCall?.phone || '',
       channel: 'call',
       direction: 'transcription',
       provider: 'Deepgram',
@@ -53536,6 +53831,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       callId: session.callId || contextCall?.id || '',
       payload: {
         source: 'telnyx-media-stream',
+        callDirection: contextCall?.direction || '',
         streamId: session.streamId,
         frameCount: session.frameCount,
         audioBytes: session.audioBytes,
@@ -60709,7 +61005,38 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/recordings') {
       const body = await readBody(request);
-      const messageId = body.messageId || body.id || `msg-recording-${Date.now()}`;
+      const recordingIdentitySeed = [
+        body.callId || body.call_id || body.telnyxCallControlId || body.call_control_id || '',
+        body.providerRecordingId || body.provider_recording_id || '',
+        body.recordingUrl || body.audioUrl || body.url || '',
+        body.storagePath || body.storage_path || '',
+        body.createdAt || body.created_at || body.timestamp || '',
+        body.durationSeconds || body.duration_seconds || '',
+        body.audioBase64 ? hashString(String(body.audioBase64)) : '',
+        body.provider || 'Telnyx',
+      ].join('|');
+      const messageId =
+        body.messageId ||
+        body.id ||
+        `msg-recording-${Math.abs(hashString(recordingIdentitySeed))}`;
+      const recordingCallId =
+        body.callId ||
+        body.call_id ||
+        body.telnyxCallControlId ||
+        body.call_control_id ||
+        '';
+      const contextCall = recordingCallId ? getCallById(recordingCallId) : null;
+      const recordingCallDirection = String(
+        body.callDirection ||
+          body.call_direction ||
+          body.payload?.callDirection ||
+          contextCall?.direction ||
+          (['inbound', 'outbound'].includes(String(body.direction || '').toLowerCase())
+            ? body.direction
+            : '')
+      )
+        .trim()
+        .toLowerCase();
       const existing = findMessageById(messageId);
       const storagePath = buildRecordingStoragePath({ ...body, messageId });
       const contentType = body.contentType || body.audioContentType || 'audio/mpeg';
@@ -60732,15 +61059,23 @@ const server = createServer(async (request, response) => {
             ...body,
             id: messageId,
             channel: body.channel || 'call',
-            direction: body.direction || 'recording',
+            direction: 'recording',
             provider: body.provider || 'Telnyx',
             status: body.status || 'recorded',
             body: body.body || 'Call recording captured.',
+            phone: body.phone || contextCall?.phone || '',
+            from: body.from || contextCall?.from || '',
+            to: body.to || contextCall?.to || contextCall?.phone || '',
+            callId: recordingCallId || contextCall?.id || '',
+            payload: {
+              ...(body.payload && typeof body.payload === 'object' ? body.payload : {}),
+              callDirection: recordingCallDirection,
+            },
           })),
         ...body,
         id: messageId,
         channel: body.channel || existing?.channel || 'call',
-        direction: body.direction || existing?.direction || 'recording',
+        direction: 'recording',
         provider: body.provider || existing?.provider || 'Telnyx',
         status: body.status || existing?.status || 'recorded',
         storagePath,
@@ -60748,9 +61083,16 @@ const server = createServer(async (request, response) => {
         audioContentType: contentType,
         durationSeconds: toNumber(body.durationSeconds || body.duration_seconds || existing?.durationSeconds, 0),
         recordingUrl: body.recordingUrl || body.audioUrl || existing?.recordingUrl || '',
+        phone: body.phone || existing?.phone || contextCall?.phone || '',
+        from: body.from || existing?.from || contextCall?.from || '',
+        to: body.to || existing?.to || contextCall?.to || contextCall?.phone || '',
+        fromPhone: body.fromPhone || body.from || existing?.fromPhone || existing?.from || contextCall?.from || '',
+        toPhone: body.toPhone || body.to || existing?.toPhone || existing?.to || contextCall?.to || contextCall?.phone || '',
+        callId: recordingCallId || existing?.callId || contextCall?.id || '',
         payload: {
           ...(existing?.payload && typeof existing.payload === 'object' ? existing.payload : {}),
           ...(body.payload && typeof body.payload === 'object' ? body.payload : {}),
+          callDirection: recordingCallDirection || existing?.payload?.callDirection || '',
           storagePath,
           storageBucket: SUPABASE_CALL_RECORDINGS_BUCKET,
           contentType,
@@ -60760,16 +61102,22 @@ const server = createServer(async (request, response) => {
       };
       upsertMessage(state, message);
       await persistUnifiedMessageRecord(message);
-      addActivity(
-        state,
-        makeActivity({
-          actor: body.actor || 'Telnyx',
-          category: 'CALL',
-          status: upload?.ok ? 'uploaded' : 'recorded',
-          text: `Recording metadata saved for ${message.leadName || message.leadId || messageId}`,
-          target: storagePath,
-        })
-      );
+      const recordingActivityId = `activity-recording-${messageId}`;
+      if (!state.activity.some((entry) => entry.id === recordingActivityId)) {
+        addActivity(
+          state,
+          {
+            ...makeActivity({
+              actor: body.actor || 'Telnyx',
+              category: 'CALL',
+              status: upload?.ok ? 'uploaded' : 'recorded',
+              text: `Recording metadata saved for ${message.leadName || message.leadId || messageId}`,
+              target: storagePath,
+            }),
+            id: recordingActivityId,
+          }
+        );
+      }
       await persistState(state);
       json(response, 200, {
         ok: true,
@@ -61321,11 +61669,24 @@ const server = createServer(async (request, response) => {
         text: `Updated lead details for ${patched?.seller?.name || nextLead.seller?.name || 'seller'}.`,
         target: patched?.property?.address || nextLead.property?.address || patched?.seller?.email || nextLead.seller?.email || '',
       });
+      activity.id = String(
+        body.eventId ||
+          body.event_id ||
+          body.idempotencyKey ||
+          request.headers['idempotency-key'] ||
+          activity.id
+      );
+      activity.action = 'updated';
       activity.leadId = patched?.leadId || nextLead.leadId;
       activity.leadName = patched?.seller?.name || nextLead.seller?.name;
       activity.address = patched?.property?.address || nextLead.property?.address;
       addActivity(state, activity);
       await persistState(state);
+      await projectLiveConversationRecord({
+        record: activity,
+        projector: projectActivityEvent,
+        source: 'lead-updated',
+      });
       json(response, 200, {
         ok: true,
         lead: buildLeadFullView((patched || nextLead).leadId || (patched || nextLead).id)?.lead || patched || nextLead,
@@ -61471,10 +61832,24 @@ const server = createServer(async (request, response) => {
         text: note,
         target: context.address || context.leadName,
       });
+      activity.id = String(
+        body.eventId ||
+          body.event_id ||
+          body.idempotencyKey ||
+          request.headers['idempotency-key'] ||
+          activity.id
+      );
       activity.leadId = context.leadId;
       activity.leadName = context.leadName;
+      activity.phone = context.phone;
+      activity.email = context.email;
       addActivity(state, activity);
       await persistState(state);
+      await projectLiveConversationRecord({
+        record: activity,
+        projector: projectActivityEvent,
+        source: 'lead-note',
+      });
       json(response, 200, {
         ok: true,
         activity,
@@ -61603,6 +61978,22 @@ const server = createServer(async (request, response) => {
           address: lead.property?.address || context.address,
         });
         const message = createMessageRecord({
+          id:
+            body.id ||
+            body.message_id ||
+            body.messageId ||
+            body.event_id ||
+            body.eventId ||
+            campaignWebhook?.event?.providerEventId ||
+            `instantly-reply-${Math.abs(
+              hashString(
+                [
+                  body.email || body.contact?.email || context.email,
+                  body.timestamp || body.occurredAt || '',
+                  replyBody,
+                ].join('|')
+              )
+            )}`,
           leadId: leadContext.leadId,
           leadName: leadContext.leadName,
           address: leadContext.address,
@@ -61636,17 +62027,43 @@ const server = createServer(async (request, response) => {
         });
       }
 
-      addActivity(
-        state,
-        makeActivity({
-          actor: 'Instantly',
-          category: 'EMAIL',
-          status: eventType.includes('reply') ? 'received' : eventType.includes('open') ? 'opened' : eventType.includes('click') ? 'clicked' : 'queued',
-          text: eventType.includes('reply') ? `Cold email reply received from ${context.leadName || body.email || 'lead'}.` : `Instantly webhook: ${eventType || 'event'} for ${context.leadName || body.email || 'lead'}.`,
-          target: context.address || body.email || context.leadName,
-        })
-      );
+      const instantlyActivity = makeActivity({
+        actor: 'Instantly',
+        category: 'EMAIL',
+        status: eventType.includes('reply') ? 'received' : eventType.includes('open') ? 'opened' : eventType.includes('click') ? 'clicked' : 'queued',
+        text: eventType.includes('reply') ? `Cold email reply received from ${context.leadName || body.email || 'lead'}.` : `Instantly webhook: ${eventType || 'event'} for ${context.leadName || body.email || 'lead'}.`,
+        target: context.address || body.email || context.leadName,
+      });
+      instantlyActivity.id =
+        body.id ||
+        body.event_id ||
+        body.eventId ||
+        campaignWebhook?.event?.providerEventId ||
+        `instantly-event-${Math.abs(
+          hashString(
+            [
+              eventType,
+              body.email || body.contact?.email || context.email,
+              body.timestamp || body.occurredAt || '',
+              body.campaignId || body.campaign_id || '',
+            ].join('|')
+          )
+        )}`;
+      instantlyActivity.leadId =
+        campaignWebhook?.campaignLead?.leadId ||
+        body.leadId ||
+        body.contact?.leadId ||
+        context.leadId;
+      instantlyActivity.email = body.email || body.contact?.email || context.email;
+      addActivity(state, instantlyActivity);
       await persistState(state);
+      if (!eventType.includes('reply')) {
+        await projectLiveConversationRecord({
+          record: instantlyActivity,
+          projector: projectActivityEvent,
+          source: 'instantly-webhook',
+        });
+      }
       json(response, 200, {
         ok: true,
         campaignWebhook,
@@ -61665,20 +62082,37 @@ const server = createServer(async (request, response) => {
       });
       const messageBody = String(body.body || body.text || body.message || '').trim();
 
-      upsertMessage(
-        state,
-        createMessageRecord({
-          leadId: context.leadId,
-          leadName: context.leadName,
-          address: context.address,
-          email: body.email || context.email,
-          channel: 'email',
-          direction: 'inbound',
-          body: messageBody,
-          status: 'received',
-          provider: body.provider || 'email-webhook',
-        })
-      );
+      const message = createMessageRecord({
+        id:
+          body.id ||
+          body.message_id ||
+          body.messageId ||
+          body.event_id ||
+          body.eventId ||
+          `email-webhook-${Math.abs(
+            hashString(
+              [
+                body.provider || 'email-webhook',
+                body.email || body.from || context.email,
+                body.timestamp || body.occurredAt || '',
+                messageBody,
+              ].join('|')
+            )
+          )}`,
+        leadId: context.leadId,
+        leadName: context.leadName,
+        address: context.address,
+        email: body.email || body.from || context.email,
+        from: body.from || body.email || context.email,
+        to: body.to || '',
+        channel: 'email',
+        direction: 'inbound',
+        body: messageBody,
+        status: 'received',
+        provider: body.provider || 'email-webhook',
+      });
+      upsertMessage(state, message);
+      await persistUnifiedMessageRecord(message);
 
       const replyResult = await toolHandlers.handleReplyIntent({
         leadId: context.leadId,

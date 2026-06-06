@@ -268,6 +268,54 @@ export function projectMessageEvent(record) {
 
   const channel = normalized(record.channel);
   const nativeRecording = channel === 'call' && normalized(record.direction) === 'recording';
+  const nativeTranscript =
+    channel === 'call' &&
+    ['transcript', 'transcription'].includes(normalized(record.direction));
+  if (nativeTranscript) {
+    const senderAddress = firstText(record.fromPhone, record.senderAddress, record.from);
+    const recipientAddress = firstText(record.toPhone, record.recipientAddress, record.to);
+
+    return commonEvent(record, {
+      eventType: 'call.transcript',
+      channel: 'call',
+      direction: directionOf(record.payload?.callDirection, 'internal'),
+      sourceTable: 'unified_messages',
+      provider: record.provider,
+      senderAddress,
+      recipientAddress,
+      actorType: firstText(record.actorType) || 'system',
+      actorName: record.actorName,
+      subject: record.subject,
+      body: record.body ?? record.text,
+      status: record.status,
+      occurredAt: firstTimestamp(
+        record.occurredAt,
+        record.transcriptAt,
+        record.createdAt,
+        record.updatedAt
+      ),
+      payload: payloadFrom(record, [
+        'channel',
+        'direction',
+        'provider',
+        'fromPhone',
+        'toPhone',
+        'senderAddress',
+        'recipientAddress',
+        'from',
+        'to',
+        'actorName',
+        'subject',
+        'body',
+        'text',
+        'status',
+        'occurredAt',
+        'transcriptAt',
+        'createdAt',
+        'updatedAt',
+      ]),
+    });
+  }
   if (nativeRecording) {
     record = mergePayloadFields(record, [
       'recordingUrl',
@@ -276,6 +324,7 @@ export function projectMessageEvent(record) {
       'audioContentType',
       'durationSeconds',
       'callId',
+      'callDirection',
     ]);
     const senderAddress = firstText(record.fromPhone, record.senderAddress, record.from);
     const recipientAddress = firstText(record.toPhone, record.recipientAddress, record.to);
@@ -333,6 +382,7 @@ export function projectMessageEvent(record) {
           durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
           recordingUrl: firstNonEmpty(record.recordingUrl),
           callId: firstNonEmpty(record.callId),
+          callDirection: firstNonEmpty(record.callDirection),
         }
       ),
     });
@@ -345,11 +395,21 @@ export function projectMessageEvent(record) {
   const senderAddress =
     channel === 'sms'
       ? firstText(record.fromPhone, record.senderAddress, record.from)
-      : firstText(record.fromEmail, record.senderAddress, record.from);
+      : firstText(
+          record.fromEmail,
+          record.senderAddress,
+          record.from,
+          direction === 'inbound' ? record.email : ''
+        );
   const recipientAddress =
     channel === 'sms'
       ? firstText(record.toPhone, record.recipientAddress, record.to)
-      : firstText(record.toEmail, record.recipientAddress, record.to);
+      : firstText(
+          record.toEmail,
+          record.recipientAddress,
+          record.to,
+          direction === 'outbound' ? record.email : ''
+        );
   const actorName = firstText(
     record.senderName,
     record.fromName,
@@ -618,6 +678,10 @@ export function projectCallEvent(record, kind) {
         storageBucket: firstNonEmpty(record.storageBucket),
         audioContentType: firstNonEmpty(record.audioContentType),
         durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
+        callDirection:
+          callKind === 'recording' && ['inbound', 'outbound'].includes(direction)
+            ? direction
+            : undefined,
       }
     ),
   });
@@ -625,7 +689,7 @@ export function projectCallEvent(record, kind) {
 
 function contractEventType(status) {
   if (status === 'sent') return 'contract.sent';
-  if (status === 'viewed') return 'contract.viewed';
+  if (status === 'viewed' || status === 'delivered') return 'contract.viewed';
   if (status === 'signed' || status === 'completed') return 'contract.completed';
   return 'system';
 }

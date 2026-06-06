@@ -127,6 +127,26 @@ describe('message projection', () => {
     });
   });
 
+  test.each([
+    ['inbound', 'seller@example.com', 'seller@example.com', ''],
+    ['outbound', 'seller@example.com', '', 'seller@example.com'],
+  ])(
+    'uses the seller email fallback for %s provider records',
+    (direction, email, senderAddress, recipientAddress) => {
+      expect(
+        projectMessageEvent({
+          id: `email-fallback-${direction}`,
+          channel: 'email',
+          direction,
+          email,
+        })
+      ).toMatchObject({
+        senderAddress,
+        recipientAddress,
+      });
+    }
+  );
+
   test('projects a native unified-message recording row', () => {
     expect(
       projectMessageEvent({
@@ -144,6 +164,9 @@ describe('message projection', () => {
         duration_seconds: 47,
         recording_url: 'https://recordings.example/recording-message-1.mp3',
         provider_id: 'provider-recording-1',
+        payload: {
+          callDirection: 'inbound',
+        },
         created_at: '2026-06-06T13:30:00.000Z',
       })
     ).toMatchObject({
@@ -166,6 +189,44 @@ describe('message projection', () => {
         durationSeconds: 47,
         recordingUrl: 'https://recordings.example/recording-message-1.mp3',
         providerId: 'provider-recording-1',
+        callDirection: 'inbound',
+      },
+    });
+  });
+
+  test('projects a native unified-message transcript row', () => {
+    expect(
+      projectMessageEvent({
+        id: 'transcript-message-1',
+        workspaceId: 'workspace-1',
+        leadId: 'lead-1',
+        channel: 'call',
+        direction: 'transcription',
+        provider: 'deepgram',
+        body: 'Seller: Friday works for me.',
+        status: 'complete',
+        payload: {
+          callDirection: 'inbound',
+          callId: 'call-1',
+        },
+        createdAt: '2026-06-06T13:40:00.000Z',
+      })
+    ).toMatchObject({
+      workspaceId: 'workspace-1',
+      leadId: 'lead-1',
+      eventType: 'call.transcript',
+      channel: 'call',
+      direction: 'inbound',
+      sourceTable: 'unified_messages',
+      sourceId: 'transcript-message-1',
+      sourceKey:
+        'unified_messages:transcript-message-1:call.transcript',
+      provider: 'deepgram',
+      body: 'Seller: Friday works for me.',
+      occurredAt: '2026-06-06T13:40:00.000Z',
+      payload: {
+        callDirection: 'inbound',
+        callId: 'call-1',
       },
     });
   });
@@ -312,6 +373,7 @@ describe('call projection', () => {
     expect(
       projectCallEvent({
         id: 'call-3',
+        direction: 'inbound',
         recordingUrl: 'https://recordings.example/call-3.mp3',
         storagePath: 'calls/call-3.mp3',
         durationSeconds: '',
@@ -325,6 +387,7 @@ describe('call projection', () => {
         recordingUrl: 'https://recordings.example/call-3.mp3',
         storagePath: 'calls/call-3.mp3',
         durationSeconds: 0,
+        callDirection: 'inbound',
       },
     });
   });
@@ -477,6 +540,7 @@ describe('contract projection', () => {
   test.each([
     ['sent', 'contract.sent'],
     ['viewed', 'contract.viewed'],
+    ['delivered', 'contract.viewed'],
     ['signed', 'contract.completed'],
     ['completed', 'contract.completed'],
     ['draft', 'system'],
@@ -912,5 +976,73 @@ describe('projection validation and purity', () => {
     });
     expect(record.transcriptChunk.text).toBe('Frozen words');
     expect(record.payload.nested).toHaveProperty('ignored');
+  });
+});
+
+describe('provider retry source identities', () => {
+  test.each([
+    [
+      'Telnyx SMS',
+      () =>
+        projectMessageEvent({
+          id: 'telnyx-message-retry',
+          channel: 'sms',
+          provider: 'telnyx',
+        }),
+    ],
+    [
+      'Instantly email',
+      () =>
+        projectMessageEvent({
+          id: 'instantly-message-retry',
+          channel: 'email',
+          provider: 'instantly',
+        }),
+    ],
+    [
+      'Telnyx call transcript',
+      () =>
+        projectCallEvent(
+          {
+            id: 'telnyx-call-transcript-retry',
+            transcriptText: 'Seller transcript.',
+          },
+          'transcript'
+        ),
+    ],
+    [
+      'DocuSign envelope',
+      () =>
+        projectContractEvent({
+          id: 'docusign-envelope-retry',
+          envelopeId: 'envelope-retry',
+          status: 'viewed',
+        }),
+    ],
+    [
+      'approval decision',
+      () =>
+        projectApprovalEvent({
+          id: 'approval-retry',
+          status: 'approved',
+        }),
+    ],
+    [
+      'lead note',
+      () =>
+        projectActivityEvent({
+          id: 'lead-note-retry',
+          category: 'NOTE',
+          text: 'Seller prefers afternoons.',
+        }),
+    ],
+  ])('%s retries produce the same source identity', (_label, project) => {
+    const first = project();
+    const retry = project();
+
+    expect(first.sourceKey).toBe(retry.sourceKey);
+    expect(first.sourceTable).toBe(retry.sourceTable);
+    expect(first.sourceId).toBe(retry.sourceId);
+    expect(first.eventType).toBe(retry.eventType);
   });
 });

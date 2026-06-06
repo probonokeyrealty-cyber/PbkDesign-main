@@ -136,6 +136,78 @@ export type MessageRecord = {
   createdAt?: string;
 };
 
+export type ConversationThreadIdentity = {
+  id?: string;
+  threadId?: string;
+  identityType?: 'phone' | 'email' | string;
+  value?: string;
+  normalizedValue?: string;
+  displayValue?: string;
+  isPrimary?: boolean;
+  source?: string;
+  createdAt?: string;
+};
+
+export type ConversationEvent = {
+  id: string;
+  threadId: string;
+  leadId?: string | null;
+  eventType: string;
+  channel?: string;
+  direction?: string;
+  provider?: string;
+  senderIdentityId?: string | null;
+  actorType?: string;
+  actorName?: string;
+  senderAddress?: string;
+  recipientAddress?: string;
+  subject?: string;
+  body?: string;
+  status?: string;
+  occurredAt: string;
+  readAt?: string | null;
+  hiddenAt?: string | null;
+  spamReportedAt?: string | null;
+  payload?: Record<string, unknown>;
+};
+
+export type ConversationThread = {
+  id: string;
+  leadId?: string | null;
+  title?: string;
+  status?: string;
+  assignedAgent?: string;
+  lastEventAt?: string | null;
+  lastInboundAt?: string | null;
+  lastOutboundAt?: string | null;
+  unreadCount?: number;
+  pinned?: boolean;
+  archivedAt?: string | null;
+  mergedIntoThreadId?: string | null;
+  seller?: Record<string, unknown>;
+  property?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  identities?: ConversationThreadIdentity[];
+  latestEvent?: ConversationEvent | null;
+};
+
+export type CommunicationSenderIdentity = {
+  id: string;
+  provider: 'telnyx' | 'instantly' | string;
+  channel: 'sms' | 'email' | 'call';
+  address: string;
+  normalizedAddress?: string;
+  label?: string;
+  region?: string;
+  lifecycleStatus: string;
+  healthStatus?: string;
+  healthScore?: number | null;
+  isWorkspaceDefault?: boolean;
+  inboundGraceUntil?: string | null;
+  retiredAt?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
 export type ContractRecord = {
   id: string;
   leadName?: string;
@@ -1812,5 +1884,326 @@ export async function sendDealToAgent(
     message: `Analyzer synced ${deal.address || 'deal'} to the runtime for ${deal.selectedPath || 'cash'} follow-up. Agent context includes ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script.`,
     deal,
     agentDealContext,
+  });
+}
+
+export type ConversationListResponse = {
+  ok: boolean;
+  result?: string;
+  items?: ConversationThread[];
+  nextCursor?: string | null;
+  error?: string;
+};
+
+export type ConversationDetailResponse = {
+  ok: boolean;
+  result?: string;
+  thread?: ConversationThread | null;
+  leadSummary?: Record<string, unknown> | null;
+  senderSummary?: Record<string, unknown> | null;
+  error?: string;
+};
+
+export type ConversationTimelineResponse = {
+  ok: boolean;
+  result?: string;
+  items?: ConversationEvent[];
+  nextCursor?: string | null;
+  error?: string;
+};
+
+export type SenderIdentityListResponse = {
+  ok: boolean;
+  result?: string;
+  items?: CommunicationSenderIdentity[];
+  summary?: Record<string, unknown>;
+  providers?: Record<string, unknown>;
+  synced?: CommunicationSenderIdentity[];
+  error?: string;
+};
+
+function conversationSearchSuffix(
+  entries: Array<[string, string | number | boolean | null | undefined]>
+) {
+  const params = new URLSearchParams();
+  for (const [key, value] of entries) {
+    if (value === undefined || value === null || value === '') continue;
+    params.set(key, String(value));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+export async function fetchConversationsRequest({
+  cursor = '',
+  search = '',
+  unread,
+  pinned,
+  archived,
+  channel = '',
+  status = '',
+  assignedAgent = '',
+  limit = 40,
+}: {
+  cursor?: string;
+  search?: string;
+  unread?: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+  channel?: string;
+  status?: string;
+  assignedAgent?: string;
+  limit?: number;
+} = {}) {
+  const suffix = conversationSearchSuffix([
+    ['cursor', cursor],
+    ['search', search.trim()],
+    ['unread', unread],
+    ['pinned', pinned],
+    ['archived', archived],
+    ['channel', channel],
+    ['status', status],
+    ['assignedAgent', assignedAgent],
+    ['limit', Math.max(1, Math.min(100, limit))],
+  ]);
+  return bridgeRequest<ConversationListResponse>({
+    path: `/api/conversations${suffix}`,
+  });
+}
+
+export async function fetchConversationRequest(threadId: string) {
+  return bridgeRequest<ConversationDetailResponse>({
+    path: `/api/conversations/${encodeURIComponent(threadId)}`,
+  });
+}
+
+export async function fetchConversationTimelineRequest(
+  threadId: string,
+  {
+    cursor = '',
+    limit = 80,
+    includeHidden = false,
+  }: {
+    cursor?: string;
+    limit?: number;
+    includeHidden?: boolean;
+  } = {}
+) {
+  const suffix = conversationSearchSuffix([
+    ['cursor', cursor],
+    ['limit', Math.max(1, Math.min(200, limit))],
+    ['includeHidden', includeHidden || undefined],
+  ]);
+  return bridgeRequest<ConversationTimelineResponse>({
+    path: `/api/conversations/${encodeURIComponent(threadId)}/timeline${suffix}`,
+  });
+}
+
+export async function patchConversationRequest(
+  threadId: string,
+  body: {
+    read?: boolean;
+    unread?: boolean;
+    pinned?: boolean;
+    archived?: boolean;
+    assignedAgent?: string;
+    spam?: boolean;
+  }
+) {
+  return bridgeRequest<ConversationDetailResponse>({
+    method: 'PATCH',
+    path: `/api/conversations/${encodeURIComponent(threadId)}`,
+    body,
+  });
+}
+
+export async function sendConversationMessageRequest(
+  threadId: string,
+  body: {
+    channel: 'sms' | 'email';
+    senderIdentityId: string;
+    body: string;
+    subject?: string;
+    scheduledFor?: string;
+    actor?: string;
+    requestedBy?: string;
+  }
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    scheduled?: boolean;
+    scheduledFor?: string;
+    message?: MessageRecord;
+    approval?: ApprovalRecord | null;
+    providerDeliveryClaimed?: boolean;
+    event?: ConversationEvent;
+    providerResult?: Record<string, unknown>;
+    qaValidation?: Record<string, unknown> | null;
+    safetyValidation?: Record<string, unknown> | null;
+    error?: string;
+  }>({
+    method: 'POST',
+    path: `/api/conversations/${encodeURIComponent(threadId)}/messages`,
+    body,
+  });
+}
+
+export async function fetchSenderIdentitiesRequest({
+  channel = '',
+  provider = '',
+  lifecycleStatus = '',
+}: {
+  channel?: string;
+  provider?: string;
+  lifecycleStatus?: string;
+} = {}) {
+  const suffix = conversationSearchSuffix([
+    ['channel', channel],
+    ['provider', provider],
+    ['lifecycleStatus', lifecycleStatus],
+  ]);
+  return bridgeRequest<SenderIdentityListResponse>({
+    path: `/api/communication-identities${suffix}`,
+  });
+}
+
+export async function syncSenderIdentitiesRequest() {
+  return bridgeRequest<SenderIdentityListResponse>({
+    method: 'POST',
+    path: '/api/communication-identities/sync',
+    body: {},
+  });
+}
+
+export async function patchSenderIdentityRequest(
+  identityId: string,
+  body: {
+    lifecycleStatus: string;
+    reason?: string;
+  }
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    identity?: CommunicationSenderIdentity | null;
+    error?: string;
+  }>({
+    method: 'PATCH',
+    path: `/api/communication-identities/${encodeURIComponent(identityId)}`,
+    body,
+  });
+}
+
+export async function requestSenderReleaseRequest(
+  identityId: string,
+  body: { reason: string }
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    identity?: CommunicationSenderIdentity;
+    approval?: ApprovalRecord;
+    error?: string;
+  }>({
+    method: 'POST',
+    path: `/api/communication-identities/${encodeURIComponent(identityId)}/release-request`,
+    body,
+  });
+}
+
+export async function fetchSenderRecommendationRequest(
+  threadId: string,
+  channel: 'sms' | 'email'
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    recommended?: CommunicationSenderIdentity | null;
+    alternatives?: CommunicationSenderIdentity[];
+    reasonCodes?: string[];
+    error?: string;
+  }>({
+    method: 'POST',
+    path: `/api/conversations/${encodeURIComponent(threadId)}/sender-recommendation`,
+    body: { channel },
+  });
+}
+
+export async function refineConversationDraftRequest(
+  threadId: string,
+  body: {
+    channel: 'sms' | 'email';
+    draft: string;
+    subject?: string;
+  }
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    degraded?: boolean;
+    rawDraft?: string;
+    refinedDraft?: string;
+    contextEventCount?: number;
+    error?: string;
+  }>({
+    method: 'POST',
+    path: `/api/conversations/${encodeURIComponent(threadId)}/refine-draft`,
+    body,
+  });
+}
+
+export async function patchConversationEventRequest(
+  eventId: string,
+  body: {
+    read?: boolean;
+    hidden?: boolean;
+    important?: boolean;
+  }
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    event?: ConversationEvent;
+    error?: string;
+  }>({
+    method: 'PATCH',
+    path: `/api/conversation-events/${encodeURIComponent(eventId)}`,
+    body,
+  });
+}
+
+export async function restoreConversationEventRequest(eventId: string) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    event?: ConversationEvent;
+    error?: string;
+  }>({
+    method: 'POST',
+    path: `/api/conversation-events/${encodeURIComponent(eventId)}/restore`,
+    body: {},
+  });
+}
+
+export async function reportConversationEventSpamRequest(
+  eventId: string,
+  body: {
+    reason?: string;
+    explicitOptOut?: boolean;
+    actor?: string;
+  } = {}
+) {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    event?: ConversationEvent;
+    explicitOptOut?: boolean;
+    dncCreated?: boolean;
+    error?: string;
+  }>({
+    method: 'POST',
+    path: `/api/conversation-events/${encodeURIComponent(eventId)}/report-spam`,
+    body,
   });
 }

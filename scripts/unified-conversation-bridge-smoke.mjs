@@ -73,6 +73,7 @@ assert(
 
 assert(
   /createConversationStore\(pool\)/.test(conversationRoutes) &&
+    /workspaceId:\s*CONVERSATION_WORKSPACE_ID/.test(conversationRoutes) &&
     /store\.listThreads\(filters\)/.test(conversationRoutes),
   'GET /api/conversations must use the Postgres conversation store.'
 );
@@ -100,15 +101,21 @@ assert(
 assert(
   /matchPath\(pathname,\s*'\/api\/conversations\/:threadId\/timeline'\)/.test(conversationRoutes) &&
     /request\.method === 'GET'/.test(conversationRoutes) &&
-    /store\.listTimeline\(threadId,\s*\{[\s\S]*cursor:[\s\S]*limit:[\s\S]*includeHidden:/.test(
+    /store\.getThread\(threadId,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID,?\s*\}\)/.test(
+      conversationRoutes
+    ) &&
+    /if \(!thread\)[\s\S]*Conversation thread not found/.test(conversationRoutes) &&
+    /store\.listTimeline\(threadId,\s*\{[\s\S]*workspaceId:\s*CONVERSATION_WORKSPACE_ID[\s\S]*cursor:[\s\S]*limit:[\s\S]*includeHidden:/.test(
       conversationRoutes
     ),
-  'GET /api/conversations/:threadId/timeline must call store.listTimeline with its contract.'
+  'GET /api/conversations/:threadId/timeline must guard canonical existence and pass workspace.'
 );
 
 assert(
   /matchPath\(pathname,\s*'\/api\/conversations\/:threadId'\)/.test(conversationRoutes) &&
-    /store\.getThread\(threadId\)/.test(conversationRoutes) &&
+    /store\.getThread\(threadId,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID,?\s*\}\)/.test(
+      conversationRoutes
+    ) &&
     /buildConversationLeadSummary\(pool,\s*thread\)/.test(conversationRoutes) &&
     /buildConversationSenderSummary\(store,\s*thread\)/.test(conversationRoutes) &&
     /thread,[\s\S]*leadSummary,[\s\S]*senderSummary/.test(conversationRoutes) &&
@@ -128,11 +135,9 @@ assert(
   'Conversation detail must load lead summaries from Postgres with a real bridge-state fallback.'
 );
 
-const leadSummaryStart = bridge.indexOf(
-  'async function buildConversationLeadSummary(pool, thread)'
-);
+const leadSummaryStart = bridge.indexOf('function mapConversationLeadSummary(row, source)');
 const leadSummaryEnd = bridge.indexOf(
-  '\nfunction incrementConversationSummaryCount',
+  '\nasync function buildConversationSenderSummary',
   leadSummaryStart
 );
 const leadSummaryHelper = bridge.slice(leadSummaryStart, leadSummaryEnd);
@@ -155,21 +160,19 @@ assert(
       'engagement_score',
       'motivation_score',
       'dnc',
-      'raw',
     ].every((column) => new RegExp(`\\b${column}\\b`).test(leadSummaryHelper)) &&
-    !/SELECT\s+\*/i.test(leadSummaryHelper),
-  'Conversation lead summary must select only the reviewed stable lead columns.'
+    !/SELECT\s+\*|\braw\b/i.test(leadSummaryHelper),
+  'Conversation lead summary must select only safe stable lead columns and exclude raw.'
 );
 
 assert(
   /function buildConversationSenderSummary\(store,\s*thread\)/.test(bridge) &&
-    /store\.listSenderIdentities\(\{\s*workspaceId:\s*thread\.workspaceId,?\s*\}\)/.test(bridge) &&
+    /store\.getSenderIdentitySummary\(\{\s*workspaceId:\s*thread\.workspaceId,?\s*\}\)/.test(
+      bridge
+    ) &&
     /source:\s*'postgres:communication_sender_identities'/.test(bridge) &&
-    /byChannel/.test(bridge) &&
-    /byProvider/.test(bridge) &&
-    /byLifecycle/.test(bridge) &&
-    /isWorkspaceDefault/.test(bridge),
-  'Conversation detail must summarize real sender identities without provider secrets.'
+    /itemsTruncated:\s*false/.test(storeSource),
+  'Conversation detail must use the exact untruncated sender identity summary contract.'
 );
 
 const senderSummaryStart = bridge.indexOf(
@@ -191,8 +194,10 @@ assert(
 assert(
   /request\.method === 'PATCH'/.test(conversationRoutes) &&
     /buildConversationThreadPatch\(body,\s*currentThread\)/.test(conversationRoutes) &&
-    /store\.patchThread\(threadId,\s*patch\)/.test(conversationRoutes),
-  'PATCH /api/conversations/:threadId must translate semantic fields before patching the store.'
+    /store\.patchThread\(threadId,\s*patch,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID,?\s*\}\)/.test(
+      conversationRoutes
+    ),
+  'PATCH /api/conversations/:threadId must translate fields and pass workspace to the store.'
 );
 
 assert(
@@ -215,10 +220,10 @@ assert(
 assert(
   /matchPath\(pathname,\s*'\/api\/conversations\/:threadId\/merge'\)/.test(conversationRoutes) &&
     /request\.method === 'POST'/.test(conversationRoutes) &&
-    /store\.mergeThreads\(\{[\s\S]*canonicalThreadId,[\s\S]*mergedThreadId,[\s\S]*actor,/.test(
+    /store\.mergeThreads\(\{[\s\S]*workspaceId:\s*CONVERSATION_WORKSPACE_ID,[\s\S]*canonicalThreadId,[\s\S]*mergedThreadId,[\s\S]*actor,/.test(
       conversationRoutes
     ),
-  'POST /api/conversations/:threadId/merge must call store.mergeThreads.'
+  'POST /api/conversations/:threadId/merge must call store.mergeThreads with workspace.'
 );
 
 assert(
@@ -262,6 +267,48 @@ assert(
       bridge
     ),
   'Conversation store errors must degrade safely for connectivity and missing-schema failures.'
+);
+
+assert(
+  /\['22007', '22P02'\]\.includes\(String\(error\?\.code/.test(bridge) &&
+    /Invalid conversation request syntax/.test(bridge),
+  'Known Postgres input syntax errors must return a sanitized 400.'
+);
+
+assert(
+  /function conversationCursorError/.test(storeSource) &&
+    /statusCode:\s*400/.test(storeSource) &&
+    /UUID/.test(storeSource) &&
+    /Date\.parse/.test(storeSource) &&
+    /includeHidden must be a boolean/.test(storeSource),
+  'Conversation cursors must validate UUIDs, timestamps, and visibility before querying Postgres.'
+);
+
+assert(
+  /async function getThread\(threadId,\s*options = \{ workspaceId: 'pbk' \}\)/.test(storeSource) &&
+    /WHERE id = \$1[\s\S]*workspace_id = \$2[\s\S]*merged_into_thread_id IS NULL/.test(
+      storeSource
+    ) &&
+    /async function listTimeline\(threadId,\s*options = \{\}\)/.test(storeSource) &&
+    /JOIN public\.conversation_threads AS thread/.test(storeSource) &&
+    /thread\.workspace_id = \$2/.test(storeSource) &&
+    /async function patchThread\(\s*threadId,\s*patch = \{\},\s*options = \{ workspaceId: 'pbk' \}\s*\)/.test(
+      storeSource
+    ) &&
+    /async function mergeThreads\(\{\s*workspaceId:[\s\S]*canonicalThreadId/.test(storeSource),
+  'Direct conversation store operations must be workspace scoped.'
+);
+
+assert(
+  /async function getSenderIdentitySummary\(\{ workspaceId:[\s\S]*\} = \{\}\)/.test(storeSource) &&
+    /COUNT\(\*\)::integer/.test(storeSource) &&
+    /GROUP BY channel/.test(storeSource) &&
+    /GROUP BY provider/.test(storeSource) &&
+    /GROUP BY lifecycle_status/.test(storeSource) &&
+    /WHERE workspace_id = \$1[\s\S]*lifecycle_status = 'active'[\s\S]*is_workspace_default = TRUE/.test(
+      storeSource
+    ),
+  'Sender identity summary must use exact aggregate SQL and an unbounded safe item query.'
 );
 
 assert(

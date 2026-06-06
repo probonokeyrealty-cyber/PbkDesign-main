@@ -20,6 +20,9 @@ const CONVERSATION_TABLES = [
   'conversation_events',
   'communication_sender_identities',
 ];
+const THREAD_UUID = '11111111-1111-4111-8111-111111111111';
+const SECOND_THREAD_UUID = '22222222-2222-4222-8222-222222222222';
+const EVENT_UUID = '33333333-3333-4333-8333-333333333333';
 
 function normalizeSql(sql) {
   const normalized = sql.replace(/\r\n/g, '\n');
@@ -732,8 +735,8 @@ describe('conversation event persistence', () => {
     expect(aggregateQueries[0].sql).toContain('read_at IS NULL');
     expect(aggregateQueries[0].sql).toContain('hidden_at IS NULL');
     expect(aggregateQueries[0].sql).not.toContain('unread_count = unread_count +');
-    expect(aggregateQueries[0].params).toEqual([['thread-1']]);
-    expect(aggregateQueries[1].params).toEqual([['thread-1']]);
+    expect(aggregateQueries[0].params).toEqual([['thread-1'], 'pbk']);
+    expect(aggregateQueries[1].params).toEqual([['thread-1'], 'pbk']);
   });
 
   test('locks the existing source event and recomputes old and new threads when reassigned', async () => {
@@ -788,13 +791,102 @@ describe('conversation event persistence', () => {
 
     expect(eventLockIndex).toBeGreaterThan(-1);
     expect(eventLockIndex).toBeLessThan(insertIndex);
-    expect(aggregateQuery.params).toEqual([['thread-new', 'thread-old']]);
+    expect(aggregateQuery.params).toEqual([['thread-new', 'thread-old'], 'pbk']);
     expect(aggregateQuery.sql).toContain('MAX(event.occurred_at)');
     expect(aggregateQuery.sql).toContain('COUNT(event.id) FILTER');
+    expect(aggregateQuery.sql).toContain('event.workspace_id = $2');
   });
 });
 
 describe('conversation queries and pagination', () => {
+  test('scopes canonical thread reads and timeline rows to the requested workspace', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        if (sql.includes('FROM public.conversation_threads')) {
+          return params[1] === 'pbk' ? { rows: [threadRow({ id: THREAD_UUID })] } : { rows: [] };
+        }
+        return params[1] === 'pbk'
+          ? { rows: [eventRow({ id: EVENT_UUID, thread_id: THREAD_UUID })] }
+          : { rows: [] };
+      },
+    };
+    const store = createConversationStore(pool);
+
+    await expect(store.getThread(THREAD_UUID, { workspaceId: 'pbk' })).resolves.toMatchObject({
+      id: THREAD_UUID,
+    });
+    await expect(store.getThread(THREAD_UUID, { workspaceId: 'other' })).resolves.toBeNull();
+    const timeline = await store.listTimeline(THREAD_UUID, {
+      workspaceId: 'pbk',
+      limit: 10,
+    });
+    const crossWorkspaceTimeline = await store.listTimeline(THREAD_UUID, {
+      workspaceId: 'other',
+      limit: 10,
+    });
+
+    expect(timeline.items).toHaveLength(1);
+    expect(crossWorkspaceTimeline.items).toHaveLength(0);
+    expect(queries[0].sql).toContain('workspace_id = $2');
+    expect(queries[0].params).toEqual([THREAD_UUID, 'pbk']);
+    expect(queries[1].params).toEqual([THREAD_UUID, 'other']);
+    expect(queries[2].sql).toContain('JOIN public.conversation_threads AS thread');
+    expect(queries[2].sql).toContain('thread.workspace_id = $2');
+    expect(queries[2].sql).toContain('thread.merged_into_thread_id IS NULL');
+    expect(queries[2].params).toEqual([THREAD_UUID, 'pbk', 11]);
+    expect(queries[3].params).toEqual([THREAD_UUID, 'other', 11]);
+  });
+
+  test('rejects malformed cursors before querying Postgres', async () => {
+    const pool = { query: jest.fn() };
+    const store = createConversationStore(pool);
+    const cursor = (value) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+
+    for (const malformed of [
+      cursor({ id: 'not-a-uuid', lastEventAt: '2026-06-06T12:00:00.000Z' }),
+      cursor({ id: THREAD_UUID, lastEventAt: 'not-a-date' }),
+      cursor({ id: EVENT_UUID, occurredAt: 'not-a-date', includeHidden: false }),
+      cursor({
+        id: EVENT_UUID,
+        occurredAt: '2026-06-06T12:00:00.000Z',
+        includeHidden: 'false',
+      }),
+    ]) {
+      await expect(
+        store.listThreads({ workspaceId: 'pbk', cursor: malformed })
+      ).rejects.toMatchObject({ statusCode: 400 });
+    }
+
+    await expect(
+      store.listTimeline(THREAD_UUID, {
+        workspaceId: 'pbk',
+        cursor: cursor({
+          id: EVENT_UUID,
+          occurredAt: 'invalid',
+          includeHidden: false,
+        }),
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('accepts omitted timeline visibility passed as undefined', async () => {
+    const pool = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.listTimeline(THREAD_UUID, {
+        workspaceId: 'pbk',
+        includeHidden: undefined,
+      })
+    ).resolves.toEqual({ items: [], nextCursor: null });
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
+
   test('parameterizes an exact trimmed assigned-agent thread filter', async () => {
     const queries = [];
     const pool = {
@@ -819,7 +911,7 @@ describe('conversation queries and pagination', () => {
     const maliciousSearch = "%' OR TRUE; --";
     const rows = Array.from({ length: 101 }, (_, index) =>
       threadRow({
-        id: `thread-${String(index).padStart(3, '0')}`,
+        id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
         last_event_at: `2026-06-06T${String(23 - (index % 23)).padStart(2, '0')}:00:00.000Z`,
       })
     );
@@ -874,15 +966,18 @@ describe('conversation queries and pagination', () => {
     };
     const store = createConversationStore(pool);
 
-    await expect(store.getThread('thread-1')).resolves.toMatchObject({ id: 'thread-1' });
+    await expect(store.getThread(THREAD_UUID)).resolves.toMatchObject({ id: 'thread-1' });
     expect(queries[0].sql).toContain('merged_into_thread_id IS NULL');
-    expect(queries[0].params).toEqual(['thread-1']);
+    expect(queries[0].params).toEqual([THREAD_UUID, 'pbk']);
 
-    const timeline = await store.listTimeline('thread-1', { limit: 1000 });
+    const timeline = await store.listTimeline(THREAD_UUID, {
+      workspaceId: 'pbk',
+      limit: 1000,
+    });
     expect(timeline.items).toHaveLength(100);
     expect(timeline.nextCursor).toEqual(expect.any(String));
     expect(queries[1].sql).toContain('hidden_at IS NULL');
-    expect(queries[1].sql).toContain('ORDER BY occurred_at DESC, id DESC');
+    expect(queries[1].sql).toContain('ORDER BY event.occurred_at DESC, event.id DESC');
     expect(queries[1].params.at(-1)).toBe(101);
   });
 
@@ -890,7 +985,7 @@ describe('conversation queries and pagination', () => {
     const queries = [];
     const rows = Array.from({ length: 3 }, (_, index) =>
       eventRow({
-        id: `event-${index}`,
+        id: `00000000-0000-4000-9000-${String(index + 1).padStart(12, '0')}`,
         occurred_at: `2026-06-06T12:0${2 - index}:00.000Z`,
         hidden_at: index === 1 ? '2026-06-06T13:00:00.000Z' : null,
       })
@@ -903,19 +998,24 @@ describe('conversation queries and pagination', () => {
     };
     const store = createConversationStore(pool);
 
-    const firstPage = await store.listTimeline('thread-1', {
+    const firstPage = await store.listTimeline(THREAD_UUID, {
+      workspaceId: 'pbk',
       includeHidden: true,
       limit: 2,
     });
     const decoded = JSON.parse(Buffer.from(firstPage.nextCursor, 'base64url').toString('utf8'));
     expect(decoded.includeHidden).toBe(true);
 
-    await store.listTimeline('thread-1', firstPage.nextCursor);
+    await store.listTimeline(THREAD_UUID, {
+      workspaceId: 'pbk',
+      cursor: firstPage.nextCursor,
+    });
     expect(queries[0].sql).not.toContain('hidden_at IS NULL');
     expect(queries[1].sql).not.toContain('hidden_at IS NULL');
 
     await expect(
-      store.listTimeline('thread-1', {
+      store.listTimeline(THREAD_UUID, {
+        workspaceId: 'pbk',
         cursor: firstPage.nextCursor,
         includeHidden: false,
       })
@@ -924,6 +1024,39 @@ describe('conversation queries and pagination', () => {
 });
 
 describe('conversation mutation allowlists and merging', () => {
+  test('scopes thread patches to workspace and shifts patch parameter indices', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return { rows: [threadRow({ id: THREAD_UUID })] };
+      },
+    };
+
+    await createConversationStore(pool).patchThread(
+      THREAD_UUID,
+      { pinned: false, assignedAgent: 'Rex' },
+      { workspaceId: 'pbk' }
+    );
+
+    expect(queries[0].sql).toContain('assigned_agent = $3');
+    expect(queries[0].sql).toContain('pinned = $4');
+    expect(queries[0].sql).toContain('WHERE id = $1');
+    expect(queries[0].sql).toContain('workspace_id = $2');
+    expect(queries[0].params).toEqual([THREAD_UUID, 'pbk', 'Rex', false]);
+  });
+
+  test('requires merge workspace before opening a transaction', async () => {
+    const pool = { connect: jest.fn() };
+    await expect(
+      createConversationStore(pool).mergeThreads({
+        canonicalThreadId: THREAD_UUID,
+        mergedThreadId: SECOND_THREAD_UUID,
+      })
+    ).rejects.toThrow('workspaceId is required');
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
   test('rejects unknown thread patch fields and parameterizes allowed values', async () => {
     const queries = [];
     const pool = {
@@ -946,9 +1079,9 @@ describe('conversation mutation allowlists and merging', () => {
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).not.toContain("Seller's home");
     expect(queries[0].params).toContain("Seller's home");
-    expect(queries[0].sql).toContain('title = $2');
-    expect(queries[0].sql).toContain('pinned = $3');
-    expect(queries[0].sql).toContain('metadata = $4::jsonb');
+    expect(queries[0].sql).toContain('title = $3');
+    expect(queries[0].sql).toContain('pinned = $4');
+    expect(queries[0].sql).toContain('metadata = $5::jsonb');
   });
 
   test('rejects a mixed thread patch when any key is unknown', async () => {
@@ -1010,6 +1143,7 @@ describe('conversation mutation allowlists and merging', () => {
     });
 
     const result = await createConversationStore(pool).mergeThreads({
+      workspaceId: 'pbk',
       canonicalThreadId: 'thread-z',
       mergedThreadId: 'thread-a',
       actor: { type: 'user', name: "O'Brien" },
@@ -1030,7 +1164,7 @@ describe('conversation mutation allowlists and merging', () => {
     const lockQueryIndex = queries.indexOf(lockQuery);
 
     expect(snapshotIndex).toBeGreaterThan(-1);
-    expect(queries[snapshotIndex].params).toEqual([['thread-a', 'thread-z']]);
+    expect(queries[snapshotIndex].params).toEqual(['pbk', ['thread-a', 'thread-z']]);
     expect(advisoryLocks.map(({ params }) => params[0])).toEqual([
       'conversation-identity:pbk:email:seller@example.com',
       'conversation-identity:pbk:phone:+16145550199',
@@ -1038,7 +1172,7 @@ describe('conversation mutation allowlists and merging', () => {
     ]);
     expect(advisoryLocks.every(({ index }) => index > snapshotIndex)).toBe(true);
     expect(advisoryLocks.every(({ index }) => index < lockQueryIndex)).toBe(true);
-    expect(lockQuery.params).toEqual([['thread-a', 'thread-z']]);
+    expect(lockQuery.params).toEqual([['thread-a', 'thread-z'], 'pbk']);
     expect(queries.some(({ sql }) => sql.includes('DELETE FROM public.conversation_events'))).toBe(
       true
     );
@@ -1070,6 +1204,7 @@ describe('conversation mutation allowlists and merging', () => {
     const pool = { connect: jest.fn() };
     await expect(
       createConversationStore(pool).mergeThreads({
+        workspaceId: 'pbk',
         canonicalThreadId: 'thread-1',
         mergedThreadId: 'thread-1',
         actor: 'user-1',
@@ -1105,6 +1240,7 @@ describe('conversation mutation allowlists and merging', () => {
 
     await expect(
       createConversationStore(pool).mergeThreads({
+        workspaceId: 'pbk',
         canonicalThreadId: 'thread-z',
         mergedThreadId: 'thread-a',
         actor: 'user-1',
@@ -1143,6 +1279,7 @@ describe('conversation mutation allowlists and merging', () => {
 
     await expect(
       createConversationStore(pool).mergeThreads({
+        workspaceId: 'pbk',
         canonicalThreadId: 'thread-z',
         mergedThreadId: 'thread-a',
         actor: 'user-1',
@@ -1199,6 +1336,7 @@ describe('conversation mutation allowlists and merging', () => {
 
       await expect(
         createConversationStore(pool).mergeThreads({
+          workspaceId: 'pbk',
           canonicalThreadId: canonical.id,
           mergedThreadId: merged.id,
           actor: 'user-1',
@@ -1255,6 +1393,7 @@ describe('conversation mutation allowlists and merging', () => {
 
     await expect(
       createConversationStore(pool).mergeThreads({
+        workspaceId: 'pbk',
         canonicalThreadId: canonical.id,
         mergedThreadId: merged.id,
         actor: 'user-1',
@@ -1265,6 +1404,58 @@ describe('conversation mutation allowlists and merging', () => {
 });
 
 describe('sender identity persistence', () => {
+  test('returns exact sender counts and all safe active/default items without a 100-row cap', async () => {
+    const safeItems = Array.from({ length: 105 }, (_, index) =>
+      senderRow({
+        id: `sender-${index}`,
+        channel: index % 2 ? 'email' : 'sms',
+        provider: index % 2 ? 'instantly' : 'telnyx',
+        is_workspace_default: index === 0,
+      })
+    );
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        if (sql.includes('GROUP BY channel')) {
+          return {
+            rows: [
+              {
+                total: 105,
+                by_channel: { sms: 53, email: 52 },
+                by_provider: { telnyx: 53, instantly: 52 },
+                by_lifecycle: { active: 105 },
+              },
+            ],
+          };
+        }
+        return { rows: safeItems };
+      },
+    };
+
+    const summary = await createConversationStore(pool).getSenderIdentitySummary({
+      workspaceId: 'pbk',
+    });
+
+    expect(summary.counts).toEqual({
+      total: 105,
+      byChannel: { sms: 53, email: 52 },
+      byProvider: { telnyx: 53, instantly: 52 },
+      byLifecycle: { active: 105 },
+    });
+    expect(summary.items).toHaveLength(105);
+    expect(summary.itemsTruncated).toBe(false);
+    expect(queries).toHaveLength(2);
+    expect(queries.every(({ params }) => params[0] === 'pbk')).toBe(true);
+    expect(queries[0].sql).toContain('COUNT(*)::integer');
+    expect(queries[0].sql).toContain('GROUP BY channel');
+    expect(queries[0].sql).toContain('GROUP BY provider');
+    expect(queries[0].sql).toContain('GROUP BY lifecycle_status');
+    expect(queries[1].sql).not.toContain('LIMIT');
+    expect(queries[1].sql).not.toContain('provider_identity_id');
+    expect(queries[1].sql).not.toContain('metadata');
+  });
+
   test('lists, upserts, and lifecycle-patches sender identities with normalized addresses', async () => {
     const queries = [];
     const pool = {
@@ -1540,6 +1731,7 @@ describe('conversation store Postgres integration', () => {
 
         await expect(
           store.mergeThreads({
+            workspaceId,
             canonicalThreadId: provisional,
             mergedThreadId: leadAThread,
             actor: 'integration',
@@ -1547,6 +1739,7 @@ describe('conversation store Postgres integration', () => {
         ).rejects.toThrow('must be canonical');
         await expect(
           store.mergeThreads({
+            workspaceId,
             canonicalThreadId: leadAThread,
             mergedThreadId: leadBThread,
             actor: 'integration',
@@ -1752,6 +1945,7 @@ describe('conversation store Postgres integration', () => {
         });
         await identitySelected;
         const merge = createConversationStore(mergePool).mergeThreads({
+          workspaceId,
           canonicalThreadId: leadAThreadId,
           mergedThreadId: provisionalThreadId,
           actor: 'integration-race',

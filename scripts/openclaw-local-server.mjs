@@ -49233,6 +49233,8 @@ function sendConversationPostgresUnavailable(response) {
   });
 }
 
+const CONVERSATION_WORKSPACE_ID = 'pbk';
+
 function decodeConversationPathId(rawValue = '') {
   try {
     const decoded = decodeURIComponent(String(rawValue || '')).trim();
@@ -49409,7 +49411,6 @@ function mapConversationLeadSummary(row, source) {
       row.motivation_score ?? row.motivationScore
     ),
     dnc: typeof row.dnc === 'boolean' ? row.dnc : null,
-    raw: row.raw && typeof row.raw === 'object' && !Array.isArray(row.raw) ? row.raw : null,
   };
 }
 
@@ -49432,8 +49433,7 @@ async function buildConversationLeadSummary(pool, thread) {
         assigned_agent,
         engagement_score,
         motivation_score,
-        dnc,
-        raw
+        dnc
       FROM public.lead_profiles
       WHERE id = $1
         AND workspace_id = $2
@@ -49448,43 +49448,13 @@ async function buildConversationLeadSummary(pool, thread) {
   return bridgeLead ? mapConversationLeadSummary(bridgeLead, 'bridge_state') : null;
 }
 
-function incrementConversationSummaryCount(counts, key) {
-  const normalized = typeof key === 'string' && key.trim() ? key.trim() : 'unknown';
-  counts[normalized] = (counts[normalized] || 0) + 1;
-}
-
 async function buildConversationSenderSummary(store, thread) {
-  const identities = await store.listSenderIdentities({
+  const summary = await store.getSenderIdentitySummary({
     workspaceId: thread.workspaceId,
   });
-  const counts = {
-    total: identities.length,
-    byChannel: {},
-    byProvider: {},
-    byLifecycle: {},
-  };
-  for (const identity of identities) {
-    incrementConversationSummaryCount(counts.byChannel, identity.channel);
-    incrementConversationSummaryCount(counts.byProvider, identity.provider);
-    incrementConversationSummaryCount(counts.byLifecycle, identity.lifecycleStatus);
-  }
   return {
     source: 'postgres:communication_sender_identities',
-    counts,
-    items: identities
-      .filter(
-        (identity) => identity.lifecycleStatus === 'active' || identity.isWorkspaceDefault === true
-      )
-      .map((identity) => ({
-        id: identity.id,
-        channel: identity.channel,
-        provider: identity.provider,
-        address: identity.address,
-        label: identity.label,
-        lifecycleStatus: identity.lifecycleStatus,
-        healthStatus: identity.healthStatus,
-        isWorkspaceDefault: identity.isWorkspaceDefault,
-      })),
+    ...summary,
   };
 }
 
@@ -49515,11 +49485,13 @@ function getConversationStoreError(error, fallbackMessage) {
   if (Number.isInteger(error?.statusCode)) {
     return { statusCode: error.statusCode, error: message || fallbackMessage };
   }
+  if (['22007', '22P02'].includes(String(error?.code || error?.cause?.code || ''))) {
+    return { statusCode: 400, error: 'Invalid conversation request syntax.' };
+  }
   if (/must exist|not found|missing or already merged/i.test(message)) {
     return { statusCode: 404, error: message };
   }
   if (
-    error?.code === '22P02' ||
     /required|invalid|unknown|no editable|must be|must match|different|cannot|already merged|belong|visibility|cycle detected/i.test(
       message
     )
@@ -56281,6 +56253,7 @@ const server = createServer(async (request, response) => {
       try {
         const store = createConversationStore(pool);
         const filters = {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
           cursor: url.searchParams.get('cursor') || undefined,
           search: url.searchParams.get('search') || undefined,
           unread: parseConversationBooleanQuery(url.searchParams, 'unread'),
@@ -56313,7 +56286,19 @@ const server = createServer(async (request, response) => {
       try {
         const threadId = decodeConversationPathId(conversationTimelineMatch.groups.threadId);
         const store = createConversationStore(pool);
+        const thread = await store.getThread(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
+        if (!thread) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation thread not found.',
+          });
+          return;
+        }
         const page = await store.listTimeline(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
           cursor: url.searchParams.get('cursor') || undefined,
           limit: url.searchParams.get('limit') || undefined,
           includeHidden: parseConversationBooleanQuery(url.searchParams, 'includeHidden'),
@@ -56343,6 +56328,7 @@ const server = createServer(async (request, response) => {
         const actor = getConversationRequestActor(request);
         const store = createConversationStore(pool);
         const thread = await store.mergeThreads({
+          workspaceId: CONVERSATION_WORKSPACE_ID,
           canonicalThreadId,
           mergedThreadId,
           actor,
@@ -56368,7 +56354,9 @@ const server = createServer(async (request, response) => {
       try {
         const threadId = decodeConversationPathId(conversationThreadMatch.groups.threadId);
         const store = createConversationStore(pool);
-        const thread = await store.getThread(threadId);
+        const thread = await store.getThread(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
         if (!thread) {
           json(response, 404, {
             ok: false,
@@ -56407,7 +56395,9 @@ const server = createServer(async (request, response) => {
         const threadId = decodeConversationPathId(conversationThreadMatch.groups.threadId);
         const body = await readBody(request);
         const store = createConversationStore(pool);
-        const currentThread = await store.getThread(threadId);
+        const currentThread = await store.getThread(threadId, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
         if (!currentThread) {
           json(response, 404, {
             ok: false,
@@ -56417,7 +56407,9 @@ const server = createServer(async (request, response) => {
           return;
         }
         const patch = buildConversationThreadPatch(body, currentThread);
-        const thread = await store.patchThread(threadId, patch);
+        const thread = await store.patchThread(threadId, patch, {
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+        });
         json(response, thread ? 200 : 404, {
           ok: Boolean(thread),
           result: 'postgres',

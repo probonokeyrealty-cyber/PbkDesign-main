@@ -103,6 +103,10 @@ function workspaceId(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : 'pbk';
 }
 
+function requiredWorkspaceId(value) {
+  return requiredText(value, 'workspaceId');
+}
+
 function boundedLimit(value, fallback = DEFAULT_PAGE_LIMIT) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -113,38 +117,78 @@ function encodeCursor(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
+function conversationCursorError(message = 'Invalid cursor') {
+  return Object.assign(new Error(message), {
+    statusCode: 400,
+    code: 'INVALID_CONVERSATION_CURSOR',
+  });
+}
+
+function validateConversationCursor(cursor) {
+  if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) {
+    throw conversationCursorError();
+  }
+  if (
+    Object.hasOwn(cursor, 'id') &&
+    (typeof cursor.id !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.id))
+  ) {
+    throw conversationCursorError('Cursor id must be a UUID-like string');
+  }
+  for (const field of ['lastEventAt', 'occurredAt']) {
+    if (
+      Object.hasOwn(cursor, field) &&
+      cursor[field] !== null &&
+      (typeof cursor[field] !== 'string' || !Number.isFinite(Date.parse(cursor[field])))
+    ) {
+      throw conversationCursorError(`Cursor ${field} must be a valid timestamp`);
+    }
+  }
+  if (
+    Object.hasOwn(cursor, 'includeHidden') &&
+    cursor.includeHidden !== undefined &&
+    typeof cursor.includeHidden !== 'boolean'
+  ) {
+    throw conversationCursorError('Cursor includeHidden must be a boolean');
+  }
+  return cursor;
+}
+
 function decodeCursor(value) {
   if (!value) return {};
-  if (typeof value === 'object' && !Array.isArray(value)) return value;
-  if (typeof value !== 'string') throw new Error('Invalid cursor');
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return validateConversationCursor(value);
+  }
+  if (typeof value !== 'string') throw conversationCursorError();
   try {
     const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) {
-      throw new Error('Invalid cursor');
-    }
-    return cursor;
-  } catch {
-    throw new Error('Invalid cursor');
+    return validateConversationCursor(cursor);
+  } catch (error) {
+    if (error?.statusCode === 400) throw error;
+    throw conversationCursorError();
   }
 }
 
 function decodeTimelineCursor(value) {
   if (!value) return {};
   if (typeof value === 'string') return decodeCursor(value);
-  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid cursor');
-  if (!value.cursor) return value;
+  if (typeof value !== 'object' || Array.isArray(value)) throw conversationCursorError();
+  if (!value.cursor) return validateConversationCursor(value);
 
   const encoded = decodeCursor(value.cursor);
   if (
     Object.hasOwn(value, 'includeHidden') &&
+    value.includeHidden !== undefined &&
     Boolean(value.includeHidden) !== Boolean(encoded.includeHidden)
   ) {
-    throw new Error('Timeline cursor visibility does not match the requested visibility');
+    throw conversationCursorError(
+      'Timeline cursor visibility does not match the requested visibility'
+    );
   }
-  return {
+  return validateConversationCursor({
     ...encoded,
     limit: value.limit ?? encoded.limit,
-  };
+  });
 }
 
 async function withTransaction(pool, callback) {
@@ -245,7 +289,7 @@ async function lockConversationResolution(client, workspace, leadId, phone, emai
   );
 }
 
-async function lockConversationThreads(client, threadIds) {
+async function lockConversationThreads(client, workspace, threadIds) {
   const ids = [...new Set(threadIds.filter(Boolean))].sort();
   if (!ids.length) return [];
   const result = await client.query(
@@ -253,21 +297,25 @@ async function lockConversationThreads(client, threadIds) {
       SELECT *
       FROM public.conversation_threads
       WHERE id = ANY($1::uuid[])
+        AND workspace_id = $2
       ORDER BY id
       FOR UPDATE
     `,
-    [ids]
+    [ids, workspace]
   );
+  if (result.rows.some((row) => row.workspace_id !== workspace)) {
+    throw new Error('Conversation thread lock returned a different workspace');
+  }
   return result.rows;
 }
 
-async function lockCurrentThreadDestinations(client, threadIds) {
+async function lockCurrentThreadDestinations(client, workspace, threadIds) {
   const requestedIds = [...new Set(threadIds.filter(Boolean))].sort();
   const rowsById = new Map();
   let pendingIds = requestedIds;
 
   while (pendingIds.length) {
-    const lockedRows = await lockConversationThreads(client, pendingIds);
+    const lockedRows = await lockConversationThreads(client, workspace, pendingIds);
     for (const row of lockedRows) rowsById.set(row.id, row);
     pendingIds = [
       ...new Set(
@@ -290,7 +338,7 @@ async function lockCurrentThreadDestinations(client, threadIds) {
   return destinations;
 }
 
-async function selectMergeLockSnapshot(client, threadIds) {
+async function selectMergeLockSnapshot(client, workspace, threadIds) {
   const stableIds = [...new Set(threadIds.filter(Boolean))].sort();
   const result = await client.query(
     `
@@ -304,15 +352,19 @@ async function selectMergeLockSnapshot(client, threadIds) {
       LEFT JOIN public.conversation_thread_identities AS identity
         ON identity.thread_id = thread.id
         AND identity.workspace_id = thread.workspace_id
-      WHERE thread.id = ANY($1::uuid[])
+      WHERE thread.workspace_id = $1
+        AND thread.id = ANY($2::uuid[])
       ORDER BY thread.id, identity.identity_type, identity.normalized_value
     `,
-    [stableIds]
+    [workspace, stableIds]
   );
 
   const threads = new Map();
   const identities = [];
   for (const row of result.rows) {
+    if (row.workspace_id !== workspace) {
+      throw new Error('Conversation threads must belong to the requested workspace');
+    }
     if (!threads.has(row.id)) {
       threads.set(row.id, {
         id: row.id,
@@ -328,16 +380,11 @@ async function selectMergeLockSnapshot(client, threadIds) {
     }
   }
   if (threads.size !== stableIds.length) {
-    throw new Error('Both conversation threads must exist');
-  }
-
-  const workspaces = new Set([...threads.values()].map((thread) => thread.workspace_id));
-  if (workspaces.size !== 1) {
-    throw new Error('Conversation threads must belong to the same workspace');
+    throw new Error('Both conversation threads must exist in the requested workspace');
   }
 
   return {
-    workspace: workspaces.values().next().value,
+    workspace,
     threads: [...threads.values()],
     identities,
   };
@@ -421,13 +468,16 @@ async function lockEventThreads(client, threadIds, workspace, requiredThreadId) 
   return ids;
 }
 
-async function recomputeThreadAggregates(client, threadIds) {
+async function recomputeThreadAggregates(client, threadIds, workspace) {
   const ids = [...new Set(threadIds.filter(Boolean))].sort();
   if (!ids.length) return [];
   const result = await client.query(
     `
       WITH target_threads AS (
-        SELECT DISTINCT unnest($1::uuid[]) AS thread_id
+        SELECT thread.id AS thread_id
+        FROM public.conversation_threads AS thread
+        WHERE thread.workspace_id = $2
+          AND thread.id = ANY($1::uuid[])
       ),
       aggregates AS (
         SELECT
@@ -447,6 +497,7 @@ async function recomputeThreadAggregates(client, threadIds) {
         FROM target_threads AS target
         LEFT JOIN public.conversation_events AS event
           ON event.thread_id = target.thread_id
+          AND event.workspace_id = $2
         GROUP BY target.thread_id
       )
       UPDATE public.conversation_threads AS thread
@@ -458,9 +509,10 @@ async function recomputeThreadAggregates(client, threadIds) {
         updated_at = NOW()
       FROM aggregates
       WHERE thread.id = aggregates.thread_id
+        AND thread.workspace_id = $2
       RETURNING thread.*
     `,
-    [ids]
+    [ids, workspace]
   );
   return result.rows;
 }
@@ -511,6 +563,7 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
   validateThreadMerge(canonical, merged);
   const canonicalId = canonical.id;
   const mergedId = merged.id;
+  const workspace = canonical.workspace_id;
 
   await client.query(
     `
@@ -518,6 +571,8 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
       USING public.conversation_events AS kept
       WHERE duplicate.thread_id = $1
         AND kept.thread_id = $2
+        AND duplicate.workspace_id = $3
+        AND kept.workspace_id = $3
         AND duplicate.workspace_id = kept.workspace_id
         AND duplicate.source_table <> ''
         AND duplicate.source_id <> ''
@@ -525,7 +580,7 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
         AND duplicate.source_id = kept.source_id
         AND duplicate.event_type = kept.event_type
     `,
-    [mergedId, canonicalId]
+    [mergedId, canonicalId, workspace]
   );
   await client.query(
     `
@@ -535,8 +590,9 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
         lead_id = COALESCE($3, lead_id),
         updated_at = NOW()
       WHERE thread_id = $1
+        AND workspace_id = $4
     `,
-    [mergedId, canonicalId, canonical.lead_id ?? null]
+    [mergedId, canonicalId, canonical.lead_id ?? null, workspace]
   );
   await client.query(
     `
@@ -544,11 +600,13 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
       USING public.conversation_thread_identities AS kept
       WHERE duplicate.thread_id = $1
         AND kept.thread_id = $2
+        AND duplicate.workspace_id = $3
+        AND kept.workspace_id = $3
         AND duplicate.workspace_id = kept.workspace_id
         AND duplicate.identity_type = kept.identity_type
         AND duplicate.normalized_value = kept.normalized_value
     `,
-    [mergedId, canonicalId]
+    [mergedId, canonicalId, workspace]
   );
   await client.query(
     `
@@ -558,8 +616,9 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
         lead_id = COALESCE($3, lead_id),
         updated_at = NOW()
       WHERE thread_id = $1
+        AND workspace_id = $4
     `,
-    [mergedId, canonicalId, canonical.lead_id ?? null]
+    [mergedId, canonicalId, canonical.lead_id ?? null, workspace]
   );
 
   const mergedAt = new Date().toISOString();
@@ -576,9 +635,10 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
           || jsonb_build_object('lastMerge', $2::jsonb),
         updated_at = NOW()
       WHERE canonical.id = $1
+        AND canonical.workspace_id = $3
       RETURNING canonical.*
     `,
-    [canonicalId, mergeMetadata]
+    [canonicalId, mergeMetadata, workspace]
   );
   await client.query(
     `
@@ -589,8 +649,9 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
         unread_count = 0,
         updated_at = NOW()
       WHERE id = $1
+        AND workspace_id = $3
     `,
-    [mergedId, canonicalId]
+    [mergedId, canonicalId, workspace]
   );
 
   const { actorType, actorName } = mergeActorFields(actor);
@@ -647,7 +708,7 @@ async function mergeConversationThreadRows(client, canonical, merged, actor) {
     ]
   );
 
-  const aggregateRows = await recomputeThreadAggregates(client, [canonicalId]);
+  const aggregateRows = await recomputeThreadAggregates(client, [canonicalId], workspace);
   return aggregateRows[0] ?? canonical;
 }
 
@@ -761,7 +822,7 @@ export function createConversationStore(pool) {
 
       const leadCandidate = leadId ? await selectLeadThread(client, workspace, leadId) : null;
       const identityCandidates = await selectIdentityThreads(client, workspace, phone, email);
-      const candidateDestinations = await lockCurrentThreadDestinations(client, [
+      const candidateDestinations = await lockCurrentThreadDestinations(client, workspace, [
         leadCandidate?.id,
         ...identityCandidates.map((candidate) => candidate.id),
       ]);
@@ -966,35 +1027,42 @@ export function createConversationStore(pool) {
     };
   }
 
-  async function getThread(threadId) {
+  async function getThread(threadId, options = { workspaceId: 'pbk' }) {
     const id = requiredText(threadId, 'threadId');
+    const workspace = workspaceId(options?.workspaceId);
     const result = await pool.query(
       `
         SELECT *
         FROM public.conversation_threads
         WHERE id = $1
+          AND workspace_id = $2
           AND merged_into_thread_id IS NULL
         LIMIT 1
       `,
-      [id]
+      [id, workspace]
     );
     return mapConversationThreadRow(result.rows[0]);
   }
 
-  async function listTimeline(threadId, cursorInput) {
+  async function listTimeline(threadId, options = {}) {
     const id = requiredText(threadId, 'threadId');
-    const cursor = decodeTimelineCursor(cursorInput);
+    const workspace = requiredWorkspaceId(options?.workspaceId);
+    const cursor = decodeTimelineCursor(options);
     const includeHidden = Boolean(cursor.includeHidden);
-    const params = [id];
-    const conditions = ['thread_id = $1'];
+    const params = [id, workspace];
+    const conditions = [
+      'event.thread_id = $1',
+      'thread.workspace_id = $2',
+      'thread.merged_into_thread_id IS NULL',
+    ];
     const addParam = (value) => {
       params.push(value);
       return `$${params.length}`;
     };
-    if (!includeHidden) conditions.push('hidden_at IS NULL');
+    if (!includeHidden) conditions.push('event.hidden_at IS NULL');
     if (cursor.occurredAt && cursor.id) {
       conditions.push(
-        `(occurred_at, id) < (${addParam(cursor.occurredAt)}::timestamptz, ${addParam(
+        `(event.occurred_at, event.id) < (${addParam(cursor.occurredAt)}::timestamptz, ${addParam(
           cursor.id
         )}::uuid)`
       );
@@ -1003,10 +1071,13 @@ export function createConversationStore(pool) {
     params.push(limit + 1);
     const result = await pool.query(
       `
-        SELECT *
-        FROM public.conversation_events
+        SELECT event.*
+        FROM public.conversation_events AS event
+        JOIN public.conversation_threads AS thread
+          ON thread.id = event.thread_id
+          AND thread.workspace_id = event.workspace_id
         WHERE ${conditions.join('\n          AND ')}
-        ORDER BY occurred_at DESC, id DESC
+        ORDER BY event.occurred_at DESC, event.id DESC
         LIMIT $${params.length}
       `,
       params
@@ -1135,18 +1206,19 @@ export function createConversationStore(pool) {
       if (!row) throw new Error('Unable to persist conversation event');
       const inserted = row.inserted === true || row.inserted === 't';
 
-      await recomputeThreadAggregates(client, [
-        previousEvent?.thread_id,
-        lockedEvent?.thread_id,
-        row.thread_id,
-      ]);
+      await recomputeThreadAggregates(
+        client,
+        [previousEvent?.thread_id, lockedEvent?.thread_id, row.thread_id],
+        workspace
+      );
 
       return { ...mapConversationEventRow(row), inserted };
     });
   }
 
-  async function patchThread(threadId, patch = {}) {
+  async function patchThread(threadId, patch = {}, options = { workspaceId: 'pbk' }) {
     const id = requiredText(threadId, 'threadId');
+    const workspace = workspaceId(options?.workspaceId);
     const fields = [
       ['status', 'status'],
       ['assignedAgent', 'assigned_agent'],
@@ -1162,7 +1234,7 @@ export function createConversationStore(pool) {
     if (unknownFields.length) {
       throw new Error(`Unknown thread patch fields: ${unknownFields.join(', ')}`);
     }
-    const params = [id];
+    const params = [id, workspace];
     const assignments = [];
     for (const [property, column] of fields) {
       if (!Object.hasOwn(patch, property) || patch[property] === undefined) continue;
@@ -1177,6 +1249,7 @@ export function createConversationStore(pool) {
         UPDATE public.conversation_threads
         SET ${assignments.join(', ')}, updated_at = NOW()
         WHERE id = $1
+          AND workspace_id = $2
           AND merged_into_thread_id IS NULL
         RETURNING *
       `,
@@ -1185,14 +1258,20 @@ export function createConversationStore(pool) {
     return mapConversationThreadRow(result.rows[0]);
   }
 
-  async function mergeThreads({ canonicalThreadId, mergedThreadId, actor } = {}) {
+  async function mergeThreads({
+    workspaceId: workspaceInput,
+    canonicalThreadId,
+    mergedThreadId,
+    actor,
+  } = {}) {
+    const workspace = requiredWorkspaceId(workspaceInput);
     const canonicalId = requiredText(canonicalThreadId, 'canonicalThreadId');
     const mergedId = requiredText(mergedThreadId, 'mergedThreadId');
     if (canonicalId === mergedId)
       throw new Error('Canonical and merged thread IDs must be different');
 
     return withTransaction(pool, async (client) => {
-      const snapshot = await selectMergeLockSnapshot(client, [canonicalId, mergedId]);
+      const snapshot = await selectMergeLockSnapshot(client, workspace, [canonicalId, mergedId]);
       await lockConversationKeys(
         client,
         conversationLockKeys(snapshot.workspace, {
@@ -1205,7 +1284,7 @@ export function createConversationStore(pool) {
         snapshot.workspace,
         snapshot.identities
       );
-      const locked = await lockConversationThreads(client, [
+      const locked = await lockConversationThreads(client, workspace, [
         canonicalId,
         mergedId,
         ...identityDestinationIds,
@@ -1257,6 +1336,93 @@ export function createConversationStore(pool) {
       params
     );
     return result.rows.map(mapSenderIdentityRow);
+  }
+
+  async function getSenderIdentitySummary({ workspaceId: workspaceInput } = {}) {
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const aggregateResult = await pool.query(
+      `
+        WITH
+          channel_counts AS (
+            SELECT channel, COUNT(*)::integer AS count
+            FROM public.communication_sender_identities
+            WHERE workspace_id = $1
+            GROUP BY channel
+          ),
+          provider_counts AS (
+            SELECT provider, COUNT(*)::integer AS count
+            FROM public.communication_sender_identities
+            WHERE workspace_id = $1
+            GROUP BY provider
+          ),
+          lifecycle_counts AS (
+            SELECT lifecycle_status, COUNT(*)::integer AS count
+            FROM public.communication_sender_identities
+            WHERE workspace_id = $1
+            GROUP BY lifecycle_status
+          )
+        SELECT
+          (
+            SELECT COUNT(*)::integer
+            FROM public.communication_sender_identities
+            WHERE workspace_id = $1
+          ) AS total,
+          COALESCE(
+            (SELECT jsonb_object_agg(channel, count) FROM channel_counts),
+            '{}'::jsonb
+          ) AS by_channel,
+          COALESCE(
+            (SELECT jsonb_object_agg(provider, count) FROM provider_counts),
+            '{}'::jsonb
+          ) AS by_provider,
+          COALESCE(
+            (SELECT jsonb_object_agg(lifecycle_status, count) FROM lifecycle_counts),
+            '{}'::jsonb
+          ) AS by_lifecycle
+      `,
+      [workspace]
+    );
+    const itemResult = await pool.query(
+      `
+        SELECT
+          id,
+          channel,
+          provider,
+          address,
+          label,
+          lifecycle_status,
+          health_status,
+          is_workspace_default
+        FROM public.communication_sender_identities
+        WHERE workspace_id = $1
+          AND (
+            lifecycle_status = 'active'
+            OR is_workspace_default = TRUE
+          )
+        ORDER BY is_workspace_default DESC, provider, channel, address, id
+      `,
+      [workspace]
+    );
+    const counts = aggregateResult.rows[0] ?? {};
+    return {
+      counts: {
+        total: Number(counts.total || 0),
+        byChannel: jsonValue(counts.by_channel),
+        byProvider: jsonValue(counts.by_provider),
+        byLifecycle: jsonValue(counts.by_lifecycle),
+      },
+      items: itemResult.rows.map((row) => ({
+        id: row.id,
+        channel: row.channel,
+        provider: row.provider,
+        address: row.address,
+        label: row.label,
+        lifecycleStatus: row.lifecycle_status,
+        healthStatus: row.health_status,
+        isWorkspaceDefault: row.is_workspace_default,
+      })),
+      itemsTruncated: false,
+    };
   }
 
   async function upsertSenderIdentity(identity = {}) {
@@ -1433,6 +1599,7 @@ export function createConversationStore(pool) {
     patchThread,
     mergeThreads,
     listSenderIdentities,
+    getSenderIdentitySummary,
     upsertSenderIdentity,
     patchSenderIdentity,
   };

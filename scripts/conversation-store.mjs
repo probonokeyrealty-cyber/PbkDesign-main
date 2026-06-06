@@ -1185,6 +1185,43 @@ export function createConversationStore(pool) {
         )
       `);
     }
+    if (filters.activity === 'live') {
+      conditions.push(`
+        COALESCE((
+          SELECT
+            LOWER(live_event.event_type) = 'call.started'
+            AND LOWER(COALESCE(live_event.status, '')) NOT IN (
+              'busy',
+              'cancelled',
+              'completed',
+              'ended',
+              'failed',
+              'hangup',
+              'no-answer'
+            )
+          FROM public.conversation_events AS live_event
+          WHERE live_event.thread_id = t.id
+            AND live_event.hidden_at IS NULL
+            AND LOWER(live_event.event_type) IN ('call.started', 'call.completed')
+          ORDER BY live_event.occurred_at DESC, live_event.id DESC
+          LIMIT 1
+        ), FALSE)
+      `);
+    }
+    if (filters.activity === 'approvals') {
+      conditions.push(`
+        EXISTS (
+          SELECT 1
+          FROM public.conversation_events AS approval_event
+          WHERE approval_event.thread_id = t.id
+            AND approval_event.hidden_at IS NULL
+            AND (
+              LOWER(approval_event.event_type) LIKE '%approval%'
+              OR LOWER(approval_event.status) IN ('approval_required', 'pending_approval')
+            )
+        )
+      `);
+    }
     if (typeof filters.search === 'string' && filters.search.trim()) {
       const searchParam = addParam(filters.search.trim());
       conditions.push(`

@@ -25,6 +25,8 @@ const helpers = [
   'patchConversationEventRequest',
   'restoreConversationEventRequest',
   'reportConversationEventSpamRequest',
+  'searchLeadsRequest',
+  'mergeConversationThreadsRequest',
 ];
 
 function helperFunctionSource(helper) {
@@ -100,6 +102,12 @@ const helperContracts = [
     'POST',
     '/api/conversation-events/${encodeURIComponent(eventId)}/report-spam',
   ],
+  ['searchLeadsRequest', 'GET', '/api/leads/search?${params.toString()}'],
+  [
+    'mergeConversationThreadsRequest',
+    'POST',
+    '/api/conversations/${encodeURIComponent(canonicalThreadId)}/merge',
+  ],
 ];
 
 for (const [helper, method, path] of helperContracts) {
@@ -139,6 +147,10 @@ assert(
 assert(
   /new URLSearchParams/.test(helperSource),
   'Conversation list and timeline filters must use URLSearchParams.'
+);
+assert(
+  /\['activity', activity\]/.test(helperFunctionSource('fetchConversationsRequest')),
+  'Conversation lists must send server-side live and approval activity filters.'
 );
 
 for (const pathPattern of [

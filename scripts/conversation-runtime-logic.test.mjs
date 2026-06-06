@@ -15,19 +15,19 @@ async function loadHelper() {
 }
 
 describe('Unified conversation runtime logic', () => {
-  test('normalizes one row per seller and keeps the newest duplicate thread data', async () => {
+  test('deduplicates only exact thread ids and preserves distinct server threads', async () => {
     const helper = await loadHelper();
     expect(helper).not.toBeNull();
 
     const rows = helper.normalizeConversationThreads([
       {
-        id: 'thread-old',
+        id: 'thread-1',
         leadId: 'lead-1',
         title: 'Seller One',
         lastEventAt: '2026-06-01T10:00:00.000Z',
       },
       {
-        id: 'thread-new',
+        id: 'thread-1',
         leadId: 'lead-1',
         title: 'Seller One',
         lastEventAt: '2026-06-02T10:00:00.000Z',
@@ -49,11 +49,12 @@ describe('Unified conversation runtime logic', () => {
       },
     ]);
 
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(rows.find((row) => row.leadId === 'lead-1')).toMatchObject({
-      id: 'thread-new',
+      id: 'thread-1',
       unreadCount: 2,
     });
+    expect(rows.find((row) => row.id === 'thread-unknown')).toBeDefined();
     expect(rows.find((row) => row.leadId === 'lead-2')).toMatchObject({
       id: 'thread-linked',
     });

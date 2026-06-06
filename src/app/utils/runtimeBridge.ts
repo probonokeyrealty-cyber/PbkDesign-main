@@ -1941,6 +1941,7 @@ export async function fetchConversationsRequest({
   pinned,
   archived,
   channel = '',
+  activity = '',
   status = '',
   assignedAgent = '',
   limit = 40,
@@ -1951,6 +1952,7 @@ export async function fetchConversationsRequest({
   pinned?: boolean;
   archived?: boolean;
   channel?: string;
+  activity?: 'live' | 'approvals' | string;
   status?: string;
   assignedAgent?: string;
   limit?: number;
@@ -1962,6 +1964,7 @@ export async function fetchConversationsRequest({
     ['pinned', pinned],
     ['archived', archived],
     ['channel', channel],
+    ['activity', activity],
     ['status', status],
     ['assignedAgent', assignedAgent],
     ['limit', Math.max(1, Math.min(100, limit))],
@@ -2205,5 +2208,45 @@ export async function reportConversationEventSpamRequest(
     method: 'POST',
     path: `/api/conversation-events/${encodeURIComponent(eventId)}/report-spam`,
     body,
+  });
+}
+
+export async function searchLeadsRequest({
+  query,
+  limit = 8,
+  threshold = 0.3,
+}: {
+  query: string;
+  limit?: number;
+  threshold?: number;
+}) {
+  const params = new URLSearchParams({
+    q: query.trim(),
+    limit: String(Math.max(1, Math.min(50, limit))),
+    threshold: String(Math.max(0.05, Math.min(1, threshold))),
+  });
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    query?: string;
+    count?: number;
+    leads?: LeadImport[];
+    error?: string;
+  }>({
+    path: `/api/leads/search?${params.toString()}`,
+  });
+}
+
+export async function mergeConversationThreadsRequest(
+  canonicalThreadId: string,
+  mergedThreadId: string
+) {
+  return bridgeRequest<ConversationDetailResponse>({
+    method: 'POST',
+    path: `/api/conversations/${encodeURIComponent(canonicalThreadId)}/merge`,
+    body: {
+      canonicalThreadId,
+      mergedThreadId,
+    },
   });
 }

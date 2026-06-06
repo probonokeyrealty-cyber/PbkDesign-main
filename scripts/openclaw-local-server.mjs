@@ -58602,6 +58602,7 @@ const server = createServer(async (request, response) => {
           pinned: parseConversationBooleanQuery(url.searchParams, 'pinned'),
           archived: parseConversationBooleanQuery(url.searchParams, 'archived'),
           channel: url.searchParams.get('channel') || undefined,
+          activity: url.searchParams.get('activity') || undefined,
           status: url.searchParams.get('status') || url.searchParams.get('stage') || undefined,
           assignedAgent: url.searchParams.get('assignedAgent') || undefined,
           limit: url.searchParams.get('limit') || undefined,

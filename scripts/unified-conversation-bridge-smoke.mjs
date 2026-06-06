@@ -157,6 +157,7 @@ assert(
       conversationRoutes
     ) &&
     /channel:\s*url\.searchParams\.get\('channel'\)/.test(conversationRoutes) &&
+    /activity:\s*url\.searchParams\.get\('activity'\)/.test(conversationRoutes) &&
     /assignedAgent:\s*url\.searchParams\.get\('assignedAgent'\)/.test(conversationRoutes) &&
     /unread:\s*parseConversationBooleanQuery/.test(conversationRoutes) &&
     /pinned:\s*parseConversationBooleanQuery/.test(conversationRoutes),
@@ -168,6 +169,13 @@ assert(
     storeSource
   ) && /t\.assigned_agent = \$\{addParam\(filters\.assignedAgent\.trim\(\)\)\}/.test(storeSource),
   'Conversation store must apply an exact parameterized assigned-agent filter.'
+);
+assert(
+  /filters\.activity === 'live'/.test(storeSource) &&
+    /FROM public\.conversation_events AS live_event/.test(storeSource) &&
+    /filters\.activity === 'approvals'/.test(storeSource) &&
+    /FROM public\.conversation_events AS approval_event/.test(storeSource),
+  'Conversation store must apply live and approval activity filters before pagination.'
 );
 
 assert(

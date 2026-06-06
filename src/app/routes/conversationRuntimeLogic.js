@@ -25,31 +25,6 @@ function threadActivityTime(thread = {}) {
   );
 }
 
-function normalizedIdentityKey(identity = {}) {
-  const value = cleanText(
-    identity.normalizedValue ||
-      identity.normalized_value ||
-      identity.value ||
-      identity.displayValue ||
-      identity.display_value
-  ).toLowerCase();
-  if (!value) return '';
-  const type = cleanText(identity.identityType || identity.identity_type || 'identity').toLowerCase();
-  return `${type}:${value}`;
-}
-
-function threadSellerKeys(thread = {}) {
-  const keys = [];
-  const leadId = cleanText(thread.leadId || thread.lead_id);
-  if (leadId) keys.push(`lead:${leadId}`);
-  for (const identity of asArray(thread.identities)) {
-    const key = normalizedIdentityKey(asObject(identity));
-    if (key) keys.push(key);
-  }
-  if (!keys.length) keys.push(`thread:${cleanText(thread.id)}`);
-  return [...new Set(keys)];
-}
-
 export function sortConversationThreads(threads = []) {
   return [...asArray(threads)].sort(
     (left, right) =>
@@ -59,40 +34,17 @@ export function sortConversationThreads(threads = []) {
 }
 
 export function normalizeConversationThreads(threads = []) {
-  const source = asArray(threads).map((thread) => ({ ...asObject(thread) }));
-  const parent = source.map((_, index) => index);
-  const aliases = new Map();
-  const find = (index) => {
-    let current = index;
-    while (parent[current] !== current) {
-      parent[current] = parent[parent[current]];
-      current = parent[current];
-    }
-    return current;
-  };
-  const union = (left, right) => {
-    const leftRoot = find(left);
-    const rightRoot = find(right);
-    if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
-  };
-
-  source.forEach((thread, index) => {
-    for (const key of threadSellerKeys(thread)) {
-      const previous = aliases.get(key);
-      if (previous !== undefined) union(index, previous);
-      aliases.set(key, index);
-    }
-  });
-
-  const bySeller = new Map();
-  source.forEach((thread, index) => {
-    const key = find(index);
-    const current = bySeller.get(key);
+  const byThreadId = new Map();
+  for (const rawThread of asArray(threads)) {
+    const thread = { ...asObject(rawThread) };
+    const id = cleanText(thread.id);
+    if (!id) continue;
+    const current = byThreadId.get(id);
     if (!current || threadActivityTime(thread) >= threadActivityTime(current)) {
-      bySeller.set(key, thread);
+      byThreadId.set(id, thread);
     }
-  });
-  return sortConversationThreads([...bySeller.values()]);
+  }
+  return sortConversationThreads([...byThreadId.values()]);
 }
 
 function resolvedTimeZone(timeZone) {

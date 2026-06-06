@@ -216,6 +216,12 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/inbox/*"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
 from = "/fleet"
 to = "/index.shell.html"
 status = 200

@@ -10,6 +10,9 @@ const DealView = lazy(() =>
   import('../routes/DealView').then((module) => ({ default: module.DealView }))
 );
 const Inbox = lazy(() => import('../routes/Inbox').then((module) => ({ default: module.Inbox })));
+const UnifiedInbox = lazy(() =>
+  import('../routes/UnifiedInbox').then((module) => ({ default: module.UnifiedInbox }))
+);
 const Settings = lazy(() =>
   import('../routes/Settings').then((module) => ({ default: module.Settings }))
 );
@@ -49,6 +52,7 @@ const router = createBrowserRouter(
         { path: 'deal', element: <DealView /> },
         { path: 'deal/:id', element: <DealView /> },
         { path: 'inbox', element: <Inbox /> },
+        { path: 'inbox/conversations', element: <UnifiedInbox /> },
         { path: 'fleet', element: <AgentFleet /> },
         { path: 'memory', element: <MemoryAnalytics /> },
         { path: 'analytics', element: <Analytics /> },

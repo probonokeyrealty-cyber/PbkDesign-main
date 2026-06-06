@@ -1389,6 +1389,29 @@ describe('conversation queries and pagination', () => {
     expect(queries[0].params).toEqual(['pbk', 'Ava', 51]);
   });
 
+  test('applies live and approval activity filters before pagination', async () => {
+    const queries = [];
+    const pool = {
+      async query(sql, params) {
+        queries.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+    const store = createConversationStore(pool);
+
+    await store.listThreads({ workspaceId: 'pbk', activity: 'live' });
+    await store.listThreads({ workspaceId: 'pbk', activity: 'approvals' });
+
+    expect(queries[0].sql).toContain('FROM public.conversation_events AS live_event');
+    expect(queries[0].sql).toContain("LOWER(live_event.event_type) = 'call.started'");
+    expect(queries[0].sql).toContain("'call.completed'");
+    expect(queries[0].sql).toContain('ORDER BY live_event.occurred_at DESC');
+    expect(queries[1].sql).toContain('FROM public.conversation_events AS approval_event');
+    expect(queries[1].sql).toContain("'approval_required'");
+    expect(queries[0].params).toEqual(['pbk', 51]);
+    expect(queries[1].params).toEqual(['pbk', 51]);
+  });
+
   test('parameterizes thread filters, bounds limits, and emits a deterministic cursor', async () => {
     const maliciousSearch = "%' OR TRUE; --";
     const rows = Array.from({ length: 101 }, (_, index) =>

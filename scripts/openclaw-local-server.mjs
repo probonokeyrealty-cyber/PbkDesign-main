@@ -33008,6 +33008,8 @@ function summarizeProviderActionResult(result = {}) {
     ok: result.ok !== false,
     result: result.result || result.outcome || '',
     error: result.error || '',
+    status: result.status || '',
+    reconciliationRequired: Boolean(result.reconciliationRequired),
     callId: result.call?.id || result.callId || '',
     callStatus: result.call?.status || result.status || '',
     callProvider: result.call?.provider || result.provider || '',
@@ -46416,13 +46418,22 @@ async function handleEvent(eventType, payload = {}) {
       approval.actor === incomingActor &&
       incomingActedAt &&
       approval.actedAt === incomingActedAt;
+    const reconcileUnknownProviderDispatch =
+      exactApprovalReplay &&
+      String(approval.type || '').toLowerCase() === 'provider-action' &&
+      approval.metadata?.providerActionDispatch?.status === 'dispatching' &&
+      !approval.metadata?.providerActionResult;
     const retryConversationProjectionOnly =
       exactApprovalReplay &&
       String(approval.type || '').toLowerCase() === 'provider-action' &&
       Boolean(approval.metadata?.providerActionAttemptedAt) &&
       Boolean(approval.metadata?.conversationSendBinding?.conversationEventId) &&
       !approval.metadata?.conversationProjection?.projectedAt;
-    if (exactApprovalReplay && !retryConversationProjectionOnly) {
+    if (
+      exactApprovalReplay &&
+      !retryConversationProjectionOnly &&
+      !reconcileUnknownProviderDispatch
+    ) {
       return {
         ok: true,
         replayed: true,
@@ -46554,8 +46565,47 @@ async function handleEvent(eventType, payload = {}) {
     if (approval.status === 'approved' && String(approval.type || '').toLowerCase() === 'provider-action') {
       approval.metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
       const toolName = String(approval.approvalAction || approval.metadata.requestedTool || approval.metadata.toolName || '').trim();
-      const alreadyAttempted = Boolean(approval.metadata.providerActionAttemptedAt);
-      if (!alreadyAttempted) {
+      const providerActionDispatch =
+        approval.metadata.providerActionDispatch &&
+        typeof approval.metadata.providerActionDispatch === 'object'
+          ? approval.metadata.providerActionDispatch
+          : null;
+      const unresolvedProviderDispatch =
+        providerActionDispatch?.status === 'dispatching' &&
+        !approval.metadata.providerActionResult;
+      const alreadyAttempted = Boolean(
+        approval.metadata.providerActionAttemptedAt ||
+          approval.metadata.providerActionResult ||
+          providerActionDispatch?.status === 'completed' ||
+          providerActionDispatch?.status === 'reconciliation_required'
+      );
+      if (unresolvedProviderDispatch) {
+        const reconciliationRequiredAt = isoNow();
+        providerActionResult = {
+          ok: false,
+          result: 'provider_delivery_unknown',
+          status: 'reconciliation_required',
+          error:
+            'Provider dispatch began without a durable completion result. Reconcile with the provider before retrying.',
+          reconciliationRequired: true,
+          attemptToken: providerActionDispatch.attemptToken || '',
+          replayed: true,
+          skipped: true,
+          providerAttempted: false,
+        };
+        approval.metadata.providerActionAttemptedAt =
+          providerActionDispatch.dispatchStartedAt || reconciliationRequiredAt;
+        approval.metadata.providerActionResult =
+          summarizeProviderActionResult(providerActionResult);
+        approval.metadata.providerActionDispatch = {
+          ...providerActionDispatch,
+          status: 'reconciliation_required',
+          reclaimable: false,
+          result: 'provider_delivery_unknown',
+          reconciliationRequiredAt,
+        };
+        await persistState(state);
+      } else if (!alreadyAttempted) {
         if (!APPROVAL_REPLAYABLE_PROVIDER_TOOLS.has(toolName) || typeof toolHandlers[toolName] !== 'function') {
           providerActionResult = {
             ok: false,
@@ -46583,6 +46633,15 @@ async function handleEvent(eventType, payload = {}) {
               summarizeProviderActionResult(providerActionResult);
             approval.metadata.providerActionBindingValidation = bindingValidation;
           } else {
+            approval.metadata.providerActionDispatch = {
+              attemptToken: randomUUID(),
+              status: 'dispatching',
+              dispatchStartedAt: isoNow(),
+              leasePolicy: 'manual_reconciliation',
+              leaseExpiresAt: null,
+              reclaimable: false,
+            };
+            await persistState(state);
             const qaProviderExecution = await executeToolHandlerWithQa(
               toolName,
               {
@@ -46598,6 +46657,15 @@ async function handleEvent(eventType, payload = {}) {
               summarizeProviderActionResult(providerActionResult);
             approval.metadata.providerActionQa = qaProviderExecution.qaValidation?.qa || null;
             approval.metadata.providerActionBindingValidation = bindingValidation;
+            approval.metadata.providerActionDispatch = {
+              ...approval.metadata.providerActionDispatch,
+              status: 'completed',
+              completedAt: approval.metadata.providerActionAttemptedAt,
+              result:
+                approval.metadata.providerActionResult?.result ||
+                (providerActionResult?.ok === false ? 'provider_error' : 'provider_completed'),
+            };
+            await persistState(state);
           }
         }
       } else {
@@ -50269,6 +50337,18 @@ async function bindConversationApprovalToEvent(
 
 function classifyConversationSendResult(channel, result = {}) {
   const normalizedResult = String(result.result || result.outcome || '').trim().toLowerCase();
+  if (
+    normalizedResult === 'provider_delivery_unknown' ||
+    result.reconciliationRequired === true ||
+    String(result.status || '').trim().toLowerCase() === 'reconciliation_required'
+  ) {
+    return {
+      status: 'reconciliation_required',
+      httpStatus: 409,
+      ok: false,
+      result: 'provider_delivery_unknown',
+    };
+  }
   if (result.requiresApproval || normalizedResult === 'queued_for_approval' || result.approval?.id) {
     return {
       status: 'approval_required',

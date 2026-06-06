@@ -612,6 +612,38 @@ assert(
   'Approval replay must execute the provider once and retry only the original event projection until projected.'
 );
 
+const providerDispatchMarkerIndex = providerApprovalSource.indexOf(
+  'attemptToken: randomUUID()'
+);
+const providerDispatchPersistIndex = providerApprovalSource.indexOf(
+  'await persistState(state);',
+  providerDispatchMarkerIndex
+);
+const providerDispatchExecuteIndex = providerApprovalSource.indexOf(
+  'executeToolHandlerWithQa('
+);
+assert(
+  /providerActionDispatch/.test(providerApprovalSource) &&
+    /attemptToken:\s*randomUUID\(\)/.test(providerApprovalSource) &&
+    /status:\s*'dispatching'/.test(providerApprovalSource) &&
+    /dispatchStartedAt:\s*isoNow\(\)/.test(providerApprovalSource) &&
+    /leasePolicy:\s*'manual_reconciliation'/.test(providerApprovalSource) &&
+    /leaseExpiresAt:\s*null/.test(providerApprovalSource) &&
+    /reclaimable:\s*false/.test(providerApprovalSource) &&
+    providerDispatchMarkerIndex >= 0 &&
+    providerDispatchPersistIndex > providerDispatchMarkerIndex &&
+    providerDispatchExecuteIndex > providerDispatchPersistIndex &&
+    /providerActionDispatch\?\.status\s*===\s*'dispatching'/.test(
+      providerApprovalSource
+    ) &&
+    /provider_delivery_unknown/.test(providerApprovalSource) &&
+    /reconciliation_required/.test(providerApprovalSource) &&
+    providerApprovalSource.indexOf(
+      "providerActionDispatch?.status === 'dispatching'"
+    ) < providerDispatchExecuteIndex,
+  'Approval replay must durably lease provider dispatch before execution and never replay an unresolved dispatch.'
+);
+
 assert(
   /askStrategistRecord\(\{[\s\S]*responseFormat:\s*'text'/.test(conversationRoutes) &&
     /Rewrite only the operator's draft/.test(bridge) &&

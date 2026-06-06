@@ -29,6 +29,15 @@ function firstText(record, fields) {
   return '';
 }
 
+function firstValue(record, fields) {
+  for (const field of fields) {
+    if (!Object.hasOwn(record, field)) continue;
+    const value = record[field];
+    if (value !== null && value !== undefined && value !== '') return value;
+  }
+  return '';
+}
+
 function normalizedProviderStatus(value = '') {
   return String(value ?? '')
     .trim()
@@ -42,6 +51,10 @@ function isValidConversationEmail(value = '') {
 
 function assignSafeMetadata(metadata, key, value) {
   if (typeof value === 'boolean') {
+    metadata[key] = value;
+    return;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
     metadata[key] = value;
     return;
   }
@@ -67,18 +80,51 @@ function telnyxLifecycleStatus(status) {
   return 'quarantined';
 }
 
-function instantlyLifecycleStatus(providerStatus, warmupStatus) {
-  const combined = [providerStatus, warmupStatus].filter(Boolean).join('_');
+const INSTANTLY_ACCOUNT_STATUS_LABELS = new Map([
+  [1, 'active'],
+  [2, 'paused'],
+  [3, 'temporary_maintenance'],
+  [-1, 'connection_error'],
+  [-2, 'soft_bounce'],
+  [-3, 'sending_error'],
+]);
+const INSTANTLY_WARMUP_STATUS_LABELS = new Map([
+  [0, 'paused'],
+  [1, 'active'],
+  [-1, 'banned'],
+  [-2, 'spam_folder_unknown'],
+  [-3, 'permanent_suspension'],
+]);
+
+function instantlyStatusCode(value, labels) {
+  const number =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^-?\d+$/.test(value.trim())
+        ? Number(value)
+        : Number.NaN;
+  return Number.isInteger(number) && labels.has(number) ? number : null;
+}
+
+function instantlyLifecycleStatus(providerStatus, warmupStatus, setupPending) {
   if (
-    /(?:^|_)(?:error|failed|failure|disconnected|bounced|invalid|quarantined|deleted)(?:_|$)/.test(
-      combined
+    /(?:^|_)(?:connection_error|soft_bounce|sending_error|error|failed|failure|disconnected|bounced|invalid|quarantined|deleted)(?:_|$)/.test(
+      providerStatus
+    ) ||
+    /(?:^|_)(?:banned|spam_folder_unknown|permanent_suspension|error|failed|quarantined)(?:_|$)/.test(
+      warmupStatus
     )
   ) {
     return 'quarantined';
   }
-  if (/(?:^|_)(?:paused|disabled|inactive|suspended)(?:_|$)/.test(combined)) {
+  if (
+    /(?:^|_)(?:paused|temporary_maintenance|disabled|inactive|suspended)(?:_|$)/.test(
+      providerStatus
+    )
+  ) {
     return 'paused';
   }
+  if (setupPending) return 'warming';
   if (
     /(?:^|_)(?:warming|pending|running|in_progress)(?:_|$)/.test(warmupStatus) ||
     /(?:^|_)warm(?:ing|up|ed)?(?:_|$)/.test(warmupStatus) ||
@@ -173,12 +219,26 @@ export function normalizeInstantlySenderIdentity(value, defaultEmail = '') {
   );
   if (!isValidConversationEmail(address)) return null;
 
-  const providerStatus = normalizedProviderStatus(
-    firstText(record, ['status', 'healthStatus', 'health_status'])
+  const rawProviderStatus = firstValue(record, ['status', 'healthStatus', 'health_status']);
+  const rawWarmupStatus = firstValue(record, ['warmupStatus', 'warmup_status']);
+  const providerStatusCode = instantlyStatusCode(
+    rawProviderStatus,
+    INSTANTLY_ACCOUNT_STATUS_LABELS
   );
-  const warmupStatus = normalizedProviderStatus(
-    firstText(record, ['warmupStatus', 'warmup_status'])
-  );
+  const warmupStatusCode = instantlyStatusCode(rawWarmupStatus, INSTANTLY_WARMUP_STATUS_LABELS);
+  const providerStatus =
+    providerStatusCode === null
+      ? normalizedProviderStatus(rawProviderStatus)
+      : INSTANTLY_ACCOUNT_STATUS_LABELS.get(providerStatusCode);
+  const warmupStatus =
+    warmupStatusCode === null
+      ? normalizedProviderStatus(rawWarmupStatus)
+      : INSTANTLY_WARMUP_STATUS_LABELS.get(warmupStatusCode);
+  const rawSetupPending = firstValue(record, ['setupPending', 'setup_pending']);
+  const setupPending =
+    rawSetupPending === true ||
+    rawSetupPending === 1 ||
+    String(rawSetupPending).trim().toLowerCase() === 'true';
   const providerName = firstText(record, [
     'providerName',
     'provider_name',
@@ -189,9 +249,21 @@ export function normalizeInstantlySenderIdentity(value, defaultEmail = '') {
   ]);
   const metadata = {};
   assignSafeMetadata(metadata, 'providerStatus', providerStatus || 'unknown');
+  if (providerStatusCode !== null) {
+    assignSafeMetadata(metadata, 'providerStatusCode', providerStatusCode);
+  }
   assignSafeMetadata(metadata, 'warmupStatus', warmupStatus);
+  if (warmupStatusCode !== null) {
+    assignSafeMetadata(metadata, 'warmupStatusCode', warmupStatusCode);
+  }
+  if (rawSetupPending !== '') assignSafeMetadata(metadata, 'setupPending', setupPending);
   assignSafeMetadata(metadata, 'providerName', providerName);
-  const lifecycleStatus = instantlyLifecycleStatus(providerStatus, warmupStatus);
+  const lifecycleStatus = instantlyLifecycleStatus(providerStatus, warmupStatus, setupPending);
+  const quarantinedWarmupStatuses = new Set([
+    'banned',
+    'spam_folder_unknown',
+    'permanent_suspension',
+  ]);
 
   return {
     provider: 'instantly',
@@ -220,9 +292,13 @@ export function normalizeInstantlySenderIdentity(value, defaultEmail = '') {
     ]),
     lifecycleStatus,
     healthStatus:
-      lifecycleStatus === 'warming' && warmupStatus
+      lifecycleStatus === 'quarantined' && quarantinedWarmupStatuses.has(warmupStatus)
         ? warmupStatus
-        : providerStatus || warmupStatus || 'unknown',
+        : lifecycleStatus === 'warming' && setupPending
+          ? 'setup_pending'
+          : lifecycleStatus === 'warming' && warmupStatus
+            ? warmupStatus
+            : providerStatus || warmupStatus || 'unknown',
     isWorkspaceDefault:
       Boolean(normalizeConversationEmail(defaultEmail)) &&
       address === normalizeConversationEmail(defaultEmail),

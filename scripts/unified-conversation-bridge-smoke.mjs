@@ -330,9 +330,11 @@ const instantlyAdapter = bridge.slice(instantlyAdapterStart, instantlyAdapterEnd
 assert(
   instantlyAdapterStart >= 0 &&
     instantlyAdapterEnd > instantlyAdapterStart &&
-    /status:\s*record\.status\s*\|\|\s*''/.test(instantlyAdapter) &&
+    /status:\s*record\.status\s*\?\?\s*''/.test(instantlyAdapter) &&
     /warmupStatus/.test(instantlyAdapter) &&
     /warmup_status/.test(instantlyAdapter) &&
+    /setupPending/.test(instantlyAdapter) &&
+    /setup_pending/.test(instantlyAdapter) &&
     !/status:\s*record\.status\s*\|\|\s*record\.warmup_status/.test(instantlyAdapter),
   'Instantly adapter must preserve status and warmup status as independent normalizer inputs.'
 );
@@ -371,8 +373,11 @@ assert(
     /normalizeTelnyxSenderIdentity/.test(identityRoutes) &&
     /normalizeInstantlySenderIdentity/.test(identityRoutes) &&
     /store\.syncSenderIdentity/.test(identityRoutes) &&
+    /if \(providerResult\.ok !== true\)[\s\S]*valid:\s*0,[\s\S]*synced:\s*0,[\s\S]*continue;/.test(
+      identityRoutes
+    ) &&
     /providers:\s*providerSync/.test(identityRoutes),
-  'Sender identity sync must isolate provider failures and persist through the lifecycle-preserving helper.'
+  'Sender identity sync must isolate provider failures, reject fallback mutation, and persist live inventory only.'
 );
 
 assert(
@@ -413,14 +418,18 @@ assert(
 
 assert(
   /parseCommunicationIdentityReleaseRequestBody/.test(bridge) &&
+    /const approvalId = randomUUID\(\)/.test(identityRoutes) &&
+    /store\.reserveSenderIdentityRelease/.test(identityRoutes) &&
+    /if \(!reservation\.reserved\)/.test(identityRoutes) &&
+    /store\.cancelSenderIdentityReleaseReservation/.test(identityRoutes) &&
+    /createApproval\(\{\s*id:\s*approvalId/.test(identityRoutes) &&
     /type:\s*'provider_identity_release'/.test(identityRoutes) &&
     /approvalAction:\s*'release_communication_identity'/.test(identityRoutes) &&
     /payload:\s*\{\s*identityId,\s*provider:\s*identity\.provider,\s*address:\s*identity\.address/.test(
       identityRoutes
     ) &&
-    /lifecycleStatus:\s*'release_pending'/.test(identityRoutes) &&
-    /releaseApprovalId:\s*approval\.id/.test(identityRoutes),
-  'Release requests must create the dedicated approval and preserve its ID on release_pending identities.'
+    /existingApprovalId/.test(identityRoutes),
+  'Release requests must reserve one approval ID, replay idempotently, and roll back failed approval creation.'
 );
 
 assert(
@@ -432,6 +441,7 @@ assert(
     /approval\.payload\?\.identityId[\s\S]*identityId/.test(identityRoutes) &&
     /approval\.payload\?\.provider[\s\S]*identity\.provider/.test(identityRoutes) &&
     /approval\.payload\?\.address[\s\S]*identity\.address/.test(identityRoutes) &&
+    /identity\.metadata\?\.releaseApprovalId\s*===\s*approvalId/.test(identityRoutes) &&
     /json\(response,\s*501,\s*\{\s*ok:\s*false,\s*result:\s*'provider_release_not_configured',?\s*\}\)/.test(
       identityRoutes
     ),
@@ -444,6 +454,8 @@ assert(
   ) &&
     /function chooseSyncedLifecycle\(existing,\s*incoming\)/.test(storeSource) &&
     /async function syncSenderIdentity\(identity = \{\}\)/.test(storeSource) &&
+    /async function reserveSenderIdentityRelease/.test(storeSource) &&
+    /async function cancelSenderIdentityReleaseReservation/.test(storeSource) &&
     /async function patchSenderIdentity\(\s*identityId,\s*patch = \{\},\s*options = \{ workspaceId: 'pbk' \}\s*\)/.test(
       storeSource
     ) &&

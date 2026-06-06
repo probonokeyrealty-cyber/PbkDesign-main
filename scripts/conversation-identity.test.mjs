@@ -208,6 +208,157 @@ describe('provider sender identity normalization', () => {
   );
 
   test.each([
+    [
+      'active account and active warmup',
+      { status: 1, warmup_status: 1 },
+      'active',
+      'active',
+      {
+        providerStatus: 'active',
+        providerStatusCode: 1,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+      },
+    ],
+    [
+      'active account and paused warmup',
+      { status: 1, warmup_status: 0 },
+      'active',
+      'active',
+      {
+        providerStatus: 'active',
+        providerStatusCode: 1,
+        warmupStatus: 'paused',
+        warmupStatusCode: 0,
+      },
+    ],
+    [
+      'paused account',
+      { status: 2, warmup_status: 1 },
+      'paused',
+      'paused',
+      {
+        providerStatus: 'paused',
+        providerStatusCode: 2,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+      },
+    ],
+    [
+      'maintenance account',
+      { status: 3, warmup_status: 1 },
+      'paused',
+      'temporary_maintenance',
+      {
+        providerStatus: 'temporary_maintenance',
+        providerStatusCode: 3,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+      },
+    ],
+    [
+      'connection error',
+      { status: -1, warmup_status: 1 },
+      'quarantined',
+      'connection_error',
+      {
+        providerStatus: 'connection_error',
+        providerStatusCode: -1,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+      },
+    ],
+    [
+      'soft bounce',
+      { status: -2, warmup_status: 1 },
+      'quarantined',
+      'soft_bounce',
+      {
+        providerStatus: 'soft_bounce',
+        providerStatusCode: -2,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+      },
+    ],
+    [
+      'sending error',
+      { status: -3, warmup_status: 1 },
+      'quarantined',
+      'sending_error',
+      {
+        providerStatus: 'sending_error',
+        providerStatusCode: -3,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+      },
+    ],
+    [
+      'banned warmup',
+      { status: 1, warmup_status: -1 },
+      'quarantined',
+      'banned',
+      {
+        providerStatus: 'active',
+        providerStatusCode: 1,
+        warmupStatus: 'banned',
+        warmupStatusCode: -1,
+      },
+    ],
+    [
+      'unknown spam folder warmup',
+      { status: 1, warmup_status: -2 },
+      'quarantined',
+      'spam_folder_unknown',
+      {
+        providerStatus: 'active',
+        providerStatusCode: 1,
+        warmupStatus: 'spam_folder_unknown',
+        warmupStatusCode: -2,
+      },
+    ],
+    [
+      'permanently suspended warmup',
+      { status: 1, warmup_status: -3 },
+      'quarantined',
+      'permanent_suspension',
+      {
+        providerStatus: 'active',
+        providerStatusCode: 1,
+        warmupStatus: 'permanent_suspension',
+        warmupStatusCode: -3,
+      },
+    ],
+    [
+      'setup pending',
+      { status: 1, warmup_status: 1, setup_pending: true },
+      'warming',
+      'setup_pending',
+      {
+        providerStatus: 'active',
+        providerStatusCode: 1,
+        warmupStatus: 'active',
+        warmupStatusCode: 1,
+        setupPending: true,
+      },
+    ],
+  ])(
+    'maps official Instantly v2 shape: %s',
+    (_name, providerFields, lifecycleStatus, healthStatus, metadata) => {
+      expect(
+        normalizeInstantlySenderIdentity({
+          id: `instantly-${providerFields.status}-${providerFields.warmup_status}`,
+          email: 'official@example.com',
+          ...providerFields,
+        })
+      ).toMatchObject({
+        lifecycleStatus,
+        healthStatus,
+        metadata,
+      });
+    }
+  );
+
+  test.each([
     ['warming', 'warming'],
     ['warmup', 'warming'],
     ['paused', 'paused'],

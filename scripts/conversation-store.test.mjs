@@ -1556,6 +1556,238 @@ describe('sender identity persistence', () => {
     expect(queries[0].params).toEqual(['sender-1', 'workspace-a']);
   });
 
+  test('serializes sender sync with advisory lock, row lock, and same-client upsert', async () => {
+    const { pool, queries, client } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('normalized_address = $4') && sql.includes('FOR UPDATE')) {
+        return { rows: [senderRow({ lifecycle_status: 'active', metadata: {} })] };
+      }
+      if (sql.includes('INSERT INTO public.communication_sender_identities')) {
+        return {
+          rows: [
+            senderRow({
+              lifecycle_status: params[8],
+              metadata: JSON.parse(params[15]),
+            }),
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await createConversationStore(pool).syncSenderIdentity({
+      workspaceId: 'pbk',
+      provider: 'telnyx',
+      channel: 'sms',
+      address: '+16145550199',
+      lifecycleStatus: 'quarantined',
+      metadata: { providerStatus: 'failed' },
+    });
+
+    expect(queries.map(({ sql }) => sql.trim().split(/\s+/).slice(0, 3).join(' '))).toEqual([
+      'BEGIN',
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      'SELECT * FROM',
+      'INSERT INTO public.communication_sender_identities',
+      'COMMIT',
+    ]);
+    expect(queries[1].params).toEqual([
+      'communication-sender-identity:pbk:telnyx:sms:+16145550199',
+    ]);
+    expect(queries[2].sql).toContain('FOR UPDATE');
+    expect(pool.query).not.toHaveBeenCalled();
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  test('serializes sender patch with the same advisory lock and preserves metadata', async () => {
+    let readCount = 0;
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('FROM public.communication_sender_identities') && sql.includes('id = $1')) {
+        readCount += 1;
+        return {
+          rows: [
+            senderRow({
+              lifecycle_status: 'quarantined',
+              metadata: {
+                releaseApprovalId: 'approval-existing',
+                lifecycleSyncHistory: [{ chosenLifecycleStatus: 'quarantined' }],
+              },
+            }),
+          ],
+        };
+      }
+      if (sql.includes('UPDATE public.communication_sender_identities')) {
+        return {
+          rows: [
+            senderRow({
+              lifecycle_status: params[2],
+              metadata: JSON.parse(params[3]),
+            }),
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const identity = await createConversationStore(pool).patchSenderIdentity(
+      'sender-1',
+      {
+        lifecycleStatus: 'paused',
+        metadata: { operatorManaged: true, lifecycleReason: 'operator pause' },
+      },
+      { workspaceId: 'pbk' }
+    );
+
+    expect(readCount).toBe(2);
+    expect(queries[0].sql).toBe('BEGIN');
+    expect(queries[2].sql).toContain('pg_advisory_xact_lock');
+    expect(queries[3].sql).toContain('FOR UPDATE');
+    expect(queries[4].sql).toContain('UPDATE public.communication_sender_identities');
+    expect(queries.at(-1).sql).toBe('COMMIT');
+    expect(identity.metadata).toMatchObject({
+      releaseApprovalId: 'approval-existing',
+      operatorManaged: true,
+      lifecycleSyncHistory: [{ chosenLifecycleStatus: 'quarantined' }],
+    });
+  });
+
+  test('rechecks release lifecycle restrictions against the locked sender row', async () => {
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('FROM public.communication_sender_identities') && sql.includes('id = $1')) {
+        return {
+          rows: [
+            senderRow({
+              lifecycle_status: 'release_pending',
+              metadata: { releaseApprovalId: 'approval-existing' },
+            }),
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).patchSenderIdentity(
+        'sender-1',
+        { lifecycleStatus: 'active' },
+        { workspaceId: 'pbk' }
+      )
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(
+      queries.some(({ sql }) => sql.includes('UPDATE public.communication_sender_identities'))
+    ).toBe(false);
+    expect(queries.at(-1).sql).toBe('ROLLBACK');
+  });
+
+  test('reserves a release once and returns the existing approval binding on replay', async () => {
+    let current = senderRow({
+      lifecycle_status: 'retired',
+      metadata: { lifecycleReason: 'operator retired' },
+    });
+    const { pool, queries } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('FROM public.communication_sender_identities') && sql.includes('id = $1')) {
+        return { rows: [current] };
+      }
+      if (sql.includes('UPDATE public.communication_sender_identities')) {
+        current = {
+          ...current,
+          lifecycle_status: params[2],
+          metadata: JSON.parse(params[3]),
+        };
+        return { rows: [current] };
+      }
+      return { rows: [] };
+    });
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.reserveSenderIdentityRelease('sender-1', {
+        workspaceId: 'pbk',
+        approvalId: 'approval-new',
+        reason: 'release it',
+        changedAt: '2026-06-06T12:00:00.000Z',
+      })
+    ).resolves.toMatchObject({
+      reserved: true,
+      existingApprovalId: '',
+      identity: {
+        lifecycleStatus: 'release_pending',
+        metadata: {
+          releaseApprovalId: 'approval-new',
+          releasePreviousLifecycleStatus: 'retired',
+        },
+      },
+    });
+
+    await expect(
+      store.reserveSenderIdentityRelease('sender-1', {
+        workspaceId: 'pbk',
+        approvalId: 'approval-other',
+        changedAt: '2026-06-06T12:01:00.000Z',
+      })
+    ).resolves.toMatchObject({
+      reserved: false,
+      existingApprovalId: 'approval-new',
+    });
+
+    expect(
+      queries.filter(({ sql }) => sql.includes('UPDATE public.communication_sender_identities'))
+    ).toHaveLength(1);
+  });
+
+  test('cancels only the matching failed release reservation and restores prior lifecycle', async () => {
+    let current = senderRow({
+      lifecycle_status: 'release_pending',
+      metadata: {
+        releaseApprovalId: 'approval-new',
+        releasePreviousLifecycleStatus: 'quarantined',
+        releaseRequestedAt: '2026-06-06T12:00:00.000Z',
+        operatorManaged: true,
+      },
+    });
+    const { pool } = createRecordingTransaction(async (sql, params) => {
+      if (sql.includes('FROM public.communication_sender_identities') && sql.includes('id = $1')) {
+        return { rows: [current] };
+      }
+      if (sql.includes('UPDATE public.communication_sender_identities')) {
+        current = {
+          ...current,
+          lifecycle_status: params[2],
+          metadata: JSON.parse(params[3]),
+        };
+        return { rows: [current] };
+      }
+      return { rows: [] };
+    });
+    const store = createConversationStore(pool);
+
+    await expect(
+      store.cancelSenderIdentityReleaseReservation('sender-1', {
+        workspaceId: 'pbk',
+        approvalId: 'wrong-approval',
+        changedAt: '2026-06-06T12:02:00.000Z',
+      })
+    ).resolves.toMatchObject({ canceled: false });
+
+    await expect(
+      store.cancelSenderIdentityReleaseReservation('sender-1', {
+        workspaceId: 'pbk',
+        approvalId: 'approval-new',
+        changedAt: '2026-06-06T12:03:00.000Z',
+      })
+    ).resolves.toMatchObject({
+      canceled: true,
+      identity: {
+        lifecycleStatus: 'quarantined',
+        metadata: {
+          operatorManaged: true,
+        },
+      },
+    });
+    expect(current.metadata).not.toHaveProperty('releaseApprovalId');
+    expect(current.metadata).not.toHaveProperty('releaseRequestedAt');
+  });
+
   test('returns exact sender counts and all safe active/default items without a 100-row cap', async () => {
     const safeItems = Array.from({ length: 105 }, (_, index) =>
       senderRow({
@@ -1665,7 +1897,10 @@ describe('sender identity persistence', () => {
     expect(patchQuery.sql).not.toContain("owner's request");
     expect(patchQuery.sql).toContain('workspace_id = $2');
     expect(patchQuery.params.slice(0, 2)).toEqual(['sender-1', 'workspace-a']);
-    expect(patchQuery.params).toContain(JSON.stringify({ reason: "owner's request" }));
+    expect(JSON.parse(patchQuery.params.at(-1))).toMatchObject({
+      pool: 'primary',
+      reason: "owner's request",
+    });
   });
 
   test('rejects unknown-only sender identity patches', async () => {
@@ -1744,6 +1979,7 @@ describe('sender identity persistence', () => {
       const pool = {
         async query(sql, params) {
           queries.push({ sql, params });
+          if (sql.includes('pg_advisory_xact_lock')) return { rows: [] };
           if (sql.includes('SELECT *') && sql.includes('normalized_address = $4')) {
             return {
               rows: [
@@ -1791,10 +2027,12 @@ describe('sender identity persistence', () => {
         },
       });
 
-      expect(queries).toHaveLength(2);
-      expect(queries[0].params).toEqual(['pbk', 'telnyx', 'sms', '+16145550199']);
-      expect(queries[1].params[8]).toBe(expectedLifecycle);
-      expect(JSON.parse(queries[1].params[15])).toMatchObject({
+      expect(queries).toHaveLength(3);
+      expect(queries[0].sql).toContain('pg_advisory_xact_lock');
+      expect(queries[1].params).toEqual(['pbk', 'telnyx', 'sms', '+16145550199']);
+      expect(queries[1].sql).toContain('FOR UPDATE');
+      expect(queries[2].params[8]).toBe(expectedLifecycle);
+      expect(JSON.parse(queries[2].params[15])).toMatchObject({
         releaseApprovalId: 'approval-1',
         providerStatus: incomingLifecycle,
         lifecycleSyncHistory: [
@@ -1834,10 +2072,13 @@ describe('sender identity persistence', () => {
       { workspaceId: 'pbk' }
     );
 
-    expect(queries[0].sql).toContain('lifecycle_status = $3');
-    expect(queries[0].sql).toContain('metadata = $4::jsonb');
-    expect(queries[0].sql).not.toContain('retired_at =');
-    expect(queries[0].sql).not.toContain('inbound_grace_until =');
+    const updateQuery = queries.find(({ sql }) =>
+      sql.includes('UPDATE public.communication_sender_identities')
+    );
+    expect(updateQuery.sql).toContain('lifecycle_status = $3');
+    expect(updateQuery.sql).toContain('metadata = $4::jsonb');
+    expect(updateQuery.sql).not.toContain('retired_at =');
+    expect(updateQuery.sql).not.toContain('inbound_grace_until =');
   });
 });
 
@@ -1876,6 +2117,71 @@ async function withConversationStoreIntegration(run) {
 }
 
 describe('conversation store Postgres integration', () => {
+  postgresIntegrationTest(
+    'serializes concurrent provider sync and operator patch without reviving the sender',
+    async () => {
+      const { Pool } = await import('pg');
+      const pool = new Pool({
+        connectionString: process.env.PBK_TEST_DATABASE_URL,
+        max: 4,
+      });
+      const workspaceId = `sender-sync-patch-${randomUUID()}`;
+      const address = `sender-${randomUUID()}@example.com`;
+      const store = createConversationStore(pool);
+      try {
+        await ensureConversationSchema(pool);
+        const created = await store.upsertSenderIdentity({
+          workspaceId,
+          provider: 'instantly',
+          channel: 'email',
+          address,
+          lifecycleStatus: 'active',
+          metadata: { providerStatus: 'active' },
+        });
+
+        await Promise.all([
+          store.syncSenderIdentity({
+            workspaceId,
+            provider: 'instantly',
+            channel: 'email',
+            address,
+            lifecycleStatus: 'active',
+            healthStatus: 'active',
+            metadata: { providerStatus: 'active', providerStatusCode: 1 },
+          }),
+          store.patchSenderIdentity(
+            created.id,
+            {
+              lifecycleStatus: 'paused',
+              metadata: {
+                operatorManaged: true,
+                lifecycleSource: 'operator',
+                lifecycleReason: 'operator pause',
+              },
+            },
+            { workspaceId }
+          ),
+        ]);
+
+        await expect(store.getSenderIdentity(created.id, { workspaceId })).resolves.toMatchObject({
+          lifecycleStatus: 'paused',
+          metadata: {
+            operatorManaged: true,
+            lifecycleSource: 'operator',
+            providerStatus: 'active',
+          },
+        });
+      } finally {
+        await pool.query(
+          `DELETE FROM public.communication_sender_identities WHERE workspace_id = $1`,
+          [workspaceId]
+        );
+        await pool.end();
+      }
+    },
+    30_000
+  );
+
   postgresIntegrationTest(
     'preserves retired sender state and metadata on sparse inventory upsert',
     async () => {

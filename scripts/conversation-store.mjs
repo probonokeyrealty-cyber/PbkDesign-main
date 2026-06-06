@@ -34,6 +34,38 @@ function senderIdentityMetadata(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function mergeSenderIdentityMetadata(currentValue, incomingValue) {
+  const current = senderIdentityMetadata(currentValue);
+  const incoming = senderIdentityMetadata(incomingValue);
+  const merged = { ...current, ...incoming };
+
+  for (const historyKey of ['lifecycleHistory', 'lifecycleSyncHistory']) {
+    const entries = [
+      ...(Array.isArray(current[historyKey]) ? current[historyKey] : []),
+      ...(Array.isArray(incoming[historyKey]) ? incoming[historyKey] : []),
+    ];
+    if (!entries.length) continue;
+    const seen = new Set();
+    merged[historyKey] = entries
+      .filter((entry) => {
+        const key = JSON.stringify(entry);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(-50);
+  }
+
+  for (const bindingKey of [
+    'releaseApprovalId',
+    'releaseRequestedAt',
+    'releasePreviousLifecycleStatus',
+  ]) {
+    if (Object.hasOwn(current, bindingKey)) merged[bindingKey] = current[bindingKey];
+  }
+  return merged;
+}
+
 function isOperatorManagedSenderIdentity(identity) {
   const metadata = senderIdentityMetadata(identity?.metadata);
   if (metadata.operatorManaged === true || metadata.operatorManaged === 'true') return true;
@@ -319,6 +351,54 @@ async function withTransaction(pool, callback) {
   } finally {
     client.release?.();
   }
+}
+
+function senderIdentityLockKey(workspace, provider, channel, normalizedAddress) {
+  return `communication-sender-identity:${workspace}:${provider}:${channel}:${normalizedAddress}`;
+}
+
+async function lockSenderIdentity(client, workspace, provider, channel, normalizedAddress) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+    senderIdentityLockKey(workspace, provider, channel, normalizedAddress),
+  ]);
+}
+
+async function selectSenderIdentityById(client, identityId, workspace, { forUpdate = false } = {}) {
+  const result = await client.query(
+    `
+      SELECT *
+      FROM public.communication_sender_identities
+      WHERE id = $1
+        AND workspace_id = $2
+      LIMIT 1
+      ${forUpdate ? 'FOR UPDATE' : ''}
+    `,
+    [identityId, workspace]
+  );
+  return mapSenderIdentityRow(result.rows[0]);
+}
+
+async function selectSenderIdentityByAddress(
+  client,
+  workspace,
+  provider,
+  channel,
+  normalizedAddress
+) {
+  const result = await client.query(
+    `
+      SELECT *
+      FROM public.communication_sender_identities
+      WHERE workspace_id = $1
+        AND provider = $2
+        AND channel = $3
+        AND normalized_address = $4
+      LIMIT 1
+      FOR UPDATE
+    `,
+    [workspace, provider, channel, normalizedAddress]
+  );
+  return mapSenderIdentityRow(result.rows[0]);
 }
 
 async function selectLeadThread(client, workspace, leadId) {
@@ -1566,7 +1646,7 @@ export function createConversationStore(pool) {
     };
   }
 
-  async function upsertSenderIdentity(identity = {}) {
+  async function upsertSenderIdentityWithClient(client, identity = {}) {
     const workspace = workspaceId(identity.workspaceId);
     const provider = requiredText(identity.provider, 'provider');
     const channel = requiredText(identity.channel, 'channel');
@@ -1595,7 +1675,7 @@ export function createConversationStore(pool) {
       (property) => Object.hasOwn(identity, property) && identity[property] !== undefined
     );
 
-    const result = await pool.query(
+    const result = await client.query(
       `
         INSERT INTO public.communication_sender_identities AS existing (
           workspace_id,
@@ -1690,6 +1770,10 @@ export function createConversationStore(pool) {
     return mapSenderIdentityRow(result.rows[0]);
   }
 
+  async function upsertSenderIdentity(identity = {}) {
+    return upsertSenderIdentityWithClient(pool, identity);
+  }
+
   async function syncSenderIdentity(identity = {}) {
     const workspace = workspaceId(identity.workspaceId);
     const provider = requiredText(identity.provider, 'provider');
@@ -1702,44 +1786,41 @@ export function createConversationStore(pool) {
         : normalizeConversationPhone(address));
     if (!normalizedAddress) throw new Error('A valid sender address is required');
 
-    const existingResult = await pool.query(
-      `
-        SELECT *
-        FROM public.communication_sender_identities
-        WHERE workspace_id = $1
-          AND provider = $2
-          AND channel = $3
-          AND normalized_address = $4
-        LIMIT 1
-      `,
-      [workspace, provider, channel, normalizedAddress]
-    );
-    const existing = mapSenderIdentityRow(existingResult.rows[0]);
-    const lifecycleStatus = chooseSyncedLifecycle(existing, identity);
-    const existingMetadata = senderIdentityMetadata(existing?.metadata);
-    const incomingMetadata = senderIdentityMetadata(identity.metadata);
-    const lifecycleSyncHistory = Array.isArray(existingMetadata.lifecycleSyncHistory)
-      ? existingMetadata.lifecycleSyncHistory.slice(-49)
-      : [];
-    lifecycleSyncHistory.push({
-      previousLifecycleStatus: existing?.lifecycleStatus || '',
-      incomingLifecycleStatus: senderLifecycleStatus(identity.lifecycleStatus),
-      chosenLifecycleStatus: lifecycleStatus,
-      syncedAt: new Date().toISOString(),
-    });
-    return upsertSenderIdentity({
-      ...identity,
-      workspaceId: workspace,
-      provider,
-      channel,
-      address,
-      normalizedAddress,
-      lifecycleStatus,
-      metadata: {
-        ...existingMetadata,
-        ...incomingMetadata,
-        lifecycleSyncHistory,
-      },
+    return withTransaction(pool, async (client) => {
+      await lockSenderIdentity(client, workspace, provider, channel, normalizedAddress);
+      const existing = await selectSenderIdentityByAddress(
+        client,
+        workspace,
+        provider,
+        channel,
+        normalizedAddress
+      );
+      const lifecycleStatus = chooseSyncedLifecycle(existing, identity);
+      const existingMetadata = senderIdentityMetadata(existing?.metadata);
+      const incomingMetadata = senderIdentityMetadata(identity.metadata);
+      const lifecycleSyncHistory = Array.isArray(existingMetadata.lifecycleSyncHistory)
+        ? existingMetadata.lifecycleSyncHistory.slice(-49)
+        : [];
+      lifecycleSyncHistory.push({
+        previousLifecycleStatus: existing?.lifecycleStatus || '',
+        incomingLifecycleStatus: senderLifecycleStatus(identity.lifecycleStatus),
+        chosenLifecycleStatus: lifecycleStatus,
+        syncedAt: new Date().toISOString(),
+      });
+      return upsertSenderIdentityWithClient(client, {
+        ...identity,
+        workspaceId: workspace,
+        provider,
+        channel,
+        address,
+        normalizedAddress,
+        lifecycleStatus,
+        metadata: {
+          ...existingMetadata,
+          ...incomingMetadata,
+          lifecycleSyncHistory,
+        },
+      });
     });
   }
 
@@ -1771,27 +1852,221 @@ export function createConversationStore(pool) {
     if (unknownFields.length) {
       throw new Error(`Unknown sender identity patch fields: ${unknownFields.join(', ')}`);
     }
-    const params = [id, workspace];
-    const assignments = [];
-    for (const [property, column] of fields) {
-      if (!Object.hasOwn(patch, property) || patch[property] === undefined) continue;
-      const value =
-        property === 'metadata' ? JSON.stringify(patch[property] ?? {}) : patch[property];
-      params.push(value);
-      assignments.push(`${column} = $${params.length}${property === 'metadata' ? '::jsonb' : ''}`);
-    }
-    if (!assignments.length) throw new Error('No editable sender identity fields provided');
-    const result = await pool.query(
-      `
-        UPDATE public.communication_sender_identities
-        SET ${assignments.join(', ')}, updated_at = NOW()
-        WHERE id = $1
-          AND workspace_id = $2
-        RETURNING *
-      `,
-      params
+    const providedFields = fields.filter(
+      ([property]) => Object.hasOwn(patch, property) && patch[property] !== undefined
     );
-    return mapSenderIdentityRow(result.rows[0]);
+    if (!providedFields.length) throw new Error('No editable sender identity fields provided');
+    return withTransaction(pool, async (client) => {
+      const initial = await selectSenderIdentityById(client, id, workspace);
+      if (!initial) return null;
+      await lockSenderIdentity(
+        client,
+        workspace,
+        initial.provider,
+        initial.channel,
+        initial.normalizedAddress
+      );
+      const current = await selectSenderIdentityById(client, id, workspace, {
+        forUpdate: true,
+      });
+      if (!current) return null;
+      if (
+        Object.hasOwn(patch, 'lifecycleStatus') &&
+        patch.lifecycleStatus !== current.lifecycleStatus &&
+        ['release_pending', 'released'].includes(current.lifecycleStatus)
+      ) {
+        throw Object.assign(
+          new Error(
+            `Communication identity in ${current.lifecycleStatus} cannot be changed by lifecycle PATCH.`
+          ),
+          { statusCode: 409 }
+        );
+      }
+
+      const transactionParams = [id, workspace];
+      const transactionAssignments = [];
+      for (const [property, column] of providedFields) {
+        const value =
+          property === 'metadata'
+            ? JSON.stringify(mergeSenderIdentityMetadata(current.metadata, patch.metadata))
+            : patch[property];
+        transactionParams.push(value);
+        transactionAssignments.push(
+          `${column} = $${transactionParams.length}${property === 'metadata' ? '::jsonb' : ''}`
+        );
+      }
+      const result = await client.query(
+        `
+          UPDATE public.communication_sender_identities
+          SET ${transactionAssignments.join(', ')}, updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+          RETURNING *
+        `,
+        transactionParams
+      );
+      return mapSenderIdentityRow(result.rows[0]);
+    });
+  }
+
+  async function reserveSenderIdentityRelease(
+    identityId,
+    { workspaceId: workspaceInput, approvalId: approvalInput, reason = '', changedAt } = {}
+  ) {
+    const id = requiredText(identityId, 'identityId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const approvalId = requiredText(approvalInput, 'approvalId');
+    const requestedAt = changedAt || new Date().toISOString();
+
+    return withTransaction(pool, async (client) => {
+      const initial = await selectSenderIdentityById(client, id, workspace);
+      if (!initial) {
+        return { identity: null, existingApprovalId: '', reserved: false };
+      }
+      await lockSenderIdentity(
+        client,
+        workspace,
+        initial.provider,
+        initial.channel,
+        initial.normalizedAddress
+      );
+      const current = await selectSenderIdentityById(client, id, workspace, {
+        forUpdate: true,
+      });
+      if (!current) {
+        return { identity: null, existingApprovalId: '', reserved: false };
+      }
+
+      const currentMetadata = senderIdentityMetadata(current.metadata);
+      const existingApprovalId = String(currentMetadata.releaseApprovalId || '').trim();
+      if (current.lifecycleStatus === 'release_pending' && existingApprovalId) {
+        return {
+          identity: current,
+          existingApprovalId,
+          reserved: false,
+        };
+      }
+      if (!['retired', 'quarantined', 'paused'].includes(current.lifecycleStatus)) {
+        throw Object.assign(
+          new Error(
+            `Communication identity in ${current.lifecycleStatus} cannot request provider release.`
+          ),
+          { statusCode: 409 }
+        );
+      }
+
+      const lifecycleHistory = Array.isArray(currentMetadata.lifecycleHistory)
+        ? currentMetadata.lifecycleHistory.slice(-49)
+        : [];
+      lifecycleHistory.push({
+        from: current.lifecycleStatus,
+        to: 'release_pending',
+        reason: reason || '',
+        source: 'operator',
+        at: requestedAt,
+      });
+      const metadata = {
+        ...currentMetadata,
+        operatorManaged: true,
+        lifecycleSource: 'operator',
+        lifecycleHistory,
+        lifecycleChangedAt: requestedAt,
+        releaseApprovalId: approvalId,
+        releaseRequestedAt: requestedAt,
+        releasePreviousLifecycleStatus: current.lifecycleStatus,
+        ...(reason ? { lifecycleReason: reason } : {}),
+      };
+      const result = await client.query(
+        `
+          UPDATE public.communication_sender_identities
+          SET lifecycle_status = $3,
+              metadata = $4::jsonb,
+              updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+          RETURNING *
+        `,
+        [id, workspace, 'release_pending', JSON.stringify(metadata)]
+      );
+      return {
+        identity: mapSenderIdentityRow(result.rows[0]),
+        existingApprovalId: '',
+        reserved: true,
+      };
+    });
+  }
+
+  async function cancelSenderIdentityReleaseReservation(
+    identityId,
+    { workspaceId: workspaceInput, approvalId: approvalInput, changedAt } = {}
+  ) {
+    const id = requiredText(identityId, 'identityId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+    const approvalId = requiredText(approvalInput, 'approvalId');
+    const canceledAt = changedAt || new Date().toISOString();
+
+    return withTransaction(pool, async (client) => {
+      const initial = await selectSenderIdentityById(client, id, workspace);
+      if (!initial) return { identity: null, canceled: false };
+      await lockSenderIdentity(
+        client,
+        workspace,
+        initial.provider,
+        initial.channel,
+        initial.normalizedAddress
+      );
+      const current = await selectSenderIdentityById(client, id, workspace, {
+        forUpdate: true,
+      });
+      if (!current) return { identity: null, canceled: false };
+
+      const currentMetadata = senderIdentityMetadata(current.metadata);
+      if (
+        current.lifecycleStatus !== 'release_pending' ||
+        currentMetadata.releaseApprovalId !== approvalId
+      ) {
+        return { identity: current, canceled: false };
+      }
+
+      const previousLifecycleStatus = ['retired', 'quarantined', 'paused'].includes(
+        currentMetadata.releasePreviousLifecycleStatus
+      )
+        ? currentMetadata.releasePreviousLifecycleStatus
+        : 'quarantined';
+      const metadata = { ...currentMetadata };
+      delete metadata.releaseApprovalId;
+      delete metadata.releaseRequestedAt;
+      delete metadata.releasePreviousLifecycleStatus;
+      const lifecycleHistory = Array.isArray(metadata.lifecycleHistory)
+        ? metadata.lifecycleHistory.slice(-49)
+        : [];
+      lifecycleHistory.push({
+        from: 'release_pending',
+        to: previousLifecycleStatus,
+        reason: 'approval_creation_failed',
+        source: 'system',
+        at: canceledAt,
+      });
+      metadata.lifecycleHistory = lifecycleHistory;
+      metadata.lifecycleChangedAt = canceledAt;
+
+      const result = await client.query(
+        `
+          UPDATE public.communication_sender_identities
+          SET lifecycle_status = $3,
+              metadata = $4::jsonb,
+              updated_at = NOW()
+          WHERE id = $1
+            AND workspace_id = $2
+          RETURNING *
+        `,
+        [id, workspace, previousLifecycleStatus, JSON.stringify(metadata)]
+      );
+      return {
+        identity: mapSenderIdentityRow(result.rows[0]),
+        canceled: true,
+      };
+    });
   }
 
   return {
@@ -1808,5 +2083,7 @@ export function createConversationStore(pool) {
     upsertSenderIdentity,
     syncSenderIdentity,
     patchSenderIdentity,
+    reserveSenderIdentityRelease,
+    cancelSenderIdentityReleaseReservation,
   };
 }

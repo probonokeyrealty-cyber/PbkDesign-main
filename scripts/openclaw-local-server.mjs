@@ -28861,14 +28861,17 @@ async function buildTelnyxVoiceRoutingDiagnostic() {
 
 function normalizeInstantlySenderRecord(record = {}) {
   const email = String(record.email || record.email_address || record.address || record.username || record.smtp_username || '').trim();
-  const warmupStatus = String(record.warmupStatus || record.warmup_status || '').trim();
+  const warmupStatus = record.warmupStatus ?? record.warmup_status ?? '';
+  const setupPending = record.setupPending ?? record.setup_pending ?? false;
   return {
     id: record.id || record.uuid || email,
     email,
     provider: record.provider || record.provider_name || record.type || record.smtp_provider || 'instantly',
-    status: record.status || '',
+    status: record.status ?? '',
     warmupStatus,
     warmup_status: warmupStatus,
+    setupPending,
+    setup_pending: setupPending,
   };
 }
 
@@ -56508,6 +56511,21 @@ const server = createServer(async (request, response) => {
           const records = Array.isArray(providerResult[provider.recordsKey])
             ? providerResult[provider.recordsKey]
             : [];
+          if (providerResult.ok !== true) {
+            providerSync[provider.name] = {
+              ok: false,
+              result: providerResult.result || 'provider_error',
+              error:
+                providerResult.error ||
+                providerResult.verbiage ||
+                `${provider.name} sender inventory failed.`,
+              received: records.length,
+              valid: 0,
+              synced: 0,
+              fallbackAvailable: records.length,
+            };
+            continue;
+          }
           const identities = records
             .map((record) =>
               provider.normalize(record, providerResult[provider.defaultKey] || '')
@@ -56650,9 +56668,15 @@ const server = createServer(async (request, response) => {
           await readBody(request)
         );
         const store = createConversationStore(pool);
-        const identity = await store.getSenderIdentity(identityId, {
+        const approvalId = randomUUID();
+        const changedAt = isoNow();
+        const reservation = await store.reserveSenderIdentityRelease(identityId, {
           workspaceId: CONVERSATION_WORKSPACE_ID,
+          approvalId,
+          reason,
+          changedAt,
         });
+        const identity = reservation.identity;
         if (!identity) {
           json(response, 404, {
             ok: false,
@@ -56661,57 +56685,70 @@ const server = createServer(async (request, response) => {
           });
           return;
         }
-        if (!['retired', 'quarantined', 'paused'].includes(identity.lifecycleStatus)) {
-          throw Object.assign(
-            new Error(
-              `Communication identity in ${identity.lifecycleStatus} cannot request provider release.`
-            ),
-            { statusCode: 409 }
+        if (!reservation.reserved) {
+          const existingApproval = state.approvals.find(
+            (item) =>
+              item.id === reservation.existingApprovalId &&
+              String(item.status || '').toLowerCase() === 'pending'
           );
+          if (existingApproval) {
+            json(response, 202, {
+              ok: true,
+              result: 'queued_for_approval',
+              approval: existingApproval,
+              identity,
+              replayed: true,
+            });
+            return;
+          }
+          json(response, 409, {
+            ok: false,
+            result: 'release_already_pending',
+            existingApprovalId: reservation.existingApprovalId,
+            error: 'Communication identity already has a pending release reservation.',
+          });
+          return;
         }
 
-        const approvalResult = await toolHandlers.createApproval({
-          type: 'provider_identity_release',
-          approvalAction: 'release_communication_identity',
-          provider: identity.provider,
-          address: identity.address,
-          payload: {
-            identityId,
+        let approvalResult;
+        try {
+          approvalResult = await toolHandlers.createApproval({
+            id: approvalId,
+            type: 'provider_identity_release',
+            approvalAction: 'release_communication_identity',
             provider: identity.provider,
             address: identity.address,
-          },
-          notes: reason,
-          metadata: {
-            identityId,
-            provider: identity.provider,
-            address: identity.address,
-            reason,
-          },
-        });
-        const approval = approvalResult.approval;
-        const changedAt = isoNow();
-        const updatedIdentity = await store.patchSenderIdentity(
-          identityId,
-          {
-            lifecycleStatus: 'release_pending',
-            metadata: {
-              ...buildCommunicationIdentityLifecycleMetadata(
-                identity,
-                'release_pending',
-                reason,
-                changedAt
-              ),
-              releaseApprovalId: approval.id,
-              releaseRequestedAt: changedAt,
+            payload: {
+              identityId,
+              provider: identity.provider,
+              address: identity.address,
             },
-          },
-          { workspaceId: CONVERSATION_WORKSPACE_ID }
-        );
+            notes: reason,
+            metadata: {
+              identityId,
+              provider: identity.provider,
+              address: identity.address,
+              reason,
+            },
+          });
+          if (!approvalResult?.approval) {
+            throw new Error('Communication identity release approval was not created.');
+          }
+        } catch (error) {
+          const cancellation = store.cancelSenderIdentityReleaseReservation(identityId, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+            approvalId,
+            changedAt: isoNow(),
+          });
+          await cancellation.catch(() => {});
+          throw error;
+        }
+        const approval = approvalResult.approval;
         json(response, 202, {
           ok: true,
           result: 'queued_for_approval',
           approval,
-          identity: updatedIdentity,
+          identity,
         });
       } catch (error) {
         sendConversationStoreError(
@@ -56767,6 +56804,7 @@ const server = createServer(async (request, response) => {
           return;
         }
         const approvalMatches =
+          identity.metadata?.releaseApprovalId === approvalId &&
           String(approval.status || '').toLowerCase() === 'approved' &&
           String(approval.type || '').toLowerCase() === 'provider_identity_release' &&
           String(approval.approvalAction || '').toLowerCase() ===

@@ -157,6 +157,7 @@
     "test:ava-latency-status": "node ./scripts/ava-latency-status-smoke.mjs",
     "test:ava-assistant-chat": "node ./scripts/ava-assistant-chat-smoke.mjs",
     "test:ui-hardening-regression": "node ./scripts/ui-hardening-regression-smoke.mjs",
+    "test:unified-conversation-bridge": "node ./scripts/unified-conversation-bridge-smoke.mjs",
     "test:public-ava-chat": "node ./scripts/public-ava-chat-smoke.mjs",
     "test:seven-figure-closer-os": "node ./scripts/seven-figure-closer-os-smoke.mjs",
     "test:chaos": "node ./scripts/chaos-test-smoke.mjs",

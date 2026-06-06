@@ -33,6 +33,8 @@ import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSch
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
+import { ensureConversationSchema } from './conversation-schema.mjs';
+import { createConversationStore } from './conversation-store.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -5817,6 +5819,7 @@ async function ensurePbkOperationalTables(pool) {
     CREATE INDEX IF NOT EXISTS pbk_research_additive_provider_checks_lookup_idx
       ON public.pbk_research_additive_provider_checks (tenant_id, additive_id, provider_id, created_at DESC);
   `);
+  await ensureConversationSchema(pool);
   await ensureNurtureSchema(pool).catch((error) => {
     console.warn('[postgres] nurture schema ensure skipped', error?.message || error);
   });
@@ -49221,6 +49224,142 @@ function matchPath(pathname, pattern) {
   return pathname.match(regex);
 }
 
+function sendConversationPostgresUnavailable(response) {
+  json(response, 503, {
+    ok: false,
+    result: 'postgres_unavailable',
+    degraded: true,
+    error: 'Unified conversations require the Postgres conversation schema.',
+  });
+}
+
+function decodeConversationPathId(rawValue = '') {
+  try {
+    const decoded = decodeURIComponent(String(rawValue || '')).trim();
+    if (!decoded) throw new Error('empty conversation thread ID');
+    return decoded;
+  } catch {
+    throw Object.assign(new Error('Invalid encoded conversation thread ID.'), {
+      statusCode: 400,
+    });
+  }
+}
+
+function parseConversationBooleanQuery(searchParams, key) {
+  if (!searchParams.has(key)) return undefined;
+  const value = String(searchParams.get(key) || '')
+    .trim()
+    .toLowerCase();
+  if (['1', 'true', 'yes'].includes(value)) return true;
+  if (['0', 'false', 'no'].includes(value)) return false;
+  throw Object.assign(new Error(`${key} must be true or false.`), {
+    statusCode: 400,
+  });
+}
+
+function buildConversationThreadPatch(body = {}, currentThread = null) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw Object.assign(new Error('Conversation patch body must be a JSON object.'), {
+      statusCode: 400,
+    });
+  }
+  const allowedFields = new Set(['read', 'unread', 'pinned', 'archived', 'assignedAgent', 'spam']);
+  const unknownFields = Object.keys(body).filter((key) => !allowedFields.has(key));
+  if (unknownFields.length) {
+    throw Object.assign(
+      new Error(`Unknown conversation patch fields: ${unknownFields.join(', ')}`),
+      { statusCode: 400 }
+    );
+  }
+  if (!Object.keys(body).length) {
+    throw Object.assign(new Error('No conversation patch fields provided.'), {
+      statusCode: 400,
+    });
+  }
+  if (body.read === true && body.unread === true) {
+    throw Object.assign(new Error('read and unread cannot both be true.'), {
+      statusCode: 400,
+    });
+  }
+
+  const patch = {};
+  const now = new Date().toISOString();
+  if (Object.hasOwn(body, 'read')) {
+    if (body.read !== true) {
+      throw Object.assign(new Error('read must be true when provided.'), {
+        statusCode: 400,
+      });
+    }
+    patch.unreadCount = 0;
+  }
+  if (Object.hasOwn(body, 'unread')) {
+    if (body.unread !== true) {
+      throw Object.assign(new Error('unread must be true when provided.'), {
+        statusCode: 400,
+      });
+    }
+    patch.unreadCount = Math.max(1, Number(currentThread?.unreadCount || 0));
+  }
+  for (const field of ['pinned', 'archived', 'spam']) {
+    if (Object.hasOwn(body, field) && typeof body[field] !== 'boolean') {
+      throw Object.assign(new Error(`${field} must be a boolean.`), {
+        statusCode: 400,
+      });
+    }
+  }
+  if (Object.hasOwn(body, 'pinned')) patch.pinned = body.pinned;
+  if (Object.hasOwn(body, 'archived')) {
+    const value = body.archived;
+    patch.archivedAt = value ? now : null;
+  }
+  if (Object.hasOwn(body, 'assignedAgent')) {
+    if (typeof body.assignedAgent !== 'string') {
+      throw Object.assign(new Error('assignedAgent must be a string.'), {
+        statusCode: 400,
+      });
+    }
+    patch.assignedAgent = body.assignedAgent.trim();
+  }
+  if (Object.hasOwn(body, 'spam')) {
+    const value = body.spam;
+    patch.spamReportedAt = value ? now : null;
+  }
+  return patch;
+}
+
+function getConversationRequestActor(request) {
+  const teamAuth = getTeamAuthMeta(request);
+  return teamAuth.ok && teamAuth.actor ? teamAuth.actor : 'operator';
+}
+
+function getConversationStoreError(error, fallbackMessage) {
+  const message = String(error?.message || '');
+  if (Number.isInteger(error?.statusCode)) {
+    return { statusCode: error.statusCode, error: message || fallbackMessage };
+  }
+  if (/must exist|not found|missing or already merged/i.test(message)) {
+    return { statusCode: 404, error: message };
+  }
+  if (
+    error?.code === '22P02' ||
+    /required|invalid|unknown|no editable|must be|must match|different|cannot|already merged|belong|visibility|cycle detected/i.test(
+      message
+    )
+  ) {
+    return { statusCode: 400, error: message };
+  }
+  return { statusCode: 500, error: fallbackMessage };
+}
+
+function sendConversationStoreError(response, error, fallbackMessage) {
+  const failure = getConversationStoreError(error, fallbackMessage);
+  json(response, failure.statusCode, {
+    ok: false,
+    result: 'postgres',
+    error: failure.error,
+  });
+}
+
 function mapTelnyxWebhook(body = {}) {
   const eventType = String(body.data?.event_type || body.event_type || body.type || '').toLowerCase();
   const payload = body.data?.payload || body.payload || body.data || body;
@@ -55951,6 +56090,177 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/api/conversations') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const store = createConversationStore(pool);
+        const filters = {
+          cursor: url.searchParams.get('cursor') || undefined,
+          search: url.searchParams.get('search') || undefined,
+          unread: parseConversationBooleanQuery(url.searchParams, 'unread'),
+          pinned: parseConversationBooleanQuery(url.searchParams, 'pinned'),
+          archived: parseConversationBooleanQuery(url.searchParams, 'archived'),
+          channel: url.searchParams.get('channel') || undefined,
+          status: url.searchParams.get('status') || url.searchParams.get('stage') || undefined,
+          limit: url.searchParams.get('limit') || undefined,
+        };
+        const page = await store.listThreads(filters);
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          ...page,
+        });
+      } catch (error) {
+        sendConversationStoreError(response, error, 'Unable to list unified conversations.');
+      }
+      return;
+    }
+
+    const conversationTimelineMatch = matchPath(pathname, '/api/conversations/:threadId/timeline');
+    if (conversationTimelineMatch && request.method === 'GET') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(conversationTimelineMatch.groups.threadId);
+        const store = createConversationStore(pool);
+        const page = await store.listTimeline(threadId, {
+          cursor: url.searchParams.get('cursor') || undefined,
+          limit: url.searchParams.get('limit') || undefined,
+          includeHidden: parseConversationBooleanQuery(url.searchParams, 'includeHidden'),
+        });
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          ...page,
+        });
+      } catch (error) {
+        sendConversationStoreError(response, error, 'Unable to load the conversation timeline.');
+      }
+      return;
+    }
+
+    const conversationMergeMatch = matchPath(pathname, '/api/conversations/:threadId/merge');
+    if (conversationMergeMatch && request.method === 'POST') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(conversationMergeMatch.groups.threadId);
+        const body = await readBody(request);
+        if (
+          Object.hasOwn(body, 'canonicalThreadId') &&
+          typeof body.canonicalThreadId !== 'string'
+        ) {
+          throw Object.assign(new Error('canonicalThreadId must be a string.'), {
+            statusCode: 400,
+          });
+        }
+        const canonicalThreadId =
+          typeof body.canonicalThreadId === 'string' && body.canonicalThreadId.trim()
+            ? body.canonicalThreadId.trim()
+            : threadId;
+        const mergedThreadId =
+          typeof body.mergedThreadId === 'string' ? body.mergedThreadId.trim() : '';
+        if (body.canonicalThreadId && canonicalThreadId !== threadId) {
+          throw Object.assign(
+            new Error('Canonical thread ID must match the path thread ID.'),
+            { statusCode: 400 }
+          );
+        }
+        if (!mergedThreadId) {
+          throw Object.assign(new Error('mergedThreadId is required.'), {
+            statusCode: 400,
+          });
+        }
+        if (canonicalThreadId === mergedThreadId) {
+          throw Object.assign(
+            new Error('Canonical and merged thread IDs must be different.'),
+            { statusCode: 400 }
+          );
+        }
+        const actor = getConversationRequestActor(request);
+        const store = createConversationStore(pool);
+        const thread = await store.mergeThreads({
+          canonicalThreadId,
+          mergedThreadId,
+          actor,
+        });
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          thread,
+        });
+      } catch (error) {
+        sendConversationStoreError(response, error, 'Unable to merge conversation threads.');
+      }
+      return;
+    }
+
+    const conversationThreadMatch = matchPath(pathname, '/api/conversations/:threadId');
+    if (conversationThreadMatch && request.method === 'GET') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(conversationThreadMatch.groups.threadId);
+        const store = createConversationStore(pool);
+        const thread = await store.getThread(threadId);
+        json(response, thread ? 200 : 404, {
+          ok: Boolean(thread),
+          result: 'postgres',
+          thread,
+          error: thread ? undefined : 'Conversation thread not found.',
+        });
+      } catch (error) {
+        sendConversationStoreError(response, error, 'Unable to load the conversation thread.');
+      }
+      return;
+    }
+
+    if (conversationThreadMatch && request.method === 'PATCH') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const threadId = decodeConversationPathId(conversationThreadMatch.groups.threadId);
+        const body = await readBody(request);
+        const store = createConversationStore(pool);
+        const currentThread = await store.getThread(threadId);
+        if (!currentThread) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Conversation thread not found.',
+          });
+          return;
+        }
+        const patch = buildConversationThreadPatch(body, currentThread);
+        const thread = await store.patchThread(threadId, patch);
+        json(response, thread ? 200 : 404, {
+          ok: Boolean(thread),
+          result: 'postgres',
+          thread,
+          error: thread ? undefined : 'Conversation thread not found.',
+        });
+      } catch (error) {
+        sendConversationStoreError(response, error, 'Unable to update the conversation thread.');
+      }
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/campaigns/lead-sources') {
       json(response, 200, {
         ok: true,
@@ -56425,7 +56735,7 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities'];
       if (!pool) {
         json(response, 200, {
           ok: false,

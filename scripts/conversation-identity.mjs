@@ -6,7 +6,7 @@ export function normalizeConversationPhone(value = '') {
 
   const digits = phone.replace(/\D/g, '');
   if (digits.length < 7 || digits.length > 15) return '';
-  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 10 && !phone.startsWith('+')) return `+1${digits}`;
   return `+${digits}`;
 }
 

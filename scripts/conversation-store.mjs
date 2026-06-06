@@ -124,71 +124,114 @@ function conversationCursorError(message = 'Invalid cursor') {
   });
 }
 
-function validateConversationCursor(cursor) {
+function validateCursorObject(cursor) {
   if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) {
     throw conversationCursorError();
-  }
-  if (
-    Object.hasOwn(cursor, 'id') &&
-    (typeof cursor.id !== 'string' ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.id))
-  ) {
-    throw conversationCursorError('Cursor id must be a UUID-like string');
-  }
-  for (const field of ['lastEventAt', 'occurredAt']) {
-    if (
-      Object.hasOwn(cursor, field) &&
-      cursor[field] !== null &&
-      (typeof cursor[field] !== 'string' || !Number.isFinite(Date.parse(cursor[field])))
-    ) {
-      throw conversationCursorError(`Cursor ${field} must be a valid timestamp`);
-    }
-  }
-  if (
-    Object.hasOwn(cursor, 'includeHidden') &&
-    cursor.includeHidden !== undefined &&
-    typeof cursor.includeHidden !== 'boolean'
-  ) {
-    throw conversationCursorError('Cursor includeHidden must be a boolean');
   }
   return cursor;
 }
 
-function decodeCursor(value) {
-  if (!value) return {};
-  if (typeof value === 'object' && !Array.isArray(value)) {
-    return validateConversationCursor(value);
+function validateCursorId(cursor) {
+  if (
+    !Object.hasOwn(cursor, 'id') ||
+    typeof cursor.id !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.id)
+  ) {
+    throw conversationCursorError('Cursor id must be a UUID-like string');
   }
-  if (typeof value !== 'string') throw conversationCursorError();
+}
+
+function validateThreadCursor(cursor) {
+  validateCursorObject(cursor);
+  if (!Object.hasOwn(cursor, 'lastEventAt')) {
+    throw conversationCursorError('Thread cursor lastEventAt is required');
+  }
+  validateCursorId(cursor);
+  if (
+    cursor.lastEventAt !== null &&
+    (typeof cursor.lastEventAt !== 'string' ||
+      !cursor.lastEventAt.trim() ||
+      !Number.isFinite(Date.parse(cursor.lastEventAt)))
+  ) {
+    throw conversationCursorError('Thread cursor lastEventAt must be a valid timestamp or null');
+  }
+  if (Object.hasOwn(cursor, 'occurredAt') || Object.hasOwn(cursor, 'includeHidden')) {
+    throw conversationCursorError('Invalid thread cursor shape');
+  }
+  return cursor;
+}
+
+function validateTimelineCursor(cursor) {
+  validateCursorObject(cursor);
+  for (const field of ['occurredAt', 'id', 'includeHidden']) {
+    if (!Object.hasOwn(cursor, field)) {
+      throw conversationCursorError(`Timeline cursor ${field} is required`);
+    }
+  }
+  validateCursorId(cursor);
+  if (
+    typeof cursor.occurredAt !== 'string' ||
+    !cursor.occurredAt.trim() ||
+    !Number.isFinite(Date.parse(cursor.occurredAt))
+  ) {
+    throw conversationCursorError('Timeline cursor occurredAt must be a valid timestamp');
+  }
+  if (typeof cursor.includeHidden !== 'boolean') {
+    throw conversationCursorError('Timeline cursor includeHidden must be a boolean');
+  }
+  if (Object.hasOwn(cursor, 'lastEventAt')) {
+    throw conversationCursorError('Invalid timeline cursor shape');
+  }
+  return cursor;
+}
+
+function decodeCursorPayload(value) {
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value) throw conversationCursorError();
   try {
-    const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-    return validateConversationCursor(cursor);
-  } catch (error) {
-    if (error?.statusCode === 400) throw error;
+    return validateCursorObject(JSON.parse(Buffer.from(value, 'base64url').toString('utf8')));
+  } catch {
     throw conversationCursorError();
   }
 }
 
+function decodeThreadCursor(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
+    return {};
+  }
+  return validateThreadCursor(decodeCursorPayload(value));
+}
+
 function decodeTimelineCursor(value) {
   if (!value) return {};
-  if (typeof value === 'string') return decodeCursor(value);
+  if (typeof value === 'string') {
+    return validateTimelineCursor(decodeCursorPayload(value));
+  }
   if (typeof value !== 'object' || Array.isArray(value)) throw conversationCursorError();
-  if (!value.cursor) return validateConversationCursor(value);
-
-  const encoded = decodeCursor(value.cursor);
   if (
     Object.hasOwn(value, 'includeHidden') &&
     value.includeHidden !== undefined &&
-    Boolean(value.includeHidden) !== Boolean(encoded.includeHidden)
+    typeof value.includeHidden !== 'boolean'
+  ) {
+    throw conversationCursorError('Timeline includeHidden must be a boolean');
+  }
+  if (!value.cursor) return value;
+
+  const encoded = validateTimelineCursor(decodeCursorPayload(value.cursor));
+  if (
+    Object.hasOwn(value, 'includeHidden') &&
+    value.includeHidden !== undefined &&
+    value.includeHidden !== encoded.includeHidden
   ) {
     throw conversationCursorError(
       'Timeline cursor visibility does not match the requested visibility'
     );
   }
-  return validateConversationCursor({
+  return {
     ...encoded,
     limit: value.limit ?? encoded.limit,
-  });
+  };
 }
 
 async function withTransaction(pool, callback) {
@@ -987,7 +1030,7 @@ export function createConversationStore(pool) {
       conditions.push(filters.archived ? 't.archived_at IS NOT NULL' : 't.archived_at IS NULL');
     }
 
-    const cursor = decodeCursor(filters.cursor);
+    const cursor = decodeThreadCursor(filters.cursor);
     if (cursor.lastEventAt && cursor.id) {
       conditions.push(
         `(

@@ -839,37 +839,90 @@ describe('conversation queries and pagination', () => {
     expect(queries[3].params).toEqual([THREAD_UUID, 'other', 11]);
   });
 
-  test('rejects malformed cursors before querying Postgres', async () => {
+  test('rejects malformed thread cursor shapes before querying Postgres', async () => {
     const pool = { query: jest.fn() };
     const store = createConversationStore(pool);
     const cursor = (value) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 
     for (const malformed of [
+      cursor({ id: THREAD_UUID }),
+      cursor({ lastEventAt: '2026-06-06T12:00:00.000Z' }),
       cursor({ id: 'not-a-uuid', lastEventAt: '2026-06-06T12:00:00.000Z' }),
       cursor({ id: THREAD_UUID, lastEventAt: 'not-a-date' }),
-      cursor({ id: EVENT_UUID, occurredAt: 'not-a-date', includeHidden: false }),
+      cursor({ id: THREAD_UUID, lastEventAt: 123 }),
       cursor({
-        id: EVENT_UUID,
+        id: THREAD_UUID,
+        lastEventAt: '2026-06-06T12:00:00.000Z',
         occurredAt: '2026-06-06T12:00:00.000Z',
-        includeHidden: 'false',
       }),
     ]) {
       await expect(
         store.listThreads({ workspaceId: 'pbk', cursor: malformed })
       ).rejects.toMatchObject({ statusCode: 400 });
     }
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('rejects malformed timeline cursor shapes before querying Postgres', async () => {
+    const pool = { query: jest.fn() };
+    const store = createConversationStore(pool);
+    const cursor = (value) => Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+
+    for (const malformed of [
+      cursor({ id: EVENT_UUID }),
+      cursor({ id: EVENT_UUID, occurredAt: null, includeHidden: false }),
+      cursor({ id: EVENT_UUID, occurredAt: '2026-06-06T12:00:00.000Z' }),
+      cursor({
+        id: 'not-a-uuid',
+        occurredAt: '2026-06-06T12:00:00.000Z',
+        includeHidden: false,
+      }),
+      cursor({ id: EVENT_UUID, occurredAt: 'invalid', includeHidden: false }),
+      cursor({
+        id: EVENT_UUID,
+        occurredAt: '2026-06-06T12:00:00.000Z',
+        includeHidden: 'false',
+      }),
+      cursor({
+        id: EVENT_UUID,
+        occurredAt: '2026-06-06T12:00:00.000Z',
+        includeHidden: false,
+        lastEventAt: '2026-06-06T12:00:00.000Z',
+      }),
+    ]) {
+      await expect(
+        store.listTimeline(THREAD_UUID, {
+          workspaceId: 'pbk',
+          cursor: malformed,
+        })
+      ).rejects.toMatchObject({ statusCode: 400 });
+    }
 
     await expect(
       store.listTimeline(THREAD_UUID, {
         workspaceId: 'pbk',
-        cursor: cursor({
-          id: EVENT_UUID,
-          occurredAt: 'invalid',
-          includeHidden: false,
-        }),
+        includeHidden: 'false',
       })
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('accepts a thread cursor with an explicit null timestamp branch', async () => {
+    const pool = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+    const cursor = Buffer.from(
+      JSON.stringify({ id: THREAD_UUID, lastEventAt: null }),
+      'utf8'
+    ).toString('base64url');
+
+    await expect(
+      createConversationStore(pool).listThreads({
+        workspaceId: 'pbk',
+        cursor,
+      })
+    ).resolves.toEqual({ items: [], nextCursor: null });
+    expect(pool.query).toHaveBeenCalledTimes(1);
   });
 
   test('accepts omitted timeline visibility passed as undefined', async () => {

@@ -24,14 +24,15 @@ const STARTED_CALL_STATUSES = new Set([
 ]);
 
 const APPROVAL_CREATED_STATUSES = new Set(['pending', 'created', 'requested']);
-const APPROVAL_DECIDED_STATUSES = new Set([
+const APPROVAL_CONCRETE_DECISION_STATUSES = new Set([
   'approved',
   'declined',
   'rejected',
-  'decided',
   'needs_revision',
   'cancelled',
+  'canceled',
 ]);
+const APPROVAL_DECIDED_STATUSES = new Set([...APPROVAL_CONCRETE_DECISION_STATUSES, 'decided']);
 
 const RECORD_ALIASES = {
   id: ['sourceId', 'source_id'],
@@ -167,6 +168,17 @@ function firstTimestamp(...values) {
   return firstNonEmpty(...values) ?? null;
 }
 
+function mergePayloadFields(record, fields) {
+  if (!isRecord(record.payload)) return record;
+
+  const mergedRecord = { ...record };
+  for (const field of fields) {
+    const value = firstNonEmpty(record[field], record.payload[field]);
+    if (value !== undefined) mergedRecord[field] = value;
+  }
+  return mergedRecord;
+}
+
 function cleanValue(value) {
   if (Array.isArray(value)) {
     return value.filter((item) => item !== undefined).map(cleanValue);
@@ -257,6 +269,14 @@ export function projectMessageEvent(record) {
   const channel = normalized(record.channel);
   const nativeRecording = channel === 'call' && normalized(record.direction) === 'recording';
   if (nativeRecording) {
+    record = mergePayloadFields(record, [
+      'recordingUrl',
+      'storagePath',
+      'storageBucket',
+      'audioContentType',
+      'durationSeconds',
+      'callId',
+    ]);
     const senderAddress = firstText(record.fromPhone, record.senderAddress, record.from);
     const recipientAddress = firstText(record.toPhone, record.recipientAddress, record.to);
 
@@ -300,6 +320,7 @@ export function projectMessageEvent(record) {
           'durationSeconds',
           'duration',
           'recordingUrl',
+          'callId',
           'occurredAt',
           'sentAt',
           'createdAt',
@@ -311,6 +332,7 @@ export function projectMessageEvent(record) {
           audioContentType: firstNonEmpty(record.audioContentType),
           durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
           recordingUrl: firstNonEmpty(record.recordingUrl),
+          callId: firstNonEmpty(record.callId),
         }
       ),
     });
@@ -701,8 +723,8 @@ export function projectApprovalEvent(record) {
   const approvalType = firstText(record.approvalType, record.type);
   const action = firstText(record.action, record.payload?.action);
   const decision =
-    firstText(record.decision, record.payload?.decision) ||
-    (APPROVAL_DECIDED_STATUSES.has(status) ? status : '');
+    firstText(record.decision, record.payload?.decision, record.outcome, record.payload?.outcome) ||
+    (APPROVAL_CONCRETE_DECISION_STATUSES.has(status) ? status : '');
   const actorName =
     eventType === 'approval.decided'
       ? firstText(record.decidedBy, record.actorName, record.actor, record.requestedBy)

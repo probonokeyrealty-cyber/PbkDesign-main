@@ -170,6 +170,47 @@ describe('message projection', () => {
     });
   });
 
+  test('projects recording metadata from the unified-message persistence fallback payload', () => {
+    const payload = Object.freeze({
+      recordingUrl: 'https://recordings.example/recording-message-fallback.mp3',
+      storagePath: 'calls/recording-message-fallback.mp3',
+      storageBucket: 'call-recordings',
+      audioContentType: 'audio/mpeg',
+      durationSeconds: 58,
+      callId: 'call-persistence-fallback',
+    });
+    const record = Object.freeze({
+      id: 'recording-message-fallback',
+      workspace_id: 'workspace-1',
+      lead_id: 'lead-1',
+      channel: 'call',
+      direction: 'recording',
+      provider: 'telnyx',
+      payload,
+      created_at: '2026-06-06T13:45:00.000Z',
+    });
+
+    const event = projectMessageEvent(record);
+
+    expect(event).toMatchObject({
+      eventType: 'call.recording',
+      sourceTable: 'unified_messages',
+      sourceId: 'recording-message-fallback',
+      sourceKey: 'unified_messages:recording-message-fallback:call.recording',
+      occurredAt: '2026-06-06T13:45:00.000Z',
+      payload: {
+        recordingUrl: 'https://recordings.example/recording-message-fallback.mp3',
+        storagePath: 'calls/recording-message-fallback.mp3',
+        storageBucket: 'call-recordings',
+        audioContentType: 'audio/mpeg',
+        durationSeconds: 58,
+        callId: 'call-persistence-fallback',
+      },
+    });
+    expect(event.payload).not.toBe(payload);
+    expect(record.payload).toEqual(payload);
+  });
+
   test.each(['recording', 'voice', '', undefined])(
     'rejects unsupported message channel %p',
     (channel) => {
@@ -483,6 +524,7 @@ describe('approval projection', () => {
     ['decided', 'approval.decided'],
     ['needs_revision', 'approval.decided'],
     ['cancelled', 'approval.decided'],
+    ['canceled', 'approval.decided'],
   ])('maps approval status %s to %s', (status, eventType) => {
     expect(
       projectApprovalEvent({
@@ -523,6 +565,65 @@ describe('approval projection', () => {
       occurredAt: '2026-06-06T16:00:00.000Z',
       payload: {
         decision: 'approved',
+      },
+    });
+  });
+
+  test.each(['cancelled', 'canceled'])(
+    'uses acted and decided timestamp precedence for %s approvals',
+    (status) => {
+      expect(
+        projectApprovalEvent({
+          id: `approval-${status}-time`,
+          status,
+          actedAt: '2026-06-06T16:05:00.000Z',
+          decidedAt: '2026-06-06T16:04:00.000Z',
+          updatedAt: '2026-06-06T16:03:00.000Z',
+          createdAt: '2026-06-06T16:02:00.000Z',
+        })
+      ).toMatchObject({
+        eventType: 'approval.decided',
+        occurredAt: '2026-06-06T16:05:00.000Z',
+        payload: {
+          decision: status,
+        },
+      });
+    }
+  );
+
+  test('does not invent a concrete decision from generic decided status', () => {
+    const payload = Object.freeze({ auditId: 'approval-audit-1' });
+    const record = Object.freeze({
+      id: 'approval-generic-decided',
+      status: 'decided',
+      payload,
+    });
+
+    const event = projectApprovalEvent(record);
+
+    expect(event).toMatchObject({
+      eventType: 'approval.decided',
+      payload: {
+        auditId: 'approval-audit-1',
+      },
+    });
+    expect(event.payload).not.toHaveProperty('decision');
+    expect(event.payload).not.toBe(payload);
+    expect(record.payload).toEqual(payload);
+  });
+
+  test('uses an explicit outcome as the decision for generic decided status', () => {
+    expect(
+      projectApprovalEvent({
+        id: 'approval-explicit-outcome',
+        status: 'decided',
+        outcome: 'declined',
+      })
+    ).toMatchObject({
+      eventType: 'approval.decided',
+      payload: {
+        outcome: 'declined',
+        decision: 'declined',
       },
     });
   });

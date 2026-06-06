@@ -366,6 +366,40 @@ describe('conversation thread resolution', () => {
       )
     ).toBe(true);
   });
+
+  test('locks the preferred normalized identity before reselecting or creating a provisional thread', async () => {
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('JOIN public.conversation_threads AS t')) {
+        return { rows: [threadRow({ id: 'identity-thread', lead_id: null })] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(
+      createConversationStore(pool).resolveThread({
+        phone: '(614) 555-0199',
+        email: 'seller@example.com',
+      })
+    ).resolves.toMatchObject({ id: 'identity-thread', leadId: null });
+
+    const identityLockIndex = queries.findIndex(
+      ({ sql }) => sql.includes('pg_advisory_xact_lock') && sql.includes('hashtextextended($1, 0)')
+    );
+    const identitySelectIndex = queries.findIndex(({ sql }) =>
+      sql.includes('JOIN public.conversation_threads AS t')
+    );
+    const provisionalInsertIndex = queries.findIndex(
+      ({ sql }) =>
+        sql.includes('INSERT INTO public.conversation_threads') && !sql.includes('lead_id')
+    );
+
+    expect(identityLockIndex).toBeGreaterThan(-1);
+    expect(queries[identityLockIndex].params).toEqual([
+      'conversation-identity:pbk:phone:+16145550199',
+    ]);
+    expect(identitySelectIndex).toBeGreaterThan(identityLockIndex);
+    expect(provisionalInsertIndex).toBe(-1);
+  });
 });
 
 describe('conversation event persistence', () => {
@@ -531,7 +565,7 @@ describe('conversation mutation allowlists and merging', () => {
     const store = createConversationStore(pool);
 
     await expect(store.patchThread('thread-1', { leadId: 'lead-2' })).rejects.toThrow(
-      'No editable thread fields'
+      'Unknown thread patch fields: leadId'
     );
     await store.patchThread('thread-1', {
       title: "Seller's home",
@@ -545,6 +579,19 @@ describe('conversation mutation allowlists and merging', () => {
     expect(queries[0].sql).toContain('title = $2');
     expect(queries[0].sql).toContain('pinned = $3');
     expect(queries[0].sql).toContain('metadata = $4::jsonb');
+  });
+
+  test('rejects a mixed thread patch when any key is unknown', async () => {
+    const pool = { query: jest.fn() };
+
+    await expect(
+      createConversationStore(pool).patchThread('thread-1', {
+        title: 'Allowed title',
+        leadId: 'lead-2',
+      })
+    ).rejects.toThrow('Unknown thread patch fields: leadId');
+
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   test('locks merge rows in stable ID order and dedupes source events and identities', async () => {
@@ -628,6 +675,55 @@ describe('conversation mutation allowlists and merging', () => {
     ).rejects.toThrow('workspace');
     expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
   });
+
+  test.each([
+    {
+      name: 'canonical',
+      canonical: threadRow({
+        id: 'thread-z',
+        archived_at: '2026-06-06T13:00:00.000Z',
+        merged_into_thread_id: 'thread-old',
+      }),
+      merged: threadRow({ id: 'thread-a' }),
+      message: 'Thread thread-z is already merged into thread-old and cannot be canonical',
+    },
+    {
+      name: 'merged',
+      canonical: threadRow({ id: 'thread-z' }),
+      merged: threadRow({ id: 'thread-a', merged_into_thread_id: 'thread-old' }),
+      message: 'Thread thread-a is already merged into thread-old and cannot be merged',
+    },
+  ])(
+    'rejects an already-merged $name input before moving data',
+    async ({ canonical, merged, message }) => {
+      const { pool, queries } = createRecordingTransaction(async (sql) => {
+        if (sql.includes('ORDER BY id') && sql.includes('FOR UPDATE')) {
+          return {
+            rows: [merged, canonical].sort((left, right) => left.id.localeCompare(right.id)),
+          };
+        }
+        return { rows: [] };
+      });
+
+      await expect(
+        createConversationStore(pool).mergeThreads({
+          canonicalThreadId: canonical.id,
+          mergedThreadId: merged.id,
+          actor: 'user-1',
+        })
+      ).rejects.toThrow(message);
+
+      expect(
+        queries.some(
+          ({ sql }) =>
+            sql.includes('DELETE FROM public.conversation_events') ||
+            sql.includes('UPDATE public.conversation_events') ||
+            sql.includes('DELETE FROM public.conversation_thread_identities')
+        )
+      ).toBe(false);
+      expect(queries.at(-1)).toEqual({ sql: 'ROLLBACK', params: [] });
+    }
+  );
 });
 
 describe('sender identity persistence', () => {
@@ -691,7 +787,20 @@ describe('sender identity persistence', () => {
       createConversationStore(pool).patchSenderIdentity('sender-1', {
         providerIdentityId: 'provider-2',
       })
-    ).rejects.toThrow('No editable sender identity fields');
+    ).rejects.toThrow('Unknown sender identity patch fields: providerIdentityId');
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('rejects a mixed sender identity patch when any key is unknown', async () => {
+    const pool = { query: jest.fn() };
+
+    await expect(
+      createConversationStore(pool).patchSenderIdentity('sender-1', {
+        lifecycleStatus: 'retired',
+        providerIdentityId: 'provider-2',
+      })
+    ).rejects.toThrow('Unknown sender identity patch fields: providerIdentityId');
+
     expect(pool.query).not.toHaveBeenCalled();
   });
 });

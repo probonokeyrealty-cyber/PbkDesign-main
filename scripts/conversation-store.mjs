@@ -195,6 +195,14 @@ async function lockLeadResolution(client, workspace, leadId) {
   ]);
 }
 
+async function lockIdentityResolution(client, workspace, phone, email) {
+  const identityType = phone ? 'phone' : 'email';
+  const normalizedValue = phone || email;
+  await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+    `conversation-identity:${workspace}:${identityType}:${normalizedValue}`,
+  ]);
+}
+
 async function insertLeadThread(client, input) {
   const result = await client.query(
     `
@@ -303,7 +311,8 @@ export function createConversationStore(pool) {
     return withTransaction(pool, async (client) => {
       let thread = leadId ? await selectLeadThread(client, workspace, leadId) : null;
 
-      if (!thread) {
+      if (!thread && (phone || email)) {
+        await lockIdentityResolution(client, workspace, phone, email);
         thread = await selectIdentityThread(client, workspace, phone, email);
       }
 
@@ -667,6 +676,11 @@ export function createConversationStore(pool) {
       ['spamReportedAt', 'spam_reported_at'],
       ['metadata', 'metadata'],
     ];
+    const allowedFields = new Set(fields.map(([property]) => property));
+    const unknownFields = Object.keys(patch).filter((property) => !allowedFields.has(property));
+    if (unknownFields.length) {
+      throw new Error(`Unknown thread patch fields: ${unknownFields.join(', ')}`);
+    }
     const params = [id];
     const assignments = [];
     for (const [property, column] of fields) {
@@ -714,8 +728,16 @@ export function createConversationStore(pool) {
       if (canonical.workspace_id !== merged.workspace_id) {
         throw new Error('Conversation threads must belong to the same workspace');
       }
-      if (canonical.merged_into_thread_id) throw new Error('Canonical thread is already merged');
-      if (merged.merged_into_thread_id) throw new Error('Merged thread is already merged');
+      if (canonical.merged_into_thread_id) {
+        throw new Error(
+          `Thread ${canonical.id} is already merged into ${canonical.merged_into_thread_id} and cannot be canonical`
+        );
+      }
+      if (merged.merged_into_thread_id) {
+        throw new Error(
+          `Thread ${merged.id} is already merged into ${merged.merged_into_thread_id} and cannot be merged`
+        );
+      }
 
       await client.query(
         `
@@ -948,6 +970,11 @@ export function createConversationStore(pool) {
       ['releasedAt', 'released_at'],
       ['metadata', 'metadata'],
     ];
+    const allowedFields = new Set(fields.map(([property]) => property));
+    const unknownFields = Object.keys(patch).filter((property) => !allowedFields.has(property));
+    if (unknownFields.length) {
+      throw new Error(`Unknown sender identity patch fields: ${unknownFields.join(', ')}`);
+    }
     const params = [id];
     const assignments = [];
     for (const [property, column] of fields) {

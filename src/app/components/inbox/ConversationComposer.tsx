@@ -569,6 +569,8 @@ export function ConversationComposer({
         <label className="pbk-composer-subject">
           <span>Subject</span>
           <input
+            id="conversation-email-subject"
+            name="subject"
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
             placeholder="Seller follow-up"
@@ -579,6 +581,8 @@ export function ConversationComposer({
       <label className="pbk-composer-body">
         <span className="sr-only">Message body</span>
         <textarea
+          id="conversation-message-body"
+          name="body"
           value={body}
           onChange={(event) => setBody(event.target.value)}
           placeholder={
@@ -631,6 +635,8 @@ export function ConversationComposer({
         </button>
         <label className="pbk-composer-schedule-toggle">
           <input
+            id="conversation-send-later"
+            name="sendLater"
             type="checkbox"
             checked={sendLater}
             onChange={(event) => setSendLater(event.target.checked)}
@@ -640,6 +646,8 @@ export function ConversationComposer({
         </label>
         {sendLater && (
           <input
+            id="conversation-scheduled-for"
+            name="scheduledFor"
             type="datetime-local"
             value={scheduledFor}
             onChange={(event) => setScheduledFor(event.target.value)}

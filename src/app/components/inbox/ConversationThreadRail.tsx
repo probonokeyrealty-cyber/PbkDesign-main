@@ -136,6 +136,8 @@ export function ConversationThreadRail({
           <Search size={15} aria-hidden="true" />
           <span className="sr-only">Search conversations</span>
           <input
+            id="conversation-search"
+            name="conversationSearch"
             type="search"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}

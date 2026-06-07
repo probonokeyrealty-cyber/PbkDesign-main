@@ -277,6 +277,25 @@ assert(
     /onChange=\{\(event\) => onChange\(event\.target\.value\)\}/.test(senderSelect),
   'Sender selection must use a native mobile-safe control.'
 );
+for (const formIdentity of [
+  'id="conversation-search"',
+  'name="conversationSearch"',
+  'id="conversation-sender-identity"',
+  'name="senderIdentityId"',
+  'id="conversation-email-subject"',
+  'name="subject"',
+  'id="conversation-message-body"',
+  'name="body"',
+  'id="conversation-send-later"',
+  'name="sendLater"',
+  'id="conversation-scheduled-for"',
+  'name="scheduledFor"',
+]) {
+  assert(
+    `${threadRail}\n${composerCombined}`.includes(formIdentity),
+    `Unified inbox form controls must include ${formIdentity}.`
+  );
+}
 for (const action of [
   'Copy',
   'Mark important',

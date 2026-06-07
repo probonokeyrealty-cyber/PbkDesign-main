@@ -69,6 +69,8 @@ export function SenderIdentitySelect({
         </span>
         <ChevronDown size={14} aria-hidden="true" />
         <select
+          id="conversation-sender-identity"
+          name="senderIdentityId"
           aria-label={senderLabel}
           value={selectedId}
           disabled={disabled || loading}

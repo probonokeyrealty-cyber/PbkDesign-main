@@ -153,20 +153,35 @@ async function readSourceBatch(pool, table, {
   batchSize,
 }) {
   const leadScoped = table === 'activity_log' ? 'AND lead_id IS NOT NULL' : '';
-  const result = await pool.query(
-    `SELECT *
-     FROM public.${table}
-     WHERE workspace_id = $1
-       AND id > $2
-       ${leadScoped}
-     ORDER BY id ASC
-     LIMIT $3`,
-    [workspaceId, afterId || '', batchSize + 1]
-  );
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT *
+       FROM public.${table}
+       WHERE workspace_id = $1
+         AND id > $2
+         ${leadScoped}
+       ORDER BY id ASC
+       LIMIT $3`,
+      [workspaceId, afterId || '', batchSize + 1]
+    );
+  } catch (error) {
+    if (error?.code === '42P01') {
+      return {
+        rows: [],
+        hasMore: false,
+        missing: true,
+        missingReason: error?.message || `Source table public.${table} does not exist.`,
+      };
+    }
+    throw error;
+  }
   const rows = Array.isArray(result.rows) ? result.rows : [];
   return {
     rows: rows.slice(0, batchSize),
     hasMore: rows.length > batchSize,
+    missing: false,
+    missingReason: '',
   };
 }
 
@@ -180,6 +195,8 @@ function emptySourceStats(table) {
     updatedEvents: 0,
     errors: 0,
     lastCursor: '',
+    missing: false,
+    missingReason: '',
   };
 }
 
@@ -272,6 +289,11 @@ export async function runConversationBackfill({
         batchSize: normalizedBatchSize,
       });
       hasMore = batch.hasMore;
+      if (batch.missing) {
+        source.missing = true;
+        source.missingReason = batch.missingReason;
+        break;
+      }
       if (!batch.rows.length) break;
 
       let checkpointId = afterId;

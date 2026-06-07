@@ -90,6 +90,33 @@ function fakePool(rowsByTable = sourceRows()) {
 }
 
 describe('conversation backfill planning', () => {
+  test('skips optional source tables that do not exist', async () => {
+    const missing = Object.assign(
+      new Error('relation "public.unified_messages" does not exist'),
+      { code: '42P01' }
+    );
+    const pool = {
+      query: jest.fn(async (sql) => {
+        if (String(sql).includes('public.unified_messages')) throw missing;
+        return { rows: [] };
+      }),
+    };
+
+    const result = await runConversationBackfill({
+      pool,
+      apply: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.complete).toBe(true);
+    expect(
+      result.sources.find((source) => source.table === 'unified_messages')
+    ).toMatchObject({
+      missing: true,
+      errors: 0,
+    });
+  });
+
   test('uses the required source order and defaults to dry-run', () => {
     expect(BACKFILL_ORDER).toEqual([
       'lead_profiles',

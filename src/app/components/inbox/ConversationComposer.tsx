@@ -221,6 +221,9 @@ export function ConversationComposer({
   const profile = getLeadProfile(lead);
   const seller = record(profile.seller);
   const property = record(profile.property);
+  const templateLeadName = text(profile.leadName || profile.name || seller.name || thread.title);
+  const templateAddress = text(profile.address || property.address || property.propertyAddress);
+  const templateInboundBody = useMemo(() => latestInboundBody(events) || '', [events]);
   const recipient = getRecipient(thread, lead, recipientSummary, channel);
   const selectedSender =
     senderIdentities.find((identity) => identity.id === senderIdentityId) || null;
@@ -351,9 +354,9 @@ export function ConversationComposer({
     setTemplatesLoading(true);
     void fetchReplyTemplatesRequest({
       channel,
-      leadName: text(profile.leadName || profile.name || seller.name || thread.title),
-      address: text(profile.address || property.address || property.propertyAddress),
-      body: latestInboundBody(events) || '',
+      leadName: templateLeadName,
+      address: templateAddress,
+      body: templateInboundBody,
     })
       .then((response) => {
         if (requestId === templateRequestSequence.current) {
@@ -369,7 +372,7 @@ export function ConversationComposer({
     return () => {
       templateRequestSequence.current += 1;
     };
-  }, [channel, events, profile, property, seller.name, thread.title]);
+  }, [channel, templateAddress, templateInboundBody, templateLeadName]);
 
   useEffect(
     () => () => {

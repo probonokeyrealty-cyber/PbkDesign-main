@@ -235,6 +235,13 @@ assert(
   'Channel changes must not allow a stale sender identity to submit a message.'
 );
 assert(
+  composer.includes('templateLeadName') &&
+    composer.includes('templateAddress') &&
+    composer.includes('templateInboundBody') &&
+    /\[channel, templateAddress, templateInboundBody, templateLeadName\]/.test(composer),
+  'Reply templates must use stable scalar dependencies instead of refetching on every render.'
+);
+assert(
   /submittedFingerprint/.test(composer) &&
     /exactMessageAlreadyQueued/.test(composer),
   'A queued approval or scheduled message must not be submitted twice without an edit.'

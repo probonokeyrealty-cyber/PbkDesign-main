@@ -154,6 +154,12 @@ assert(
   'Composer must expose an accessible SMS/email segmented control.'
 );
 assert(
+  composer.includes('recipientRepairHref') &&
+    composer.includes('Add contact info') &&
+    composer.includes('/leads?new=1'),
+  'Composer must route missing recipient data back to the canonical lead portal.'
+);
+assert(
   threadRail.includes('New message') &&
     threadRail.includes('onNewConversation') &&
     unifiedInbox.includes('<NewConversationDialog'),
@@ -171,6 +177,11 @@ assert(
     newConversation.includes("aria-pressed={channel === 'email'}") &&
     newConversation.includes("event.key === 'Escape'"),
   'New message must provide accessible SMS/email selection and keyboard dismissal.'
+);
+assert(
+  newConversation.includes('Add contact info in Lead Portal') &&
+    newConversation.includes('Create a new lead'),
+  'New message must provide direct repair paths for missing canonical contact data.'
 );
 for (const requiredCopy of [
   'From',
@@ -254,6 +265,11 @@ assert(
   senderSelect.includes('POST /api/conversations/:threadId/sender-recommendation'),
   'Sender selector must identify the bridge endpoint that ranks its recommendation.'
 );
+assert(
+  /<select[\s\S]*aria-label=\{senderLabel\}[\s\S]*value=\{selectedId\}/.test(senderSelect) &&
+    /onChange=\{\(event\) => onChange\(event\.target\.value\)\}/.test(senderSelect),
+  'Sender selection must use a native mobile-safe control.'
+);
 for (const action of [
   'Copy',
   'Mark important',
@@ -271,7 +287,7 @@ assert(
 );
 assert(
   css.includes('.pbk-conversation-composer') &&
-    css.includes('.pbk-sender-select-trigger') &&
+    css.includes('.pbk-sender-select-control') &&
     css.includes('env(safe-area-inset-bottom)') &&
     css.includes('max-height: min(58dvh, 520px)') &&
     css.includes('overflow-y: auto'),

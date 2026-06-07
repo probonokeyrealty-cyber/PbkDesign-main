@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import {
   AlertTriangle,
   CalendarClock,
@@ -10,6 +11,7 @@ import {
   Send,
   Sparkles,
   Square,
+  UserRoundPen,
   WandSparkles,
 } from 'lucide-react';
 import { PbkDataSource } from '../../../components/pbk/index';
@@ -223,6 +225,9 @@ export function ConversationComposer({
   const selectedSender =
     senderIdentities.find((identity) => identity.id === senderIdentityId) || null;
   const senderRestriction = selectedSender ? getSenderRestrictionReason(selectedSender) : '';
+  const recipientRepairHref = thread.leadId
+    ? `/leads/${encodeURIComponent(thread.leadId)}`
+    : '/leads?new=1';
   const senderMatchesChannel = selectedSender?.channel === channel;
   const blockedByDnc = dncBlocked(lead);
   const segmentInfo = useMemo(() => getSmsSegmentInfo(body), [body]);
@@ -655,7 +660,13 @@ export function ConversationComposer({
           }`}
           role={blockedByDnc || recommendationGuard ? 'alert' : 'status'}
         >
-          {sendDisabledReason}
+          <span>{sendDisabledReason}</span>
+          {!recipient && (
+            <Link to={recipientRepairHref}>
+              <UserRoundPen size={13} aria-hidden="true" />
+              {thread.leadId ? 'Add contact info' : 'Create lead'}
+            </Link>
+          )}
         </div>
       )}
 

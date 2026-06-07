@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import {
   ArrowRight,
   Check,
@@ -291,7 +292,12 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
             );
           })}
           {!searching && query.trim().length >= 2 && !matches.length && !error && (
-            <p>No matching PBK leads found.</p>
+            <div className="pbk-new-conversation-empty">
+              <p>No matching PBK leads found.</p>
+              <Link to="/leads?new=1" onClick={onClose}>
+                Create a new lead
+              </Link>
+            </div>
           )}
           {query.trim().length < 2 && (
             <div className="pbk-new-conversation-hint">
@@ -312,6 +318,14 @@ export function NewConversationDialog({ open, onClose, onResolved }: NewConversa
                     channel === 'sms' ? 'phone number' : 'valid email'
                   } in the Lead Portal first.`}
               </small>
+              {!selectedRecipient && (
+                <Link
+                  to={`/leads/${encodeURIComponent(getLeadId(selectedLead))}`}
+                  onClick={onClose}
+                >
+                  Add contact info in Lead Portal
+                </Link>
+              )}
             </div>
             <button
               type="button"

@@ -128,6 +128,7 @@ COPY scripts/conversation-store.mjs ./scripts/conversation-store.mjs
 COPY scripts/backfill-conversations.mjs ./scripts/backfill-conversations.mjs
 COPY scripts/provider-action-dispatch-policy.mjs ./scripts/provider-action-dispatch-policy.mjs
 COPY scripts/provider-action-dispatch.mjs ./scripts/provider-action-dispatch.mjs
+COPY scripts/invoke-rate-limit.mjs ./scripts/invoke-rate-limit.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs

@@ -1192,12 +1192,16 @@ export function createConversationStore(pool) {
             LOWER(live_event.event_type) = 'call.started'
             AND LOWER(COALESCE(live_event.status, '')) NOT IN (
               'busy',
+              'canceled',
               'cancelled',
+              'complete',
               'completed',
               'ended',
               'failed',
               'hangup',
-              'no-answer'
+              'hungup',
+              'no-answer',
+              'no_answer'
             )
           FROM public.conversation_events AS live_event
           WHERE live_event.thread_id = t.id

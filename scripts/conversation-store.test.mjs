@@ -1406,6 +1406,9 @@ describe('conversation queries and pagination', () => {
     expect(queries[0].sql).toContain("LOWER(live_event.event_type) = 'call.started'");
     expect(queries[0].sql).toContain("'call.completed'");
     expect(queries[0].sql).toContain('ORDER BY live_event.occurred_at DESC');
+    for (const terminalAlias of ["'complete'", "'hungup'", "'no_answer'"]) {
+      expect(queries[0].sql).toContain(terminalAlias);
+    }
     expect(queries[1].sql).toContain('FROM public.conversation_events AS approval_event');
     expect(queries[1].sql).toContain("'approval_required'");
     expect(queries[0].params).toEqual(['pbk', 51]);

@@ -47356,7 +47356,7 @@ async function handleEvent(eventType, payload = {}) {
     const nextPhone = normalizePhone(existingCall?.phone || payload.phone || payload.to || '');
     const nextFrom = normalizePhone(payload.from || existingCall?.from || existingCall?.fromNumber || '');
     const nextTo = normalizePhone(payload.to || existingCall?.to || existingCall?.phone || '');
-    const conversationCallKind = /ended|hangup|completed|failed|busy|no-answer|cancel/i.test(
+    const conversationCallKind = /ended|hangup|hungup|complete|failed|busy|no[-_]?answer|cancel/i.test(
       String(nextStatus)
     )
       ? 'completed'
@@ -47389,7 +47389,7 @@ async function handleEvent(eventType, payload = {}) {
       phone: nextPhone,
       from: nextFrom,
       to: nextTo,
-      endedAt: /ended|hangup|completed|failed|busy|no-answer|cancel/i.test(String(nextStatus)) ? payload.endedAt || isoNow() : existingCall?.endedAt || '',
+      endedAt: /ended|hangup|hungup|complete|failed|busy|no[-_]?answer|cancel/i.test(String(nextStatus)) ? payload.endedAt || isoNow() : existingCall?.endedAt || '',
       telnyxCallControlId: payload.call_control_id || payload.callControlId || existingCall?.telnyxCallControlId || '',
       telnyxCallLegId: payload.call_leg_id || payload.callLegId || existingCall?.telnyxCallLegId || '',
       telnyxCallSessionId: payload.call_session_id || payload.callSessionId || existingCall?.telnyxCallSessionId || '',

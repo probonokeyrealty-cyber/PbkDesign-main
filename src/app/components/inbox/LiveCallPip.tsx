@@ -13,6 +13,7 @@ import {
   MicOff,
   Phone,
   PhoneOff,
+  Sparkles,
   UserRound,
 } from 'lucide-react';
 import { PbkDataSource } from '../../../components/pbk/index';
@@ -79,23 +80,11 @@ function callLeadId(call: RuntimeCall) {
 }
 
 function callPhone(call: RuntimeCall) {
-  return text(
-    call.phone ||
-      call.recipientPhone ||
-      call.recipient_phone ||
-      call.from ||
-      call.to
-  );
+  return text(call.phone || call.recipientPhone || call.recipient_phone || call.from || call.to);
 }
 
 function callPhoneCandidates(call: RuntimeCall) {
-  return [
-    call.phone,
-    call.recipientPhone,
-    call.recipient_phone,
-    call.to,
-    call.from,
-  ]
+  return [call.phone, call.recipientPhone, call.recipient_phone, call.to, call.from]
     .map(normalizePhone)
     .filter(Boolean);
 }
@@ -120,9 +109,7 @@ function selectLiveCall(calls: RuntimeCall[], leadId = '', phone = '') {
     calls.find((call) => {
       if (!activeCallStatus(call.status)) return false;
       if (leadId && callLeadId(call) === leadId) return true;
-      return Boolean(
-        normalizedPhone && callPhoneCandidates(call).includes(normalizedPhone)
-      );
+      return Boolean(normalizedPhone && callPhoneCandidates(call).includes(normalizedPhone));
     }) || null
   );
 }
@@ -212,6 +199,20 @@ function talkTimeLabel(seconds: number | null) {
   return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 }
 
+function readOperatorWhisper(call: RuntimeCall) {
+  const raw = call.operatorWhisper || call.operator_whisper;
+  const whisper = typeof raw === 'string' ? { text: raw } : record(raw);
+  const whisperText = text(whisper.text || whisper.hint || whisper.nextMove || whisper.next_move);
+  if (!whisperText) return null;
+  const confidence = number(whisper.confidence);
+  return {
+    text: whisperText,
+    reason: text(whisper.reason || whisper.rule),
+    confidence: confidence == null ? null : Math.round(Math.max(0, Math.min(1, confidence)) * 100),
+    approvalNeeded: Boolean(whisper.approvalNeeded || whisper.approval_needed),
+  };
+}
+
 export function LiveCallPip({
   calls,
   leadId = '',
@@ -263,10 +264,9 @@ export function LiveCallPip({
   const talkTime = readTalkTime(liveCall);
   const talkTotal = (talkTime.ava || 0) + (talkTime.seller || 0);
   const avaTalkWidth = talkTotal ? Math.round(((talkTime.ava || 0) / talkTotal) * 100) : 0;
-  const sellerTalkWidth = talkTotal
-    ? Math.round(((talkTime.seller || 0) / talkTotal) * 100)
-    : 0;
+  const sellerTalkWidth = talkTotal ? Math.round(((talkTime.seller || 0) / talkTotal) * 100) : 0;
   const sentiment = normalizeSentiment(liveCall);
+  const operatorWhisper = readOperatorWhisper(liveCall);
   const startedAt = text(liveCall.startedAt || liveCall.connectedAt || liveCall.createdAt);
 
   const runCallControl = async (
@@ -405,7 +405,10 @@ export function LiveCallPip({
         </span>
         <span>
           <Activity size={12} />
-          Sentiment: {sentiment == null ? 'Not available' : `${sentiment} / ${sentimentLabel(sentiment, liveCall)}`}
+          Sentiment:{' '}
+          {sentiment == null
+            ? 'Not available'
+            : `${sentiment} / ${sentimentLabel(sentiment, liveCall)}`}
         </span>
       </div>
 
@@ -430,6 +433,35 @@ export function LiveCallPip({
             </div>
           </div>
 
+          {operatorWhisper && (
+            <section
+              className="pbk-live-call-whisper"
+              aria-label="Private Ava operator coaching"
+              aria-live="polite"
+            >
+              <div>
+                <span>
+                  <Sparkles size={13} />
+                  Ava whisper
+                </span>
+                <small>
+                  {operatorWhisper.confidence == null
+                    ? 'Live guidance'
+                    : `${operatorWhisper.confidence}% confidence`}
+                </small>
+              </div>
+              <strong>{operatorWhisper.text}</strong>
+              {(operatorWhisper.reason || operatorWhisper.approvalNeeded) && (
+                <p>
+                  {operatorWhisper.reason}
+                  {operatorWhisper.approvalNeeded
+                    ? `${operatorWhisper.reason ? ' · ' : ''}Approval required before action`
+                    : ''}
+                </p>
+              )}
+            </section>
+          )}
+
           <section className="pbk-live-call-transcript" aria-label="Live transcript">
             <div>
               <strong>Open transcript</strong>
@@ -438,7 +470,9 @@ export function LiveCallPip({
             {transcript.length ? (
               transcript.slice(-10).map((line) => (
                 <p key={line.id}>
-                  <b>{line.speaker === 'seller' ? 'Seller' : line.speaker === 'ava' ? 'Ava' : 'You'}</b>
+                  <b>
+                    {line.speaker === 'seller' ? 'Seller' : line.speaker === 'ava' ? 'Ava' : 'You'}
+                  </b>
                   <span>{line.text}</span>
                 </p>
               ))
@@ -456,9 +490,7 @@ export function LiveCallPip({
           <div className="pbk-live-call-secondary-actions">
             <button
               type="button"
-              onClick={() =>
-                void saveNote(`Important live call with ${resolvedLeadName}.`, true)
-              }
+              onClick={() => void saveNote(`Important live call with ${resolvedLeadName}.`, true)}
               disabled={!resolvedLeadId || Boolean(pendingAction)}
               title="Mark important"
             >
@@ -563,7 +595,7 @@ export function LiveCallPip({
           <PbkDataSource
             endpoint="snapshot.calls + POST /api/calls/:id/action"
             status="ships"
-            note="lead notes: POST /api/leads/add-note; follow-up: POST /api/appointments"
+            note="private hint: calls[].operatorWhisper; lead notes: POST /api/leads/add-note; follow-up: POST /api/appointments"
           />
         </div>
       )}
@@ -585,13 +617,7 @@ export function LiveCallPip({
           <AlertDialogFooter>
             <AlertDialogCancel>Keep call live</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() =>
-                void runCallControl(
-                  'end',
-                  'Call ended',
-                  endCallTarget?.id || ''
-                )
-              }
+              onClick={() => void runCallControl('end', 'Call ended', endCallTarget?.id || '')}
             >
               <PhoneOff size={14} />
               End call

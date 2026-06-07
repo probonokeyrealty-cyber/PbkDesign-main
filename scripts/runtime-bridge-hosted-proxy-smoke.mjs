@@ -36,17 +36,29 @@ assert(
 
 assert(
   /function\s+hasServerSideRuntimeAuth\(\)/.test(source),
-  'runtimeBridge must recognize when Netlify same-origin proxy provides server-side bridge auth.',
+  'runtimeBridge must recognize authenticated Netlify same-origin sessions.',
 );
 
 assert(
-  /if\s*\(\s*hasServerSideRuntimeAuth\(\)\s*\)\s*return/.test(source),
-  'runtimeBridge auth guard must allow protected requests through the authenticated same-origin proxy.',
+  /endpoint === origin && Boolean\(getRuntimeTeamSession\(\)\)/.test(source),
+  'Same-origin proxy authority must require an unexpired PBK team session.',
 );
 
 assert(
-  /shouldRetryRuntimeViaHosted/.test(source) && /usage_exceeded/i.test(source),
-  'runtimeBridge should still retry direct Render when Netlify function usage is exhausted.',
+  /getRuntimeTeamSession/.test(source) &&
+    /authenticateTeamSessionRequest/.test(source) &&
+    /X-PBK-Team-Token/.test(source),
+  'The shell must create, store, and send expiring team sessions without exposing the bridge key.',
+);
+
+assert(
+  /if \(!isAuthOptionalRuntimePath\(path\)\) return false/.test(source),
+  'Protected requests must never retry directly against Render without server-side bearer auth.',
+);
+
+assert(
+  /const apiKey = env\.DEV/.test(source),
+  'Production Vite bundles must not embed PBK bridge API keys.',
 );
 
 console.log(JSON.stringify({ ok: true, result: 'runtime_bridge_hosted_proxy_smoke_ready' }, null, 2));

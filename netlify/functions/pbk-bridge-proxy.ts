@@ -50,7 +50,6 @@ function buildCorsHeaders(event?: Parameters<Handler>[0]) {
 
 const FORWARDED_REQUEST_HEADERS = new Set([
   'accept',
-  'authorization',
   'content-type',
   'idempotency-key',
   'x-idempotency-key',
@@ -69,7 +68,26 @@ const FORWARDED_RESPONSE_HEADERS = new Set([
   'last-modified',
   'x-pbk-bridge',
   'x-pbk-pdf-renderer',
+  'x-ratelimit-limit',
+  'x-ratelimit-remaining',
+  'x-ratelimit-reset',
   'x-request-id',
+  'retry-after',
+]);
+
+const PUBLIC_PROXY_READ_PATHS = new Set([
+  '/health',
+  '/status',
+  '/api/health',
+  '/api/status',
+  '/api/auth/team/status',
+]);
+
+const PUBLIC_PROXY_POST_PATHS = new Set([
+  '/api/auth/team',
+  '/api/auth/team/verify',
+  '/api/public/ava-chat',
+  '/public/ava-chat',
 ]);
 
 function json(payload: unknown, statusCode = 200, extraHeaders: Record<string, string> = {}, event?: Parameters<Handler>[0]) {
@@ -86,10 +104,99 @@ function json(payload: unknown, statusCode = 200, extraHeaders: Record<string, s
 }
 
 function normalizeProxyPath(eventPath = '', requestedPath = '') {
-  const raw = String(requestedPath || '').trim()
+  let raw = String(requestedPath || '').trim()
     || String(eventPath || '').replace(/^\/\.netlify\/functions\/pbk-bridge-proxy\/?/, '');
-  const path = `/${raw.replace(/^\/+/, '')}`;
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    let decoded = '';
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      throw new Error('invalid_proxy_path');
+    }
+    if (decoded === raw) break;
+    raw = decoded;
+    if (pass === 3) throw new Error('invalid_proxy_path');
+  }
+
+  if (/[\0\\]/.test(raw)) throw new Error('invalid_proxy_path');
+  const segments = raw.replace(/^\/+/, '').split('/');
+  if (segments.some((segment) => segment === '.' || segment === '..')) {
+    throw new Error('invalid_proxy_path');
+  }
+
+  const path = `/${segments.filter(Boolean).join('/')}`;
   return path === '/' ? '/health' : path;
+}
+
+function parseJsonBody(body?: Buffer) {
+  if (!body?.byteLength) return {};
+  try {
+    const parsed = JSON.parse(body.toString('utf8'));
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function authorizeTeamRequest({
+  method = 'GET',
+  targetPath = '',
+  body = {},
+  permissions = {},
+}: {
+  method?: string;
+  targetPath?: string;
+  body?: Record<string, unknown>;
+  permissions?: Record<string, unknown>;
+}) {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  const normalizedPath = String(targetPath || '').toLowerCase();
+  const toolName = String(body.toolName || body.tool || body.name || '').trim();
+  const normalizedToolName = toolName.toLowerCase();
+
+  const deny = (permission: string, action: string) => ({
+    ok: false,
+    statusCode: 403,
+    error: `This team session is not permitted to ${action}.`,
+    code: 'team_permission_denied',
+    permission,
+  });
+
+  if (normalizedMethod === 'DELETE' && permissions.canDeleteData !== true) {
+    return deny('canDeleteData', 'delete PBK data');
+  }
+
+  const contractTool = /^(?:sendcontract|senddocusign|prepare_and_send_contract|preparecontract|sendnegotiationapproval)$/i.test(toolName);
+  const contractRoute =
+    normalizedMethod !== 'GET'
+    && (
+      /(?:contract|docusign|document-deliver)/.test(normalizedPath)
+      || normalizedPath === '/api/underwriting/sign'
+    );
+  if ((contractTool || contractRoute) && permissions.canSendContracts !== true) {
+    return deny('canSendContracts', 'send or modify contracts');
+  }
+
+  const killSwitchTool = /^(?:pbk_kill_switch|killswitch|togglekillswitch)$/i.test(toolName);
+  const killSwitchRoute =
+    normalizedMethod !== 'GET'
+    && /(?:kill-switch|killswitch)/.test(normalizedPath);
+  if ((killSwitchTool || killSwitchRoute) && permissions.canToggleKillSwitch !== true) {
+    return deny('canToggleKillSwitch', 'change the PBK kill switch');
+  }
+
+  const guardrailTool =
+    /^(?:admin_update_env_var|admin_restart_openclaw|admin_run_away_worker|routeadmincommand|requestadminaction)$/i.test(toolName)
+    || /^admin_/.test(normalizedToolName);
+  const guardrailRoute =
+    normalizedMethod !== 'GET'
+    && /(?:\/api\/admin(?:\/|$)|\/api\/auth\/totp|\/api\/settings(?:\/|$)|\/api\/guardrails|\/api\/desktop-sidecar\/command)/.test(normalizedPath);
+  if ((guardrailTool || guardrailRoute) && permissions.canChangeGuardrails !== true) {
+    return deny('canChangeGuardrails', 'change infrastructure or security guardrails');
+  }
+
+  return { ok: true, statusCode: 200 };
 }
 
 function appendQueryParams(url: URL, event: Parameters<Handler>[0]) {
@@ -124,19 +231,104 @@ function getRequestId(event: Parameters<Handler>[0]) {
 
 function buildRequestHeaders(event: Parameters<Handler>[0], requestId: string) {
   const headers: Record<string, string> = {};
-  const incomingAuthorization = getHeader(event, 'authorization');
   for (const [name, value] of Object.entries(event.headers || {})) {
     const lower = name.toLowerCase();
     if (!FORWARDED_REQUEST_HEADERS.has(lower) || value == null) continue;
     headers[name] = value;
   }
   const bridgeApiKey = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
-  if (!incomingAuthorization && bridgeApiKey) {
+  if (bridgeApiKey) {
     headers.Authorization = `Bearer ${bridgeApiKey}`;
   }
+  const clientIp = getHeader(event, 'x-nf-client-connection-ip')
+    || getHeader(event, 'cf-connecting-ip')
+    || getHeader(event, 'x-forwarded-for').split(',')[0]?.trim()
+    || '';
+  if (clientIp) headers['X-PBK-Client-IP'] = clientIp;
   headers['X-PBK-Netlify-Proxy'] = 'pbk-bridge-proxy';
   headers['X-Request-ID'] = requestId;
   return headers;
+}
+
+function isPublicProxyRequest(method = 'GET', targetPath = '') {
+  const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (
+    targetPath.startsWith('/api/public/') ||
+    targetPath.startsWith('/public/')
+  ) {
+    return true;
+  }
+  if (normalizedMethod === 'GET' || normalizedMethod === 'HEAD') {
+    return PUBLIC_PROXY_READ_PATHS.has(targetPath);
+  }
+  return normalizedMethod === 'POST' && PUBLIC_PROXY_POST_PATHS.has(targetPath);
+}
+
+async function verifyTeamSession(
+  event: Parameters<Handler>[0],
+  requestId: string,
+) {
+  const token = getHeader(event, 'x-pbk-team-token');
+  if (!token || token.length > 4096) {
+    return {
+      ok: false,
+      statusCode: 401,
+      error: 'PBK team session required.',
+      code: 'team_auth_required',
+    };
+  }
+  const bridgeApiKey = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+  if (!bridgeApiKey) {
+    return {
+      ok: false,
+      statusCode: 503,
+      error: 'Netlify bridge authentication is not configured.',
+      code: 'proxy_bridge_auth_not_configured',
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${BRIDGE_URL}/api/auth/team/verify`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${bridgeApiKey}`,
+        'Content-Type': 'application/json',
+        'X-PBK-Team-Token': token,
+        'X-PBK-Netlify-Proxy': 'pbk-bridge-proxy',
+        'X-Request-ID': requestId,
+      },
+      body: JSON.stringify({ source: 'netlify-bridge-proxy' }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || payload.ok === false) {
+      return {
+        ok: false,
+        statusCode: response.status === 503 ? 503 : 401,
+        error: String(payload.error || 'PBK team session is invalid or expired.'),
+        code: String(payload.code || 'invalid_team_session'),
+      };
+    }
+    const permissions =
+      payload.permissions && typeof payload.permissions === 'object'
+        ? payload.permissions as Record<string, unknown>
+        : {};
+    return { ok: true, statusCode: 200, permissions };
+  } catch (error) {
+    return {
+      ok: false,
+      statusCode: error instanceof Error && error.name === 'AbortError' ? 504 : 502,
+      error:
+        error instanceof Error && error.name === 'AbortError'
+          ? 'PBK team session verification timed out.'
+          : 'PBK team session could not be verified.',
+      code: 'team_auth_verification_unavailable',
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function isTextResponse(contentType = '') {
@@ -274,7 +466,22 @@ export const handler: Handler = async (event) => {
     };
   }
 
-  const targetPath = normalizeProxyPath(event.path, event.queryStringParameters?.path || '');
+  let targetPath = '';
+  try {
+    targetPath = normalizeProxyPath(event.path, event.queryStringParameters?.path || '');
+  } catch {
+    return json(
+      {
+        ok: false,
+        error: 'Invalid bridge proxy path.',
+        code: 'invalid_proxy_path',
+        requestId,
+      },
+      400,
+      { 'X-Request-ID': requestId },
+      event,
+    );
+  }
   const targetUrl = new URL(targetPath, `${BRIDGE_URL}/`);
   appendQueryParams(targetUrl, event);
 
@@ -283,13 +490,50 @@ export const handler: Handler = async (event) => {
     ? Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8')
     : undefined;
 
-  const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB — headroom under Netlify's 6 MB function limit
+  const MAX_BODY_BYTES = 5 * 1024 * 1024; // 5 MB - headroom under Netlify's 6 MB function limit
   if (body && body.byteLength > MAX_BODY_BYTES) {
     return {
       statusCode: 413,
       headers: { 'Content-Type': 'application/json', ...buildCorsHeaders(event), 'X-Request-ID': requestId },
       body: JSON.stringify({ ok: false, error: 'Request body too large', maxBytes: MAX_BODY_BYTES, requestId }),
     };
+  }
+
+  if (!isPublicProxyRequest(event.httpMethod, targetPath)) {
+    const teamSession = await verifyTeamSession(event, requestId);
+    if (!teamSession.ok) {
+      return json(
+        {
+          ok: false,
+          error: teamSession.error,
+          code: teamSession.code,
+          requestId,
+        },
+        teamSession.statusCode,
+        { 'X-Request-ID': requestId },
+        event,
+      );
+    }
+    const authorization = authorizeTeamRequest({
+      method: event.httpMethod,
+      targetPath,
+      body: parseJsonBody(body),
+      permissions: teamSession.permissions,
+    });
+    if (!authorization.ok) {
+      return json(
+        {
+          ok: false,
+          error: authorization.error,
+          code: authorization.code,
+          permission: authorization.permission,
+          requestId,
+        },
+        authorization.statusCode,
+        { 'X-Request-ID': requestId },
+        event,
+      );
+    }
   }
 
   const PROXY_TIMEOUT_MS = Math.max(

@@ -1800,7 +1800,10 @@ const checks = [
     ok:
       /export\s+const\s+handler/.test(netlifyBridgeProxyFunction) &&
       /PBK_BRIDGE_URL/.test(netlifyBridgeProxyFunction) &&
-      /authorization/.test(netlifyBridgeProxyFunction) &&
+      /process\.env\.PBK_BRIDGE_API_KEY/.test(netlifyBridgeProxyFunction) &&
+      /verifyTeamSession/.test(netlifyBridgeProxyFunction) &&
+      /headers\.Authorization\s*=\s*`Bearer \$\{bridgeApiKey\}`/.test(netlifyBridgeProxyFunction) &&
+      !/FORWARDED_REQUEST_HEADERS[\s\S]{0,220}['"]authorization['"]/.test(netlifyBridgeProxyFunction) &&
       /X-PBK-Team-Token/.test(netlifyBridgeProxyFunction) &&
       /isBase64Encoded/.test(netlifyBridgeProxyFunction) &&
       /from\s*=\s*"\/state"/.test(netlifyConfig) &&

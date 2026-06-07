@@ -20,6 +20,10 @@ void initializeObservability({ serviceName: 'pbk-event-worker' });
 const DATABASE_URL = String(process.env.PBK_DATABASE_URL || process.env.DATABASE_URL || '').trim();
 const BRIDGE_URL = String(process.env.PBK_EVENT_WORKER_BRIDGE_URL || process.env.PBK_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 const BRIDGE_KEY = String(process.env.PBK_BRIDGE_API_KEY || '').trim();
+const configuredBridgeTimeoutMs = Number(process.env.PBK_EVENT_WORKER_BRIDGE_TIMEOUT_MS || 30_000);
+const BRIDGE_TIMEOUT_MS = Number.isFinite(configuredBridgeTimeoutMs)
+  ? Math.max(5_000, Math.min(120_000, configuredBridgeTimeoutMs))
+  : 30_000;
 
 let pool = null;
 
@@ -53,6 +57,15 @@ async function ensureDeadLetterTable() {
       stack TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    DELETE FROM public.event_dead_letters older
+    USING public.event_dead_letters newer
+    WHERE older.tenant_id = newer.tenant_id
+      AND older.event_id = newer.event_id
+      AND older.event_id <> ''
+      AND older.ctid < newer.ctid;
+    CREATE UNIQUE INDEX IF NOT EXISTS event_dead_letters_tenant_event_idx
+      ON public.event_dead_letters (tenant_id, event_id)
+      WHERE event_id <> '';
   `);
   return { ok: true };
 }
@@ -74,7 +87,15 @@ async function recordDeadLetter(record = {}) {
     `INSERT INTO public.event_dead_letters (
       tenant_id, event_id, event_type, source, payload, error, stack, created_at
     )
-    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
+    VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
+    ON CONFLICT (tenant_id, event_id) WHERE event_id <> ''
+    DO UPDATE SET
+      event_type = EXCLUDED.event_type,
+      source = EXCLUDED.source,
+      payload = EXCLUDED.payload,
+      error = EXCLUDED.error,
+      stack = EXCLUDED.stack,
+      created_at = EXCLUDED.created_at`,
     [
       'pbk',
       String(record.eventId || record.event_id || ''),
@@ -89,74 +110,140 @@ async function recordDeadLetter(record = {}) {
   return { ok: true };
 }
 
-async function invokeBridgeTool(toolName, params = {}) {
+async function invokeBridgeTool(toolName, params = {}, options = {}) {
   if (!BRIDGE_URL || !BRIDGE_KEY) {
-    return { ok: false, skipped: true, reason: 'bridge_url_or_key_missing' };
+    throw new Error(`Bridge ${toolName} is unavailable because PBK_EVENT_WORKER_BRIDGE_URL or PBK_BRIDGE_API_KEY is missing.`);
   }
-  const response = await fetch(`${BRIDGE_URL}/invoke`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${BRIDGE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ toolName, params }),
-  });
-  const text = await response.text();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BRIDGE_TIMEOUT_MS);
+  let response;
+  let text = '';
+  try {
+    response = await fetch(`${BRIDGE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${BRIDGE_KEY}`,
+        'Content-Type': 'application/json',
+        ...(options.idempotencyKey
+          ? { 'Idempotency-Key': String(options.idempotencyKey).slice(0, 160) }
+          : {}),
+      },
+      body: JSON.stringify({ toolName, params }),
+      signal: controller.signal,
+    });
+    text = await response.text();
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Bridge ${toolName} timed out after ${BRIDGE_TIMEOUT_MS}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   let body = null;
   try {
     body = text ? JSON.parse(text) : null;
   } catch {
-    body = { text };
+    throw new Error(`Bridge ${toolName} returned malformed JSON.`);
   }
   if (!response.ok) {
     throw new Error(`Bridge ${toolName} returned ${response.status}: ${text.slice(0, 300)}`);
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error(`Bridge ${toolName} returned an empty or invalid response body.`);
+  }
+  const allowedFailureResults = new Set(
+    Array.isArray(options.allowFailureResults) ? options.allowFailureResults.map(String) : [],
+  );
+  const nestedResult =
+    body.result && typeof body.result === 'object' && !Array.isArray(body.result)
+      ? body.result
+      : null;
+  const applicationResult = String(
+    nestedResult?.result
+    || nestedResult?.reason
+    || (typeof body.result === 'string' ? body.result : '')
+    || body.reason
+    || '',
+  );
+  if (
+    (
+      body.ok === false
+      || body.skipped === true
+      || nestedResult?.ok === false
+      || nestedResult?.skipped === true
+    )
+    && !allowedFailureResults.has(applicationResult)
+  ) {
+    throw new Error(
+      `Bridge ${toolName} failed: ${String(
+        nestedResult?.error
+        || nestedResult?.reason
+        || nestedResult?.result
+        || body.error
+        || body.reason
+        || applicationResult
+        || 'application_error',
+      ).slice(0, 300)}`,
+    );
   }
   return body;
 }
 
 async function handleEvent(event) {
   const startedAt = Date.now();
+  const eventStepKey = (step) => `event:${event.id}:${step}`;
   switch (event.type) {
     case EventTypes.CALL_COMPLETED:
       await invokeBridgeTool('scoreCallQuality', {
+        id: `call-qa-event-${event.id}`,
+        eventId: event.id,
         callId: event.payload.callId || event.payload.call_id || '',
         transcript: event.payload.transcript || '',
         source: 'event-worker',
         createRexDecision: true,
-      });
+      }, { idempotencyKey: eventStepKey('score-call-quality') });
       {
-        const embedding = await invokeBridgeTool('upsertCallEmbeddingFromTranscript', {
-          workspaceId: event.payload.workspaceId || event.payload.workspace_id || 'pbk',
-          callId: event.payload.callId || event.payload.call_id || '',
-          leadId: event.payload.leadId || event.payload.lead_id || '',
-          transcript: event.payload.transcript || event.payload.transcriptText || event.payload.transcript_text || '',
-          outcome: event.payload.outcome || event.payload.outcomeLabel || event.payload.outcome_label || 'completed',
-          status: event.payload.status || 'completed',
-          sentiment: event.payload.sentiment ?? event.payload.sentimentScore ?? event.payload.sentiment_score ?? null,
-          source: 'event-worker-call-completed',
-        });
-        if (embedding?.ok === false && embedding?.result !== 'insufficient_call_memory') {
-          console.warn(`[pbk-event-worker] call embedding skipped/failed: ${embedding.result || 'unknown'} ${embedding.error || ''}`.trim());
-        }
+        await invokeBridgeTool(
+          'upsertCallEmbeddingFromTranscript',
+          {
+            workspaceId: event.payload.workspaceId || event.payload.workspace_id || 'pbk',
+            callId: event.payload.callId || event.payload.call_id || '',
+            leadId: event.payload.leadId || event.payload.lead_id || '',
+            transcript: event.payload.transcript || event.payload.transcriptText || event.payload.transcript_text || '',
+            outcome: event.payload.outcome || event.payload.outcomeLabel || event.payload.outcome_label || 'completed',
+            status: event.payload.status || 'completed',
+            sentiment: event.payload.sentiment ?? event.payload.sentimentScore ?? event.payload.sentiment_score ?? null,
+            source: 'event-worker-call-completed',
+          },
+          {
+            allowFailureResults: ['insufficient_call_memory'],
+            idempotencyKey: eventStepKey('upsert-call-embedding'),
+          },
+        );
       }
       if (event.payload.scriptId || event.payload.script_id || event.payload.contextAwareScript?.id) {
         await invokeBridgeTool('recordContextAwareScriptOutcome', {
+          workspaceId: event.payload.workspaceId || event.payload.workspace_id || 'pbk',
           scriptId: event.payload.scriptId || event.payload.script_id || event.payload.contextAwareScript?.id || '',
           callId: event.payload.callId || event.payload.call_id || '',
           leadId: event.payload.leadId || event.payload.lead_id || '',
+          outcomeEventId: `event-${event.id}-script-${event.payload.scriptId || event.payload.script_id || event.payload.contextAwareScript?.id || ''}`,
           outcome: event.payload.outcome || event.payload.outcomeLabel || event.payload.outcome_label || 'completed',
           success: event.payload.success,
           dealValue: event.payload.dealValue || event.payload.deal_value || event.payload.assignmentFee || event.payload.assignment_fee || 0,
           source: 'event-worker',
-        });
+        }, { idempotencyKey: eventStepKey('record-script-outcome') });
       }
       break;
     case EventTypes.LEAD_IMPORTED:
       console.log(`[pbk-event-worker] lead imported: ${event.payload.leadId || event.payload.lead_id || 'unknown'}`);
       await invokeBridgeTool('handleRexLeadImported', {
         ...event.payload,
+        eventId: event.id,
+        idempotencyKey: eventStepKey('rex-lead-imported'),
         source: event.source || 'event-worker',
-      });
+      }, { idempotencyKey: eventStepKey('rex-lead-imported') });
       break;
     case EventTypes.LEAD_UPDATED:
       {
@@ -173,6 +260,9 @@ async function handleEvent(event) {
           }, {
             invokeTool: invokeBridgeTool,
           });
+          if (result?.ok === false) {
+            throw new Error(`Lead nurture start failed: ${result.error || result.reason || result.result || 'application_error'}`);
+          }
           console.log(`[pbk-event-worker] nurture ${result.result || 'handled'} for lead ${leadId}`);
         }
       }
@@ -181,6 +271,9 @@ async function handleEvent(event) {
       {
         const db = getPool();
         const result = await pauseNurtureForPhoneStop(db, event.payload || {});
+        if (result?.ok === false) {
+          throw new Error(`SMS stop handling failed: ${result.error || result.reason || result.result || 'application_error'}`);
+        }
         if (result.paused) {
           console.log(`[pbk-event-worker] paused ${result.paused} nurture instance(s) for lead ${result.leadId}`);
         }
@@ -244,7 +337,7 @@ async function main() {
   const nurtureTimer = startNurtureInterval();
   await consumeEvents(handleEvent, {
     bus,
-    batchSize: Number(process.env.PBK_EVENT_WORKER_BATCH_SIZE || 10),
+    batchSize: 1,
     blockMs: Number(process.env.PBK_EVENT_WORKER_BLOCK_MS || 5000),
     deadLetterSink: recordDeadLetter,
   });

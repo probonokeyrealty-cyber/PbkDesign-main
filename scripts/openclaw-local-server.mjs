@@ -27,6 +27,7 @@ import { SYNTHETIC_EDGE_CASE_SOURCE, buildSyntheticEdgeCaseObjections } from './
 import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabilityCounter, initializeObservability, recordEventBusBacklogMetric, recordGuardrailViolationMetric, recordLatencyMetric, withObservabilitySpan } from './observability.mjs';
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
+import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { listTeamWorkflowTemplates, runAgentTeamWorkflow } from './agent-teams.mjs';
 import { runAutoSkillLearner as runAutoSkillLearnerCore } from './auto-skill-learner.mjs';
 import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
@@ -469,6 +470,18 @@ const PUBLIC_AVA_ASSISTANT_SESSION_TTL_SECONDS = Math.max(300, Math.min(7 * 24 *
 const ANALYZE_DEAL_RATE_LIMIT_MAX = Math.max(3, Number(process.env.PBK_ANALYZE_DEAL_RATE_LIMIT_MAX || 30));
 const ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS = Math.max(10_000, Number(process.env.PBK_ANALYZE_DEAL_RATE_LIMIT_WINDOW_MS || 60_000));
 const analyzeDealRateBuckets = new Map();
+const INVOKE_RATE_LIMIT_MAX = Math.max(10, Number(process.env.PBK_INVOKE_RATE_LIMIT_MAX || 300));
+const INVOKE_RATE_LIMIT_WINDOW_MS = Math.max(1_000, Number(process.env.PBK_INVOKE_RATE_LIMIT_WINDOW_MS || 60_000));
+const TEAM_AUTH_RATE_LIMIT_MAX = Math.max(3, Number(process.env.PBK_TEAM_AUTH_RATE_LIMIT_MAX || 8));
+const TEAM_AUTH_RATE_LIMIT_WINDOW_MS = Math.max(
+  60_000,
+  Number(process.env.PBK_TEAM_AUTH_RATE_LIMIT_WINDOW_MS || 15 * 60_000)
+);
+const configuredMaxRequestBodyBytes = Number(process.env.PBK_MAX_REQUEST_BODY_BYTES || 6 * 1024 * 1024);
+const MAX_REQUEST_BODY_BYTES = Math.max(
+  64 * 1024,
+  Number.isFinite(configuredMaxRequestBodyBytes) ? configuredMaxRequestBodyBytes : 6 * 1024 * 1024
+);
 const EXTERNAL_WEBHOOK_SECRET = String(process.env.PBK_EXTERNAL_WEBHOOK_SECRET || '').trim();
 const LOCAL_CALLBACK_URL = String(process.env.PBK_LOCAL_CALLBACK_URL || '').trim().replace(/\/+$/g, '');
 const LOCAL_CALLBACK_TOKEN = String(process.env.PBK_LOCAL_CALLBACK_TOKEN || '').trim();
@@ -2654,6 +2667,21 @@ function verifyTeamSessionToken(token = '') {
   };
 }
 
+function hasTeamAuthCredentials(request = {}, body = {}) {
+  return Boolean(
+    request.headers?.['x-pbk-team-token']
+    || request.headers?.['x-team-token']
+    || request.headers?.['x-pbk-team-passcode']
+    || request.headers?.['x-team-passcode']
+    || body.teamToken
+    || body.team_token
+    || body.teamPasscode
+    || body.team_passcode
+    || body.teamAuthRequired === true
+    || body.requireTeamAuth === true
+  );
+}
+
 function getTeamAuthMeta(request = {}, body = {}) {
   const headerToken = String(request.headers?.['x-pbk-team-token'] || request.headers?.['x-team-token'] || '').trim();
   const bodyToken = String(body?.teamToken || body?.team_token || '').trim();
@@ -2704,7 +2732,7 @@ function getTeamApprovalRestriction(approval = {}, status = '') {
   if (amount > TEAM_APPROVAL_LIMIT) {
     return `Offer is ${currency(amount)}, above the team limit of ${currency(TEAM_APPROVAL_LIMIT)}. Admin approval required.`;
   }
-  if (/(contract|docusign|provider|admin|kill|delete|campaign|outbound|prompt|rex-decision)/i.test(`${type} ${action}`)) {
+  if (/(contract|docusign|provider|admin|kill|delete|campaign|outbound|prompt|rex-decision|nurture|sms|email|call|send|local_command|executelocalcommand|desktop|sidecar|automation)/i.test(`${type} ${action}`)) {
     return 'This approval can trigger a contract, provider write, admin change, campaign, or prompt application. Admin approval required.';
   }
   return null;
@@ -8298,6 +8326,71 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
       UNIQUE (workspace_id, path_key, title, version)
     );
 
+    CREATE UNIQUE INDEX IF NOT EXISTS scripts_workspace_id_id_idx
+      ON public.scripts (workspace_id, id);
+
+    CREATE TABLE IF NOT EXISTS public.pbk_script_outcome_events (
+      id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL DEFAULT 'pbk',
+      script_id TEXT NOT NULL,
+      lead_id TEXT NOT NULL DEFAULT '',
+      call_id TEXT NOT NULL DEFAULT '',
+      outcome_label TEXT NOT NULL DEFAULT 'observed',
+      success BOOLEAN,
+      reward NUMERIC,
+      deal_value NUMERIC NOT NULL DEFAULT 0,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (workspace_id, id)
+    );
+
+    DO $$
+    DECLARE
+      existing_primary_key TEXT;
+    BEGIN
+      SELECT constraint_name
+      INTO existing_primary_key
+      FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name = 'pbk_script_outcome_events'
+        AND constraint_type = 'PRIMARY KEY'
+      LIMIT 1;
+
+      IF existing_primary_key IS NOT NULL
+         AND pg_get_constraintdef(
+           (
+             SELECT oid
+             FROM pg_constraint
+             WHERE conname = existing_primary_key
+               AND conrelid = 'public.pbk_script_outcome_events'::regclass
+           )
+         ) = 'PRIMARY KEY (id)' THEN
+        EXECUTE format(
+          'ALTER TABLE public.pbk_script_outcome_events DROP CONSTRAINT %I',
+          existing_primary_key
+        );
+        ALTER TABLE public.pbk_script_outcome_events
+          ADD PRIMARY KEY (workspace_id, id);
+      END IF;
+    END
+    $$;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'pbk_script_outcome_events_workspace_script_fk'
+      ) THEN
+        ALTER TABLE public.pbk_script_outcome_events
+          ADD CONSTRAINT pbk_script_outcome_events_workspace_script_fk
+          FOREIGN KEY (workspace_id, script_id)
+          REFERENCES public.scripts (workspace_id, id)
+          ON DELETE CASCADE;
+      END IF;
+    END
+    $$;
+
     ALTER TABLE public.probe_questions
       ADD COLUMN IF NOT EXISTS workspace_id TEXT NOT NULL DEFAULT 'pbk',
       ADD COLUMN IF NOT EXISTS signal_keywords TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
@@ -8346,6 +8439,13 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
     CREATE INDEX IF NOT EXISTS scripts_tags_idx
       ON public.scripts USING GIN (tags);
 
+    CREATE INDEX IF NOT EXISTS pbk_script_outcome_events_script_created_idx
+      ON public.pbk_script_outcome_events (workspace_id, script_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS pbk_script_outcome_events_call_idx
+      ON public.pbk_script_outcome_events (workspace_id, call_id)
+      WHERE call_id <> '';
+
     DELETE FROM public.scripts old_script
     USING public.scripts keep_script
     WHERE old_script.ctid < keep_script.ctid
@@ -8381,6 +8481,7 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
 
     ALTER TABLE public.probe_questions ENABLE ROW LEVEL SECURITY;
     ALTER TABLE public.scripts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.pbk_script_outcome_events ENABLE ROW LEVEL SECURITY;
   `);
 
   try {
@@ -18518,6 +18619,12 @@ async function runAutonomousRexGoalDiscoveryRecord(params = {}) {
 }
 
 async function handleRexLeadImportedRecord(params = {}) {
+  const idempotencyKey = String(
+    params.idempotencyKey || params.idempotency_key || params.eventId || params.event_id || ''
+  ).trim();
+  const idempotencyHash = idempotencyKey
+    ? createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 24)
+    : '';
   const action = selectRexProactiveLeadAction(params, {
     nowLocalHour: params.nowLocalHour ?? params.now_local_hour,
     hotLeadThreshold: params.hotLeadThreshold || params.hot_lead_threshold || 80,
@@ -18527,6 +18634,7 @@ async function handleRexLeadImportedRecord(params = {}) {
   let decision = null;
   if (['queue_call', 'schedule_for_calling_window', 'create_rex_decision'].includes(action.action)) {
     task = await recordAgentHandoffTask({
+      id: idempotencyHash ? `pbk-agent-task-rex-lead-${idempotencyHash}` : undefined,
       tenantId: params.tenantId || params.tenant_id || 'pbk',
       fromAgent: 'Rex',
       toAgent: 'Ava',
@@ -18547,6 +18655,7 @@ async function handleRexLeadImportedRecord(params = {}) {
     });
     decision = await createRexDecision(
       {
+        id: idempotencyHash ? `rex-decision-lead-import-${idempotencyHash}` : undefined,
         requestApproval: false,
         source: 'rex-proactive-lead-trigger',
         actor: 'Rex',
@@ -18834,6 +18943,151 @@ function getTelnyxLiveReplyStrategistTimeoutMs() {
   return configured;
 }
 
+const contextAwareScriptCatalogByWorkspace = new Map();
+const contextAwareScriptCatalogLoadedAtByWorkspace = new Map();
+const contextAwareScriptCatalogRefreshPromises = new Map();
+const CONTEXT_AWARE_SCRIPT_CATALOG_REFRESH_MS = Math.max(
+  30_000,
+  Number(process.env.PBK_SCRIPT_CATALOG_REFRESH_MS || 60_000)
+);
+
+function getContextAwareScriptWorkspaceId(params = {}) {
+  return String(params.workspaceId || params.workspace_id || 'pbk').trim() || 'pbk';
+}
+
+function getContextAwareScriptCatalog(workspaceId = 'pbk') {
+  return contextAwareScriptCatalogByWorkspace.get(workspaceId) || [];
+}
+
+function calculateContextAwareLearnedWeight(
+  usageCount = 0,
+  conversionCount = 0,
+  rewardAverage = null,
+  rewardCount = 0
+) {
+  const uses = Math.max(0, Number(usageCount || 0));
+  const conversions = Math.max(0, Math.min(uses, Number(conversionCount || 0)));
+  const rewards = Math.max(0, Number(rewardCount || 0));
+  const normalizedReward = Number.isFinite(Number(rewardAverage))
+    ? Math.max(-1, Math.min(1, Number(rewardAverage)))
+    : null;
+  if (!uses && !rewards) return 0;
+  const posteriorRate = (conversions + 1) / (uses + 2);
+  const conversionConfidence = Math.min(1, uses / 24);
+  const conversionSignal = ((posteriorRate - 0.5) * 2) * conversionConfidence;
+  if (normalizedReward == null || !rewards) {
+    return Number(conversionSignal.toFixed(4));
+  }
+  const rewardConfidence = Math.min(1, rewards / 16);
+  const rewardSignal = normalizedReward * rewardConfidence;
+  return Number((rewardSignal * 0.7 + conversionSignal * 0.3).toFixed(4));
+}
+
+function normalizeContextAwareScriptCatalogRow(row = {}) {
+  const metadata = plainObject(row.metadata);
+  const usageCount = Math.max(0, Number(row.usage_count ?? row.usageCount ?? 0));
+  const conversionCount = Math.max(
+    0,
+    Number(row.conversion_count ?? row.conversionCount ?? 0)
+  );
+  const rewardAverage = Number.isFinite(
+    Number(row.reward_average ?? row.rewardAverage)
+  )
+    ? Number(row.reward_average ?? row.rewardAverage)
+    : null;
+  const rewardCount = Math.max(
+    0,
+    Number(row.reward_count ?? row.rewardCount ?? 0)
+  );
+  return {
+    id: String(row.id || '').trim(),
+    title: String(row.title || row.name || '').trim(),
+    content: String(row.content || row.script || '').trim(),
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    pathKey: String(row.path_key || row.pathKey || '').trim(),
+    allowedRoles: Array.isArray(row.allowed_roles || row.allowedRoles)
+      ? row.allowed_roles || row.allowedRoles
+      : ['owner', 'agent', 'decision_helper'],
+    metadata,
+    usageCount,
+    conversionCount,
+    dealValue: Math.max(0, Number(row.deal_value ?? row.dealValue ?? 0)),
+    rewardAverage,
+    rewardCount,
+    learnedWeight: calculateContextAwareLearnedWeight(
+      usageCount,
+      conversionCount,
+      rewardAverage,
+      rewardCount
+    ),
+  };
+}
+
+async function loadContextAwareScriptCatalog(workspaceId = 'pbk') {
+  const normalizedWorkspaceId = String(workspaceId || 'pbk').trim() || 'pbk';
+  const existingCatalog = getContextAwareScriptCatalog(normalizedWorkspaceId);
+  const result = await queryPgRows(
+    `SELECT
+       scripts.id, scripts.title, scripts.content, scripts.tags,
+       scripts.path_key, scripts.allowed_roles, scripts.metadata,
+       scripts.usage_count, scripts.conversion_count, scripts.deal_value,
+       outcome_stats.reward_average, outcome_stats.reward_count
+     FROM public.scripts scripts
+     LEFT JOIN (
+       SELECT
+         workspace_id,
+         script_id,
+         AVG(reward) FILTER (WHERE reward IS NOT NULL) AS reward_average,
+         COUNT(reward) FILTER (WHERE reward IS NOT NULL) AS reward_count
+       FROM public.pbk_script_outcome_events
+       GROUP BY workspace_id, script_id
+     ) outcome_stats
+       ON outcome_stats.workspace_id = scripts.workspace_id
+      AND outcome_stats.script_id = scripts.id
+     WHERE scripts.workspace_id = $1 AND scripts.active = TRUE
+     ORDER BY
+       COALESCE(outcome_stats.reward_average, 0) DESC,
+       scripts.conversion_count DESC,
+       scripts.usage_count DESC,
+       scripts.updated_at DESC`,
+    [normalizedWorkspaceId]
+  );
+  if (!result.ok) {
+    return {
+      ok: false,
+      result: 'script_catalog_refresh_failed',
+      error: result.error || '',
+      workspaceId: normalizedWorkspaceId,
+      count: existingCatalog.length,
+    };
+  }
+  const catalog = (result.rows || [])
+    .map(normalizeContextAwareScriptCatalogRow)
+    .filter((script) => script.id && script.content);
+  const loadedAt = isoNow();
+  contextAwareScriptCatalogByWorkspace.set(normalizedWorkspaceId, catalog);
+  contextAwareScriptCatalogLoadedAtByWorkspace.set(normalizedWorkspaceId, loadedAt);
+  return {
+    ok: true,
+    result: 'script_catalog_refreshed',
+    workspaceId: normalizedWorkspaceId,
+    count: catalog.length,
+    loadedAt,
+  };
+}
+
+async function refreshContextAwareScriptCatalog(workspaceId = 'pbk') {
+  const normalizedWorkspaceId = String(workspaceId || 'pbk').trim() || 'pbk';
+  if (!contextAwareScriptCatalogRefreshPromises.has(normalizedWorkspaceId)) {
+    const refreshPromise = loadContextAwareScriptCatalog(normalizedWorkspaceId)
+      .finally(() => {
+        contextAwareScriptCatalogRefreshPromises.delete(normalizedWorkspaceId);
+      });
+    contextAwareScriptCatalogRefreshPromises.set(normalizedWorkspaceId, refreshPromise);
+  }
+  return contextAwareScriptCatalogRefreshPromises.get(normalizedWorkspaceId);
+}
+
 function buildAvaScriptRotationSnapshot(params = {}) {
   ensureAgentFleetCollections();
   const query = String(params.query || params.transcript || params.text || '').toLowerCase();
@@ -18902,8 +19156,34 @@ function buildAvaScriptRotationSnapshot(params = {}) {
 }
 
 function buildContextAwareScriptLibrary(params = {}) {
+  const workspaceId = getContextAwareScriptWorkspaceId(params);
+  const catalog = getContextAwareScriptCatalog(workspaceId);
+  const catalogLoadedAt = contextAwareScriptCatalogLoadedAtByWorkspace.get(workspaceId) || '';
+  const catalogAgeMs = catalogLoadedAt
+    ? Date.now() - Date.parse(catalogLoadedAt)
+    : Number.POSITIVE_INFINITY;
+  if (catalogAgeMs >= CONTEXT_AWARE_SCRIPT_CATALOG_REFRESH_MS) {
+    void refreshContextAwareScriptCatalog(workspaceId).catch((error) => {
+      console.warn(
+        '[pbk-local-openclaw] context-aware script catalog refresh skipped:',
+        error?.message || error
+      );
+    });
+  }
   const provided = Array.isArray(params.scriptsLibrary || params.scripts_library || params.scripts) ? params.scriptsLibrary || params.scripts_library || params.scripts : [];
-  if (provided.length) return provided;
+  if (provided.length) {
+    return provided.map((script) => {
+      const catalogMatch = catalog.find(
+        (item) =>
+          item.id === String(script.id || '') ||
+          (item.pathKey === String(script.pathKey || script.path_key || '') &&
+            item.title === String(script.title || script.name || ''))
+      );
+      return catalogMatch ? { ...script, ...catalogMatch } : script;
+    });
+  }
+  if (catalog.length) return catalog;
+  if (workspaceId !== 'pbk') return [];
   const bundle = buildAvaWarManualRuntimeSeedBundle();
   return (bundle.scripts || []).map((script) => ({
     id: script.id,
@@ -18919,13 +19199,16 @@ function buildContextAwareScriptLibrary(params = {}) {
 async function persistContextAwareScriptExposureToPg(selection = {}, params = {}) {
   const script = selection.selectedScript || selection.selected || {};
   if (!script?.id) return false;
+  const workspaceId = String(
+    params.workspaceId || params.workspace_id || 'pbk'
+  ).trim() || 'pbk';
   const result = await queryPgRows(
     `UPDATE public.scripts
      SET usage_count = COALESCE(usage_count, 0) + 1,
          last_selected_at = NOW(),
          metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
          updated_at = NOW()
-     WHERE id = $1
+     WHERE id = $1 AND workspace_id = $3
      RETURNING id`,
     [
       script.id,
@@ -18938,6 +19221,7 @@ async function persistContextAwareScriptExposureToPg(selection = {}, params = {}
           selectedAt: isoNow(),
         },
       }),
+      workspaceId,
     ]
   );
   return result.ok && result.rows.length > 0;
@@ -18955,6 +19239,7 @@ async function selectContextAwareScriptRecord(params = {}) {
       EventTypes.SCRIPT_VARIANT_SELECTED,
       {
         scriptId: selection.selectedScript?.id || '',
+        workspaceId: getContextAwareScriptWorkspaceId(params),
         title: selection.selectedScript?.title || '',
         callId: params.callId || params.call_id || '',
         leadId: params.leadId || params.lead_id || '',
@@ -18986,81 +19271,293 @@ async function getCurrentScriptRecord(params = {}) {
 async function recordContextAwareScriptOutcomeRecord(params = {}) {
   const scriptId = String(params.scriptId || params.script_id || params.id || '').trim();
   if (!scriptId) return { ok: false, result: 'invalid_request', error: 'scriptId is required.' };
+  const workspaceId = String(
+    params.workspaceId || params.workspace_id || 'pbk'
+  ).trim() || 'pbk';
   const scripts = buildContextAwareScriptLibrary(params);
   const script = scripts.find((item) => String(item.id || '') === scriptId) || {
     id: scriptId,
     metadata: {},
   };
-  const stats = recordScriptOutcomeStats(script, params);
-  const success = typeof params.success === 'boolean' ? params.success : /accepted|signed|closed|won|appointment/i.test(String(params.outcome || params.outcomeLabel || params.outcome_label || ''));
+  const outcomeText = String(
+    params.outcome || params.outcomeLabel || params.outcome_label || ''
+  ).trim();
+  const explicitSuccess =
+    typeof params.success === 'boolean' ? params.success : null;
+  const success =
+    explicitSuccess ??
+    (/\b(rejected|lost|dnc|do not call|no interest|hung up|angry)\b/i.test(
+      outcomeText
+    )
+      ? false
+      : /\b(accepted|signed|closed|won|appointment|callback|qualified|contract sent)\b/i.test(
+          outcomeText
+        )
+        ? true
+        : null);
+  const reward = Number.isFinite(Number(params.reward))
+    ? Math.max(-1, Math.min(1, Number(params.reward)))
+    : success === true
+      ? 1
+      : success === false
+        ? -1
+        : 0.15;
+  const stats = recordScriptOutcomeStats(script, {
+    ...params,
+    success: success === true,
+  });
   const dealValue = Math.max(0, toMoneyNumber(params.dealValue ?? params.deal_value ?? params.assignmentFee ?? params.assignment_fee, 0));
+  const callId = String(params.callId || params.call_id || '').trim();
+  const leadId = String(params.leadId || params.lead_id || '').trim();
+  const outcomeEventId = String(
+    params.outcomeEventId ||
+      params.outcome_event_id ||
+      (callId
+        ? `script-outcome-${createHash('sha256')
+            .update(`${workspaceId}|${callId}|${scriptId}`)
+            .digest('hex')
+            .slice(0, 32)}`
+        : `script-outcome-${Date.now()}-${randomUUID().slice(0, 8)}`)
+  );
   const result = await queryPgRows(
-    `UPDATE public.scripts
-     SET usage_count = COALESCE(usage_count, 0) + 1,
-         conversion_count = COALESCE(conversion_count, 0) + $2,
-         deal_value = COALESCE(deal_value, 0) + $3,
-         last_outcome_at = NOW(),
-         metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-         updated_at = NOW()
-     WHERE id = $1
-     RETURNING id, usage_count, conversion_count, deal_value`,
+    `WITH inserted AS (
+       INSERT INTO public.pbk_script_outcome_events (
+         id, workspace_id, script_id, lead_id, call_id, outcome_label,
+         success, reward, deal_value, metadata, created_at
+       )
+       SELECT $2, $10, $1, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW()
+       WHERE EXISTS (
+         SELECT 1
+         FROM public.scripts
+         WHERE id = $1 AND workspace_id = $10
+       )
+       ON CONFLICT (workspace_id, id) DO NOTHING
+       RETURNING id, outcome_label, success, reward, deal_value
+     ),
+     updated AS (
+       UPDATE public.scripts
+       SET conversion_count = COALESCE(conversion_count, 0) + CASE WHEN $6 IS TRUE THEN 1 ELSE 0 END,
+           deal_value = COALESCE(deal_value, 0) + $8,
+           last_outcome_at = NOW(),
+           metadata = COALESCE(metadata, '{}'::jsonb) || $9::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+         AND workspace_id = $10
+         AND EXISTS (SELECT 1 FROM inserted)
+       RETURNING id, usage_count, conversion_count, deal_value
+     ),
+     canonical AS (
+       SELECT id, outcome_label, success, reward, deal_value
+       FROM inserted
+       UNION ALL
+       SELECT
+         events.id,
+         events.outcome_label,
+         events.success,
+         events.reward,
+         events.deal_value
+       FROM public.pbk_script_outcome_events events
+       WHERE events.id = $2
+         AND events.workspace_id = $10
+         AND events.script_id = $1
+         AND NOT EXISTS (SELECT 1 FROM inserted)
+       LIMIT 1
+     )
+     SELECT
+       scripts.id,
+       scripts.usage_count,
+       scripts.conversion_count,
+       scripts.deal_value,
+       EXISTS (SELECT 1 FROM inserted) AS inserted,
+       canonical.id AS canonical_event_id,
+       canonical.outcome_label AS canonical_outcome_label,
+       canonical.success AS canonical_success,
+       canonical.reward AS canonical_reward,
+       canonical.deal_value AS canonical_deal_value
+     FROM public.scripts scripts
+     LEFT JOIN canonical ON TRUE
+     WHERE scripts.id = $1 AND scripts.workspace_id = $10`,
     [
       scriptId,
-      success ? 1 : 0,
+      outcomeEventId,
+      leadId,
+      callId,
+      outcomeText || stats.lastOutcomeLabel || 'observed',
+      success,
+      reward,
       dealValue,
       JSON.stringify({
+        ...plainObject(params.metadata),
         lastContextAwareOutcome: {
-          callId: params.callId || params.call_id || '',
-          leadId: params.leadId || params.lead_id || '',
+          callId,
+          leadId,
           outcome: stats.lastOutcomeLabel,
           success,
+          reward,
           recordedAt: isoNow(),
         },
       }),
+      workspaceId,
     ]
   );
   const returned = result.rows?.[0] || {};
+  const canonicalEventId = String(returned.canonical_event_id || '').trim();
+  const canonicalOutcome =
+    String(returned.canonical_outcome_label || '').trim() ||
+    stats.lastOutcomeLabel;
+  const canonicalSuccess =
+    typeof returned.canonical_success === 'boolean'
+      ? returned.canonical_success
+      : success;
+  const canonicalReward =
+    returned.canonical_reward != null &&
+    Number.isFinite(Number(returned.canonical_reward))
+    ? Number(returned.canonical_reward)
+    : reward;
+  const canonicalDealValue =
+    returned.canonical_deal_value != null &&
+    Number.isFinite(Number(returned.canonical_deal_value))
+    ? Number(returned.canonical_deal_value)
+    : dealValue;
   const finalStats = returned.id
     ? {
-        usageCount: Number(returned.usage_count || stats.usageCount),
-        conversionCount: Number(returned.conversion_count || stats.conversionCount),
-        dealValue: Number(returned.deal_value || stats.dealValue),
-        lastOutcomeLabel: stats.lastOutcomeLabel,
+        usageCount: Number(returned.usage_count ?? stats.usageCount),
+        conversionCount: Number(
+          returned.conversion_count ?? stats.conversionCount
+        ),
+        dealValue: Number(returned.deal_value ?? stats.dealValue),
+        lastOutcomeLabel: canonicalOutcome,
         lastSelectedAt: stats.lastSelectedAt,
       }
     : stats;
-  void publishPbkEvent(
-    EventTypes.SCRIPT_OUTCOME_RECORDED,
-    {
-      scriptId,
-      callId: params.callId || params.call_id || '',
-      leadId: params.leadId || params.lead_id || '',
-      outcome: finalStats.lastOutcomeLabel,
-      stats: finalStats,
-    },
-    'script-rotator'
-  );
+  const inserted = Boolean(returned.inserted);
+  if (returned.id && canonicalEventId && inserted) {
+    await recordAgentDecisionRecord({
+      id: `agent-decision-${slugify(workspaceId)}-${outcomeEventId}`,
+      agentId: 'ava',
+      agentName: 'Ava',
+      actionType: 'context_aware_script_outcome',
+      source: params.source || 'script-rotator',
+      leadId,
+      callId,
+      context: {
+        scriptId,
+        title: script.title || '',
+        pathKey: script.pathKey || '',
+      },
+      parameters: {
+        reasonCodes: params.reasonCodes || params.reason_codes || [],
+      },
+      outcome: {
+        label: canonicalOutcome,
+        success: canonicalSuccess,
+        dealValue: canonicalDealValue,
+      },
+      reward: canonicalReward,
+      metadata: {
+        outcomeEventId,
+        idempotentReplay: !inserted,
+      },
+    });
+    await refreshContextAwareScriptCatalog(workspaceId);
+  }
+  if (inserted) {
+    void publishPbkEvent(
+      EventTypes.SCRIPT_OUTCOME_RECORDED,
+      {
+        scriptId,
+        callId,
+        leadId,
+        outcome: finalStats.lastOutcomeLabel,
+        stats: finalStats,
+        reward: canonicalReward,
+        idempotent: false,
+      },
+      'script-rotator'
+    );
+  }
   return {
-    ok: result.ok,
-    result: result.ok ? 'script_outcome_recorded' : 'script_outcome_record_failed',
+    ok: result.ok && Boolean(returned.id) && Boolean(canonicalEventId),
+    result:
+      result.ok && returned.id && canonicalEventId
+        ? inserted
+          ? 'script_outcome_recorded'
+          : 'script_outcome_already_recorded'
+        : result.ok && returned.id
+          ? 'script_outcome_id_conflict'
+        : 'script_outcome_record_failed',
     scriptId,
     stats: finalStats,
-    storage: { postgres: result.ok && result.rows.length > 0 },
-    error: result.ok ? '' : result.error || '',
+    reward: canonicalReward,
+    idempotent: !inserted,
+    storage: {
+      postgres: result.ok && Boolean(returned.id) && Boolean(canonicalEventId),
+    },
+    error:
+      result.ok && returned.id && canonicalEventId
+        ? ''
+        : result.ok && returned.id
+          ? 'Outcome event ID already belongs to a different script.'
+          : result.error || 'Script row was not found for the recorded outcome.',
   };
 }
 
-function rememberContextAwareScriptSelection(session = {}, architecture = {}) {
+function normalizeContextAwareSpokenText(value = '') {
+  return sanitizeAvaSpokenOutput(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9$%]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function rememberContextAwareScriptSelection(session = {}, architecture = {}, spokenText = '') {
   const selection = architecture?.scripts?.contextAwareSelection || session.contextAwareScriptSelection || null;
   const script = selection?.selectedScript || architecture?.scripts?.selectedScript || {};
   const scriptId = script?.id || session.contextAwareScriptSelection?.selectedScript?.id || '';
-  if (!scriptId) return;
+  const normalizedScript = normalizeContextAwareSpokenText(script?.content || '');
+  const normalizedSpoken = normalizeContextAwareSpokenText(spokenText);
+  const scriptWasSpoken =
+    normalizedScript.length >= 20
+    && normalizedSpoken.length >= 20
+    && (normalizedSpoken.includes(normalizedScript) || normalizedScript.includes(normalizedSpoken));
+  if (!scriptId || !scriptWasSpoken) return false;
+  const workspaceId = String(
+    session.workspaceId || session.workspace_id || session.tenantId || session.tenant_id || 'pbk'
+  ).trim() || 'pbk';
+  const exposurePersisted = await persistContextAwareScriptExposureToPg(
+    selection || { selectedScript: script },
+    {
+      workspaceId,
+      callId: session.callId || '',
+      leadId: session.leadId || '',
+    }
+  );
+  if (!exposurePersisted) return false;
   if (!Array.isArray(session.recentScriptIds)) session.recentScriptIds = [];
   session.recentScriptIds = [scriptId, ...session.recentScriptIds.filter((id) => id !== scriptId)].slice(0, 8);
+  if (!Array.isArray(session.contextAwareScriptHistory)) {
+    session.contextAwareScriptHistory = [];
+  }
+  session.contextAwareScriptHistory = [
+    {
+      scriptId,
+      title: script.title || '',
+      pathKey: script.pathKey || '',
+      reasonCodes: selection?.reasonCodes || [],
+      score: selection?.score || 0,
+      selectedAt: isoNow(),
+      spokenAt: isoNow(),
+      spokenPreview: String(spokenText || '').slice(0, 320),
+    },
+    ...session.contextAwareScriptHistory.filter(
+      (item) => item?.scriptId !== scriptId
+    ),
+  ].slice(0, 8);
   void publishPbkEvent(
     EventTypes.SCRIPT_VARIANT_SELECTED,
     {
       scriptId,
+      workspaceId,
       title: script.title || '',
       callId: session.callId || '',
       leadId: session.leadId || '',
@@ -19069,6 +19566,7 @@ function rememberContextAwareScriptSelection(session = {}, architecture = {}) {
     },
     'ava-live-call'
   );
+  return true;
 }
 
 function getAvaIntelligenceMode(params = {}) {
@@ -20118,10 +20616,16 @@ async function createPostCallCoachingReport(params = {}) {
     compliance: /\b(guarantee|pressure|must sign now)\b/i.test(joined) ? 55 : 86,
   };
   const overall = Math.round(averageNumeric(Object.values(scores)) || 0);
+  const callId = String(params.callId || params.call_id || '').trim();
   const report = {
-    id: String(params.id || `post-call-coach-${slugify(params.callId || params.leadId || 'call')}-${Date.now()}-${randomUUID().slice(0, 8)}`).trim(),
+    id: String(
+      params.id ||
+        (callId
+          ? `post-call-coach-${slugify(callId)}`
+          : `post-call-coach-${slugify(params.leadId || 'call')}-${Date.now()}-${randomUUID().slice(0, 8)}`)
+    ).trim(),
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
-    callId: String(params.callId || params.call_id || '').trim(),
+    callId,
     leadId: String(params.leadId || params.lead_id || '').trim(),
     agentId: String(params.agentId || params.agent_id || 'ava').trim(),
     scores,
@@ -20136,12 +20640,18 @@ async function createPostCallCoachingReport(params = {}) {
   };
   if (!Array.isArray(state.postCallCoachingReports)) state.postCallCoachingReports = [];
   upsertById(state, 'postCallCoachingReports', report);
-  await scoreCallQualityRecord({ ...params, transcript: joined, createRexDecision: false });
+  const quality = await scoreCallQualityRecord({
+    ...params,
+    id: `${report.id}-quality`,
+    transcript: joined,
+    createRexDecision: params.createRexDecision ?? false,
+  });
   await persistState(state);
   return {
     ok: true,
     result: 'post_call_coaching_report_created',
     report,
+    quality,
     state: buildStateSnapshot(),
   };
 }
@@ -20229,11 +20739,24 @@ async function decomposeGoalPlan(params = {}) {
 }
 
 async function scoreCallQualityRecord(params = {}) {
+  const requestedId = String(params.id || '').trim();
+  if (requestedId) {
+    const existing = (state.callQaScores || []).find((item) => item.id === requestedId);
+    if (existing) {
+      return {
+        ok: true,
+        result: 'call_qa_already_scored',
+        replayed: true,
+        score: existing,
+        storage: { localState: true },
+      };
+    }
+  }
   const context = findLeadContext(params);
   const transcript = String(params.transcript || params.text || params.body || '').trim();
   const score = buildCallQaScore({ ...params, transcript });
   const record = {
-    id: params.id || `call-qa-${slugify(params.callId || context.leadId || randomUUID())}-${Date.now()}`,
+    id: requestedId || `call-qa-${slugify(params.callId || context.leadId || randomUUID())}-${Date.now()}`,
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
     leadId: String(params.leadId || context.leadId || '').trim(),
     callId: String(params.callId || params.call_id || '').trim(),
@@ -20648,6 +21171,74 @@ function hasAuthorityConfirmationPhrase(text = '') {
   return isAffirmativeAvaAuthorityAnswer(text) || /\b(i can make a decision|i can make decisions|i make the decisions|right offer|i am the owner|i own it)\b/i.test(normalizeTelnyxRepairTranscript(text));
 }
 
+function inferContextAwareCallOutcome({
+  session = {},
+  contextCall = null,
+  transcript = '',
+  reason = '',
+} = {}) {
+  const leadId = contextCall?.leadId || session.leadId || '';
+  const callId = contextCall?.id || session.callId || '';
+  const callbackScheduled = (state.appointments || []).some((appointment) => {
+    if (!['scheduled', 'confirmed'].includes(String(appointment.status || '').toLowerCase())) {
+      return false;
+    }
+    return Boolean(
+      callId &&
+        String(appointment.callId || appointment.call_id || '') === callId
+    );
+  });
+  const outcomeText = [
+    contextCall?.status,
+    contextCall?.outcome,
+    contextCall?.disposition,
+    contextCall?.result,
+    reason,
+    transcript.slice(-1800),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const negative =
+    /\b(dnc|do not call|not interested|rejected|wrong number|angry|hung up|hangup|blocked)\b/i.test(
+      outcomeText
+    );
+  const positive =
+    callbackScheduled ||
+    /\b(appointment scheduled|callback scheduled|contract sent|contract signed|signed contract|offer accepted|accepted offer|qualified lead|moving forward with the offer)\b/i.test(
+      outcomeText
+    );
+  const pathLocked = Boolean(session.pathLocked || contextCall?.pathLocked);
+  const transcriptLength = String(transcript || '').length;
+  const success = negative ? false : positive ? true : null;
+  const reward =
+    success === true
+      ? 1
+      : success === false
+        ? -1
+        : pathLocked && transcriptLength >= 250
+          ? 0.35
+          : transcriptLength >= 160
+            ? 0.2
+            : 0.05;
+  return {
+    success,
+    reward,
+    outcomeLabel: negative
+      ? 'negative call outcome'
+      : positive
+      ? callbackScheduled
+        ? 'callback scheduled'
+        : 'positive call outcome'
+      : pathLocked
+          ? 'qualified path engagement'
+          : 'call engagement observed',
+    callbackScheduled,
+    pathLocked,
+    transcriptLength,
+  };
+}
+
 async function recordPostCallLearningFromTranscript({ session = {}, contextCall = null, message = {}, transcriptText = '', reason = '' } = {}) {
   const transcript = String(transcriptText || '')
     .replace(/\s+/g, ' ')
@@ -20655,18 +21246,36 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
   const callId = message.callId || session.callId || contextCall?.id || '';
   if (!callId || transcript.length < 40) return { ok: false, skipped: true, result: 'weak_post_call_transcript' };
   const leadId = message.leadId || contextCall?.leadId || session.leadId || '';
-  const qa = await scoreCallQualityRecord({
+  const inferredOutcome = inferContextAwareCallOutcome({
+    session,
+    contextCall,
+    transcript,
+    reason,
+  });
+  const coachingTranscript =
+    Array.isArray(contextCall?.transcript) && contextCall.transcript.length
+      ? contextCall.transcript
+      : transcript;
+  const coaching = await createPostCallCoachingReport({
+    id: `post-call-coach-${slugify(callId)}`,
     callId,
     leadId,
-    transcript,
+    transcript: coachingTranscript,
     source: 'telnyx-deepgram-finalize-inline',
     createRexDecision: true,
+    outcome: {
+      callbackScheduled: inferredOutcome.callbackScheduled,
+      success: inferredOutcome.success,
+      reward: inferredOutcome.reward,
+      label: inferredOutcome.outcomeLabel,
+    },
     metadata: {
       reason,
       streamId: session.streamId || '',
       inlineLearning: true,
     },
   }).catch((error) => ({ ok: false, error: error?.message || String(error) }));
+  const qa = coaching?.quality || null;
 
   const authorityProbeCount = countAuthorityProbePhrases(transcript);
   const authorityConfirmed = hasAuthorityConfirmationPhrase(transcript) || Boolean(session.authorityConfirmed || session.decisionMakerConfirmed);
@@ -20725,6 +21334,55 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     );
   }
 
+  const selections = [
+    ...(Array.isArray(session.contextAwareScriptHistory)
+      ? session.contextAwareScriptHistory
+      : []),
+  ].filter(Boolean);
+  const uniqueSelections = Array.from(
+    new Map(
+      selections
+        .filter((selection) => selection?.scriptId)
+        .map((selection) => [selection.scriptId, selection])
+    ).values()
+  ).slice(0, 8);
+  const scriptOutcomes = [];
+  for (const selection of uniqueSelections) {
+    scriptOutcomes.push(
+      await recordContextAwareScriptOutcomeRecord({
+        workspaceId:
+          session.workspaceId
+          || session.workspace_id
+          || session.tenantId
+          || session.tenant_id
+          || contextCall?.workspaceId
+          || contextCall?.workspace_id
+          || contextCall?.tenantId
+          || contextCall?.tenant_id
+          || 'pbk',
+        scriptId: selection.scriptId,
+        callId,
+        leadId,
+        outcomeLabel: inferredOutcome.outcomeLabel,
+        success: inferredOutcome.success,
+        reward: inferredOutcome.reward,
+        reasonCodes: selection.reasonCodes || [],
+        source: 'telnyx-post-call-learning',
+        metadata: {
+          title: selection.title || '',
+          pathKey: selection.pathKey || selectedPath,
+          callbackScheduled: inferredOutcome.callbackScheduled,
+          pathLocked: inferredOutcome.pathLocked,
+          transcriptLength: inferredOutcome.transcriptLength,
+        },
+      }).catch((error) => ({
+        ok: false,
+        error: error?.message || String(error),
+        scriptId: selection.scriptId,
+      }))
+    );
+  }
+
   recordCallTrace('post_call_learning_completed', {
     callId,
     leadId,
@@ -20734,6 +21392,13 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
     authorityProbeCount,
     authorityConfirmed,
     repeatedAuthorityAfterConfirmation,
+    coachingGrade: coaching?.report?.grade || '',
+    scriptOutcomes: scriptOutcomes.map((item) => ({
+      ok: item?.ok,
+      result: item?.result || item?.error || '',
+      scriptId: item?.scriptId || '',
+      reward: item?.reward ?? null,
+    })),
     outcomes: outcomes.map((item) => ({
       ok: item?.ok,
       result: item?.result || item?.error || '',
@@ -20741,7 +21406,14 @@ async function recordPostCallLearningFromTranscript({ session = {}, contextCall 
       success: item?.outcome?.success,
     })),
   });
-  return { ok: true, result: 'post_call_learning_completed', qa, outcomes };
+  return {
+    ok: true,
+    result: 'post_call_learning_completed',
+    qa,
+    coaching,
+    outcomes,
+    scriptOutcomes,
+  };
 }
 
 async function requestHumanHandoffRecord(params = {}) {
@@ -34741,7 +35413,9 @@ async function recordAgentHandoffTask(task = {}) {
     createdAt: task.createdAt || task.created_at || isoNow(),
     updatedAt: task.updatedAt || task.updated_at || isoNow(),
   };
-  state.agentTasks.unshift(record);
+  const existing = state.agentTasks.find((item) => item.id === record.id);
+  if (existing) return existing;
+  upsertById(state, 'agentTasks', record);
   state.agentTasks = sortNewest(state.agentTasks).slice(0, LIMITS.agentTasks);
   void persistPbkTaskRecord(record);
   void publishPbkEvent(
@@ -35757,11 +36431,26 @@ async function applyRexDecision(decisionOrId = {}, options = {}) {
 
 async function createRexDecision(payload = {}, options = {}) {
   ensureRexCollections();
+  const requestedId = String(payload.id || '').trim();
+  if (requestedId) {
+    const existing = state.rexDecisions.find((item) => item.id === requestedId);
+    if (existing) {
+      return {
+        ok: true,
+        result: 'rex_decision_already_exists',
+        replayed: true,
+        decision: existing,
+        approval: existing.approvalId
+          ? state.approvals.find((item) => item.id === existing.approvalId) || null
+          : null,
+      };
+    }
+  }
   const tool = normalizeRexTool(payload.tool || payload.action);
   const params = payload.params && typeof payload.params === 'object' ? payload.params : {};
   const target = summarizeRexDecisionTarget(tool, params);
   const decision = {
-    id: payload.id || `rex-decision-${slugify(tool)}-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    id: requestedId || `rex-decision-${slugify(tool)}-${Date.now()}-${randomUUID().slice(0, 8)}`,
     source: payload.source || options.source || 'rex-strategist',
     tool,
     params,
@@ -48802,9 +49491,35 @@ async function sendElevenLabsTtsStream(response, body = {}, text = '') {
 }
 
 async function readRawBodyBuffer(request) {
+  const declaredLength = Number(request.headers?.['content-length'] || 0);
+  if (declaredLength > MAX_REQUEST_BODY_BYTES) {
+    throw Object.assign(
+      new Error(
+        `Request body exceeds the ${MAX_REQUEST_BODY_BYTES}-byte bridge limit.`
+      ),
+      {
+        statusCode: 413,
+        code: 'request_body_too_large',
+      }
+    );
+  }
   const chunks = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+      throw Object.assign(
+        new Error(
+          `Request body exceeds the ${MAX_REQUEST_BODY_BYTES}-byte bridge limit.`
+        ),
+        {
+          statusCode: 413,
+          code: 'request_body_too_large',
+        }
+      );
+    }
+    chunks.push(buffer);
   }
   return chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
 }
@@ -49173,10 +49888,63 @@ async function invokeLocalCallback(body = {}) {
 }
 
 function getRequestClientIp(request) {
-  const forwarded = String(request.headers?.['x-forwarded-for'] || '')
+  const forwarded = String(
+    request.headers?.['x-pbk-client-ip'] ||
+      request.headers?.['x-nf-client-connection-ip'] ||
+      request.headers?.['cf-connecting-ip'] ||
+      request.headers?.['x-forwarded-for'] ||
+      ''
+  )
     .split(',')[0]
     .trim();
   return forwarded || String(request.headers?.['x-real-ip'] || '').trim() || request.socket?.remoteAddress || 'unknown';
+}
+
+const invokeRateLimiter = createInvokeRateLimiter({
+  limit: INVOKE_RATE_LIMIT_MAX,
+  windowMs: INVOKE_RATE_LIMIT_WINDOW_MS,
+  getRedisClient: getSharedRedisClient,
+  makeRedisKey: (identity) => redisKey('rate-limit', 'invoke', identity),
+});
+
+const teamAuthRateLimiter = createInvokeRateLimiter({
+  limit: TEAM_AUTH_RATE_LIMIT_MAX,
+  minimumLimit: 3,
+  windowMs: TEAM_AUTH_RATE_LIMIT_WINDOW_MS,
+  getRedisClient: getSharedRedisClient,
+  makeRedisKey: (identity) => redisKey('rate-limit', 'team-auth', identity),
+  failClosedOnRedisError: true,
+});
+
+async function checkInvokeRateLimit(request) {
+  const identity = buildInvokeRateLimitIdentity({
+    authorization: request.headers?.authorization,
+    ip: getRequestClientIp(request),
+  });
+  return invokeRateLimiter.consume(identity);
+}
+
+async function checkTeamAuthRateLimit(request) {
+  const identity = buildInvokeRateLimitIdentity({
+    authorization: '',
+    ip: getRequestClientIp(request),
+  });
+  return teamAuthRateLimiter.consume(identity);
+}
+
+function setRateLimitResponseHeaders(response, rateLimit) {
+  response.setHeader('X-RateLimit-Limit', String(rateLimit.limit));
+  response.setHeader('X-RateLimit-Remaining', String(rateLimit.remaining));
+  response.setHeader(
+    'X-RateLimit-Reset',
+    String(Math.ceil(Number(rateLimit.resetAt || Date.now()) / 1000))
+  );
+  if (!rateLimit.ok) {
+    response.setHeader(
+      'Retry-After',
+      String(rateLimit.retryAfterSeconds || 1)
+    );
+  }
 }
 
 function checkPublicAvaChatRateLimit(request) {
@@ -54013,6 +54781,44 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
   };
 }
 
+function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
+  const move = reply.resolvedCallContext?.exactNextMove || {};
+  const strategy = reply.strategist?.strategy || {};
+  const text = sanitizeAvaSpokenOutput(
+    move.text ||
+      move.exactNextMove ||
+      strategy.nextQuestion ||
+      strategy.immediateScript ||
+      reply.architecture?.pathDecision?.nextProbeQuestion ||
+      fallbackText
+  ).slice(0, 360);
+  if (!text) return null;
+  return {
+    text,
+    reason: String(
+      move.reason ||
+        strategy.rule ||
+        reply.architecture?.pathDecision?.rule ||
+        'PBK live-call context resolver'
+    ).slice(0, 240),
+    source: move.source || 'ava-context-resolver',
+    confidence: Math.max(
+      0,
+      Math.min(
+        1,
+        Number(
+          move.confidence ??
+            strategy.confidence ??
+            reply.architecture?.pathDecision?.confidence ??
+            0.72
+        )
+      )
+    ),
+    approvalNeeded: Boolean(strategy.approvalNeeded),
+    updatedAt: isoNow(),
+  };
+}
+
 async function injectDebugTranscriptIntoLiveCall(body = {}) {
   const transcript = String(body.transcript || body.text || body.utterance || '')
     .replace(/\s+/g, ' ')
@@ -54122,6 +54928,20 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
       identifiedPath: livePathDecision.pathLocked ? livePathDecision.selectedPath : contextCall.identifiedPath,
       pathDecision: livePathDecision,
       nextMove: livePathDecision.pathLocked ? `Path locked to ${livePathDecision.selectedPathLabel}. Use that script lane and move to the next safe close.` : livePathDecision.nextProbeQuestion || "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
+      operatorWhisper: {
+        text: livePathDecision.pathLocked
+          ? `Stay in the ${livePathDecision.selectedPathLabel} lane and move to the next safe close.`
+          : livePathDecision.nextProbeQuestion ||
+            "Listen for the property address, timeline, condition, motivation, and authority.",
+        reason: livePathDecision.rule || 'Live path qualification',
+        source: 'ava-path-resolver',
+        confidence: Math.max(
+          0,
+          Math.min(1, Number(livePathDecision.confidence || 0.62))
+        ),
+        approvalNeeded: false,
+        updatedAt: isoNow(),
+      },
       updatedAt: isoNow(),
     });
   }
@@ -54141,6 +54961,8 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
     { session, contextCall }
   );
   const spoken = sanitizeAvaSpokenOutput(guardedReplyText, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
+  session.operatorWhisper =
+    buildOperatorWhisperRecord(reply, spoken) || session.operatorWhisper || null;
   session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
   session.lastAvaReplyMode = reply.replyMode || 'debug_inject';
   session.pathDecision = reply.architecture?.pathDecision || session.pathDecision || livePathDecision;
@@ -54161,7 +54983,7 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
     if (speakResult.ok) {
       session.lastAvaReplySpoken = spoken;
       session.lastAvaSpokenPreview = spoken.slice(0, 320);
-      rememberContextAwareScriptSelection(session, reply.architecture || {});
+      await rememberContextAwareScriptSelection(session, reply.architecture || {}, spoken);
       rememberAvaLiveReplyFingerprint(session, spoken);
     }
   }
@@ -54196,6 +55018,7 @@ async function injectDebugTranscriptIntoLiveCall(body = {}) {
         },
       ].slice(-50),
       nextMove: spoken,
+      operatorWhisper: session.operatorWhisper,
       updatedAt: isoNow(),
     });
   }
@@ -54781,6 +55604,10 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       { session, contextCall }
     );
     const spoken = sanitizeAvaSpokenOutput(guardedReplyText, 'I hear you. Let me slow this down so I can help the right way. What matters most right now: speed, certainty, or price?');
+    session.operatorWhisper =
+      buildOperatorWhisperRecord(reply, spoken) ||
+      session.operatorWhisper ||
+      null;
     session.lastAvaReplyPreview = String(reply.text || '').slice(0, 1200);
     session.pathDecision = reply.architecture?.pathDecision || session.pathDecision || {};
     session.fullIntelligence = reply.architecture?.fullIntelligence || session.fullIntelligence || {};
@@ -54883,10 +55710,13 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       },
       stage: 'maybeSpeakTelnyxAvaReply.tts',
     });
-    session.lastAvaReplySpoken = spoken;
-    session.lastAvaSpokenPreview = spoken.slice(0, 320);
     session.lastAvaReplyMode = reply.replyMode || 'live';
-    rememberContextAwareScriptSelection(session, reply.architecture || {});
+    if (speakResult.ok) {
+      session.lastAvaReplySpoken = spoken;
+      session.lastAvaSpokenPreview = spoken.slice(0, 320);
+      await rememberContextAwareScriptSelection(session, reply.architecture || {}, spoken);
+      rememberAvaLiveReplyFingerprint(session, spoken);
+    }
     const speechLock = setTelnyxAvaTurnLock(session, {
       reason: speakResult.ok ? 'ava_speaking' : 'ava_reply_attempted',
       durationMs: estimateTelnyxAvaSpeechLockMs(spoken),
@@ -54915,7 +55745,6 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
       turnLockReason: speechLock?.reason || sendingLock?.reason || '',
       stage: 'maybeSpeakTelnyxAvaReply',
     });
-    rememberAvaLiveReplyFingerprint(session, spoken);
     addActivity(
       state,
       makeActivity({
@@ -54958,6 +55787,7 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         pathLocked: reply.architecture?.pathDecision?.pathLocked || contextCall.pathLocked,
         identifiedPath: reply.architecture?.pathDecision?.pathLocked ? reply.architecture.pathDecision.selectedPath : contextCall.identifiedPath,
         nextMove: spoken,
+        operatorWhisper: session.operatorWhisper,
         avaLatency: {
           speechFinalToReplyStartMs,
           replyMode: reply.replyMode || 'live',
@@ -55073,6 +55903,20 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         identifiedPath: livePathDecision.pathLocked ? livePathDecision.selectedPath : contextCall.identifiedPath,
         pathDecision: livePathDecision,
         nextMove: livePathDecision.pathLocked ? `Path locked to ${livePathDecision.selectedPathLabel}. Use that script lane and move to the next safe close.` : livePathDecision.nextProbeQuestion || "Listen for the caller's property address, timeline, condition, motivation, and authority. Keep Ava's next question short.",
+        operatorWhisper: {
+          text: livePathDecision.pathLocked
+            ? `Stay in the ${livePathDecision.selectedPathLabel} lane and move to the next safe close.`
+            : livePathDecision.nextProbeQuestion ||
+              "Listen for the property address, timeline, condition, motivation, and authority.",
+          reason: livePathDecision.rule || 'Live path qualification',
+          source: 'ava-path-resolver',
+          confidence: Math.max(
+            0,
+            Math.min(1, Number(livePathDecision.confidence || 0.62))
+          ),
+          approvalNeeded: false,
+          updatedAt: isoNow(),
+        },
         updatedAt: isoNow(),
       });
       if (normalized.isFinal || normalized.speechFinal) {
@@ -56028,6 +56872,20 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && pathname === '/api/auth/team') {
+      const teamAuthRateLimit = await checkTeamAuthRateLimit(request);
+      setRateLimitResponseHeaders(response, teamAuthRateLimit);
+      if (!teamAuthRateLimit.ok) {
+        const redisUnavailable = teamAuthRateLimit.source === 'redis_unavailable';
+        json(response, redisUnavailable ? 503 : 429, {
+          ok: false,
+          error: redisUnavailable
+            ? 'Team authentication is temporarily unavailable.'
+            : 'Too many team passcode attempts. Try again later.',
+          code: redisUnavailable ? 'team_auth_rate_limit_unavailable' : 'team_auth_rate_limited',
+          retryAfterSeconds: teamAuthRateLimit.retryAfterSeconds,
+        });
+        return;
+      }
       const body = await readBody(request);
       if (!isTeamPasscodeValid(body?.passcode || body?.teamPasscode || body?.team_passcode || '')) {
         json(response, 401, {
@@ -57819,6 +58677,26 @@ const server = createServer(async (request, response) => {
       json(response, 200, {
         ok: true,
         tooling: await buildToolingStatus(),
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/auth/team/verify') {
+      const teamAuth = getTeamAuthMeta(request);
+      if (!teamAuth.ok) {
+        json(response, 401, {
+          ok: false,
+          error: teamAuth.error || 'PBK team session is invalid or expired.',
+          code: teamAuth.error || 'invalid_team_session',
+        });
+        return;
+      }
+      json(response, 200, {
+        ok: true,
+        role: teamAuth.role,
+        actor: teamAuth.actor,
+        expiresAt: teamAuth.expiresAt,
+        permissions: getTeamPermissions(),
       });
       return;
     }
@@ -60447,6 +61325,20 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/invoke', '/api/invoke'])) {
+      const invokeRateLimit = await checkInvokeRateLimit(request);
+      setRateLimitResponseHeaders(response, invokeRateLimit);
+      if (!invokeRateLimit.ok) {
+        incrementObservabilityCounter('invoke_rate_limit_rejections', 1, {
+          source: invokeRateLimit.source,
+        });
+        json(response, 429, {
+          ok: false,
+          error: 'Bridge tool rate limit exceeded. Please retry shortly.',
+          code: 'invoke_rate_limit_exceeded',
+          retryAfterSeconds: invokeRateLimit.retryAfterSeconds,
+        });
+        return;
+      }
       const body = await readBody(request);
       const toolName = body.toolName;
       const params = body.params || {};
@@ -60883,7 +61775,8 @@ const server = createServer(async (request, response) => {
 
       const body = await readBody(request);
       const approval = state.approvals.find((item) => item.id === approvalDecisionMatch.groups.id);
-      if (body.teamAuthRequired === true || body.requireTeamAuth === true) {
+      const teamAuthPresented = hasTeamAuthCredentials(request, body);
+      if (teamAuthPresented) {
         const teamAuth = getTeamAuthMeta(request, body);
         if (!teamAuth.ok) {
           json(response, 403, {
@@ -60934,7 +61827,8 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const approval = state.approvals.find((item) => item.id === approvalMatch.groups.id);
       const requestedStatus = normalizeApprovalDecisionStatus(body.status || body.action || 'approved');
-      if (body.teamAuthRequired === true || body.requireTeamAuth === true) {
+      const teamAuthPresented = hasTeamAuthCredentials(request, body);
+      if (teamAuthPresented) {
         const teamAuth = getTeamAuthMeta(request, body);
         if (!teamAuth.ok) {
           json(response, 403, {
@@ -63117,9 +64011,13 @@ const server = createServer(async (request, response) => {
       available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET /api/vector/capacity', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
     });
   } catch (error) {
-    json(response, 500, {
+    const statusCode = Number.isInteger(error?.statusCode)
+      ? error.statusCode
+      : 500;
+    json(response, statusCode, {
       ok: false,
       error: error instanceof Error ? error.message : 'Unknown server error',
+      code: error?.code || (statusCode === 413 ? 'request_body_too_large' : 'bridge_error'),
     });
   }
 });
@@ -63724,6 +64622,20 @@ function startAgentRegistryHealthScheduler() {
 
 server.listen(PORT, HOST, () => {
   startContractTemplateWatcher();
+  refreshContextAwareScriptCatalog()
+    .then((result) => {
+      if (result.ok) {
+        console.log(
+          `[pbk-local-openclaw] context-aware script catalog ready (${result.count}).`
+        );
+      }
+    })
+    .catch((error) => {
+      console.warn(
+        '[pbk-local-openclaw] context-aware script catalog refresh skipped:',
+        error?.message || error
+      );
+    });
   reloadContractTemplateLibrary('startup').catch((error) => {
     console.warn('[pbk-local-openclaw] contract template startup load failed:', error instanceof Error ? error.message : error);
   });

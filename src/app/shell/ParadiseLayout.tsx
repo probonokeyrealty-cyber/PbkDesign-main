@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
+import { TeamAccessGate } from '../components/TeamAccessGate';
 import { UiToastHost } from '../components/UiToastHost';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
@@ -276,52 +277,58 @@ export function ParadiseLayout() {
   };
 
   return (
-    <div
-      className={[
-        'pbk-shell-frame h-full w-full grid grid-cols-1 bg-slate-950 text-slate-100 overflow-hidden transition-[grid-template-columns]',
-        prefs.railCollapsed ? 'md:grid-cols-[72px_1fr]' : 'md:grid-cols-[240px_1fr]',
-      ].join(' ')}
+    <TeamAccessGate
+      onAuthenticated={async () => {
+        await refresh();
+      }}
     >
-      <Sidebar
-        collapsed={prefs.railCollapsed}
-        pendingApprovals={pendingApprovalCount}
-        prefsSource={prefsSource}
-        onToggleRail={toggleRail}
-      />
-      <div className="pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
-        <ShellTopbar
-          theme={prefs.theme}
-          themeDataSource={prefsSource}
-          onToggleTheme={updateTheme}
+      <div
+        className={[
+          'pbk-shell-frame h-full w-full grid grid-cols-1 bg-slate-950 text-slate-100 overflow-hidden transition-[grid-template-columns]',
+          prefs.railCollapsed ? 'md:grid-cols-[72px_1fr]' : 'md:grid-cols-[240px_1fr]',
+        ].join(' ')}
+      >
+        <Sidebar
+          collapsed={prefs.railCollapsed}
+          pendingApprovals={pendingApprovalCount}
+          prefsSource={prefsSource}
+          onToggleRail={toggleRail}
         />
-        <FavoritesBar snapshot={snapshot} refresh={refresh} />
-        <main className="pbk-shell-content relative overflow-auto bg-slate-900">
-          {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
-          <ErrorBoundary>
-            <Suspense
-              fallback={
-                <div className="grid min-h-[280px] place-items-center text-sm text-slate-400">
-                  Loading...
-                </div>
-              }
-            >
-              <Outlet />
-            </Suspense>
-          </ErrorBoundary>
-        </main>
+        <div className="pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
+          <ShellTopbar
+            theme={prefs.theme}
+            themeDataSource={prefsSource}
+            onToggleTheme={updateTheme}
+          />
+          <FavoritesBar snapshot={snapshot} refresh={refresh} />
+          <main className="pbk-shell-content relative overflow-auto bg-slate-900">
+            {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
+            <ErrorBoundary>
+              <Suspense
+                fallback={
+                  <div className="grid min-h-[280px] place-items-center text-sm text-slate-400">
+                    Loading...
+                  </div>
+                }
+              >
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
+          </main>
+        </div>
+        <MobileShellNavigation pendingApprovals={pendingApprovalCount} />
+        <ShortcutCheatSheet open={shortcutOpen} onClose={() => setShortcutOpen(false)} />
+        <SessionTimeoutWarning
+          onStayActive={() =>
+            showUiToast({
+              tone: 'success',
+              title: 'Session kept active',
+              desc: `Dashboard stays in ${systemTheme} system-aware mode.`,
+            })
+          }
+        />
+        <UiToastHost />
       </div>
-      <MobileShellNavigation pendingApprovals={pendingApprovalCount} />
-      <ShortcutCheatSheet open={shortcutOpen} onClose={() => setShortcutOpen(false)} />
-      <SessionTimeoutWarning
-        onStayActive={() =>
-          showUiToast({
-            tone: 'success',
-            title: 'Session kept active',
-            desc: `Dashboard stays in ${systemTheme} system-aware mode.`,
-          })
-        }
-      />
-      <UiToastHost />
-    </div>
+    </TeamAccessGate>
   );
 }

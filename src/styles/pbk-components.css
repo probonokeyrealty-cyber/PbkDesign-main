@@ -4792,6 +4792,144 @@
   padding: 10px 11px max(10px, env(safe-area-inset-bottom));
   overscroll-behavior: contain;
 }
+.pbk-team-access-shell {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--bg-deep) 92%, var(--sky) 8%), var(--bg-deep)),
+    var(--bg-deep);
+  padding: 24px;
+  color: var(--text-primary);
+}
+.pbk-team-access-panel {
+  width: min(100%, 430px);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
+  padding: 28px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+}
+.pbk-team-access-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--sky-glow);
+  color: var(--sky);
+}
+.pbk-team-access-mark svg {
+  width: 21px;
+  height: 21px;
+}
+.pbk-team-access-eyebrow {
+  display: block;
+  margin-top: 20px;
+  color: var(--sky);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.pbk-team-access-panel h1 {
+  margin: 7px 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 7vw, 38px);
+  line-height: 1;
+}
+.pbk-team-access-panel > p {
+  margin: 12px 0 22px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.pbk-team-access-panel form label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+}
+.pbk-team-access-input {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--bg-input);
+  padding: 0 12px;
+}
+.pbk-team-access-input:focus-within {
+  border-color: var(--sky);
+  box-shadow: 0 0 0 3px var(--sky-glow);
+}
+.pbk-team-access-input svg {
+  width: 16px;
+  color: var(--text-tertiary);
+}
+.pbk-team-access-input input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 13px 0;
+  font-size: 13px;
+}
+.pbk-team-access-panel form button {
+  display: flex;
+  width: 100%;
+  min-height: 43px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--sky);
+  color: var(--bg-deep);
+  font-size: 12px;
+  font-weight: 800;
+}
+.pbk-team-access-panel form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.pbk-team-access-panel form button svg,
+.pbk-team-access-checking svg {
+  width: 16px;
+  height: 16px;
+}
+.pbk-team-access-checking {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--bg-input);
+  padding: 13px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.pbk-team-access-error {
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--border));
+  border-radius: 10px;
+  background: var(--red-glow);
+  color: var(--red);
+  padding: 10px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.pbk-team-access-panel > small {
+  display: block;
+  margin-top: 16px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1.55;
+}
 .pbk-live-call-talk-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -4828,6 +4966,48 @@
 }
 .pbk-live-call-talk-grid > div:last-child i {
   background: var(--amber);
+}
+.pbk-live-call-whisper {
+  margin-top: 9px;
+  border: 1px solid color-mix(in srgb, var(--sky) 36%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--sky) 9%, var(--bg-panel));
+  padding: 10px;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--sky) 70%, transparent);
+}
+.pbk-live-call-whisper > div,
+.pbk-live-call-whisper > div span {
+  display: flex;
+  align-items: center;
+}
+.pbk-live-call-whisper > div {
+  justify-content: space-between;
+  gap: 8px;
+}
+.pbk-live-call-whisper > div span {
+  gap: 5px;
+  color: var(--sky);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+.pbk-live-call-whisper small {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 7px;
+}
+.pbk-live-call-whisper strong {
+  display: block;
+  margin-top: 7px;
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.pbk-live-call-whisper p {
+  margin: 5px 0 0;
+  color: var(--text-tertiary);
+  font-size: 8px;
+  line-height: 1.45;
 }
 .pbk-live-call-transcript {
   margin-top: 9px;

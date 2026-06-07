@@ -11,13 +11,48 @@ assert(
 );
 
 assert(
-  /const\s+incomingAuthorization\s*=\s*getHeader\(event,\s*['"]authorization['"]\)/i.test(source),
-  'Netlify bridge proxy must detect caller Authorization before injecting fallback auth.',
+  /async function verifyTeamSession/.test(source),
+  'Netlify bridge proxy must verify the PBK team session before attaching bridge authority.',
 );
 
 assert(
-  /if\s*\(\s*!\s*incomingAuthorization\s*&&\s*bridgeApiKey\s*\)/.test(source),
-  'Netlify bridge proxy must inject bridge auth only when the caller did not provide Authorization.',
+  /decodeURIComponent\(raw\)/.test(source) &&
+    /segment === ['"]\.\.['"]/.test(source) &&
+    /invalid_proxy_path/.test(source),
+  'Netlify bridge proxy must reject encoded traversal before deciding whether a route is public.',
+);
+
+assert(
+  /if\s*\(\s*!isPublicProxyRequest\(event\.httpMethod,\s*targetPath\)\s*\)[\s\S]*verifyTeamSession/.test(source),
+  'Protected proxy requests must be rejected until the team session verifies.',
+);
+
+assert(
+  /function authorizeTeamRequest/.test(source) &&
+    /canDeleteData/.test(source) &&
+    /canSendContracts/.test(source) &&
+    /canToggleKillSwitch/.test(source) &&
+    /canChangeGuardrails/.test(source) &&
+    /team_permission_denied/.test(source),
+  'Verified team permissions must be enforced before the bridge key is attached upstream.',
+);
+assert(
+  /normalizedPath === ['"]\/api\/underwriting\/sign['"]/.test(source),
+  'The underwriting sign route must require contract-send permission.',
+);
+assert(
+  /\/api\\\/settings\(\?:\\\/\|\$\)/.test(source) &&
+    /\/api\\\/desktop-sidecar\\\/command/.test(source),
+  'Team sessions must not mutate settings or issue desktop-sidecar commands.',
+);
+
+const publicReadPaths = source.slice(
+  source.indexOf('const PUBLIC_PROXY_READ_PATHS'),
+  source.indexOf('const PUBLIC_PROXY_POST_PATHS'),
+);
+assert(
+  !/\/api\/(leads|deals|skills|observability)\//.test(publicReadPaths),
+  'Operational analytics and seller data must remain behind the PBK team session.',
 );
 
 assert(
@@ -26,8 +61,20 @@ assert(
 );
 
 assert(
+  !/FORWARDED_REQUEST_HEADERS[\s\S]{0,220}['"]authorization['"]/.test(source),
+  'The proxy must not forward caller-supplied Authorization headers upstream.',
+);
+
+assert(
   /headers\['X-PBK-Netlify-Proxy'\]\s*=\s*['"]pbk-bridge-proxy['"]/.test(source),
   'Netlify bridge proxy should continue tagging proxied requests.',
+);
+
+assert(
+  /x-ratelimit-limit/.test(source) &&
+    /x-ratelimit-remaining/.test(source) &&
+    /retry-after/.test(source),
+  'Rate-limit response headers must survive the Netlify proxy.',
 );
 
 console.log(JSON.stringify({ ok: true, result: 'netlify_bridge_proxy_auth_smoke_ready' }, null, 2));

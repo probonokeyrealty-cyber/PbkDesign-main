@@ -11,7 +11,16 @@ type RuntimeConfig = {
   apiKey?: string;
 };
 
+export type RuntimeTeamSession = {
+  token: string;
+  role: string;
+  actor: string;
+  expiresAt: string;
+  permissions?: Record<string, unknown>;
+};
+
 const DEFAULT_HOSTED_BRIDGE_ENDPOINT = 'https://pbk-openclaw-bridge.onrender.com';
+const RUNTIME_TEAM_SESSION_KEY = 'pbk:team-session:v1';
 let avaSnnWorker: Worker | null = null;
 let rexSnnWorker: Worker | null = null;
 
@@ -915,8 +924,40 @@ function getEnvRuntimeConfig(): RuntimeConfig | null {
     env.VITE_PBK_BRIDGE_URL || env.VITE_PBK_OPENCLAW_URL || env.VITE_PBK_OPENCLAW_ENDPOINT;
   if (!endpoint) return null;
 
-  const apiKey = env.VITE_PBK_BRIDGE_API_KEY || env.VITE_PBK_OPENCLAW_API_KEY;
+  const apiKey = env.DEV ? env.VITE_PBK_BRIDGE_API_KEY || env.VITE_PBK_OPENCLAW_API_KEY : undefined;
   return apiKey ? { endpoint, apiKey } : { endpoint };
+}
+
+export function getRuntimeTeamSession(): RuntimeTeamSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(RUNTIME_TEAM_SESSION_KEY);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as RuntimeTeamSession;
+    if (!session?.token || !session.expiresAt || Date.parse(session.expiresAt) <= Date.now()) {
+      window.localStorage.removeItem(RUNTIME_TEAM_SESSION_KEY);
+      return null;
+    }
+    return session;
+  } catch {
+    window.localStorage.removeItem(RUNTIME_TEAM_SESSION_KEY);
+    return null;
+  }
+}
+
+export function clearRuntimeTeamSession() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(RUNTIME_TEAM_SESSION_KEY);
+}
+
+function saveRuntimeTeamSession(session: RuntimeTeamSession) {
+  if (typeof window === 'undefined') return session;
+  window.localStorage.setItem(RUNTIME_TEAM_SESSION_KEY, JSON.stringify(session));
+  return session;
+}
+
+export function isRuntimeTeamAuthRequired() {
+  return isNetlifyHostedRuntimeShell();
 }
 
 export function getRuntimeConfig(): RuntimeConfig {
@@ -982,6 +1023,9 @@ function isAuthOptionalRuntimePath(path = '') {
     normalized === '/api/v1/skills/outcomes' ||
     normalized === '/api/skills/trends' ||
     normalized === '/api/v1/skills/trends' ||
+    normalized === '/api/auth/team' ||
+    normalized === '/api/auth/team/status' ||
+    normalized === '/api/auth/team/verify' ||
     normalized.startsWith('/api/public/')
   );
 }
@@ -992,7 +1036,7 @@ function hasServerSideRuntimeAuth() {
   const config = getRuntimeConfig();
   const endpoint = String(config.endpoint || '').replace(/\/+$/g, '');
   const origin = String(window.location.origin || '').replace(/\/+$/g, '');
-  return endpoint === origin;
+  return endpoint === origin && Boolean(getRuntimeTeamSession());
 }
 
 function hasLocalDevProxyAuth() {
@@ -1063,6 +1107,8 @@ export function buildRuntimeHeaders({
   };
   if (json) headers['Content-Type'] = 'application/json';
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+  const teamSession = getRuntimeTeamSession();
+  if (teamSession?.token) headers['X-PBK-Team-Token'] = teamSession.token;
   return headers;
 }
 
@@ -1099,7 +1145,7 @@ export async function bridgeRequest<T = unknown>({
   let response: Response;
   try {
     response = await fetch(requestUrl, init);
-    if (await shouldRetryRuntimeViaHosted(response, requestUrl)) {
+    if (await shouldRetryRuntimeViaHosted(response, requestUrl, path)) {
       const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
       if (fallbackUrl) response = await fetch(fallbackUrl, init);
     }
@@ -1151,7 +1197,8 @@ function buildHostedRuntimeFallbackUrl(url = '') {
   }
 }
 
-async function shouldRetryRuntimeViaHosted(response: Response, url = '') {
+async function shouldRetryRuntimeViaHosted(response: Response, url = '', path = '') {
+  if (!isAuthOptionalRuntimePath(path)) return false;
   if (!buildHostedRuntimeFallbackUrl(url)) return false;
   if (response.status !== 503) return false;
   const text = await response
@@ -1159,6 +1206,64 @@ async function shouldRetryRuntimeViaHosted(response: Response, url = '') {
     .text()
     .catch(() => '');
   return /usage_exceeded/i.test(text) || /Usage exceeded/i.test(text);
+}
+
+export async function fetchTeamAuthStatusRequest() {
+  return bridgeRequest<{
+    ok: boolean;
+    configured: boolean;
+    sessionTtlMs?: number;
+    permissions?: Record<string, unknown>;
+  }>({
+    path: '/api/auth/team/status',
+  });
+}
+
+export async function authenticateTeamSessionRequest(body: { passcode: string; actor?: string }) {
+  const response = await bridgeRequest<RuntimeTeamSession & { ok: boolean }>({
+    method: 'POST',
+    path: '/api/auth/team',
+    body,
+  });
+  if (!response.ok || !response.token) {
+    throw new Error('PBK team session could not be created.');
+  }
+  return saveRuntimeTeamSession({
+    token: response.token,
+    role: response.role || 'team',
+    actor: response.actor || body.actor || 'PBK team',
+    expiresAt: response.expiresAt,
+    permissions: response.permissions,
+  });
+}
+
+export async function verifyRuntimeTeamSessionRequest() {
+  const session = getRuntimeTeamSession();
+  if (!session) return null;
+  try {
+    const verified = await bridgeRequest<{
+      ok: boolean;
+      role?: string;
+      actor?: string;
+      expiresAt?: string;
+      permissions?: Record<string, unknown>;
+    }>({
+      method: 'POST',
+      path: '/api/auth/team/verify',
+      body: {},
+    });
+    if (!verified.ok) throw new Error('Team session verification failed.');
+    return saveRuntimeTeamSession({
+      ...session,
+      role: verified.role || session.role,
+      actor: verified.actor || session.actor,
+      expiresAt: verified.expiresAt || session.expiresAt,
+      permissions: verified.permissions || session.permissions,
+    });
+  } catch {
+    clearRuntimeTeamSession();
+    return null;
+  }
 }
 
 export async function invokeRuntimeTool<T = unknown>(

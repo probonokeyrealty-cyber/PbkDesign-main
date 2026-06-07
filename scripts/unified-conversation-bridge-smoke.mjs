@@ -190,6 +190,11 @@ assert(
     ),
   'GET /api/conversations/:threadId/timeline must guard canonical existence and pass workspace.'
 );
+assert(
+  /store\.getThreadContactIdentities\(thread\.id/.test(conversationRoutes) &&
+    /recipientSummary/.test(conversationRoutes),
+  'Conversation detail must expose canonical phone/email context for the sender-aware composer.'
+);
 
 assert(
   /matchPath\(pathname,\s*'\/api\/conversations\/:threadId'\)/.test(conversationRoutes) &&

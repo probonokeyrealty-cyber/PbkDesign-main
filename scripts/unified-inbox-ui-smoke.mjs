@@ -9,6 +9,8 @@ const unifiedInboxPath = resolve(root, 'src/app/routes/UnifiedInbox.tsx');
 const threadRailPath = resolve(root, 'src/app/components/inbox/ConversationThreadRail.tsx');
 const timelinePath = resolve(root, 'src/app/components/inbox/ConversationTimeline.tsx');
 const inspectorPath = resolve(root, 'src/app/components/inbox/LeadContextInspector.tsx');
+const composerPath = resolve(root, 'src/app/components/inbox/ConversationComposer.tsx');
+const senderSelectPath = resolve(root, 'src/app/components/inbox/SenderIdentitySelect.tsx');
 const cssPath = resolve(root, 'src/styles/pbk-components.css');
 const netlifyPath = resolve(root, 'netlify.toml');
 
@@ -65,7 +67,14 @@ assert(
 assert(inbox.includes('New message') || inbox.includes('Compose'), 'Inbox must retain compose.');
 assert(inbox.includes('Refresh'), 'Inbox must retain refresh.');
 
-for (const path of [unifiedInboxPath, threadRailPath, timelinePath, inspectorPath]) {
+for (const path of [
+  unifiedInboxPath,
+  threadRailPath,
+  timelinePath,
+  inspectorPath,
+  composerPath,
+  senderSelectPath,
+]) {
   assert(existsSync(path), `${path.split(/[\\/]/).at(-1)} must exist.`);
 }
 
@@ -74,9 +83,12 @@ const unifiedInbox = readFileSync(unifiedInboxPath, 'utf8');
 const threadRail = readFileSync(threadRailPath, 'utf8');
 const timeline = readFileSync(timelinePath, 'utf8');
 const inspector = readFileSync(inspectorPath, 'utf8');
+const composer = readFileSync(composerPath, 'utf8');
+const senderSelect = readFileSync(senderSelectPath, 'utf8');
 const css = readFileSync(cssPath, 'utf8');
 const netlify = readFileSync(netlifyPath, 'utf8');
 const combined = `${unifiedInbox}\n${threadRail}\n${timeline}\n${inspector}`;
+const composerCombined = `${composer}\n${senderSelect}`;
 
 assert(
   /const UnifiedInbox = lazy\(/.test(router) &&
@@ -128,6 +140,108 @@ assert(
 assert(
   timeline.includes('onLatestSeen') && timeline.includes('atBottomRef'),
   'Read state must be driven by the operator reaching the newest timeline event.'
+);
+assert(
+  /aria-label="Message channel"/.test(composer) &&
+    /aria-pressed=\{channel === 'sms'\}/.test(composer) &&
+    /aria-pressed=\{channel === 'email'\}/.test(composer),
+  'Composer must expose an accessible SMS/email segmented control.'
+);
+for (const requiredCopy of [
+  'From',
+  'Telnyx',
+  'Instantly',
+  'Recommended',
+  'Send later',
+  'Ava mic',
+  'Refine with Ava',
+  'Smart replies',
+]) {
+  assert(
+    composerCombined.includes(requiredCopy),
+    `Sender-aware composer must include "${requiredCopy}".`
+  );
+}
+for (const endpointHelper of [
+  'fetchSenderIdentitiesRequest',
+  'fetchSenderRecommendationRequest',
+  'fetchReplyTemplatesRequest',
+  'refineConversationDraftRequest',
+  'sendConversationMessageRequest',
+]) {
+  assert(
+    composer.includes(endpointHelper),
+    `Composer must use bridge helper ${endpointHelper}.`
+  );
+}
+assert(
+  /recognition\.onresult[\s\S]*setBody\(transcript\)/.test(composer) &&
+    !/recognition\.onresult[\s\S]{0,450}sendMessage/.test(composer),
+  'Speech recognition may edit the draft but must never send automatically.'
+);
+assert(
+  /setBody\(response\.refinedDraft\)/.test(composer) &&
+    !/refineDraft[\s\S]{0,900}sendConversationMessageRequest/.test(composer),
+  'Ava refinement must remain editable and must never auto-send.'
+);
+assert(
+  /selectedSender\?\.channel === channel/.test(composer) &&
+    /!senderLoading/.test(composer),
+  'Channel changes must not allow a stale sender identity to submit a message.'
+);
+assert(
+  /submittedFingerprint/.test(composer) &&
+    /exactMessageAlreadyQueued/.test(composer),
+  'A queued approval or scheduled message must not be submitted twice without an edit.'
+);
+assert(
+  /bodyRef\.current === requestedBody/.test(composer) &&
+    /channelRef\.current === requestedChannel/.test(composer) &&
+    /bodyRef\.current\.trim\(\) === submittedBody/.test(composer),
+  'Late Ava and provider responses must preserve newer operator edits.'
+);
+assert(
+  /recommendationGuard/.test(composer) &&
+    /if \(!recommended\) return ''/.test(composer) &&
+    /reasonCodes/.test(composer),
+  'A fail-closed sender recommendation must not fall back to an arbitrary identity.'
+);
+assert(
+  /const \[notice, setNotice\]/.test(composer) &&
+    /const \[sendOutcome, setSendOutcome\]/.test(composer),
+  'Provider send outcomes must remain independent from dismissible composer notices.'
+);
+assert(
+  /aria-describedby=/.test(composer) &&
+    /conversation-send-requirement/.test(composer),
+  'Disabled Send controls must expose their reason to assistive technology.'
+);
+assert(
+  senderSelect.includes('POST /api/conversations/:threadId/sender-recommendation'),
+  'Sender selector must identify the bridge endpoint that ranks its recommendation.'
+);
+for (const action of [
+  'Copy',
+  'Mark important',
+  'Report spam',
+  'Delete',
+  'toastUndo',
+  'restoreConversationEventRequest',
+]) {
+  assert(timeline.includes(action), `Timeline event menus must include ${action}.`);
+}
+assert(
+  /onPointerDown=\{startLongPress\}/.test(timeline) &&
+    /const spamEligible = message && !outbound/.test(timeline),
+  'Touch long-press must open the same menu, with spam reporting limited to inbound messages.'
+);
+assert(
+  css.includes('.pbk-conversation-composer') &&
+    css.includes('.pbk-sender-select-trigger') &&
+    css.includes('env(safe-area-inset-bottom)') &&
+    css.includes('max-height: min(58dvh, 520px)') &&
+    css.includes('overflow-y: auto'),
+  'Composer and sender selector must have responsive safe-area styles.'
 );
 
 console.log('unified-inbox-ui-smoke: ok');

@@ -14,6 +14,7 @@ import {
 import { useSearchParams } from 'react-router';
 import { ConversationThreadRail, type ConversationFilter } from '../components/inbox/ConversationThreadRail';
 import { ConversationTimeline } from '../components/inbox/ConversationTimeline';
+import { ConversationComposer } from '../components/inbox/ConversationComposer';
 import { LeadContextInspector } from '../components/inbox/LeadContextInspector';
 import {
   fetchConversationRequest,
@@ -99,6 +100,10 @@ export function UnifiedInbox() {
   );
 
   const [selectedThread, setSelectedThread] = useState<ConversationThread | null>(null);
+  const [recipientSummary, setRecipientSummary] = useState<{
+    phone?: string;
+    email?: string;
+  } | null>(null);
   const [timeline, setTimeline] = useState<ConversationEvent[]>([]);
   const [timelineCursor, setTimelineCursor] = useState<string | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -222,6 +227,7 @@ export function UnifiedInbox() {
         setTimelineCursor(null);
         setTimelineLoading(false);
         setTimelineError('');
+        setRecipientSummary(null);
         setLeadDetail(null);
         return;
       }
@@ -243,6 +249,7 @@ export function UnifiedInbox() {
         }
         const thread = threadResponse.thread || null;
         setSelectedThread(thread);
+        setRecipientSummary(threadResponse.recipientSummary || null);
         setTimeline((current) => {
           if (!quiet) return timelineResponse.items || [];
           const merged = new Map(current.map((event) => [event.id, event]));
@@ -568,7 +575,18 @@ export function UnifiedInbox() {
             onLoadMore={() => void loadEarlierTimeline()}
             onOpenProfile={() => setProfileOpen(true)}
             onLatestSeen={() => void markSelectedThreadRead()}
+            onEventChanged={() => void loadSelectedThread()}
           />
+          {selectedThread && (
+            <ConversationComposer
+              key={selectedThread.id}
+              thread={selectedThread}
+              lead={leadDetail}
+              recipientSummary={recipientSummary}
+              events={timeline}
+              onSent={() => void loadSelectedThread({ quiet: true })}
+            />
+          )}
         </div>
 
         <LeadContextInspector

@@ -955,9 +955,20 @@ function hasServerSideRuntimeAuth() {
   return endpoint === origin;
 }
 
+function hasLocalDevProxyAuth() {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return false;
+  const host = String(window.location.hostname || '').toLowerCase();
+  if (host !== '127.0.0.1' && host !== 'localhost') return false;
+  const config = getRuntimeConfig();
+  const endpoint = String(config.endpoint || '').replace(/\/+$/g, '');
+  const origin = String(window.location.origin || '').replace(/\/+$/g, '');
+  return endpoint === origin;
+}
+
 function assertRuntimeAuthConfigured(path = '') {
   if (isAuthOptionalRuntimePath(path)) return;
   if (hasServerSideRuntimeAuth()) return;
+  if (hasLocalDevProxyAuth()) return;
   const config = getRuntimeConfig();
   if (config.apiKey) return;
   throw new Error(
@@ -1052,6 +1063,11 @@ export async function bridgeRequest<T = unknown>({
       const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
       if (fallbackUrl) response = await fetch(fallbackUrl, init);
     }
+  } catch (error) {
+    if (timeoutController.signal.aborted) {
+      throw new Error('PBK bridge request timed out after 15 seconds.');
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -1901,6 +1917,10 @@ export type ConversationDetailResponse = {
   thread?: ConversationThread | null;
   leadSummary?: Record<string, unknown> | null;
   senderSummary?: Record<string, unknown> | null;
+  recipientSummary?: {
+    phone?: string;
+    email?: string;
+  } | null;
   error?: string;
 };
 

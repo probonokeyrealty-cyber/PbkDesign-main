@@ -10,15 +10,43 @@ import {
   Loader2,
   Mail,
   MessageSquare,
+  MoreHorizontal,
   Phone,
   Play,
   RefreshCw,
   ShieldCheck,
   StickyNote,
+  Copy,
+  Flag,
+  Trash2,
 } from 'lucide-react';
 import { PbkDataSource } from '../../../components/pbk/index';
-import type { ConversationEvent, ConversationThread } from '../../utils/runtimeBridge';
+import {
+  patchConversationEventRequest,
+  reportConversationEventSpamRequest,
+  restoreConversationEventRequest,
+  type ConversationEvent,
+  type ConversationThread,
+} from '../../utils/runtimeBridge';
+import { showUiToast, toastUndo } from '../../utils/uiFeedback';
 import { groupConversationEventsByDay } from '../../routes/conversationRuntimeLogic.js';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../ui/alert-dialog';
 
 type ConversationTimelineProps = {
   thread?: ConversationThread | null;
@@ -31,6 +59,7 @@ type ConversationTimelineProps = {
   onLoadMore: () => void;
   onOpenProfile: () => void;
   onLatestSeen: () => void;
+  onEventChanged: () => void;
 };
 
 function record(value: unknown) {
@@ -104,14 +133,21 @@ function getTranscriptSegments(event: ConversationEvent) {
 
 function ConversationEventRow({
   event,
+  onEventChanged,
 }: {
   event: ConversationEvent;
+  onEventChanged: () => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const longPressTimerRef = useRef<number | null>(null);
   const kind = eventKind(event);
   const message = kind === 'sms' || kind === 'email';
   const outbound = text(event.direction).toLowerCase() === 'outbound';
+  const spamEligible = message && !outbound;
   const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmSpam, setConfirmSpam] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
   const recordingUrl = getRecordingUrl(event);
   const transcriptSegments = getTranscriptSegments(event);
   const body = text(event.body || event.subject, 'Activity recorded');
@@ -122,12 +158,178 @@ function ConversationEventRow({
     void audioRef.current.play();
   };
 
+  const clearLongPress = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const startLongPress = () => {
+    clearLongPress();
+    longPressTimerRef.current = window.setTimeout(() => {
+      setMenuOpen(true);
+      longPressTimerRef.current = null;
+    }, 550);
+  };
+
+  useEffect(
+    () => () => {
+      clearLongPress();
+    },
+    []
+  );
+
+  const copyEvent = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        [event.subject, event.body].map((value) => text(value)).filter(Boolean).join('\n')
+      );
+      showUiToast({ tone: 'success', title: 'Copied to clipboard' });
+    } catch {
+      showUiToast({ tone: 'error', title: 'Copy failed' });
+    }
+  };
+
+  const markImportant = async () => {
+    setActionPending(true);
+    try {
+      await patchConversationEventRequest(event.id, { important: true });
+      onEventChanged();
+      showUiToast({ tone: 'success', title: 'Marked important' });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Could not mark important',
+        desc: error instanceof Error ? error.message : 'The bridge rejected the update.',
+      });
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const softDelete = async () => {
+    setActionPending(true);
+    try {
+      await patchConversationEventRequest(event.id, { hidden: true });
+      onEventChanged();
+      toastUndo({
+        title: 'Activity removed from this timeline',
+        desc: 'The event is soft-deleted and can be restored.',
+        undo: async () => {
+          await restoreConversationEventRequest(event.id);
+          onEventChanged();
+        },
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Could not remove activity',
+        desc: error instanceof Error ? error.message : 'The bridge rejected the update.',
+      });
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const reportSpam = async () => {
+    if (!spamEligible) return;
+    setActionPending(true);
+    try {
+      await reportConversationEventSpamRequest(event.id, {
+        reason: 'Reported by PBK operator from unified inbox',
+        actor: 'PBK operator',
+      });
+      onEventChanged();
+      showUiToast({
+        tone: 'warning',
+        title: 'Reported as spam',
+        desc: 'PBK recorded the report. Explicit opt-outs are also added to DNC.',
+      });
+    } catch (error) {
+      showUiToast({
+        tone: 'error',
+        title: 'Spam report failed',
+        desc: error instanceof Error ? error.message : 'The bridge rejected the report.',
+      });
+    } finally {
+      setActionPending(false);
+      setConfirmSpam(false);
+    }
+  };
+
+  const eventMenu = (
+    <>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="pbk-conversation-event-menu-trigger"
+            aria-label="Open activity actions"
+          >
+            {actionPending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <MoreHorizontal size={15} />
+            )}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="pbk-conversation-event-menu">
+          <DropdownMenuItem onSelect={() => void copyEvent()}>
+            <Copy />
+            Copy
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void markImportant()}>
+            <Flag />
+            Mark important
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {spamEligible && (
+            <DropdownMenuItem onSelect={() => setConfirmSpam(true)}>
+              <ShieldCheck />
+              Report spam
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem variant="destructive" onSelect={() => void softDelete()}>
+            <Trash2 />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {spamEligible && (
+        <AlertDialog open={confirmSpam} onOpenChange={setConfirmSpam}>
+          <AlertDialogContent className="pbk-conversation-confirm-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Report this inbound message as spam?</AlertDialogTitle>
+              <AlertDialogDescription>
+                PBK will keep an audit record. If this message contains an explicit opt-out, the
+                seller phone is added to DNC.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => void reportSpam()}>
+                <ShieldCheck size={14} />
+                Report spam
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </>
+  );
+
   if (message) {
     return (
       <article
         className={`pbk-conversation-bubble ${outbound ? 'outbound' : 'inbound'}`}
         aria-label={`${outbound ? 'Outbound' : 'Inbound'} ${kind}`}
+        onPointerDown={startLongPress}
+        onPointerUp={clearLongPress}
+        onPointerCancel={clearLongPress}
+        onPointerMove={clearLongPress}
       >
+        {eventMenu}
         {event.subject && <div className="pbk-conversation-subject">{event.subject}</div>}
         <div className="pbk-conversation-body">{body}</div>
         <div className="pbk-conversation-event-meta">
@@ -142,7 +344,14 @@ function ConversationEventRow({
   }
 
   return (
-    <article className={`pbk-conversation-event-row ${kind}`}>
+    <article
+      className={`pbk-conversation-event-row ${kind}`}
+      onPointerDown={startLongPress}
+      onPointerUp={clearLongPress}
+      onPointerCancel={clearLongPress}
+      onPointerMove={clearLongPress}
+    >
+      {eventMenu}
       <span className="pbk-conversation-event-icon">
         <EventIcon kind={kind} />
       </span>
@@ -210,6 +419,7 @@ export function ConversationTimeline({
   onLoadMore,
   onOpenProfile,
   onLatestSeen,
+  onEventChanged,
 }: ConversationTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
@@ -301,7 +511,11 @@ export function ConversationTimeline({
                 <span>{group.label}</span>
               </div>
               {group.events.map((event) => (
-                <ConversationEventRow key={event.id} event={event} />
+                <ConversationEventRow
+                  key={event.id}
+                  event={event}
+                  onEventChanged={onEventChanged}
+                />
               ))}
             </div>
           ))}

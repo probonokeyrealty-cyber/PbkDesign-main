@@ -59438,13 +59438,17 @@ const server = createServer(async (request, response) => {
             thread: null,
             leadSummary: null,
             senderSummary: null,
+            recipientSummary: null,
             error: 'Conversation thread not found.',
           });
           return;
         }
-        const [leadSummary, senderSummary] = await Promise.all([
+        const [leadSummary, senderSummary, recipientSummary] = await Promise.all([
           buildConversationLeadSummary(pool, thread),
           buildConversationSenderSummary(store, thread),
+          store.getThreadContactIdentities(thread.id, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          }),
         ]);
         json(response, 200, {
           ok: true,
@@ -59452,6 +59456,7 @@ const server = createServer(async (request, response) => {
           thread,
           leadSummary,
           senderSummary,
+          recipientSummary,
         });
       } catch (error) {
         sendConversationStoreError(response, error, 'Unable to load the conversation thread.');

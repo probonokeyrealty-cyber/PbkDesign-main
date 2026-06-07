@@ -149,6 +149,15 @@ assert(
   'Conversation list and timeline filters must use URLSearchParams.'
 );
 assert(
+  /function hasLocalDevProxyAuth\(\)/.test(source) &&
+    /if \(hasLocalDevProxyAuth\(\)\) return;/.test(source),
+  'Protected local development requests must be allowed through the authenticated Vite proxy.'
+);
+assert(
+  /PBK bridge request timed out after 15 seconds\./.test(source),
+  'Bridge timeouts must surface an operator-readable error instead of a raw AbortSignal message.'
+);
+assert(
   /\['activity', activity\]/.test(helperFunctionSource('fetchConversationsRequest')),
   'Conversation lists must send server-side live and approval activity filters.'
 );

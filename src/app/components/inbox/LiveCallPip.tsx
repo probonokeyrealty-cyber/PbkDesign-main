@@ -209,6 +209,9 @@ function readOperatorWhisper(call: RuntimeCall) {
     text: whisperText,
     reason: text(whisper.reason || whisper.rule),
     confidence: confidence == null ? null : Math.round(Math.max(0, Math.min(1, confidence)) * 100),
+    confidenceBand: text(whisper.confidenceBand || whisper.confidence_band).toLowerCase(),
+    responseMode: text(whisper.responseMode || whisper.response_mode).toLowerCase(),
+    checking: Boolean(whisper.checking || whisper.shouldVerify || whisper.should_verify),
     approvalNeeded: Boolean(whisper.approvalNeeded || whisper.approval_needed),
   };
 }
@@ -435,7 +438,9 @@ export function LiveCallPip({
 
           {operatorWhisper && (
             <section
-              className="pbk-live-call-whisper"
+              className={`pbk-live-call-whisper ${
+                operatorWhisper.checking ? 'is-checking' : ''
+              }`.trim()}
               aria-label="Private Ava operator coaching"
               aria-live="polite"
             >
@@ -445,17 +450,42 @@ export function LiveCallPip({
                   Ava whisper
                 </span>
                 <small>
-                  {operatorWhisper.confidence == null
-                    ? 'Live guidance'
-                    : `${operatorWhisper.confidence}% confidence`}
+                  {operatorWhisper.checking ? (
+                    <>
+                      <Loader2 className="animate-spin" />
+                      Ava is checking
+                    </>
+                  ) : operatorWhisper.confidence == null ? (
+                    'Live guidance'
+                  ) : (
+                    `${operatorWhisper.confidence}% confidence`
+                  )}
                 </small>
               </div>
               <strong>{operatorWhisper.text}</strong>
-              {(operatorWhisper.reason || operatorWhisper.approvalNeeded) && (
+              {(operatorWhisper.reason ||
+                operatorWhisper.confidenceBand ||
+                operatorWhisper.responseMode ||
+                operatorWhisper.approvalNeeded) && (
                 <p>
                   {operatorWhisper.reason}
+                  {operatorWhisper.confidenceBand
+                    ? `${operatorWhisper.reason ? ' · ' : ''}${operatorWhisper.confidenceBand} evidence confidence`
+                    : ''}
+                  {operatorWhisper.responseMode &&
+                  !['proceed', 'boundary'].includes(operatorWhisper.responseMode)
+                    ? `${
+                        operatorWhisper.reason || operatorWhisper.confidenceBand ? ' · ' : ''
+                      }Mode: ${operatorWhisper.responseMode}`
+                    : ''}
                   {operatorWhisper.approvalNeeded
-                    ? `${operatorWhisper.reason ? ' · ' : ''}Approval required before action`
+                    ? `${
+                        operatorWhisper.reason ||
+                        operatorWhisper.confidenceBand ||
+                        operatorWhisper.responseMode
+                          ? ' · '
+                          : ''
+                      }Approval required before action`
                     : ''}
                 </p>
               )}

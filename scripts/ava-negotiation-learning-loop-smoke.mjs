@@ -48,6 +48,25 @@ assert(
   'Call finalization must create coaching and close selected-script outcomes.'
 );
 assert(
+  /source:\s*['"]post-call-coaching['"]/.test(bridge) &&
+    /projector:\s*projectActivityEvent/.test(bridge) &&
+    /conversationProjection/.test(bridge),
+  'Post-call coaching must project into the canonical seller conversation timeline.'
+);
+assert(
+  /await recordPostCallLearningFromTranscript\(\{[\s\S]*contextCall:\s*finalizedCall \|\| contextCall/.test(
+    bridge
+  ),
+  'Deepgram finalization must await idempotent post-call coaching before the call session is persisted as complete.'
+);
+assert(
+  /projector:\s*projectCallEvent[\s\S]*kind:\s*['"]completed['"][\s\S]*source:\s*['"]telnyx-deepgram-finalize['"]/.test(
+    bridge
+  ) &&
+    /const durationSeconds =[\s\S]*Date\.parse\(endedAt\)/.test(bridge),
+  'Deepgram finalization must enrich and reproject the deterministic completed-call event with final duration and transcript context.'
+);
+assert(
   /contextAwareScriptHistory/.test(bridge) &&
     /pbk_script_outcome_events/.test(bridge),
   'Live selections must be retained and outcomes must be idempotent.'

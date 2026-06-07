@@ -153,6 +153,18 @@ assert(
   'Read state must be driven by the operator reaching the newest timeline event.'
 );
 assert(
+  unifiedInbox.includes("document.addEventListener('visibilitychange'") &&
+    unifiedInbox.includes("window.addEventListener('focus'"),
+  'Unread state must retry when the operator returns to a visible inbox tab.'
+);
+assert(
+  timeline.includes('pbk-conversation-call-summary') &&
+    timeline.includes('formatCallDuration') &&
+    timeline.includes('getCallSentiment') &&
+    timeline.includes('pbk-conversation-coaching-tip'),
+  'Unified inbox calls must show compact duration, sentiment, summary, and coaching cards.'
+);
+assert(
   /aria-label="Message channel"/.test(composer) &&
     /aria-pressed=\{channel === 'sms'\}/.test(composer) &&
     /aria-pressed=\{channel === 'email'\}/.test(composer),
@@ -327,9 +339,21 @@ assert(
   css.includes('.pbk-conversation-composer') &&
     css.includes('.pbk-sender-select-control') &&
     css.includes('env(safe-area-inset-bottom)') &&
-    css.includes('max-height: min(58dvh, 520px)') &&
+    css.includes('--pbk-conversation-viewport-height') &&
+    unifiedInbox.includes('window.visualViewport') &&
     css.includes('overflow-y: auto'),
-  'Composer and sender selector must have responsive safe-area styles.'
+  'Composer and sender selector must respond to mobile keyboard and safe-area geometry.'
+);
+assert(
+  composer.includes('pbk-composer-scroll-body') &&
+    /\.pbk-composer-scroll-body\s*\{[\s\S]*?overflow-y:\s*auto/.test(css),
+  'The mobile composer must scroll its controls independently from its send footer.'
+);
+assert(
+  /\.pbk-conversation-composer\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/.test(
+    css
+  ),
+  'The mobile composer must reserve stable rows for Send and its data-source label.'
 );
 assert(
   unifiedInbox.includes('useRuntimeSnapshot') &&

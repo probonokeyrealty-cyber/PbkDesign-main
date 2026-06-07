@@ -53,10 +53,24 @@ assert.equal(missingMaoOffer.blocked, false, 'Missing MAO should not hard-block 
 assert.equal(missingMaoOffer.approvalRequired, true, 'Missing MAO should force approval/review.');
 assert(missingMaoOffer.warnings.some((item) => item.code === 'mao_missing'), 'Missing MAO warning should be explicit.');
 
+const distressedSellerOffer = validateProviderActionSafety('sendDocuSign', {
+  finalOffer: 90000,
+  mao: 100000,
+  emotion: 'anger',
+});
+
+assert.equal(distressedSellerOffer.blocked, false, 'Seller emotion should route to review instead of hard-blocking.');
+assert.equal(distressedSellerOffer.result, 'safety_review_required');
+assert(
+  distressedSellerOffer.warnings.some((item) => item.code === 'emotion_requires_review'),
+  'Emotion review warning should be explicit.',
+);
+
 console.log('safety-validator smoke passed', {
   safeOffer: safeOffer.result,
   highOffer: highOffer.result,
   dncCall: dncCall.result,
   afterHoursCall: afterHoursCall.result,
   missingConsentCall: missingConsentCall.result,
+  distressedSellerOffer: distressedSellerOffer.result,
 });

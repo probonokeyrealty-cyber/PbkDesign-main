@@ -8,6 +8,7 @@ const sidebar = readFileSync(resolve(root, 'src/app/shell/Sidebar.tsx'), 'utf8')
 const layout = readFileSync(resolve(root, 'src/app/shell/ParadiseLayout.tsx'), 'utf8');
 const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
 const campaigns = readFileSync(resolve(root, 'src/app/routes/Campaigns.tsx'), 'utf8');
+const styles = readFileSync(resolve(root, 'src/styles/pbk-components.css'), 'utf8');
 const dataMap = readFileSync(resolve(root, 'docs/modern-shell-bridge-data-map.md'), 'utf8');
 
 function assert(condition, message) {
@@ -47,5 +48,11 @@ assert(/fetchCampaignsRequest/.test(campaigns), 'Campaigns page must read live c
 assert(/createCampaignRequest/.test(campaigns), 'Campaign wizard must create campaigns through the bridge.');
 assert(/requestCampaignApprovalRequest/.test(campaigns), 'Campaign launch must request bridge approval.');
 assert(!/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|Diane Kowalski|Marco Hill|Lena Brooks/.test(campaigns), 'Campaigns page must not ship hardcoded seller/campaign mock data.');
+assert(
+  /@media \(max-width: 560px\)[\s\S]*?\.pbk-wiz-foot \.nav-btns[\s\S]*?grid-template-columns: 1fr[\s\S]*?min-height: 44px/.test(
+    styles
+  ),
+  'Campaign wizard actions must stay fully visible and touch-sized on narrow mobile screens.'
+);
 
 console.log('campaigns-shell-smoke: ok');

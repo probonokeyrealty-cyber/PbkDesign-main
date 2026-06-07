@@ -239,6 +239,27 @@ assert(
     /mapConversationLeadSummary\(bridgeLead,\s*'bridge_state'\)/.test(bridge),
   'Conversation detail must load lead summaries from Postgres with a real bridge-state fallback.'
 );
+assert(
+  /SELECT l\.id,[\s\S]*l\.stage,[\s\S]*FROM public\.lead_profiles l/.test(bridge) &&
+    /FROM public\.lead_profiles l[\s\S]*l\.workspace_id = 'pbk'/.test(bridge) &&
+    /source:\s*'supabase-lead-profiles'/.test(bridge) &&
+    /Stage: \$\{lead\.stage \|\| 'unknown'\}/.test(bridge),
+  'Inbound Ava calls must read canonical lead_profiles and keep workflow stage distinct from status.'
+);
+assert(
+  /const persistence = await persistLeadProfileRowToDb\(nextLead, 'instantly-reply'\)/.test(
+    bridge
+  ) &&
+    /!persistence\.ok && STATE_BACKEND === 'postgres'/.test(bridge) &&
+    /instantly_lead_persistence_failed/.test(bridge),
+  'Instantly replies must fail retryably before downstream side effects when canonical lead persistence fails in production.'
+);
+assert(
+  /async function unifiedMessageAlreadyPersisted/.test(bridge) &&
+    /FROM public\.unified_messages/.test(bridge) &&
+    /result:\s*'instantly_reply_already_processed'/.test(bridge),
+  'Instantly reply replays must be deduplicated against durable unified message ids.'
+);
 
 const leadSummaryStart = bridge.indexOf('function mapConversationLeadSummary(row, source)');
 const leadSummaryEnd = bridge.indexOf(

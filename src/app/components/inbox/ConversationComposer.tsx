@@ -523,180 +523,182 @@ export function ConversationComposer({
 
   return (
     <section className="pbk-conversation-composer" aria-label="Message composer">
-      <div className="pbk-composer-topline">
-        <div className="pbk-composer-channel" aria-label="Message channel">
-          <button
-            type="button"
-            className={channel === 'sms' ? 'active' : ''}
-            aria-pressed={channel === 'sms'}
-            onClick={() => {
-              setChannel('sms');
-              setNotice(null);
-            }}
-          >
-            <MessageSquare size={14} />
-            SMS
-          </button>
-          <button
-            type="button"
-            className={channel === 'email' ? 'active' : ''}
-            aria-pressed={channel === 'email'}
-            onClick={() => {
-              setChannel('email');
-              setNotice(null);
-            }}
-          >
-            <Mail size={14} />
-            Email
-          </button>
+      <div className="pbk-composer-scroll-body">
+        <div className="pbk-composer-topline">
+          <div className="pbk-composer-channel" aria-label="Message channel">
+            <button
+              type="button"
+              className={channel === 'sms' ? 'active' : ''}
+              aria-pressed={channel === 'sms'}
+              onClick={() => {
+                setChannel('sms');
+                setNotice(null);
+              }}
+            >
+              <MessageSquare size={14} />
+              SMS
+            </button>
+            <button
+              type="button"
+              className={channel === 'email' ? 'active' : ''}
+              aria-pressed={channel === 'email'}
+              onClick={() => {
+                setChannel('email');
+                setNotice(null);
+              }}
+            >
+              <Mail size={14} />
+              Email
+            </button>
+          </div>
+          <span className="pbk-composer-recipient" title={recipient || undefined}>
+            To: {recipient || `No ${channel === 'sms' ? 'phone number' : 'email address'}`}
+          </span>
         </div>
-        <span className="pbk-composer-recipient" title={recipient || undefined}>
-          To: {recipient || `No ${channel === 'sms' ? 'phone number' : 'email address'}`}
-        </span>
-      </div>
 
-      <SenderIdentitySelect
-        identities={senderIdentities}
-        selectedId={senderIdentityId}
-        recommendedId={recommendedId}
-        loading={senderLoading}
-        disabled={sending}
-        onChange={(identityId) => {
-          setSenderIdentityId(identityId);
-          setNotice(null);
-        }}
-      />
-
-      {channel === 'email' && (
-        <label className="pbk-composer-subject">
-          <span>Subject</span>
-          <input
-            id="conversation-email-subject"
-            name="subject"
-            value={subject}
-            onChange={(event) => setSubject(event.target.value)}
-            placeholder="Seller follow-up"
-          />
-        </label>
-      )}
-
-      <label className="pbk-composer-body">
-        <span className="sr-only">Message body</span>
-        <textarea
-          id="conversation-message-body"
-          name="body"
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
-          placeholder={
-            channel === 'sms'
-              ? 'Write a clear seller text...'
-              : 'Write a thoughtful seller email...'
-          }
-          rows={4}
+        <SenderIdentitySelect
+          identities={senderIdentities}
+          selectedId={senderIdentityId}
+          recommendedId={recommendedId}
+          loading={senderLoading}
+          disabled={sending}
+          onChange={(identityId) => {
+            setSenderIdentityId(identityId);
+            setNotice(null);
+          }}
         />
-      </label>
 
-      <div className="pbk-composer-smart-replies" aria-label="Ava smart replies">
-        <span>
-          <Sparkles size={12} />
-          Smart replies
-        </span>
-        {templatesLoading && <Loader2 size={13} className="animate-spin" />}
-        {templates.map((template, index) => (
-          <button
-            key={`${template.templateKey || 'reply'}-${index}`}
-            type="button"
-            onClick={() => {
-              setBody(text(template.text || template.html));
-              if (channel === 'email' && template.subject) setSubject(template.subject);
-            }}
-            title={text(template.text || template.html)}
-          >
-            {text(template.text || template.html).slice(0, 52)}
-          </button>
-        ))}
-      </div>
+        {channel === 'email' && (
+          <label className="pbk-composer-subject">
+            <span>Subject</span>
+            <input
+              id="conversation-email-subject"
+              name="subject"
+              value={subject}
+              onChange={(event) => setSubject(event.target.value)}
+              placeholder="Seller follow-up"
+            />
+          </label>
+        )}
 
-      <div className="pbk-composer-tools">
-        <button
-          type="button"
-          className={listening ? 'active listening' : ''}
-          onClick={startListening}
-          aria-pressed={listening}
-        >
-          {listening ? <Square size={13} /> : <Mic size={14} />}
-          {listening ? 'Stop dictation' : 'Ava mic'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void refineDraft()}
-          disabled={!body.trim() || refining}
-        >
-          {refining ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
-          Refine with Ava
-        </button>
-        <label className="pbk-composer-schedule-toggle">
-          <input
-            id="conversation-send-later"
-            name="sendLater"
-            type="checkbox"
-            checked={sendLater}
-            onChange={(event) => setSendLater(event.target.checked)}
+        <label className="pbk-composer-body">
+          <span className="sr-only">Message body</span>
+          <textarea
+            id="conversation-message-body"
+            name="body"
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            placeholder={
+              channel === 'sms'
+                ? 'Write a clear seller text...'
+                : 'Write a thoughtful seller email...'
+            }
+            rows={4}
           />
-          <CalendarClock size={14} />
-          Send later
         </label>
-        {sendLater && (
-          <input
-            id="conversation-scheduled-for"
-            name="scheduledFor"
-            type="datetime-local"
-            value={scheduledFor}
-            onChange={(event) => setScheduledFor(event.target.value)}
-            aria-label="Scheduled send time"
+
+        <div className="pbk-composer-smart-replies" aria-label="Ava smart replies">
+          <span>
+            <Sparkles size={12} />
+            Smart replies
+          </span>
+          {templatesLoading && <Loader2 size={13} className="animate-spin" />}
+          {templates.map((template, index) => (
+            <button
+              key={`${template.templateKey || 'reply'}-${index}`}
+              type="button"
+              onClick={() => {
+                setBody(text(template.text || template.html));
+                if (channel === 'email' && template.subject) setSubject(template.subject);
+              }}
+              title={text(template.text || template.html)}
+            >
+              {text(template.text || template.html).slice(0, 52)}
+            </button>
+          ))}
+        </div>
+
+        <div className="pbk-composer-tools">
+          <button
+            type="button"
+            className={listening ? 'active listening' : ''}
+            onClick={startListening}
+            aria-pressed={listening}
+          >
+            {listening ? <Square size={13} /> : <Mic size={14} />}
+            {listening ? 'Stop dictation' : 'Ava mic'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void refineDraft()}
+            disabled={!body.trim() || refining}
+          >
+            {refining ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
+            Refine with Ava
+          </button>
+          <label className="pbk-composer-schedule-toggle">
+            <input
+              id="conversation-send-later"
+              name="sendLater"
+              type="checkbox"
+              checked={sendLater}
+              onChange={(event) => setSendLater(event.target.checked)}
+            />
+            <CalendarClock size={14} />
+            Send later
+          </label>
+          {sendLater && (
+            <input
+              id="conversation-scheduled-for"
+              name="scheduledFor"
+              type="datetime-local"
+              value={scheduledFor}
+              onChange={(event) => setScheduledFor(event.target.value)}
+              aria-label="Scheduled send time"
+            />
+          )}
+          <span className="pbk-composer-count">
+            {channel === 'sms'
+              ? `${segmentInfo.segments} segment${segmentInfo.segments === 1 ? '' : 's'} · ${segmentInfo.encoding}`
+              : `${body.length} characters`}
+          </span>
+        </div>
+
+        {!canSend && sendDisabledReason && !sending && (
+          <div
+            id="conversation-send-requirement"
+            className={`pbk-composer-guard ${
+              blockedByDnc || recommendationGuard || senderRestriction || scheduleInvalid
+                ? ''
+                : 'neutral'
+            }`}
+            role={blockedByDnc || recommendationGuard ? 'alert' : 'status'}
+          >
+            <span>{sendDisabledReason}</span>
+            {!recipient && (
+              <Link to={recipientRepairHref}>
+                <UserRoundPen size={13} aria-hidden="true" />
+                {thread.leadId ? 'Add contact info' : 'Create lead'}
+              </Link>
+            )}
+          </div>
+        )}
+
+        {notice && (
+          <ComposerOutcomeBanner
+            outcome={notice}
+            label="composer notice"
+            onDismiss={() => setNotice(null)}
           />
         )}
-        <span className="pbk-composer-count">
-          {channel === 'sms'
-            ? `${segmentInfo.segments} segment${segmentInfo.segments === 1 ? '' : 's'} · ${segmentInfo.encoding}`
-            : `${body.length} characters`}
-        </span>
+        {sendOutcome && (
+          <ComposerOutcomeBanner
+            outcome={sendOutcome}
+            label="send result"
+            onDismiss={() => setSendOutcome(null)}
+          />
+        )}
       </div>
-
-      {!canSend && sendDisabledReason && !sending && (
-        <div
-          id="conversation-send-requirement"
-          className={`pbk-composer-guard ${
-            blockedByDnc || recommendationGuard || senderRestriction || scheduleInvalid
-              ? ''
-              : 'neutral'
-          }`}
-          role={blockedByDnc || recommendationGuard ? 'alert' : 'status'}
-        >
-          <span>{sendDisabledReason}</span>
-          {!recipient && (
-            <Link to={recipientRepairHref}>
-              <UserRoundPen size={13} aria-hidden="true" />
-              {thread.leadId ? 'Add contact info' : 'Create lead'}
-            </Link>
-          )}
-        </div>
-      )}
-
-      {notice && (
-        <ComposerOutcomeBanner
-          outcome={notice}
-          label="composer notice"
-          onDismiss={() => setNotice(null)}
-        />
-      )}
-      {sendOutcome && (
-        <ComposerOutcomeBanner
-          outcome={sendOutcome}
-          label="send result"
-          onDismiss={() => setSendOutcome(null)}
-        />
-      )}
 
       <div className="pbk-composer-send-row">
         <span>

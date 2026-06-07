@@ -113,6 +113,27 @@ async function main() {
     assert(strategy.result?.strategy?.immediateScript, 'Strategist did not return a seller-facing script.');
     assert(strategy.result?.request?.id, 'Strategist did not store learning request.');
 
+    const doctrine = await invoke('getAvaConversationIntelligence', {
+      leadId: 'strategy-smoke-lead',
+      leadName: 'Diane Smoke',
+      address: '202 Cherry Ln, Columbus OH',
+      query: 'The property needs more than 100 thousand in repairs, but I want the highest net.',
+      transcript: 'Seller: The property needs more than 100 thousand in repairs, but I want the highest net.',
+      arv: 300000,
+      repairs: 120000,
+      mao: 125000,
+      timeline: '60 days',
+      primaryGoal: 'maximum net',
+      objectionType: 'price_too_low',
+      readOnly: true,
+    });
+    assert(doctrine.result?.doctrine?.revision === 'ava-doctrine-v1', 'Ava doctrine snapshot missing.');
+    assert(doctrine.result?.doctrine?.negotiation?.path === 'rbp', 'High-repair seller should select the RBP doctrine path.');
+    assert(doctrine.result?.doctrine?.recommendedQuestion, 'Ava doctrine should provide a calibrated question.');
+    assert(doctrine.result?.doctrine?.confidence?.revision === 'ava-evidence-confidence-v1', 'Evidence confidence snapshot missing.');
+    assert(doctrine.result?.doctrine?.confidence?.offerApproval === 'always_required', 'Confidence must not bypass offer approval.');
+    assert(doctrine.result?.doctrine?.interactionStyle?.mode, 'Warmth/dominance interaction style missing.');
+
     const repairs = await invoke('recordRepairs', {
       leadId: 'strategy-smoke-lead',
       leadName: 'Diane Smoke',
@@ -234,6 +255,9 @@ async function main() {
       revision: health.revision,
       deepSeekReady: Boolean(health.providers.deepSeek?.ready),
       strategistResult: strategy.result?.result,
+      doctrinePath: doctrine.result?.doctrine?.negotiation?.path,
+      doctrineConfidence: doctrine.result?.doctrine?.confidence?.score,
+      interactionStyle: doctrine.result?.doctrine?.interactionStyle?.mode,
       approvalId,
       overrideId: override.result?.override?.id,
       scriptTestId: testId,

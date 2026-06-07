@@ -132,6 +132,7 @@ export function UnifiedInbox() {
   const [mergePendingId, setMergePendingId] = useState('');
   const [mergeError, setMergeError] = useState('');
   const [selectedLeadMatch, setSelectedLeadMatch] = useState<LeadSearchResult | null>(null);
+  const inboxRef = useRef<HTMLDivElement>(null);
   const threadRequestSequence = useRef(0);
   const selectedRequestSequence = useRef(0);
   const selectedThreadIdRef = useRef(selectedThreadId);
@@ -162,6 +163,25 @@ export function UnifiedInbox() {
     return () => {
       mobileMedia.removeEventListener('change', update);
       inspectorMedia.removeEventListener('change', update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateViewportHeight = () => {
+      inboxRef.current?.style.setProperty(
+        '--pbk-conversation-viewport-height',
+        `${Math.round(viewport?.height || window.innerHeight)}px`
+      );
+    };
+    updateViewportHeight();
+    viewport?.addEventListener('resize', updateViewportHeight);
+    viewport?.addEventListener('scroll', updateViewportHeight);
+    window.addEventListener('resize', updateViewportHeight);
+    return () => {
+      viewport?.removeEventListener('resize', updateViewportHeight);
+      viewport?.removeEventListener('scroll', updateViewportHeight);
+      window.removeEventListener('resize', updateViewportHeight);
     };
   }, []);
 
@@ -387,6 +407,18 @@ export function UnifiedInbox() {
   }, [inspectorOverlay, profileOpen, selectedThread]);
 
   useEffect(() => {
+    const saveVisibleReadState = () => {
+      if (document.visibilityState === 'visible') void markSelectedThreadRead();
+    };
+    document.addEventListener('visibilitychange', saveVisibleReadState);
+    window.addEventListener('focus', saveVisibleReadState);
+    return () => {
+      document.removeEventListener('visibilitychange', saveVisibleReadState);
+      window.removeEventListener('focus', saveVisibleReadState);
+    };
+  }, [markSelectedThreadRead]);
+
+  useEffect(() => {
     const leadId = selectedThread?.leadId;
     if (!leadId) {
       setLeadDetail(null);
@@ -547,6 +579,7 @@ export function UnifiedInbox() {
 
   return (
     <div
+      ref={inboxRef}
       className={`pbk-unified-inbox ${profileOpen ? 'profile-open' : ''}`}
       data-mobile-state={mobileState}
     >

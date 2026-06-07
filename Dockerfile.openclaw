@@ -111,6 +111,13 @@ COPY scripts/coworker-heartbeat.mjs ./scripts/coworker-heartbeat.mjs
 COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs
 COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
+COPY scripts/ava-state-machine.mjs ./scripts/ava-state-machine.mjs
+COPY scripts/ava-confidence.mjs ./scripts/ava-confidence.mjs
+COPY scripts/negotiation-policy.mjs ./scripts/negotiation-policy.mjs
+COPY scripts/question-policy.mjs ./scripts/question-policy.mjs
+COPY scripts/closing-questions.mjs ./scripts/closing-questions.mjs
+COPY scripts/emotion-policy.mjs ./scripts/emotion-policy.mjs
+COPY scripts/warmth-dominance.mjs ./scripts/warmth-dominance.mjs
 COPY scripts/synthetic-edge-cases.mjs ./scripts/synthetic-edge-cases.mjs
 COPY scripts/mission-resilience.mjs ./scripts/mission-resilience.mjs
 COPY scripts/agent-teams.mjs ./scripts/agent-teams.mjs

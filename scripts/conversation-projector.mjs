@@ -87,6 +87,11 @@ const RECORD_ALIASES = {
   audioContentType: ['audio_content_type'],
   recordingPath: ['recording_path'],
   durationSeconds: ['duration_seconds'],
+  callSummary: ['call_summary'],
+  outcomeSummary: ['outcome_summary'],
+  dispositionSummary: ['disposition_summary'],
+  sentimentScore: ['sentiment_score'],
+  sentimentLabel: ['sentiment_label'],
   transcriptText: ['transcript_text'],
   transcriptChunk: ['transcript_chunk'],
   currentTranscriptChunk: ['current_transcript_chunk'],
@@ -592,6 +597,34 @@ function callAddresses(record, direction) {
     : { senderAddress: explicitSender, recipientAddress: sellerAddress };
 }
 
+function summarizeCallRecord(record) {
+  const explicitSummary = firstText(
+    record.summary,
+    record.callSummary,
+    record.outcomeSummary,
+    record.dispositionSummary,
+    record.notes
+  );
+  if (explicitSummary) return explicitSummary.replace(/\s+/g, ' ').slice(0, 420);
+
+  if (Array.isArray(record.transcript)) {
+    const summary = record.transcript
+      .slice(-4)
+      .map((turn) =>
+        isRecord(turn)
+          ? firstText(turn.text, turn.body, turn.content, turn.transcript)
+          : firstText(turn)
+      )
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (summary) return summary.slice(0, 420);
+  }
+
+  return firstText(record.transcriptText).replace(/\s+/g, ' ').slice(0, 420);
+}
+
 export function projectCallEvent(record, kind) {
   assertRecord(record);
   record = normalizeRecord(record);
@@ -610,6 +643,12 @@ export function projectCallEvent(record, kind) {
         Object.entries(chunk).filter(([key]) => !['text', 'transcript'].includes(key))
       )
     : {};
+  const summary = summarizeCallRecord(record);
+  const sentiment = firstNonEmpty(
+    record.sentiment,
+    record.sentimentScore,
+    record.sentimentLabel
+  );
 
   return commonEvent(record, {
     eventType: `call.${callKind}`,
@@ -622,7 +661,7 @@ export function projectCallEvent(record, kind) {
     actorType: firstText(record.actorType) || actorTypeForDirection(direction),
     actorName: firstText(record.senderName, record.actorName, record.participantName),
     subject: record.subject,
-    body: callKind === 'transcript' ? transcriptBody(record) : record.notes,
+    body: callKind === 'transcript' ? transcriptBody(record) : summary,
     status: record.status,
     occurredAt: callOccurredAt(record, callKind),
     payload: payloadFrom(
@@ -660,6 +699,13 @@ export function projectCallEvent(record, kind) {
         'recordingPath',
         'durationSeconds',
         'duration',
+        'summary',
+        'callSummary',
+        'outcomeSummary',
+        'dispositionSummary',
+        'sentiment',
+        'sentimentScore',
+        'sentimentLabel',
         'startedAt',
         'endedAt',
         'completedAt',
@@ -678,6 +724,8 @@ export function projectCallEvent(record, kind) {
         storageBucket: firstNonEmpty(record.storageBucket),
         audioContentType: firstNonEmpty(record.audioContentType),
         durationSeconds: firstNonEmpty(record.durationSeconds, record.duration),
+        summary: summary || undefined,
+        sentiment,
         callDirection:
           callKind === 'recording' && ['inbound', 'outbound'].includes(direction)
             ? direction

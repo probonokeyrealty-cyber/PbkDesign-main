@@ -78,6 +78,19 @@ function getMao(params = {}) {
   return money(params.mao ?? params.maxAllowableOffer ?? params.max_allowable_offer ?? params.originalMao ?? params.original_mao, 0);
 }
 
+function getSellerEmotion(params = {}) {
+  return String(
+    params.emotion
+      ?? params.sellerEmotion
+      ?? params.seller_emotion
+      ?? params.sentimentEmotion
+      ?? params.sentiment_emotion
+      ?? params.metadata?.emotion
+      ?? params.metadata?.sellerEmotion
+      ?? ''
+  ).trim().toLowerCase();
+}
+
 function getCallingHour(options = {}) {
   if (Number.isFinite(Number(options.nowLocalHour ?? options.now_local_hour))) return Number(options.nowLocalHour ?? options.now_local_hour);
   return new Date().getHours();
@@ -159,6 +172,16 @@ export function validateProviderActionSafety(toolName, params = {}, options = {}
     }
     if (offer > 0 && !mao) {
       pushIssue(warnings, 'mao_missing', 'MAO is missing; require human review before seller-facing offer or contract.', 'medium', { offer });
+    }
+    const emotion = getSellerEmotion(params);
+    if (['anger', 'angry', 'fear', 'fearful', 'sadness', 'sad', 'overwhelm', 'overwhelmed'].includes(emotion)) {
+      pushIssue(
+        warnings,
+        'emotion_requires_review',
+        'Seller emotion calls for de-escalation or empathy before a seller-facing offer or contract.',
+        'medium',
+        { emotion },
+      );
     }
     const arv = money(params.arv ?? params.afterRepairValue ?? params.after_repair_value, 0);
     const repairs = money(params.repairs ?? params.repairTotal ?? params.repair_total, 0);

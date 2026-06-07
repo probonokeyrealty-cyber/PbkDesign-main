@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Clock3,
   FileSignature,
+  Lightbulb,
   Loader2,
   Mail,
   MessageSquare,
@@ -80,14 +81,20 @@ function formatTime(value: string) {
 
 function eventKind(event: ConversationEvent) {
   const kind = text(event.eventType).toLowerCase();
+  const payload = record(event.payload);
+  const activityKind = text(
+    payload.category || payload.type || payload.source || payload.metadata
+  ).toLowerCase();
   if (event.channel === 'sms' || kind.includes('sms')) return 'sms';
   if (event.channel === 'email' || kind.includes('email')) return 'email';
   if (kind.includes('transcript')) return 'transcript';
-  if (event.channel === 'call' || kind.includes('call') || kind.includes('recording')) return 'call';
+  if (event.channel === 'call' || kind.includes('call') || kind.includes('recording'))
+    return 'call';
   if (kind.includes('docusign') || kind.includes('contract') || kind.includes('envelope'))
     return 'contract';
   if (kind.includes('approval')) return 'approval';
   if (kind.includes('note')) return 'note';
+  if (kind.includes('coaching') || activityKind.includes('coaching')) return 'coaching';
   return 'system';
 }
 
@@ -100,6 +107,7 @@ function EventIcon({ kind }: { kind: ReturnType<typeof eventKind> }) {
     contract: FileSignature,
     approval: ShieldCheck,
     note: StickyNote,
+    coaching: Lightbulb,
     system: Clock3,
   };
   const Icon = icons[kind];
@@ -131,6 +139,48 @@ function getTranscriptSegments(event: ConversationEvent) {
     .filter((entry) => entry.text);
 }
 
+function formatCallDuration(seconds: unknown) {
+  const duration = Math.max(0, Number(seconds || 0));
+  if (!Number.isFinite(duration) || duration <= 0) return 'Duration pending';
+  const minutes = Math.floor(duration / 60);
+  const remainder = Math.round(duration % 60);
+  return minutes ? `${minutes}m ${String(remainder).padStart(2, '0')}s` : `${remainder}s`;
+}
+
+function getCallSentiment(value: unknown) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    const normalized = Math.abs(numeric) <= 1 ? numeric : numeric / 100;
+    if (normalized >= 0.2) return { label: 'Positive', tone: 'positive' };
+    if (normalized <= -0.2) return { label: 'Concerned', tone: 'negative' };
+    return { label: 'Neutral', tone: 'neutral' };
+  }
+  const label = text(value, 'Not scored');
+  const normalized = label.toLowerCase();
+  return {
+    label,
+    tone: /positive|warm|happy|good/.test(normalized)
+      ? 'positive'
+      : /negative|angry|upset|concern|frustrat/.test(normalized)
+        ? 'negative'
+        : 'neutral',
+  };
+}
+
+function getCallPresentation(event: ConversationEvent) {
+  const payload = record(event.payload);
+  return {
+    duration: formatCallDuration(payload.durationSeconds || payload.duration_seconds),
+    sentiment: getCallSentiment(
+      payload.sentiment || payload.sentimentScore || payload.sentiment_score
+    ),
+    summary: text(
+      payload.summary || payload.callSummary || payload.call_summary || event.body || event.subject,
+      'Call completed. A summary will appear when the provider or coaching pipeline returns it.'
+    ),
+  };
+}
+
 function ConversationEventRow({
   event,
   onEventChanged,
@@ -151,6 +201,7 @@ function ConversationEventRow({
   const recordingUrl = getRecordingUrl(event);
   const transcriptSegments = getTranscriptSegments(event);
   const body = text(event.body || event.subject, 'Activity recorded');
+  const callPresentation = kind === 'call' ? getCallPresentation(event) : null;
 
   const seekRecording = (seconds: number) => {
     if (!audioRef.current || !Number.isFinite(seconds)) return;
@@ -183,7 +234,10 @@ function ConversationEventRow({
   const copyEvent = async () => {
     try {
       await navigator.clipboard.writeText(
-        [event.subject, event.body].map((value) => text(value)).filter(Boolean).join('\n')
+        [event.subject, event.body]
+          .map((value) => text(value))
+          .filter(Boolean)
+          .join('\n')
       );
       showUiToast({ tone: 'success', title: 'Copied to clipboard' });
     } catch {
@@ -360,7 +414,28 @@ function ConversationEventRow({
           <strong>{text(event.eventType, 'System activity').replace(/_/g, ' ')}</strong>
           <span>{formatTime(event.occurredAt)}</span>
         </div>
-        {kind === 'transcript' ? (
+        {kind === 'call' && callPresentation ? (
+          <div className="pbk-conversation-call-summary">
+            <div className="pbk-conversation-call-facts">
+              <span>
+                <Clock3 size={12} aria-hidden="true" />
+                {callPresentation.duration}
+              </span>
+              <span className={`sentiment ${callPresentation.sentiment.tone}`}>
+                {callPresentation.sentiment.label}
+              </span>
+            </div>
+            <p>{callPresentation.summary}</p>
+          </div>
+        ) : kind === 'coaching' ? (
+          <div className="pbk-conversation-coaching-tip">
+            <Lightbulb size={15} aria-hidden="true" />
+            <span>
+              <strong>{text(event.subject, 'Post-call coaching')}</strong>
+              <small>{body}</small>
+            </span>
+          </div>
+        ) : kind === 'transcript' ? (
           <>
             <button
               type="button"
@@ -470,7 +545,11 @@ export function ConversationTimeline({
           </p>
         </div>
         {thread && (
-          <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onOpenProfile}>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+            onClick={onOpenProfile}
+          >
             Open seller profile
           </button>
         )}

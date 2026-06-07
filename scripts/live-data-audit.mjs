@@ -205,7 +205,9 @@ const checks = [
       /upsertLeadFromInstantlyReply/.test(bridge) &&
       /getInstantlyReplyText/.test(bridge) &&
       /'instantly_reply'/.test(bridge) &&
-      /persistLeadProfileRowToDb\(saved \|\| nextLead,\s*'instantly-reply'\)/.test(bridge),
+      /persistLeadProfileRowToDb\(nextLead,\s*'instantly-reply'\)/.test(bridge) &&
+      /instantly_lead_persistence_failed/.test(bridge) &&
+      /unifiedMessageAlreadyPersisted/.test(bridge),
   },
   {
     name: 'Lead edit modal enriches from last call and full lead context',

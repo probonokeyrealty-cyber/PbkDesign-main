@@ -28,6 +28,15 @@ import { getObservabilityStatus as getPbkObservabilityStatus, incrementObservabi
 import { recordAvaResponseLatencyStatus } from './ava-latency-status.mjs';
 import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent, normalizeAssistantSession, planAssistantIntent, sanitizeAssistantTurn } from './ava-assistant-chat.mjs';
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
+import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
+import { calibrateAvaConfidence } from './ava-confidence.mjs';
+import { NegotiationPolicy } from './negotiation-policy.mjs';
+import { QuestionPolicy } from './question-policy.mjs';
+import { getEmotionPolicy as getAvaDoctrineEmotionPolicy } from './emotion-policy.mjs';
+import {
+  applyWarmthDominance,
+  selectWarmthDominance,
+} from './warmth-dominance.mjs';
 import { listTeamWorkflowTemplates, runAgentTeamWorkflow } from './agent-teams.mjs';
 import { runAutoSkillLearner as runAutoSkillLearnerCore } from './auto-skill-learner.mjs';
 import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSchema, executeApprovedSequence as executeApprovedNurtureSequenceCore, processDueNurtureInstances, startNurtureSequenceCore } from './nurture-agent.mjs';
@@ -9538,6 +9547,22 @@ async function persistUnifiedMessageRecord(message = {}) {
   }
 }
 
+async function unifiedMessageAlreadyPersisted(messageId = '') {
+  const normalizedId = String(messageId || '').trim();
+  if (!normalizedId) return false;
+  if ((state.messages || []).some((message) => String(message.id || '') === normalizedId)) {
+    return true;
+  }
+  const result = await queryPgRows(
+    `SELECT 1
+     FROM public.unified_messages
+     WHERE workspace_id = 'pbk' AND id = $1
+     LIMIT 1`,
+    [normalizedId]
+  );
+  return Boolean(result.ok && result.rows?.length);
+}
+
 async function persistBrainBlogPostRecord(post = {}) {
   const pool = getPgPool();
   if (!pool || !post.id) return false;
@@ -15411,6 +15436,35 @@ function buildAvaProsodyProfile(params = {}) {
     similarityBoost = learned.similarityBoost;
   }
 
+  const interactionStyle = selectWarmthDominance({
+    emotion,
+    sentiment,
+    hesitation: params.hesitation,
+    buyingSignal: params.buyingSignal ?? params.buying_signal,
+    readyToClose: detected.intent === 'ready_to_close',
+    pathLocked: params.pathLocked === true || params.path_locked === true,
+    bantComplete: params.bantComplete === true || params.bant_complete === true,
+    shouldHandoff: params.shouldHandoff === true || params.should_handoff === true,
+    shouldStopContact:
+      params.shouldStopContact === true ||
+      params.should_stop_contact === true ||
+      /\b(stop calling|do not call|don't call|remove me|unsubscribe)\b/i.test(text),
+  });
+  const styled = applyWarmthDominance(
+    {
+      speed,
+      stability,
+      similarityBoost,
+      pauseMs,
+    },
+    interactionStyle
+  );
+  speed = styled.speed;
+  stability = styled.stability;
+  similarityBoost = styled.similarityBoost;
+  pauseMs = styled.pauseMs;
+  delivery = `${delivery}; ${interactionStyle.instruction}`;
+
   return {
     profile,
     sentiment,
@@ -15423,6 +15477,7 @@ function buildAvaProsodyProfile(params = {}) {
     pauseMs,
     pitchGuidance,
     delivery,
+    interactionStyle,
     tags,
     audioTags: {
       enabled: ELEVENLABS_AUDIO_TAGS_ENABLED,
@@ -20647,11 +20702,47 @@ async function createPostCallCoachingReport(params = {}) {
     createRexDecision: params.createRexDecision ?? false,
   });
   await persistState(state);
+  const leadContext = report.leadId ? findLeadContext({ leadId: report.leadId }) : {};
+  const coachingTip =
+    report.coaching?.[0] ||
+    report.nextActions?.[0] ||
+    'Review the call before the next seller touch.';
+  const conversationProjection = report.leadId
+    ? await projectLiveConversationRecord({
+        record: {
+          id: report.id,
+          leadId: report.leadId,
+          leadName: leadContext.leadName || '',
+          address: leadContext.address || '',
+          actor: 'Rex',
+          actorType: 'agent',
+          category: 'post_call_coaching',
+          type: 'coaching',
+          action: 'created',
+          status: 'ready',
+          subject: `Post-call coaching · ${report.grade}`,
+          text: coachingTip,
+          callId: report.callId,
+          important: report.overall < 72,
+          metadata: {
+            overall: report.overall,
+            grade: report.grade,
+            scores: report.scores,
+            strengths: report.strengths,
+            nextActions: report.nextActions,
+          },
+          occurredAt: report.createdAt,
+        },
+        projector: projectActivityEvent,
+        source: 'post-call-coaching',
+      })
+    : { ok: false, skipped: true, result: 'missing_lead_id' };
   return {
     ok: true,
     result: 'post_call_coaching_report_created',
     report,
     quality,
+    conversationProjection,
     state: buildStateSnapshot(),
   };
 }
@@ -21519,6 +21610,186 @@ async function synthesizeClosingAnswerWithDeepSeek({ context = {}, playbook = {}
   return result.ok ? { ok: true, answer: result.answer, provider: result.provider } : result;
 }
 
+function inferAvaDoctrinePhase({ params = {}, context = {}, architecture = {}, reaction = {}, pathDecision = {} } = {}) {
+  const approvalStatus = String(params.approvalStatus || params.approval_status || '').trim();
+  if (params.nextAction || params.next_action || reaction.shouldStopContact) return Phase.FOLLOW_UP;
+  if (approvalStatus) return Phase.APPROVAL;
+  if (
+    params.verbalCommitment === true ||
+    params.verbal_commitment === true ||
+    Number.isFinite(Number(params.counterOffer ?? params.counter_offer))
+  ) {
+    return Phase.COMMITMENT;
+  }
+  if (reaction.objectionType && reaction.objectionType !== 'general_discovery') {
+    return Phase.OBJECTION_RESOLUTION;
+  }
+  if (pathDecision.pathLocked || pathDecision.selectedPath || params.selectedPath) {
+    return Phase.PATH_SELECTION;
+  }
+  if (
+    Number(params.mao || context.mao || 0) > 0 ||
+    Number(params.arv || context.arv || 0) > 0 ||
+    Number(params.repairs || context.repairs || 0) > 0
+  ) {
+    return Phase.ECONOMICS;
+  }
+  if (
+    params.primaryMotivation ||
+    params.primary_motivation ||
+    architecture.goalInference?.primaryGoal
+  ) {
+    return Phase.MOTIVATION;
+  }
+  if (architecture.bant?.complete || params.discoveryComplete === true) return Phase.DISCOVERY;
+  if (context.leadId || context.phone || context.email) return Phase.PARTICIPANT_VERIFICATION;
+  return Phase.TRUST;
+}
+
+function buildAvaDoctrineSnapshot({
+  params = {},
+  context = {},
+  architecture = {},
+  reaction = {},
+  pathDecision = {},
+  closing = {},
+} = {}) {
+  const phase = inferAvaDoctrinePhase({ params, context, architecture, reaction, pathDecision });
+  const stateMachine = new ClosingStateMachine(
+    context.leadId || params.leadId || '',
+    params.callId || params.call_id || '',
+    {
+      phase,
+      evidence: {
+        trustEstablished: phase !== Phase.TRUST,
+        participantsIdentified: Boolean(context.leadId || context.phone || context.email),
+        discoveryComplete: Boolean(architecture.bant?.complete || params.discoveryComplete),
+        primaryMotivation:
+          params.primaryMotivation ||
+          params.primary_motivation ||
+          architecture.goalInference?.primaryGoal ||
+          '',
+        maoCalculated: Number(params.mao || context.mao || 0) > 0,
+        pathSelected: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
+        objectionsCleared: reaction.objectionType === 'general_discovery',
+        verbalCommitment: params.verbalCommitment === true || params.verbal_commitment === true,
+        counterOffer: params.counterOffer ?? params.counter_offer,
+        approvalStatus: params.approvalStatus || params.approval_status || '',
+        nextAction: params.nextAction || params.next_action || '',
+      },
+    }
+  );
+  const negotiation = new NegotiationPolicy(
+    {
+      ...context,
+      timeline: params.timeline || context.timeline || '',
+      primaryGoal:
+        params.primaryGoal ||
+        params.primary_goal ||
+        architecture.goalInference?.primaryGoal ||
+        '',
+      sellerMinimum: params.sellerMinimum || params.seller_minimum,
+      propertyCondition:
+        params.propertyCondition || params.property_condition || context.propertyCondition,
+    },
+    {
+      arv: params.arv || context.arv,
+      repairs: params.repairs || context.repairs,
+      mao: params.mao || context.mao,
+      condition:
+        params.propertyCondition || params.property_condition || context.propertyCondition,
+      assignmentFee: params.assignmentFee || params.assignment_fee,
+      holdingCosts: params.holdingCosts || params.holding_costs,
+      closingCosts: params.closingCosts || params.closing_costs,
+    },
+    params.offerHistory || params.offer_history || [],
+    {
+      approvedMaximum:
+        params.approvedMaximum ||
+        params.approved_maximum ||
+        params.mao ||
+        context.mao ||
+        0,
+    }
+  ).buildRecommendation();
+  const questionPolicy = QuestionPolicy.fromJSON(
+    params.questionPolicy || params.question_policy || {}
+  );
+  const recommendedQuestion = questionPolicy.selectNextQuestion({
+    leadId: context.leadId || params.leadId || '',
+    turn: params.turnCount || params.turn_count || 0,
+    phase,
+    objectionType: reaction.objectionType,
+    lastSellerResponse: params.query || params.transcript || '',
+    rejectionCount: params.rejectionCount || params.rejection_count || 0,
+    compareAlternatives: phase === Phase.PATH_SELECTION,
+  });
+  const emotionName = String(
+    closing.emotionalMemory?.dominantEmotion ||
+      closing.advice?.emotionalMemory?.dominantEmotion ||
+      reaction.prosody?.emotion ||
+      params.emotion ||
+      ''
+  )
+    .trim()
+    .toLowerCase();
+  const emotionPolicy = getAvaDoctrineEmotionPolicy(emotionName);
+  const bantKnown = Object.values(architecture.bant?.known || {}).filter((value) =>
+    Boolean(String(value ?? '').trim())
+  ).length;
+  const bantMissing = Array.isArray(architecture.bant?.missing)
+    ? architecture.bant.missing.length
+    : 0;
+  const confidence = calibrateAvaConfidence({
+    pathConfidence: pathDecision.confidence,
+    goalConfidence: architecture.goalInference?.topGoal?.confidence,
+    closingConfidence: closing.confidence || closing.advice?.confidence,
+    transcriptConfidence:
+      params.transcriptConfidence ||
+      params.transcript_confidence ||
+      params.sttConfidence ||
+      params.stt_confidence,
+    bantComplete: architecture.bant?.complete === true,
+    bantKnown,
+    bantMissing,
+    evidenceCount:
+      Number(closing.knowledgeFacts?.length || closing.advice?.support?.length || 0) +
+      Number(closing.similarDeals?.length || 0) +
+      Number(closing.memories?.length || 0),
+    pathLocked: pathDecision.pathLocked === true,
+    goalUncertaintyHigh: architecture.goalInference?.uncertaintyHigh === true,
+    novelObjection: reaction.trigger === 'novel_objection',
+    shouldHandoff: reaction.shouldHandoff === true,
+    shouldStopContact: reaction.shouldStopContact === true,
+  });
+
+  return {
+    revision: 'ava-doctrine-v1',
+    state: stateMachine.getPhaseMetadata(),
+    negotiation,
+    recommendedQuestion,
+    emotion: {
+      detected: emotionName || 'neutral',
+      nextAction: emotionPolicy.nextAction,
+      prohibited: emotionPolicy.prohibited,
+      handoffRisk: emotionPolicy.handoffRisk,
+    },
+    interactionStyle:
+      reaction.prosody?.interactionStyle ||
+      selectWarmthDominance({
+        emotion: emotionName,
+        sentiment: reaction.prosody?.sentiment,
+        pathLocked: pathDecision.pathLocked === true,
+        bantComplete: architecture.bant?.complete === true,
+        shouldHandoff: reaction.shouldHandoff === true,
+        shouldStopContact: reaction.shouldStopContact === true,
+      }),
+    confidence,
+    operatingRule:
+      'Persistent, not coercive: resolve ambiguity with a clear no, specific callback, human handoff, or approved next step.',
+  };
+}
+
 async function buildAvaConversationIntelligence(params = {}) {
   const sessionContext = params.session || {};
   const baseContext =
@@ -21597,6 +21868,14 @@ async function buildAvaConversationIntelligence(params = {}) {
       pathDecision,
       warManual,
     });
+  const doctrine = buildAvaDoctrineSnapshot({
+    params: { ...params, query },
+    context,
+    architecture,
+    reaction,
+    pathDecision,
+    closing,
+  });
   const pathCanGuide = !reaction.shouldStopContact;
   const criticalReaction = reaction.shouldStopContact || /\b(stop calling|do not call|don't call|remove me|unsubscribe|scam|fake|legit|real company|who are you|trust)\b/i.test(query);
   const warObjectionPhrase = pathCanGuide && warManual.objection?.response && Number(warManual.objection?.confidence || 0) >= 0.16 ? warManual.objection.response : '';
@@ -21613,9 +21892,14 @@ async function buildAvaConversationIntelligence(params = {}) {
   const pathGuidedPhrase = lockedPathPhrase ? (reaction.immediatePhrase && !criticalReaction ? `${reaction.immediatePhrase} ${lockedPathPhrase}` : lockedPathPhrase) : pathCanGuide && !pathDecision.pathLocked && pathDecision.nextProbeQuestion && !reaction.immediatePhrase ? pathDecision.nextProbeQuestion : '';
   const rawResponseText = criticalReaction ? (reaction.shouldStopContact ? reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '' : activeListeningPhrase || warObjectionPhrase || reaction.immediatePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '') : masterProbePhrase || activeListeningPhrase || warObjectionPhrase || pathGuidedPhrase || reaction.immediatePhrase || warProbePhrase || closing.nextBestPhrase || closing.advice?.nextBestPhrase || '';
   const hookedResponseText = pathCanGuide
-    ? ensureAvaSellerReplyHook(rawResponseText, {
+      ? ensureAvaSellerReplyHook(rawResponseText, {
         hook: activeListening.callFlow?.recommendedHook,
-        nextQuestion: activeListening.callFlow?.recommendedHook || closing.closeQuestion || closing.advice?.closeQuestion || '',
+        nextQuestion:
+          activeListening.callFlow?.recommendedHook ||
+          closing.closeQuestion ||
+          closing.advice?.closeQuestion ||
+          doctrine.recommendedQuestion ||
+          '',
         stopContact: reaction.shouldStopContact,
       })
     : rawResponseText;
@@ -21633,7 +21917,11 @@ async function buildAvaConversationIntelligence(params = {}) {
     result: 'ava_conversation_intelligence',
     answer: responseText,
     nextBestPhrase: responseText,
-    closeQuestion: closing.closeQuestion || closing.advice?.closeQuestion || '',
+    closeQuestion:
+      closing.closeQuestion ||
+      closing.advice?.closeQuestion ||
+      doctrine.recommendedQuestion ||
+      '',
     selectedPath: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
     pathDecision,
     callerRole,
@@ -21657,6 +21945,8 @@ async function buildAvaConversationIntelligence(params = {}) {
     web,
     qa,
     promptFrame: closing.promptFrame || closing.advice?.promptFrame,
+    doctrine,
+    confidenceCalibration: doctrine.confidence,
     actionPolicy: {
       providerWrites: params.noProviderWrites === true || params.providerWrites === false || params.readOnly === true ? 'blocked' : 'approval_gated',
       providerWritesBlocked: params.noProviderWrites === true || params.providerWrites === false || params.readOnly === true,
@@ -24301,7 +24591,22 @@ function buildAvaResolvedNextMove(params = {}) {
     text,
     exactNextMove: text,
     transcript,
-    confidence: Math.max(0.5, Math.min(0.97, toNumber(pathDecision.confidence, 0.72) || toNumber(goalInference.topGoal?.confidence, 0.72) || toNumber(conversation.confidence, 0.72) || 0.72)),
+    confidence: Math.max(
+      0.35,
+      Math.min(
+        0.97,
+        toNumber(
+          conversation.confidenceCalibration?.score ??
+            conversation.doctrine?.confidence?.score ??
+            pathDecision.confidence ??
+            goalInference.topGoal?.confidence ??
+            conversation.confidence,
+          0.72
+        )
+      )
+    ),
+    confidenceCalibration:
+      conversation.confidenceCalibration || conversation.doctrine?.confidence || null,
     goalInference: {
       topGoal: goalInference.topGoal || null,
       secondaryGoals: goalInference.secondaryGoals || [],
@@ -26805,8 +27110,20 @@ async function upsertLeadFromInstantlyReply(body = {}, context = {}, replyBody =
     notes: pickFirstText(existing?.notes, replySummary),
     updatedAt: isoNow(),
   });
-  const saved = existing ? patchLeadImport(state, lookup, nextLead) : (addLeadImport(state, nextLead), nextLead);
-  await persistLeadProfileRowToDb(saved || nextLead, 'instantly-reply');
+  const persistence = await persistLeadProfileRowToDb(nextLead, 'instantly-reply');
+  if (!persistence.ok && STATE_BACKEND === 'postgres') {
+    const error = new Error(
+      `Instantly reply lead persistence failed: ${
+        persistence.error || persistence.reason || 'lead_profiles unavailable'
+      }`
+    );
+    error.code = 'instantly_lead_persistence_failed';
+    error.retryable = true;
+    throw error;
+  }
+  const saved = existing
+    ? patchLeadImport(state, lookup, nextLead)
+    : (addLeadImport(state, nextLead), nextLead);
   return saved || nextLead;
 }
 
@@ -27320,6 +27637,9 @@ function createCallRecord(params = {}) {
     outboundAvaGreetingAt: params.outboundAvaGreetingAt || params.outbound_ava_greeting_at || '',
     outboundAvaGreetingError: params.outboundAvaGreetingError || params.outbound_ava_greeting_error || '',
     script: params.script || params.notes || '',
+    summary: params.summary || params.callSummary || params.call_summary || '',
+    callSummary: params.callSummary || params.call_summary || params.summary || '',
+    sentimentLabel: params.sentimentLabel || params.sentiment_label || '',
     sentiment:
       params.sentiment === undefined ||
       params.sentiment === null ||
@@ -30199,7 +30519,8 @@ function buildInboundLeadContextFromLocalLead(localLead = {}, normalizedPhone = 
     address: localLead.property?.address || localLead.address || '',
     phone: normalizedPhone,
     email: seller.email || localLead.email || '',
-    status: localLead.status || localLead.stage || '',
+    status: localLead.status || '',
+    stage: localLead.stage || '',
     motivationScore: toNumber(localLead.motivation_score ?? localLead.motivationScore ?? localLead.score, 0),
     lastContactAt: localLead.lastContactAt || localLead.updatedAt || localLead.createdAt || '',
     bant: normalizeBantInfo(localLead.bant || {}, localLead),
@@ -30209,20 +30530,24 @@ function buildInboundLeadContextFromLocalLead(localLead = {}, normalizedPhone = 
 }
 
 function buildInboundLeadContextFromDbRow(row = {}, normalizedPhone = '') {
+  const raw = row.raw && typeof row.raw === 'object' ? row.raw : {};
+  const seller = raw.seller && typeof raw.seller === 'object' ? raw.seller : {};
+  const property = raw.property && typeof raw.property === 'object' ? raw.property : {};
   return {
     found: true,
-    source: 'supabase-leads',
+    source: 'supabase-lead-profiles',
     leadId: row.id || '',
-    leadName: getSpokenLeadName(row.name || row.full_name || row.lead_name || ''),
-    address: row.address || row.property_address || '',
+    leadName: getSpokenLeadName(row.lead_name || seller.name || ''),
+    address: row.address || property.address || '',
     phone: normalizedPhone,
-    email: row.email || '',
+    email: row.email || seller.email || '',
     status: row.status || '',
+    stage: row.stage || raw.stage || '',
     motivationScore: toNumber(row.motivation_score ?? row.score, 0),
     lastContactAt: row.updated_at || row.created_at || '',
-    bant: normalizeBantInfo(row.raw?.bant || {}, row.raw || {}),
-    callContext: row.raw?.call_context || row.raw?.callContext || {},
-    raw: row.raw || row,
+    bant: normalizeBantInfo(raw.bant || {}, raw),
+    callContext: raw.call_context || raw.callContext || {},
+    raw: Object.keys(raw).length ? raw : row,
   };
 }
 
@@ -30238,6 +30563,7 @@ async function findInboundLeadContext(phone = '') {
       phone: '',
       email: '',
       status: 'new',
+      stage: 'new',
       motivationScore: 0,
       lastContactAt: '',
       diagnostics: {
@@ -30250,10 +30576,11 @@ async function findInboundLeadContext(phone = '') {
   // not a source of truth, because stale in-memory context can make Ava greet the
   // wrong seller after a previous call.
   const dbResult = await queryPgRows(
-    `SELECT l.id, l.name, l.full_name, l.lead_name, l.address, l.property_address, l.phone, l.email,
-            l.status, l.motivation_score, l.score, l.updated_at, l.created_at, to_jsonb(l.*) AS raw
-     FROM public.leads l
-     WHERE regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g') = regexp_replace($1, '[^0-9]', '', 'g')
+    `SELECT l.id, l.lead_name, l.address, l.phone, l.email, l.status, l.stage,
+            l.motivation_score, l.updated_at, l.created_at, l.raw
+     FROM public.lead_profiles l
+     WHERE l.workspace_id = 'pbk'
+       AND regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g') = regexp_replace($1, '[^0-9]', '', 'g')
      ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC NULLS LAST
      LIMIT 1`,
     [normalizedPhone]
@@ -30286,6 +30613,7 @@ async function findInboundLeadContext(phone = '') {
     phone: normalizedPhone,
     email: '',
     status: 'new',
+    stage: 'new',
     motivationScore: 0,
     lastContactAt: '',
   };
@@ -30305,7 +30633,7 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
   const missingBant = getMissingBantFields(bant);
   const callContext = lead.callContext || lead.raw?.call_context || lead.raw?.callContext || {};
   const story = selectAvaStoryForContext({
-    transcript: [lead.status, lead.address, callContext.lastObjection, callContext.summary].filter(Boolean).join(' '),
+    transcript: [lead.status, lead.stage, lead.address, callContext.lastObjection, callContext.summary].filter(Boolean).join(' '),
     address: lead.address,
   });
   const guidance = selectNegotiationGuidance(
@@ -30323,7 +30651,7 @@ function buildAvaInboundPromptContext({ lead = {}, route = 'ava_qualify', from =
   );
   const memories = getAvaActiveMemorySummary(6);
   const guidanceLines = [guidance?.promptBrief || '', ...(guidance?.tactics || []).map((item) => `- ${item.principle || item.tacticName || 'Guidance'}: ${item.scriptExample || item.scriptFragment || item.recommendedResponse || ''}`), guidance?.emotionalRule?.recommendedResponse ? `- Emotional read: ${guidance.emotionalRule.recommendedResponse}` : ''].filter(Boolean);
-  return ['## Inbound Call Mode - Probono Key Realty', 'You are Ava, the acquisition specialist for Probono Key Realty. Sound warm, confident, tactful, and human. Never pretend to be a licensed attorney, never pressure, and transfer immediately when the caller asks for a human.', lead.found ? `Caller context: ${spokenLeadName || 'returning caller'}${lead.address ? ` at ${lead.address}` : ''}. Status: ${lead.status || 'unknown'}. Motivation score: ${lead.motivationScore || 0}.` : `Caller context: new caller from ${from || 'unknown number'} calling ${to || 'PBK'}. Start by asking for the property address and situation.`, `BANT+ status: ${missingBant.length ? `missing ${missingBant.join(', ')}` : 'complete'}. Never present seller-facing numbers until all five pillars are complete.`, Object.keys(bant).length ? `Known BANT+: ${JSON.stringify(bant)}` : '', Object.keys(callContext || {}).length ? `Prior call context: ${JSON.stringify(callContext).slice(0, 900)}` : '', route === 'transfer_jordan' ? 'Routing decision: high-intent caller. Explain briefly that you are connecting them to Jordan, then transfer.' : route === 'transfer_underwriting' ? 'Routing decision: contract/underwriting caller. Offer a concise status recap and transfer to underwriting.' : route === 'after_hours_voicemail' ? 'Routing decision: after-hours. Collect name, number, property address, and promise next-business-day callback.' : 'Routing decision: Ava qualifies first. Ask address, timeline, condition, motivation, and whether they want a quick cash analysis or Jordan handoff.', 'Negotiation guidance for this moment:', 'Core rules: detect whether the caller is homeowner, agent, family, executor, or attorney; never say wholesaler; use the scam/fake handler when trust is challenged; say you do not know instead of guessing.', 'PBK core path library: Cash Offer = speed/as-is/certainty; RBP = higher owner net with 30-60 day timeline; Creative Finance = agent-listed cash-flow problem solved by seller carry/wrap/subject-to; Mortgage Takeover = agent-listed low-rate loan asset solved by sub-to/assumption/carry gap; Land = buildability/utilities/zoning/access/builder math first. These are the heart of the business. Do not blend scripts across paths.', ...guidanceLines, story ? `Relevant Ava story to use only if natural: ${story.storyText}` : '', memories ? `Recent self-learned memories:\n${memories}` : 'Recent self-learned memories: none loaded yet.'].filter(Boolean).join('\n');
+  return ['## Inbound Call Mode - Probono Key Realty', 'You are Ava, the acquisition specialist for Probono Key Realty. Sound warm, confident, tactful, and human. Never pretend to be a licensed attorney, never pressure, and transfer immediately when the caller asks for a human.', lead.found ? `Caller context: ${spokenLeadName || 'returning caller'}${lead.address ? ` at ${lead.address}` : ''}. Status: ${lead.status || 'unknown'}. Stage: ${lead.stage || 'unknown'}. Motivation score: ${lead.motivationScore || 0}.` : `Caller context: new caller from ${from || 'unknown number'} calling ${to || 'PBK'}. Start by asking for the property address and situation.`, `BANT+ status: ${missingBant.length ? `missing ${missingBant.join(', ')}` : 'complete'}. Never present seller-facing numbers until all five pillars are complete.`, Object.keys(bant).length ? `Known BANT+: ${JSON.stringify(bant)}` : '', Object.keys(callContext || {}).length ? `Prior call context: ${JSON.stringify(callContext).slice(0, 900)}` : '', route === 'transfer_jordan' ? 'Routing decision: high-intent caller. Explain briefly that you are connecting them to Jordan, then transfer.' : route === 'transfer_underwriting' ? 'Routing decision: contract/underwriting caller. Offer a concise status recap and transfer to underwriting.' : route === 'after_hours_voicemail' ? 'Routing decision: after-hours. Collect name, number, property address, and promise next-business-day callback.' : 'Routing decision: Ava qualifies first. Ask address, timeline, condition, motivation, and whether they want a quick cash analysis or Jordan handoff.', 'Negotiation guidance for this moment:', 'Core rules: detect whether the caller is homeowner, agent, family, executor, or attorney; never say wholesaler; use the scam/fake handler when trust is challenged; say you do not know instead of guessing.', 'PBK core path library: Cash Offer = speed/as-is/certainty; RBP = higher owner net with 30-60 day timeline; Creative Finance = agent-listed cash-flow problem solved by seller carry/wrap/subject-to; Mortgage Takeover = agent-listed low-rate loan asset solved by sub-to/assumption/carry gap; Land = buildability/utilities/zoning/access/builder math first. These are the heart of the business. Do not blend scripts across paths.', ...guidanceLines, story ? `Relevant Ava story to use only if natural: ${story.storyText}` : '', memories ? `Recent self-learned memories:\n${memories}` : 'Recent self-learned memories: none loaded yet.'].filter(Boolean).join('\n');
 }
 
 async function persistInboundCallRoute(route = {}) {
@@ -30397,7 +30725,12 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
   if (afterHours) {
     route = 'after_hours_voicemail';
     reason = `After-hours routing in ${INBOUND_TIMEZONE}.`;
-  } else if (lead.found && String(lead.status || '').toLowerCase() === 'contract_sent') {
+  } else if (
+    lead.found &&
+    [lead.status, lead.stage].some(
+      (value) => String(value || '').toLowerCase() === 'contract_sent'
+    )
+  ) {
     route = 'transfer_underwriting';
     reason = 'Contract sent lead routed to underwriting.';
   } else if (lead.found && lead.motivationScore >= 8 && !INBOUND_QUALIFY_BEFORE_TRANSFER) {
@@ -34049,14 +34382,19 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
   const mode = getRuntimeOperatingMode();
   const approvalReplayId = String(params.approvalId || params.approval_id || '').trim();
   const forceApproval = Boolean(params.forceApproval === true || params.force_approval === true);
-  if (mode === 'autopilot' && !forceApproval) return null;
-  if (approvalReplayId && isApprovalApproved(approvalReplayId)) return null;
-
   const label = toolName.replace(/_/g, ' ');
   const safetyValidation = await preValidateToolSafety(toolName, params, 'operating-mode-guard');
   if (safetyValidation?.blocked) {
     return buildSafetyBlockedToolResult(toolName, safetyValidation);
   }
+  if (approvalReplayId && isApprovalApproved(approvalReplayId)) return null;
+
+  const safetyReviewRequired = Boolean(
+    safetyValidation?.approvalRequired &&
+      Array.isArray(safetyValidation?.warnings) &&
+      safetyValidation.warnings.length > 0
+  );
+  if (mode === 'autopilot' && !forceApproval && !safetyReviewRequired) return null;
 
   if (mode === 'manual') {
     const event = makeActivity(
@@ -34081,7 +34419,14 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     };
   }
 
+  const safetyWarningSummary = safetyReviewRequired
+    ? `Safety review: ${safetyValidation.warnings
+        .map((warning) => warning.message || warning.code)
+        .filter(Boolean)
+        .join(' ')}`
+    : '';
   const approvalNotes =
+    safetyWarningSummary ||
     sanitizeAdminApprovalCopy('', {
       provider: params.provider || 'system',
       action: params.action || toolName || 'provider_action',
@@ -34116,7 +34461,9 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
     toolName,
     approval,
     safety: safetyValidation,
-    message: `${label} was queued because Approval mode is active.`,
+    message: safetyReviewRequired
+      ? `${label} was queued for safety review before execution.`
+      : `${label} was queued because Approval mode is active.`,
   };
 }
 
@@ -52819,6 +53166,20 @@ function mapTelnyxWebhook(body = {}) {
         call_control_id: payload.call_control_id || payload.id || '',
         call_leg_id: payload.call_leg_id || payload.callLegId || '',
         call_session_id: payload.call_session_id || payload.callSessionId || '',
+        durationSeconds: toNumber(
+          payload.durationSeconds || payload.duration_seconds || payload.duration_secs || payload.duration,
+          0
+        ),
+        summary: payload.summary || payload.call_summary || payload.callSummary || '',
+        sentiment:
+          payload.sentiment_score ??
+          payload.sentimentScore ??
+          (typeof payload.sentiment === 'number' ? payload.sentiment : null),
+        sentimentLabel:
+          payload.sentiment_label ||
+          payload.sentimentLabel ||
+          (typeof payload.sentiment === 'string' ? payload.sentiment : ''),
+        startedAt: payload.started_at || payload.startedAt || payload.start_time || '',
         endedAt: eventType.includes('hangup') ? isoNow() : '',
       },
     };
@@ -54784,6 +55145,11 @@ async function buildTelnyxLiveAvaReply({ session = {}, transcript = '', contextC
 function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
   const move = reply.resolvedCallContext?.exactNextMove || {};
   const strategy = reply.strategist?.strategy || {};
+  const calibration =
+    reply.conversation?.confidenceCalibration ||
+    reply.conversation?.doctrine?.confidence ||
+    move.confidenceCalibration ||
+    {};
   const text = sanitizeAvaSpokenOutput(
     move.text ||
       move.exactNextMove ||
@@ -54808,12 +55174,16 @@ function buildOperatorWhisperRecord(reply = {}, fallbackText = '') {
         1,
         Number(
           move.confidence ??
+            calibration.score ??
             strategy.confidence ??
             reply.architecture?.pathDecision?.confidence ??
             0.72
         )
       )
     ),
+    confidenceBand: calibration.band || '',
+    responseMode: calibration.responseMode || '',
+    checking: calibration.shouldVerify === true,
     approvalNeeded: Boolean(strategy.approvalNeeded),
     updatedAt: isoNow(),
   };
@@ -55273,6 +55643,46 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
     upsertMessage(state, message);
     await persistUnifiedMessageRecord(message);
 
+    const mergedTranscript = [
+      ...(Array.isArray(contextCall?.transcript) ? contextCall.transcript : []),
+      ...session.transcript.slice(-25),
+    ];
+    const callStartedAt = contextCall?.startedAt || session.startedAt || '';
+    const durationSeconds =
+      callStartedAt && Number.isFinite(Date.parse(callStartedAt))
+        ? Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(callStartedAt)) / 1000))
+        : toNumber(contextCall?.durationSeconds, 0);
+    const finalizedCall = contextCall
+      ? {
+          ...contextCall,
+          status: /ended|hangup|hungup|complete|failed|busy|no[-_]?answer|cancel/i.test(
+            String(contextCall.status || '')
+          )
+            ? contextCall.status
+            : 'completed',
+          endedAt,
+          durationSeconds,
+          transcript: mergedTranscript,
+          transcriptText,
+          sentiment: session.sentiment?.pbkScore ?? contextCall.sentiment,
+          sentimentLabel:
+            session.sentiment?.label ||
+            session.sentiment?.dominantEmotion ||
+            contextCall.sentimentLabel ||
+            '',
+          updatedAt: isoNow(),
+        }
+      : null;
+    if (finalizedCall) {
+      upsertCall(state, finalizedCall);
+      await projectLiveConversationRecord({
+        record: finalizedCall,
+        projector: projectCallEvent,
+        kind: 'completed',
+        source: 'telnyx-deepgram-finalize',
+      });
+    }
+
     if (transcriptText) {
       const classification = classifyPbkIntent(transcriptText);
       await recordPbkIntentEvent(
@@ -55344,9 +55754,9 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
         },
         'telnyx-deepgram-finalize'
       ).catch(() => null);
-      void recordPostCallLearningFromTranscript({
+      await recordPostCallLearningFromTranscript({
         session,
-        contextCall,
+        contextCall: finalizedCall || contextCall,
         message,
         transcriptText,
         reason,
@@ -55358,15 +55768,6 @@ async function handleTelnyxDeepgramMediaSocket(socket, request) {
           error: error?.message || String(error),
           stage: 'postCallLearning',
         });
-      });
-    }
-
-    if (contextCall) {
-      upsertCall(state, {
-        ...contextCall,
-        transcript: [...(Array.isArray(contextCall.transcript) ? contextCall.transcript : []), ...session.transcript.slice(-25)],
-        sentiment: session.sentiment?.pbkScore ?? contextCall.sentiment,
-        updatedAt: isoNow(),
       });
     }
 
@@ -63740,23 +64141,36 @@ const server = createServer(async (request, response) => {
           phone: lead.seller?.phone || body.phone || body.contact?.phone || '',
           address: lead.property?.address || context.address,
         });
+        const messageId =
+          body.id ||
+          body.message_id ||
+          body.messageId ||
+          body.event_id ||
+          body.eventId ||
+          campaignWebhook?.event?.providerEventId ||
+          `instantly-reply-${Math.abs(
+            hashString(
+              [
+                body.email || body.contact?.email || context.email,
+                body.timestamp || body.occurredAt || '',
+                replyBody,
+              ].join('|')
+            )
+          )}`;
+        if (await unifiedMessageAlreadyPersisted(messageId)) {
+          json(response, 200, {
+            ok: true,
+            replayed: true,
+            result: 'instantly_reply_already_processed',
+            leadId: leadContext.leadId,
+            messageId,
+            campaignWebhook,
+            state: buildStateSnapshot(),
+          });
+          return;
+        }
         const message = createMessageRecord({
-          id:
-            body.id ||
-            body.message_id ||
-            body.messageId ||
-            body.event_id ||
-            body.eventId ||
-            campaignWebhook?.event?.providerEventId ||
-            `instantly-reply-${Math.abs(
-              hashString(
-                [
-                  body.email || body.contact?.email || context.email,
-                  body.timestamp || body.occurredAt || '',
-                  replyBody,
-                ].join('|')
-              )
-            )}`,
+          id: messageId,
           leadId: leadContext.leadId,
           leadName: leadContext.leadName,
           address: leadContext.address,

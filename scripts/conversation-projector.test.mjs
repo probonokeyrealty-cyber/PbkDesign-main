@@ -412,6 +412,43 @@ describe('call projection', () => {
     });
   });
 
+  test('projects a compact call summary, duration, and sentiment for the unified timeline', () => {
+    expect(
+      projectCallEvent({
+        id: 'call-summary-1',
+        direction: 'outbound',
+        status: 'completed',
+        duration_seconds: 347,
+        call_summary: 'Seller is hesitant on price but agreed to review the repair estimate.',
+        sentiment_score: 0.72,
+        ended_at: '2026-06-06T14:06:00.000Z',
+      })
+    ).toMatchObject({
+      eventType: 'call.completed',
+      body: 'Seller is hesitant on price but agreed to review the repair estimate.',
+      payload: {
+        durationSeconds: 347,
+        summary: 'Seller is hesitant on price but agreed to review the repair estimate.',
+        sentiment: 0.72,
+      },
+    });
+  });
+
+  test('derives a bounded call summary from recent transcript turns when no summary exists', () => {
+    const event = projectCallEvent({
+      id: 'call-summary-fallback',
+      status: 'completed',
+      transcript: [
+        { speaker: 'agent', text: 'Old setup that should not dominate.' },
+        { speaker: 'seller', text: 'The roof is my main concern.' },
+        { speaker: 'agent', text: 'We can account for that in the repair estimate.' },
+      ],
+    });
+
+    expect(event.payload.summary).toContain('The roof is my main concern.');
+    expect(event.payload.summary.length).toBeLessThanOrEqual(420);
+  });
+
   test('uses explicit kind before recording and completion evidence', () => {
     expect(
       projectCallEvent(

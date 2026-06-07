@@ -1726,6 +1726,34 @@
   }
 }
 @media (max-width: 560px) {
+  .pbk-wiz-modal {
+    width: 100%;
+    max-height: calc(100dvh - env(safe-area-inset-top));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .pbk-wiz-body {
+    padding: var(--s-4);
+  }
+  .pbk-wiz-pane {
+    min-height: 0;
+  }
+  .pbk-wiz-foot {
+    position: sticky;
+    bottom: 0;
+    padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg-console) 97%, transparent);
+  }
+  .pbk-wiz-foot .nav-btns {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .pbk-wiz-foot .nav-btns > * {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+@media (max-width: 560px) {
   .pbk-campaign-hero {
     padding: var(--s-5) var(--s-4) var(--s-4);
   }
@@ -4188,6 +4216,65 @@
   background: var(--lime-glow);
   color: var(--lime);
 }
+.pbk-conversation-event-row.coaching {
+  border-color: rgba(125, 211, 252, 0.2);
+  background: linear-gradient(90deg, rgba(14, 165, 233, 0.09), transparent 70%), var(--bg-panel);
+}
+.pbk-conversation-event-row.coaching .pbk-conversation-event-icon {
+  border: 1px solid rgba(125, 211, 252, 0.3);
+  background: var(--sky-glow);
+  color: var(--sky-bright);
+}
+.pbk-conversation-call-summary {
+  display: grid;
+  gap: 9px;
+}
+.pbk-conversation-call-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.pbk-conversation-call-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-void);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.pbk-conversation-call-facts .sentiment.positive {
+  border-color: rgba(163, 230, 53, 0.24);
+  color: var(--lime);
+}
+.pbk-conversation-call-facts .sentiment.negative {
+  border-color: rgba(251, 113, 133, 0.3);
+  color: var(--crimson);
+}
+.pbk-conversation-coaching-tip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  color: var(--sky-bright);
+}
+.pbk-conversation-coaching-tip > span {
+  display: grid;
+  gap: 3px;
+}
+.pbk-conversation-coaching-tip strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.pbk-conversation-coaching-tip small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
 .pbk-conversation-event-content {
   min-width: 0;
 }
@@ -4305,6 +4392,10 @@
   padding: 10px 14px 8px;
   box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.14);
   backdrop-filter: blur(18px);
+}
+.pbk-composer-scroll-body {
+  min-width: 0;
+  min-height: 0;
 }
 .pbk-composer-topline,
 .pbk-composer-tools,
@@ -4975,6 +5066,11 @@
   padding: 10px;
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--sky) 70%, transparent);
 }
+.pbk-live-call-whisper.is-checking {
+  border-color: color-mix(in srgb, var(--amber) 48%, var(--border));
+  background: color-mix(in srgb, var(--amber) 8%, var(--bg-panel));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--amber) 72%, transparent);
+}
 .pbk-live-call-whisper > div,
 .pbk-live-call-whisper > div span {
   display: flex;
@@ -4992,9 +5088,16 @@
   text-transform: uppercase;
 }
 .pbk-live-call-whisper small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 7px;
+}
+.pbk-live-call-whisper small svg {
+  width: 9px;
+  height: 9px;
 }
 .pbk-live-call-whisper strong {
   display: block;
@@ -5638,7 +5741,9 @@
   .pbk-unified-inbox-grid,
   .pbk-unified-inbox:not(.profile-open) .pbk-unified-inbox-grid {
     display: block;
-    height: calc(100dvh - 138px - env(safe-area-inset-bottom));
+    height: calc(
+      var(--pbk-conversation-viewport-height, 100dvh) - 138px - env(safe-area-inset-bottom)
+    );
     min-height: 0;
   }
   .pbk-conversation-thread-rail,
@@ -5683,13 +5788,27 @@
     opacity: 1;
   }
   .pbk-conversation-composer {
-    max-height: min(58dvh, 520px);
-    overflow-y: auto;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    max-height: min(58dvh, calc(var(--pbk-conversation-viewport-height, 100dvh) - 176px), 520px);
+    overflow: hidden;
     overscroll-behavior: contain;
     padding-right: 10px;
     padding-bottom: max(9px, env(safe-area-inset-bottom));
     padding-left: 10px;
     scrollbar-gutter: stable;
+  }
+  .pbk-composer-scroll-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+  .pbk-composer-send-row {
+    margin-top: 7px;
+    border-top: 1px solid var(--border-dim);
+    background: color-mix(in srgb, var(--bg-console) 98%, transparent);
+    padding-top: 8px;
   }
   .pbk-live-call-pip {
     position: fixed;

@@ -285,6 +285,8 @@ export function ShellTopbar({
           className="pbk-shell-search-input w-full h-9 pl-9 pr-3 rounded-md bg-slate-900 border border-slate-800
                      text-sm text-slate-100 placeholder-slate-500
                      focus:outline-none focus:border-slate-600"
+          role="combobox"
+          aria-autocomplete="list"
           aria-expanded={searchOpen && Boolean(query.trim())}
           aria-controls="pbk-global-search-results"
         />

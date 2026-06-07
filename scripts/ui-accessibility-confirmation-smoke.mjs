@@ -27,6 +27,42 @@ expect(
   'HelpTooltip trigger has a visible focus-visible ring'
 );
 
+const shellTopbar = read('src/app/shell/ShellTopbar.tsx');
+expect(
+  shellTopbar,
+  /role="combobox"[\s\S]*aria-autocomplete="list"[\s\S]*aria-expanded=/,
+  'Global search uses valid combobox semantics'
+);
+
+const sidebar = read('src/app/shell/Sidebar.tsx');
+expect(
+  sidebar,
+  /aria-label=\{showBadge \? `\$\{visibleBadge\} \$\{visibleLabel\}` : visibleLabel\}/,
+  'Mobile navigation names include visible labels and badge counts'
+);
+expect(
+  sidebar,
+  'aria-label="More - open all dashboard pages"',
+  'Mobile More control includes its visible label in the accessible name'
+);
+
+const componentCss = read('src/styles/pbk-components.css');
+expect(
+  componentCss,
+  /\.pbk-conversation-day-label span[\s\S]*?color: var\(--text-secondary\)/,
+  'Conversation day labels use accessible secondary text contrast'
+);
+expect(
+  componentCss,
+  /\.pbk-composer-channel button[\s\S]*?color: var\(--text-secondary\)/,
+  'Inactive composer channels use accessible secondary text contrast'
+);
+expect(
+  componentCss,
+  /\.pbk-sender-select-control small[\s\S]*?color: var\(--text-secondary\)/,
+  'Sender metadata uses accessible secondary text contrast'
+);
+
 const commandCenter = read('src/app/routes/CommandCenter.tsx');
 expect(
   commandCenter,

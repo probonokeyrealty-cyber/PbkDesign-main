@@ -141,6 +141,8 @@ export function MobileShellNavigation({ pendingApprovals = 0 }: { pendingApprova
       <nav className="pbk-mobile-shell-nav md:hidden" aria-label="Mobile shell navigation">
         {primaryItems.map(({ to, label, icon: Icon }) => {
           const showBadge = to === '/inbox' && pendingApprovals > 0;
+          const visibleLabel = label === 'Command Center' ? 'Command' : label;
+          const visibleBadge = pendingApprovals > 9 ? '9+' : pendingApprovals;
           return (
             <NavLink
               key={to}
@@ -149,17 +151,13 @@ export function MobileShellNavigation({ pendingApprovals = 0 }: { pendingApprova
               className={({ isActive }) =>
                 `pbk-mobile-shell-nav-item ${isActive ? 'active' : ''}`.trim()
               }
-              aria-label={label}
+              aria-label={showBadge ? `${visibleBadge} ${visibleLabel}` : visibleLabel}
             >
               <span className="pbk-mobile-shell-nav-icon">
                 <Icon size={17} />
-                {showBadge && (
-                  <span className="pbk-mobile-shell-nav-badge">
-                    {pendingApprovals > 9 ? '9+' : pendingApprovals}
-                  </span>
-                )}
+                {showBadge && <span className="pbk-mobile-shell-nav-badge">{visibleBadge}</span>}
               </span>
-              <span>{label === 'Command Center' ? 'Command' : label}</span>
+              <span>{visibleLabel}</span>
             </NavLink>
           );
         })}
@@ -169,7 +167,7 @@ export function MobileShellNavigation({ pendingApprovals = 0 }: { pendingApprova
           onClick={() => setOpen(true)}
           aria-expanded={open}
           aria-controls="pbk-mobile-shell-menu"
-          aria-label="Open all dashboard pages"
+          aria-label="More - open all dashboard pages"
         >
           <span className="pbk-mobile-shell-nav-icon">
             <Menu size={18} />

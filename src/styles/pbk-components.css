@@ -4093,7 +4093,7 @@
   border: 1px solid var(--border-dim);
   border-radius: 999px;
   background: var(--bg-console);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   padding: 4px 9px;
   font-family: var(--font-mono);
   font-size: 8px;
@@ -4334,7 +4334,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   padding: 6px 10px;
   font-family: var(--font-mono);
   font-size: 9px;
@@ -4418,7 +4418,7 @@
 }
 .pbk-sender-select-control small {
   margin-top: 2px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 8px;
 }

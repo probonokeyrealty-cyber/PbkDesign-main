@@ -86,7 +86,15 @@ if (!address || typeof address === 'string') {
 const browser = await puppeteer.launch({
   executablePath: await findChrome(),
   headless: 'new',
-  args: ['--disable-dev-shm-usage', '--no-sandbox'],
+  timeout: 90_000,
+  args: [
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-setuid-sandbox',
+    '--no-default-browser-check',
+    '--no-first-run',
+    '--no-sandbox',
+  ],
 });
 
 try {

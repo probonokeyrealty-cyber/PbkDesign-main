@@ -11410,9 +11410,15 @@ function upsertContract(stateRef, contract) {
 }
 
 function findLeadContext(params = {}) {
-  const fallbackImport = state.leadImports[0] || {};
-  const fallbackApproval = state.approvals[0] || {};
-  const fallbackCall = state.calls.find((call) => isActiveLiveCall(call)) || state.calls[0] || {};
+  const allowImplicitContext =
+    params.allowImplicitContext === true ||
+    params.allow_implicit_context === true ||
+    params.useActiveCallContext === true;
+  const fallbackImport = allowImplicitContext ? state.leadImports[0] || {} : {};
+  const fallbackApproval = allowImplicitContext ? state.approvals[0] || {} : {};
+  const fallbackCall = allowImplicitContext
+    ? state.calls.find((call) => isActiveLiveCall(call)) || state.calls[0] || {}
+    : {};
   const explicitLeadId = String(params.leadId || params.lead_id || '').trim();
   const explicitPhone = normalizePhone(params.phone || params.to || params.number);
   const explicitLeadName = getSpokenLeadName(params.leadName || params.name || '');
@@ -11460,7 +11466,17 @@ function findLeadContext(params = {}) {
   const matchedPhone = normalizePhone(matchedLeadImport?.seller?.phone || matchedLeadImport?.phone || matchedCall?.phone || matchedApproval?.phone || '');
   const matchedEmail = matchedLeadImport?.seller?.email || matchedLeadImport?.email || matchedApproval?.email || '';
   const fallback = {
-    leadId: explicitLeadId || matchedLeadImport?.leadId || matchedLeadImport?.id || matchedCall?.leadId || matchedApproval?.leadId || derivedLeadId || (hasExplicitContext ? '' : fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId) || randomUUID(),
+    leadId:
+      explicitLeadId ||
+      matchedLeadImport?.leadId ||
+      matchedLeadImport?.id ||
+      matchedCall?.leadId ||
+      matchedApproval?.leadId ||
+      derivedLeadId ||
+      (hasExplicitContext
+        ? ''
+        : fallbackApproval.leadId || fallbackImport.leadId || fallbackCall.leadId) ||
+      '',
     leadName: explicitLeadName || matchedLeadName || (hasExplicitContext ? '' : fallbackApproval.leadName || fallbackImport?.seller?.name || fallbackCall.leadName || 'Unknown seller'),
     address: explicitAddress || matchedAddress || (hasExplicitContext ? '' : fallbackApproval.address || fallbackImport?.property?.address || fallbackCall.address || 'Unknown property'),
     phone: explicitPhone || matchedPhone || (hasExplicitContext ? '' : normalizePhone(fallbackCall.phone) || normalizePhone(fallbackImport?.seller?.phone) || ''),
@@ -33199,9 +33215,11 @@ function normalizeSettingsPatch(params = {}) {
   return patch;
 }
 
-const OPERATING_MODE_GATED_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'pbk_call_operator', 'skipTrace', 'connectMcpServer', 'callMcpTool', 'activateGeneratedTool', 'invokeGeneratedTool', 'runCliCommand', 'startNurtureSequence', 'bootstrapStreakPipeline', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var']);
+const OPERATING_MODE_GATED_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'pbk_call_operator', 'skipTrace', 'connectMcpServer', 'callMcpTool', 'activateGeneratedTool', 'invokeGeneratedTool', 'runCliCommand', 'startNurtureSequence', 'scheduleAppointment', 'updateCRM', 'bootstrapStreakPipeline', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var']);
 
-const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'pbk_call_operator', 'skipTrace', 'connectMcpServer', 'callMcpTool', 'activateGeneratedTool', 'invokeGeneratedTool', 'runCliCommand', 'startNurtureSequence']);
+const APPROVAL_REPLAYABLE_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'pbk_call_operator', 'skipTrace', 'connectMcpServer', 'callMcpTool', 'activateGeneratedTool', 'invokeGeneratedTool', 'runCliCommand', 'startNurtureSequence', 'scheduleAppointment', 'updateCRM']);
+
+const SELLER_BOUND_PROVIDER_TOOLS = new Set(['sendColdEmail', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'sendDocuSign', 'sendContract', 'prepare_and_send_contract', 'sendSellerDocs', 'skipTrace', 'startNurtureSequence', 'scheduleAppointment', 'updateCRM']);
 
 const DIRECT_ENV_UPDATE_ALLOWLIST = new Set(['PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_STRATEGIST_PROVIDER', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_TOTP_SECRET', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_WINDOW']);
 
@@ -33275,9 +33293,63 @@ function getProviderKillSwitch() {
   };
 }
 
+function hasExplicitSellerBinding(params = {}) {
+  const candidates = [
+    params.leadId,
+    params.lead_id,
+    params.threadId,
+    params.thread_id,
+    params.conversationId,
+    params.conversation_id,
+    params.contractId,
+    params.contract_id,
+    params.phone,
+    params.to,
+    params.email,
+    params.address,
+    params.propertyAddress,
+    params.property_address,
+    params.leadName,
+    params.lead_name,
+    params.sellerName,
+    params.seller_name,
+  ];
+  return candidates.some((value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return Boolean(
+      normalized &&
+        !['unknown', 'unknown seller', 'unknown property', 'seller', 'provider action'].includes(
+          normalized
+        )
+    );
+  });
+}
+
 async function enforceOperatingModeForTool(toolName, params = {}) {
   if (!OPERATING_MODE_GATED_TOOLS.has(toolName)) return null;
   if (isDirectProtectedEnvUpdate(toolName, params)) return null;
+  if (SELLER_BOUND_PROVIDER_TOOLS.has(toolName) && !hasExplicitSellerBinding(params)) {
+    const label = toolName.replace(/_/g, ' ');
+    const event = makeActivity(
+      {
+        category: 'Guardrail',
+        actor: 'PBK bridge',
+        text: `Blocked ${label} because no seller or conversation identifier was supplied.`,
+        target: 'missing seller binding',
+        status: 'blocked',
+      },
+      'runtime'
+    );
+    addActivity(state, event);
+    await persistState(state);
+    return {
+      ok: false,
+      result: 'seller_context_required',
+      outcome: 'seller_context_required',
+      toolName,
+      message: `${label} requires an explicit lead, conversation, phone, email, or property identifier.`,
+    };
+  }
   const killSwitch = getProviderKillSwitch();
   if (killSwitch.active) {
     const label = toolName.replace(/_/g, ' ');
@@ -35857,6 +35929,224 @@ async function queryPgRows(sql = '', params = []) {
       code: error?.code || '',
     };
   }
+}
+
+async function buildVectorCapacityStatus() {
+  const generatedAt = isoNow();
+  const catalog = await queryPgRows(`
+    WITH targets(table_name, label) AS (
+      VALUES
+        ('call_embeddings', 'Ava episodic call memory'),
+        ('coach_memory', 'Ava coaching memory'),
+        ('brain_blog_posts', 'Rex research memory')
+    )
+    SELECT
+      targets.table_name,
+      targets.label,
+      relation.oid IS NOT NULL AS exists,
+      COALESCE(
+        stats.n_live_tup::double precision,
+        GREATEST(relation.reltuples::double precision, 0),
+        0
+      )::bigint AS estimated_row_count,
+      COALESCE(
+        ROUND(
+          (
+            COALESCE(
+              stats.n_live_tup::double precision,
+              GREATEST(relation.reltuples::double precision, 0),
+              0
+            )
+            * (1 - COALESCE(embedding_stats.null_frac, 1))
+          )::numeric,
+          0
+        ),
+        0
+      )::bigint AS estimated_embedded_count,
+      COALESCE(pg_relation_size(relation.oid), 0)::bigint AS table_bytes,
+      COALESCE(pg_indexes_size(relation.oid), 0)::bigint AS index_bytes,
+      COALESCE(pg_total_relation_size(relation.oid), 0)::bigint AS total_bytes,
+      COALESCE(format_type(embedding_attribute.atttypid, embedding_attribute.atttypmod), '') AS embedding_type,
+      stats.last_analyze,
+      stats.last_autoanalyze,
+      COALESCE(
+        ARRAY_AGG(DISTINCT index_relation.relname)
+          FILTER (WHERE index_relation.relname IS NOT NULL),
+        ARRAY[]::name[]
+      ) AS index_names,
+      COALESCE(
+        ARRAY_AGG(DISTINCT access_method.amname)
+          FILTER (WHERE access_method.amname IS NOT NULL),
+        ARRAY[]::name[]
+      ) AS index_methods
+    FROM targets
+    LEFT JOIN pg_namespace namespace
+      ON namespace.nspname = 'public'
+    LEFT JOIN pg_class relation
+      ON relation.relnamespace = namespace.oid
+      AND relation.relname = targets.table_name
+      AND relation.relkind IN ('r', 'p')
+    LEFT JOIN pg_stat_user_tables stats
+      ON stats.schemaname = 'public'
+      AND stats.relname = targets.table_name
+    LEFT JOIN pg_attribute embedding_attribute
+      ON embedding_attribute.attrelid = relation.oid
+      AND embedding_attribute.attname = 'embedding'
+      AND embedding_attribute.attnum > 0
+      AND NOT embedding_attribute.attisdropped
+    LEFT JOIN pg_stats embedding_stats
+      ON embedding_stats.schemaname = 'public'
+      AND embedding_stats.tablename = targets.table_name
+      AND embedding_stats.attname = 'embedding'
+    LEFT JOIN pg_index relation_index
+      ON relation_index.indrelid = relation.oid
+    LEFT JOIN pg_class index_relation
+      ON index_relation.oid = relation_index.indexrelid
+    LEFT JOIN pg_am access_method
+      ON access_method.oid = index_relation.relam
+    GROUP BY
+      targets.table_name,
+      targets.label,
+      relation.oid,
+      relation.reltuples,
+      stats.n_live_tup,
+      stats.last_analyze,
+      stats.last_autoanalyze,
+      embedding_stats.null_frac,
+      embedding_attribute.atttypid,
+      embedding_attribute.atttypmod
+    ORDER BY targets.table_name;
+  `);
+
+  if (!catalog.ok) {
+    return {
+      ok: false,
+      result: catalog.reason === 'no_database' ? 'postgres_unavailable' : 'capacity_query_failed',
+      source: 'Postgres catalog via PBK bridge',
+      generatedAt,
+      backend: 'pgvector',
+      s3Role: 'backup_only',
+      mastraRequired: false,
+      tables: [],
+      summary: {
+        estimatedRows: 0,
+        estimatedEmbeddedRows: 0,
+        totalBytes: 0,
+        vectorTableCount: 0,
+      },
+      recommendation: {
+        action: 'restore_postgres_visibility',
+        label: 'Restore Postgres visibility',
+        detail: catalog.error || 'PBK_DATABASE_URL is unavailable to the bridge.',
+      },
+      warnings: [catalog.error || catalog.reason || 'Vector capacity could not be measured.'],
+    };
+  }
+
+  const tables = catalog.rows.map((row) => {
+    const embeddingType = String(row.embedding_type || '');
+    const dimensionMatch = embeddingType.match(/vector\((\d+)\)/i);
+    const indexNames = Array.isArray(row.index_names) ? row.index_names.map(String) : [];
+    const indexMethods = Array.isArray(row.index_methods)
+      ? row.index_methods.map((value) => String(value).toLowerCase())
+      : [];
+    const vectorIndexMethod = indexMethods.includes('hnsw')
+      ? 'hnsw'
+      : indexMethods.includes('ivfflat')
+        ? 'ivfflat'
+        : 'none';
+    return {
+      id: String(row.table_name || ''),
+      label: String(row.label || row.table_name || ''),
+      exists: Boolean(row.exists),
+      estimatedRowCount: Number(row.estimated_row_count || 0),
+      estimatedEmbeddedCount: Number(row.estimated_embedded_count || 0),
+      dimensions: Number(dimensionMatch?.[1] || 0),
+      tableBytes: Number(row.table_bytes || 0),
+      indexBytes: Number(row.index_bytes || 0),
+      totalBytes: Number(row.total_bytes || 0),
+      statsUpdatedAt: row.last_autoanalyze || row.last_analyze || null,
+      vectorIndexMethod,
+      indexNames,
+    };
+  });
+  const existingTables = tables.filter((table) => table.exists);
+  const summary = existingTables.reduce(
+    (totals, table) => ({
+      estimatedRows: totals.estimatedRows + table.estimatedRowCount,
+      estimatedEmbeddedRows: totals.estimatedEmbeddedRows + table.estimatedEmbeddedCount,
+      totalBytes: totals.totalBytes + table.totalBytes,
+      vectorTableCount: totals.vectorTableCount + (table.dimensions > 0 ? 1 : 0),
+    }),
+    {
+      estimatedRows: 0,
+      estimatedEmbeddedRows: 0,
+      totalBytes: 0,
+      vectorTableCount: 0,
+    }
+  );
+  const missingVectorIndex = existingTables.some(
+    (table) =>
+      table.dimensions > 0 &&
+      table.estimatedEmbeddedCount > 0 &&
+      table.vectorIndexMethod === 'none'
+  );
+  const largeScale =
+    summary.estimatedEmbeddedRows >= 1_000_000 || summary.totalBytes >= 8 * 1024 ** 3;
+  const approachingScale =
+    summary.estimatedEmbeddedRows >= 250_000 || summary.totalBytes >= 2 * 1024 ** 3;
+
+  let recommendation = {
+    action: 'keep_pgvector',
+    label: 'Keep pgvector',
+    detail:
+      'Current scale does not justify a second live vector service. Keep Postgres as source of truth and S3 for backup snapshots only.',
+  };
+  if (!existingTables.length) {
+    recommendation = {
+      action: 'apply_vector_schema',
+      label: 'Apply vector schema',
+      detail:
+        'The canonical embedding tables are not visible. Apply the existing Supabase migrations before benchmarking another engine.',
+    };
+  } else if (missingVectorIndex) {
+    recommendation = {
+      action: 'repair_pgvector_indexes',
+      label: 'Repair pgvector indexes',
+      detail:
+        'At least one embedded table has no HNSW or IVFFlat index. Repair the canonical index before evaluating another engine.',
+    };
+  } else if (largeScale) {
+    recommendation = {
+      action: 'benchmark_secondary_index',
+      label: 'Benchmark a secondary compressed index',
+      detail:
+        'Production scale is high enough for a shadow benchmark. pgvector remains the source of truth until latency and recall targets pass.',
+    };
+  } else if (approachingScale) {
+    recommendation = {
+      action: 'monitor_and_prepare_benchmark',
+      label: 'Monitor and prepare a benchmark',
+      detail:
+        'Capacity is approaching the evidence threshold. Capture p95 latency and Recall@10 before adding another vector runtime.',
+    };
+  }
+
+  return {
+    ok: true,
+    result: 'postgres_catalog_live',
+    source: 'Postgres catalog via PBK bridge',
+    generatedAt,
+    backend: 'pgvector',
+    s3Role: 'backup_only',
+    mastraRequired: false,
+    tables,
+    summary,
+    recommendation,
+    warnings: existingTables.length
+      ? []
+      : ['No canonical vector tables were found in the public schema.'],
+  };
 }
 
 async function persistProsodyDecisionToPg(record = {}) {
@@ -46446,7 +46736,7 @@ const toolHandlers = {
       });
     } else if (lower.includes('book call') || lower.includes('book appointment') || lower.includes('calendar') || lower.includes('schedule call')) {
       routedTo = 'scheduleAppointment';
-      response = await toolHandlers.scheduleAppointment({
+      response = await invokeToolWithOperatingGuard('scheduleAppointment', {
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
@@ -46503,7 +46793,13 @@ const toolHandlers = {
         notes: command,
       });
     } else if (explicitCrmWriteIntent) {
-      response = await toolHandlers.updateCRM({
+      routedTo = 'updateCRM';
+      response = await invokeToolWithOperatingGuard('updateCRM', {
+        leadId: context.leadId,
+        leadName: context.leadName,
+        address: context.address,
+        phone: context.phone,
+        email: context.email,
         message: `Ava logged command: ${command || 'No command text provided.'}`,
         target: context.address || context.leadName,
       });
@@ -57527,6 +57823,15 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (
+      request.method === 'GET' &&
+      matchesPath(pathname, ['/api/vector/capacity', '/api/v1/vector/capacity'])
+    ) {
+      const capacity = await buildVectorCapacityStatus();
+      json(response, capacity.ok ? 200 : 503, capacity);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/workflows', '/api/n8n/workflows'])) {
       json(response, 200, await listWorkflowPersistence());
       return;
@@ -62472,8 +62777,12 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/appointments') {
       const body = await readBody(request);
-      const result = await toolHandlers.scheduleAppointment(body);
-      json(response, result.ok === false ? 400 : 200, {
+      const { result } = await executeRouteToolHandler(
+        'scheduleAppointment',
+        body,
+        'appointments-route'
+      );
+      json(response, result.result === 'queued_for_approval' ? 202 : result.ok === false ? 400 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -62805,7 +63114,7 @@ const server = createServer(async (request, response) => {
     json(response, 404, {
       ok: false,
       error: `No route for ${request.method} ${pathname}`,
-      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
+      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET /api/vector/capacity', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
     });
   } catch (error) {
     json(response, 500, {

@@ -5,10 +5,12 @@ import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchObservabilityStatusRequest,
   fetchReleaseStatusRequest,
+  fetchVectorCapacityStatusRequest,
   updateAdminTaskDecision,
   type ObservabilityStatusResponse,
   type ReleaseStatusComponent,
   type ReleaseStatusResponse,
+  type VectorCapacityStatusResponse,
 } from '../utils/runtimeBridge';
 
 type ReadinessState = 'ready' | 'partial' | 'missing' | 'unknown';
@@ -53,6 +55,25 @@ function describeTooling(meta: Record<string, unknown> | undefined) {
 function toNumber(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function formatBytes(value: unknown) {
+  const bytes = Math.max(0, toNumber(value));
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let amount = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && amount >= 1024; index += 1) {
+    amount /= 1024;
+    unit = units[index];
+  }
+  return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${unit}`;
+}
+
+function formatCount(value: unknown) {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(
+    Math.max(0, toNumber(value))
+  );
 }
 
 function formatRuntimeStatus(status: unknown) {
@@ -131,6 +152,11 @@ function SettingsSourceRail() {
         endpoint="GET /api/release/status"
         status="ships"
         note="deploy/release readiness"
+      />
+      <PbkDataSource
+        endpoint="GET /api/vector/capacity"
+        status="ships"
+        note="pgvector capacity and index evidence"
       />
     </div>
   );
@@ -445,6 +471,108 @@ function SettingsReleasePanel({
   );
 }
 
+function SettingsVectorCapacityPanel({
+  capacity,
+}: {
+  capacity: VectorCapacityStatusResponse | null;
+}) {
+  const summary = capacity?.summary || {};
+  const tables = Array.isArray(capacity?.tables) ? capacity.tables : [];
+  const recommendation = capacity?.recommendation;
+
+  return (
+    <section className="pbk-settings-card">
+      <div className="pbk-settings-card-head">
+        <div>
+          <span className="pbk-kicker">Memory infrastructure</span>
+          <h2>Vector capacity</h2>
+          <p>
+            Production pgvector footprint and index readiness. This is the evidence gate for any
+            future compressed-index benchmark.
+          </p>
+        </div>
+        <PbkDataSource
+          endpoint="GET /api/vector/capacity"
+          status="ships"
+          note={capacity?.source || 'waiting for Postgres catalog'}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Embedded rows</div>
+          <strong className="mt-1 block text-xl text-sky-200">
+            {capacity ? formatCount(summary.estimatedEmbeddedRows) : '...'}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">catalog estimate</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Total storage</div>
+          <strong className="mt-1 block text-xl text-slate-100">
+            {capacity ? formatBytes(summary.totalBytes) : '...'}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">tables and indexes</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+          <div className="pbk-kicker">Live backend</div>
+          <strong className="mt-1 block text-xl text-emerald-200">
+            {String(capacity?.backend || 'checking')}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">S3: backup only</div>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {tables.map((table) => (
+          <div
+            key={table.id}
+            className="grid gap-2 rounded-lg border border-slate-800/90 bg-slate-950/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-slate-100" title={table.label}>
+                {table.label || table.id}
+              </div>
+              <div className="mt-1 text-xs text-slate-400">
+                {table.dimensions || 0} dimensions - {table.vectorIndexMethod || 'no vector index'}
+              </div>
+            </div>
+            <div className="text-left sm:text-right">
+              <div className="pbk-kicker">Rows</div>
+              <strong className="text-sm text-slate-200">
+                {formatCount(table.estimatedEmbeddedCount)}
+              </strong>
+            </div>
+            <div className="text-left sm:text-right">
+              <div className="pbk-kicker">Size</div>
+              <strong className="text-sm text-slate-200">{formatBytes(table.totalBytes)}</strong>
+            </div>
+          </div>
+        ))}
+        {capacity && !tables.length && (
+          <div className="pbk-settings-empty">No canonical vector tables are visible.</div>
+        )}
+      </div>
+
+      <div
+        className={[
+          'mt-3 rounded-lg border p-3',
+          recommendation?.action === 'keep_pgvector'
+            ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
+            : 'border-amber-400/20 bg-amber-500/10 text-amber-100',
+        ].join(' ')}
+      >
+        <div className="text-sm font-semibold">
+          {recommendation?.label || 'Measuring vector capacity'}
+        </div>
+        <p className="mt-1 text-xs leading-5 opacity-80">
+          {recommendation?.detail ||
+            'The bridge is reading Postgres catalog statistics. No secondary vector runtime is active.'}
+        </p>
+      </div>
+    </section>
+  );
+}
+
 export function Settings() {
   const { snapshot, quotas, tooling, loading, error, refresh } = useRuntimeSnapshot();
   const [pendingAction, setPendingAction] = useState('');
@@ -453,6 +581,7 @@ export function Settings() {
   const [releaseStatus, setReleaseStatus] = useState<ReleaseStatusResponse | null>(null);
   const [observabilityStatus, setObservabilityStatus] =
     useState<ObservabilityStatusResponse | null>(null);
+  const [vectorCapacity, setVectorCapacity] = useState<VectorCapacityStatusResponse | null>(null);
   const [settingsAdminDecisionDraft, setSettingsAdminDecisionDraft] =
     useState<SettingsAdminDecisionDraft | null>(null);
   const status = (snapshot?.status || {}) as Record<string, unknown>;
@@ -623,6 +752,22 @@ export function Settings() {
     };
   }, [stateBackend]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchVectorCapacityStatusRequest()
+      .then((response) => {
+        if (cancelled) return;
+        setVectorCapacity(response);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setVectorCapacity(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stateBackend]);
+
   const confirmSettingsAdminDecision = (
     task: Record<string, unknown>,
     status: SettingsAdminDecisionDraft['status']
@@ -734,6 +879,8 @@ export function Settings() {
             />
           </div>
         </section>
+
+        <SettingsVectorCapacityPanel capacity={vectorCapacity} />
 
         <section className="pbk-settings-card pbk-settings-admin-card">
           <div className="pbk-settings-card-head">

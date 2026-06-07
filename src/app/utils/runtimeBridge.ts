@@ -506,6 +506,44 @@ export type ReleaseStatusResponse = {
   warnings?: string[];
 };
 
+export type VectorCapacityTable = {
+  id: string;
+  label?: string;
+  exists?: boolean;
+  estimatedRowCount?: number;
+  estimatedEmbeddedCount?: number;
+  dimensions?: number;
+  tableBytes?: number;
+  indexBytes?: number;
+  totalBytes?: number;
+  statsUpdatedAt?: string | null;
+  vectorIndexMethod?: string;
+  indexNames?: string[];
+};
+
+export type VectorCapacityStatusResponse = {
+  ok: boolean;
+  result?: string;
+  source?: string;
+  generatedAt?: string;
+  backend?: string;
+  s3Role?: string;
+  mastraRequired?: boolean;
+  tables?: VectorCapacityTable[];
+  summary?: {
+    estimatedRows?: number;
+    estimatedEmbeddedRows?: number;
+    totalBytes?: number;
+    vectorTableCount?: number;
+  };
+  recommendation?: {
+    action?: string;
+    label?: string;
+    detail?: string;
+  };
+  warnings?: string[];
+};
+
 export type RuntimeScriptCandidate = {
   id: string;
   title: string;
@@ -1321,6 +1359,12 @@ export async function fetchReleaseStatusRequest() {
 export async function fetchObservabilityStatusRequest() {
   return bridgeRequest<ObservabilityStatusResponse>({
     path: '/api/observability/status',
+  });
+}
+
+export async function fetchVectorCapacityStatusRequest() {
+  return bridgeRequest<VectorCapacityStatusResponse>({
+    path: '/api/vector/capacity',
   });
 }
 

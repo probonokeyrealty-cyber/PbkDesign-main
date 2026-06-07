@@ -10,6 +10,7 @@ const PROVIDER_WRITE_TOOLS = new Set([
   'pbkSendNegotiationApproval',
   'sendNegotiationApproval',
   'scheduleAppointment',
+  'updateCRM',
   'launch_campaign',
   'admin_update_env_var',
 ]);

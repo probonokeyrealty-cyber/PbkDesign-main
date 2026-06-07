@@ -12,12 +12,8 @@ export type ConversationDayGroup = {
 
 export type ConversationMobileState = 'threads' | 'conversation' | 'profile';
 
-export function normalizeConversationThreads(
-  threads?: ConversationThread[]
-): ConversationThread[];
-export function sortConversationThreads(
-  threads?: ConversationThread[]
-): ConversationThread[];
+export function normalizeConversationThreads(threads?: ConversationThread[]): ConversationThread[];
+export function sortConversationThreads(threads?: ConversationThread[]): ConversationThread[];
 export function filterVisibleConversationEvents(
   events?: ConversationEvent[],
   options?: { includeHidden?: boolean }
@@ -31,12 +27,10 @@ export function filterSenderIdentitiesForChannel(
   channel?: string
 ): CommunicationSenderIdentity[];
 export function getSenderRestrictionReason(identity?: CommunicationSenderIdentity): string;
+export function isConversationApprovalRequired(response?: Record<string, unknown>): boolean;
 export function getConversationMobileState(options?: {
   threadId?: string;
   selectedThreadId?: string;
   profileOpen?: boolean;
 }): ConversationMobileState;
-export function getConversationPreview(
-  thread?: ConversationThread,
-  maxLength?: number
-): string;
+export function getConversationPreview(thread?: ConversationThread, maxLength?: number): string;

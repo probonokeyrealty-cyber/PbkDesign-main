@@ -13,6 +13,10 @@ const composerPath = resolve(root, 'src/app/components/inbox/ConversationCompose
 const newConversationPath = resolve(root, 'src/app/components/inbox/NewConversationDialog.tsx');
 const senderSelectPath = resolve(root, 'src/app/components/inbox/SenderIdentitySelect.tsx');
 const liveCallPipPath = resolve(root, 'src/app/components/inbox/LiveCallPip.tsx');
+const conversationRuntimeLogicPath = resolve(
+  root,
+  'src/app/routes/conversationRuntimeLogic.js'
+);
 const cssPath = resolve(root, 'src/styles/pbk-components.css');
 const netlifyPath = resolve(root, 'netlify.toml');
 
@@ -91,6 +95,7 @@ const composer = readFileSync(composerPath, 'utf8');
 const newConversation = readFileSync(newConversationPath, 'utf8');
 const senderSelect = readFileSync(senderSelectPath, 'utf8');
 const liveCallPip = readFileSync(liveCallPipPath, 'utf8');
+const conversationRuntimeLogic = readFileSync(conversationRuntimeLogicPath, 'utf8');
 const css = readFileSync(cssPath, 'utf8');
 const netlify = readFileSync(netlifyPath, 'utf8');
 const combined = `${unifiedInbox}\n${threadRail}\n${timeline}\n${inspector}`;
@@ -245,6 +250,13 @@ assert(
   /submittedFingerprint/.test(composer) &&
     /exactMessageAlreadyQueued/.test(composer),
   'A queued approval or scheduled message must not be submitted twice without an edit.'
+);
+assert(
+  /isConversationApprovalRequired\(response\)/.test(composer) &&
+    /isConversationApprovalRequired/.test(conversationRuntimeLogic) &&
+    /providerApproval\.id/.test(conversationRuntimeLogic) &&
+    /result === 'queued_for_approval'/.test(conversationRuntimeLogic),
+  'Composer must preserve drafts and show approval state for nested and top-level queue responses.'
 );
 assert(
   /bodyRef\.current === requestedBody/.test(composer) &&

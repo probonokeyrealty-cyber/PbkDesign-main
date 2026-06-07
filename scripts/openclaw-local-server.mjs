@@ -59463,6 +59463,7 @@ const server = createServer(async (request, response) => {
         json(response, classification.httpStatus, {
           ok: classification.ok,
           result: classification.result,
+          approval: providerResult?.approval || null,
           providerResult,
           qaValidation,
           safetyValidation,

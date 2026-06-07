@@ -2076,7 +2076,11 @@ export async function sendConversationMessageRequest(
     approval?: ApprovalRecord | null;
     providerDeliveryClaimed?: boolean;
     event?: ConversationEvent;
-    providerResult?: Record<string, unknown>;
+    providerResult?: Record<string, unknown> & {
+      approval?: ApprovalRecord | null;
+      requiresApproval?: boolean;
+      result?: string;
+    };
     qaValidation?: Record<string, unknown> | null;
     safetyValidation?: Record<string, unknown> | null;
     error?: string;

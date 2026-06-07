@@ -29,7 +29,10 @@ import {
   type ReplyTemplateRecord,
 } from '../../utils/runtimeBridge';
 import { showUiToast } from '../../utils/uiFeedback';
-import { getSenderRestrictionReason } from '../../routes/conversationRuntimeLogic.js';
+import {
+  getSenderRestrictionReason,
+  isConversationApprovalRequired,
+} from '../../routes/conversationRuntimeLogic.js';
 import { SenderIdentitySelect } from './SenderIdentitySelect';
 
 type Channel = 'sms' | 'email';
@@ -482,8 +485,7 @@ export function ConversationComposer({
         actor: 'PBK operator',
         requestedBy: 'unified-inbox',
       });
-      const approvalRequired =
-        Boolean(response.approval) || response.result === 'approval_required';
+      const approvalRequired = isConversationApprovalRequired(response);
       setSendOutcome({
         tone: approvalRequired || response.scheduled ? 'warning' : 'success',
         title: approvalRequired

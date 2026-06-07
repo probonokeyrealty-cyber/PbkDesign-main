@@ -127,7 +127,9 @@ export function getSenderRestrictionReason(identity = {}) {
     return `Sender is ${lifecycleStatus.replace(/_/g, ' ')}.`;
   }
 
-  const healthStatus = cleanText(identity.healthStatus).toLowerCase().replace(/[\s-]+/g, '_');
+  const healthStatus = cleanText(identity.healthStatus)
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
   if (
     /(?:^|_)(?:blocked|quarantined|error|failed|failure|banned|suspended|disabled|disconnected|retired|released|release_pending|sending_error|connection_error|soft_bounce|permanent_suspension)(?:_|$)/.test(
       healthStatus
@@ -136,6 +138,22 @@ export function getSenderRestrictionReason(identity = {}) {
     return `Provider health is ${healthStatus.replace(/_/g, ' ')}.`;
   }
   return '';
+}
+
+export function isConversationApprovalRequired(response = {}) {
+  const normalized = asObject(response);
+  const providerResult = asObject(normalized.providerResult);
+  const approval = asObject(normalized.approval);
+  const providerApproval = asObject(providerResult.approval);
+  const result = cleanText(normalized.result).toLowerCase();
+
+  return Boolean(
+    approval.id ||
+    providerApproval.id ||
+    providerResult.requiresApproval === true ||
+    result === 'approval_required' ||
+    result === 'queued_for_approval'
+  );
 }
 
 export function getConversationMobileState({

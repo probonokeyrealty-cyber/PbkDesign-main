@@ -637,6 +637,12 @@ assert(
     /senderEmail:\s*senderIdentity\.address/.test(conversationRoutes),
   'Conversation sends must reuse provider tools and propagate the explicitly selected sender.'
 );
+assert(
+  /result:\s*classification\.result,[\s\S]*approval:\s*providerResult\?\.approval \|\| null,[\s\S]*providerResult/.test(
+    conversationRoutes
+  ),
+  'Conversation send responses must expose approval metadata at the top level during rolling deploys.'
+);
 
 assert(
   /new Set\(\[[\s\S]*'requestedBy'[\s\S]*\]\)/.test(bridge) &&

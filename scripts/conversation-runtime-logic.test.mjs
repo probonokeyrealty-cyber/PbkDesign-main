@@ -147,6 +147,45 @@ describe('Unified conversation runtime logic', () => {
     expect(helper.getSenderRestrictionReason(sms[1])).toMatch(/quarantined/i);
   });
 
+  test('recognizes every supported approval-gated provider response shape', async () => {
+    const helper = await loadHelper();
+    expect(helper).not.toBeNull();
+
+    expect(
+      helper.isConversationApprovalRequired({
+        approval: { id: 'approval-top-level' },
+      })
+    ).toBe(true);
+    expect(
+      helper.isConversationApprovalRequired({
+        providerResult: {
+          approval: { id: 'approval-provider' },
+        },
+      })
+    ).toBe(true);
+    expect(
+      helper.isConversationApprovalRequired({
+        providerResult: { requiresApproval: true },
+      })
+    ).toBe(true);
+    expect(
+      helper.isConversationApprovalRequired({
+        result: 'approval_required',
+      })
+    ).toBe(true);
+    expect(
+      helper.isConversationApprovalRequired({
+        result: 'queued_for_approval',
+      })
+    ).toBe(true);
+    expect(
+      helper.isConversationApprovalRequired({
+        result: 'sent',
+        providerResult: { requiresApproval: false },
+      })
+    ).toBe(false);
+  });
+
   test('derives explicit mobile transitions and compact previews', async () => {
     const helper = await loadHelper();
     expect(helper).not.toBeNull();

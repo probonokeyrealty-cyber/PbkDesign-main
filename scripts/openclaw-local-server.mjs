@@ -25978,6 +25978,60 @@ function normalizeLeadIntake(payload = {}) {
   };
 }
 
+function syncLeadCompatibilityAliases(lead = {}) {
+  const seller = lead.seller || {};
+  const property = lead.property || {};
+  const motivation = lead.motivation || {};
+  const compliance = lead.compliance || {};
+  const assignment = lead.assignment || {};
+  const notes =
+    lead.notes && typeof lead.notes === 'object' && !Array.isArray(lead.notes)
+      ? lead.notes
+      : {};
+  const internalNotes =
+    typeof lead.notes === 'string' ? lead.notes : notes.internal ?? '';
+
+  Object.assign(lead, {
+    name: seller.name ?? '',
+    leadName: seller.name ?? '',
+    phone: seller.phone ?? '',
+    email: seller.email ?? '',
+    preferredChannel: seller.preferredChannel ?? 'unknown',
+    bestTimeToCall: seller.bestTimeToCall ?? '',
+    relationship: seller.relationshipToProperty ?? '',
+    sellerNotes: seller.notes ?? notes.seller ?? '',
+    internalNotes,
+    address: property.address ?? '',
+    propertyAddress: property.address ?? '',
+    city: property.city ?? '',
+    state: property.state ?? '',
+    zip: property.zip ?? '',
+    zipCode: property.zip ?? '',
+    occupancy: property.occupancy ?? 'unknown',
+    condition: property.condition ?? 'unknown',
+    property_type: property.propertyType ?? property.type ?? '',
+    propertyType: property.propertyType ?? property.type ?? '',
+    beds: property.beds ?? null,
+    baths: property.baths ?? null,
+    sqft: property.sqft ?? null,
+    yearBuilt: property.yearBuilt ?? null,
+    askingPrice: property.askingPrice ?? motivation.askingPrice ?? null,
+    arv: property.arv ?? null,
+    mao: property.mao ?? null,
+    estimatedRepairs: property.estimatedRepairs ?? null,
+    mortgageBalance: property.mortgageBalance ?? null,
+    motivationSummary: motivation.summary ?? '',
+    motivation_summary: motivation.summary ?? '',
+    timeline: motivation.timeline ?? 'unknown',
+    assignedAgent: assignment.assignedAgent ?? 'Ava',
+    tcpaConsent: compliance.tcpaConsent ?? compliance.consentStatus ?? 'unknown',
+    consentStatus: compliance.consentStatus ?? compliance.tcpaConsent ?? 'unknown',
+    dncStatus: compliance.dncStatus ?? 'needs_review',
+  });
+
+  return lead;
+}
+
 function pickFirstText(...values) {
   for (const value of values) {
     const text = String(value || '').trim();
@@ -37731,6 +37785,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
       recordId: record.recordId || record.leadId || record.callId || record.messageId || record.contractId || record.id || '',
       recordKind: record.recordKind || record.kind || 'result',
       routeContext: record.routeContext || '',
+      leadId: record.leadId || '',
+      threadId: record.threadId || '',
       kind: record.kind || 'result',
       title: compactSearchText(record.title || 'Untitled result'),
       subtitle: compactSearchText(record.subtitle || ''),
@@ -37793,6 +37849,8 @@ function collectGlobalSearchRecords(query = '', limit = 12) {
       body: [message.address, message.phone, message.email, message.body].filter(Boolean).join(' '),
       page: 'inbox',
       recordId: message.id,
+      leadId: message.leadId || '',
+      threadId: message.threadId || '',
       routeContext: `message:${message.id || ''}`,
       createdAt: message.createdAt,
     })
@@ -58776,6 +58834,7 @@ const server = createServer(async (request, response) => {
           activity: url.searchParams.get('activity') || undefined,
           status: url.searchParams.get('status') || url.searchParams.get('stage') || undefined,
           assignedAgent: url.searchParams.get('assignedAgent') || undefined,
+          leadId: url.searchParams.get('leadId') || undefined,
           limit: url.searchParams.get('limit') || undefined,
         };
         const page = await store.listThreads(filters);
@@ -61759,6 +61818,59 @@ const server = createServer(async (request, response) => {
     if (leadPatchMatch && request.method === 'PATCH') {
       const body = await readBody(request);
       const existing = findLeadImportByLookup(leadPatchMatch.groups.id);
+      const sellerPatch =
+        body.seller && typeof body.seller === 'object' && !Array.isArray(body.seller)
+          ? body.seller
+          : {};
+      const propertyPatch =
+        body.property && typeof body.property === 'object' && !Array.isArray(body.property)
+          ? body.property
+          : {};
+      const motivationPatch =
+        body.motivation &&
+        typeof body.motivation === 'object' &&
+        !Array.isArray(body.motivation)
+          ? body.motivation
+          : {};
+      const compliancePatch =
+        body.compliance &&
+        typeof body.compliance === 'object' &&
+        !Array.isArray(body.compliance)
+          ? body.compliance
+          : {};
+      const assignmentPatch =
+        body.assignment &&
+        typeof body.assignment === 'object' &&
+        !Array.isArray(body.assignment)
+          ? body.assignment
+          : {};
+      const existingNotesRecord =
+        existing?.notes &&
+        typeof existing.notes === 'object' &&
+        !Array.isArray(existing.notes)
+          ? existing.notes
+          : null;
+      const incomingNotesRecord =
+        body.notes && typeof body.notes === 'object' && !Array.isArray(body.notes)
+          ? body.notes
+          : null;
+      const nextNotes =
+        existingNotesRecord || incomingNotesRecord
+          ? {
+              ...(existingNotesRecord || {}),
+              ...(incomingNotesRecord || {}),
+              ...(body.sellerNotes !== undefined ? { seller: body.sellerNotes } : {}),
+              ...(body.internalNotes !== undefined
+                ? { internal: body.internalNotes }
+                : typeof body.notes === 'string'
+                  ? { internal: body.notes }
+                  : {}),
+            }
+          : body.internalNotes !== undefined
+            ? body.internalNotes
+            : body.notes !== undefined
+              ? body.notes
+              : existing?.notes;
       const currentCallContext = existing?.callContext || existing?.call_context || {};
       const selectedPath = normalizePbkDealPath(body.selected_path || body.selectedPath || body.path || currentCallContext.selected_path || currentCallContext.selectedPath, existing ? inferLeadSelectedPath(existing) : 'cash');
       const callContextPatch = {
@@ -61787,37 +61899,128 @@ const server = createServer(async (request, response) => {
         score: body.motivation_score ?? body.motivationScore ?? existing?.score,
         seller: {
           ...(existing?.seller || {}),
+          ...sellerPatch,
           ...compactObject({
             name: body.name ?? body.leadName,
             phone: body.phone,
             email: body.email,
             notes: body.sellerNotes,
+            preferredChannel: body.preferredChannel,
+            bestTimeToCall: body.bestTimeToCall,
+            relationshipToProperty: body.relationship,
           }),
         },
         property: {
           ...(existing?.property || {}),
+          ...propertyPatch,
           ...compactObject({
             address: body.address ?? body.propertyAddress,
             propertyType: body.property_type ?? body.propertyType,
             type: body.property_type ?? body.propertyType,
             askingPrice: body.askingPrice,
+            city: body.city,
+            state: body.state,
+            zip: body.zip ?? body.zipCode,
+            occupancy: body.occupancy,
+            condition: body.condition,
+            beds: body.beds,
+            baths: body.baths,
+            sqft: body.sqft,
+            yearBuilt: body.yearBuilt,
+            arv: body.arv,
+            mao: body.mao,
+            estimatedRepairs: body.estimatedRepairs,
+            mortgageBalance: body.mortgageBalance,
           }),
         },
         motivation: {
           ...(existing?.motivation || {}),
+          ...motivationPatch,
           ...compactObject({
-            summary: body.motivation || body.motivation_summary,
+            summary:
+              typeof body.motivation === 'string'
+                ? body.motivation
+                : body.motivation_summary,
             timeline: body.timeline,
+            askingPrice: body.askingPrice,
+          }),
+        },
+        compliance: {
+          ...(existing?.compliance || {}),
+          ...compliancePatch,
+          ...compactObject({
+            tcpaConsent: body.tcpaConsent,
+            consentStatus: body.tcpaConsent,
+            dncStatus: body.dncStatus,
+          }),
+        },
+        assignment: {
+          ...(existing?.assignment || {}),
+          ...assignmentPatch,
+          ...compactObject({
+            assignedAgent: body.assignedAgent,
+            stage: body.stage,
           }),
         },
         tags: body.tags !== undefined ? normalizeLeadTags(body.tags) : existing?.tags,
-        notes: body.notes !== undefined ? body.notes : existing?.notes,
+        notes:
+          typeof nextNotes === 'string'
+            ? nextNotes
+            : body.internalNotes ?? existing?.internalNotes ?? '',
+        sellerNotes:
+          body.sellerNotes !== undefined ? body.sellerNotes : existing?.sellerNotes,
+        internalNotes:
+          body.internalNotes !== undefined ? body.internalNotes : existing?.internalNotes,
+        assignedAgent:
+          body.assignedAgent !== undefined ? body.assignedAgent : existing?.assignedAgent,
+        preferredChannel:
+          body.preferredChannel !== undefined
+            ? body.preferredChannel
+            : existing?.preferredChannel,
+        bestTimeToCall:
+          body.bestTimeToCall !== undefined ? body.bestTimeToCall : existing?.bestTimeToCall,
+        relationship:
+          body.relationship !== undefined ? body.relationship : existing?.relationship,
+        tcpaConsent:
+          body.tcpaConsent !== undefined ? body.tcpaConsent : existing?.tcpaConsent,
+        dncStatus: body.dncStatus !== undefined ? body.dncStatus : existing?.dncStatus,
+        askingPrice:
+          body.askingPrice !== undefined ? body.askingPrice : existing?.askingPrice,
+        arv: body.arv !== undefined ? body.arv : existing?.arv,
+        mao: body.mao !== undefined ? body.mao : existing?.mao,
+        estimatedRepairs:
+          body.estimatedRepairs !== undefined
+            ? body.estimatedRepairs
+            : existing?.estimatedRepairs,
+        mortgageBalance:
+          body.mortgageBalance !== undefined
+            ? body.mortgageBalance
+            : existing?.mortgageBalance,
         bant: parseBantPayload(body.bant, existing?.bant || {}),
         callContext: callContextPatch,
         selectedPath,
         selected_path: selectedPath,
         updatedAt: isoNow(),
       });
+      nextLead.notes = nextNotes;
+      nextLead.motivation = {
+        ...(existing?.motivation || {}),
+        ...motivationPatch,
+        ...(nextLead.motivation || {}),
+      };
+      nextLead.compliance = {
+        ...(existing?.compliance || {}),
+        ...compliancePatch,
+        ...(nextLead.compliance || {}),
+        ...(body.tcpaConsent !== undefined ? { tcpaConsent: body.tcpaConsent } : {}),
+      };
+      nextLead.assignment = {
+        ...(existing?.assignment || {}),
+        ...assignmentPatch,
+        ...(nextLead.assignment || {}),
+        ...(body.stage !== undefined ? { stage: body.stage } : {}),
+      };
+      syncLeadCompatibilityAliases(nextLead);
 
       const patched = existing
         ? patchLeadImport(
@@ -62030,14 +62233,26 @@ const server = createServer(async (request, response) => {
       };
       addActivity(state, activity);
       await persistState(state);
-      await projectLiveConversationRecord({
-        record: activity,
-        projector: projectActivityEvent,
-        source: 'lead-note',
-      });
+      let projection;
+      try {
+        projection = await projectLiveConversationRecord({
+          record: activity,
+          projector: projectActivityEvent,
+          source: 'lead-note',
+        });
+      } catch (error) {
+        projection = {
+          ok: false,
+          result: 'projection_failed',
+          error: error instanceof Error ? error.message : String(error || 'unknown error'),
+        };
+        console.warn('[pbk-local-openclaw] lead note timeline projection failed:', projection.error);
+      }
       json(response, 200, {
         ok: true,
         activity,
+        timelineProjected: projection?.ok === true,
+        projectionResult: projection?.result || '',
         state: buildStateSnapshot(),
       });
       return;

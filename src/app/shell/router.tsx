@@ -6,6 +6,9 @@ const CommandCenter = lazy(() =>
   import('../routes/CommandCenter').then((module) => ({ default: module.CommandCenter }))
 );
 const Leads = lazy(() => import('../routes/Leads').then((module) => ({ default: module.Leads })));
+const LeadPortal = lazy(() =>
+  import('../routes/LeadPortal').then((module) => ({ default: module.LeadPortal }))
+);
 const DealView = lazy(() =>
   import('../routes/DealView').then((module) => ({ default: module.DealView }))
 );
@@ -49,6 +52,7 @@ const router = createBrowserRouter(
         { path: 'command-center', element: <CommandCenter /> },
         { path: 'dashboard', element: <CommandCenter /> },
         { path: 'leads', element: <Leads /> },
+        { path: 'leads/:leadId', element: <LeadPortal /> },
         { path: 'deal', element: <DealView /> },
         { path: 'deal/:id', element: <DealView /> },
         { path: 'inbox', element: <Inbox /> },

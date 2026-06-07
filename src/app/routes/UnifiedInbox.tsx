@@ -88,6 +88,7 @@ export function UnifiedInbox() {
   const { snapshot, refresh: refreshRuntime } = useRuntimeSnapshot(2500);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedThreadId = searchParams.get('thread') || '';
+  const requestedLeadId = searchParams.get('lead') || '';
   const [threads, setThreads] = useState<ConversationThread[]>([]);
   const [threadCursor, setThreadCursor] = useState<string | null>(null);
   const [threadLoading, setThreadLoading] = useState(true);
@@ -135,6 +136,7 @@ export function UnifiedInbox() {
   const matchDialogRef = useRef<HTMLElement>(null);
   const matchReturnFocusRef = useRef<HTMLElement | null>(null);
   const leadSearchSequence = useRef(0);
+  const leadThreadResolveSequence = useRef(0);
 
   const visibleThreads = useMemo(
     () => normalizeConversationThreads(threads) as ConversationThread[],
@@ -162,12 +164,42 @@ export function UnifiedInbox() {
   const setSelectedThreadInUrl = useCallback(
     (threadId: string) => {
       const next = new URLSearchParams(searchParams);
-      if (threadId) next.set('thread', threadId);
-      else next.delete('thread');
+      if (threadId) {
+        next.set('thread', threadId);
+        next.delete('lead');
+      } else {
+        next.delete('thread');
+      }
       setSearchParams(next, { replace: true });
     },
     [searchParams, setSearchParams]
   );
+
+  useEffect(() => {
+    if (!requestedLeadId || selectedThreadId) return undefined;
+    const requestId = ++leadThreadResolveSequence.current;
+    void fetchConversationsRequest({ leadId: requestedLeadId, limit: 2 })
+      .then((response) => {
+        if (requestId !== leadThreadResolveSequence.current) return;
+        const canonical =
+          (response.items || []).find((candidate) => candidate.leadId === requestedLeadId) ||
+          response.items?.[0];
+        if (canonical?.id) {
+          setSelectedThreadInUrl(canonical.id);
+          return;
+        }
+        setThreadError('This seller has no canonical conversation thread yet.');
+      })
+      .catch((error) => {
+        if (requestId !== leadThreadResolveSequence.current) return;
+        setThreadError(
+          error instanceof Error ? error.message : 'Unable to resolve the seller conversation.'
+        );
+      });
+    return () => {
+      leadThreadResolveSequence.current += 1;
+    };
+  }, [requestedLeadId, selectedThreadId, setSelectedThreadInUrl]);
 
   const loadThreadPage = useCallback(
     async ({ append = false, cursor = '' }: { append?: boolean; cursor?: string } = {}) => {
@@ -214,10 +246,23 @@ export function UnifiedInbox() {
   }, [loadThreadPage]);
 
   useEffect(() => {
-    if (!compactViewport && !threadLoading && !selectedThreadId && visibleThreads[0]?.id) {
+    if (
+      !compactViewport &&
+      !threadLoading &&
+      !selectedThreadId &&
+      !requestedLeadId &&
+      visibleThreads[0]?.id
+    ) {
       setSelectedThreadInUrl(visibleThreads[0].id);
     }
-  }, [compactViewport, selectedThreadId, setSelectedThreadInUrl, threadLoading, visibleThreads]);
+  }, [
+    compactViewport,
+    requestedLeadId,
+    selectedThreadId,
+    setSelectedThreadInUrl,
+    threadLoading,
+    visibleThreads,
+  ]);
 
   const loadSelectedThread = useCallback(
     async ({ quiet = false }: { quiet?: boolean } = {}) => {
@@ -460,7 +505,7 @@ export function UnifiedInbox() {
     setMergeError('');
     try {
       const candidates = await fetchConversationsRequest({
-        search: leadId,
+        leadId,
         limit: 20,
       });
       const canonical = (candidates.items || []).find(

@@ -53,9 +53,15 @@ function getBridgeSearchRoute(result: GlobalSearchResult, query = '') {
   const kind = text(result.kind || result.recordKind).toLowerCase();
   const page = text(result.page).toLowerCase();
   const id = text(result.recordId || result.id);
+  const leadId = text(result.leadId);
+  const threadId = text(result.threadId);
   if (kind === 'agent' || page === 'agent-fleet') return `/fleet?agent=${encodeURIComponent(id)}`;
-  if (kind === 'lead' || page === 'lead-detail') return `/leads?lead=${encodeURIComponent(id)}`;
-  if (kind === 'message' || page === 'inbox') return `/inbox?message=${encodeURIComponent(id)}`;
+  if (kind === 'lead' || page === 'lead-detail') return `/leads/${encodeURIComponent(id)}`;
+  if (kind === 'message' || page === 'inbox') {
+    if (threadId) return `/inbox/conversations?thread=${encodeURIComponent(threadId)}`;
+    if (leadId) return `/inbox/conversations?lead=${encodeURIComponent(leadId)}`;
+    return '/inbox/conversations';
+  }
   if (kind === 'contract' || page === 'contracts')
     return `/leads?contract=${encodeURIComponent(id)}`;
   if (kind === 'brain' || page === 'brain') return `/memory?doc=${encodeURIComponent(id)}`;
@@ -148,7 +154,7 @@ export function ShellTopbar({
           id: `lead:${getLeadId(record)}`,
           label,
           meta,
-          to: `/leads?lead=${encodeURIComponent(getLeadId(record))}`,
+          to: `/leads/${encodeURIComponent(getLeadId(record))}`,
         };
       })
       .filter((item) => `${item.label} ${item.meta}`.toLowerCase().includes(needle));

@@ -504,7 +504,7 @@ function InboxMessageRow({
   const leadId = getMessageLeadId(message);
   const openLeadPortal = () => {
     if (leadId) {
-      window.location.assign(`/leads?lead=${encodeURIComponent(leadId)}`);
+      window.location.assign(`/leads/${encodeURIComponent(leadId)}`);
       return;
     }
     window.location.assign(`/leads?search=${encodeURIComponent(title)}`);

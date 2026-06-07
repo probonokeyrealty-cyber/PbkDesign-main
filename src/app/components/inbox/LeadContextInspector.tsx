@@ -273,7 +273,7 @@ export function LeadContextInspector({
 
       {thread && (
         <footer>
-          <Link to={leadId ? `/leads?lead=${encodeURIComponent(leadId)}` : '/leads'}>
+          <Link to={leadId ? `/leads/${encodeURIComponent(leadId)}` : '/leads'}>
             <ExternalLink size={14} />
             Full lead portal
           </Link>

@@ -1174,6 +1174,9 @@ export function createConversationStore(pool) {
     if (typeof filters.assignedAgent === 'string' && filters.assignedAgent.trim()) {
       conditions.push(`t.assigned_agent = ${addParam(filters.assignedAgent.trim())}`);
     }
+    if (typeof filters.leadId === 'string' && filters.leadId.trim()) {
+      conditions.push(`t.lead_id = ${addParam(filters.leadId.trim())}`);
+    }
     if (typeof filters.channel === 'string' && filters.channel.trim()) {
       const channelParam = addParam(filters.channel.trim());
       conditions.push(`

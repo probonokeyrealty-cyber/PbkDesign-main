@@ -386,6 +386,8 @@ export type GlobalSearchResult = {
   recordId?: string;
   recordKind?: string;
   routeContext?: string;
+  leadId?: string;
+  threadId?: string;
   kind?: string;
   title?: string;
   subtitle?: string;
@@ -1964,6 +1966,7 @@ export async function fetchConversationsRequest({
   activity = '',
   status = '',
   assignedAgent = '',
+  leadId = '',
   limit = 40,
 }: {
   cursor?: string;
@@ -1975,6 +1978,7 @@ export async function fetchConversationsRequest({
   activity?: 'live' | 'approvals' | string;
   status?: string;
   assignedAgent?: string;
+  leadId?: string;
   limit?: number;
 } = {}) {
   const suffix = conversationSearchSuffix([
@@ -1987,6 +1991,7 @@ export async function fetchConversationsRequest({
     ['activity', activity],
     ['status', status],
     ['assignedAgent', assignedAgent],
+    ['leadId', leadId],
     ['limit', Math.max(1, Math.min(100, limit))],
   ]);
   return bridgeRequest<ConversationListResponse>({

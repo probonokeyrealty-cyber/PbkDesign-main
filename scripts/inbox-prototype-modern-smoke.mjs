@@ -78,7 +78,10 @@ assert(
 
 assert(/getMessageLeadId/.test(inbox), 'Inbox should resolve lead ids from message rows.');
 assert(/Open lead/.test(inbox), 'Inbox message rows should expose an Open lead portal action.');
-assert(/\/leads\?lead=/.test(inbox), 'Inbox Open lead action should deep-link to the bridge-backed lead portal.');
+assert(
+  /\/leads\/\$\{encodeURIComponent\(leadId\)\}/.test(inbox),
+  'Inbox Open lead action should deep-link to the canonical bridge-backed lead portal.'
+);
 
 assert(
   !/John Smith|Diane Kowalski|123 Main St|Approve Offer|UI-only|SAMPLE_MESSAGES|MOCK_MESSAGES/.test(inbox),

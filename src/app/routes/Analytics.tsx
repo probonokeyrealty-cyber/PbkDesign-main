@@ -536,7 +536,7 @@ function DrillDownPanel({ open, title, meta, items, onClose, onExport }: DrillDo
                 className="w-full rounded-2xl border border-slate-800 bg-slate-900 px-3 py-3 text-left transition hover:border-sky-500/40"
                 onClick={() => {
                   onClose();
-                  navigate(`/leads?lead=${encodeURIComponent(item.id)}`);
+                  navigate(`/leads/${encodeURIComponent(item.id)}`);
                 }}
               >
                 <div className="flex items-center justify-between gap-3">

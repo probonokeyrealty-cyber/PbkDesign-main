@@ -112,6 +112,11 @@ timeout = 25
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
+  for = "/leads/*"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
   for = "/deal"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
@@ -193,6 +198,12 @@ force = true
 
 [[redirects]]
 from = "/leads"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/leads/*"
 to = "/index.shell.html"
 status = 200
 force = true

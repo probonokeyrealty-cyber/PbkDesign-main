@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import {
   AlertCircle,
   CheckCircle2,
@@ -883,6 +883,7 @@ const softPanelClass =
 
 export function Leads() {
   const { snapshot, loading, error, refresh } = useRuntimeSnapshot();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const snapshotLeads = useMemo(
     () => (Array.isArray(snapshot?.leadImports) ? (snapshot.leadImports as BridgeRecord[]) : []),
@@ -946,7 +947,8 @@ export function Leads() {
     const requestedSearch = searchParams.get('search');
 
     if (requestedLeadId) {
-      setSelectedLeadId(requestedLeadId);
+      navigate(`/leads/${encodeURIComponent(requestedLeadId)}`, { replace: true });
+      return;
     } else if (requestedSearch && leads.length) {
       const needle = requestedSearch.toLowerCase();
       const match = leads.find((lead) =>
@@ -974,7 +976,7 @@ export function Leads() {
         { replace: true }
       );
     }
-  }, [leads, searchParams, setSearchParams]);
+  }, [leads, navigate, searchParams, setSearchParams]);
 
   const beginLeadAction = useCallback((key: string) => {
     if (leadActionLockRef.current) return false;
@@ -1225,6 +1227,7 @@ export function Leads() {
         desc: `${getSellerName(lead)} is ready for Ava, Rex, approvals, analyzer, and contracts.`,
       });
       await Promise.all([refresh().catch(() => null), loadLeadRoster()]);
+      navigate(`/leads/${encodeURIComponent(nextLeadId)}`);
     } catch (nextError) {
       const message =
         nextError instanceof Error ? `Create failed: ${nextError.message}` : 'Create failed.';
@@ -1464,11 +1467,11 @@ export function Leads() {
                   aria-selected={isSelected}
                   aria-pressed={isSelected}
                   className="lead-mobile-card"
-                  onClick={() => setSelectedLeadId(id)}
+                  onClick={() => navigate(`/leads/${encodeURIComponent(id)}`)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      setSelectedLeadId(id);
+                      navigate(`/leads/${encodeURIComponent(id)}`);
                     }
                   }}
                 >
@@ -1544,7 +1547,7 @@ export function Leads() {
                   type="button"
                   aria-label={`Open lead ${getSellerName(lead)} at ${getLeadAddress(lead)}`}
                   aria-selected={isSelected}
-                  onClick={() => setSelectedLeadId(id)}
+                  onClick={() => navigate(`/leads/${encodeURIComponent(id)}`)}
                   className={[
                     'grid w-full grid-cols-1 gap-2 px-4 py-4 text-left transition md:grid-cols-[1fr_auto]',
                     isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',

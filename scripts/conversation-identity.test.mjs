@@ -610,10 +610,28 @@ describe('sender recommendation compliance', () => {
   test.each([
     ['', 'consent_unknown'],
     ['unknown', 'consent_unknown'],
+    ['needs review', 'consent_needs_review'],
+    ['pending', 'consent_pending'],
+  ])('routes reviewable SMS consent %p through approval', (consentStatus, reasonCode) => {
+    expect(
+      evaluateConversationSenderRecommendationCompliance({
+        channel: 'sms',
+        dncBlocked: false,
+        consentStatus,
+      })
+    ).toEqual({
+      allowed: true,
+      reasonCodes: [reasonCode, 'approval_required'],
+    });
+  });
+
+  test.each([
     ['denied', 'consent_denied'],
     ['revoked', 'consent_revoked'],
-    ['needs review', 'consent_needs_review'],
-  ])('fails SMS consent %p closed', (consentStatus, reasonCode) => {
+    ['opted out', 'consent_opted_out'],
+    ['false', 'consent_false'],
+    ['no', 'consent_no'],
+  ])('hard-blocks SMS consent %p', (consentStatus, reasonCode) => {
     expect(
       evaluateConversationSenderRecommendationCompliance({
         channel: 'sms',
@@ -622,7 +640,7 @@ describe('sender recommendation compliance', () => {
       })
     ).toEqual({
       allowed: false,
-      reasonCodes: [reasonCode, 'approval_required'],
+      reasonCodes: [reasonCode],
     });
   });
 

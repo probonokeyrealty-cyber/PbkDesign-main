@@ -20,6 +20,7 @@ import {
   fetchSenderRecommendationRequest,
   refineConversationDraftRequest,
   sendConversationMessageRequest,
+  syncSenderIdentitiesRequest,
   type CommunicationSenderIdentity,
   type ConversationEvent,
   type ConversationThread,
@@ -36,6 +37,7 @@ type ConversationComposerProps = {
   lead?: Record<string, unknown> | null;
   recipientSummary?: { phone?: string; email?: string } | null;
   events: ConversationEvent[];
+  initialChannel?: Channel;
   onSent: () => void;
 };
 
@@ -182,9 +184,10 @@ export function ConversationComposer({
   lead,
   recipientSummary,
   events,
+  initialChannel = 'sms',
   onSent,
 }: ConversationComposerProps) {
-  const [channel, setChannel] = useState<Channel>('sms');
+  const [channel, setChannel] = useState<Channel>(initialChannel);
   const [senderIdentities, setSenderIdentities] = useState<CommunicationSenderIdentity[]>([]);
   const [senderIdentityId, setSenderIdentityId] = useState('');
   const [recommendedId, setRecommendedId] = useState('');
@@ -204,6 +207,7 @@ export function ConversationComposer({
   const [submittedFingerprint, setSubmittedFingerprint] = useState('');
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const senderRequestSequence = useRef(0);
+  const senderSyncAttempted = useRef(false);
   const templateRequestSequence = useRef(0);
   const bodyRef = useRef(body);
   const subjectRef = useRef(subject);
@@ -271,10 +275,23 @@ export function ConversationComposer({
     setNotice(null);
     setRecommendationGuard('');
     try {
-      const [inventory, recommendation] = await Promise.all([
-        fetchSenderIdentitiesRequest({ channel }),
-        fetchSenderRecommendationRequest(thread.id, channel),
-      ]);
+      let inventory = await fetchSenderIdentitiesRequest({ channel });
+      if (!(inventory.items || []).length && !senderSyncAttempted.current) {
+        senderSyncAttempted.current = true;
+        const sync = await syncSenderIdentitiesRequest();
+        inventory = await fetchSenderIdentitiesRequest({ channel });
+        const unavailableProviders = Object.entries(record(sync.providers))
+          .filter(([, value]) => record(value).ok === false)
+          .map(([provider]) => provider);
+        if (unavailableProviders.length) {
+          setNotice({
+            tone: 'warning',
+            title: 'Some senders need attention',
+            detail: `${unavailableProviders.join(' and ')} could not refresh. Available connected identities are still shown.`,
+          });
+        }
+      }
+      const recommendation = await fetchSenderRecommendationRequest(thread.id, channel);
       if (requestId !== senderRequestSequence.current) return;
       const identities = inventory.items || [];
       const recommended = recommendation.recommended || null;
@@ -282,6 +299,13 @@ export function ConversationComposer({
       setRecommendedId(recommended?.id || '');
       if (!recommended) {
         setRecommendationGuard(explainRecommendationGuard(recommendation.reasonCodes || []));
+      } else if (recommendation.reasonCodes?.includes('approval_required')) {
+        setNotice({
+          tone: 'warning',
+          title: 'SMS approval required',
+          detail:
+            'Consent needs review. You can draft and submit this message, but PBK will not send it until an operator approves it.',
+        });
       }
       setSenderIdentityId((current) => {
         if (!recommended) return '';
@@ -417,7 +441,8 @@ export function ConversationComposer({
         setNotice({
           tone: 'warning',
           title: 'Newer draft preserved',
-          detail: 'The message changed while Ava was working. Run Refine again on the current text.',
+          detail:
+            'The message changed while Ava was working. Run Refine again on the current text.',
         });
       }
     } catch (error) {
@@ -449,7 +474,8 @@ export function ConversationComposer({
         actor: 'PBK operator',
         requestedBy: 'unified-inbox',
       });
-      const approvalRequired = Boolean(response.approval) || response.result === 'approval_required';
+      const approvalRequired =
+        Boolean(response.approval) || response.result === 'approval_required';
       setSendOutcome({
         tone: approvalRequired || response.scheduled ? 'warning' : 'success',
         title: approvalRequired
@@ -587,7 +613,11 @@ export function ConversationComposer({
           {listening ? <Square size={13} /> : <Mic size={14} />}
           {listening ? 'Stop dictation' : 'Ava mic'}
         </button>
-        <button type="button" onClick={() => void refineDraft()} disabled={!body.trim() || refining}>
+        <button
+          type="button"
+          onClick={() => void refineDraft()}
+          disabled={!body.trim() || refining}
+        >
           {refining ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
           Refine with Ava
         </button>
@@ -653,9 +683,7 @@ export function ConversationComposer({
           onClick={() => void sendMessage()}
           disabled={!canSend}
           aria-describedby={
-            !canSend && sendDisabledReason && !sending
-              ? 'conversation-send-requirement'
-              : undefined
+            !canSend && sendDisabledReason && !sending ? 'conversation-send-requirement' : undefined
           }
         >
           {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}

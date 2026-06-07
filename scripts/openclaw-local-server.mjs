@@ -50381,6 +50381,52 @@ async function buildConversationSenderSummary(store, thread) {
   };
 }
 
+async function loadConversationLeadForResolve(pool, leadId) {
+  const selectLead = () =>
+    pool.query(
+      `
+        SELECT
+          id,
+          lead_name,
+          phone,
+          email,
+          address,
+          city,
+          state,
+          postal_code,
+          stage,
+          status,
+          assigned_agent,
+          engagement_score,
+          motivation_score,
+          dnc
+        FROM public.lead_profiles
+        WHERE id = $1
+          AND workspace_id = $2
+        LIMIT 1
+      `,
+      [leadId, CONVERSATION_WORKSPACE_ID]
+    );
+
+  const existing = await selectLead();
+  if (existing.rows[0]) return existing.rows[0];
+
+  const bridgeLead = buildLeadFullView(leadId)?.lead;
+  if (!bridgeLead) return null;
+  const persisted = await persistLeadProfileRowToDb(
+    bridgeLead,
+    'unified-inbox-compose'
+  );
+  if (!persisted?.ok) {
+    throw Object.assign(
+      new Error('The seller exists in bridge state but could not be persisted for messaging.'),
+      { statusCode: 503 }
+    );
+  }
+  const created = await selectLead();
+  return created.rows[0] || null;
+}
+
 function getConversationRequestActor(request) {
   const teamAuth = getTeamAuthMeta(request);
   return teamAuth.ok && teamAuth.actor ? teamAuth.actor : 'operator';
@@ -50419,6 +50465,22 @@ function parseConversationSenderRecommendationBody(body) {
     throw Object.assign(new Error('channel must be sms or email.'), { statusCode: 400 });
   }
   return { channel };
+}
+
+function parseConversationResolveBody(body) {
+  requirePlainConversationActionBody(
+    body,
+    'Conversation resolve body must be a plain JSON object.'
+  );
+  rejectUnknownConversationFields(body, new Set(['leadId']), 'conversation resolve');
+  if (typeof body.leadId !== 'string' || !body.leadId.trim()) {
+    throw Object.assign(new Error('leadId is required and must be a nonempty string.'), {
+      statusCode: 400,
+    });
+  }
+  return {
+    leadId: body.leadId.trim().slice(0, 240),
+  };
 }
 
 function parseConversationRunDueBody(body) {
@@ -58815,6 +58877,61 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/conversations/resolve') {
+      const pool = getPgPool();
+      if (!pool) {
+        sendConversationPostgresUnavailable(response);
+        return;
+      }
+      try {
+        const { leadId } = parseConversationResolveBody(await readBody(request));
+        const lead = await loadConversationLeadForResolve(pool, leadId);
+        if (!lead) {
+          json(response, 404, {
+            ok: false,
+            result: 'postgres',
+            error: 'Lead not found.',
+          });
+          return;
+        }
+        const store = createConversationStore(pool);
+        const thread = await store.resolveThread({
+          workspaceId: CONVERSATION_WORKSPACE_ID,
+          leadId: lead.id,
+          phone: lead.phone || '',
+          email: lead.email || '',
+          title: lead.lead_name || lead.address || 'Seller conversation',
+          source: 'unified-inbox-compose',
+          metadata: {
+            openedBy: getConversationRequestActor(request),
+            openedFrom: 'unified-inbox',
+          },
+        });
+        const [leadSummary, senderSummary, recipientSummary] = await Promise.all([
+          buildConversationLeadSummary(pool, thread),
+          buildConversationSenderSummary(store, thread),
+          store.getThreadContactIdentities(thread.id, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          }),
+        ]);
+        json(response, 200, {
+          ok: true,
+          result: 'postgres',
+          thread,
+          leadSummary,
+          senderSummary,
+          recipientSummary,
+        });
+      } catch (error) {
+        sendConversationStoreError(
+          response,
+          error,
+          'Unable to open the seller conversation.'
+        );
+      }
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/conversations') {
       const pool = getPgPool();
       if (!pool) {
@@ -58943,12 +59060,18 @@ const server = createServer(async (request, response) => {
           reasonCodes: identity.reasonCodes || [],
         }));
         const recommended = publicRanked[0] || null;
+        const reasonCodes = [
+          ...new Set([
+            ...(compliance.reasonCodes || []),
+            ...(recommended?.reasonCodes || []),
+          ]),
+        ];
         json(response, 200, {
           ok: true,
           result: 'postgres',
           recommended,
           alternatives: publicRanked.slice(1),
-          reasonCodes: recommended?.reasonCodes || ['no_eligible_sender'],
+          reasonCodes: reasonCodes.length ? reasonCodes : ['no_eligible_sender'],
         });
       } catch (error) {
         sendConversationStoreError(
@@ -59065,6 +59188,44 @@ const server = createServer(async (request, response) => {
           return;
         }
 
+        const consentStatus = getConversationConsentStatus(
+          recipientContext.runtimeLead
+        );
+        const sendCompliance = evaluateConversationSenderRecommendationCompliance({
+          channel: parsed.channel,
+          dncBlocked: false,
+          consentStatus,
+        });
+        if (!sendCompliance.allowed) {
+          const reason = `SMS consent is ${consentStatus.replace(/_/g, ' ')}. Update the lead compliance record before messaging.`;
+          const providerResult = {
+            ok: false,
+            blocked: true,
+            result: 'sms_consent_blocked',
+            reason,
+            reasonCodes: sendCompliance.reasonCodes,
+          };
+          const event = await projectConversationSendOutcome(store, {
+            thread,
+            requestId,
+            channel: parsed.channel,
+            senderIdentity,
+            recipient,
+            body: parsed.body,
+            subject: parsed.subject,
+            status: 'blocked',
+            result: providerResult,
+            scheduledFor: parsed.scheduledFor,
+            actor,
+            reason,
+          });
+          json(response, 409, {
+            ...providerResult,
+            event,
+          });
+          return;
+        }
+
         const conversationSendBinding = buildConversationSendBinding({
           workspaceId: CONVERSATION_WORKSPACE_ID,
           threadId: thread.id,
@@ -59095,9 +59256,7 @@ const server = createServer(async (request, response) => {
                 to: recipient,
                 from: senderIdentity.address,
                 fromNumber: senderIdentity.address,
-                consentStatus: getConversationConsentStatus(
-                  recipientContext.runtimeLead
-                ),
+                consentStatus,
               }
             : {
                 email: recipient,

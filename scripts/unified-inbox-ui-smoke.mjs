@@ -10,6 +10,7 @@ const threadRailPath = resolve(root, 'src/app/components/inbox/ConversationThrea
 const timelinePath = resolve(root, 'src/app/components/inbox/ConversationTimeline.tsx');
 const inspectorPath = resolve(root, 'src/app/components/inbox/LeadContextInspector.tsx');
 const composerPath = resolve(root, 'src/app/components/inbox/ConversationComposer.tsx');
+const newConversationPath = resolve(root, 'src/app/components/inbox/NewConversationDialog.tsx');
 const senderSelectPath = resolve(root, 'src/app/components/inbox/SenderIdentitySelect.tsx');
 const liveCallPipPath = resolve(root, 'src/app/components/inbox/LiveCallPip.tsx');
 const cssPath = resolve(root, 'src/styles/pbk-components.css');
@@ -74,6 +75,7 @@ for (const path of [
   timelinePath,
   inspectorPath,
   composerPath,
+  newConversationPath,
   senderSelectPath,
   liveCallPipPath,
 ]) {
@@ -86,6 +88,7 @@ const threadRail = readFileSync(threadRailPath, 'utf8');
 const timeline = readFileSync(timelinePath, 'utf8');
 const inspector = readFileSync(inspectorPath, 'utf8');
 const composer = readFileSync(composerPath, 'utf8');
+const newConversation = readFileSync(newConversationPath, 'utf8');
 const senderSelect = readFileSync(senderSelectPath, 'utf8');
 const liveCallPip = readFileSync(liveCallPipPath, 'utf8');
 const css = readFileSync(cssPath, 'utf8');
@@ -150,6 +153,25 @@ assert(
     /aria-pressed=\{channel === 'email'\}/.test(composer),
   'Composer must expose an accessible SMS/email segmented control.'
 );
+assert(
+  threadRail.includes('New message') &&
+    threadRail.includes('onNewConversation') &&
+    unifiedInbox.includes('<NewConversationDialog'),
+  'Unified inbox must expose New message even when no thread exists.'
+);
+assert(
+  newConversation.includes('resolveConversationThreadRequest') &&
+    newConversation.includes('searchLeadsRequest') &&
+    newConversation.includes('Open {channel.toUpperCase()} composer') &&
+    !newConversation.includes('sendConversationMessageRequest'),
+  'New message must resolve a canonical lead thread, then reuse the existing composer.'
+);
+assert(
+  newConversation.includes("aria-pressed={channel === 'sms'}") &&
+    newConversation.includes("aria-pressed={channel === 'email'}") &&
+    newConversation.includes("event.key === 'Escape'"),
+  'New message must provide accessible SMS/email selection and keyboard dismissal.'
+);
 for (const requiredCopy of [
   'From',
   'Telnyx',
@@ -167,6 +189,7 @@ for (const requiredCopy of [
 }
 for (const endpointHelper of [
   'fetchSenderIdentitiesRequest',
+  'syncSenderIdentitiesRequest',
   'fetchSenderRecommendationRequest',
   'fetchReplyTemplatesRequest',
   'refineConversationDraftRequest',
@@ -177,6 +200,14 @@ for (const endpointHelper of [
     `Composer must use bridge helper ${endpointHelper}.`
   );
 }
+assert(
+  /if \(!\(inventory\.items \|\| \[\]\)\.length && !senderSyncAttempted\.current\)/.test(
+    composer
+  ) &&
+    /await syncSenderIdentitiesRequest\(\)/.test(composer) &&
+    /inventory = await fetchSenderIdentitiesRequest\(\{ channel \}\)/.test(composer),
+  'An empty canonical sender inventory must trigger one provider sync and refetch.'
+);
 assert(
   /recognition\.onresult[\s\S]*setBody\(transcript\)/.test(composer) &&
     !/recognition\.onresult[\s\S]{0,450}sendMessage/.test(composer),

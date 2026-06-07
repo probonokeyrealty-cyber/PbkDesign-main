@@ -2005,6 +2005,16 @@ export async function fetchConversationRequest(threadId: string) {
   });
 }
 
+export async function resolveConversationThreadRequest(leadId: string) {
+  return bridgeRequest<ConversationDetailResponse>({
+    method: 'POST',
+    path: '/api/conversations/resolve',
+    body: {
+      leadId: leadId.trim(),
+    },
+  });
+}
+
 export async function fetchConversationTimelineRequest(
   threadId: string,
   {
@@ -2123,10 +2133,7 @@ export async function patchSenderIdentityRequest(
   });
 }
 
-export async function requestSenderReleaseRequest(
-  identityId: string,
-  body: { reason: string }
-) {
+export async function requestSenderReleaseRequest(identityId: string, body: { reason: string }) {
   return bridgeRequest<{
     ok: boolean;
     result?: string;
@@ -2140,10 +2147,7 @@ export async function requestSenderReleaseRequest(
   });
 }
 
-export async function fetchSenderRecommendationRequest(
-  threadId: string,
-  channel: 'sms' | 'email'
-) {
+export async function fetchSenderRecommendationRequest(threadId: string, channel: 'sms' | 'email') {
   return bridgeRequest<{
     ok: boolean;
     result?: string;

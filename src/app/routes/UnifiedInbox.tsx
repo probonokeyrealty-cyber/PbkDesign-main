@@ -12,11 +12,15 @@ import {
   X,
 } from 'lucide-react';
 import { useSearchParams } from 'react-router';
-import { ConversationThreadRail, type ConversationFilter } from '../components/inbox/ConversationThreadRail';
+import {
+  ConversationThreadRail,
+  type ConversationFilter,
+} from '../components/inbox/ConversationThreadRail';
 import { ConversationTimeline } from '../components/inbox/ConversationTimeline';
 import { ConversationComposer } from '../components/inbox/ConversationComposer';
 import { LiveCallPip } from '../components/inbox/LiveCallPip';
 import { LeadContextInspector } from '../components/inbox/LeadContextInspector';
+import { NewConversationDialog } from '../components/inbox/NewConversationDialog';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchConversationRequest,
@@ -49,11 +53,7 @@ function text(value: unknown, fallback = '') {
   return String(value ?? fallback).trim();
 }
 
-function buildThreadFilters(
-  search: string,
-  filter: ConversationFilter,
-  cursor = ''
-) {
+function buildThreadFilters(search: string, filter: ConversationFilter, cursor = '') {
   return {
     cursor,
     search,
@@ -89,6 +89,7 @@ export function UnifiedInbox() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedThreadId = searchParams.get('thread') || '';
   const requestedLeadId = searchParams.get('lead') || '';
+  const requestedChannel = searchParams.get('channel') === 'email' ? 'email' : 'sms';
   const [threads, setThreads] = useState<ConversationThread[]>([]);
   const [threadCursor, setThreadCursor] = useState<string | null>(null);
   const [threadLoading, setThreadLoading] = useState(true);
@@ -120,6 +121,9 @@ export function UnifiedInbox() {
     () => typeof window !== 'undefined' && window.innerWidth >= 1180
   );
   const [degradedReason, setDegradedReason] = useState('');
+  const [newConversationOpen, setNewConversationOpen] = useState(
+    () => searchParams.get('compose') === '1'
+  );
 
   const [matchThread, setMatchThread] = useState<ConversationThread | null>(null);
   const [leadQuery, setLeadQuery] = useState('');
@@ -204,7 +208,11 @@ export function UnifiedInbox() {
   const loadThreadPage = useCallback(
     async ({ append = false, cursor = '' }: { append?: boolean; cursor?: string } = {}) => {
       const requestId = ++threadRequestSequence.current;
-      append ? setThreadLoadingMore(true) : setThreadLoading(true);
+      if (append) {
+        setThreadLoadingMore(true);
+      } else {
+        setThreadLoading(true);
+      }
       if (!append) setThreadError('');
       try {
         const response = await fetchConversationsRequest(
@@ -578,11 +586,10 @@ export function UnifiedInbox() {
             setSelectedThreadInUrl(thread.id);
             if (typeof window !== 'undefined' && window.innerWidth < 1180) setProfileOpen(false);
           }}
-          onLoadMore={() =>
-            void loadThreadPage({ append: true, cursor: threadCursor || '' })
-          }
+          onLoadMore={() => void loadThreadPage({ append: true, cursor: threadCursor || '' })}
           onRetry={() => void loadThreadPage()}
           onMatchUnknown={openMatchLead}
+          onNewConversation={() => setNewConversationOpen(true)}
         />
 
         <div className="pbk-conversation-main">
@@ -627,11 +634,12 @@ export function UnifiedInbox() {
           />
           {selectedThread && (
             <ConversationComposer
-              key={selectedThread.id}
+              key={`${selectedThread.id}:${requestedChannel}`}
               thread={selectedThread}
               lead={leadDetail}
               recipientSummary={recipientSummary}
               events={timeline}
+              initialChannel={requestedChannel}
               onSent={() => void loadSelectedThread({ quiet: true })}
             />
           )}
@@ -661,6 +669,21 @@ export function UnifiedInbox() {
           onClose={() => setProfileOpen(false)}
         />
       </div>
+
+      <NewConversationDialog
+        open={newConversationOpen}
+        onClose={() => setNewConversationOpen(false)}
+        onResolved={(thread, channel) => {
+          const next = new URLSearchParams(searchParams);
+          next.set('thread', thread.id);
+          next.set('channel', channel);
+          next.delete('lead');
+          next.delete('compose');
+          setSearchParams(next, { replace: true });
+          setNewConversationOpen(false);
+          void loadThreadPage();
+        }}
+      />
 
       {matchThread && (
         <div className="pbk-conversation-match-backdrop" role="presentation">
@@ -742,7 +765,11 @@ export function UnifiedInbox() {
               )}
             </div>
             {selectedLeadMatch && (
-              <div className="pbk-conversation-merge-confirm" role="group" aria-label="Confirm match">
+              <div
+                className="pbk-conversation-merge-confirm"
+                role="group"
+                aria-label="Confirm match"
+              >
                 <div>
                   <strong>Merge into {getLeadResultName(selectedLeadMatch)}?</strong>
                   <span>

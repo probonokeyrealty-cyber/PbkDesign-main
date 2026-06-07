@@ -418,11 +418,24 @@ export function evaluateConversationSenderRecommendationCompliance({
       reasonCodes: [],
     };
   }
+  const reviewConsentStatuses = new Set([
+    'unknown',
+    'needs_review',
+    'pending',
+    'not_verified',
+    'unverified',
+  ]);
+  if (reviewConsentStatuses.has(normalizedConsent)) {
+    return {
+      allowed: true,
+      reasonCodes: [
+        `consent_${normalizedConsent}`,
+        'approval_required',
+      ],
+    };
+  }
   return {
     allowed: false,
-    reasonCodes: [
-      `consent_${normalizedConsent === 'unknown' ? 'unknown' : normalizedConsent}`,
-      'approval_required',
-    ],
+    reasonCodes: [`consent_${normalizedConsent}`],
   };
 }

@@ -78,7 +78,7 @@ for (const table of [
 }
 
 const conversationRoutesStart = bridge.indexOf(
-  "if (request.method === 'GET' && pathname === '/api/conversations')"
+  "if (request.method === 'POST' && pathname === '/api/conversations/resolve')"
 );
 const conversationRoutesEnd = bridge.indexOf(
   "if (request.method === 'GET' && pathname === '/api/campaigns/lead-sources')",
@@ -148,6 +148,26 @@ assert(
     /workspaceId:\s*CONVERSATION_WORKSPACE_ID/.test(conversationRoutes) &&
     /store\.listThreads\(filters\)/.test(conversationRoutes),
   'GET /api/conversations must use the Postgres conversation store.'
+);
+assert(
+  /request\.method === 'POST' && pathname === '\/api\/conversations\/resolve'/.test(
+    conversationRoutes
+  ) &&
+    /parseConversationResolveBody\(await readBody\(request\)\)/.test(conversationRoutes) &&
+    /loadConversationLeadForResolve\(pool, leadId\)/.test(conversationRoutes) &&
+    /store\.resolveThread\(\{[\s\S]*leadId:\s*lead\.id[\s\S]*phone:\s*lead\.phone[\s\S]*email:\s*lead\.email/.test(
+      conversationRoutes
+    ) &&
+    /source:\s*'unified-inbox-compose'/.test(conversationRoutes),
+  'POST /api/conversations/resolve must open the canonical persisted seller thread.'
+);
+assert(
+  /function parseConversationResolveBody\(body\)/.test(bridge) &&
+    /rejectUnknownConversationFields\(body, new Set\(\['leadId'\]\), 'conversation resolve'\)/.test(
+      bridge
+    ) &&
+    /leadId is required and must be a nonempty string/.test(bridge),
+  'Conversation resolve must validate its narrow leadId-only request contract.'
 );
 
 assert(
@@ -634,8 +654,19 @@ assert(
   ) &&
     /if \(!compliance\.allowed\)/.test(conversationRoutes) &&
     /reasonCodes:\s*compliance\.reasonCodes/.test(conversationRoutes) &&
+    /\.\.\.\(compliance\.reasonCodes \|\| \[\]\)/.test(conversationRoutes) &&
     /recommended:\s*null,[\s\S]*alternatives:\s*\[\]/.test(conversationRoutes),
-  'Sender recommendations must fail closed for DNC and non-consented SMS recipients.'
+  'Sender recommendations must hard-block DNC or denied consent while carrying approval reasons for reviewable consent.'
+);
+
+assert(
+  /const sendCompliance = evaluateConversationSenderRecommendationCompliance\(\{[\s\S]*channel:\s*parsed\.channel[\s\S]*consentStatus/.test(
+    conversationRoutes
+  ) &&
+    /if \(!sendCompliance\.allowed\)/.test(conversationRoutes) &&
+    /result:\s*'sms_consent_blocked'/.test(conversationRoutes) &&
+    /status:\s*'blocked'/.test(conversationRoutes),
+  'Conversation sends must hard-block denied or revoked SMS consent before provider dispatch.'
 );
 
 assert(

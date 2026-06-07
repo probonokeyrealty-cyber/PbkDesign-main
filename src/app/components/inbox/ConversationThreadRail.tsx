@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Phone,
   Pin,
+  Plus,
   Search,
   UserRoundSearch,
 } from 'lucide-react';
@@ -40,6 +41,7 @@ type ConversationThreadRailProps = {
   onLoadMore: () => void;
   onRetry: () => void;
   onMatchUnknown: (thread: ConversationThread) => void;
+  onNewConversation: () => void;
 };
 
 const filters: Array<{
@@ -111,13 +113,24 @@ export function ConversationThreadRail({
   onLoadMore,
   onRetry,
   onMatchUnknown,
+  onNewConversation,
 }: ConversationThreadRailProps) {
   return (
     <aside className="pbk-conversation-thread-rail" aria-label="Seller conversations">
       <div className="pbk-conversation-thread-tools">
-        <div>
-          <div className="pbk-eyebrow">Seller conversations</div>
-          <h1>Unified Inbox</h1>
+        <div className="pbk-conversation-thread-heading">
+          <div>
+            <div className="pbk-eyebrow">Seller conversations</div>
+            <h1>Unified Inbox</h1>
+          </div>
+          <button
+            type="button"
+            className="pbk-conversation-new-message"
+            onClick={onNewConversation}
+          >
+            <Plus size={15} aria-hidden="true" />
+            New message
+          </button>
         </div>
         <label className="pbk-conversation-search">
           <Search size={15} aria-hidden="true" />
@@ -204,7 +217,9 @@ export function ConversationThreadRail({
                       )}
                       <span className="sla">
                         <Clock3 size={11} aria-hidden="true" />
-                        {thread.lastInboundAt ? `Inbound ${relativeTime(thread.lastInboundAt)}` : 'No SLA'}
+                        {thread.lastInboundAt
+                          ? `Inbound ${relativeTime(thread.lastInboundAt)}`
+                          : 'No SLA'}
                       </span>
                     </span>
                   </span>
@@ -228,7 +243,11 @@ export function ConversationThreadRail({
           <div className="pbk-conversation-inline-state">
             <MessageSquare size={18} />
             <strong>No matching conversations</strong>
-            <span>New provider activity will appear here as a single seller thread.</span>
+            <span>Start from an existing lead or wait for new provider activity.</span>
+            <button type="button" onClick={onNewConversation}>
+              <Plus size={14} aria-hidden="true" />
+              New message
+            </button>
           </div>
         )}
 

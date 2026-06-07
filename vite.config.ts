@@ -130,31 +130,6 @@ export default defineConfig({
         analyzer: path.resolve(__dirname, 'analyzer.html'),
         shell: path.resolve(__dirname, 'index.shell.html'),
       },
-      output: {
-        manualChunks(id) {
-          const normalizedId = id.split(path.sep).join('/');
-          if (normalizedId.includes('/node_modules/')) {
-            if (/[\\/]node_modules[\\/](react|react-dom|react-router)([\\/]|$)/.test(id)) {
-              return 'vendor-react';
-            }
-            if (
-              /[\\/]node_modules[\\/](@mui|@emotion|@radix-ui|@popperjs|lucide-react)([\\/]|$)/.test(
-                id
-              )
-            ) {
-              return 'vendor-ui';
-            }
-            if (/[\\/]node_modules[\\/](recharts|d3-|three)([\\/]|$)/.test(id)) {
-              return 'vendor-visualization';
-            }
-            return 'vendor';
-          }
-          const routeMatch = normalizedId.match(/\/src\/app\/routes\/([^/.]+)/);
-          if (routeMatch?.[1]) {
-            return `route-${routeMatch[1].replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()}`;
-          }
-        },
-      },
     },
   },
 })

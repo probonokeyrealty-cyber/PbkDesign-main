@@ -114,6 +114,7 @@
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",
     "test:leads-new-lead-portal": "node ./scripts/leads-new-lead-portal-smoke.mjs",
     "test:lead-portal-route": "node ./scripts/lead-portal-route-smoke.mjs",
+    "test:render-docker-imports": "node ./scripts/render-docker-imports-smoke.mjs",
     "test:ava-chat-local-command": "node ./scripts/ava-chat-local-command-smoke.mjs",
     "test:agent-memory-wiring": "node ./scripts/agent-memory-wiring-smoke.mjs",
     "test:mobile-wiring-lead-portal": "node ./scripts/mobile-wiring-lead-portal-smoke.mjs",

@@ -120,6 +120,13 @@ COPY scripts/onnx-training-worker.mjs ./scripts/onnx-training-worker.mjs
 COPY scripts/research-additives.mjs ./scripts/research-additives.mjs
 COPY scripts/train-emotion-world-model.mjs ./scripts/train-emotion-world-model.mjs
 COPY scripts/train_emotion_world_model_onnx.py ./scripts/train_emotion_world_model_onnx.py
+COPY scripts/conversation-identity.mjs ./scripts/conversation-identity.mjs
+COPY scripts/conversation-projector.mjs ./scripts/conversation-projector.mjs
+COPY scripts/conversation-live-projector.mjs ./scripts/conversation-live-projector.mjs
+COPY scripts/conversation-schema.mjs ./scripts/conversation-schema.mjs
+COPY scripts/conversation-store.mjs ./scripts/conversation-store.mjs
+COPY scripts/provider-action-dispatch-policy.mjs ./scripts/provider-action-dispatch-policy.mjs
+COPY scripts/provider-action-dispatch.mjs ./scripts/provider-action-dispatch.mjs
 COPY scripts/event-bus ./scripts/event-bus
 COPY scripts/property-data-adapter.mjs ./scripts/property-data-adapter.mjs
 COPY scripts/openclaw-local-server.mjs ./scripts/openclaw-local-server.mjs

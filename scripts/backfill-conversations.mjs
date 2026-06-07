@@ -372,7 +372,11 @@ export async function createBackfillPool(env = process.env) {
     env.PBK_DATABASE_URL || env.DATABASE_URL || ''
   ).trim();
   if (!databaseUrl) return null;
-  const { Pool } = await import('pg');
+  const pgModule = await import('pg');
+  const Pool = pgModule.Pool || pgModule.default?.Pool || pgModule.default;
+  if (typeof Pool !== 'function') {
+    throw new TypeError('Postgres Pool constructor is unavailable.');
+  }
   return new Pool({
     connectionString: databaseUrl,
     max: 2,

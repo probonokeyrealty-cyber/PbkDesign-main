@@ -125,6 +125,7 @@ COPY scripts/conversation-projector.mjs ./scripts/conversation-projector.mjs
 COPY scripts/conversation-live-projector.mjs ./scripts/conversation-live-projector.mjs
 COPY scripts/conversation-schema.mjs ./scripts/conversation-schema.mjs
 COPY scripts/conversation-store.mjs ./scripts/conversation-store.mjs
+COPY scripts/backfill-conversations.mjs ./scripts/backfill-conversations.mjs
 COPY scripts/provider-action-dispatch-policy.mjs ./scripts/provider-action-dispatch-policy.mjs
 COPY scripts/provider-action-dispatch.mjs ./scripts/provider-action-dispatch.mjs
 COPY scripts/event-bus ./scripts/event-bus

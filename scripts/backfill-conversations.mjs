@@ -147,6 +147,26 @@ function eventThreadRequest(event, record, workspaceId) {
   };
 }
 
+async function resolveKnownLeadId(pool, leadId, workspaceId, cache) {
+  const normalizedLeadId = String(leadId || '').trim();
+  if (!normalizedLeadId) return null;
+  if (cache.has(normalizedLeadId)) {
+    return cache.get(normalizedLeadId) ? normalizedLeadId : null;
+  }
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM public.lead_profiles
+       WHERE workspace_id = $1
+         AND id = $2
+     ) AS present`,
+    [workspaceId, normalizedLeadId]
+  );
+  const present = Boolean(result.rows?.[0]?.present);
+  cache.set(normalizedLeadId, present);
+  return present ? normalizedLeadId : null;
+}
+
 async function readSourceBatch(pool, table, {
   workspaceId,
   afterId,
@@ -194,6 +214,7 @@ function emptySourceStats(table) {
     insertedEvents: 0,
     updatedEvents: 0,
     errors: 0,
+    skippedOrphans: 0,
     lastCursor: '',
     missing: false,
     missingReason: '',
@@ -244,6 +265,7 @@ export async function runConversationBackfill({
 
   if (apply) await ensureSchema(pool);
   const store = createStore(pool);
+  const leadExistenceCache = new Map();
   const sources = [];
   const failures = [];
   const totals = {
@@ -318,12 +340,33 @@ export async function runConversationBackfill({
           }
 
           for (const event of events) {
+            const knownLeadId = await resolveKnownLeadId(
+              pool,
+              event.leadId,
+              workspaceId,
+              leadExistenceCache
+            );
+            const projectedEvent = {
+              ...event,
+              leadId: knownLeadId,
+              metadata: {
+                ...(event.metadata || {}),
+                ...(event.leadId && !knownLeadId
+                  ? { orphanedLeadId: event.leadId }
+                  : {}),
+              },
+            };
+            const contact = sellerContactFromEvent(projectedEvent);
+            if (!knownLeadId && !contact.phone && !contact.email) {
+              source.skippedOrphans += 1;
+              continue;
+            }
             const thread = await store.resolveThread(
-              eventThreadRequest(event, record, workspaceId)
+              eventThreadRequest(projectedEvent, record, workspaceId)
             );
             source.threadsResolved += 1;
             const persisted = await store.upsertEvent({
-              ...event,
+              ...projectedEvent,
               workspaceId,
               threadId: thread.id,
             });

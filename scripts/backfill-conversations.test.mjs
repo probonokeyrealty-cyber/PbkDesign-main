@@ -76,6 +76,18 @@ function sourceRows() {
 function fakePool(rowsByTable = sourceRows()) {
   return {
     query: jest.fn(async (sql, values) => {
+      if (String(sql).includes('SELECT EXISTS')) {
+        const [, leadId] = values;
+        return {
+          rows: [
+            {
+              present: (rowsByTable.lead_profiles || []).some(
+                (lead) => lead.id === leadId
+              ),
+            },
+          ],
+        };
+      }
       const table = BACKFILL_ORDER.find((name) =>
         String(sql).includes(`public.${name}`)
       );
@@ -259,6 +271,46 @@ describe('runConversationBackfill', () => {
       'contract.sent',
       'lead.note',
     ]);
+  });
+
+  test('skips orphan events that have no surviving contact identity', async () => {
+    const rows = sourceRows();
+    rows.activity_log = [
+      {
+        id: 'activity-orphan',
+        workspace_id: 'pbk',
+        lead_id: 'lead-missing',
+        actor: 'Ava',
+        category: 'NOTE',
+        text: 'Legacy note without a surviving seller record.',
+        created_at: '2026-06-01T13:10:00.000Z',
+      },
+    ];
+    const resolveThread = jest.fn(async ({ leadId }) => ({
+      id: `thread-${leadId || 'contact'}`,
+    }));
+    const upsertEvent = jest.fn(async (event) => ({
+      ...event,
+      inserted: true,
+    }));
+
+    const result = await runConversationBackfill({
+      pool: fakePool(rows),
+      apply: true,
+      createStore: () => ({ resolveThread, upsertEvent }),
+      ensureSchema: jest.fn(),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      result.sources.find((source) => source.table === 'activity_log')
+    ).toMatchObject({
+      skippedOrphans: 1,
+      errors: 0,
+    });
+    expect(upsertEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: 'activity-orphan' })
+    );
   });
 
   test('returns a safe no-database result', async () => {

@@ -15,7 +15,9 @@ import { useSearchParams } from 'react-router';
 import { ConversationThreadRail, type ConversationFilter } from '../components/inbox/ConversationThreadRail';
 import { ConversationTimeline } from '../components/inbox/ConversationTimeline';
 import { ConversationComposer } from '../components/inbox/ConversationComposer';
+import { LiveCallPip } from '../components/inbox/LiveCallPip';
 import { LeadContextInspector } from '../components/inbox/LeadContextInspector';
+import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   fetchConversationRequest,
   fetchConversationsRequest,
@@ -83,6 +85,7 @@ function getLeadResultAddress(result: LeadSearchResult) {
 }
 
 export function UnifiedInbox() {
+  const { snapshot, refresh: refreshRuntime } = useRuntimeSnapshot(2500);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedThreadId = searchParams.get('thread') || '';
   const [threads, setThreads] = useState<ConversationThread[]>([]);
@@ -587,6 +590,21 @@ export function UnifiedInbox() {
               onSent={() => void loadSelectedThread({ quiet: true })}
             />
           )}
+          <LiveCallPip
+            calls={snapshot?.calls || []}
+            leadId={selectedThread?.leadId}
+            leadName={selectedThread?.title}
+            phone={recipientSummary?.phone}
+            address={text(
+              record(leadDetail).address ||
+                record(record(leadDetail).property).address ||
+                record(selectedThread?.property).address
+            )}
+            onChanged={() => {
+              void refreshRuntime();
+              void loadSelectedThread({ quiet: true });
+            }}
+          />
         </div>
 
         <LeadContextInspector

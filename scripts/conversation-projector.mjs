@@ -900,6 +900,8 @@ export function projectActivityEvent(record) {
         'status',
         'target',
         'source',
+        'callId',
+        'important',
         'metadata',
         'occurredAt',
         'at',
@@ -910,6 +912,8 @@ export function projectActivityEvent(record) {
         category: category || undefined,
         target: target || undefined,
         source: source || undefined,
+        callId: firstText(record.callId) || undefined,
+        important: record.important === true || undefined,
         metadata: isRecord(record.metadata) ? record.metadata : undefined,
       }
     ),

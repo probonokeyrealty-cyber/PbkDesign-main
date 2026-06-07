@@ -1435,7 +1435,13 @@ function sanitizeLegacyInboundCallContext(call = {}) {
 function normalizeStaleLiveCall(call = {}) {
   if (!call || typeof call !== 'object') return call;
   const contextSafeCall = sanitizeLegacyInboundCallContext(call);
-  if (String(contextSafeCall.status || '').toLowerCase() !== 'live') return contextSafeCall;
+  if (
+    !/^(active|connected|dialing|initiated|queued|in[_ -]?progress|live|on[_ -]?hold|ringing|transferring)$/i.test(
+      String(contextSafeCall.status || '').trim()
+    )
+  ) {
+    return contextSafeCall;
+  }
   const timestamp = callTimeMs(contextSafeCall);
   if (!timestamp || Date.now() - timestamp <= LIVE_CALL_STALE_AFTER_MS) return contextSafeCall;
   return {
@@ -1444,7 +1450,7 @@ function normalizeStaleLiveCall(call = {}) {
     endedAt: contextSafeCall.endedAt || contextSafeCall.ended_at || new Date(timestamp).toISOString(),
     updatedAt: contextSafeCall.updatedAt || contextSafeCall.updated_at || new Date(timestamp).toISOString(),
     staleLiveCall: true,
-    staleReason: `No live call update within ${Math.round(LIVE_CALL_STALE_AFTER_MS / 60_000)} minutes.`,
+    staleReason: `No active call update within ${Math.round(LIVE_CALL_STALE_AFTER_MS / 60_000)} minutes.`,
   };
 }
 
@@ -1453,7 +1459,9 @@ function normalizeStaleLiveCalls(calls = []) {
 }
 
 function isActiveLiveCall(call = {}) {
-  return String(normalizeStaleLiveCall(call)?.status || '').toLowerCase() === 'live';
+  return /^(active|connected|dialing|initiated|queued|in[_ -]?progress|live|on[_ -]?hold|ringing|transferring)$/i.test(
+    String(normalizeStaleLiveCall(call)?.status || '').trim()
+  );
 }
 
 function toMoneyNumber(value, fallback = 0) {
@@ -26570,7 +26578,12 @@ function createCallRecord(params = {}) {
     outboundAvaGreetingAt: params.outboundAvaGreetingAt || params.outbound_ava_greeting_at || '',
     outboundAvaGreetingError: params.outboundAvaGreetingError || params.outbound_ava_greeting_error || '',
     script: params.script || params.notes || '',
-    sentiment: toNumber(params.sentiment, 0.66),
+    sentiment:
+      params.sentiment === undefined ||
+      params.sentiment === null ||
+      params.sentiment === ''
+        ? null
+        : toNumber(params.sentiment, null),
     yellRisk: toNumber(params.yellRisk, 0.05),
     humanJoined: Boolean(params.humanJoined),
     aiMuted: Boolean(params.aiMuted),
@@ -29305,6 +29318,36 @@ async function startTelnyxAiAssistant(callControlId = '', promptOverride = '') {
     assistant_id: TELNYX_AI_ASSISTANT_ID,
     prompt: promptOverride,
   });
+}
+
+async function stopTelnyxAiAssistant(callControlId = '') {
+  if (!callControlId) {
+    return {
+      ok: false,
+      skipped: true,
+      error: 'Missing Telnyx call_control_id.',
+    };
+  }
+  return fireTelnyxRequest(
+    'POST',
+    `/calls/${encodeURIComponent(callControlId)}/actions/ai_assistant_stop`,
+    {}
+  );
+}
+
+async function hangupTelnyxCall(callControlId = '') {
+  if (!callControlId) {
+    return {
+      ok: false,
+      skipped: true,
+      error: 'Missing Telnyx call_control_id.',
+    };
+  }
+  return fireTelnyxRequest(
+    'POST',
+    `/calls/${encodeURIComponent(callControlId)}/actions/hangup`,
+    {}
+  );
 }
 
 function getLocalDateParts(date = new Date(), timeZone = INBOUND_TIMEZONE) {
@@ -47272,11 +47315,27 @@ async function handleEvent(eventType, payload = {}) {
   }
 
   if (normalizedEvent === 'call-control') {
-    const call = state.calls.find((item) => item.id === payload.id) || state.calls.find((item) => normalizePhone(item.phone) === normalizePhone(payload.phone || payload.to || '')) || state.calls.find((item) => isActiveLiveCall(item));
+    const requestedCallId = String(payload.id || '').trim();
+    const requestedPhone = normalizePhone(payload.phone || payload.to || '');
+    const call = requestedCallId
+      ? state.calls.find(
+          (item) =>
+            item.id === requestedCallId ||
+            item.callId === requestedCallId ||
+            item.telnyxCallControlId === requestedCallId ||
+            item.telnyxCallLegId === requestedCallId ||
+            item.telnyxCallSessionId === requestedCallId
+        )
+      : requestedPhone
+        ? state.calls.find(
+            (item) => normalizePhone(item.phone || item.from || item.to || '') === requestedPhone
+          )
+        : state.calls.find((item) => isActiveLiveCall(item));
 
     if (!call) {
       return {
         ok: false,
+        statusCode: 404,
         error: 'No matching call found.',
       };
     }
@@ -47284,9 +47343,50 @@ async function handleEvent(eventType, payload = {}) {
     const action = String(payload.action || '')
       .trim()
       .toLowerCase();
+    const callControlId = String(
+      call.telnyxCallControlId ||
+        call.callControlId ||
+        (String(call.provider || '').toLowerCase() === 'telnyx' ? call.id : '')
+    ).trim();
+    const localMediaSession = findTelnyxMediaSessionForDebug({
+      callId: callControlId || call.id,
+      phone: call.phone || call.from || call.to || '',
+    });
+    let providerControl = null;
+    let assistantControl = null;
+
     if (action === 'takeover' || action === 'take over') {
+      const operatorTarget = normalizePhone(payload.target || HUMAN_AGENT_PHONE || OPERATOR_PHONE || '');
+      if (!operatorTarget) {
+        return {
+          ok: false,
+          statusCode: 503,
+          error:
+            'PBK_HUMAN_AGENT_PHONE or PBK_OPERATOR_PHONE is required before a live call can be transferred.',
+        };
+      }
+      providerControl = await transferTelnyxCall(callControlId, operatorTarget);
+      if (!providerControl.ok) {
+        return {
+          ok: false,
+          statusCode: 502,
+          error:
+            providerControl.error ||
+            'Telnyx did not accept the operator transfer.',
+          providerControl,
+        };
+      }
+      if (localMediaSession) {
+        localMediaSession.avaReplySuppressed = true;
+        localMediaSession.supersededAt = isoNow();
+        localMediaSession.supersededBy = payload.actor || 'PBK dashboard';
+        const turnLockKey = getTelnyxAvaTurnLockKey(localMediaSession);
+        if (turnLockKey) telnyxAvaTurnLocksByCallId.delete(turnLockKey);
+      }
       call.humanJoined = true;
-      call.status = 'live';
+      call.aiMuted = true;
+      call.status = 'transferring';
+      call.transferTarget = operatorTarget;
       call.updatedAt = isoNow();
       addActivity(
         state,
@@ -47294,11 +47394,41 @@ async function handleEvent(eventType, payload = {}) {
           actor: payload.actor || 'PBK dashboard',
           category: 'CALL',
           status: 'live',
-          text: `Human takeover engaged for ${call.leadName}`,
-          target: call.address || call.phone,
+          text: `Transferred ${call.leadName} to the configured human operator`,
+          target: operatorTarget,
         })
       );
     } else if (action === 'mute' || action === 'mute ai') {
+      if (localMediaSession) {
+        localMediaSession.avaReplySuppressed = true;
+        localMediaSession.supersededAt = isoNow();
+        localMediaSession.supersededBy = payload.actor || 'PBK dashboard';
+        const turnLockKey = getTelnyxAvaTurnLockKey(localMediaSession);
+        if (turnLockKey) telnyxAvaTurnLocksByCallId.delete(turnLockKey);
+      }
+      const hostedAssistantExpected =
+        shouldStartTelnyxHostedAiAssistant() ||
+        Boolean(localMediaSession?.telnyxAiAssistantStarted);
+      assistantControl = hostedAssistantExpected
+        ? await stopTelnyxAiAssistant(callControlId)
+        : {
+            ok: true,
+            skipped: true,
+            result: 'hosted_assistant_not_active',
+          };
+      if (!localMediaSession || !assistantControl.ok) {
+        return {
+          ok: false,
+          statusCode: 502,
+          error:
+            assistantControl.error ||
+            (localMediaSession
+              ? 'The hosted Telnyx assistant could not be stopped.'
+              : 'No active PBK voice session was found to mute.'),
+          assistantControl,
+          localVoiceSuppressed: Boolean(localMediaSession?.avaReplySuppressed),
+        };
+      }
       call.aiMuted = true;
       call.updatedAt = isoNow();
       addActivity(
@@ -47312,8 +47442,23 @@ async function handleEvent(eventType, payload = {}) {
         })
       );
     } else if (action === 'transfer') {
-      call.status = 'transferred';
-      call.transferTarget = payload.target || 'human';
+      const transferTarget = normalizePhone(payload.target || HUMAN_AGENT_PHONE || OPERATOR_PHONE || '');
+      providerControl = await transferTelnyxCall(callControlId, transferTarget);
+      if (!providerControl.ok) {
+        return {
+          ok: false,
+          statusCode: 502,
+          error: providerControl.error || 'Telnyx did not accept the call transfer.',
+          providerControl,
+        };
+      }
+      if (localMediaSession) {
+        localMediaSession.avaReplySuppressed = true;
+        const turnLockKey = getTelnyxAvaTurnLockKey(localMediaSession);
+        if (turnLockKey) telnyxAvaTurnLocksByCallId.delete(turnLockKey);
+      }
+      call.status = 'transferring';
+      call.transferTarget = transferTarget;
       call.updatedAt = isoNow();
       addActivity(
         state,
@@ -47326,6 +47471,23 @@ async function handleEvent(eventType, payload = {}) {
         })
       );
     } else if (action === 'end' || action === 'hangup' || action === 'hang up') {
+      providerControl = await hangupTelnyxCall(callControlId);
+      if (!providerControl.ok) {
+        return {
+          ok: false,
+          statusCode: 502,
+          error:
+            providerControl.error ||
+            'Telnyx did not accept the hang-up command.',
+          providerControl,
+        };
+      }
+      if (localMediaSession) {
+        localMediaSession.avaReplySuppressed = true;
+        localMediaSession.finalizeReason = 'operator_hangup';
+        const turnLockKey = getTelnyxAvaTurnLockKey(localMediaSession);
+        if (turnLockKey) telnyxAvaTurnLocksByCallId.delete(turnLockKey);
+      }
       call.status = 'ended';
       call.endedAt = isoNow();
       call.updatedAt = isoNow();
@@ -47339,6 +47501,12 @@ async function handleEvent(eventType, payload = {}) {
           target: call.address || call.phone,
         })
       );
+    } else {
+      return {
+        ok: false,
+        statusCode: 400,
+        error: `Unsupported call control action: ${action || 'missing action'}.`,
+      };
     }
 
     upsertCall(state, call);
@@ -47346,6 +47514,9 @@ async function handleEvent(eventType, payload = {}) {
     return {
       ok: true,
       call,
+      providerControl,
+      assistantControl,
+      localVoiceSuppressed: Boolean(localMediaSession?.avaReplySuppressed),
     };
   }
 
@@ -60426,7 +60597,7 @@ const server = createServer(async (request, response) => {
         target: body.target,
         actor: body.actor || 'api',
       });
-      json(response, result.ok === false ? 404 : 200, {
+      json(response, result.ok === false ? result.statusCode || 502 : 200, {
         ...result,
         state: buildStateSnapshot(),
       });
@@ -61849,6 +62020,14 @@ const server = createServer(async (request, response) => {
       activity.leadName = context.leadName;
       activity.phone = context.phone;
       activity.email = context.email;
+      activity.callId = String(body.callId || body.call_id || '').trim();
+      activity.important = body.important === true;
+      activity.source = String(body.source || 'lead-note').trim();
+      activity.metadata = {
+        ...(body.metadata && typeof body.metadata === 'object' ? body.metadata : {}),
+        important: activity.important,
+        ...(activity.callId ? { callId: activity.callId } : {}),
+      };
       addActivity(state, activity);
       await persistState(state);
       await projectLiveConversationRecord({

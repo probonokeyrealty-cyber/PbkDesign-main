@@ -11,6 +11,7 @@ const timelinePath = resolve(root, 'src/app/components/inbox/ConversationTimelin
 const inspectorPath = resolve(root, 'src/app/components/inbox/LeadContextInspector.tsx');
 const composerPath = resolve(root, 'src/app/components/inbox/ConversationComposer.tsx');
 const senderSelectPath = resolve(root, 'src/app/components/inbox/SenderIdentitySelect.tsx');
+const liveCallPipPath = resolve(root, 'src/app/components/inbox/LiveCallPip.tsx');
 const cssPath = resolve(root, 'src/styles/pbk-components.css');
 const netlifyPath = resolve(root, 'netlify.toml');
 
@@ -74,6 +75,7 @@ for (const path of [
   inspectorPath,
   composerPath,
   senderSelectPath,
+  liveCallPipPath,
 ]) {
   assert(existsSync(path), `${path.split(/[\\/]/).at(-1)} must exist.`);
 }
@@ -85,6 +87,7 @@ const timeline = readFileSync(timelinePath, 'utf8');
 const inspector = readFileSync(inspectorPath, 'utf8');
 const composer = readFileSync(composerPath, 'utf8');
 const senderSelect = readFileSync(senderSelectPath, 'utf8');
+const liveCallPip = readFileSync(liveCallPipPath, 'utf8');
 const css = readFileSync(cssPath, 'utf8');
 const netlify = readFileSync(netlifyPath, 'utf8');
 const combined = `${unifiedInbox}\n${threadRail}\n${timeline}\n${inspector}`;
@@ -242,6 +245,60 @@ assert(
     css.includes('max-height: min(58dvh, 520px)') &&
     css.includes('overflow-y: auto'),
   'Composer and sender selector must have responsive safe-area styles.'
+);
+assert(
+  unifiedInbox.includes('useRuntimeSnapshot') &&
+    /calls=\{snapshot\?\.calls \|\| \[\]\}/.test(unifiedInbox) &&
+    unifiedInbox.includes('<LiveCallPip'),
+  'Live call PiP must derive from real snapshot.calls data.'
+);
+for (const requiredCopy of [
+  'Ava talk time',
+  'Seller talk time',
+  'Sentiment',
+  'Not available',
+  'Open transcript',
+  'Mark important',
+  'Add note',
+  'Follow-up',
+]) {
+  assert(liveCallPip.includes(requiredCopy), `Live call PiP must include "${requiredCopy}".`);
+}
+for (const helper of [
+  'controlRuntimeCall',
+  'saveLeadNoteRequest',
+  'scheduleAppointmentRequest',
+]) {
+  assert(liveCallPip.includes(helper), `Live call PiP must use existing helper ${helper}.`);
+}
+assert(
+  css.includes('.pbk-live-call-pip') &&
+    css.includes('env(safe-area-inset-top)') &&
+    css.includes('env(safe-area-inset-bottom)'),
+  'Live call PiP must stay clear of mobile safe areas and navigation.'
+);
+assert(
+  /queued\|in\[_ -\]\?progress/.test(liveCallPip) &&
+    /callStatusLabel/.test(liveCallPip),
+  'Queued provider calls must surface honestly as Calling in the live PiP.'
+);
+assert(
+  /endCallTarget/.test(liveCallPip) &&
+    /endCallTarget\?\.id \|\| ''/.test(liveCallPip),
+  'End-call confirmation must stay pinned to the call the operator selected.'
+);
+assert(
+  /top:\s*calc\(150px \+ env\(safe-area-inset-top\)\)/.test(css),
+  'Mobile live-call PiP must sit below conversation navigation controls.'
+);
+assert(
+  /\.pbk-live-call-pip\.expanded[\s\S]*?bottom:\s*max\(82px,[\s\S]*?max-height:\s*none/.test(
+    css
+  ) &&
+    /\.pbk-live-call-pip\.expanded \.pbk-live-call-pip-body[\s\S]*?flex:\s*1[\s\S]*?max-height:\s*none/.test(
+      css
+    ),
+  'Expanded mobile live-call controls must remain scrollable on short viewports.'
 );
 
 console.log('unified-inbox-ui-smoke: ok');

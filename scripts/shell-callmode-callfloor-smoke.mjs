@@ -20,6 +20,7 @@ const paradiseLayout = read('src/app/shell/ParadiseLayout.tsx');
 const callMode = read('src/app/components/CallModeTab.tsx');
 const callFloor = read('src/app/components/CallFloorPanel.tsx');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
+const localServer = read('scripts/openclaw-local-server.mjs');
 const pkg = JSON.parse(read('package.json'));
 
 assert(!/v0\.1 shell - engine intact|collapsed \? 'v0\.1'/.test(sidebar), 'Sidebar version should not be hardcoded to v0.1.');
@@ -54,6 +55,43 @@ assert(/export async function scheduleAppointmentRequest/.test(runtimeBridge), '
 assert(/export async function cancelScheduledCallRequest/.test(runtimeBridge), 'runtimeBridge should expose scheduled-call cancellation.');
 assert(/export async function saveLeadNoteRequest/.test(runtimeBridge), 'runtimeBridge should expose lead note saving.');
 assert(/export async function sendOfferEmailRequest/.test(runtimeBridge), 'runtimeBridge should expose offer email sending.');
+assert(
+  /\/actions\/ai_assistant_stop/.test(localServer) &&
+    /\/actions\/hangup/.test(localServer),
+  'Live-call controls must reach the Telnyx provider instead of only mutating runtime state.'
+);
+assert(
+  /providerControl = await hangupTelnyxCall\(callControlId\);[\s\S]*?if \(!providerControl\.ok\)[\s\S]*?call\.status = 'ended'/.test(
+    localServer
+  ),
+  'Call state must only become ended after Telnyx accepts the hang-up command.'
+);
+assert(
+  /providerControl = await transferTelnyxCall\(callControlId, operatorTarget\);[\s\S]*?call\.status = 'transferring'/.test(
+    localServer
+  ),
+  'Human takeover must transfer the provider call to the configured operator.'
+);
+assert(
+  /hostedAssistantExpected[\s\S]*?await stopTelnyxAiAssistant\(callControlId\)[\s\S]*?if \(!localMediaSession \|\| !assistantControl\.ok\)/.test(
+    localServer
+  ),
+  'Mute must fail unless every configured Ava voice lane is stopped.'
+);
+assert(
+  !/sentiment:\s*toNumber\(params\.sentiment,\s*0\.66\)/.test(localServer),
+  'Call records must not invent a default sentiment score.'
+);
+assert(
+  /queued\|in\[_ -\]\?progress\|live/.test(localServer) &&
+    /staleReason: `No active call update/.test(localServer),
+  'Queued and dialing calls must expire when provider webhooks stop arriving.'
+);
+assert(
+  /activity\.important = body\.important === true/.test(localServer) &&
+    /activity\.callId = String\(body\.callId/.test(localServer),
+  'Live-call notes must persist important and call identity metadata.'
+);
 
 assert(
   pkg.scripts?.['test:shell-callmode-callfloor'] === 'node ./scripts/shell-callmode-callfloor-smoke.mjs',

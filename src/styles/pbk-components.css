@@ -4625,6 +4625,302 @@
 .pbk-conversation-composer > .pbk-data-source {
   margin: 7px 0 0;
 }
+.pbk-live-call-pip {
+  position: absolute;
+  z-index: 18;
+  top: 94px;
+  right: 14px;
+  width: min(390px, calc(100% - 28px));
+  overflow: hidden;
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-console) 97%, transparent);
+  color: var(--text-primary);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(22px);
+}
+.pbk-live-call-pip.expanded {
+  display: flex;
+  flex-direction: column;
+}
+.pbk-live-call-pip-head {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 10px minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--lime-glow) 86%, transparent),
+    transparent
+  );
+  color: inherit;
+  padding: 10px 12px;
+  text-align: left;
+}
+.pbk-live-call-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lime);
+  box-shadow: 0 0 0 4px var(--lime-glow);
+  animation: pbk-live-call-pulse 1.8s ease-in-out infinite;
+}
+@keyframes pbk-live-call-pulse {
+  50% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+.pbk-live-call-pip-head > span:nth-child(2) {
+  min-width: 0;
+}
+.pbk-live-call-pip-head small,
+.pbk-live-call-pip-head strong {
+  display: block;
+}
+.pbk-live-call-pip-head small {
+  color: var(--lime);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+.pbk-live-call-pip-head strong {
+  overflow: hidden;
+  margin-top: 2px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pbk-live-call-duration,
+.pbk-live-call-pip-summary > span,
+.pbk-live-call-talk-grid span,
+.pbk-live-call-secondary-actions button,
+.pbk-live-call-primary-actions button {
+  display: inline-flex;
+  align-items: center;
+}
+.pbk-live-call-duration {
+  gap: 4px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.pbk-live-call-pip-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding: 7px 11px;
+}
+.pbk-live-call-pip-summary > span {
+  min-width: 0;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pbk-live-call-pip-body {
+  max-height: min(62dvh, 560px);
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding: 10px 11px max(10px, env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+.pbk-live-call-talk-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.pbk-live-call-talk-grid > div {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  padding: 8px 9px 10px;
+}
+.pbk-live-call-talk-grid span {
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.pbk-live-call-talk-grid strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+}
+.pbk-live-call-talk-grid i {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--sky);
+  transition: width var(--duration-normal) var(--ease-out);
+}
+.pbk-live-call-talk-grid > div:last-child i {
+  background: var(--amber);
+}
+.pbk-live-call-transcript {
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--bg-panel);
+  padding: 9px;
+}
+.pbk-live-call-transcript > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pbk-live-call-transcript > div strong {
+  font-size: 10px;
+}
+.pbk-live-call-transcript > div span {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+.pbk-live-call-transcript p {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 7px;
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.pbk-live-call-transcript p b {
+  color: var(--sky);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.pbk-live-call-transcript p.empty {
+  display: block;
+  color: var(--text-tertiary);
+}
+.pbk-live-call-secondary-actions,
+.pbk-live-call-primary-actions {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+.pbk-live-call-context-guard {
+  margin-top: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.26);
+  border-radius: 8px;
+  background: var(--amber-glow);
+  color: var(--amber);
+  padding: 7px 8px;
+  font-size: 9px;
+}
+.pbk-live-call-secondary-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pbk-live-call-primary-actions {
+  grid-template-columns: 1.15fr 1fr 0.72fr;
+}
+.pbk-live-call-secondary-actions button,
+.pbk-live-call-primary-actions button {
+  min-width: 0;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  padding: 7px 6px;
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.pbk-live-call-secondary-actions svg,
+.pbk-live-call-primary-actions svg,
+.pbk-live-call-inline-form button svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.pbk-live-call-primary-actions button:first-child {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: var(--lime-glow);
+  color: var(--lime);
+}
+.pbk-live-call-primary-actions button.danger {
+  border-color: rgba(248, 113, 113, 0.28);
+  color: var(--crimson);
+}
+.pbk-live-call-secondary-actions button:disabled,
+.pbk-live-call-primary-actions button:disabled,
+.pbk-live-call-inline-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.pbk-live-call-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 7px;
+  margin-top: 8px;
+}
+.pbk-live-call-inline-form label,
+.pbk-live-call-inline-form label > span {
+  display: block;
+}
+.pbk-live-call-inline-form label > span {
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.pbk-live-call-inline-form textarea,
+.pbk-live-call-inline-form input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 10px;
+}
+.pbk-live-call-inline-form textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+.pbk-live-call-inline-form input {
+  color-scheme: dark;
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+.pbk-live-call-inline-form button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--sky);
+  border-radius: 8px;
+  background: var(--sky);
+  color: #061018;
+  padding: 7px 9px;
+  font-size: 9px;
+  font-weight: 800;
+}
+.pbk-live-call-pip .pbk-data-source {
+  margin: 9px 0 0;
+}
 .pbk-conversation-bubble-skeleton {
   width: min(62%, 32rem);
   height: 74px;
@@ -5028,6 +5324,23 @@
     padding-left: 10px;
     scrollbar-gutter: stable;
   }
+  .pbk-live-call-pip {
+    position: fixed;
+    top: calc(150px + env(safe-area-inset-top));
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-height: calc(100dvh - 240px - env(safe-area-inset-bottom));
+  }
+  .pbk-live-call-pip.expanded {
+    bottom: max(82px, calc(68px + env(safe-area-inset-bottom)));
+    max-height: none;
+  }
+  .pbk-live-call-pip.expanded .pbk-live-call-pip-body {
+    min-height: 0;
+    flex: 1;
+    max-height: none;
+  }
   .pbk-sender-select {
     grid-template-columns: 34px minmax(0, 1fr);
   }
@@ -5119,6 +5432,31 @@
     width: 100%;
     margin-left: 0;
     text-align: right;
+  }
+  .pbk-live-call-pip {
+    right: 6px;
+    left: 6px;
+  }
+  .pbk-live-call-pip-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pbk-live-call-talk-grid,
+  .pbk-live-call-inline-form {
+    grid-template-columns: 1fr;
+  }
+  .pbk-live-call-secondary-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pbk-live-call-secondary-actions button:first-child {
+    grid-column: 1 / -1;
+  }
+  .pbk-live-call-primary-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pbk-live-call-primary-actions button.danger {
+    grid-column: 1 / -1;
   }
   .pbk-conversation-body {
     font-size: 12px;

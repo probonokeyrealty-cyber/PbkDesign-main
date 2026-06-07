@@ -35970,14 +35970,14 @@ async function buildVectorCapacityStatus() {
       stats.last_analyze,
       stats.last_autoanalyze,
       COALESCE(
-        ARRAY_AGG(DISTINCT index_relation.relname)
+        JSONB_AGG(DISTINCT index_relation.relname)
           FILTER (WHERE index_relation.relname IS NOT NULL),
-        ARRAY[]::name[]
+        '[]'::jsonb
       ) AS index_names,
       COALESCE(
-        ARRAY_AGG(DISTINCT access_method.amname)
+        JSONB_AGG(DISTINCT access_method.amname)
           FILTER (WHERE access_method.amname IS NOT NULL),
-        ARRAY[]::name[]
+        '[]'::jsonb
       ) AS index_methods
     FROM targets
     LEFT JOIN pg_namespace namespace

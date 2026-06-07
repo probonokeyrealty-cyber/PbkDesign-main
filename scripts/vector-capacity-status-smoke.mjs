@@ -40,9 +40,11 @@ assert(
 assert(
   /estimated_embedded_count/.test(bridge) &&
     /pg_total_relation_size/.test(bridge) &&
+    /JSONB_AGG\(DISTINCT index_relation\.relname\)/.test(bridge) &&
+    /JSONB_AGG\(DISTINCT access_method\.amname\)/.test(bridge) &&
     /vectorIndexMethod/.test(bridge) &&
     /brain_blog_posts/.test(bridge),
-  'Vector capacity must expose row, storage, and vector-index evidence.'
+  'Vector capacity must expose row, storage, and JSON-safe vector-index evidence.'
 );
 
 assert(

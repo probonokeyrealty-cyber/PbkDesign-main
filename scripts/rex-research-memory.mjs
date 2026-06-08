@@ -180,11 +180,19 @@ export async function ensureRexResearchMemorySchema(pool) {
   }
 
   await pool.query(`
+    DROP FUNCTION IF EXISTS public.match_brain_blog_posts(
+      VECTOR,
+      DOUBLE PRECISION,
+      INTEGER,
+      TEXT
+    );
+
     CREATE OR REPLACE FUNCTION public.match_brain_blog_posts(
       query_embedding VECTOR(1536),
       match_threshold DOUBLE PRECISION DEFAULT 0.45,
       match_count INTEGER DEFAULT 5,
-      workspace_filter TEXT DEFAULT 'pbk'
+      workspace_filter TEXT DEFAULT 'pbk',
+      embedding_model_filter TEXT DEFAULT ''
     )
     RETURNS TABLE (
       id TEXT,
@@ -223,6 +231,7 @@ export async function ensureRexResearchMemorySchema(pool) {
       FROM public.brain_blog_posts AS post
       WHERE post.workspace_id = workspace_filter
         AND post.embedding IS NOT NULL
+        AND (embedding_model_filter = '' OR post.embedding_model = embedding_model_filter)
         AND post.status <> 'hidden'
         AND 1 - (post.embedding <=> query_embedding) >= match_threshold
       ORDER BY post.embedding <=> query_embedding
@@ -231,7 +240,7 @@ export async function ensureRexResearchMemorySchema(pool) {
 
     REVOKE ALL ON TABLE public.brain_blog_posts FROM PUBLIC;
     REVOKE ALL ON TABLE public.pbk_vector_canary_runs FROM PUBLIC;
-    REVOKE ALL ON FUNCTION public.match_brain_blog_posts(VECTOR, DOUBLE PRECISION, INTEGER, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.match_brain_blog_posts(VECTOR, DOUBLE PRECISION, INTEGER, TEXT, TEXT) FROM PUBLIC;
 
     DO $$
     BEGIN
@@ -246,7 +255,7 @@ export async function ensureRexResearchMemorySchema(pool) {
       IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
         GRANT ALL ON TABLE public.brain_blog_posts TO service_role;
         GRANT ALL ON TABLE public.pbk_vector_canary_runs TO service_role;
-        GRANT EXECUTE ON FUNCTION public.match_brain_blog_posts(VECTOR, DOUBLE PRECISION, INTEGER, TEXT) TO service_role;
+        GRANT EXECUTE ON FUNCTION public.match_brain_blog_posts(VECTOR, DOUBLE PRECISION, INTEGER, TEXT, TEXT) TO service_role;
       END IF;
     END $$;
   `);

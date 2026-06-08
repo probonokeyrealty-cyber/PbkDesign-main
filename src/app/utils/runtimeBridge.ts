@@ -539,6 +539,23 @@ export type VectorCapacityStatusResponse = {
   backend?: string;
   s3Role?: string;
   mastraRequired?: boolean;
+  embeddingProvider?: {
+    configured?: boolean;
+    ready?: boolean;
+    requestedProvider?: string;
+    provider?: string;
+    mode?: string;
+    model?: string;
+    nativeModel?: string;
+    nativeDimensions?: number;
+    dimensions?: number;
+    projection?: string;
+    fallbackReason?: string;
+    deepSeekEmbeddingsSupported?: boolean;
+    result?: string;
+    error?: string;
+    validatedAt?: string | null;
+  };
   tables?: VectorCapacityTable[];
   summary?: {
     estimatedRows?: number;
@@ -552,6 +569,7 @@ export type VectorCapacityStatusResponse = {
     schemaReady?: boolean;
     embeddingsReady?: boolean;
     indexReady?: boolean;
+    provider?: VectorCapacityStatusResponse['embeddingProvider'];
     canary?: {
       ok?: boolean;
       fresh?: boolean;

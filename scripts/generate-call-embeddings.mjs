@@ -3,6 +3,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import {
+  createTextEmbedding,
+  getEmbeddingProviderConfig,
+} from './vector-embedding.mjs';
 
 const { Pool } = pg;
 
@@ -92,43 +96,14 @@ function vectorLiteral(embedding = []) {
   }).join(',')}]`;
 }
 
-async function createEmbedding(text, { apiKey, baseUrl, model, timeoutMs }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${baseUrl}/v1/embeddings`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        input: String(text || '').slice(0, 8000),
-      }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(payload?.error?.message || payload?.message || `OpenAI embeddings returned ${response.status}`);
-    }
-    const embedding = payload?.data?.[0]?.embedding;
-    if (!Array.isArray(embedding) || embedding.length !== 1536) {
-      throw new Error(`Embedding dimension mismatch: expected 1536, got ${Array.isArray(embedding) ? embedding.length : 'none'}`);
-    }
-    return { embedding, usage: payload?.usage || {} };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 hydrateLocalRuntimeEnv();
 
 const args = parseArgs();
 const databaseUrl = String(process.env.PBK_DATABASE_URL || process.env.DATABASE_URL || '').trim();
 const apiKey = String(process.env.PBK_OPENAI_API_KEY || process.env.OPENAI_API_KEY || '').trim();
 const baseUrl = String(process.env.PBK_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com').trim().replace(/\/+$/g, '');
-const model = String(process.env.PBK_OPENAI_EMBEDDING_MODEL || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
+const embeddingConfig = getEmbeddingProviderConfig();
+const model = embeddingConfig.configuredModel;
 const limit = Math.max(1, Math.min(500, toNumber(args.limit || process.env.PBK_CALL_EMBEDDINGS_LIMIT, 100)));
 const minChars = Math.max(24, Math.min(2000, toNumber(args.minChars || process.env.PBK_CALL_EMBEDDINGS_MIN_CHARS, 80)));
 const timeoutMs = Math.max(1000, Math.min(60000, toNumber(args.timeoutMs || process.env.PBK_OPENAI_EMBEDDING_TIMEOUT_MS, 15000)));
@@ -137,11 +112,6 @@ const dryRun = args.dryRun === true || /^(1|true|yes|on)$/i.test(String(args.dry
 
 if (!databaseUrl) {
   console.error('Missing PBK_DATABASE_URL or DATABASE_URL. Run migrations and backfill against an explicit database target.');
-  process.exit(1);
-}
-
-if (!apiKey) {
-  console.error('Missing PBK_OPENAI_API_KEY or OPENAI_API_KEY. Embedding generation requires an OpenAI embeddings key.');
   process.exit(1);
 }
 
@@ -222,6 +192,7 @@ async function main() {
   const summary = {
     ok: true,
     result: 'call_embeddings_generated',
+    provider: embeddingConfig.provider,
     model,
     dryRun,
     limit,
@@ -239,7 +210,22 @@ async function main() {
       continue;
     }
     try {
-      const { embedding } = await createEmbedding(sourceText, { apiKey, baseUrl, model, timeoutMs });
+      const embeddingResult = await createTextEmbedding(sourceText, {
+        provider: embeddingConfig.provider,
+        openAiApiKey: apiKey,
+        openAiBaseUrl: baseUrl,
+        openAiModel: embeddingConfig.openAiModel,
+        localModel: embeddingConfig.localModel,
+        timeoutMs,
+      });
+      if (!embeddingResult.ok) {
+        throw new Error(
+          embeddingResult.error ||
+            embeddingResult.result ||
+            'Embedding generation failed.'
+        );
+      }
+      const { embedding } = embeddingResult;
       await upsertCallEmbedding(call, sourceText, embedding);
       summary.processed += 1;
       console.log(JSON.stringify({ ok: true, callId: call.id, leadId: call.lead_id || '', chars: sourceText.length }));

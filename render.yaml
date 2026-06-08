@@ -119,6 +119,18 @@ services:
       - key: PBK_STRATEGIST_PROVIDER
         value: deepseek
 
+      # DeepSeek remains Ava/Rex's strategist, but its public API does not
+      # expose a supported embeddings model. Use a quota-independent local
+      # model and preserve the existing 1536-dimension pgvector contract.
+      - key: PBK_EMBEDDING_PROVIDER
+        value: local_hf
+      - key: PBK_LOCAL_EMBEDDING_MODEL
+        value: Xenova/all-MiniLM-L6-v2
+      - key: PBK_LOCAL_EMBEDDING_DTYPE
+        value: q8
+      - key: PBK_HF_CACHE_DIR
+        value: /app/.cache/pbk-transformers
+
       # Hermes analyst lane. Keep this suggest-only: Hermes can recommend
       # scripts/strategy from PBK data, but provider writes remain approval-gated.
       - key: PBK_HERMES_ENABLED

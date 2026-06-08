@@ -63,6 +63,11 @@ import {
   ensureRexResearchMemorySchema,
   normalizeRexResearchMemoryRow,
 } from './rex-research-memory.mjs';
+import {
+  createTextEmbedding,
+  getEmbeddingProviderConfig,
+  prewarmEmbeddingProvider,
+} from './vector-embedding.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -280,7 +285,21 @@ const OPENAI_BASE_URL = String(process.env.PBK_OPENAI_BASE_URL || process.env.OP
   .replace(/\/+$/g, '');
 const OPENAI_WEB_SEARCH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_OPENAI_WEB_SEARCH_ENABLED || 'true').trim());
 const OPENAI_WEB_SEARCH_MODEL = String(process.env.PBK_OPENAI_WEB_SEARCH_MODEL || process.env.OPENAI_WEB_SEARCH_MODEL || 'gpt-4o-mini').trim();
-const OPENAI_EMBEDDING_MODEL = String(process.env.PBK_OPENAI_EMBEDDING_MODEL || process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
+const EMBEDDING_PROVIDER_CONFIG = getEmbeddingProviderConfig();
+const TEXT_EMBEDDING_MODEL = EMBEDDING_PROVIDER_CONFIG.configuredModel;
+let embeddingProviderRuntimeStatus = {
+  ready: false,
+  result: 'not_validated',
+  provider: EMBEDDING_PROVIDER_CONFIG.provider,
+  model: TEXT_EMBEDDING_MODEL,
+  nativeDimensions:
+    EMBEDDING_PROVIDER_CONFIG.provider === 'local_hf'
+      ? EMBEDDING_PROVIDER_CONFIG.localNativeDimensions
+      : EMBEDDING_PROVIDER_CONFIG.storageDimensions,
+  dimensions: EMBEDDING_PROVIDER_CONFIG.storageDimensions,
+  error: '',
+  validatedAt: null,
+};
 const AVA_EPISODIC_MEMORY_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AVA_EPISODIC_MEMORY_ENABLED || 'true').trim());
 const AVA_EPISODIC_MEMORY_TIMEOUT_MS = Math.max(50, Math.min(1000, Number(process.env.PBK_AVA_EPISODIC_MEMORY_TIMEOUT_MS || 120)));
 const AVA_EPISODIC_MEMORY_MATCH_THRESHOLD = Math.max(0.1, Math.min(0.98, Number(process.env.PBK_AVA_EPISODIC_MEMORY_MATCH_THRESHOLD || 0.72)));
@@ -7939,12 +7958,21 @@ async function ensureCallEmbeddingsSchema(pool) {
 
       ALTER TABLE public.call_embeddings ENABLE ROW LEVEL SECURITY;
 
+      DROP FUNCTION IF EXISTS public.match_call_embeddings(
+        VECTOR,
+        DOUBLE PRECISION,
+        INT,
+        TEXT,
+        TEXT
+      );
+
       CREATE OR REPLACE FUNCTION public.match_call_embeddings(
         query_embedding VECTOR(1536),
         match_threshold DOUBLE PRECISION DEFAULT 0.72,
         match_count INT DEFAULT 3,
         exclude_lead_id TEXT DEFAULT '',
-        exclude_call_id TEXT DEFAULT ''
+        exclude_call_id TEXT DEFAULT '',
+        embedding_model_filter TEXT DEFAULT ''
       )
       RETURNS TABLE (
         call_id TEXT,
@@ -7971,6 +7999,7 @@ async function ensureCallEmbeddingsSchema(pool) {
         FROM public.call_embeddings ce
         WHERE ce.workspace_id = 'pbk'
           AND ce.embedding IS NOT NULL
+          AND (embedding_model_filter = '' OR ce.embedding_model = embedding_model_filter)
           AND (exclude_lead_id = '' OR ce.lead_id <> exclude_lead_id)
           AND (exclude_call_id = '' OR ce.call_id <> exclude_call_id)
           AND 1 - (ce.embedding <=> query_embedding) >= match_threshold
@@ -7981,8 +8010,8 @@ async function ensureCallEmbeddingsSchema(pool) {
       COMMENT ON TABLE public.call_embeddings IS
         'Outcome-weighted episodic call memory for Ava. Each row is a memory capsule from a prior call transcript.';
 
-      COMMENT ON FUNCTION public.match_call_embeddings(VECTOR, DOUBLE PRECISION, INT, TEXT, TEXT) IS
-        'Returns similar past call memory capsules by cosine similarity for Ava live-call resolver retrieval.';
+      COMMENT ON FUNCTION public.match_call_embeddings(VECTOR, DOUBLE PRECISION, INT, TEXT, TEXT, TEXT) IS
+        'Returns same-model past call memory capsules by cosine similarity for Ava live-call resolver retrieval.';
     `);
     callEmbeddingsSchemaLastError = null;
     return true;
@@ -9633,7 +9662,7 @@ async function persistBrainBlogPostRecord(post = {}, options = {}) {
         updated_at = EXCLUDED.updated_at
       WHERE public.brain_blog_posts.workspace_id = EXCLUDED.workspace_id
       RETURNING id`,
-      [workspaceId, post.id, post.title || 'Untitled Brain post', post.sourceUrl || '', post.sourceType || 'manual', post.sourceName || post.source || '', post.publishedAt || null, post.content || '', post.summary || '', normalizeStringList(post.keyTakeaways || []), normalizeStringList(post.tags || []), normalizeStringList(post.revenueStreams || []), post.salesMentor || '', post.techniqueType || '', post.contentHash || '', post.status || 'ready', post.trainedAt || null, embedding, embeddingModel || OPENAI_EMBEDDING_MODEL, embeddingHash, embeddedAt, JSON.stringify(post.metadata || {}), post.createdAt || isoNow(), post.updatedAt || isoNow(), clearEmbedding]
+      [workspaceId, post.id, post.title || 'Untitled Brain post', post.sourceUrl || '', post.sourceType || 'manual', post.sourceName || post.source || '', post.publishedAt || null, post.content || '', post.summary || '', normalizeStringList(post.keyTakeaways || []), normalizeStringList(post.tags || []), normalizeStringList(post.revenueStreams || []), post.salesMentor || '', post.techniqueType || '', post.contentHash || '', post.status || 'ready', post.trainedAt || null, embedding, embeddingModel || TEXT_EMBEDDING_MODEL, embeddingHash, embeddedAt, JSON.stringify(post.metadata || {}), post.createdAt || isoNow(), post.updatedAt || isoNow(), clearEmbedding]
     );
     return result.rowCount > 0;
   } catch (error) {
@@ -22456,7 +22485,7 @@ async function createCallTranscriptEmbedding(sourceText = '', record = {}) {
   return {
     ok: true,
     result: chunkResults.length > 1 ? 'chunked_average_embedding' : 'single_chunk_embedding',
-    model: chunkResults[0]?.model || OPENAI_EMBEDDING_MODEL,
+    model: chunkResults[0]?.model || TEXT_EMBEDDING_MODEL,
     embedding: averageEmbeddingVectors(chunkResults.map((item) => item.embedding)),
     chunks: chunkResults.map(({ embedding, ...item }) => item),
   };
@@ -22483,72 +22512,64 @@ async function createOpenAiEmbedding(text = '', options = {}) {
   const cleanText = String(text || '')
     .replace(/\s+/g, ' ')
     .trim();
-  const model = String(options.model || OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
-  if (!OPENAI_API_KEY)
-    return {
-      ok: false,
-      result: 'provider_missing',
-      error: 'OpenAI embeddings key is not configured.',
-    };
+  const model = String(options.model || TEXT_EMBEDDING_MODEL).trim();
   if (!cleanText || cleanText.length < 12) return { ok: false, result: 'empty_text', error: 'Embedding text was empty.' };
   const cacheKey = getEmbeddingCacheKey(model, cleanText);
   if (openAiEmbeddingCache.has(cacheKey)) {
-    return { ok: true, result: 'cache_hit', model, embedding: openAiEmbeddingCache.get(cacheKey) };
+    return {
+      ...openAiEmbeddingCache.get(cacheKey),
+      result: 'cache_hit',
+    };
   }
-  const timeoutMs = Math.max(50, Math.min(60000, toNumber(options.timeoutMs, 10000)));
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${OPENAI_BASE_URL}/v1/embeddings`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        input: cleanText.slice(0, 8000),
-      }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      return {
-        ok: false,
-        result: 'provider_error',
-        status: response.status,
-        error: payload?.error?.message || payload?.message || `OpenAI embeddings returned ${response.status}`,
-      };
-    }
-    const embedding = payload?.data?.[0]?.embedding;
-    if (!Array.isArray(embedding) || embedding.length !== 1536) {
-      return {
-        ok: false,
-        result: 'dimension_mismatch',
-        error: `Expected 1536-dim embedding, got ${Array.isArray(embedding) ? embedding.length : 'none'}.`,
-      };
-    }
-    openAiEmbeddingCache.set(cacheKey, embedding);
+  const result = await createTextEmbedding(cleanText, {
+    provider: EMBEDDING_PROVIDER_CONFIG.provider,
+    openAiApiKey: OPENAI_API_KEY,
+    openAiBaseUrl: OPENAI_BASE_URL,
+    openAiModel: EMBEDDING_PROVIDER_CONFIG.openAiModel,
+    localModel: EMBEDDING_PROVIDER_CONFIG.localModel,
+    timeoutMs: Math.max(50, Math.min(60000, toNumber(options.timeoutMs, 10000))),
+    onUsage: async ({ provider, model: usageModel, usage, responseId }) => {
+      await recordTokenUsage(provider, usageModel, usage, {
+        source: options.source || 'ava-episodic-memory-embedding',
+        callId: options.callId || '',
+        leadId: options.leadId || '',
+        responseId,
+      });
+    },
+  });
+  embeddingProviderRuntimeStatus = {
+    ready: Boolean(result.ok),
+    result: result.result || (result.ok ? 'live' : 'provider_error'),
+    provider: result.provider || EMBEDDING_PROVIDER_CONFIG.provider,
+    model: result.model || TEXT_EMBEDDING_MODEL,
+    nativeDimensions: Number(
+      result.nativeDimensions ||
+        (result.ok ? result.embedding?.length : 0) ||
+        EMBEDDING_PROVIDER_CONFIG.localNativeDimensions
+    ),
+    dimensions: Number(
+      result.dimensions ||
+        result.embedding?.length ||
+        EMBEDDING_PROVIDER_CONFIG.storageDimensions
+    ),
+    projection: result.projection || 'none',
+    fallbackReason:
+      result.fallbackReason || EMBEDDING_PROVIDER_CONFIG.fallbackReason || '',
+    error: result.error || '',
+    validatedAt: isoNow(),
+  };
+  if (result.ok) {
+    const cached = {
+      ...result,
+      usage: result.usage || null,
+    };
+    openAiEmbeddingCache.set(cacheKey, cached);
     if (openAiEmbeddingCache.size > 200) {
       const oldestKey = openAiEmbeddingCache.keys().next().value;
       if (oldestKey) openAiEmbeddingCache.delete(oldestKey);
     }
-    await recordTokenUsage('openai', model, payload?.usage || {}, {
-      source: options.source || 'ava-episodic-memory-embedding',
-      callId: options.callId || '',
-      leadId: options.leadId || '',
-      responseId: payload?.id || '',
-    });
-    return { ok: true, result: 'live', model, embedding, usage: payload?.usage || null };
-  } catch (error) {
-    return {
-      ok: false,
-      result: error?.name === 'AbortError' ? 'provider_timeout' : 'provider_error',
-      error: error?.name === 'AbortError' ? 'OpenAI embedding request timed out.' : error?.message || 'OpenAI embedding request failed.',
-    };
-  } finally {
-    clearTimeout(timeout);
   }
+  return result;
 }
 
 async function embedAndPersistBrainBlogPost(post = {}, options = {}) {
@@ -22572,7 +22593,7 @@ async function embedAndPersistBrainBlogPost(post = {}, options = {}) {
 
   const workspaceId = normalizeTenantId(options.workspaceId || options.workspace_id || post.workspaceId || post.workspace_id);
   const embeddingText = buildRexResearchEmbeddingText(post);
-  const embeddingModel = String(options.embeddingModel || OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
+  const embeddingModel = String(options.embeddingModel || TEXT_EMBEDDING_MODEL).trim();
   const embeddingHash = createHash('sha256')
     .update(`${embeddingModel}\n${embeddingText}`)
     .digest('hex');
@@ -22671,8 +22692,14 @@ async function retrieveRexResearchMemories(params = {}) {
   if (embeddingResult.ok) {
     const semantic = await queryPgRows(
       `SELECT *
-       FROM public.match_brain_blog_posts($1::vector, $2, $3, $4)`,
-      [vectorLiteral(embeddingResult.embedding), threshold, limit, workspaceId]
+       FROM public.match_brain_blog_posts($1::vector, $2, $3, $4, $5)`,
+      [
+        vectorLiteral(embeddingResult.embedding),
+        threshold,
+        limit,
+        workspaceId,
+        embeddingResult.model || TEXT_EMBEDDING_MODEL,
+      ]
     );
     if (semantic.ok && semantic.rows.length) {
       return {
@@ -22710,7 +22737,7 @@ async function retrieveRexResearchMemories(params = {}) {
     source: matches.length ? 'postgres_fts' : 'pgvector',
     query,
     workspaceId,
-    model: embeddingResult.model || OPENAI_EMBEDDING_MODEL,
+    model: embeddingResult.model || TEXT_EMBEDDING_MODEL,
     dimensions: embeddingResult.ok ? embeddingResult.embedding.length : 0,
     matches,
     error: embeddingResult.ok ? lexical.error || '' : embeddingResult.error || lexical.error || '',
@@ -22731,7 +22758,7 @@ async function backfillRexResearchEmbeddings(params = {}) {
        AND (embedding IS NULL OR embedding_model <> $2 OR embedding_hash = '')
      ORDER BY updated_at DESC
      LIMIT $3`,
-    [workspaceId, OPENAI_EMBEDDING_MODEL, limit]
+    [workspaceId, TEXT_EMBEDDING_MODEL, limit]
   );
   if (!rows.ok) {
     return {
@@ -22849,7 +22876,7 @@ async function runRexResearchMemoryCanary(params = {}) {
       ok,
       ok ? 'semantic_round_trip_passed' : 'semantic_round_trip_failed',
       latencyMs,
-      embedding?.model || OPENAI_EMBEDDING_MODEL,
+      embedding?.model || TEXT_EMBEDDING_MODEL,
       Number(embedding?.dimensions || 0),
       matched?.id || '',
       error,
@@ -22871,7 +22898,7 @@ async function runRexResearchMemoryCanary(params = {}) {
     result: ok ? 'semantic_round_trip_passed' : 'semantic_round_trip_failed',
     workspaceId,
     latencyMs,
-    model: embedding?.model || OPENAI_EMBEDDING_MODEL,
+    model: embedding?.model || TEXT_EMBEDDING_MODEL,
     dimensions: Number(embedding?.dimensions || 0),
     similarity: Number(matched?.similarity || 0),
     error,
@@ -22897,7 +22924,7 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
        AND embedding_model = $3
        AND transcript_hash = $4
      LIMIT 1`,
-    [record.workspaceId || record.workspace_id || callRecord?.workspace_id || 'pbk', callId, OPENAI_EMBEDDING_MODEL, transcriptHash]
+    [record.workspaceId || record.workspace_id || callRecord?.workspace_id || 'pbk', callId, TEXT_EMBEDDING_MODEL, transcriptHash]
   );
   if (existing.ok && existing.rows?.length) {
     return {
@@ -22906,7 +22933,7 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
       result: 'call_embedding_already_current',
       callId,
       leadId,
-      embeddingModel: OPENAI_EMBEDDING_MODEL,
+      embeddingModel: TEXT_EMBEDDING_MODEL,
     };
   }
   const embeddingResult = await createCallTranscriptEmbedding(sourceText, {
@@ -22958,7 +22985,7 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
        synthetic = EXCLUDED.synthetic,
        metadata = public.call_embeddings.metadata || EXCLUDED.metadata,
        updated_at = NOW()`,
-    [record.workspaceId || record.workspace_id || 'pbk', callId, leadId, record.outcome || inferCallEmbeddingOutcome({ ...callRecord, ...record }), record.sentiment?.pbkScore ?? record.sentiment ?? callRecord?.sentiment ?? null, sourceText.slice(0, 12000), transcriptHash, embeddingResult.model || OPENAI_EMBEDDING_MODEL, vectorLiteral(embeddingResult.embedding), Boolean(record.synthetic), JSON.stringify(metadata)]
+    [record.workspaceId || record.workspace_id || 'pbk', callId, leadId, record.outcome || inferCallEmbeddingOutcome({ ...callRecord, ...record }), record.sentiment?.pbkScore ?? record.sentiment ?? callRecord?.sentiment ?? null, sourceText.slice(0, 12000), transcriptHash, embeddingResult.model || TEXT_EMBEDDING_MODEL, vectorLiteral(embeddingResult.embedding), Boolean(record.synthetic), JSON.stringify(metadata)]
   );
   recordCallTrace('call_embedding_upserted', {
     callId,
@@ -22975,7 +23002,7 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
         callId,
         leadId,
         chunkCount: embeddingResult.chunks?.length || 1,
-        embeddingModel: embeddingResult.model || OPENAI_EMBEDDING_MODEL,
+        embeddingModel: embeddingResult.model || TEXT_EMBEDDING_MODEL,
       }
     : result;
 }
@@ -23005,7 +23032,7 @@ async function retrieveSimilarCallMemories(params = {}) {
   const threshold = Math.max(0.1, Math.min(0.98, toNumber(params.threshold, AVA_EPISODIC_MEMORY_MATCH_THRESHOLD)));
   const callId = String(params.callId || params.call_id || '').trim();
   const leadId = String(params.leadId || params.lead_id || '').trim();
-  const embeddingCacheKey = getEmbeddingCacheKey(OPENAI_EMBEDDING_MODEL, text);
+  const embeddingCacheKey = getEmbeddingCacheKey(TEXT_EMBEDDING_MODEL, text);
   const canUseVectorNow = openAiEmbeddingCache.has(embeddingCacheKey) || params.allowSlowEmbedding === true;
 
   let embeddingResult = {
@@ -23019,7 +23046,10 @@ async function retrieveSimilarCallMemories(params = {}) {
       leadId,
       timeoutMs: Math.max(40, Math.min(900, toNumber(params.timeoutMs, AVA_EPISODIC_MEMORY_TIMEOUT_MS))),
     });
-  } else if (OPENAI_API_KEY) {
+  } else if (
+    EMBEDDING_PROVIDER_CONFIG.provider !== 'openai' ||
+    Boolean(OPENAI_API_KEY)
+  ) {
     void createOpenAiEmbedding(text, {
       source: 'ava-episodic-memory-query-background-cache',
       callId,
@@ -23030,8 +23060,15 @@ async function retrieveSimilarCallMemories(params = {}) {
   if (embeddingResult.ok) {
     const vectorResult = await queryPgRows(
       `SELECT call_id, lead_id, outcome, source_text, similarity, metadata, synthetic, created_at
-       FROM public.match_call_embeddings($1::vector, $2::double precision, $3::int, $4::text, $5::text)`,
-      [vectorLiteral(embeddingResult.embedding), threshold, limit, leadId, callId]
+       FROM public.match_call_embeddings($1::vector, $2::double precision, $3::int, $4::text, $5::text, $6::text)`,
+      [
+        vectorLiteral(embeddingResult.embedding),
+        threshold,
+        limit,
+        leadId,
+        callId,
+        embeddingResult.model || TEXT_EMBEDDING_MODEL,
+      ]
     );
     if (vectorResult.ok && vectorResult.rows.length) {
       return {
@@ -32856,6 +32893,30 @@ function getOpenAiWebSearchProviderMeta() {
   };
 }
 
+function getEmbeddingProviderMeta() {
+  const localProvider = EMBEDDING_PROVIDER_CONFIG.provider === 'local_hf';
+  return {
+    configured: true,
+    ready: Boolean(embeddingProviderRuntimeStatus.ready),
+    requestedProvider: EMBEDDING_PROVIDER_CONFIG.requestedProvider,
+    provider: EMBEDDING_PROVIDER_CONFIG.provider,
+    mode: localProvider ? 'local-transformers' : 'remote-api',
+    model: TEXT_EMBEDDING_MODEL,
+    nativeModel: localProvider ? EMBEDDING_PROVIDER_CONFIG.localModel : TEXT_EMBEDDING_MODEL,
+    nativeDimensions: embeddingProviderRuntimeStatus.nativeDimensions,
+    dimensions: EMBEDDING_PROVIDER_CONFIG.storageDimensions,
+    projection: localProvider ? 'cosine_preserving_repeat' : 'none',
+    fallbackReason:
+      embeddingProviderRuntimeStatus.fallbackReason ||
+      EMBEDDING_PROVIDER_CONFIG.fallbackReason ||
+      '',
+    deepSeekEmbeddingsSupported: false,
+    result: embeddingProviderRuntimeStatus.result,
+    error: embeddingProviderRuntimeStatus.error,
+    validatedAt: embeddingProviderRuntimeStatus.validatedAt,
+  };
+}
+
 function getTavilyProviderMeta() {
   const missing = [];
   if (!TAVILY_API_KEY) missing.push('PBK_TAVILY_API_KEY or TAVILY_API_KEY');
@@ -37451,6 +37512,7 @@ async function queryPgRows(sql = '', params = []) {
 
 async function buildVectorCapacityStatus() {
   const generatedAt = isoNow();
+  const embeddingProvider = getEmbeddingProviderMeta();
   const catalog = await queryPgRows(`
     WITH targets(table_name, label) AS (
       VALUES
@@ -37545,6 +37607,7 @@ async function buildVectorCapacityStatus() {
       backend: 'pgvector',
       s3Role: 'backup_only',
       mastraRequired: false,
+      embeddingProvider,
       tables: [],
       summary: {
         estimatedRows: 0,
@@ -37739,6 +37802,7 @@ async function buildVectorCapacityStatus() {
     backend: 'pgvector',
     s3Role: 'backup_only',
     mastraRequired: false,
+    embeddingProvider,
     tables,
     summary: {
       ...summary,
@@ -37749,6 +37813,7 @@ async function buildVectorCapacityStatus() {
       schemaReady: Boolean(rexMemory?.exists && rexMemory.dimensions === 1536),
       embeddingsReady: Boolean(rexMemory?.estimatedEmbeddedCount),
       indexReady: Boolean(rexMemory?.vectorIndexMethod && rexMemory.vectorIndexMethod !== 'none'),
+      provider: embeddingProvider,
       canary: rexCanary,
     },
     recommendation,
@@ -65706,6 +65771,32 @@ server.listen(PORT, HOST, () => {
   prewarmVoiceProviders().catch((error) => {
     console.warn('[pbk-local-openclaw] voice provider prewarm failed:', error?.message || error);
   });
+  prewarmEmbeddingProvider({ includeFallback: true })
+    .then((status) => {
+      embeddingProviderRuntimeStatus = {
+        ...embeddingProviderRuntimeStatus,
+        ...status,
+        ready: Boolean(status.ok),
+        error: '',
+        validatedAt: isoNow(),
+      };
+      console.log(
+        `[pbk-local-openclaw] embedding provider ready: ${status.provider} (${status.model}, ${status.dimensions} dimensions).`
+      );
+    })
+    .catch((error) => {
+      embeddingProviderRuntimeStatus = {
+        ...embeddingProviderRuntimeStatus,
+        ready: false,
+        result: 'prewarm_failed',
+        error: error?.message || String(error),
+        validatedAt: isoNow(),
+      };
+      console.warn(
+        '[pbk-local-openclaw] embedding provider prewarm failed:',
+        error?.message || error
+      );
+    });
   startEmotionalLearningAutoImprove();
   startCommandCenterClosedLoopScheduler();
   startAgentRegistryHealthScheduler();

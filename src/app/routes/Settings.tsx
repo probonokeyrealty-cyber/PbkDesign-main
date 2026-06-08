@@ -480,6 +480,7 @@ function SettingsVectorCapacityPanel({
   const tables = Array.isArray(capacity?.tables) ? capacity.tables : [];
   const recommendation = capacity?.recommendation;
   const rexResearch = capacity?.rexResearch;
+  const embeddingProvider = capacity?.embeddingProvider || rexResearch?.provider;
 
   return (
     <section className="pbk-settings-card">
@@ -542,6 +543,15 @@ function SettingsVectorCapacityPanel({
             {rexResearch?.canary?.fresh
               ? `canary ${formatCount(rexResearch.canary.latencyMs)} ms`
               : 'run semantic canary'}
+          </div>
+          <div
+            className="mt-1 truncate text-xs text-slate-400"
+            title={embeddingProvider?.nativeModel || embeddingProvider?.model}
+          >
+            {embeddingProvider?.provider || 'provider pending'}
+            {embeddingProvider?.nativeDimensions
+              ? ` ${embeddingProvider.nativeDimensions}->${embeddingProvider.dimensions || 1536}`
+              : ''}
           </div>
         </div>
       </div>

@@ -11,9 +11,14 @@ const packagePath = resolve(root, 'package.json');
 const dockerfileOpenclawPath = resolve(root, 'Dockerfile.openclaw');
 const productionCheckPath = resolve(root, 'scripts/production-pristine-check.mjs');
 const callEmbeddingsScriptPath = resolve(root, 'scripts/generate-call-embeddings.mjs');
+const vectorEmbeddingPath = resolve(root, 'scripts/vector-embedding.mjs');
 const callEmbeddingsMigrationPath = resolve(
   root,
   'supabase/migrations/20260527010000_pbk_call_episodic_memory.sql'
+);
+const semanticModelScopeMigrationPath = resolve(
+  root,
+  'supabase/migrations/20260608020000_pbk_semantic_embedding_model_scope.sql'
 );
 const agentsPath = resolve(root, 'AGENTS.md');
 const avaMasterclassPath = resolve(root, 'knowledge/ava-wholesale-conversation-masterclass.md');
@@ -51,8 +56,14 @@ const productionCheck = readFileSync(productionCheckPath, 'utf8');
 const callEmbeddingsScript = existsSync(callEmbeddingsScriptPath)
   ? readFileSync(callEmbeddingsScriptPath, 'utf8')
   : '';
+const vectorEmbedding = existsSync(vectorEmbeddingPath)
+  ? readFileSync(vectorEmbeddingPath, 'utf8')
+  : '';
 const callEmbeddingsMigration = existsSync(callEmbeddingsMigrationPath)
   ? readFileSync(callEmbeddingsMigrationPath, 'utf8')
+  : '';
+const semanticModelScopeMigration = existsSync(semanticModelScopeMigrationPath)
+  ? readFileSync(semanticModelScopeMigrationPath, 'utf8')
   : '';
 const agents = readFileSync(agentsPath, 'utf8');
 const avaMasterclass = readFileSync(avaMasterclassPath, 'utf8');
@@ -1580,7 +1591,9 @@ const checks = [
       /CREATE TABLE IF NOT EXISTS public\.call_embeddings/.test(callEmbeddingsMigration) &&
       /embedding VECTOR\(1536\)/.test(callEmbeddingsMigration) &&
       /CREATE OR REPLACE FUNCTION public\.match_call_embeddings/.test(callEmbeddingsMigration) &&
-      /text-embedding-3-small/.test(callEmbeddingsScript) &&
+      /createTextEmbedding/.test(callEmbeddingsScript) &&
+      /Xenova\/all-MiniLM-L6-v2/.test(vectorEmbedding) &&
+      /embedding_model_filter/.test(semanticModelScopeMigration) &&
       /INSERT INTO public\.call_embeddings/.test(callEmbeddingsScript) &&
       /async function createOpenAiEmbedding/.test(bridge) &&
       /async function retrieveSimilarCallMemories/.test(bridge) &&

@@ -61,6 +61,7 @@ WORKDIR /app
 # browser downloads during npm install in constrained hosted builders.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_CACHE_DIR=/tmp/puppeteer
+ENV PBK_HF_CACHE_DIR=/app/.cache/pbk-transformers
 ENV NPM_CONFIG_FETCH_RETRIES=5
 ENV NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000
 ENV NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
@@ -71,6 +72,7 @@ ENV NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
 RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=warn --timeout=600000 \
       @sparticuz/chromium@147.0.1 \
       @deepgram/sdk@5.1.0 \
+      @huggingface/transformers@4.2.0 \
       @langchain/langgraph@1.3.2 \
       @modelcontextprotocol/sdk@1.29.0 \
       @aws-sdk/client-s3@3.1056.0 \
@@ -87,6 +89,11 @@ RUN npm install --legacy-peer-deps --no-save --no-audit --no-fund --loglevel=war
       redis@5.10.0 \
       ws@8.20.1 \
       youtube-transcript@1.3.1
+
+# Bake the compact q8 embedding model into the image. Render instances can
+# restart without downloading model weights, which keeps Rex/Ava semantic
+# memory independent of a runtime network call or provider quota.
+RUN node --input-type=module -e "import { env, pipeline } from '@huggingface/transformers'; env.cacheDir=process.env.PBK_HF_CACHE_DIR; await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' });"
 
 # Property data import/scraping is intentionally isolated in a Python venv so
 # the hosted bridge can run HomeHarvest and Scrapling without touching Node deps.
@@ -126,6 +133,7 @@ COPY scripts/nurture-agent.mjs ./scripts/nurture-agent.mjs
 COPY scripts/onnx-training-worker.mjs ./scripts/onnx-training-worker.mjs
 COPY scripts/research-additives.mjs ./scripts/research-additives.mjs
 COPY scripts/rex-research-memory.mjs ./scripts/rex-research-memory.mjs
+COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
 COPY scripts/train-emotion-world-model.mjs ./scripts/train-emotion-world-model.mjs
 COPY scripts/train_emotion_world_model_onnx.py ./scripts/train_emotion_world_model_onnx.py
 COPY scripts/conversation-identity.mjs ./scripts/conversation-identity.mjs

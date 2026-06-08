@@ -31,7 +31,7 @@ assert(
 );
 assert(
   REX_RESEARCH_EMBEDDING_DIMENSIONS === 1536,
-  'Rex research memory must stay aligned with text-embedding-3-small dimensions.'
+  'Rex research memory must stay aligned with the canonical pgvector storage dimensions.'
 );
 
 const normalized = normalizeRexResearchMemoryRow({
@@ -66,6 +66,7 @@ assert(
 
 assert(
   /async function embedAndPersistBrainBlogPost/.test(bridge) &&
+    /createTextEmbedding/.test(bridge) &&
     /async function retrieveRexResearchMemories/.test(bridge) &&
     /async function backfillRexResearchEmbeddings/.test(bridge) &&
     /async function runRexResearchMemoryCanary/.test(bridge),
@@ -91,9 +92,18 @@ assert(
 
 assert(
   /rexResearch\?:/.test(runtimeBridge) &&
+    /embeddingProvider\?:/.test(runtimeBridge) &&
     /Rex semantic memory/.test(settings) &&
     /Needs proof/.test(settings),
   'Settings must show Rex readiness separately instead of implying all pgvector memory is live.'
+);
+assert(
+  /PBK_EMBEDDING_PROVIDER[\s\S]*local_hf/.test(read('render.yaml')) &&
+    /@huggingface\/transformers@4\.2\.0/.test(read('Dockerfile.openclaw')) &&
+    /pipeline\('feature-extraction', 'Xenova\/all-MiniLM-L6-v2'/.test(
+      read('Dockerfile.openclaw')
+    ),
+  'Render must package, prewarm, and select the quota-independent local embedding provider.'
 );
 assert(
   /POST \/api\/brain\/vector\/backfill/.test(dataMap) &&

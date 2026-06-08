@@ -64,10 +64,19 @@ import {
   normalizeRexResearchMemoryRow,
 } from './rex-research-memory.mjs';
 import {
+  buildAvaCoachingEmbeddingText,
+  normalizeAvaCoachingMemoryRow,
+} from './ava-coaching-memory.mjs';
+import {
   createTextEmbedding,
   getEmbeddingProviderConfig,
   prewarmEmbeddingProvider,
 } from './vector-embedding.mjs';
+import {
+  COMMAND_INTENT_ROUTER_VERSION,
+  classifyCommandIntent,
+  listCommandIntentRouterRules,
+} from './command-intent-router.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -264,6 +273,16 @@ const REDIS_CALL_STATE_TTL_SECONDS = Math.max(300, Math.min(86400, Number(proces
 const REDIS_LEASE_TTL_SECONDS = Math.max(30, Math.min(3600, Number(process.env.PBK_REDIS_LEASE_TTL_SECONDS || 15 * 60)));
 const REDIS_RETRY_COOLDOWN_MS = Math.max(5000, Math.min(300000, Number(process.env.PBK_REDIS_RETRY_COOLDOWN_MS || 60000)));
 const REDIS_ACTIVE_CALL_STALE_MS = Math.max(30_000, Math.min(10 * 60 * 1000, Number(process.env.PBK_REDIS_ACTIVE_CALL_STALE_MS || 3 * 60 * 1000)));
+const COMMAND_INTENT_ROUTER_ENABLED = !/^(0|false|no|off)$/i.test(
+  String(process.env.PBK_COMMAND_INTENT_ROUTER_ENABLED || 'true').trim()
+);
+const COMMAND_INTENT_CACHE_ENABLED = !/^(0|false|no|off)$/i.test(
+  String(process.env.PBK_COMMAND_INTENT_CACHE_ENABLED || 'true').trim()
+);
+const COMMAND_INTENT_CACHE_MAX_TTL_SECONDS = Math.max(
+  1,
+  Math.min(60, Number(process.env.PBK_COMMAND_INTENT_CACHE_MAX_TTL_SECONDS || 30))
+);
 const CALL_TRACE_LOCAL_LIMIT = Math.max(50, Math.min(1000, Number(process.env.PBK_CALL_TRACE_LOCAL_LIMIT || 300)));
 const CALL_TRACE_REDIS_LIMIT = Math.max(50, Math.min(2000, Number(process.env.PBK_CALL_TRACE_REDIS_LIMIT || 500)));
 const CALL_TRACE_TTL_SECONDS = Math.max(900, Math.min(86400, Number(process.env.PBK_CALL_TRACE_TTL_SECONDS || 12 * 60 * 60)));
@@ -8329,7 +8348,10 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
     $$;
 
     ALTER TABLE public.coach_memory
-      ADD COLUMN IF NOT EXISTS embedding VECTOR(1536);
+      ADD COLUMN IF NOT EXISTS embedding VECTOR(1536),
+      ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS embedding_hash TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS public.probe_questions (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -8576,9 +8598,11 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
     )
     LANGUAGE sql
     STABLE
+    SECURITY INVOKER
+    SET search_path = public
     AS $$
       SELECT
-        cm.id,
+        cm.id::TEXT,
         cm.memory_type,
         cm.objection_tag,
         cm.path_key,
@@ -8595,11 +8619,76 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
       ORDER BY cm.embedding <=> query_embedding
       LIMIT GREATEST(1, LEAST(match_count, 10));
     $$;
+
+    REVOKE ALL ON FUNCTION public.match_coach_memory(
+      VECTOR,
+      DOUBLE PRECISION,
+      INTEGER,
+      TEXT
+    ) FROM PUBLIC;
   `);
   await ensureRexResearchMemorySchema(pool).catch((error) => {
     console.warn('[postgres] Rex research memory schema ensure skipped', error?.message || error);
   });
   return true;
+}
+
+const commandIntentResultCache = new Map();
+
+function pruneCommandIntentResultCache(now = Date.now()) {
+  for (const [key, entry] of commandIntentResultCache.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) {
+      commandIntentResultCache.delete(key);
+    }
+  }
+}
+
+async function getCachedCommandIntentResult(classification = {}) {
+  if (!COMMAND_INTENT_CACHE_ENABLED || !classification.cacheable || !classification.cacheKey) {
+    return null;
+  }
+  const now = Date.now();
+  pruneCommandIntentResultCache(now);
+  const local = commandIntentResultCache.get(classification.cacheKey);
+  if (local?.value && Number(local.expiresAt || 0) > now) {
+    return local.value;
+  }
+
+  if (!sharedRedisClient?.isOpen) return null;
+  const shared = await redisGetJson(redisKey('command-intent-result', classification.cacheKey));
+  if (!shared?.value || Number(shared.expiresAt || 0) <= now) return null;
+  commandIntentResultCache.set(classification.cacheKey, shared);
+  return shared.value;
+}
+
+function setCachedCommandIntentResult(classification = {}, value = null) {
+  if (
+    !COMMAND_INTENT_CACHE_ENABLED ||
+    !classification.cacheable ||
+    !classification.cacheKey ||
+    !value
+  ) {
+    return;
+  }
+  const ttlSeconds = Math.max(
+    1,
+    Math.min(
+      COMMAND_INTENT_CACHE_MAX_TTL_SECONDS,
+      Number(classification.ttlSeconds || COMMAND_INTENT_CACHE_MAX_TTL_SECONDS)
+    )
+  );
+  const entry = {
+    value,
+    expiresAt: Date.now() + ttlSeconds * 1000,
+  };
+  commandIntentResultCache.set(classification.cacheKey, entry);
+  if (sharedRedisClient?.isOpen) {
+    void redisSetJson(
+      redisKey('command-intent-result', classification.cacheKey),
+      entry,
+      ttlSeconds
+    );
+  }
 }
 
 async function seedAvaWarManualRuntimeKnowledgeToPg(pool) {
@@ -22815,6 +22904,275 @@ async function backfillRexResearchEmbeddings(params = {}) {
   };
 }
 
+async function getAvaCoachingEmbeddingCounts(workspaceId = 'pbk') {
+  const counts = await queryPgRows(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(embedding)::int AS embedded,
+       COUNT(*) FILTER (WHERE embedding IS NULL)::int AS remaining
+     FROM public.coach_memory
+     WHERE workspace_id = $1`,
+    [workspaceId]
+  );
+  const row = counts.ok ? counts.rows?.[0] || {} : {};
+  return {
+    ok: counts.ok,
+    total: Number(row.total || 0),
+    embedded: Number(row.embedded || 0),
+    remaining: Number(row.remaining || 0),
+    error: counts.error || '',
+  };
+}
+
+async function embedAndPersistAvaCoachingMemory(memory = {}, options = {}) {
+  const workspaceId = normalizeTenantId(
+    options.workspaceId || options.workspace_id || memory.workspaceId
+  );
+  const embeddingText = buildAvaCoachingEmbeddingText(memory);
+  const embeddingModel = String(options.embeddingModel || TEXT_EMBEDDING_MODEL).trim();
+  const embeddingHash = createHash('sha256')
+    .update(`${embeddingModel}\n${embeddingText}`)
+    .digest('hex');
+
+  if (!memory.id || embeddingText.length < 12) {
+    return {
+      ok: false,
+      skipped: true,
+      result: memory.id ? 'empty_text' : 'invalid_memory',
+      error: memory.id
+        ? 'Ava coaching memory had no embeddable text.'
+        : 'Ava coaching memory requires an id.',
+    };
+  }
+
+  if (
+    memory.hasEmbedding &&
+    memory.embeddingHash === embeddingHash &&
+    memory.embeddingModel === embeddingModel
+  ) {
+    return {
+      ok: true,
+      skipped: true,
+      result: 'embedding_current',
+      model: embeddingModel,
+      dimensions: 1536,
+      embeddingHash,
+    };
+  }
+
+  const embeddingResult = await createOpenAiEmbedding(embeddingText, {
+    model: embeddingModel,
+    source: options.source || 'ava-coaching-memory-backfill',
+    timeoutMs: Math.max(1000, Math.min(30000, toNumber(options.timeoutMs, 10000))),
+  });
+  if (!embeddingResult.ok) {
+    return {
+      ...embeddingResult,
+      skipped: false,
+      embeddingHash,
+    };
+  }
+
+  const persisted = await queryPgRows(
+    `UPDATE public.coach_memory
+     SET embedding = $3::vector,
+         embedding_model = $4,
+         embedding_hash = $5,
+         embedded_at = NOW(),
+         updated_at = NOW()
+     WHERE workspace_id = $1 AND id = $2
+     RETURNING id`,
+    [
+      workspaceId,
+      memory.id,
+      vectorLiteral(embeddingResult.embedding),
+      embeddingResult.model || embeddingModel,
+      embeddingHash,
+    ]
+  );
+  return {
+    ok: persisted.ok && persisted.rows.length === 1,
+    skipped: false,
+    result:
+      persisted.ok && persisted.rows.length === 1 ? 'embedded' : 'persistence_failed',
+    model: embeddingResult.model || embeddingModel,
+    dimensions: embeddingResult.embedding.length,
+    embeddingHash,
+    usage: embeddingResult.usage || null,
+    error: persisted.error || '',
+  };
+}
+
+async function backfillAvaCoachingMemoryEmbeddings(params = {}) {
+  const workspaceId = normalizeTenantId(params.workspaceId || params.workspace_id);
+  const limit = Math.max(1, Math.min(250, toNumber(params.limit, 50)));
+  const before = await getAvaCoachingEmbeddingCounts(workspaceId);
+  const rows = await queryPgRows(
+    `SELECT
+       id, workspace_id, memory_type, objection_tag, path_key, prompt, response,
+       source, source_url, outcome, score, metadata, embedding_model,
+       embedding_hash, embedding IS NOT NULL AS has_embedding, embedded_at,
+       created_at, updated_at
+     FROM public.coach_memory
+     WHERE workspace_id = $1
+       AND (
+         embedding IS NULL
+         OR embedding_model <> $2
+         OR embedding_hash = ''
+       )
+     ORDER BY updated_at DESC, id ASC
+     LIMIT $3`,
+    [workspaceId, TEXT_EMBEDDING_MODEL, limit]
+  );
+  if (!rows.ok) {
+    return {
+      ok: false,
+      result: rows.reason || 'query_failed',
+      error: rows.error || 'Unable to load Ava coaching memory.',
+      workspaceId,
+      before,
+      processed: 0,
+      embedded: 0,
+      failures: [],
+    };
+  }
+
+  const outcomes = [];
+  for (const row of rows.rows) {
+    const memory = normalizeAvaCoachingMemoryRow(row);
+    const result = await embedAndPersistAvaCoachingMemory(memory, {
+      workspaceId,
+      source: 'ava-coaching-memory-backfill',
+      timeoutMs: params.timeoutMs,
+    });
+    outcomes.push({ id: memory.id, ...result });
+  }
+
+  if (outcomes.some((outcome) => outcome.ok && outcome.result === 'embedded')) {
+    await queryPgRows('ANALYZE public.coach_memory');
+  }
+  const after = await getAvaCoachingEmbeddingCounts(workspaceId);
+  const failures = outcomes.filter((outcome) => !outcome.ok);
+  return {
+    ok: failures.length === 0,
+    result: rows.rows.length
+      ? failures.length
+        ? 'partial'
+        : after.remaining
+          ? 'batch_embedded'
+          : 'embedded'
+      : 'nothing_to_backfill',
+    memoryType: 'ava_coaching',
+    workspaceId,
+    before,
+    after,
+    processed: outcomes.length,
+    embedded: outcomes.filter(
+      (outcome) => outcome.ok && outcome.result === 'embedded'
+    ).length,
+    current: outcomes.filter(
+      (outcome) => outcome.ok && outcome.result === 'embedding_current'
+    ).length,
+    failures,
+  };
+}
+
+async function runAvaCoachingMemoryCanary(params = {}) {
+  const workspaceId = normalizeTenantId(params.workspaceId || params.workspace_id);
+  const startedAt = Date.now();
+  const candidateResult = await queryPgRows(
+    `SELECT
+       id, workspace_id, memory_type, objection_tag, path_key, prompt, response,
+       source, source_url, outcome, score, metadata, embedding_model,
+       embedding_hash, embedding IS NOT NULL AS has_embedding, embedded_at,
+       created_at, updated_at
+     FROM public.coach_memory
+     WHERE workspace_id = $1 AND embedding IS NOT NULL
+     ORDER BY score DESC, updated_at DESC
+     LIMIT 1`,
+    [workspaceId]
+  );
+  const candidate = candidateResult.ok
+    ? normalizeAvaCoachingMemoryRow(candidateResult.rows?.[0] || {})
+    : null;
+  let embedding = null;
+  let matches = [];
+  let error = candidateResult.error || '';
+  if (candidate?.id) {
+    embedding = await createOpenAiEmbedding(
+      buildAvaCoachingEmbeddingText(candidate),
+      {
+        source: 'ava-coaching-memory-canary',
+        timeoutMs: Math.max(1000, Math.min(30000, toNumber(params.timeoutMs, 10000))),
+      }
+    );
+    if (embedding.ok) {
+      const matchResult = await queryPgRows(
+        `SELECT *
+         FROM public.match_coach_memory($1::vector, $2, $3, $4)`,
+        [
+          vectorLiteral(embedding.embedding),
+          Math.max(0, Math.min(1, Number(params.threshold ?? 0.2))),
+          5,
+          candidate.memoryType,
+        ]
+      );
+      if (matchResult.ok) {
+        matches = matchResult.rows || [];
+      } else {
+        error = matchResult.error || matchResult.reason || 'coach_memory_match_failed';
+      }
+    } else {
+      error = embedding.error || embedding.result || 'embedding_failed';
+    }
+  } else if (!error) {
+    error = 'No embedded Ava coaching memory exists for the canary.';
+  }
+
+  const matched = matches.some((row) => String(row.id || '') === candidate?.id);
+  const passed = Boolean(candidate?.id && embedding?.ok && matched);
+  const result = passed ? 'semantic_round_trip_passed' : 'semantic_round_trip_failed';
+  const latencyMs = Date.now() - startedAt;
+  await queryPgRows(
+    `INSERT INTO public.pbk_vector_canary_runs (
+       id, workspace_id, memory_type, ok, result, latency_ms, embedding_model,
+       dimensions, matched_id, error, metadata, created_at
+     )
+     VALUES ($1,$2,'ava_coaching',$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW())`,
+    [
+      `ava-coaching-vector-canary-${randomUUID()}`,
+      workspaceId,
+      passed,
+      result,
+      latencyMs,
+      embedding?.model || TEXT_EMBEDDING_MODEL,
+      Number(embedding?.embedding?.length || 0),
+      matched ? candidate.id : '',
+      error,
+      JSON.stringify({
+        candidateId: candidate?.id || '',
+        matchCount: matches.length,
+        topSimilarity: Number(matches[0]?.similarity || 0),
+      }),
+    ]
+  );
+  return {
+    ok: passed,
+    result,
+    memoryType: 'ava_coaching',
+    workspaceId,
+    latencyMs,
+    embeddingAvailable: Boolean(embedding?.ok),
+    embeddingModel: embedding?.model || TEXT_EMBEDDING_MODEL,
+    dimensions: Number(embedding?.embedding?.length || 0),
+    candidateId: candidate?.id || '',
+    matchedId: matched ? candidate.id : '',
+    matchCount: matches.length,
+    topSimilarity: Number(matches[0]?.similarity || 0),
+    error,
+  };
+}
+
 async function runRexResearchMemoryCanary(params = {}) {
   const workspaceId = normalizeTenantId(params.workspaceId || params.workspace_id);
   const canaryId = `rex-vector-canary-${randomUUID()}`;
@@ -30079,6 +30437,18 @@ async function buildToolingStatus() {
   const metricsUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/metrics` : `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}/metrics`;
 
   const sections = {
+    commandIntentRouter: {
+      optional: false,
+      ready: COMMAND_INTENT_ROUTER_ENABLED,
+      enabled: COMMAND_INTENT_ROUTER_ENABLED,
+      cacheEnabled: COMMAND_INTENT_CACHE_ENABLED,
+      cacheMaxTtlSeconds: COMMAND_INTENT_CACHE_MAX_TTL_SECONDS,
+      version: COMMAND_INTENT_ROUTER_VERSION,
+      routes: listCommandIntentRouterRules(),
+      note: COMMAND_INTENT_ROUTER_ENABLED
+        ? 'Explicit read-only status checks bypass LLM providers and use short RAM/Redis caching.'
+        : 'Enable PBK_COMMAND_INTENT_ROUTER_ENABLED to activate deterministic status routing.',
+    },
     metaAgent: {
       ready: existsSync(META_AGENT_SCENARIO_FILE),
       scenarioLeads: Array.isArray(scenario?.leads) ? scenario.leads.length : 0,
@@ -43314,6 +43684,123 @@ function enrichNurtureLeadParams(params = {}) {
   };
 }
 
+async function executeFastCommandIntent(classification = {}, params = {}) {
+  switch (classification.intent) {
+    case 'status.bridge': {
+      const result = await toolHandlers.admin_check_health({
+        requestedBy: 'PBK command intent router',
+        source: params.source || 'agent-command-fast-path',
+      });
+      return {
+        ok: true,
+        routedTo: classification.route,
+        answer: 'PBK bridge health came directly from the live runtime snapshot.',
+        source: 'live PBK bridge state',
+        result,
+      };
+    }
+    case 'status.openclaw_gateway': {
+      const result = await buildOpenClawGatewayStatus({ force: false });
+      return {
+        ok: true,
+        routedTo: classification.route,
+        answer: result?.ready
+          ? 'OpenClaw gateway is responding to the bridge.'
+          : 'OpenClaw gateway status needs attention.',
+        source: 'OpenClaw HTTP and WebSocket probes',
+        result,
+      };
+    }
+    case 'status.desktop_sidecar': {
+      const result = buildDesktopSidecarStatus();
+      return {
+        ok: true,
+        routedTo: classification.route,
+        answer: result.connected
+          ? `${result.connectedCount} desktop sidecar connection${result.connectedCount === 1 ? '' : 's'} active.`
+          : 'No desktop sidecar is connected.',
+        source: 'live desktop sidecar socket registry',
+        result,
+      };
+    }
+    case 'status.tooling': {
+      const result = await buildToolingStatus();
+      return {
+        ok: true,
+        routedTo: classification.route,
+        answer: result.summary?.note || 'PBK tooling readiness was read from the live bridge.',
+        source: 'PBK tooling status builder',
+        result,
+      };
+    }
+    case 'status.provider_quotas': {
+      const result = buildQuotasSnapshot();
+      return {
+        ok: true,
+        routedTo: classification.route,
+        answer: 'Provider readiness and operating quotas came from the current PBK runtime.',
+        source: 'PBK provider and quota snapshot',
+        result,
+      };
+    }
+    case 'status.vector_memory': {
+      const result = await buildVectorCapacityStatus();
+      return {
+        ok: true,
+        routedTo: classification.route,
+        answer: result.rexResearchReady
+          ? 'Rex semantic memory and pgvector capacity are ready.'
+          : 'Rex semantic memory status was checked and still has readiness work.',
+        source: 'Postgres catalog and pgvector canary',
+        result,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+async function routeFastCommandIntent(command = '', params = {}) {
+  if (!COMMAND_INTENT_ROUTER_ENABLED) return null;
+  const classification = classifyCommandIntent(command);
+  if (!classification.matched || classification.confidence !== 1) return null;
+
+  const startedAt = performance.now();
+  let response = await getCachedCommandIntentResult(classification);
+  const cacheHit = Boolean(response);
+  if (!response) {
+    response = await executeFastCommandIntent(classification, params);
+    if (!response) return null;
+    setCachedCommandIntentResult(classification, response);
+  }
+  const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
+  incrementObservabilityCounter('command_intent_router_requests', 1, {
+    intent: classification.intent,
+    cache: cacheHit ? 'hit' : 'miss',
+  });
+  recordLatencyMetric('command_intent_router_latency_ms', latencyMs, {
+    intent: classification.intent,
+    cache: cacheHit ? 'hit' : 'miss',
+  });
+
+  return {
+    routedTo: response.routedTo || classification.route,
+    response,
+    intentRouter: {
+      version: COMMAND_INTENT_ROUTER_VERSION,
+      category: classification.category,
+      intent: classification.intent,
+      confidence: classification.confidence,
+      reason: classification.reason,
+      cache: cacheHit ? 'hit' : 'miss',
+      cacheTtlSeconds: classification.ttlSeconds,
+      providerBypassed: true,
+      requestedBy: params.actor || params.requestedBy || 'PBK operator',
+      latencyMs,
+    },
+  };
+}
+
 const toolHandlers = {
   async search_leads(params = {}) {
     recordToolUse('search_leads');
@@ -48285,6 +48772,14 @@ const toolHandlers = {
   async runAgentCommand(params = {}) {
     recordToolUse('runAgentCommand');
     const command = String(params.command || params.text || '').trim();
+    const fastIntentResult = await routeFastCommandIntent(command, params);
+    if (fastIntentResult) {
+      return {
+        ok: true,
+        command,
+        ...fastIntentResult,
+      };
+    }
     const ttsDiagnosticCommand = looksLikeAvaTtsDiagnosticCommand(command, params);
     const parsedContext = extractCommandContext(command);
     const context = ttsDiagnosticCommand
@@ -60019,14 +60514,36 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/vector/backfill', '/brain/vector/backfill'])) {
       const body = await readBody(request);
-      const result = await backfillRexResearchEmbeddings(body);
+      const memoryType = String(
+        body.memoryType || body.memory_type || body.scope || 'rex_research'
+      )
+        .trim()
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
+      const result =
+        memoryType === 'ava_coaching' ||
+        memoryType === 'coach_memory' ||
+        memoryType === 'coaching'
+          ? await backfillAvaCoachingMemoryEmbeddings(body)
+          : await backfillRexResearchEmbeddings(body);
       json(response, result.ok === false && result.result !== 'partial' ? 503 : 200, result);
       return;
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/vector/canary', '/brain/vector/canary'])) {
       const body = await readBody(request);
-      const result = await runRexResearchMemoryCanary(body);
+      const memoryType = String(
+        body.memoryType || body.memory_type || body.scope || 'rex_research'
+      )
+        .trim()
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
+      const result =
+        memoryType === 'ava_coaching' ||
+        memoryType === 'coach_memory' ||
+        memoryType === 'coaching'
+          ? await runAvaCoachingMemoryCanary(body)
+          : await runRexResearchMemoryCanary(body);
       json(response, result.ok ? 200 : 503, result);
       return;
     }

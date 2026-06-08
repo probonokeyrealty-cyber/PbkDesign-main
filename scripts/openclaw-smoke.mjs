@@ -480,6 +480,34 @@ async function main() {
         },
       }),
     }).then((response) => response.json());
+    const fastBridgeStatusCommand = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'runAgentCommand',
+        params: {
+          command: 'Check PBK bridge health',
+          source: 'smoke-test-fast-intent',
+        },
+      }),
+    }).then((response) => response.json());
+    const cachedFastBridgeStatusCommand = await fetch(`${BASE_URL}/invoke`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        toolName: 'runAgentCommand',
+        params: {
+          command: 'Check PBK bridge health',
+          source: 'smoke-test-fast-intent',
+        },
+      }),
+    }).then((response) => response.json());
     const avaTtsDiagnosticCommand = await fetch(`${BASE_URL}/invoke`, {
       method: 'POST',
       headers: {
@@ -1247,6 +1275,21 @@ async function main() {
     assert(
       avaSafeStatusCommand?.result?.response?.result === 'ava_conversation_intelligence',
       'Ava safe status command did not return conversation intelligence.',
+    );
+    assert(fastBridgeStatusCommand?.ok === true, 'Fast bridge status command did not succeed.');
+    assert(
+      fastBridgeStatusCommand?.result?.routedTo === 'bridge_health_status',
+      `Fast bridge status command routed to ${fastBridgeStatusCommand?.result?.routedTo || 'missing'} instead of bridge_health_status.`,
+    );
+    assert(
+      fastBridgeStatusCommand?.result?.intentRouter?.providerBypassed === true
+        && fastBridgeStatusCommand?.result?.intentRouter?.cache === 'miss',
+      'First fast bridge status command did not report a provider-bypassed cache miss.',
+    );
+    assert(
+      cachedFastBridgeStatusCommand?.result?.intentRouter?.providerBypassed === true
+        && cachedFastBridgeStatusCommand?.result?.intentRouter?.cache === 'hit',
+      'Repeated fast bridge status command did not use the short-lived result cache.',
     );
     assert(avaTtsDiagnosticCommand?.ok === true, 'Ava TTS diagnostic command did not succeed.');
     assert(

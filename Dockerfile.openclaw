@@ -134,6 +134,8 @@ COPY scripts/onnx-training-worker.mjs ./scripts/onnx-training-worker.mjs
 COPY scripts/research-additives.mjs ./scripts/research-additives.mjs
 COPY scripts/rex-research-memory.mjs ./scripts/rex-research-memory.mjs
 COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
+COPY scripts/command-intent-router.mjs ./scripts/command-intent-router.mjs
+COPY scripts/ava-coaching-memory.mjs ./scripts/ava-coaching-memory.mjs
 COPY scripts/train-emotion-world-model.mjs ./scripts/train-emotion-world-model.mjs
 COPY scripts/train_emotion_world_model_onnx.py ./scripts/train_emotion_world_model_onnx.py
 COPY scripts/conversation-identity.mjs ./scripts/conversation-identity.mjs

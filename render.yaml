@@ -55,6 +55,16 @@ services:
         value: pbk-openclaw
       - key: PBK_REDIS_CALL_STATE_TTL_SECONDS
         value: "21600"
+      # Deterministic, read-only command routing. Explicit bridge, OpenClaw,
+      # sidecar, tooling, quota, and vector-status checks bypass LLM providers
+      # and use a short RAM/Redis cache. Seller and mutation commands never
+      # enter this lane.
+      - key: PBK_COMMAND_INTENT_ROUTER_ENABLED
+        value: "true"
+      - key: PBK_COMMAND_INTENT_CACHE_ENABLED
+        value: "true"
+      - key: PBK_COMMAND_INTENT_CACHE_MAX_TTL_SECONDS
+        value: "30"
 
       # OpenTelemetry/Grafana observability. Keep OTLP endpoint/headers secret
       # in Render; bridge runs fail-open if not configured.

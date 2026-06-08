@@ -228,6 +228,31 @@ function getCallId(call: Record<string, unknown>) {
   return String(call.id || call.callId || call.call_id || '');
 }
 
+const CALL_QUALITY_REVIEWED_KEY = 'pbk:call-quality-reviewed:v1';
+
+function readReviewedCallIds() {
+  if (typeof window === 'undefined') return new Set<string>();
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CALL_QUALITY_REVIEWED_KEY) || '[]');
+    return new Set(Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function persistReviewedCallId(callId: string, reviewed: Set<string>) {
+  if (!callId || typeof window === 'undefined') return;
+  reviewed.add(callId);
+  try {
+    window.localStorage.setItem(
+      CALL_QUALITY_REVIEWED_KEY,
+      JSON.stringify(Array.from(reviewed).slice(-100))
+    );
+  } catch {
+    // Review persistence is a convenience and must not block the dashboard.
+  }
+}
+
 function getCallQualityScore(call: Record<string, unknown>) {
   return toNumber(call.qualityScore ?? call.qaScore ?? call.callQualityScore ?? call.score, null);
 }
@@ -897,7 +922,8 @@ export function CommandCenter() {
   const [bridgeLeadRoster, setBridgeLeadRoster] = useState<RuntimeRecord[]>([]);
   const [leadRosterSource, setLeadRosterSource] = useState('GET /api/leads pending');
   const announcedCallRef = useRef('');
-  const reviewedCallRef = useRef('');
+  const reviewedCallRef = useRef(readReviewedCallIds());
+  const promptedCallRef = useRef('');
 
   const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
   const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
@@ -1113,10 +1139,18 @@ export function CommandCenter() {
   useEffect(() => {
     if (!endedCallForReview) return;
     const callId = getCallId(endedCallForReview);
-    if (!callId || reviewedCallRef.current === callId) return;
-    reviewedCallRef.current = callId;
+    if (!callId || reviewedCallRef.current.has(callId) || promptedCallRef.current === callId) {
+      return;
+    }
+    promptedCallRef.current = callId;
     setQualityReviewCall(endedCallForReview);
   }, [endedCallForReview]);
+
+  const closeQualityReview = useCallback(() => {
+    const callId = qualityReviewCall ? getCallId(qualityReviewCall) : '';
+    persistReviewedCallId(callId, reviewedCallRef.current);
+    setQualityReviewCall(null);
+  }, [qualityReviewCall]);
   const toolingSummary = (tooling?.summary || {}) as Record<string, unknown>;
   const toolingCoreReady =
     toNumber(toolingSummary.requiredReadyCount, toNumber(toolingSummary.readyCount, 0)) || 0;
@@ -1925,7 +1959,7 @@ export function CommandCenter() {
           transcriptCount={
             Array.isArray(qualityReviewCall?.transcript) ? qualityReviewCall.transcript.length : 0
           }
-          onClose={() => setQualityReviewCall(null)}
+          onClose={closeQualityReview}
         />
 
         {adminDecisionDraft && (

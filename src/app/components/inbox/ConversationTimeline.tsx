@@ -21,7 +21,6 @@ import {
   Flag,
   Trash2,
 } from 'lucide-react';
-import { PbkDataSource } from '../../../components/pbk/index';
 import {
   patchConversationEventRequest,
   reportConversationEventSpamRequest,
@@ -627,11 +626,6 @@ export function ConversationTimeline({
           </button>
         )}
       </div>
-      <PbkDataSource
-        endpoint="GET /api/conversations/:threadId/timeline"
-        status="ships"
-        note="SMS, email, calls, contracts, approvals, and notes"
-      />
     </section>
   );
 }

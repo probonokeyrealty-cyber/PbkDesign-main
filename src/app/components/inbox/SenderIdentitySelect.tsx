@@ -1,5 +1,4 @@
 import { Check, ChevronDown, Mail, MessageSquare, ShieldAlert, Sparkles } from 'lucide-react';
-import { PbkDataSource } from '../../../components/pbk/index';
 import type { CommunicationSenderIdentity } from '../../utils/runtimeBridge';
 import { getSenderRestrictionReason } from '../../routes/conversationRuntimeLogic.js';
 
@@ -96,11 +95,6 @@ export function SenderIdentitySelect({
           })}
         </select>
       </label>
-      <PbkDataSource
-        endpoint="GET /api/communication-identities"
-        status="ships"
-        note="inventory; POST /api/conversations/:threadId/sender-recommendation ranks the default"
-      />
     </div>
   );
 }

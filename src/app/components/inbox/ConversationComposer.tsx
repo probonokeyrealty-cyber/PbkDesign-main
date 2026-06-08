@@ -14,7 +14,6 @@ import {
   UserRoundPen,
   WandSparkles,
 } from 'lucide-react';
-import { PbkDataSource } from '../../../components/pbk/index';
 import { getSmsSegmentInfo } from '../../routes/inboxRuntimeLogic.js';
 import {
   fetchReplyTemplatesRequest,
@@ -593,7 +592,7 @@ export function ConversationComposer({
                 ? 'Write a clear seller text...'
                 : 'Write a thoughtful seller email...'
             }
-            rows={4}
+            rows={3}
           />
         </label>
 
@@ -716,11 +715,6 @@ export function ConversationComposer({
           {sendLater ? 'Schedule' : 'Send'}
         </button>
       </div>
-      <PbkDataSource
-        endpoint="POST /api/conversations/:threadId/messages"
-        status="ships"
-        note="explicit sender, provider safety, scheduling, and approvals"
-      />
     </section>
   );
 }

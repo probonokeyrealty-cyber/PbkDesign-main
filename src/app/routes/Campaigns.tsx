@@ -995,10 +995,12 @@ function CampaignWizard({
   onSubmit: (mode: WizardMode) => void;
 }) {
   const [step, setStep] = useState(1);
+  const [stepError, setStepError] = useState('');
 
   useEffect(() => {
     if (!open) return undefined;
     setStep(1);
+    setStepError('');
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
@@ -1008,12 +1010,39 @@ function CampaignWizard({
 
   if (!open) return null;
 
-  const update = (patch: Partial<CampaignWizardDraft>) => onChange({ ...draft, ...patch });
+  const update = (patch: Partial<CampaignWizardDraft>) => {
+    setStepError('');
+    onChange({ ...draft, ...patch });
+  };
   const source = sources.find((item) => item.id === draft.leadSource);
   const templateOptions = normalizeTemplateOptions(templates);
   const canSubmit = Boolean(draft.name.trim()) && Boolean(draft.firstMessage.trim());
   const estimatedCost = asNumber(source?.count, 0) * (draft.channel === 'email' ? 0.002 : 0.03);
+  const validateStep = () => {
+    if (step === 1 && !['email', 'call', 'sms'].includes(draft.channel)) {
+      return 'Choose Email, Calls, or SMS before continuing.';
+    }
+    if (step === 2 && !draft.leadSource.trim()) {
+      return 'Choose a lead source before continuing.';
+    }
+    if (step === 3 && !draft.firstMessage.trim()) {
+      return 'Add the first seller-facing message before continuing.';
+    }
+    if (step === 4 && !draft.name.trim()) {
+      return 'Name the campaign before reviewing it.';
+    }
+    if (step === 4 && asNumber(draft.dailyCap, 0) < 1) {
+      return 'Daily cap must be at least 1.';
+    }
+    return '';
+  };
   const next = () => {
+    const validationError = validateStep();
+    if (validationError) {
+      setStepError(validationError);
+      return;
+    }
+    setStepError('');
     if (step < WIZARD_STEPS.length) {
       setStep((current) => Math.min(WIZARD_STEPS.length, current + 1));
       return;
@@ -1048,6 +1077,12 @@ function CampaignWizard({
         </div>
 
         <div className="pbk-wiz-body">
+          {stepError && (
+            <div className="pbk-wiz-validation" role="alert" aria-live="assertive">
+              <AlertCircle size={15} />
+              <span>{stepError}</span>
+            </div>
+          )}
           <CampaignWizardPane active={step === 1}>
             <h3>
               Pick a <em>channel</em>.
@@ -1302,7 +1337,10 @@ function CampaignWizard({
               type="button"
               variant="ghost"
               disabled={step === 1 || Boolean(saving)}
-              onClick={() => setStep((current) => Math.max(1, current - 1))}
+              onClick={() => {
+                setStepError('');
+                setStep((current) => Math.max(1, current - 1));
+              }}
             >
               Back
             </PbkButton>

@@ -1005,8 +1005,17 @@ export default function App({ engineOnly = false }: AppProps) {
             onCreateLead={handleCreateLeadFromAnalyzer}
           />
 
+          <DealAnalyzerMobileRail
+            deal={activeDeal}
+            selectedPath={activeSelectedPath}
+            onOpenSnapshot={() => setLeftPanelOpen(true)}
+            onOpenWorkflow={handleOpenWorkflowDrawer}
+            onAnalyze={() => void handleAnalyzeDeal()}
+            onTabChange={setActiveTab}
+          />
+
           {/* Tab Content */}
-          <div className="pbk-deal-content pbk-deal-content-with-mobile-rail flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
+          <div className="pbk-deal-content flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
             {activeTab === 'analyzer' && (
               <AnalyzerTab
                 deal={activeDeal}
@@ -1051,14 +1060,6 @@ export default function App({ engineOnly = false }: AppProps) {
               <CRMFeatures deal={activeDeal} onLoadDeal={handleLoadSavedDeal} />
             )}
           </div>
-          <DealAnalyzerMobileRail
-            deal={activeDeal}
-            selectedPath={activeSelectedPath}
-            onOpenSnapshot={() => setLeftPanelOpen(true)}
-            onOpenWorkflow={handleOpenWorkflowDrawer}
-            onAnalyze={() => void handleAnalyzeDeal()}
-            onTabChange={setActiveTab}
-          />
         </div>
 
         <RightPanel

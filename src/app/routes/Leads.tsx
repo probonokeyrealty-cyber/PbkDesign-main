@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   X,
 } from 'lucide-react';
@@ -915,6 +916,8 @@ export function Leads() {
   const [reloading, setReloading] = useState(false);
   const [contractStatus, setContractStatus] = useState('');
   const [displayLimit, setDisplayLimit] = useState(40);
+  const [leadQuery, setLeadQuery] = useState(() => searchParams.get('search') || '');
+  const [leadFilter, setLeadFilter] = useState<'all' | 'hot' | 'callable' | 'contract'>('all');
   const reloadTimerRef = useRef<number | null>(null);
   const reloadInFlightRef = useRef(false);
   const leadActionLockRef = useRef(false);
@@ -928,7 +931,35 @@ export function Leads() {
     () => leads.find((lead) => getLeadId(lead) === selectedLeadId) || leads[0] || null,
     [leads, selectedLeadId]
   );
-  const visibleLeads = useMemo(() => leads.slice(0, displayLimit), [displayLimit, leads]);
+  const filteredLeads = useMemo(() => {
+    const needle = leadQuery.trim().toLowerCase();
+    return leads.filter((lead) => {
+      const matchesQuery =
+        !needle ||
+        [
+          getSellerName(lead),
+          getLeadAddress(lead),
+          getLeadPhone(lead),
+          getLeadEmail(lead),
+          lead.status,
+          lead.stage,
+          lead.source,
+          ...getLeadTags(lead),
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(needle);
+      if (!matchesQuery) return false;
+      if (leadFilter === 'hot') return getLeadScore(lead) >= 80;
+      if (leadFilter === 'callable') return isCallablePhone(getLeadPhone(lead));
+      if (leadFilter === 'contract') return isValidEmail(getLeadEmail(lead));
+      return true;
+    });
+  }, [leadFilter, leadQuery, leads]);
+  const visibleLeads = useMemo(
+    () => filteredLeads.slice(0, displayLimit),
+    [displayLimit, filteredLeads]
+  );
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
@@ -950,6 +981,7 @@ export function Leads() {
       navigate(`/leads/${encodeURIComponent(requestedLeadId)}`, { replace: true });
       return;
     } else if (requestedSearch && leads.length) {
+      setLeadQuery(requestedSearch);
       const needle = requestedSearch.toLowerCase();
       const match = leads.find((lead) =>
         [getSellerName(lead), getLeadAddress(lead), getLeadPhone(lead), getLeadEmail(lead)]
@@ -977,6 +1009,10 @@ export function Leads() {
       );
     }
   }, [leads, navigate, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    setDisplayLimit(40);
+  }, [leadFilter, leadQuery]);
 
   const beginLeadAction = useCallback((key: string) => {
     if (leadActionLockRef.current) return false;
@@ -1446,11 +1482,54 @@ export function Leads() {
 
       <div className="pbk-leads-layout">
         <LeadsPipelineRail
-          total={leads.length}
+          total={filteredLeads.length}
           visible={visibleLeads.length}
           sourceNote={rosterSourceLabel}
           onLoadMore={() => setDisplayLimit((current) => current + 50)}
         >
+          <div className="pbk-leads-roster-tools">
+            <label className="pbk-leads-search">
+              <Search size={15} aria-hidden="true" />
+              <span className="sr-only">Search leads</span>
+              <input
+                type="search"
+                value={leadQuery}
+                onChange={(event) => setLeadQuery(event.target.value)}
+                placeholder="Search name, address, phone, stage..."
+              />
+              {leadQuery && (
+                <button
+                  type="button"
+                  onClick={() => setLeadQuery('')}
+                  aria-label="Clear lead search"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </label>
+            <div className="pbk-leads-smart-filters" aria-label="Lead filters">
+              {[
+                ['all', 'All'],
+                ['hot', 'Hot 80+'],
+                ['callable', 'Callable'],
+                ['contract', 'Contract ready'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={leadFilter === value ? 'active' : ''}
+                  aria-pressed={leadFilter === value}
+                  onClick={() => setLeadFilter(value as 'all' | 'hot' | 'callable' | 'contract')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="pbk-leads-result-count" aria-live="polite">
+              {filteredLeads.length} matching lead{filteredLeads.length === 1 ? '' : 's'}
+            </div>
+          </div>
+
           <div className="leads-mobile-cards">
             {visibleLeads.map((lead) => {
               const id = getLeadId(lead);
@@ -1584,9 +1663,11 @@ export function Leads() {
                 </button>
               );
             })}
-            {!leads.length && (
+            {!filteredLeads.length && (
               <div className="px-4 py-10 text-center text-xs text-slate-500">
-                No bridge leads loaded yet.
+                {leads.length
+                  ? 'No leads match this search and filter.'
+                  : 'No bridge leads loaded yet.'}
               </div>
             )}
           </div>

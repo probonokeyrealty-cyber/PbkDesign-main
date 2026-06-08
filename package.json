@@ -109,6 +109,7 @@
     "test:analytics-prototype-modern": "node ./scripts/analytics-prototype-modern-smoke.mjs",
     "test:inbox-prototype-modern": "node ./scripts/inbox-prototype-modern-smoke.mjs",
     "test:unified-inbox-ui": "node ./scripts/unified-inbox-ui-smoke.mjs",
+    "test:mobile-workspace-regression": "node ./scripts/mobile-workspace-regression-smoke.mjs",
     "test:settings-prototype-modern": "node ./scripts/settings-prototype-modern-smoke.mjs",
     "test:leads-prototype-modern": "node ./scripts/leads-prototype-modern-smoke.mjs",
     "test:leads-full-roster-bridge": "node ./scripts/leads-full-roster-bridge-smoke.mjs",

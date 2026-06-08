@@ -109,11 +109,19 @@ assert(
 
 for (const endpoint of [
   'GET /api/conversations',
-  'GET /api/conversations/:threadId/timeline',
   'GET /api/leads/:id/full',
 ]) {
   assert(combined.includes(endpoint), `Unified inbox must label source ${endpoint}.`);
 }
+assert(
+  unifiedInbox.includes('fetchConversationTimelineRequest'),
+  'Unified inbox must load the canonical conversation timeline through runtimeBridge.'
+);
+assert(
+  !timeline.includes('GET /api/conversations/:threadId/timeline') &&
+    !senderSelect.includes('GET /api/communication-identities'),
+  'Operator-facing conversation chrome must not expose endpoint debugging copy.'
+);
 
 assert(
   !/Diane Kowalski|Marco Hill|John Smith|123 Main St|SAMPLE_|MOCK_/.test(combined),
@@ -293,10 +301,6 @@ assert(
   'Disabled Send controls must expose their reason to assistive technology.'
 );
 assert(
-  senderSelect.includes('POST /api/conversations/:threadId/sender-recommendation'),
-  'Sender selector must identify the bridge endpoint that ranks its recommendation.'
-);
-assert(
   /<select[\s\S]*aria-label=\{senderLabel\}[\s\S]*value=\{selectedId\}/.test(senderSelect) &&
     /onChange=\{\(event\) => onChange\(event\.target\.value\)\}/.test(senderSelect),
   'Sender selection must use a native mobile-safe control.'
@@ -346,14 +350,18 @@ assert(
 );
 assert(
   composer.includes('pbk-composer-scroll-body') &&
-    /\.pbk-composer-scroll-body\s*\{[\s\S]*?overflow-y:\s*auto/.test(css),
-  'The mobile composer must scroll its controls independently from its send footer.'
+    /\.pbk-conversation-main\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\)\s+auto/.test(
+      css
+    ) &&
+    /\.pbk-conversation-timeline-scroll\s*\{[\s\S]*?overflow-y:\s*auto/.test(css),
+  'The workspace must reserve fixed header/composer rows and scroll only the message timeline.'
 );
 assert(
-  /\.pbk-conversation-composer\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto\s+auto/.test(
-    css
-  ),
-  'The mobile composer must reserve stable rows for Send and its data-source label.'
+  /\.pbk-conversation-timeline\s*\{[\s\S]*?display:\s*contents/.test(css) &&
+    /\.pbk-conversation-composer\s*\{[\s\S]*?display:\s*contents/.test(css) &&
+    /\.pbk-composer-scroll-body\s*\{[\s\S]*?grid-row:\s*2/.test(css) &&
+    /\.pbk-composer-send-row\s*\{[\s\S]*?grid-row:\s*4/.test(css),
+  'Conversation identity controls and Send must remain fixed around the scrolling timeline.'
 );
 assert(
   unifiedInbox.includes('useRuntimeSnapshot') &&

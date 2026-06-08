@@ -11,7 +11,6 @@ import {
   UserPlus,
   Workflow,
 } from 'lucide-react';
-import { PbkDataSource } from '../../components/pbk/index';
 import { DealData, PBKPath } from '../types';
 import { formatCurrency } from '../utils/formatting';
 import { getPathLabel } from '../utils/pbk';
@@ -104,7 +103,6 @@ export function DealAnalyzerCommandHeader({
   deal,
   selectedPath,
   activeTab,
-  analyzeStatus,
   onTabChange,
   onOpenSnapshot,
   onOpenWorkflow,
@@ -192,11 +190,6 @@ export function DealAnalyzerCommandHeader({
           <span>Verdict</span>
           <strong>{verdictMeta.label}</strong>
         </div>
-        <PbkDataSource
-          endpoint="window.PBKAnalyzer + POST /api/analyzeDeal"
-          status="ships"
-          note={analyzeStatus ? 'last analyzer status shown in engine' : 'local state bridge'}
-        />
       </div>
 
       <button

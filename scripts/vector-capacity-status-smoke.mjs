@@ -54,6 +54,13 @@ assert(
 );
 
 assert(
+  /rexResearchReady/.test(bridge) &&
+    /run_rex_vector_canary/.test(bridge) &&
+    /backfill_rex_embeddings/.test(bridge),
+  'Vector capacity must report Rex readiness honestly and prescribe backfill/canary work.'
+);
+
+assert(
   /SettingsVectorCapacityPanel/.test(settings) &&
     /fetchVectorCapacityStatusRequest/.test(settings),
   'Settings must render the bridge-backed vector capacity panel.'

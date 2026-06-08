@@ -2064,6 +2064,46 @@ export function createConversationStore(pool) {
     return mapConversationThreadRow(result.rows[0]);
   }
 
+  async function markThreadRead(
+    threadId,
+    { workspaceId: workspaceInput = 'pbk', readAt = new Date().toISOString() } = {}
+  ) {
+    const id = requiredText(threadId, 'threadId');
+    const workspace = requiredWorkspaceId(workspaceInput);
+
+    return withTransaction(pool, async (client) => {
+      const threadResult = await client.query(
+        `
+          SELECT *
+          FROM public.conversation_threads
+          WHERE id = $1
+            AND workspace_id = $2
+            AND merged_into_thread_id IS NULL
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [id, workspace]
+      );
+      if (!threadResult.rows[0]) return null;
+
+      await client.query(
+        `
+          UPDATE public.conversation_events
+          SET read_at = $3,
+              updated_at = NOW()
+          WHERE thread_id = $1
+            AND workspace_id = $2
+            AND direction = 'inbound'
+            AND read_at IS NULL
+            AND hidden_at IS NULL
+        `,
+        [id, workspace, readAt]
+      );
+      const aggregateRows = await recomputeThreadAggregates(client, [id], workspace);
+      return mapConversationThreadRow(aggregateRows[0] ?? threadResult.rows[0]);
+    });
+  }
+
   async function mergeThreads({
     workspaceId: workspaceInput,
     canonicalThreadId,
@@ -2703,6 +2743,7 @@ export function createConversationStore(pool) {
     reconcileStaleDispatchingMessages,
     reportEventSpam,
     patchThread,
+    markThreadRead,
     mergeThreads,
     listSenderIdentities,
     getSenderIdentity,

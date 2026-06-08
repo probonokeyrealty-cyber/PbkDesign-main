@@ -479,6 +479,7 @@ function SettingsVectorCapacityPanel({
   const summary = capacity?.summary || {};
   const tables = Array.isArray(capacity?.tables) ? capacity.tables : [];
   const recommendation = capacity?.recommendation;
+  const rexResearch = capacity?.rexResearch;
 
   return (
     <section className="pbk-settings-card">
@@ -498,7 +499,7 @@ function SettingsVectorCapacityPanel({
         />
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
           <div className="pbk-kicker">Embedded rows</div>
           <strong className="mt-1 block text-xl text-sky-200">
@@ -520,6 +521,29 @@ function SettingsVectorCapacityPanel({
           </strong>
           <div className="mt-1 text-xs text-slate-400">S3: backup only</div>
         </div>
+        <div
+          className={[
+            'rounded-lg border p-3',
+            rexResearch?.ready
+              ? 'border-emerald-400/20 bg-emerald-500/10'
+              : 'border-amber-400/20 bg-amber-500/10',
+          ].join(' ')}
+        >
+          <div className="pbk-kicker">Rex semantic memory</div>
+          <strong
+            className={[
+              'mt-1 block text-xl',
+              rexResearch?.ready ? 'text-emerald-200' : 'text-amber-100',
+            ].join(' ')}
+          >
+            {rexResearch?.ready ? 'Ready' : 'Needs proof'}
+          </strong>
+          <div className="mt-1 text-xs text-slate-400">
+            {rexResearch?.canary?.fresh
+              ? `canary ${formatCount(rexResearch.canary.latencyMs)} ms`
+              : 'run semantic canary'}
+          </div>
+        </div>
       </div>
 
       <div className="mt-3 space-y-2">
@@ -534,6 +558,14 @@ function SettingsVectorCapacityPanel({
               </div>
               <div className="mt-1 text-xs text-slate-400">
                 {table.dimensions || 0} dimensions - {table.vectorIndexMethod || 'no vector index'}
+              </div>
+              <div
+                className={[
+                  'mt-1 text-xs font-semibold',
+                  table.ready ? 'text-emerald-300' : 'text-amber-300',
+                ].join(' ')}
+              >
+                {table.ready ? 'Schema, vectors, and index ready' : 'Not ready'}
               </div>
             </div>
             <div className="text-left sm:text-right">

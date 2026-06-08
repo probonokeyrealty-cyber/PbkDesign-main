@@ -58,6 +58,11 @@ import {
   ensureProviderActionDispatchSchema as ensureProviderActionDispatchSchemaCore,
   executeProviderActionWithSharedLease as executeProviderActionWithSharedLeaseCore,
 } from './provider-action-dispatch.mjs';
+import {
+  buildRexResearchEmbeddingText,
+  ensureRexResearchMemorySchema,
+  normalizeRexResearchMemoryRow,
+} from './rex-research-memory.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -8562,6 +8567,9 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
       LIMIT GREATEST(1, LEAST(match_count, 10));
     $$;
   `);
+  await ensureRexResearchMemorySchema(pool).catch((error) => {
+    console.warn('[postgres] Rex research memory schema ensure skipped', error?.message || error);
+  });
   return true;
 }
 
@@ -9563,22 +9571,31 @@ async function unifiedMessageAlreadyPersisted(messageId = '') {
   return Boolean(result.ok && result.rows?.length);
 }
 
-async function persistBrainBlogPostRecord(post = {}) {
+async function persistBrainBlogPostRecord(post = {}, options = {}) {
   const pool = getPgPool();
   if (!pool || !post.id) return false;
+  const workspaceId = normalizeTenantId(options.workspaceId || options.workspace_id || post.workspaceId || post.workspace_id);
+  const embedding = Array.isArray(options.embedding) && options.embedding.length === 1536 ? vectorLiteral(options.embedding) : null;
+  const embeddingModel = String(options.embeddingModel || options.embedding_model || '').trim();
+  const embeddingHash = String(options.embeddingHash || options.embedding_hash || '').trim();
+  const embeddedAt = options.embeddedAt || options.embedded_at || (embedding ? isoNow() : null);
+  const clearEmbedding = options.clearEmbedding === true;
   try {
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO public.brain_blog_posts (
-        id, title, source_url, source_type, source_name, published_at,
+        workspace_id, id, title, source_url, source_type, source_name, published_at,
         content, summary, key_takeaways, tags, revenue_streams, sales_mentor,
-        technique_type, content_hash, status, trained_at, metadata, created_at, updated_at
+        technique_type, content_hash, status, trained_at, embedding, embedding_model,
+        embedding_hash, embedded_at, metadata, created_at, updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6,
-        $7, $8, $9::text[], $10::text[], $11::text[], $12,
-        $13, $14, $15, $16, $17::jsonb, $18, $19
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10::text[], $11::text[], $12::text[], $13,
+        $14, $15, $16, $17, $18::vector, $19,
+        $20, $21, $22::jsonb, $23, $24
       )
       ON CONFLICT (id) DO UPDATE SET
+        workspace_id = EXCLUDED.workspace_id,
         title = EXCLUDED.title,
         source_url = EXCLUDED.source_url,
         source_type = EXCLUDED.source_type,
@@ -9594,11 +9611,31 @@ async function persistBrainBlogPostRecord(post = {}) {
         content_hash = EXCLUDED.content_hash,
         status = EXCLUDED.status,
         trained_at = EXCLUDED.trained_at,
+        embedding = CASE
+          WHEN $25::boolean THEN NULL
+          ELSE COALESCE(EXCLUDED.embedding, public.brain_blog_posts.embedding)
+        END,
+        embedding_model = CASE
+          WHEN $25::boolean THEN EXCLUDED.embedding_model
+          WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedding_model
+          ELSE public.brain_blog_posts.embedding_model
+        END,
+        embedding_hash = CASE
+          WHEN $25::boolean THEN ''
+          WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedding_hash
+          ELSE public.brain_blog_posts.embedding_hash
+        END,
+        embedded_at = CASE
+          WHEN $25::boolean THEN NULL
+          ELSE COALESCE(EXCLUDED.embedded_at, public.brain_blog_posts.embedded_at)
+        END,
         metadata = EXCLUDED.metadata,
-        updated_at = EXCLUDED.updated_at`,
-      [post.id, post.title || 'Untitled Brain post', post.sourceUrl || '', post.sourceType || 'manual', post.sourceName || post.source || '', post.publishedAt || null, post.content || '', post.summary || '', normalizeStringList(post.keyTakeaways || []), normalizeStringList(post.tags || []), normalizeStringList(post.revenueStreams || []), post.salesMentor || '', post.techniqueType || '', post.contentHash || '', post.status || 'ready', post.trainedAt || null, JSON.stringify(post.metadata || {}), post.createdAt || isoNow(), post.updatedAt || isoNow()]
+        updated_at = EXCLUDED.updated_at
+      WHERE public.brain_blog_posts.workspace_id = EXCLUDED.workspace_id
+      RETURNING id`,
+      [workspaceId, post.id, post.title || 'Untitled Brain post', post.sourceUrl || '', post.sourceType || 'manual', post.sourceName || post.source || '', post.publishedAt || null, post.content || '', post.summary || '', normalizeStringList(post.keyTakeaways || []), normalizeStringList(post.tags || []), normalizeStringList(post.revenueStreams || []), post.salesMentor || '', post.techniqueType || '', post.contentHash || '', post.status || 'ready', post.trainedAt || null, embedding, embeddingModel || OPENAI_EMBEDDING_MODEL, embeddingHash, embeddedAt, JSON.stringify(post.metadata || {}), post.createdAt || isoNow(), post.updatedAt || isoNow(), clearEmbedding]
     );
-    return true;
+    return result.rowCount > 0;
   } catch (error) {
     console.warn('[pbk-local-openclaw] brain blog persistence skipped:', error?.message || error);
     return false;
@@ -22514,6 +22551,333 @@ async function createOpenAiEmbedding(text = '', options = {}) {
   }
 }
 
+async function embedAndPersistBrainBlogPost(post = {}, options = {}) {
+  const pool = getPgPool();
+  if (!pool) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'no_database',
+      error: 'PBK_DATABASE_URL is not configured.',
+    };
+  }
+  if (!post?.id) {
+    return {
+      ok: false,
+      skipped: true,
+      result: 'invalid_post',
+      error: 'Rex research memory requires a post id.',
+    };
+  }
+
+  const workspaceId = normalizeTenantId(options.workspaceId || options.workspace_id || post.workspaceId || post.workspace_id);
+  const embeddingText = buildRexResearchEmbeddingText(post);
+  const embeddingModel = String(options.embeddingModel || OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small').trim();
+  const embeddingHash = createHash('sha256')
+    .update(`${embeddingModel}\n${embeddingText}`)
+    .digest('hex');
+
+  if (embeddingText.length < 12) {
+    const persisted = await persistBrainBlogPostRecord(post, {
+      workspaceId,
+      clearEmbedding: true,
+    });
+    return {
+      ok: false,
+      skipped: true,
+      persisted,
+      result: 'empty_text',
+      error: 'Rex research memory had no embeddable text.',
+    };
+  }
+
+  const current = await queryPgRows(
+    `SELECT embedding_hash, embedding_model, embedding IS NOT NULL AS has_embedding
+     FROM public.brain_blog_posts
+     WHERE workspace_id = $1 AND id = $2
+     LIMIT 1`,
+    [workspaceId, post.id]
+  );
+  const currentRow = current.ok ? current.rows?.[0] : null;
+  if (
+    currentRow?.has_embedding &&
+    String(currentRow.embedding_hash || '') === embeddingHash &&
+    String(currentRow.embedding_model || '') === embeddingModel
+  ) {
+    const persisted = await persistBrainBlogPostRecord(post, { workspaceId });
+    return {
+      ok: persisted,
+      skipped: true,
+      result: persisted ? 'embedding_current' : 'persistence_failed',
+      model: embeddingModel,
+      dimensions: 1536,
+      embeddingHash,
+    };
+  }
+
+  const embeddingResult = await createOpenAiEmbedding(embeddingText, {
+    model: embeddingModel,
+    source: options.source || 'rex-research-memory-ingest',
+    timeoutMs: Math.max(1000, Math.min(30000, toNumber(options.timeoutMs, 10000))),
+  });
+  if (!embeddingResult.ok) {
+    const persisted = await persistBrainBlogPostRecord(post, {
+      workspaceId,
+      clearEmbedding: Boolean(currentRow?.has_embedding),
+    });
+    return {
+      ...embeddingResult,
+      persisted,
+      skipped: false,
+      embeddingHash,
+    };
+  }
+
+  const persisted = await persistBrainBlogPostRecord(post, {
+    workspaceId,
+    embedding: embeddingResult.embedding,
+    embeddingModel: embeddingResult.model || embeddingModel,
+    embeddingHash,
+    embeddedAt: isoNow(),
+  });
+  return {
+    ok: persisted,
+    skipped: false,
+    persisted,
+    result: persisted ? 'embedded' : 'persistence_failed',
+    model: embeddingResult.model || embeddingModel,
+    dimensions: embeddingResult.embedding.length,
+    embeddingHash,
+    usage: embeddingResult.usage || null,
+  };
+}
+
+async function retrieveRexResearchMemories(params = {}) {
+  const query = sanitizeAvaSpokenOutput(params.query || params.transcript || params.text || '').slice(0, 1200);
+  const workspaceId = normalizeTenantId(params.workspaceId || params.workspace_id || params.tenantId || params.tenant_id);
+  const limit = Math.max(1, Math.min(20, toNumber(params.limit, 5)));
+  const threshold = Math.max(0, Math.min(1, Number(params.threshold ?? 0.42)));
+  if (query.length < 3) {
+    return { ok: false, skipped: true, result: 'no_query', source: 'pgvector', matches: [] };
+  }
+  if (!DATABASE_URL) {
+    return { ok: false, skipped: true, result: 'no_database', source: 'pgvector', matches: [] };
+  }
+
+  const embeddingResult = await createOpenAiEmbedding(query, {
+    source: params.source || 'rex-research-memory-query',
+    timeoutMs: Math.max(250, Math.min(10000, toNumber(params.timeoutMs, 3000))),
+  });
+  if (embeddingResult.ok) {
+    const semantic = await queryPgRows(
+      `SELECT *
+       FROM public.match_brain_blog_posts($1::vector, $2, $3, $4)`,
+      [vectorLiteral(embeddingResult.embedding), threshold, limit, workspaceId]
+    );
+    if (semantic.ok && semantic.rows.length) {
+      return {
+        ok: true,
+        result: 'semantic_match',
+        source: 'pgvector',
+        query,
+        workspaceId,
+        model: embeddingResult.model,
+        dimensions: embeddingResult.embedding.length,
+        matches: semantic.rows.map(normalizeRexResearchMemoryRow),
+      };
+    }
+  }
+
+  const lexical = await queryPgRows(
+    `SELECT
+       id, title, source_url, source_name, summary, content, tags, revenue_streams,
+       sales_mentor, technique_type, 0::double precision AS similarity, metadata, created_at
+     FROM public.brain_blog_posts
+     WHERE workspace_id = $1
+       AND status <> 'hidden'
+       AND to_tsvector(
+         'english',
+         COALESCE(title, '') || ' ' || COALESCE(summary, '') || ' ' || COALESCE(content, '')
+       ) @@ plainto_tsquery('english', $2)
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [workspaceId, query, limit]
+  );
+  const matches = lexical.ok ? lexical.rows.map(normalizeRexResearchMemoryRow) : [];
+  return {
+    ok: matches.length > 0,
+    result: matches.length ? 'lexical_fallback' : embeddingResult.result || lexical.reason || 'no_match',
+    source: matches.length ? 'postgres_fts' : 'pgvector',
+    query,
+    workspaceId,
+    model: embeddingResult.model || OPENAI_EMBEDDING_MODEL,
+    dimensions: embeddingResult.ok ? embeddingResult.embedding.length : 0,
+    matches,
+    error: embeddingResult.ok ? lexical.error || '' : embeddingResult.error || lexical.error || '',
+  };
+}
+
+async function backfillRexResearchEmbeddings(params = {}) {
+  const workspaceId = normalizeTenantId(params.workspaceId || params.workspace_id);
+  const limit = Math.max(1, Math.min(250, toNumber(params.limit, 50)));
+  const rows = await queryPgRows(
+    `SELECT
+       id, workspace_id, title, source_url, source_type, source_name, published_at,
+       content, summary, key_takeaways, tags, revenue_streams, sales_mentor,
+       technique_type, content_hash, status, trained_at, metadata, created_at, updated_at
+     FROM public.brain_blog_posts
+     WHERE workspace_id = $1
+       AND status <> 'hidden'
+       AND (embedding IS NULL OR embedding_model <> $2 OR embedding_hash = '')
+     ORDER BY updated_at DESC
+     LIMIT $3`,
+    [workspaceId, OPENAI_EMBEDDING_MODEL, limit]
+  );
+  if (!rows.ok) {
+    return {
+      ok: false,
+      result: rows.reason || 'query_failed',
+      error: rows.error || 'Unable to load Rex research memory.',
+      processed: 0,
+      embedded: 0,
+      failures: [],
+    };
+  }
+
+  const outcomes = [];
+  for (const row of rows.rows) {
+    const post = normalizeBrainBlogPost({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      title: row.title,
+      sourceUrl: row.source_url,
+      sourceType: row.source_type,
+      sourceName: row.source_name,
+      publishedAt: row.published_at,
+      content: row.content,
+      summary: row.summary,
+      keyTakeaways: row.key_takeaways,
+      tags: row.tags,
+      revenueStreams: row.revenue_streams,
+      salesMentor: row.sales_mentor,
+      techniqueType: row.technique_type,
+      contentHash: row.content_hash,
+      status: row.status,
+      trainedAt: row.trained_at,
+      metadata: row.metadata,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+    const result = await embedAndPersistBrainBlogPost(post, {
+      workspaceId,
+      source: 'rex-research-memory-backfill',
+      timeoutMs: params.timeoutMs,
+    });
+    outcomes.push({ id: post.id, ...result });
+  }
+
+  const failures = outcomes.filter((outcome) => !outcome.ok);
+  return {
+    ok: failures.length === 0,
+    result: rows.rows.length ? (failures.length ? 'partial' : 'embedded') : 'nothing_to_backfill',
+    workspaceId,
+    processed: outcomes.length,
+    embedded: outcomes.filter((outcome) => outcome.ok && outcome.result === 'embedded').length,
+    current: outcomes.filter((outcome) => outcome.ok && outcome.result === 'embedding_current').length,
+    failures,
+  };
+}
+
+async function runRexResearchMemoryCanary(params = {}) {
+  const workspaceId = normalizeTenantId(params.workspaceId || params.workspace_id);
+  const canaryId = `rex-vector-canary-${randomUUID()}`;
+  const startedAt = Date.now();
+  const post = normalizeBrainBlogPost({
+    id: canaryId,
+    workspaceId,
+    title: 'Silver Meridian probate authority protocol',
+    sourceType: 'vector-canary',
+    sourceName: 'PBK semantic canary',
+    content:
+      'The Silver Meridian protocol verifies executor authority before discussing price on a probate property, then records the exact decision-maker and court timeline.',
+    summary:
+      'Verify the estate representative has authority before price negotiation and preserve the probate decision timeline.',
+    tags: ['vector-canary', 'probate', 'participant-verification'],
+    status: 'canary',
+    metadata: { canary: true },
+  });
+
+  let embedding = null;
+  let retrieval = null;
+  let error = '';
+  try {
+    embedding = await embedAndPersistBrainBlogPost(post, {
+      workspaceId,
+      source: 'rex-research-memory-canary-ingest',
+      timeoutMs: params.timeoutMs || 10000,
+    });
+    if (embedding.ok) {
+      retrieval = await retrieveRexResearchMemories({
+        workspaceId,
+        query: 'Which stored method confirms the estate representative can decide before negotiating the property price?',
+        limit: 5,
+        threshold: 0.2,
+        timeoutMs: params.timeoutMs || 10000,
+        source: 'rex-research-memory-canary-query',
+      });
+    }
+  } catch (canaryError) {
+    error = canaryError?.message || String(canaryError || '');
+  }
+
+  const matched = retrieval?.matches?.find((match) => match.id === canaryId) || null;
+  const ok = Boolean(embedding?.ok && retrieval?.source === 'pgvector' && retrieval?.result === 'semantic_match' && matched);
+  const latencyMs = Date.now() - startedAt;
+  if (!ok && !error) {
+    error = embedding?.error || retrieval?.error || 'Semantic round trip did not return the inserted canary.';
+  }
+
+  await queryPgRows(
+    `INSERT INTO public.pbk_vector_canary_runs (
+       id, workspace_id, memory_type, ok, result, latency_ms, embedding_model,
+       dimensions, matched_id, error, metadata, created_at
+     )
+     VALUES ($1,$2,'rex_research',$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NOW())`,
+    [
+      `rex-vector-canary-run-${randomUUID()}`,
+      workspaceId,
+      ok,
+      ok ? 'semantic_round_trip_passed' : 'semantic_round_trip_failed',
+      latencyMs,
+      embedding?.model || OPENAI_EMBEDDING_MODEL,
+      Number(embedding?.dimensions || 0),
+      matched?.id || '',
+      error,
+      JSON.stringify({
+        embeddingResult: embedding?.result || '',
+        retrievalResult: retrieval?.result || '',
+        retrievalSource: retrieval?.source || '',
+        similarity: matched?.similarity || 0,
+      }),
+    ]
+  );
+  await queryPgRows(`DELETE FROM public.brain_blog_posts WHERE workspace_id = $1 AND id = $2`, [
+    workspaceId,
+    canaryId,
+  ]);
+
+  return {
+    ok,
+    result: ok ? 'semantic_round_trip_passed' : 'semantic_round_trip_failed',
+    workspaceId,
+    latencyMs,
+    model: embedding?.model || OPENAI_EMBEDDING_MODEL,
+    dimensions: Number(embedding?.dimensions || 0),
+    similarity: Number(matched?.similarity || 0),
+    error,
+  };
+}
+
 async function upsertCallEmbeddingFromTranscript(record = {}) {
   if (!AVA_EPISODIC_MEMORY_ENABLED) return { ok: false, skipped: true, result: 'episodic_memory_disabled' };
   if (!DATABASE_URL) return { ok: false, skipped: true, result: 'no_database' };
@@ -22780,6 +23144,26 @@ function normalizeLiveRagKnowledgeFact(fact = {}) {
   };
 }
 
+function normalizeLiveRagRexVectorMemory(memory = {}) {
+  return {
+    type: 'rex_vector_memory',
+    id: memory.id || '',
+    title: sanitizeAvaSpokenOutput(memory.title || 'Rex research memory').slice(0, 120),
+    text: sanitizeAvaSpokenOutput(memory.summary || memory.content || '').slice(0, 520),
+    citation: sanitizeAvaSpokenOutput(memory.sourceUrl || `${memory.source || 'PBK Brain'} - ${memory.title || 'Rex memory'}`).slice(0, 180),
+    source: sanitizeAvaSpokenOutput(memory.source || 'PBK Brain').slice(0, 80),
+    similarity: Math.max(0, Math.min(1, toNumber(memory.similarity, 0))),
+    tags: normalizeStringList([...(memory.tags || []), ...(memory.revenueStreams || []), memory.salesMentor, memory.techniqueType]),
+    metadata: {
+      ...(memory.metadata || {}),
+      semantic: true,
+      sourceUrl: memory.sourceUrl || '',
+      salesMentor: memory.salesMentor || '',
+      techniqueType: memory.techniqueType || '',
+    },
+  };
+}
+
 function scoreAvaLiveRagRecord(record = {}, query = '', params = {}) {
   const searchable = [record.title, record.text, record.citation, record.source, record.tags, record.metadata?.intent, record.metadata?.path].flat().filter(Boolean).join(' ');
   let score = scorePbkTextMatch(query, searchable, {
@@ -22788,6 +23172,7 @@ function scoreAvaLiveRagRecord(record = {}, query = '', params = {}) {
     path: record.metadata?.path,
   });
   if (record.type === 'pbk_knowledge') score += 0.15 + Math.min(0.35, Math.max(0, toNumber(record.confidence, 0)));
+  if (record.type === 'rex_vector_memory') score += 0.35 + Math.min(0.65, Math.max(0, toNumber(record.similarity, 0)));
   const path = String(params.path || params.selectedPath || '')
     .trim()
     .toLowerCase();
@@ -22808,7 +23193,7 @@ async function retrieveLiveBrainKnowledge(params = {}) {
   const tenantId = normalizeTenantId(params.tenantId || params.tenant_id || params.workspaceId || params.workspace_id);
   const callId = params.callId || params.call_id || '';
   const leadId = params.leadId || params.lead_id || '';
-  const [knowledgeResult, brainResult] = await Promise.all([
+  const [knowledgeResult, brainResult, rexVectorResult] = await Promise.all([
     queryPbkKnowledgeRecords({ tenantId, query: cleanQuery, limit: Math.max(limit, 8) }).catch((error) => ({
       ok: false,
       error: error?.message || String(error || ''),
@@ -22822,8 +23207,26 @@ async function retrieveLiveBrainKnowledge(params = {}) {
         matches: [],
         error: error?.message || String(error || ''),
       })),
+    retrieveRexResearchMemories({
+      query: cleanQuery,
+      workspaceId: tenantId,
+      limit: Math.max(limit, 6),
+      threshold: params.vectorThreshold ?? 0.4,
+      timeoutMs: params.vectorTimeoutMs ?? 1600,
+      source: 'ava-live-rag-rex-vector-memory',
+    }).catch((error) => ({
+      ok: false,
+      result: 'query_failed',
+      source: 'pgvector',
+      matches: [],
+      error: error?.message || String(error || ''),
+    })),
   ]);
-  const records = [...(Array.isArray(knowledgeResult?.facts) ? knowledgeResult.facts.map(normalizeLiveRagKnowledgeFact) : []), ...(Array.isArray(brainResult?.matches) ? brainResult.matches.map(normalizeLiveRagBrainDoc) : [])].filter((record) => record.text || record.title);
+  const records = [
+    ...(Array.isArray(knowledgeResult?.facts) ? knowledgeResult.facts.map(normalizeLiveRagKnowledgeFact) : []),
+    ...(Array.isArray(rexVectorResult?.matches) ? rexVectorResult.matches.map(normalizeLiveRagRexVectorMemory) : []),
+    ...(Array.isArray(brainResult?.matches) ? brainResult.matches.map(normalizeLiveRagBrainDoc) : []),
+  ].filter((record) => record.text || record.title);
   const seen = new Set();
   const matches = records
     .map((record) => ({
@@ -22843,13 +23246,16 @@ async function retrieveLiveBrainKnowledge(params = {}) {
     ok: matches.length > 0,
     result: matches.length ? 'live_brain_rag' : 'no_live_brain_match',
     query: cleanQuery.slice(0, 240),
-    source: 'brain_and_pbk_knowledge',
+    source: 'pgvector_brain_and_pbk_knowledge',
     matchCount: matches.length,
     matches,
     diagnostics: {
       pbkKnowledgeCount: Array.isArray(knowledgeResult?.facts) ? knowledgeResult.facts.length : 0,
+      rexVectorMemoryCount: Array.isArray(rexVectorResult?.matches) ? rexVectorResult.matches.length : 0,
       brainMatchCount: Array.isArray(brainResult?.matches) ? brainResult.matches.length : 0,
       knowledgeError: knowledgeResult?.error || '',
+      rexVectorError: rexVectorResult?.error || '',
+      rexVectorResult: rexVectorResult?.result || '',
       brainError: brainResult?.error || '',
     },
   };
@@ -23103,9 +23509,85 @@ function buildRexLocalConversationalFallbackAnswer({ query = '', baseResponse = 
   return ['I have enough context to give you a practical read, not just a document dump.', safeLens, approvalLine, controlLine, 'Next action: give me the specific outcome you want, and I will turn the Brain context into either an Ava script, an analyzer rule, a campaign angle, or an admin route.'].join(' ');
 }
 
+function mergeRexSemanticMemory(baseResponse = {}, semanticMemory = {}) {
+  const semanticMatches = Array.isArray(semanticMemory.matches) ? semanticMemory.matches : [];
+  if (!semanticMatches.length) {
+    return {
+      ...baseResponse,
+      rexVectorMemory: semanticMemory,
+    };
+  }
+
+  const semanticDocs = semanticMatches.map((memory) => ({
+    id: memory.id,
+    kind: 'rex-vector-memory',
+    topic: (memory.revenueStreams || [])[0] || 'Wholesaling',
+    title: memory.title,
+    source: memory.source,
+    sourceUrl: memory.sourceUrl,
+    excerpt: memory.summary || memory.content,
+    summary: memory.summary || memory.content,
+    citation: memory.sourceUrl || `${memory.source || 'PBK Brain'} - ${memory.title}`,
+    tags: normalizeStringList([...(memory.tags || []), ...(memory.revenueStreams || [])]),
+    salesMentor: memory.salesMentor,
+    techniqueType: memory.techniqueType,
+    revenueStreams: memory.revenueStreams || [],
+    similarity: memory.similarity,
+    semantic: true,
+    createdAt: memory.createdAt,
+  }));
+  const combinedMatches = [];
+  const seen = new Set();
+  for (const match of [...semanticDocs, ...(baseResponse.matches || [])]) {
+    const key = String(match.id || `${match.title}:${match.summary}`).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    combinedMatches.push(match);
+  }
+  const top = semanticDocs[0];
+  const weakLocalAnswer =
+    !baseResponse.matches?.length ||
+    /do not have a direct stored match|no direct stored match|no local brain match/i.test(
+      String(baseResponse.answer || '')
+    );
+  return {
+    ...baseResponse,
+    answer: weakLocalAnswer
+      ? `Summary: ${top.summary || top.excerpt}\n\nKey insight: Rex found this through semantic pgvector memory with ${Math.round(
+          toNumber(top.similarity, 0) * 100
+        )}% similarity.\n\nFollow-up question: Should Rex turn this into an Ava call script, analyzer rule, or campaign action?`
+      : baseResponse.answer,
+    matches: combinedMatches.slice(0, 5),
+    citations: Array.from(
+      new Set([
+        ...semanticDocs.map((doc) => doc.citation).filter(Boolean),
+        ...(baseResponse.citations || []),
+      ])
+    ),
+    rexVectorMemory: semanticMemory,
+  };
+}
+
 async function buildRexConversationalBrainResponse(stateRef = {}, params = {}) {
   const query = String(params.query || '').trim();
-  const baseResponse = params.baseResponse || answerBrainQuery(stateRef, query);
+  const lexicalResponse = params.baseResponse || answerBrainQuery(stateRef, query);
+  const semanticMemory = query
+    ? await retrieveRexResearchMemories({
+        query,
+        workspaceId: params.workspaceId || params.workspace_id || params.tenantId || params.tenant_id,
+        limit: params.vectorLimit || 5,
+        threshold: params.vectorThreshold ?? 0.4,
+        timeoutMs: params.vectorTimeoutMs ?? 3500,
+        source: 'rex-conversational-vector-memory',
+      }).catch((error) => ({
+        ok: false,
+        result: 'query_failed',
+        source: 'pgvector',
+        matches: [],
+        error: error?.message || String(error || ''),
+      }))
+    : { ok: false, skipped: true, result: 'no_query', source: 'pgvector', matches: [] };
+  const baseResponse = mergeRexSemanticMemory(lexicalResponse, semanticMemory);
   const control = buildRexConversationControlEnvelope(stateRef);
   const meta = getDeepSeekProviderMeta();
   if (!query || params.conversational === false || !meta.ready) {
@@ -37079,6 +37561,42 @@ async function buildVectorCapacityStatus() {
     };
   }
 
+  const [rexCanaryResult, rexCountsResult] = await Promise.all([
+    queryPgRows(
+      `SELECT ok, result, latency_ms, embedding_model, dimensions, matched_id, error, metadata, created_at
+       FROM public.pbk_vector_canary_runs
+       WHERE workspace_id = 'pbk' AND memory_type = 'rex_research'
+       ORDER BY created_at DESC
+       LIMIT 1`
+    ),
+    queryPgRows(
+      `SELECT
+         COUNT(*)::bigint AS row_count,
+         COUNT(embedding)::bigint AS embedded_count
+       FROM public.brain_blog_posts
+       WHERE workspace_id = 'pbk' AND status <> 'hidden'`
+    ),
+  ]);
+  const rexCanaryRow = rexCanaryResult.ok ? rexCanaryResult.rows?.[0] || null : null;
+  const rexCountsRow = rexCountsResult.ok ? rexCountsResult.rows?.[0] || null : null;
+  const rexCanaryAgeMs = rexCanaryRow?.created_at
+    ? Date.now() - new Date(rexCanaryRow.created_at).getTime()
+    : Number.POSITIVE_INFINITY;
+  const rexCanary = {
+    ok: Boolean(rexCanaryRow?.ok),
+    fresh:
+      Boolean(rexCanaryRow?.ok) &&
+      Number(rexCanaryRow?.dimensions || 0) === 1536 &&
+      rexCanaryAgeMs <= 7 * 24 * 60 * 60 * 1000,
+    result: rexCanaryRow?.result || (rexCanaryResult.ok ? 'not_run' : 'schema_unavailable'),
+    latencyMs: Number(rexCanaryRow?.latency_ms || 0),
+    embeddingModel: rexCanaryRow?.embedding_model || '',
+    dimensions: Number(rexCanaryRow?.dimensions || 0),
+    matchedId: rexCanaryRow?.matched_id || '',
+    error: rexCanaryRow?.error || rexCanaryResult.error || '',
+    createdAt: rexCanaryRow?.created_at || null,
+  };
+
   const tables = catalog.rows.map((row) => {
     const embeddingType = String(row.embedding_type || '');
     const dimensionMatch = embeddingType.match(/vector\((\d+)\)/i);
@@ -37091,12 +37609,19 @@ async function buildVectorCapacityStatus() {
       : indexMethods.includes('ivfflat')
         ? 'ivfflat'
         : 'none';
-    return {
+    const isRexResearch = String(row.table_name || '') === 'brain_blog_posts';
+    const table = {
       id: String(row.table_name || ''),
       label: String(row.label || row.table_name || ''),
       exists: Boolean(row.exists),
-      estimatedRowCount: Number(row.estimated_row_count || 0),
-      estimatedEmbeddedCount: Number(row.estimated_embedded_count || 0),
+      estimatedRowCount:
+        isRexResearch && rexCountsRow
+          ? Number(rexCountsRow.row_count || 0)
+          : Number(row.estimated_row_count || 0),
+      estimatedEmbeddedCount:
+        isRexResearch && rexCountsRow
+          ? Number(rexCountsRow.embedded_count || 0)
+          : Number(row.estimated_embedded_count || 0),
       dimensions: Number(dimensionMatch?.[1] || 0),
       tableBytes: Number(row.table_bytes || 0),
       indexBytes: Number(row.index_bytes || 0),
@@ -37104,6 +37629,14 @@ async function buildVectorCapacityStatus() {
       statsUpdatedAt: row.last_autoanalyze || row.last_analyze || null,
       vectorIndexMethod,
       indexNames,
+    };
+    return {
+      ...table,
+      ready:
+        table.exists &&
+        table.dimensions === 1536 &&
+        table.estimatedEmbeddedCount > 0 &&
+        table.vectorIndexMethod !== 'none',
     };
   });
   const existingTables = tables.filter((table) => table.exists);
@@ -37131,6 +37664,8 @@ async function buildVectorCapacityStatus() {
     summary.estimatedEmbeddedRows >= 1_000_000 || summary.totalBytes >= 8 * 1024 ** 3;
   const approachingScale =
     summary.estimatedEmbeddedRows >= 250_000 || summary.totalBytes >= 2 * 1024 ** 3;
+  const rexMemory = tables.find((table) => table.id === 'brain_blog_posts') || null;
+  const rexResearchReady = Boolean(rexMemory?.ready && rexCanary.fresh);
 
   let recommendation = {
     action: 'keep_pgvector',
@@ -37138,7 +37673,35 @@ async function buildVectorCapacityStatus() {
     detail:
       'Current scale does not justify a second live vector service. Keep Postgres as source of truth and S3 for backup snapshots only.',
   };
-  if (!existingTables.length) {
+  if (!rexMemory?.exists || rexMemory.dimensions !== 1536) {
+    recommendation = {
+      action: 'apply_rex_vector_schema',
+      label: 'Apply Rex vector schema',
+      detail:
+        'Rex research memory does not yet expose the canonical 1536-dimension pgvector schema.',
+    };
+  } else if (rexMemory.estimatedEmbeddedCount === 0) {
+    recommendation = {
+      action: 'backfill_rex_embeddings',
+      label: 'Backfill Rex embeddings',
+      detail:
+        'Rex research records exist, but none are embedded. Run POST /api/brain/vector/backfill before calling the memory vector-ready.',
+    };
+  } else if (!rexMemory.ready) {
+    recommendation = {
+      action: 'repair_rex_vector_index',
+      label: 'Repair Rex vector index',
+      detail:
+        'Rex has embeddings but no usable HNSW or IVFFlat index. Repair the canonical pgvector index before production retrieval.',
+    };
+  } else if (!rexCanary.fresh) {
+    recommendation = {
+      action: 'run_rex_vector_canary',
+      label: 'Run Rex semantic canary',
+      detail:
+        'The Rex schema and embeddings are present, but no successful semantic round trip has been recorded in the last seven days.',
+    };
+  } else if (!existingTables.length) {
     recommendation = {
       action: 'apply_vector_schema',
       label: 'Apply vector schema',
@@ -37177,11 +37740,26 @@ async function buildVectorCapacityStatus() {
     s3Role: 'backup_only',
     mastraRequired: false,
     tables,
-    summary,
+    summary: {
+      ...summary,
+      rexResearchReady,
+    },
+    rexResearch: {
+      ready: rexResearchReady,
+      schemaReady: Boolean(rexMemory?.exists && rexMemory.dimensions === 1536),
+      embeddingsReady: Boolean(rexMemory?.estimatedEmbeddedCount),
+      indexReady: Boolean(rexMemory?.vectorIndexMethod && rexMemory.vectorIndexMethod !== 'none'),
+      canary: rexCanary,
+    },
     recommendation,
-    warnings: existingTables.length
-      ? []
-      : ['No canonical vector tables were found in the public schema.'],
+    warnings: [
+      ...(!existingTables.length ? ['No canonical vector tables were found in the public schema.'] : []),
+      ...(!rexResearchReady
+        ? [
+            'Rex research memory is not production-ready until schema, embeddings, vector index, and a fresh semantic canary all pass.',
+          ]
+        : []),
+    ],
   };
 }
 
@@ -45612,13 +46190,37 @@ const toolHandlers = {
     };
 
     addBrainDoc(state, doc);
+    const post = normalizeBrainBlogPost({
+      ...hydrated,
+      id: doc.id,
+      title: doc.title,
+      sourceUrl: doc.sourceUrl,
+      sourceType: doc.kind,
+      sourceName: doc.source,
+      content: hydrated.content || hydrated.body || hydrated.transcript || doc.summary,
+      summary: doc.summary,
+      tags: doc.tags,
+      metadata: {
+        ...doc.metadata,
+        brainDocId: doc.id,
+        ingestedThrough: 'ingestResearchDoc',
+      },
+      createdAt: doc.createdAt,
+    });
+    addBrainBlogPost(state, post);
+    const vectorMemory = await embedAndPersistBrainBlogPost(post, {
+      workspaceId: hydrated.workspaceId || hydrated.workspace_id,
+      source: 'ingestResearchDoc',
+    });
     addActivity(
       state,
       makeActivity({
         actor: 'Rex',
         category: 'RESEARCH',
-        status: 'indexed',
-        text: `Indexed new ${doc.kind} source: ${doc.title}`,
+        status: vectorMemory.ok ? 'indexed' : 'stored',
+        text: vectorMemory.ok
+          ? `Embedded new ${doc.kind} source into Rex pgvector memory: ${doc.title}`
+          : `Stored ${doc.kind} source without a Rex embedding: ${doc.title}`,
         target: doc.topic,
       })
     );
@@ -45626,8 +46228,15 @@ const toolHandlers = {
     await persistState(state);
     return {
       ok: true,
-      result: doc.metadata?.extraction?.ok === false ? 'queued_for_review' : 'live',
+      result:
+        doc.metadata?.extraction?.ok === false
+          ? 'queued_for_review'
+          : vectorMemory.ok
+            ? 'live'
+            : 'stored_without_embedding',
       doc,
+      post,
+      vectorMemory,
       extraction: doc.metadata?.extraction || null,
     };
   },
@@ -45636,14 +46245,19 @@ const toolHandlers = {
     recordToolUse('createBrainBlogPost');
     const post = normalizeBrainBlogPost(params);
     addBrainBlogPost(state, post);
-    await persistBrainBlogPostRecord(post);
+    const vectorMemory = await embedAndPersistBrainBlogPost(post, {
+      workspaceId: params.workspaceId || params.workspace_id,
+      source: 'createBrainBlogPost',
+    });
     addActivity(
       state,
       makeActivity({
         actor: params.requestedBy || 'Rex',
         category: 'BRAIN_BLOG',
-        status: 'indexed',
-        text: `Published Brain Blog post: ${post.title}`,
+        status: vectorMemory.ok ? 'indexed' : 'stored',
+        text: vectorMemory.ok
+          ? `Published and embedded Brain Blog post: ${post.title}`
+          : `Published Brain Blog post without an embedding: ${post.title}`,
         target: post.salesMentor || post.sourceName || 'Brain Blog',
       })
     );
@@ -45651,8 +46265,9 @@ const toolHandlers = {
     await persistState(state);
     return {
       ok: true,
-      result: 'live',
+      result: vectorMemory.ok ? 'live' : 'stored_without_embedding',
       post,
+      vectorMemory,
     };
   },
 
@@ -45686,7 +46301,10 @@ const toolHandlers = {
     post.status = 'trained';
     post.updatedAt = post.trainedAt;
     addBrainBlogPost(state, post);
-    await persistBrainBlogPostRecord(post);
+    const vectorMemory = await embedAndPersistBrainBlogPost(post, {
+      workspaceId: params.workspaceId || params.workspace_id,
+      source: 'trainBrainBlogPost',
+    });
     const supermemory = await syncRexMemoryToSupermemory(doc);
     addActivity(
       state,
@@ -45705,6 +46323,7 @@ const toolHandlers = {
       post,
       doc,
       supermemory,
+      vectorMemory,
     };
   },
 
@@ -45717,13 +46336,18 @@ const toolHandlers = {
     const existingKeys = new Set((state.brainBlogPosts || []).flatMap((post) => [post.sourceUrl, post.contentHash, post.id].filter(Boolean)));
     const added = [];
     const skipped = [];
+    const vectorMemory = [];
     for (const post of harvest.posts) {
       if (existingKeys.has(post.sourceUrl) || existingKeys.has(post.contentHash) || existingKeys.has(post.id)) {
         skipped.push(post);
         continue;
       }
       addBrainBlogPost(state, post);
-      await persistBrainBlogPostRecord(post);
+      const embeddingResult = await embedAndPersistBrainBlogPost(post, {
+        workspaceId: params.workspaceId || params.workspace_id,
+        source: 'harvestBrainBlog',
+      });
+      vectorMemory.push({ id: post.id, ...embeddingResult });
       existingKeys.add(post.sourceUrl);
       existingKeys.add(post.contentHash);
       existingKeys.add(post.id);
@@ -45735,8 +46359,10 @@ const toolHandlers = {
         makeActivity({
           actor: params.requestedBy || 'Brain Harvester',
           category: 'BRAIN_BLOG',
-          status: 'indexed',
-          text: `Harvested ${added.length} new Brain Blog post${added.length === 1 ? '' : 's'}.`,
+          status: vectorMemory.every((item) => item.ok) ? 'indexed' : 'warning',
+          text: `Harvested ${added.length} new Brain Blog post${added.length === 1 ? '' : 's'}; ${
+            vectorMemory.filter((item) => item.ok).length
+          } embedded for Rex semantic retrieval.`,
           target: 'Brain Blog',
         })
       );
@@ -45750,6 +46376,7 @@ const toolHandlers = {
       skipped: skipped.length,
       errors: harvest.errors,
       feeds: harvest.feeds,
+      vectorMemory,
     };
   },
 
@@ -59325,6 +59952,20 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/vector/backfill', '/brain/vector/backfill'])) {
+      const body = await readBody(request);
+      const result = await backfillRexResearchEmbeddings(body);
+      json(response, result.ok === false && result.result !== 'partial' ? 503 : 200, result);
+      return;
+    }
+
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/brain/vector/canary', '/brain/vector/canary'])) {
+      const body = await readBody(request);
+      const result = await runRexResearchMemoryCanary(body);
+      json(response, result.ok ? 200 : 503, result);
+      return;
+    }
+
     if (request.method === 'POST' && matchesPath(pathname, ['/brain/ingest', '/api/brain/ingest'])) {
       const body = await readBody(request);
       const candidateUrl = body.url || body.sourceUrl || body.source_url || body.source || '';
@@ -61460,9 +62101,18 @@ const server = createServer(async (request, response) => {
           return;
         }
         const patch = buildConversationThreadPatch(body, currentThread);
-        const thread = await store.patchThread(threadId, patch, {
-          workspaceId: CONVERSATION_WORKSPACE_ID,
-        });
+        let thread = currentThread;
+        if (body.read === true) {
+          thread = await store.markThreadRead(threadId, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          });
+          delete patch.unreadCount;
+        }
+        if (Object.keys(patch).length) {
+          thread = await store.patchThread(threadId, patch, {
+            workspaceId: CONVERSATION_WORKSPACE_ID,
+          });
+        }
         json(response, thread ? 200 : 404, {
           ok: Boolean(thread),
           result: 'postgres',
@@ -64422,7 +65072,7 @@ const server = createServer(async (request, response) => {
     json(response, 404, {
       ok: false,
       error: `No route for ${request.method} ${pathname}`,
-      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET /api/vector/capacity', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
+      available: ['GET /health', 'GET /state', 'GET /api/tools', 'GET /api/quotas', 'GET/POST /api/settings', 'GET /api/analytics', 'GET /api/analytics/campaign-drilldown', 'GET /api/memory/analytics', 'GET /api/memory/stats', 'GET /api/memory/events', 'GET /api/agent/history', 'GET /api/intelligence/capabilities', 'GET /api/revenue/engine/status', 'POST /api/revenue/engine/propose', 'POST /api/emotion/ser/predict', 'POST /api/emotion/infer-tags', 'POST /api/emotion/learning/interactions', 'POST /api/emotion/learning/improve', 'POST /api/outreach/automations/propose', 'POST /api/self-improvement/evaluate', 'POST /api/voice/emotion-prosody', 'POST /api/interruption/classify', 'POST /api/skills/transfer/recommend', 'POST /api/post-call/coach', 'POST /api/goals/decompose', 'GET/POST /api/agent-decisions', 'POST /api/emotions/call', 'POST /api/emotion/predict', 'GET/POST /api/emotion/policies/experiments', 'POST /api/emotion/policies/assign', 'POST /api/emotion/policies/outcome', 'GET /api/leads/:id/emotional-state', 'GET /api/skills/outcomes', 'GET /api/fleet/outcomes', 'GET /api/objection/playbooks', 'GET/POST /api/lead-scoring/weights', 'GET/POST /api/rex/decisions', 'POST /api/rex/strategist/proposals', 'GET/POST /api/ava/active-memory', 'POST /api/ava/learning/run', 'POST /api/ava/inbound/route', 'POST /api/campaigns/:id/script', 'POST /api/campaigns/:id/sequence', 'POST /api/slack/interactions', 'POST /api/slack/commands', 'POST /api/slack/events', 'GET /api/deepgram/health', 'GET /api/desktop-sidecar/status', 'POST /api/desktop-sidecar/command', 'GET/POST /api/local/commands', 'GET /api/local/commands/pending', 'POST /api/local/commands/:id/result', 'WS /ws/sidecar', 'GET /api/voice/browser/health', 'POST /api/ws/browser/session', 'POST /api/voice/browser/session', 'WS /api/voice/browser/stream', 'WS /ws/browser', 'WS /api/ws/browser', 'POST /api/voice/tts', 'POST /api/voice/tts/stream', 'POST /api/deepgram/transcribe-url', 'GET /api/tooling/status', 'GET /api/vector/capacity', 'POST /api/brain/vector/backfill', 'POST /api/brain/vector/canary', 'GET/POST /api/workflows', 'GET/POST /api/property-data', 'GET /api/brain/email-context', 'POST /brain/ingest', 'POST /api/training/youtube', 'POST /api/evals/youtube-training/run', 'GET/POST /brain/query', 'GET /api/participants/profile', 'GET /api/crm/streak/status', 'GET /api/crm/streak/bootstrap-plan', 'GET /metrics', 'GET /api/contracts/templates', 'GET /api/contracts/paths', 'POST /api/contracts/reload', 'GET/POST /api/appointments', 'GET /api/replies/templates', 'GET /api/lead-transitions', 'POST /api/participants/classify', 'POST /api/documents/pdf', 'POST /api/v1/documents/pdf', 'POST /api/analyzeDeal', 'POST /api/v1/analyzeDeal', 'POST /api/cold-email/send', 'POST /api/replies/handle', 'POST /api/crm/streak/bootstrap', 'POST /api/send-seller-docs', 'POST /api/browser-research/launch', 'GET/POST /api/browser-research/jobs/:jobId', 'POST /api/browser-research/complete', 'GET /api/telnyx/numbers', 'GET /api/telnyx/voice-routing', 'GET /api/instantly/senders', 'GET/POST/PATCH /api/campaigns', 'GET /api/campaigns/lead-sources', 'GET /api/campaigns/templates/ranked', 'POST /api/campaigns/:campaignId/approval', 'POST /api/campaigns/:campaignId/actions', 'POST /api/campaigns/:campaignId/events', 'POST /api/campaigns/run-due', 'POST /invoke', 'POST /events', 'GET/POST /api/admin/tasks', 'GET /api/admin/audit', 'GET /api/admin/persistence', 'GET/POST /api/admin/schema/ensure', 'GET /api/admin/docusign/status', 'POST /api/admin/route', 'POST /api/admin/request', 'GET/POST /api/approvals', 'POST /api/approvals/:id/approve', 'POST /api/approvals/:id/deny', 'GET/POST/DELETE /api/dnc', 'GET/POST /api/calls', 'POST /api/operator/call', 'POST /api/operator/update', 'POST /api/safety/kill-switch', 'POST /api/calls/:id/action', 'GET/POST/PATCH/DELETE /api/messages', 'PATCH /api/messages/:id/archive', 'GET/DELETE /api/recordings/:messageId', 'GET /api/storage/s3/status', 'POST /api/recordings/fixture', 'POST /api/recordings', 'GET/POST /api/contracts', 'POST /api/contracts/draft', 'POST /api/contracts/prepare', 'POST /api/contracts/lawyer-review', 'POST /api/contract/send', 'POST /api/contracts/:id/send', 'POST /api/contracts/:id/remind', 'POST /api/contracts/:id/void', 'GET /api/contracts/:id/pdf', 'POST /api/underwriting/sign', 'GET /api/leads/:id/full', 'PATCH /api/leads/:id', 'GET /api/leads/:id/last-call', 'GET/POST /api/leads/import', 'POST /api/webhooks/booking', 'POST /api/webhooks/external-events', 'POST /api/v1/webhooks/external-events', 'POST /api/webhooks/instantly', 'POST /api/webhooks/email', 'POST /api/webhooks/telnyx', 'POST /api/webhooks/telnyx/inbound', 'WS /api/webhooks/telnyx/media', 'POST /webhooks/telnyx/recording', 'POST /api/webhooks/docusign', 'POST /api/docusign/callback'],
     });
   } catch (error) {
     const statusCode = Number.isInteger(error?.statusCode)

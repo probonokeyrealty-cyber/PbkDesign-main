@@ -179,6 +179,19 @@ assert(
   'Composer must expose an accessible SMS/email segmented control.'
 );
 assert(
+  composer.includes('pbk-composer-draft-shell') &&
+    composer.includes('pbk-composer-mobile-tools-toggle') &&
+    composer.includes('pbk-composer-send-button'),
+  'Composer must keep a compact rounded draft/send dock and disclose secondary tools on mobile.'
+);
+assert(
+  timeline.includes('pbk-conversation-event-delete') &&
+    timeline.includes('confirmDelete') &&
+    timeline.includes('soft-delete the event') &&
+    timeline.includes('toastUndo'),
+  'Timeline must expose a confirmed, reversible soft-delete action beside each event.'
+);
+assert(
   composer.includes('recipientRepairHref') &&
     composer.includes('Add contact info') &&
     composer.includes('/leads?new=1'),

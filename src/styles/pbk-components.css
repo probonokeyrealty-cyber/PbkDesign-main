@@ -4349,6 +4349,11 @@
   font-family: var(--font-mono);
   font-size: 9px;
 }
+.pbk-conversation-event-time-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .pbk-conversation-event-content p {
   margin: 6px 0 0;
   color: var(--text-secondary);
@@ -4426,6 +4431,28 @@
   border-color: var(--border);
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+.pbk-conversation-event-delete {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+.pbk-conversation-event-delete:hover,
+.pbk-conversation-event-delete:focus-visible {
+  background: color-mix(in srgb, var(--crimson) 14%, transparent);
+  color: var(--crimson);
+}
+.pbk-conversation-event-delete:disabled {
+  cursor: wait;
+  opacity: 0.48;
 }
 .pbk-conversation-event-menu {
   min-width: 184px;
@@ -4623,15 +4650,18 @@
 }
 .pbk-composer-body {
   display: block;
-  margin-top: 7px;
+  min-width: 0;
+  flex: 1;
 }
 .pbk-composer-body textarea {
-  min-height: 64px;
-  max-height: 112px;
+  min-height: 42px;
+  max-height: 120px;
   resize: none;
-  border-radius: 12px;
-  padding: 10px 11px;
-  font-size: 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 11px 13px;
+  font-size: 13px;
   line-height: 1.45;
 }
 .pbk-composer-subject input:focus,
@@ -4809,36 +4839,60 @@
   position: relative;
   z-index: 4;
   grid-row: 4;
+  display: grid;
   border-top: 1px solid var(--border-bright);
   background: color-mix(in srgb, var(--bg-console) 98%, transparent);
   padding: 9px 14px max(9px, env(safe-area-inset-bottom));
   box-shadow: 0 -14px 36px rgba(0, 0, 0, 0.14);
   backdrop-filter: blur(18px);
-  justify-content: space-between;
-  gap: 12px;
+  gap: 5px;
   margin-top: 0;
 }
-.pbk-composer-send-row > span {
+.pbk-composer-draft-shell {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--bg-elevated);
+  padding: 4px;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+.pbk-composer-draft-shell:focus-within {
+  border-color: var(--sky);
+  box-shadow: 0 0 0 3px var(--sky-glow);
+}
+.pbk-composer-send-assurance {
   color: var(--text-tertiary);
   font-size: 9px;
 }
-.pbk-composer-send-row > button {
+.pbk-composer-send-button {
   display: inline-flex;
   flex: 0 0 auto;
+  min-width: 82px;
+  min-height: 42px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 92px;
-  border: 1px solid var(--sky);
-  border-radius: 9px;
+  border: 0;
+  border-radius: 21px;
   background: var(--sky);
   color: #061018;
   padding: 8px 13px;
   font-weight: 800;
 }
-.pbk-composer-send-row > button:disabled {
+.pbk-composer-send-button:disabled {
   cursor: not-allowed;
   opacity: 0.42;
+}
+.pbk-composer-mobile-tools-toggle {
+  display: none;
+}
+.pbk-composer-advanced {
+  display: contents;
 }
 .pbk-conversation-composer > .pbk-data-source {
   margin: 7px 0 0;
@@ -5861,6 +5915,34 @@
     margin-top: 0;
     padding: 8px 10px max(9px, env(safe-area-inset-bottom));
   }
+  .pbk-composer-mobile-tools-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 36px;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    padding: 7px 10px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .pbk-composer-mobile-tools-toggle > span {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+  }
+  .pbk-composer-advanced {
+    display: none;
+  }
+  .pbk-composer-advanced.open {
+    display: grid;
+    gap: 7px;
+  }
   .pbk-composer-subject input,
   .pbk-composer-body textarea,
   .pbk-composer-tools input[type='datetime-local'],
@@ -5868,8 +5950,8 @@
     font-size: 16px;
   }
   .pbk-composer-body textarea {
-    min-height: 58px;
-    max-height: 82px;
+    min-height: 44px;
+    max-height: 96px;
   }
   .pbk-live-call-pip {
     position: fixed;
@@ -5891,11 +5973,24 @@
   .pbk-sender-select {
     grid-template-columns: 34px minmax(0, 1fr);
   }
-  .pbk-composer-send-row > span {
+  .pbk-composer-send-assurance {
     display: none;
   }
-  .pbk-composer-send-row > button {
-    width: 100%;
+  .pbk-composer-send-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    border-radius: 50%;
+    padding: 0;
+  }
+  .pbk-composer-send-button > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
   .pbk-conversation-event-row {
     grid-template-columns: 28px minmax(0, 1fr);

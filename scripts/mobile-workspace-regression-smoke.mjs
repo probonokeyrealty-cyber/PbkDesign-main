@@ -60,6 +60,13 @@ assert(
   'Leads and contracts must expose interactive roster search and smart filters.'
 );
 assert(
+  leads.includes('onClick={() => setSelectedLeadId(id)}') &&
+    leads.includes('navigate(`/leads/${encodeURIComponent(activeLeadId)}`)') &&
+    leads.includes('Agreed pricing / last offer') &&
+    leads.includes('Contract path'),
+  'Lead roster selection must stay in the workspace while an explicit Open lead action reaches the full portal.'
+);
+assert(
   commandCenter.includes('CALL_QUALITY_REVIEWED_KEY') &&
     commandCenter.includes('persistReviewedCallId') &&
     commandCenter.includes('reviewedCallRef.current.has(callId)'),

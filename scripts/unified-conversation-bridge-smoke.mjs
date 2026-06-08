@@ -320,18 +320,26 @@ assert(
 assert(
   /request\.method === 'PATCH'/.test(conversationRoutes) &&
     /buildConversationThreadPatch\(body,\s*currentThread\)/.test(conversationRoutes) &&
+    /store\.markThreadRead\(threadId,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID,?\s*\}\)/.test(
+      conversationRoutes
+    ) &&
+    /delete patch\.unreadCount/.test(conversationRoutes) &&
     /store\.patchThread\(threadId,\s*patch,\s*\{\s*workspaceId:\s*CONVERSATION_WORKSPACE_ID,?\s*\}\)/.test(
       conversationRoutes
     ),
-  'PATCH /api/conversations/:threadId must translate fields and pass workspace to the store.'
+  'PATCH /api/conversations/:threadId must persist read state on events before applying remaining thread fields.'
 );
 
 assert(
   /read:\s*'unreadCount'|patch\.unreadCount\s*=\s*0/.test(bridge) &&
     /Math\.max\(1,\s*Number\(currentThread\?\.unreadCount/.test(bridge) &&
+    /UPDATE public\.conversation_events[\s\S]*direction = 'inbound'[\s\S]*read_at IS NULL[\s\S]*hidden_at IS NULL/.test(
+      storeSource
+    ) &&
+    /recomputeThreadAggregates\(client,\s*\[id\],\s*workspace\)/.test(storeSource) &&
     /patch\.archivedAt\s*=\s*value\s*\?\s*now\s*:\s*null/.test(bridge) &&
     /patch\.spamReportedAt\s*=\s*value\s*\?\s*now\s*:\s*null/.test(bridge),
-  'Semantic thread patch helper must translate read, unread, archived, and spam fields strictly.'
+  'Semantic thread patching must update event-level read state and translate unread, archived, and spam fields strictly.'
 );
 
 assert(

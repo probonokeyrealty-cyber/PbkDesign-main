@@ -1649,6 +1649,36 @@ describe('conversation mutation allowlists and merging', () => {
     expect(pool.query).not.toHaveBeenCalled();
   });
 
+  test('marks visible inbound events read and recomputes the thread aggregate atomically', async () => {
+    const { pool, queries } = createRecordingTransaction(async (sql) => {
+      if (sql.includes('SELECT *') && sql.includes('FOR UPDATE')) {
+        return { rows: [threadRow({ id: THREAD_UUID, unread_count: 2 })] };
+      }
+      if (sql.includes('WITH target_threads AS')) {
+        return { rows: [threadRow({ id: THREAD_UUID, unread_count: 0 })] };
+      }
+      return { rows: [] };
+    });
+
+    const result = await createConversationStore(pool).markThreadRead(THREAD_UUID, {
+      workspaceId: 'pbk',
+      readAt: '2026-06-07T12:30:00.000Z',
+    });
+
+    expect(result).toMatchObject({ id: THREAD_UUID, unreadCount: 0 });
+    const eventUpdate = queries.find(({ sql }) => sql.includes('UPDATE public.conversation_events'));
+    expect(eventUpdate.sql).toContain("direction = 'inbound'");
+    expect(eventUpdate.sql).toContain('read_at IS NULL');
+    expect(eventUpdate.sql).toContain('hidden_at IS NULL');
+    expect(eventUpdate.params).toEqual([
+      THREAD_UUID,
+      'pbk',
+      '2026-06-07T12:30:00.000Z',
+    ]);
+    expect(queries.some(({ sql }) => sql.includes('WITH target_threads AS'))).toBe(true);
+    expect(queries.map(({ sql }) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+  });
+
   test('locks merge rows in stable ID order and dedupes source events and identities', async () => {
     const { pool, queries } = createRecordingTransaction(async (sql) => {
       if (

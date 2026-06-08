@@ -196,6 +196,7 @@ function ConversationEventRow({
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmSpam, setConfirmSpam] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const recordingUrl = getRecordingUrl(event);
   const transcriptSegments = getTranscriptSegments(event);
@@ -343,7 +344,7 @@ function ConversationEventRow({
               Report spam
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem variant="destructive" onSelect={() => void softDelete()}>
+          <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
             <Trash2 />
             Delete
           </DropdownMenuItem>
@@ -369,7 +370,46 @@ function ConversationEventRow({
           </AlertDialogContent>
         </AlertDialog>
       )}
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent className="pbk-conversation-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this activity from the seller timeline?</AlertDialogTitle>
+            <AlertDialogDescription>
+              PBK will soft-delete the event and keep the provider record intact. You can undo the
+              removal from the confirmation toast.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep activity</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmDelete(false);
+                void softDelete();
+              }}
+            >
+              <Trash2 size={14} />
+              Remove activity
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
+  );
+
+  const deleteButton = (
+    <button
+      type="button"
+      className="pbk-conversation-event-delete"
+      onClick={(clickEvent) => {
+        clickEvent.stopPropagation();
+        setConfirmDelete(true);
+      }}
+      disabled={actionPending}
+      aria-label="Delete activity from timeline"
+      title="Delete activity"
+    >
+      {actionPending ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+    </button>
   );
 
   if (message) {
@@ -391,6 +431,7 @@ function ConversationEventRow({
           <span className={`status ${text(event.status).toLowerCase()}`}>
             {text(event.status, outbound ? 'sent' : 'received').replace(/_/g, ' ')}
           </span>
+          {deleteButton}
         </div>
       </article>
     );
@@ -411,7 +452,10 @@ function ConversationEventRow({
       <div className="pbk-conversation-event-content">
         <div className="pbk-conversation-event-heading">
           <strong>{text(event.eventType, 'System activity').replace(/_/g, ' ')}</strong>
-          <span>{formatTime(event.occurredAt)}</span>
+          <span className="pbk-conversation-event-time-actions">
+            <span>{formatTime(event.occurredAt)}</span>
+            {deleteButton}
+          </span>
         </div>
         {kind === 'call' && callPresentation ? (
           <div className="pbk-conversation-call-summary">

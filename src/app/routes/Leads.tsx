@@ -1546,11 +1546,11 @@ export function Leads() {
                   aria-selected={isSelected}
                   aria-pressed={isSelected}
                   className="lead-mobile-card"
-                  onClick={() => navigate(`/leads/${encodeURIComponent(id)}`)}
+                  onClick={() => setSelectedLeadId(id)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      navigate(`/leads/${encodeURIComponent(id)}`);
+                      setSelectedLeadId(id);
                     }
                   }}
                 >
@@ -1626,7 +1626,7 @@ export function Leads() {
                   type="button"
                   aria-label={`Open lead ${getSellerName(lead)} at ${getLeadAddress(lead)}`}
                   aria-selected={isSelected}
-                  onClick={() => navigate(`/leads/${encodeURIComponent(id)}`)}
+                  onClick={() => setSelectedLeadId(id)}
                   className={[
                     'grid w-full grid-cols-1 gap-2 px-4 py-4 text-left transition md:grid-cols-[1fr_auto]',
                     isSelected ? 'bg-sky-500/10' : 'hover:bg-slate-900',
@@ -1704,6 +1704,13 @@ export function Leads() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/leads/${encodeURIComponent(activeLeadId)}`)}
+                    className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-300 hover:bg-sky-400/15"
+                  >
+                    Open lead
+                  </button>
                   <button
                     type="button"
                     onClick={reloadLeadDetail}
@@ -2443,7 +2450,7 @@ export function Leads() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Selected path">
+                <Field label="Contract path">
                   <select
                     className={inputClass}
                     value={editForm.selectedPath}
@@ -2483,7 +2490,7 @@ export function Leads() {
                     onChange={(event) => setEditForm({ ...editForm, tags: event.target.value })}
                   />
                 </Field>
-                <Field label="Last offer">
+                <Field label="Agreed pricing / last offer">
                   <input
                     className={inputClass}
                     type="number"

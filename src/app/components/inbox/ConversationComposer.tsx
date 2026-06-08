@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Mic,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Square,
   UserRoundPen,
@@ -205,6 +206,7 @@ export function ConversationComposer({
   const [listening, setListening] = useState(false);
   const [templates, setTemplates] = useState<ReplyTemplateRecord[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [notice, setNotice] = useState<ComposerOutcome | null>(null);
   const [sendOutcome, setSendOutcome] = useState<ComposerOutcome | null>(null);
   const [recommendationGuard, setRecommendationGuard] = useState('');
@@ -580,87 +582,88 @@ export function ConversationComposer({
           </label>
         )}
 
-        <label className="pbk-composer-body">
-          <span className="sr-only">Message body</span>
-          <textarea
-            id="conversation-message-body"
-            name="body"
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            placeholder={
-              channel === 'sms'
-                ? 'Write a clear seller text...'
-                : 'Write a thoughtful seller email...'
-            }
-            rows={3}
-          />
-        </label>
+        <button
+          type="button"
+          className="pbk-composer-mobile-tools-toggle"
+          aria-expanded={mobileToolsOpen}
+          onClick={() => setMobileToolsOpen((open) => !open)}
+        >
+          <SlidersHorizontal size={14} />
+          Message tools
+          <span>{mobileToolsOpen ? 'Hide' : 'Open'}</span>
+        </button>
 
-        <div className="pbk-composer-smart-replies" aria-label="Ava smart replies">
-          <span>
-            <Sparkles size={12} />
-            Smart replies
-          </span>
-          {templatesLoading && <Loader2 size={13} className="animate-spin" />}
-          {templates.map((template, index) => (
+        <div className={`pbk-composer-advanced ${mobileToolsOpen ? 'open' : ''}`}>
+          <div className="pbk-composer-smart-replies" aria-label="Ava smart replies">
+            <span>
+              <Sparkles size={12} />
+              Smart replies
+            </span>
+            {templatesLoading && <Loader2 size={13} className="animate-spin" />}
+            {templates.map((template, index) => (
+              <button
+                key={`${template.templateKey || 'reply'}-${index}`}
+                type="button"
+                onClick={() => {
+                  setBody(text(template.text || template.html));
+                  if (channel === 'email' && template.subject) setSubject(template.subject);
+                }}
+                title={text(template.text || template.html)}
+              >
+                {text(template.text || template.html).slice(0, 52)}
+              </button>
+            ))}
+          </div>
+
+          <div className="pbk-composer-tools">
             <button
-              key={`${template.templateKey || 'reply'}-${index}`}
               type="button"
-              onClick={() => {
-                setBody(text(template.text || template.html));
-                if (channel === 'email' && template.subject) setSubject(template.subject);
-              }}
-              title={text(template.text || template.html)}
+              className={listening ? 'active listening' : ''}
+              onClick={startListening}
+              aria-pressed={listening}
             >
-              {text(template.text || template.html).slice(0, 52)}
+              {listening ? <Square size={13} /> : <Mic size={14} />}
+              {listening ? 'Stop dictation' : 'Ava mic'}
             </button>
-          ))}
-        </div>
-
-        <div className="pbk-composer-tools">
-          <button
-            type="button"
-            className={listening ? 'active listening' : ''}
-            onClick={startListening}
-            aria-pressed={listening}
-          >
-            {listening ? <Square size={13} /> : <Mic size={14} />}
-            {listening ? 'Stop dictation' : 'Ava mic'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void refineDraft()}
-            disabled={!body.trim() || refining}
-          >
-            {refining ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
-            Refine with Ava
-          </button>
-          <label className="pbk-composer-schedule-toggle">
-            <input
-              id="conversation-send-later"
-              name="sendLater"
-              type="checkbox"
-              checked={sendLater}
-              onChange={(event) => setSendLater(event.target.checked)}
-            />
-            <CalendarClock size={14} />
-            Send later
-          </label>
-          {sendLater && (
-            <input
-              id="conversation-scheduled-for"
-              name="scheduledFor"
-              type="datetime-local"
-              value={scheduledFor}
-              onChange={(event) => setScheduledFor(event.target.value)}
-              aria-label="Scheduled send time"
-            />
-          )}
-          <span className="pbk-composer-count">
-            {channel === 'sms'
-              ? `${segmentInfo.segments} segment${segmentInfo.segments === 1 ? '' : 's'} · ${segmentInfo.encoding}`
-              : `${body.length} characters`}
-          </span>
+            <button
+              type="button"
+              onClick={() => void refineDraft()}
+              disabled={!body.trim() || refining}
+            >
+              {refining ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <WandSparkles size={14} />
+              )}
+              Refine with Ava
+            </button>
+            <label className="pbk-composer-schedule-toggle">
+              <input
+                id="conversation-send-later"
+                name="sendLater"
+                type="checkbox"
+                checked={sendLater}
+                onChange={(event) => setSendLater(event.target.checked)}
+              />
+              <CalendarClock size={14} />
+              Send later
+            </label>
+            {sendLater && (
+              <input
+                id="conversation-scheduled-for"
+                name="scheduledFor"
+                type="datetime-local"
+                value={scheduledFor}
+                onChange={(event) => setScheduledFor(event.target.value)}
+                aria-label="Scheduled send time"
+              />
+            )}
+            <span className="pbk-composer-count">
+              {channel === 'sms'
+                ? `${segmentInfo.segments} segment${segmentInfo.segments === 1 ? '' : 's'} · ${segmentInfo.encoding}`
+                : `${body.length} characters`}
+            </span>
+          </div>
         </div>
 
         {!canSend && sendDisabledReason && !sending && (
@@ -700,20 +703,42 @@ export function ConversationComposer({
       </div>
 
       <div className="pbk-composer-send-row">
-        <span>
-          Voice and Ava refinement only edit this draft. The bridge sends only when you press Send.
+        <div className="pbk-composer-draft-shell">
+          <label className="pbk-composer-body">
+            <span className="sr-only">Message body</span>
+            <textarea
+              id="conversation-message-body"
+              name="body"
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+              placeholder={
+                channel === 'sms'
+                  ? 'Write a clear seller text...'
+                  : 'Write a thoughtful seller email...'
+              }
+              rows={2}
+            />
+          </label>
+          <button
+            type="button"
+            className="pbk-composer-send-button"
+            onClick={() => void sendMessage()}
+            disabled={!canSend}
+            aria-label={sendLater ? 'Schedule message' : 'Send message'}
+            aria-describedby={
+              !canSend && sendDisabledReason && !sending
+                ? 'conversation-send-requirement'
+                : undefined
+            }
+          >
+            {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
+            <span>{sendLater ? 'Schedule' : 'Send'}</span>
+          </button>
+        </div>
+        <span className="pbk-composer-send-assurance">
+          Ava edits the draft. The bridge sends only when you press{' '}
+          {sendLater ? 'Schedule' : 'Send'}.
         </span>
-        <button
-          type="button"
-          onClick={() => void sendMessage()}
-          disabled={!canSend}
-          aria-describedby={
-            !canSend && sendDisabledReason && !sending ? 'conversation-send-requirement' : undefined
-          }
-        >
-          {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-          {sendLater ? 'Schedule' : 'Send'}
-        </button>
       </div>
     </section>
   );

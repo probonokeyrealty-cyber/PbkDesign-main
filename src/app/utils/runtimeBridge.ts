@@ -528,6 +528,7 @@ export type VectorCapacityTable = {
   statsUpdatedAt?: string | null;
   vectorIndexMethod?: string;
   indexNames?: string[];
+  ready?: boolean;
 };
 
 export type VectorCapacityStatusResponse = {
@@ -544,6 +545,24 @@ export type VectorCapacityStatusResponse = {
     estimatedEmbeddedRows?: number;
     totalBytes?: number;
     vectorTableCount?: number;
+    rexResearchReady?: boolean;
+  };
+  rexResearch?: {
+    ready?: boolean;
+    schemaReady?: boolean;
+    embeddingsReady?: boolean;
+    indexReady?: boolean;
+    canary?: {
+      ok?: boolean;
+      fresh?: boolean;
+      result?: string;
+      latencyMs?: number;
+      embeddingModel?: string;
+      dimensions?: number;
+      matchedId?: string;
+      error?: string;
+      createdAt?: string | null;
+    };
   };
   recommendation?: {
     action?: string;

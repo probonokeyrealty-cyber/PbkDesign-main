@@ -1,5 +1,7 @@
 import pg from 'pg';
 
+import { createSkillCandidate } from './skill-governance-store.mjs';
+
 const { Pool } = pg;
 
 const DEFAULT_WINDOW_DAYS = 7;
@@ -366,56 +368,42 @@ async function extractSkillCandidate(call, strategist, options = {}) {
   };
 }
 
-async function insertSkillCandidate(pool, candidate, callId) {
+async function insertSkillCandidate(pool, candidate, callId, options = {}) {
   const name = String(candidate.skill_name || candidate.name || '').trim().slice(0, 120);
-  const content = String(candidate.content || candidate.response || candidate.question || '').trim();
-  if (!name || !content) return null;
+  const instructions = String(candidate.content || candidate.response || candidate.question || '').trim();
+  if (!name || !instructions) return null;
   const keywords = Array.isArray(candidate.trigger_keywords)
     ? candidate.trigger_keywords.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8)
     : [];
-  const confidence = clampConfidence(candidate.confidence ?? 0.65);
-  const type = String(candidate.skill_type || 'closing_tactic').trim();
-
-  if (type === 'objection_handler') {
-    const result = await pool.query(
-      `INSERT INTO public.coach_memory (
-         workspace_id, memory_type, objection_tag, prompt, response, source, outcome, score, metadata, created_at, updated_at
-       )
-       VALUES ('pbk','objection',$1,$2,$3,'auto_learner','approved',$4,$5::jsonb,NOW(),NOW())
-       RETURNING id, objection_tag AS name, score AS confidence`,
-      [
-        name,
-        `Seller says: ${keywords.join(' or ') || name}`,
-        content,
-        confidence,
-        safeJson({ sourceCallId: callId, triggerKeywords: keywords }),
-      ],
-    );
-    return { table: 'coach_memory', ...result.rows[0] };
-  }
-
-  if (type === 'probe') {
-    const result = await pool.query(
-      `INSERT INTO public.probe_questions (
-         workspace_id, signal_keywords, question_text, follow_up_depth, priority, metadata, created_at
-       )
-       VALUES ('pbk',$1::text[],$2,1,75,$3::jsonb,NOW())
-       RETURNING id, question_text AS name, priority AS confidence`,
-      [keywords, content, safeJson({ sourceCallId: callId, autoLearnerConfidence: confidence })],
-    );
-    return { table: 'probe_questions', ...result.rows[0] };
-  }
-
-  const result = await pool.query(
-    `INSERT INTO public.skills (
-       workspace_id, agent_id, agent_name, name, source, level, status, confidence, evidence, metadata, created_at, updated_at
-     )
-     VALUES ('pbk','ava','Ava',$1,'auto_learner','candidate','active',$2,$3,$4::jsonb,NOW(),NOW())
-     ON CONFLICT DO NOTHING
-     RETURNING id, name, confidence`,
-    [name, confidence, `Extracted from successful call ${callId}`, safeJson({ sourceCallId: callId, triggerKeywords: keywords, content })],
-  );
-  return result.rows[0] ? { table: 'skills', ...result.rows[0] } : null;
+  const skillType = String(candidate.skill_type || 'closing_tactic').trim() || 'closing_tactic';
+  const createCandidate = options.createCandidate || createSkillCandidate;
+  const slug = `auto-${String(callId || 'unknown')}-${name}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+  return createCandidate(pool, {
+    workspaceId: 'pbk',
+    slug,
+    displayName: name,
+    ownerId: 'ava',
+    agentId: 'ava',
+    riskClass: 'medium',
+    source: 'auto_learner',
+    instructions,
+    triggerPolicy: {
+      keywords,
+      skillType,
+      confidence: clampConfidence(candidate.confidence ?? 0.65),
+    },
+    sourceProvenance: {
+      sourceSystem: 'successful_call',
+      sourceId: String(callId || ''),
+      extractorVersion: 'auto-skill-learner-v2',
+    },
+    safetyScan: { status: 'pending' },
+    createdBy: 'auto-skill-learner',
+  });
 }
 
 async function generateNewSkillsFromSuccess(pool, options = {}) {
@@ -460,23 +448,14 @@ export async function runAutoSkillLearner(options = {}) {
     const llmAvailable = hasSkillLearnerLlmProvider(env);
     const created = llmAvailable ? await generateNewSkillsFromSuccess(pool, options) : [];
     const extractionSkippedReason = llmAvailable ? '' : 'llm_provider_unavailable';
-    let reloadResult = null;
-    const changed = [...boosted, ...decayed, ...created];
-    if (changed.length && typeof options.reloadActiveSkills === 'function') {
-      reloadResult = await options.reloadActiveSkills({
-        source: 'auto_skill_learner',
-        boosted,
-        decayed,
-        created,
-        changedCount: changed.length,
-      });
-    }
+    const reloadResult = null;
     return {
       ok: true,
       result: 'auto_skill_learner_complete',
       boostedCount: boosted.length,
       decayedCount: decayed.length,
       createdCount: created.length,
+      requiresReviewCount: created.length,
       extractionSkippedReason,
       boosted,
       decayed,
@@ -498,6 +477,7 @@ export {
   generateNewSkillsFromSuccess,
   getDatabaseUrl,
   hasSkillLearnerLlmProvider,
+  insertSkillCandidate,
   prepareSkillExtractionTranscript,
 };
 

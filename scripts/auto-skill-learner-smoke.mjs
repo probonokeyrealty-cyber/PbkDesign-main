@@ -4,6 +4,7 @@ import {
   assertSkillLearnerDatabaseConfigured,
   decayUnderperformingSkills,
   hasSkillLearnerLlmProvider,
+  insertSkillCandidate,
   prepareSkillExtractionTranscript,
   runAutoSkillLearner,
 } from './auto-skill-learner.mjs';
@@ -70,6 +71,57 @@ assert.equal(decayed.length, 1, 'One underperforming skill should decay.');
 assert.equal(decayed[0].id, 'skill-bad');
 assert.equal(decayed[0].confidence, 0.665);
 
+const candidateQueries = [];
+const candidatePool = {
+  async query(sql, params = []) {
+    candidateQueries.push({ sql, params });
+    if (/INSERT INTO public\.skill_definitions/.test(sql)) {
+      return { rows: [{ id: 'definition-1' }] };
+    }
+    if (/MAX\(version_number\)/.test(sql)) {
+      return { rows: [{ version_number: 1 }] };
+    }
+    if (/INSERT INTO public\.skill_versions/.test(sql)) {
+      return {
+        rows: [
+          {
+            id: 'version-1',
+            lifecycle_state: 'candidate',
+            content_hash: 'hash-1',
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  },
+};
+const createdCandidate = await insertSkillCandidate(
+  candidatePool,
+  {
+    skill_name: 'Price gap',
+    skill_type: 'objection_handler',
+    trigger_keywords: ['too low'],
+    content: 'Ask what evidence would close the price gap.',
+    confidence: 0.7,
+  },
+  'call-1',
+  {
+    createCandidate: async (_pool, input) => {
+      assert.equal(input.createdBy, 'auto-skill-learner');
+      return {
+        definition: { id: 'definition-1' },
+        version: { id: 'version-1', lifecycle_state: 'candidate' },
+      };
+    },
+  },
+);
+assert.equal(createdCandidate.version.lifecycle_state, 'candidate');
+assert.equal(
+  candidateQueries.some(({ sql }) => /coach_memory|probe_questions/.test(sql)),
+  false,
+  'Auto extraction must not bypass governance through active memory or probe tables.',
+);
+
 const learnerQueries = [];
 let reloadPayload = null;
 const learnerPool = {
@@ -96,7 +148,11 @@ assert.equal(learnerResult.ok, true);
 assert.equal(learnerResult.extractionSkippedReason, 'llm_provider_unavailable');
 assert.equal(learnerResult.createdCount, 0);
 assert.equal(learnerResult.decayedCount, 0);
-assert.equal(reloadPayload, null, 'No reload should happen when no skills changed.');
+assert.equal(
+  reloadPayload,
+  null,
+  'Candidate creation and confidence changes must not trigger active runtime reloads.',
+);
 assert(
   learnerQueries.some((entry) => /HAVING COUNT\(\*\) FILTER \(WHERE success IS TRUE\)/is.test(entry.sql)),
   'Boost pass should still run when LLM extraction is unavailable.',

@@ -1015,7 +1015,7 @@ export default function App({ engineOnly = false }: AppProps) {
           />
 
           {/* Tab Content */}
-          <div className="pbk-deal-content flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
+          <div className="pbk-deal-content pbk-deal-content-with-mobile-rail flex-1 overflow-y-auto bg-[#F8FAFC] dark:bg-slate-900">
             {activeTab === 'analyzer' && (
               <AnalyzerTab
                 deal={activeDeal}

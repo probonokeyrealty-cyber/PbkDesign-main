@@ -24,8 +24,6 @@ function assertCacheControl(path, expected) {
 
 [
   '/assets/*',
-  '/*.css',
-  '/*.js',
   '/*.woff2',
   '/*.ttf',
   '/*.png',
@@ -39,6 +37,7 @@ function assertCacheControl(path, expected) {
 
 [
   '/index.shell.html',
+  '/ava-chat-widget.js',
   '/index.html',
   '/analyzer.html',
   '/',
@@ -62,6 +61,16 @@ const apiHeaderBlock = getHeaderBlock('/api/*');
 assert(
   !/immutable/.test(apiHeaderBlock),
   'API proxy routes must not be marked immutable; they need live bridge responses.',
+);
+
+const globalHeaderBlock = getHeaderBlock('/*');
+assert(
+  globalHeaderBlock.includes('microphone=(self)'),
+  'The production shell must allow same-origin microphone access for Ava voice controls.',
+);
+assert(
+  globalHeaderBlock.includes('wss://pbk-openclaw-bridge.onrender.com'),
+  'The production CSP must allow the hosted browser-voice WebSocket.',
 );
 
 console.log(JSON.stringify({ ok: true, result: 'netlify_cache_headers_smoke_ready' }, null, 2));

@@ -616,6 +616,9 @@ export function CallFloorPanel({
           </button>
         </div>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <label htmlFor="callbackTime" className="sr-only">
+            Callback date and time
+          </label>
           <input
             id="callbackTime"
             type="datetime-local"

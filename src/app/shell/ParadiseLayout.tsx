@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router';
+import { Outlet, useLocation } from 'react-router';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { SessionTimeoutWarning } from '../components/SessionTimeoutWarning';
 import { ShortcutCheatSheet } from '../components/ShortcutCheatSheet';
@@ -28,7 +28,9 @@ const VALID_SHELL_PATHS = new Set([
   '/leads',
   '/deal',
   '/inbox',
+  '/inbox/conversations',
   '/fleet',
+  '/agents',
   '/memory',
   '/analytics',
   '/campaigns',
@@ -46,7 +48,7 @@ function isValidShellPath(path = '') {
   const pathname = getPathnameOnly(path);
   if (!pathname) return false;
   if (VALID_SHELL_PATHS.has(pathname)) return true;
-  return /^\/deal\/[^/]+$/.test(pathname);
+  return /^\/deal\/[^/]+$/.test(pathname) || /^\/leads\/[^/]+$/.test(pathname);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -92,13 +94,11 @@ function dispatchShortcutEvent(eventName: string, label: string) {
  */
 export function ParadiseLayout() {
   const location = useLocation();
-  const navigate = useNavigate();
   const [prefs, setPrefs] = useState(() => readPbkPrefs());
   const [systemTheme, setSystemTheme] = useState(() => getSystemPbkTheme());
   const [prefsSource, setPrefsSource] = useState('Local fallback');
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [skeletonOn, setSkeletonOn] = useState(false);
-  const lastPageRestoredRef = useRef(false);
   const bridgePrefsHydratedRef = useRef(false);
   const { snapshot, refresh } = useRuntimeSnapshot(10000);
   const pendingApprovalCount = getPendingApprovalCount(snapshot || {});
@@ -172,28 +172,23 @@ export function ParadiseLayout() {
 
   useEffect(() => {
     const path = `${location.pathname}${location.search || ''}`;
-    savePbkPrefs({ lastPage: path });
-    setPrefs((current) => ({ ...current, lastPage: path }));
+    const savedPath = isValidShellPath(path) ? path : '/';
+    savePbkPrefs({ lastPage: savedPath });
+    setPrefs((current) => ({ ...current, lastPage: savedPath }));
+    const routeTitle =
+      location.pathname === '/'
+        ? 'Command Center'
+        : location.pathname
+            .split('/')
+            .filter(Boolean)
+            .map((segment) => segment.replace(/-/g, ' '))
+            .map((segment) => segment.replace(/\b\w/g, (letter) => letter.toUpperCase()))
+            .join(' - ');
+    document.title = `${routeTitle || 'Command Center'} | PBK`;
     setSkeletonOn(true);
     const timer = window.setTimeout(() => setSkeletonOn(false), 220);
     return () => window.clearTimeout(timer);
   }, [location.pathname, location.search]);
-
-  useEffect(() => {
-    if (lastPageRestoredRef.current) return;
-    lastPageRestoredRef.current = true;
-    if (location.pathname !== '/' || prefs.lastPage === '/' || !prefs.lastPage) return;
-    if (!isValidShellPath(prefs.lastPage)) {
-      savePbkPrefs({ lastPage: '/' });
-      showUiToast({
-        tone: 'warning',
-        title: 'Saved page unavailable',
-        desc: 'The previous shell route no longer exists, so Command Center opened instead.',
-      });
-      return;
-    }
-    navigate(prefs.lastPage, { replace: true });
-  }, [location.pathname, navigate, prefs.lastPage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

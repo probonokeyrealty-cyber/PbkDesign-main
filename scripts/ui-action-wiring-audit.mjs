@@ -185,7 +185,7 @@ const netlifyBrainProxyIndex = netlifyConfig.lastIndexOf('from = "/brain/*"');
 const netlifySpaFallbackIndex = netlifyConfig.lastIndexOf('from = "/*"');
 const netlifySpaFallbackBlock = netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
 const netlifySpaFallbackConfigured = /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock)
-  && /to\s*=\s*"\/index\.html"/.test(netlifySpaFallbackBlock)
+  && /to\s*=\s*"\/index\.shell\.html"/.test(netlifySpaFallbackBlock)
   && /status\s*=\s*200/.test(netlifySpaFallbackBlock);
 const netlifyBrainCleanRouteOrdered = netlifyBrainCleanIndex >= 0
   && netlifyBrainProxyIndex >= 0
@@ -198,7 +198,7 @@ if (!netlifySpaFallbackOrdered || !netlifyBrainCleanRouteOrdered) {
   fail.push({
     name: 'Netlify SPA fallback must protect direct Command Center links after API rewrites',
     details: [
-      ...(!netlifySpaFallbackOrdered ? ['netlify.toml needs from="/*" -> /index.html after /api/* so shared clean URLs render the app without stealing API calls.'] : []),
+      ...(!netlifySpaFallbackOrdered ? ['netlify.toml needs from="/*" -> /index.shell.html after /api/* so shared clean URLs render the modern app without stealing API calls.'] : []),
       ...(!netlifyBrainCleanRouteOrdered ? ['netlify.toml needs exact from="/brain" -> /index.html before /brain/* proxy so the Brain page is not treated as a protected API call.'] : []),
     ],
   });

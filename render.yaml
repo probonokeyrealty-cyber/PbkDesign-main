@@ -325,6 +325,9 @@ services:
       # including the BEGIN/END markers. Render's env var UI handles newlines.
       - key: PBK_DOCUSIGN_PRIVATE_KEY
         sync: false
+      # Configure the matching DocuSign Connect key and enable HMAC signatures.
+      - key: PBK_DOCUSIGN_CONNECT_HMAC_SECRET
+        sync: false
 
       # ── BatchData skip-trace ────────────────────────────────────────────
       - key: PBK_BATCHDATA_API_KEY

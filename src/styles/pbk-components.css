@@ -7530,6 +7530,119 @@ html[data-theme='light'] .pbk-mobile-shell-menu-link.active {
 }
 
 /* ============================================================
+   AVA OPERATOR WORKSPACE
+   ============================================================ */
+.pbk-ava-chat-surface {
+  --ava-bg: #06080b;
+  --ava-panel: #101722;
+  --ava-panel-elevated: #151e2c;
+  --ava-hover: #1b2636;
+  --ava-border: #263448;
+  --ava-border-bright: #3b4e68;
+  --ava-text: #e8edf4;
+  --ava-text-muted: #9aa9bd;
+  --ava-text-faint: #66758a;
+  --ava-sky: #59c9f8;
+  --ava-sky-soft: rgba(56, 189, 248, 0.12);
+  --ava-user-bubble: #142a44;
+  --ava-user-border: #25517b;
+  --ava-success: #4ade80;
+  --ava-warning: #fbbf24;
+  --ava-warning-soft: rgba(251, 191, 36, 0.1);
+  --ava-warning-border: rgba(251, 191, 36, 0.35);
+  --ava-danger: #fb7185;
+  --ava-danger-soft: rgba(251, 113, 133, 0.1);
+  --ava-danger-border: rgba(251, 113, 133, 0.32);
+  color-scheme: dark;
+}
+
+html[data-theme='light'] .pbk-ava-chat-surface {
+  --ava-bg: #eef5fb;
+  --ava-panel: #ffffff;
+  --ava-panel-elevated: #f8fbfe;
+  --ava-hover: #e9f2f9;
+  --ava-border: #cedce9;
+  --ava-border-bright: #afc5d8;
+  --ava-text: #142033;
+  --ava-text-muted: #506176;
+  --ava-text-faint: #718297;
+  --ava-sky: #0369a1;
+  --ava-sky-soft: rgba(14, 165, 233, 0.1);
+  --ava-user-bubble: #e3f2fd;
+  --ava-user-border: #9ccbe8;
+  --ava-success: #15803d;
+  --ava-warning: #a16207;
+  --ava-warning-soft: rgba(217, 119, 6, 0.09);
+  --ava-warning-border: rgba(217, 119, 6, 0.28);
+  --ava-danger: #be123c;
+  --ava-danger-soft: rgba(225, 29, 72, 0.08);
+  --ava-danger-border: rgba(225, 29, 72, 0.25);
+  color-scheme: light;
+}
+
+.pbk-ava-presence-orb {
+  color: var(--ava-sky);
+  border-color: color-mix(in srgb, var(--ava-sky) 66%, transparent);
+  background:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--ava-sky) 18%, transparent),
+      transparent 58%
+    ),
+    var(--ava-panel);
+  box-shadow:
+    inset 0 0 18px color-mix(in srgb, var(--ava-sky) 13%, transparent),
+    0 0 24px color-mix(in srgb, var(--ava-sky) 10%, transparent);
+}
+
+.pbk-ava-presence-orb.is-listening {
+  animation: pbk-ava-listen 1.45s ease-in-out infinite;
+}
+
+.pbk-ava-presence-orb.is-thinking,
+.pbk-ava-presence-orb.is-working {
+  animation: pbk-ava-working 1.2s linear infinite;
+}
+
+.pbk-ava-presence-orb.is-offline {
+  color: var(--ava-danger);
+  border-color: var(--ava-danger-border);
+  box-shadow: inset 0 0 16px var(--ava-danger-soft);
+}
+
+@keyframes pbk-ava-listen {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 18px color-mix(in srgb, var(--ava-sky) 13%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--ava-sky) 28%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 24px color-mix(in srgb, var(--ava-sky) 22%, transparent),
+      0 0 0 8px transparent;
+  }
+}
+
+@keyframes pbk-ava-working {
+  0% {
+    filter: brightness(0.88);
+  }
+  50% {
+    filter: brightness(1.18);
+  }
+  100% {
+    filter: brightness(0.88);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pbk-ava-presence-orb {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
    DEAL ANALYZER MODERN SURFACE
    ============================================================ */
 .pbk-deal-surface {
@@ -8592,7 +8705,7 @@ html[data-theme='light'] .new-lead-section-head strong {
 
 .pbk-settings-source-rail {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 8px;
   margin-top: 16px;
 }
@@ -8739,12 +8852,19 @@ html[data-theme='light'] .new-lead-section-head strong {
   margin-top: 16px;
 }
 
+.pbk-settings-layout > *,
+.pbk-settings-card-head > *,
+.pbk-settings-admin-card .admin-row > * {
+  min-width: 0;
+}
+
 .pbk-settings-layout .span-2 {
   grid-row: span 2;
 }
 
 .pbk-settings-card {
   min-width: 0;
+  overflow: hidden;
   padding: 16px;
 }
 
@@ -8765,9 +8885,17 @@ html[data-theme='light'] .new-lead-section-head strong {
 }
 
 .pbk-settings-tool-card {
+  min-width: 0;
   min-height: 138px;
   padding: 13px;
   background: rgba(15, 23, 42, 0.64);
+}
+
+.pbk-settings-tool-card p,
+.pbk-settings-admin-card .admin-summary,
+.pbk-settings-card-head .pbk-data-source,
+.pbk-settings-card-head .pbk-data-source code {
+  overflow-wrap: anywhere;
 }
 
 .pbk-settings-tool-card strong {

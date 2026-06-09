@@ -925,19 +925,40 @@ export function CommandCenter() {
   const reviewedCallRef = useRef(readReviewedCallIds());
   const promptedCallRef = useRef('');
 
-  const approvals = Array.isArray(snapshot?.approvals) ? snapshot.approvals : [];
-  const adminTasks = Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : [];
-  const snapshotLeadImports = Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : [];
+  const approvals = useMemo(
+    () => (Array.isArray(snapshot?.approvals) ? snapshot.approvals : []),
+    [snapshot?.approvals]
+  );
+  const adminTasks = useMemo(
+    () => (Array.isArray(snapshot?.adminTasks) ? snapshot.adminTasks : []),
+    [snapshot?.adminTasks]
+  );
+  const snapshotLeadImports = useMemo(
+    () => (Array.isArray(snapshot?.leadImports) ? snapshot.leadImports : []),
+    [snapshot?.leadImports]
+  );
   const leadImports = useMemo(
     () => (bridgeLeadRoster.length ? bridgeLeadRoster : snapshotLeadImports),
     [bridgeLeadRoster, snapshotLeadImports]
   );
-  const fallbackActivityItems = Array.isArray(snapshot?.activity) ? snapshot.activity : [];
+  const fallbackActivityItems = useMemo(
+    () => (Array.isArray(snapshot?.activity) ? snapshot.activity : []),
+    [snapshot?.activity]
+  );
   const activityItems = intelligenceStreamItems || fallbackActivityItems;
   const visibleActivity = activityItems.slice(0, activityLimit);
-  const calls = Array.isArray(snapshot?.calls) ? snapshot.calls : [];
-  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
-  const contracts = Array.isArray(snapshot?.contracts) ? snapshot.contracts : [];
+  const calls = useMemo(
+    () => (Array.isArray(snapshot?.calls) ? snapshot.calls : []),
+    [snapshot?.calls]
+  );
+  const messages = useMemo(
+    () => (Array.isArray(snapshot?.messages) ? snapshot.messages : []),
+    [snapshot?.messages]
+  );
+  const contracts = useMemo(
+    () => (Array.isArray(snapshot?.contracts) ? snapshot.contracts : []),
+    [snapshot?.contracts]
+  );
   const fallbackSourceConfidenceItems = useMemo(
     () =>
       buildFallbackSourceLabels({

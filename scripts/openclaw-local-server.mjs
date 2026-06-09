@@ -72,6 +72,7 @@ import {
   getEmbeddingProviderConfig,
   prewarmEmbeddingProvider,
 } from './vector-embedding.mjs';
+import { verifyDocuSignConnectSignature as verifyDocuSignConnectSignatureCore } from './docusign-webhook-auth.mjs';
 import {
   COMMAND_INTENT_ROUTER_VERSION,
   classifyCommandIntent,
@@ -173,7 +174,7 @@ function hydrateWindowsUserEnv(keys = []) {
   }
 }
 
-hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_STRATEGIST_PROVIDER', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
+hydrateWindowsUserEnv(['PBK_DOCUSIGN_INTEGRATION_KEY', 'PBK_DOCUSIGN_USER_ID', 'PBK_DOCUSIGN_ACCOUNT_ID', 'PBK_DOCUSIGN_AUTH_HOST', 'PBK_DOCUSIGN_REST_BASE', 'PBK_DOCUSIGN_PRIVATE_KEY', 'PBK_DOCUSIGN_CONNECT_HMAC_SECRET', 'PBK_SUPABASE_URL', 'PBK_SUPABASE_SERVICE_ROLE_KEY', 'PBK_N8N_API_BASE_URL', 'PBK_N8N_API_KEY', 'PBK_SUPERMEMORY_API_KEY', 'PBK_SUPERMEMORY_API_URL', 'PBK_SUPERMEMORY_SYNC', 'PBK_DEEPGRAM_API_KEY', 'DEEPGRAM_API_KEY', 'PBK_HUMAN_AGENT_PHONE', 'PBK_UNDERWRITING_AGENT_PHONE', 'PBK_INBOUND_QUALIFY_BEFORE_TRANSFER', 'PBK_INBOUND_AFTER_HOURS_VOICEMAIL_ENABLED', 'PBK_INBOUND_AFTER_HOURS_START', 'PBK_INBOUND_AFTER_HOURS_END', 'PBK_INBOUND_TIMEZONE', 'PBK_TELNYX_AI_ASSISTANT_ID', 'TELNYX_AI_ASSISTANT_ID', 'PBK_AVA_MEMORY_DAILY_MINUTES', 'PBK_BROWSER_VOICE_ENABLED', 'PBK_ELEVENLABS_TTS_ENABLED', 'PBK_ELEVENLABS_API_KEY', 'ELEVENLABS_API_KEY', 'PBK_PROTECTED_OPS_PASSCODE', 'PBK_TEAM_PASSCODE', 'PBK_OPERATOR_PHONE', 'PBK_TOTP_REQUIRED', 'PBK_TOTP_SECRET', 'PBK_VOICE_PREWARM_ENABLED', 'PBK_REDIS_URL', 'REDIS_URL', 'PBK_REDIS_ENABLED', 'PBK_REDIS_NAMESPACE', 'PBK_SLACK_UPDATES_CHANNEL_ID', 'PBK_SLACK_UPDATES_CHANNEL', 'SLACK_UPDATES_CHANNEL_ID', 'PBK_OPENAI_API_KEY', 'OPENAI_API_KEY', 'PBK_OPENAI_WEB_SEARCH_ENABLED', 'PBK_OPENAI_WEB_SEARCH_MODEL', 'PBK_OPENAI_BASE_URL', 'PBK_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'PBK_DEEPSEEK_BASE_URL', 'PBK_DEEPSEEK_MODEL', 'PBK_DEEPSEEK_FALLBACK_MODEL', 'PBK_STRATEGIST_PROVIDER', 'PBK_TAVILY_API_KEY', 'TAVILY_API_KEY', 'PBK_EMOTION_WORLD_MODEL_ENDPOINT', 'PBK_EMOTION_WORLD_MODEL_API_KEY', 'PBK_EMOTION_WORLD_MODEL_TIMEOUT_MS', 'PBK_HERMES_ENABLED', 'PBK_HERMES_GATEWAY_URL', 'PBK_HERMES_API_KEY', 'PBK_HERMES_WEBHOOK_URL', 'PBK_HERMES_SLACK_CHANNEL', 'PBK_HERMES_SUGGEST_ONLY', 'PBK_HERMES_TIMEOUT_MS']);
 
 const APPROVAL_WEBHOOK_URL = String(process.env.PBK_N8N_APPROVAL_WEBHOOK || '').trim();
 const LEAD_WEBHOOK_URL = String(process.env.PBK_N8N_LEAD_WEBHOOK || '').trim();
@@ -387,6 +388,7 @@ let DOCUSIGN_REST_BASE = String(process.env.PBK_DOCUSIGN_REST_BASE || 'https://w
 const DOCUSIGN_PRIVATE_KEY = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY || process.env.DOCUSIGN_PRIVATE_KEY || '');
 const DOCUSIGN_PRIVATE_KEY_B64 = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY_B64 || process.env.PBK_DOCUSIGN_PRIVATE_KEY_BASE64 || process.env.DOCUSIGN_PRIVATE_KEY_B64 || process.env.DOCUSIGN_PRIVATE_KEY_BASE64 || '').trim();
 const DOCUSIGN_PRIVATE_KEY_PATH = String(process.env.PBK_DOCUSIGN_PRIVATE_KEY_PATH || process.env.DOCUSIGN_PRIVATE_KEY_PATH || '').trim();
+const DOCUSIGN_CONNECT_HMAC_SECRET = String(process.env.PBK_DOCUSIGN_CONNECT_HMAC_SECRET || '').trim();
 
 // ── BatchData skip-trace ────────────────────────────────────────────────────
 const BATCHDATA_API_KEY = String(process.env.PBK_BATCHDATA_API_KEY || process.env.BATCHDATA_API_KEY || '').trim();
@@ -618,10 +620,6 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 const PUBLIC_READ_PATHS = new Set([
-  '/api/leads/stages',
-  '/api/v1/leads/stages',
-  '/api/deals/timeline',
-  '/api/v1/deals/timeline',
   '/api/observability/ai-metrics',
   '/api/v1/observability/ai-metrics',
   '/api/skills/outcomes',
@@ -1733,6 +1731,7 @@ function buildDocuSignProviderStatus() {
   const issues = [...DOCUSIGN_PRIVATE_KEY_MATERIAL.issues];
   const configured = missing.length === 0;
   const ready = configured && issues.length === 0 && DOCUSIGN_PRIVATE_KEY_MATERIAL.parsed;
+  const webhookReady = Boolean(DOCUSIGN_CONNECT_HMAC_SECRET);
 
   let summary = 'DocuSign provider is ready for JWT auth and envelope sends.';
   if (missing.length) {
@@ -1745,11 +1744,22 @@ function buildDocuSignProviderStatus() {
     ok: true,
     configured,
     ready,
+    productionReady: ready && webhookReady,
     authHost: DOCUSIGN_AUTH_HOST,
     restBase: DOCUSIGN_REST_BASE,
     missing,
     issues,
     summary,
+    webhook: {
+      configured: webhookReady,
+      ready: webhookReady,
+      route: '/api/webhooks/docusign',
+      authentication: 'hmac-sha256',
+      requiredHeader: 'X-DocuSign-Signature-N',
+      summary: webhookReady
+        ? 'DocuSign Connect webhook HMAC verification is configured.'
+        : 'Set PBK_DOCUSIGN_CONNECT_HMAC_SECRET and enable HMAC in DocuSign Connect before production webhook delivery.',
+    },
     privateKey: {
       source: DOCUSIGN_PRIVATE_KEY_MATERIAL.source,
       path: DOCUSIGN_PRIVATE_KEY_MATERIAL.path || '',
@@ -11126,7 +11136,8 @@ function normalizeLocalCommandStatus(value = '') {
     .trim()
     .toLowerCase()
     .replace(/-/g, '_');
-  if (['approved', 'ready', 'queued', 'pending'].includes(normalized)) return 'approved';
+  if (['approved', 'ready'].includes(normalized)) return 'approved';
+  if (['queued', 'pending'].includes(normalized)) return 'pending';
   if (['pending_approval', 'approval_required', 'needs_approval'].includes(normalized)) {
     return 'pending_approval';
   }
@@ -11448,10 +11459,34 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
 async function completeLocalCommand(commandId = '', payload = {}) {
   const id = String(commandId || payload.id || payload.commandId || payload.command_id || '').trim();
   if (!id) return { ok: false, result: 'missing_command_id', error: 'Command id is required.' };
-  const existing = (state.localCommands || []).find((item) => String(item.id || '') === id);
+  let existing = (state.localCommands || []).find((item) => String(item.id || '') === id);
+  if (!existing) {
+    const pool = getPgPool();
+    if (pool) {
+      try {
+        await ensureLocalCommandQueueSchema(pool);
+        const { rows } = await pool.query(
+          `SELECT * FROM public.pbk_local_commands
+           WHERE tenant_id = $1 AND id = $2
+           LIMIT 1`,
+          ['pbk', id]
+        );
+        if (rows[0]) existing = mapLocalCommandRow(rows[0]);
+      } catch (error) {
+        console.warn('[pbk-local-openclaw] local command lookup skipped:', error?.message || error);
+      }
+    }
+  }
+  if (!existing) {
+    return {
+      ok: false,
+      result: 'local_command_not_found',
+      error: 'Local command was not found; refusing to create a completion record.',
+    };
+  }
   const ok = payload.ok !== false && String(payload.status || '').toLowerCase() !== 'failed';
   const patched = {
-    ...(existing || buildLocalCommandRecord({ id, command: payload.command || 'reported command result' })),
+    ...existing,
     status: ok ? 'completed' : 'failed',
     result: payload.result && typeof payload.result === 'object' ? payload.result : { output: payload.result || payload.stdout || '' },
     error: ok ? '' : String(payload.error || payload.stderr || 'Local command failed.'),
@@ -35466,14 +35501,14 @@ async function preValidateToolSafety(toolName, params = {}, source = 'pbk-bridge
     }
     return validation;
   } catch (error) {
-    console.warn('[pbk-local-openclaw] safety validation skipped:', error?.message || error);
+    console.warn('[pbk-local-openclaw] safety validation failed closed:', error?.message || error);
     return {
-      ok: true,
+      ok: false,
       result: 'safety_runtime_error',
-      blocked: false,
-      providerWrite: false,
-      approvalRequired: false,
-      skipped: true,
+      blocked: true,
+      providerWrite: true,
+      approvalRequired: true,
+      skipped: false,
       error: error?.message || String(error),
     };
   }
@@ -40710,7 +40745,7 @@ function buildCampaignFromPayload(payload = {}) {
   const leads = dedupeCampaignLeads(providedLeads.length ? providedLeads : fallbackLeads);
   const id = payload.id || `campaign-${slugify(payload.name || `${channel}-${Date.now()}`) || randomUUID().slice(0, 8)}-${randomUUID().slice(0, 8)}`;
   const conflicts = findCampaignConflicts(leads, channel, id);
-  const status = normalizeCampaignStatus(payload.status || 'draft');
+  const status = 'draft';
   const providerConfig = getCampaignProviderConfig(payload);
   const schedule = payload.schedule && typeof payload.schedule === 'object' ? payload.schedule : {};
   const sequence = payload.sequence && typeof payload.sequence === 'object' ? payload.sequence : {};
@@ -40838,11 +40873,25 @@ async function patchCampaignRecord(campaignId = '', patch = {}) {
       error: 'Campaign record not found.',
     };
   }
+  const requestedStatus = normalizeCampaignStatus(patch.status || current.status);
+  if (
+    requestedStatus === 'active' &&
+    (String(current.approvalStatus || '').toLowerCase() !== 'approved' || !current.approvalId)
+  ) {
+    return {
+      ok: false,
+      result: 'approval_required',
+      verbiage: 'Campaign activation requires approval',
+      error: 'Request campaign approval before activating provider sends.',
+      campaign: current,
+      leads: getCampaignLeads(campaignId),
+    };
+  }
   const next = {
     ...current,
     ...patch,
     channel: normalizeCampaignChannel(patch.channel || current.channel),
-    status: normalizeCampaignStatus(patch.status || current.status),
+    status: requestedStatus,
     updatedAt: isoNow(),
   };
   upsertById(state, 'campaigns', next);
@@ -51030,6 +51079,29 @@ async function readBody(request) {
     return JSON.parse(raw);
   } catch {
     return { raw };
+  }
+}
+
+function verifyDocuSignConnectSignature(headers = {}, rawBody = Buffer.alloc(0)) {
+  return verifyDocuSignConnectSignatureCore({
+    headers,
+    rawBody,
+    secret: DOCUSIGN_CONNECT_HMAC_SECRET,
+    requireSignature: IS_HOSTED,
+  });
+}
+
+async function readDocuSignWebhookRequest(request) {
+  const buffer = await readRawBodyBuffer(request);
+  const signature = verifyDocuSignConnectSignature(request.headers, buffer);
+  if (!signature.ok) return { ...signature, payload: null };
+
+  const raw = buffer.toString('utf8');
+  if (!raw) return { ok: true, signature, payload: {} };
+  try {
+    return { ok: true, signature, payload: JSON.parse(raw) };
+  } catch {
+    return { ok: true, signature, payload: { raw } };
   }
 }
 
@@ -65589,7 +65661,19 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && pathname === '/api/webhooks/docusign') {
-      const body = await readBody(request);
+      const docusignRequest = await readDocuSignWebhookRequest(request);
+      if (!docusignRequest.ok) {
+        json(response, docusignRequest.status || 401, {
+          ok: false,
+          error: docusignRequest.error || 'DocuSign Connect webhook rejected.',
+          signature: {
+            verified: false,
+            skipped: Boolean(docusignRequest.skipped),
+          },
+        });
+        return;
+      }
+      const body = docusignRequest.payload || {};
       const mapped = mapDocuSignWebhook(body);
       const campaignWebhook = recordCampaignWebhookFromPayload('DocuSign', body, mapped.eventType);
       const result = await handleEvent(mapped.eventType, mapped.payload);
@@ -65597,6 +65681,10 @@ const server = createServer(async (request, response) => {
         ok: true,
         mappedEvent: mapped.eventType,
         campaignWebhook,
+        signature: {
+          verified: !docusignRequest.signature?.skipped,
+          skipped: Boolean(docusignRequest.signature?.skipped),
+        },
         result,
         state: buildStateSnapshot(),
       });

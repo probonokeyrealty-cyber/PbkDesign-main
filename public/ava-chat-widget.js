@@ -2,7 +2,12 @@
   if (window.PBK_PUBLIC_AVA_CHAT_LOADED) return;
   window.PBK_PUBLIC_AVA_CHAT_LOADED = true;
 
-  const endpoint = window.PBK_PUBLIC_AVA_CHAT_ENDPOINT || '/api/public/ava-chat';
+  const scriptUrl = document.currentScript && document.currentScript.src;
+  const scriptOrigin = scriptUrl
+    ? new URL(scriptUrl, window.location.href).origin
+    : window.location.origin;
+  const endpoint =
+    window.PBK_PUBLIC_AVA_CHAT_ENDPOINT || `${scriptOrigin}/api/public/ava-chat`;
   const mountId = window.PBK_PUBLIC_AVA_CHAT_MOUNT || 'pbk-ava-public-chat';
   const primary = window.PBK_PUBLIC_AVA_CHAT_ACCENT || '#71f7c8';
   const host = document.getElementById(mountId) || document.body.appendChild(document.createElement('div'));

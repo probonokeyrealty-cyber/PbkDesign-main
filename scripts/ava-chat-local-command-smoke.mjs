@@ -29,7 +29,10 @@ assert(
   'package.json must expose test:ava-chat-local-command.'
 );
 
-assert(fs.existsSync(path.join(root, 'src/app/routes/AvaChat.tsx')), 'AvaChat route file must exist.');
+assert(
+  fs.existsSync(path.join(root, 'src/app/routes/AvaChat.tsx')),
+  'AvaChat route file must exist.'
+);
 const avaChat = read('src/app/routes/AvaChat.tsx');
 
 [
@@ -43,14 +46,44 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'Command history',
   'OpenClaw',
   'ClickUI',
+  'Promise.allSettled',
+  'Search command history',
+  'Replay',
+  'getResultText',
+  'role="alert"',
+  'role="radiogroup"',
+  'text-[16px]',
+  'h-[calc(100dvh-188px)]',
+  'Open Ava context',
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
 });
 
 assert(
-  /PbkDataSource[\s\S]*endpoint="POST \/api\/local\/commands"[\s\S]*status="ships"/.test(
+  /command: 'Check OpenClaw sidecar status',[\s\S]*action: 'status'/.test(avaChat),
+  'Status quick prompt must select the status action instead of leaving operator_command active.'
+);
+assert(
+  /command: 'Take a screenshot of the current desktop',[\s\S]*action: 'screenshot'/.test(avaChat),
+  'Screenshot quick prompt must select the screenshot action.'
+);
+assert(
+  /showUiToast\(\{[\s\S]*title: result\.result[\s\S]*setSubmitting\(false\);[\s\S]*Promise\.allSettled/.test(
     avaChat
   ),
+  'A successful queue response must be acknowledged before non-critical refresh work.'
+);
+assert(
+  !avaChat.includes('Ava Chat with voice-controlled local operations.'),
+  'Ava Chat must use the conversation workspace instead of the legacy marketing hero.'
+);
+assert(
+  !avaChat.includes('Supabase-backed command record'),
+  'Ava Chat must not overstate the command store durability source.'
+);
+
+assert(
+  /PbkDataSource[\s\S]*endpoint="POST \/api\/local\/commands"[\s\S]*status="ships"/.test(avaChat),
   'AvaChat must mark POST /api/local/commands as shipped.'
 );
 assert(

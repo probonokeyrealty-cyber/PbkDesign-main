@@ -104,7 +104,7 @@ const netlifySpaFallbackBlock =
   netlifySpaFallbackIndex >= 0 ? netlifyConfig.slice(netlifySpaFallbackIndex) : '';
 const netlifySpaFallbackOrdered =
   /from\s*=\s*"\/\*"/.test(netlifySpaFallbackBlock) &&
-  /to\s*=\s*"\/index\.html"/.test(netlifySpaFallbackBlock) &&
+  /to\s*=\s*"\/index\.shell\.html"/.test(netlifySpaFallbackBlock) &&
   /status\s*=\s*200/.test(netlifySpaFallbackBlock) &&
   netlifyApiProxyIndex >= 0 &&
   netlifySpaFallbackIndex > netlifyApiProxyIndex;
@@ -826,9 +826,13 @@ const checks = [
       /function scoreCallQualityRecord/.test(bridge) &&
       /function recordSkillOutcomeRecord/.test(bridge) &&
       /function persistSkillUsageToPg/.test(bridge) &&
-      /function persistSkillUsageToSupabaseRest/.test(bridge) &&
       /function fetchSkillOutcomesFromSupabaseRest/.test(bridge) &&
-      /function runAutoSkillLearnerSupabaseRest/.test(bridge) &&
+      /function getSkillGovernanceHealthMeta/.test(bridge) &&
+      /loadApprovedRuntimeSkills/.test(bridge) &&
+      /migrateLegacySkills/.test(bridge) &&
+      /request_skill_approval/.test(bridge) &&
+      /fallbackWrites:\s*'disabled'/.test(bridge) &&
+      /failClosed:\s*!usage/.test(bridge) &&
       /function getPostgresHealthMeta/.test(bridge) &&
       /postgres_unavailable/.test(bridge) &&
       /configuredStateBackend/.test(bridge) &&

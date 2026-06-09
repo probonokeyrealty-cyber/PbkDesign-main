@@ -185,6 +185,15 @@ function buildFleetAgents(): FleetAgent[] {
   }));
 }
 
+function isRegistryBackedSource(source?: string) {
+  const normalized = String(source || '')
+    .trim()
+    .toLowerCase();
+  return Boolean(
+    normalized && normalized !== 'local fallback' && normalized !== 'bridge registry empty'
+  );
+}
+
 function normalizeAgentStatus(
   value: unknown,
   fallback: FleetAgent['status'] = 'standby'
@@ -388,6 +397,7 @@ function getAgentActivityState(agent: FleetAgent, bridgeWorker?: BridgeSnnWorker
 }
 
 function getAgentDeployClass(agent: FleetAgent) {
+  if (!agent.registrySource || agent.registrySource === 'local fallback') return 'local';
   if (agent.status === 'active') return 'production';
   if (agent.status === 'standby') return 'local';
   return 'offline';
@@ -490,9 +500,12 @@ function AgentFleetHero({
   leadContextSource: string;
   callCount: number;
 }) {
-  const active = agents.filter((agent) => agent.status === 'active').length;
-  const standby = agents.filter((agent) => agent.status === 'standby').length;
-  const inactive = agents.filter((agent) => agent.status === 'inactive').length;
+  const registryBacked = isRegistryBackedSource(agentRegistrySource);
+  const active = registryBacked ? agents.filter((agent) => agent.status === 'active').length : 0;
+  const standby = registryBacked ? agents.filter((agent) => agent.status === 'standby').length : 0;
+  const inactive = registryBacked
+    ? agents.filter((agent) => agent.status === 'inactive').length
+    : 0;
   const bridgeLabel =
     bridgeConnected === null ? 'Connecting' : bridgeConnected ? 'Bridge live' : 'Bridge offline';
 
@@ -501,7 +514,9 @@ function AgentFleetHero({
       <div className="pbk-fleet-hero-top">
         <div>
           <div className="pbk-eyebrow">
-            Agent Fleet - {active} active - {standby} standby - {inactive} inactive
+            {registryBacked
+              ? `Agent Fleet - ${active} active - ${standby} standby - ${inactive} inactive`
+              : `Agent Fleet - ${agents.length} catalog entries - live status unavailable`}
           </div>
           <h1 className="pbk-display pbk-h1">
             The <em>agent fleet</em>.
@@ -569,7 +584,7 @@ function AgentFleetCard({
   const activityState = getAgentActivityState(agent, bridgeWorker);
   const ready = localSnnActive || Boolean(bridgeWorker?.ready);
   const healthReady = Boolean(healthProbe?.ready);
-  const registryBacked = Boolean(agent.registrySource && agent.registrySource !== 'local fallback');
+  const registryBacked = isRegistryBackedSource(agent.registrySource);
   const healthState = healthProbe
     ? healthReady
       ? 'ready'
@@ -606,7 +621,7 @@ function AgentFleetCard({
             </span>
           </span>
           <span className={`pbk-agent-deploy-pill ${getAgentDeployClass(agent)}`}>
-            {agent.status === 'active' ? 'production' : agent.status}
+            {registryBacked ? (agent.status === 'active' ? 'production' : agent.status) : 'catalog'}
           </span>
         </span>
 
@@ -617,7 +632,7 @@ function AgentFleetCard({
             {agent.metadata.orchestrationRole || 'worker'}
           </span>
           <span className="sentiment-line">
-            <span>Confidence lane</span>
+            <span>{registryBacked ? 'Confidence lane' : 'Reference confidence'}</span>
             <span className="sentiment-bar">
               <span
                 className="sentiment-fill"
@@ -635,7 +650,13 @@ function AgentFleetCard({
                 ? 'degraded'
                 : 'local catalog'}
           </span>
-          <span>{missingTools.length ? `${missingTools.length} tool gaps` : 'tools clear'}</span>
+          <span>
+            {missingTools.length
+              ? `${missingTools.length} tool gaps`
+              : healthProbe
+                ? 'tools clear'
+                : 'tools unknown'}
+          </span>
           <span className="pbk-agent-health-source" title={healthSource}>
             {healthSource}
           </span>
@@ -1538,6 +1559,7 @@ export function AgentFleet() {
                       writes stay blocked.
                     </p>
                     <select
+                      aria-label="Lead for deal context preview"
                       className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-sky-500/60"
                       value={selectedLeadId}
                       onChange={(event) => setSelectedLeadId(event.target.value)}

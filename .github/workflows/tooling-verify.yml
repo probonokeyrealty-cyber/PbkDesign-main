@@ -13,9 +13,9 @@ permissions:
   contents: read
 
 jobs:
-  tooling-verify:
+  founder-verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     steps:
       - name: Check out repository
@@ -36,5 +36,5 @@ jobs:
       - name: Install MCP server dependencies
         run: npm ci --prefix ./mcp-server
 
-      - name: Run tooling verification
-        run: npm run test:tooling
+      - name: Run founder release gate
+        run: npm run test:founder

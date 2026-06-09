@@ -80,24 +80,14 @@ type FieldProps = {
   onChange: (value: string) => void;
 };
 
-function PortalField({
-  label,
-  value,
-  type = 'text',
-  multiline = false,
-  onChange,
-}: FieldProps) {
+function PortalField({ label, value, type = 'text', multiline = false, onChange }: FieldProps) {
   return (
     <label className={multiline ? 'wide' : ''}>
       <span>{label}</span>
       {multiline ? (
         <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={4} />
       ) : (
-        <input
-          type={type}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
+        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
       )}
     </label>
   );
@@ -177,7 +167,11 @@ export function LeadPortal() {
       const timelineRequestId = ++timelineRequestSequence.current;
       const requestedThreadId = selectedThread.id;
       timelineThreadIdRef.current = requestedThreadId;
-      append ? setTimelineLoadingMore(true) : setTimelineLoading(true);
+      if (append) {
+        setTimelineLoadingMore(true);
+      } else {
+        setTimelineLoading(true);
+      }
       if (!append) setTimelineError('');
       try {
         const response = await fetchConversationTimelineRequest(selectedThread.id, {
@@ -421,9 +415,9 @@ export function LeadPortal() {
         resolvedStatus.includes('approval') ||
         Boolean(
           toolResult.approvalId ||
-            toolResult.approval_id ||
-            response.approvalId ||
-            response.approval_id
+          toolResult.approval_id ||
+          response.approvalId ||
+          response.approval_id
         );
       const providerLive = telnyx.live === true;
       showUiToast({
@@ -570,7 +564,9 @@ export function LeadPortal() {
         onBack={() => navigate('/leads')}
         onRefresh={() => void loadPortal()}
         onEdit={startEdit}
-        onMessage={() => thread && navigate(`/inbox/conversations?thread=${encodeURIComponent(thread.id)}`)}
+        onMessage={() =>
+          thread && navigate(`/inbox/conversations?thread=${encodeURIComponent(thread.id)}`)
+        }
         onCall={() => {
           if (!isCallablePhone(lead.phone)) {
             showUiToast({
@@ -652,9 +648,22 @@ export function LeadPortal() {
           </DialogHeader>
           {draft && (
             <div className="pbk-lead-portal-edit-grid">
-              <PortalField label="Seller name" value={draft.name} onChange={(value) => updateDraft('name', value)} />
-              <PortalField label="Phone" value={draft.phone} onChange={(value) => updateDraft('phone', value)} />
-              <PortalField label="Email" type="email" value={draft.email} onChange={(value) => updateDraft('email', value)} />
+              <PortalField
+                label="Seller name"
+                value={draft.name}
+                onChange={(value) => updateDraft('name', value)}
+              />
+              <PortalField
+                label="Phone"
+                value={draft.phone}
+                onChange={(value) => updateDraft('phone', value)}
+              />
+              <PortalField
+                label="Email"
+                type="email"
+                value={draft.email}
+                onChange={(value) => updateDraft('email', value)}
+              />
               <PortalSelect
                 label="Preferred channel"
                 value={draft.preferredChannel}
@@ -666,26 +675,116 @@ export function LeadPortal() {
                   ['email', 'Email'],
                 ]}
               />
-              <PortalField label="Best time to call" value={draft.bestTimeToCall} onChange={(value) => updateDraft('bestTimeToCall', value)} />
-              <PortalField label="Relationship" value={draft.relationship} onChange={(value) => updateDraft('relationship', value)} />
-              <PortalField label="Property address" value={draft.address} onChange={(value) => updateDraft('address', value)} />
-              <PortalField label="City" value={draft.city} onChange={(value) => updateDraft('city', value)} />
-              <PortalField label="State" value={draft.state} onChange={(value) => updateDraft('state', value)} />
-              <PortalField label="ZIP" value={draft.zip} onChange={(value) => updateDraft('zip', value)} />
-              <PortalField label="Property type" value={draft.propertyType} onChange={(value) => updateDraft('propertyType', value)} />
-              <PortalField label="Occupancy" value={draft.occupancy} onChange={(value) => updateDraft('occupancy', value)} />
-              <PortalField label="Condition" value={draft.condition} onChange={(value) => updateDraft('condition', value)} />
-              <PortalField label="Beds" type="number" value={draft.beds} onChange={(value) => updateDraft('beds', value)} />
-              <PortalField label="Baths" type="number" value={draft.baths} onChange={(value) => updateDraft('baths', value)} />
-              <PortalField label="Sq ft" type="number" value={draft.sqft} onChange={(value) => updateDraft('sqft', value)} />
-              <PortalField label="Year built" type="number" value={draft.yearBuilt} onChange={(value) => updateDraft('yearBuilt', value)} />
-              <PortalField label="Asking price" type="number" value={draft.askingPrice} onChange={(value) => updateDraft('askingPrice', value)} />
-              <PortalField label="ARV" type="number" value={draft.arv} onChange={(value) => updateDraft('arv', value)} />
-              <PortalField label="MAO" type="number" value={draft.mao} onChange={(value) => updateDraft('mao', value)} />
-              <PortalField label="Estimated repairs" type="number" value={draft.estimatedRepairs} onChange={(value) => updateDraft('estimatedRepairs', value)} />
-              <PortalField label="Mortgage balance" type="number" value={draft.mortgageBalance} onChange={(value) => updateDraft('mortgageBalance', value)} />
-              <PortalField label="Lead score" type="number" value={draft.score} onChange={(value) => updateDraft('score', value)} />
-              <PortalField label="Stage" value={draft.stage} onChange={(value) => updateDraft('stage', value)} />
+              <PortalField
+                label="Best time to call"
+                value={draft.bestTimeToCall}
+                onChange={(value) => updateDraft('bestTimeToCall', value)}
+              />
+              <PortalField
+                label="Relationship"
+                value={draft.relationship}
+                onChange={(value) => updateDraft('relationship', value)}
+              />
+              <PortalField
+                label="Property address"
+                value={draft.address}
+                onChange={(value) => updateDraft('address', value)}
+              />
+              <PortalField
+                label="City"
+                value={draft.city}
+                onChange={(value) => updateDraft('city', value)}
+              />
+              <PortalField
+                label="State"
+                value={draft.state}
+                onChange={(value) => updateDraft('state', value)}
+              />
+              <PortalField
+                label="ZIP"
+                value={draft.zip}
+                onChange={(value) => updateDraft('zip', value)}
+              />
+              <PortalField
+                label="Property type"
+                value={draft.propertyType}
+                onChange={(value) => updateDraft('propertyType', value)}
+              />
+              <PortalField
+                label="Occupancy"
+                value={draft.occupancy}
+                onChange={(value) => updateDraft('occupancy', value)}
+              />
+              <PortalField
+                label="Condition"
+                value={draft.condition}
+                onChange={(value) => updateDraft('condition', value)}
+              />
+              <PortalField
+                label="Beds"
+                type="number"
+                value={draft.beds}
+                onChange={(value) => updateDraft('beds', value)}
+              />
+              <PortalField
+                label="Baths"
+                type="number"
+                value={draft.baths}
+                onChange={(value) => updateDraft('baths', value)}
+              />
+              <PortalField
+                label="Sq ft"
+                type="number"
+                value={draft.sqft}
+                onChange={(value) => updateDraft('sqft', value)}
+              />
+              <PortalField
+                label="Year built"
+                type="number"
+                value={draft.yearBuilt}
+                onChange={(value) => updateDraft('yearBuilt', value)}
+              />
+              <PortalField
+                label="Asking price"
+                type="number"
+                value={draft.askingPrice}
+                onChange={(value) => updateDraft('askingPrice', value)}
+              />
+              <PortalField
+                label="ARV"
+                type="number"
+                value={draft.arv}
+                onChange={(value) => updateDraft('arv', value)}
+              />
+              <PortalField
+                label="MAO"
+                type="number"
+                value={draft.mao}
+                onChange={(value) => updateDraft('mao', value)}
+              />
+              <PortalField
+                label="Estimated repairs"
+                type="number"
+                value={draft.estimatedRepairs}
+                onChange={(value) => updateDraft('estimatedRepairs', value)}
+              />
+              <PortalField
+                label="Mortgage balance"
+                type="number"
+                value={draft.mortgageBalance}
+                onChange={(value) => updateDraft('mortgageBalance', value)}
+              />
+              <PortalField
+                label="Lead score"
+                type="number"
+                value={draft.score}
+                onChange={(value) => updateDraft('score', value)}
+              />
+              <PortalField
+                label="Stage"
+                value={draft.stage}
+                onChange={(value) => updateDraft('stage', value)}
+              />
               <PortalSelect
                 label="Deal path"
                 value={draft.path}
@@ -698,8 +797,16 @@ export function LeadPortal() {
                   ['land', 'Land'],
                 ]}
               />
-              <PortalField label="Assigned agent" value={draft.assignedAgent} onChange={(value) => updateDraft('assignedAgent', value)} />
-              <PortalField label="Tags" value={draft.tags} onChange={(value) => updateDraft('tags', value)} />
+              <PortalField
+                label="Assigned agent"
+                value={draft.assignedAgent}
+                onChange={(value) => updateDraft('assignedAgent', value)}
+              />
+              <PortalField
+                label="Tags"
+                value={draft.tags}
+                onChange={(value) => updateDraft('tags', value)}
+              />
               <PortalSelect
                 label="TCPA consent"
                 value={draft.tcpaConsent}
@@ -720,22 +827,55 @@ export function LeadPortal() {
                   ['blocked', 'Blocked'],
                 ]}
               />
-              <PortalField label="Motivation" value={draft.motivation} multiline onChange={(value) => updateDraft('motivation', value)} />
-              <PortalField label="Timeline" value={draft.timeline} multiline onChange={(value) => updateDraft('timeline', value)} />
-              <PortalField label="Seller notes" value={draft.sellerNotes} multiline onChange={(value) => updateDraft('sellerNotes', value)} />
-              <PortalField label="Internal notes" value={draft.internalNotes} multiline onChange={(value) => updateDraft('internalNotes', value)} />
+              <PortalField
+                label="Motivation"
+                value={draft.motivation}
+                multiline
+                onChange={(value) => updateDraft('motivation', value)}
+              />
+              <PortalField
+                label="Timeline"
+                value={draft.timeline}
+                multiline
+                onChange={(value) => updateDraft('timeline', value)}
+              />
+              <PortalField
+                label="Seller notes"
+                value={draft.sellerNotes}
+                multiline
+                onChange={(value) => updateDraft('sellerNotes', value)}
+              />
+              <PortalField
+                label="Internal notes"
+                value={draft.internalNotes}
+                multiline
+                onChange={(value) => updateDraft('internalNotes', value)}
+              />
             </div>
           )}
           <DialogFooter>
-            <button type="button" className="pbk-portal-secondary" onClick={() => setEditOpen(false)}>
+            <button
+              type="button"
+              className="pbk-portal-secondary"
+              onClick={() => setEditOpen(false)}
+            >
               Cancel
             </button>
-            <button type="button" className="pbk-portal-primary" onClick={() => void saveLead()} disabled={pendingAction === 'save'}>
+            <button
+              type="button"
+              className="pbk-portal-primary"
+              onClick={() => void saveLead()}
+              disabled={pendingAction === 'save'}
+            >
               {pendingAction === 'save' ? <Loader2 className="animate-spin" /> : <Save />}
               Save seller profile
             </button>
           </DialogFooter>
-          <PbkDataSource endpoint="PATCH /api/leads/:id" status="ships" note="shared seller profile" />
+          <PbkDataSource
+            endpoint="PATCH /api/leads/:id"
+            status="ships"
+            note="shared seller profile"
+          />
         </DialogContent>
       </Dialog>
 
@@ -750,22 +890,43 @@ export function LeadPortal() {
           </DialogHeader>
           <label>
             <span>Note</span>
-            <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={5} autoFocus />
+            <textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              rows={5}
+              autoFocus
+            />
           </label>
           <DialogFooter>
-            <button type="button" className="pbk-portal-secondary" onClick={() => setNoteOpen(false)}>
+            <button
+              type="button"
+              className="pbk-portal-secondary"
+              onClick={() => setNoteOpen(false)}
+            >
               Cancel
             </button>
-            <button type="button" className="pbk-portal-primary" onClick={() => void saveNote()} disabled={!note.trim() || pendingAction === 'note'}>
+            <button
+              type="button"
+              className="pbk-portal-primary"
+              onClick={() => void saveNote()}
+              disabled={!note.trim() || pendingAction === 'note'}
+            >
               {pendingAction === 'note' ? <Loader2 className="animate-spin" /> : <StickyNote />}
               Save note
             </button>
           </DialogFooter>
-          <PbkDataSource endpoint="POST /api/leads/add-note" status="ships" note="seller timeline note" />
+          <PbkDataSource
+            endpoint="POST /api/leads/add-note"
+            status="ships"
+            note="seller timeline note"
+          />
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && setConfirmAction('')}>
+      <AlertDialog
+        open={Boolean(confirmAction)}
+        onOpenChange={(open) => !open && setConfirmAction('')}
+      >
         <AlertDialogContent className="pbk-lead-portal-confirm">
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmCopy.title}</AlertDialogTitle>

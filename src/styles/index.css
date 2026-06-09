@@ -466,6 +466,18 @@ html[data-theme='light'] .pbk-leads-surface .border-slate-700 {
   display: grid;
   width: min(360px, calc(100vw - 2rem));
   gap: 0.6rem;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 720px) {
+  .ui-toast-stack {
+    right: 0.75rem;
+    bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 1.5rem);
+    max-height: min(48vh, 360px);
+  }
 }
 
 .ui-toast {

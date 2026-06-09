@@ -1050,10 +1050,6 @@ function isAuthOptionalRuntimePath(path = '') {
     ['/health', '/status', '/api/health', '/api/status'].includes(normalized) ||
     normalized === '/api/scripts/current' ||
     normalized === '/api/v1/scripts/current' ||
-    normalized === '/api/leads/stages' ||
-    normalized === '/api/v1/leads/stages' ||
-    normalized === '/api/deals/timeline' ||
-    normalized === '/api/v1/deals/timeline' ||
     normalized === '/api/observability/ai-metrics' ||
     normalized === '/api/v1/observability/ai-metrics' ||
     normalized === '/api/skills/outcomes' ||
@@ -1159,6 +1155,54 @@ export function buildRuntimeUrl(path: string) {
   return buildUrl(path);
 }
 
+export async function bridgeBlobRequest({
+  method = 'GET',
+  path,
+  body,
+  accept = 'application/octet-stream',
+  signal,
+}: BridgeRequestOptions & { accept?: string; signal?: AbortSignal }): Promise<Blob> {
+  assertRuntimeAuthConfigured(path);
+  const serializedBody = body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined;
+  const timeoutController = new AbortController();
+  const onAbort = () => timeoutController.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const timeoutId = setTimeout(() => timeoutController.abort(), 15_000);
+
+  try {
+    const response = await fetch(buildUrl(path), {
+      method,
+      headers: buildRuntimeHeaders({
+        json: body !== undefined && method !== 'GET',
+        accept,
+      }),
+      body: serializedBody,
+      signal: timeoutController.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `Bridge request failed (${response.status})`;
+      try {
+        const payload = text ? JSON.parse(text) : null;
+        message = payload?.message || payload?.error || message;
+      } catch {
+        if (text) message = text;
+      }
+      throw new Error(message);
+    }
+    return await response.blob();
+  } catch (error) {
+    if (timeoutController.signal.aborted) {
+      if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+      throw new Error('PBK bridge request timed out after 15 seconds.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function bridgeRequest<T = unknown>({
   method = 'GET',
   path,
@@ -1180,11 +1224,19 @@ export async function bridgeRequest<T = unknown>({
     signal: timeoutController.signal,
   };
   let response: Response;
+  let parsed: unknown;
   try {
     response = await fetch(requestUrl, init);
     if (await shouldRetryRuntimeViaHosted(response, requestUrl, path)) {
       const fallbackUrl = buildHostedRuntimeFallbackUrl(requestUrl);
       if (fallbackUrl) response = await fetch(fallbackUrl, init);
+    }
+    const text = await response.text();
+    parsed = text;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
     }
   } catch (error) {
     if (timeoutController.signal.aborted) {
@@ -1193,14 +1245,6 @@ export async function bridgeRequest<T = unknown>({
     throw error;
   } finally {
     clearTimeout(timeoutId);
-  }
-
-  const text = await response.text();
-  let parsed: unknown = text;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    parsed = text;
   }
 
   if (!response.ok) {
@@ -1307,11 +1351,28 @@ export async function invokeRuntimeTool<T = unknown>(
   toolName: string,
   params: Record<string, unknown> = {}
 ) {
-  return bridgeRequest<T>({
+  const envelope = await bridgeRequest<{
+    ok?: boolean;
+    result?: T;
+    error?: string;
+    message?: string;
+  }>({
     method: 'POST',
     path: '/invoke',
     body: { toolName, params },
   });
+  if (envelope?.ok === false) {
+    throw new Error(envelope.error || envelope.message || `${toolName} failed.`);
+  }
+  if (!envelope || !Object.prototype.hasOwnProperty.call(envelope, 'result')) {
+    throw new Error(`${toolName} returned an invalid bridge response.`);
+  }
+  const result = envelope.result;
+  if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+    const failedResult = result as Record<string, unknown>;
+    throw new Error(String(failedResult.error || failedResult.message || `${toolName} failed.`));
+  }
+  return result as T;
 }
 
 export async function startLeadCallRequest(body: Record<string, unknown>) {

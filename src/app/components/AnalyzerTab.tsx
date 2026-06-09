@@ -130,8 +130,14 @@ export function AnalyzerTab({
         </div>
 
         <div className="mb-3">
-          <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">Address</label>
+          <label
+            htmlFor="deal-property-address"
+            className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1"
+          >
+            Address
+          </label>
           <input
+            id="deal-property-address"
             type="text"
             inputMode="text"
             enterKeyHint="next"

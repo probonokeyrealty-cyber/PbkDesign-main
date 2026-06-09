@@ -1,6 +1,7 @@
 import { lazy } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import { ParadiseLayout } from './ParadiseLayout';
+import { NotFound } from '../routes/NotFound';
 
 const CommandCenter = lazy(() =>
   import('../routes/CommandCenter').then((module) => ({ default: module.CommandCenter }))
@@ -58,11 +59,13 @@ const router = createBrowserRouter(
         { path: 'inbox', element: <Inbox /> },
         { path: 'inbox/conversations', element: <UnifiedInbox /> },
         { path: 'fleet', element: <AgentFleet /> },
+        { path: 'agents', element: <AgentFleet /> },
         { path: 'memory', element: <MemoryAnalytics /> },
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'ava-chat', element: <AvaChat /> },
         { path: 'settings', element: <Settings /> },
+        { path: '*', element: <NotFound /> },
       ],
     },
   ],

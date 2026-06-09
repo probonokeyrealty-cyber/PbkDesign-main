@@ -17,10 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
-import {
-  InboxSignalLanes,
-  type InboxSignalLane,
-} from '../components/inbox/InboxSignalLanes';
+import { InboxSignalLanes, type InboxSignalLane } from '../components/inbox/InboxSignalLanes';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
 import {
   archiveMessageRequest,
@@ -336,8 +333,7 @@ function InboxHero({
           </h1>
           <p>
             Seller replies, Ava/Rex approvals, scheduled outreach, and bridge-backed compose in one
-            operator cockpit. Archive gestures stay labeled as a wiring gap until the bridge owns
-            that persistence.
+            operator cockpit. Archive actions persist through the unified message record.
           </p>
         </div>
         <div className="pbk-inbox-hero-actions">
@@ -362,11 +358,7 @@ function InboxHero({
             <MessagesSquare size={14} />
             Open Unified Inbox
           </button>
-          <button
-            type="button"
-            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
-            onClick={onCompose}
-          >
+          <button type="button" className="pbk-btn pbk-btn-ghost pbk-btn-sm" onClick={onCompose}>
             <Plus size={14} />
             Compose
           </button>

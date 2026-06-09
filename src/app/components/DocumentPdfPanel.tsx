@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Download, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+} from 'lucide-react';
 import { DealData, PBKPath } from '../types';
 import { PBKBranding, buildMasterPackageParams, getPathLabel } from '../utils/pbk';
-import { buildRuntimeHeaders, buildRuntimeUrl } from '../utils/runtimeBridge';
+import { bridgeBlobRequest } from '../utils/runtimeBridge';
 
 interface DocumentPdfPanelProps {
   deal: DealData;
@@ -38,63 +45,55 @@ export function DocumentPdfPanel({
     }
   }, []);
 
-  const generatePdf = useCallback(async (source: 'auto' | 'refresh' = 'auto') => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const generatePdf = useCallback(
+    async (source: 'auto' | 'refresh' = 'auto') => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    setStatus('syncing');
-    setError('');
+      setStatus('syncing');
+      setError('');
 
-    try {
-      const response = await fetch(buildRuntimeUrl('/api/documents/pdf'), {
-        method: 'POST',
-        headers: buildRuntimeHeaders({ json: true, accept: 'application/pdf' }),
-        body: JSON.stringify({
-          documentType: 'masterPackage',
-          documentTitle: 'PBK Master Deal Package',
-          propertyAddress: deal.address,
-          selectedPathLabel: getPathLabel(selectedPath),
-          companyName: branding.companyName,
-          masterPackageQuery: buildMasterPackageParams(
-            {
-              ...deal,
-              selectedPath,
-            },
-            branding,
-            false,
-          ),
-        }),
-        signal: controller.signal,
-      });
+      try {
+        const blob = await bridgeBlobRequest({
+          method: 'POST',
+          path: '/api/documents/pdf',
+          accept: 'application/pdf',
+          body: {
+            documentType: 'masterPackage',
+            documentTitle: 'PBK Master Deal Package',
+            propertyAddress: deal.address,
+            selectedPathLabel: getPathLabel(selectedPath),
+            companyName: branding.companyName,
+            masterPackageQuery: buildMasterPackageParams(
+              {
+                ...deal,
+                selectedPath,
+              },
+              branding,
+              false
+            ),
+          },
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        let message = `PDF service returned ${response.status}`;
-        try {
-          const payload = await response.json();
-          message = payload.message || payload.error || message;
-        } catch {
-          // Keep the HTTP fallback message.
+        const nextUrl = URL.createObjectURL(blob);
+        revokeCurrentUrl();
+        objectUrlRef.current = nextUrl;
+        setPdfUrl(nextUrl);
+        setUpdatedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+        setStatus('ready');
+        if (source === 'refresh') {
+          onPdfAction?.('refresh');
         }
-        throw new Error(message);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setStatus('error');
+        setError(err instanceof Error ? err.message : 'PDF generation failed');
       }
-
-      const blob = await response.blob();
-      const nextUrl = URL.createObjectURL(blob);
-      revokeCurrentUrl();
-      objectUrlRef.current = nextUrl;
-      setPdfUrl(nextUrl);
-      setUpdatedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
-      setStatus('ready');
-      if (source === 'refresh') {
-        onPdfAction?.('refresh');
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      setStatus('error');
-      setError(err instanceof Error ? err.message : 'PDF generation failed');
-    }
-  }, [branding, deal, onPdfAction, revokeCurrentUrl, selectedPath]);
+    },
+    [branding, deal, onPdfAction, revokeCurrentUrl, selectedPath]
+  );
 
   useEffect(() => {
     setStatus('queued');
@@ -114,7 +113,7 @@ export function DocumentPdfPanel({
   const statusText =
     status === 'ready'
       ? `PDF ready${updatedAt ? ` at ${updatedAt}` : ''}`
-    : status === 'syncing'
+      : status === 'syncing'
         ? 'Generating PDF...'
         : status === 'error'
           ? 'PDF service offline'
@@ -131,7 +130,8 @@ export function DocumentPdfPanel({
             Master PDF Preview
           </div>
           <div className="mt-1 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-            Auto-regenerates the same PBK master package output used by the selected-path packet, without changing Preview or Print.
+            Auto-regenerates the same PBK master package output used by the selected-path packet,
+            without changing Preview or Print.
           </div>
           <div className="mt-2 inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
             Path locked: {getPathLabel(selectedPath)}
@@ -215,7 +215,11 @@ export function DocumentPdfPanel({
 
       <div className="mt-3 overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 dark:border-slate-700 dark:bg-slate-900">
         {pdfUrl ? (
-          <iframe title="PBK Master Deal Package PDF preview" src={pdfUrl} className="h-[360px] w-full bg-white" />
+          <iframe
+            title="PBK Master Deal Package PDF preview"
+            src={pdfUrl}
+            className="h-[360px] w-full bg-white"
+          />
         ) : (
           <div className="flex h-[220px] items-center justify-center px-4 text-center text-[11px] leading-5 text-gray-500 dark:text-gray-400">
             The PDF preview appears here after the Documents-tab sync finishes.

@@ -77,6 +77,8 @@ import {
   classifyCommandIntent,
   listCommandIntentRouterRules,
 } from './command-intent-router.mjs';
+import { ensureSkillGovernanceSchema } from './skill-governance-schema.mjs';
+import { loadApprovedRuntimeSkills, migrateLegacySkills } from './skill-governance-store.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -1787,6 +1789,7 @@ function buildAdminPersistenceStatus() {
       summary: renderMirrored ? 'Caller ID is persisted in PBK state and mirrored to Render.' : renderConfigured ? 'Caller ID is persisted in PBK state, but Render mirroring has not completed for the current value.' : 'Caller ID is persisted in PBK state only because Render mirroring is not configured.',
     },
     docusign: buildDocuSignProviderStatus(),
+    skillGovernance: getSkillGovernanceHealthMeta(),
   };
 }
 
@@ -5058,6 +5061,15 @@ let postgresHealth = {
   lastErrorAt: null,
   error: '',
 };
+let skillGovernanceHealth = {
+  schemaReady: false,
+  migrationReady: false,
+  status: DATABASE_URL ? 'unknown' : 'file_mode',
+  checkedAt: null,
+  lastMigratedAt: null,
+  migration: null,
+  error: '',
+};
 
 function getDatabaseUrlHost() {
   try {
@@ -5958,6 +5970,18 @@ async function ensurePbkOperationalTables(pool) {
   await ensureLocalCommandQueueSchema(pool).catch((error) => {
     console.warn('[postgres] local command queue schema ensure skipped', error?.message || error);
   });
+  await ensureSkillGovernanceSchema(pool)
+    .then(() => {
+      markSkillGovernanceHealth({ schemaReady: true, status: 'schema_ready', error: '' });
+    })
+    .catch((error) => {
+      markSkillGovernanceHealth({
+        schemaReady: false,
+        status: 'schema_unavailable',
+        error: String(error?.message || error).slice(0, 500),
+      });
+      console.warn('[postgres] skill governance schema ensure skipped', error?.message || error);
+    });
   return true;
 }
 
@@ -7875,6 +7899,29 @@ async function ensurePgSchema() {
       metadata = public.pbk_knowledge.metadata || EXCLUDED.metadata,
       updated_at = NOW();
   `);
+    await ensureSkillGovernanceSchema(pool);
+    markSkillGovernanceHealth({ schemaReady: true, status: 'schema_ready', error: '' });
+    const governanceMigration = await migrateLegacySkills(pool, {
+      workspaceId: 'pbk',
+      actorId: 'bridge-startup-governance-migration',
+    }).catch((error) => {
+      markSkillGovernanceHealth({
+        migrationReady: false,
+        status: 'migration_failed',
+        error: String(error?.message || error).slice(0, 500),
+      });
+      console.warn('[pbk-local-openclaw] skill governance migration skipped:', error?.message || error);
+      return null;
+    });
+    if (governanceMigration) {
+      markSkillGovernanceHealth({
+        migrationReady: true,
+        status: 'ready',
+        migration: governanceMigration,
+        lastMigratedAt: isoNow(),
+        error: '',
+      });
+    }
     await ensureCallEmbeddingsSchema(pool);
     await ensureAvaWarManualRuntimeSchema(pool);
     await seedAvaWarManualRuntimeKnowledgeToPg(pool);
@@ -8631,6 +8678,35 @@ async function ensureAvaWarManualRuntimeSchema(pool) {
     console.warn('[postgres] Rex research memory schema ensure skipped', error?.message || error);
   });
   return true;
+}
+
+function markSkillGovernanceHealth(patch = {}) {
+  skillGovernanceHealth = {
+    ...skillGovernanceHealth,
+    ...patch,
+    checkedAt: isoNow(),
+  };
+  return skillGovernanceHealth;
+}
+
+function getSkillGovernanceHealthMeta() {
+  return {
+    configured: Boolean(DATABASE_URL),
+    ready: Boolean(skillGovernanceHealth.schemaReady && skillGovernanceHealth.migrationReady),
+    schemaReady: Boolean(skillGovernanceHealth.schemaReady),
+    migrationReady: Boolean(skillGovernanceHealth.migrationReady),
+    status: skillGovernanceHealth.status,
+    checkedAt: skillGovernanceHealth.checkedAt,
+    lastMigratedAt: skillGovernanceHealth.lastMigratedAt,
+    migration: skillGovernanceHealth.migration,
+    error: skillGovernanceHealth.error || '',
+    summary:
+      skillGovernanceHealth.schemaReady && skillGovernanceHealth.migrationReady
+        ? 'Skill governance authority is ready; only approved active/canary projections should execute.'
+        : DATABASE_URL
+          ? 'Skill governance authority is not fully ready yet.'
+          : 'Skill governance authority requires PBK_DATABASE_URL.',
+  };
 }
 
 const commandIntentResultCache = new Map();
@@ -21160,68 +21236,6 @@ async function persistSkillUsageToPg(record = {}) {
   return result.ok;
 }
 
-function normalizeSkillUsageRestRows(record = {}) {
-  const skillName = String(record.skillName || '').trim();
-  if (!skillName) return null;
-  const agentId = normalizeAgentId(record.agentName || 'ava') || 'ava';
-  const skillId = String(record.skillId || record.skill_id || `skill-${agentId}-${slugify(skillName).slice(0, 80)}`).trim();
-  const createdAt = record.createdAt || record.created_at || isoNow();
-  const metadata = {
-    ...(record.metadata || {}),
-    sourceOutcomeTable: 'pbk_skill_outcomes',
-    outcomeId: record.id || '',
-    callId: record.callId || '',
-    leadId: record.leadId || '',
-    dealClosed: Boolean(record.dealClosed),
-    supabaseRestFallback: true,
-  };
-  return {
-    skill: {
-      id: skillId,
-      workspace_id: 'pbk',
-      agent_id: agentId,
-      agent_name: normalizeAgentName(record.agentName || 'Ava'),
-      name: skillName,
-      source: 'skill_outcome',
-      level: 'measured',
-      status: 'active',
-      confidence: Math.max(0.35, Math.min(0.8, Number(record.metadata?.confidence || 0.55))),
-      evidence: `Measured from live PBK call ${record.callId || ''}`.trim(),
-      metadata: {
-        source: 'recordSkillOutcome',
-        createdFromOutcomeId: record.id || '',
-        liveCallLearning: true,
-        supabaseRestFallback: true,
-      },
-      created_at: createdAt,
-      updated_at: createdAt,
-    },
-    usage: {
-      id: record.id,
-      workspace_id: 'pbk',
-      skill_id: skillId,
-      skill_name: skillName,
-      agent_id: agentId,
-      agent_name: normalizeAgentName(record.agentName || 'Ava'),
-      outcome: record.outcomeLabel || (record.success === true ? 'success' : record.success === false ? 'miss' : 'observed'),
-      success: typeof record.success === 'boolean' ? record.success : null,
-      confidence: record.metadata?.confidence === undefined ? null : Number(record.metadata.confidence),
-      profit_margin: record.metadata?.profitMargin === undefined ? null : Number(record.metadata.profitMargin),
-      metadata,
-      used_at: createdAt,
-      created_at: createdAt,
-    },
-  };
-}
-
-async function persistSkillUsageToSupabaseRest(record = {}) {
-  const rows = normalizeSkillUsageRestRows(record);
-  if (!rows) return false;
-  const skill = await upsertSupabaseRestRows('skills', rows.skill, 'id');
-  const usage = await upsertSupabaseRestRows('skill_usage', rows.usage, 'id');
-  return Boolean(skill && usage);
-}
-
 function summarizeSkillOutcomes(skillName = '', version = '') {
   const normalizedSkill = String(skillName || '')
     .trim()
@@ -21273,19 +21287,30 @@ async function runRexSkillAutopilotRecord(params = {}) {
   const actions = [];
 
   if (summary.total >= minUses && summary.successRate >= promoteRate && summary.confidence >= promoteConfidence) {
-    const promotion = await applyAgentSkillAction(
-      'promote_skill',
+    const decision = await createRexDecision(
       {
-        sourceAgentId: params.agentId || params.agent || 'ava',
-        skillName,
+        tool: 'request_skill_approval',
+        params: {
+          agentId: params.agentId || params.agent || 'ava',
+          skillName,
+          version,
+          summary,
+        },
+        rationale: `${skillName} is performing at ${Math.round(summary.successRate * 100)}% after ${summary.total} measured outcomes. Rex recommends approval review rather than direct promotion.`,
+        actor: params.actor || 'Rex Skill Autopilot',
+        source: 'skill-outcome-loop',
+        requestApproval: true,
       },
-      { actor: params.actor || 'Rex Skill Autopilot' }
+      {
+        requestApproval: true,
+        actor: params.actor || 'Rex Skill Autopilot',
+        source: 'skill-outcome-loop',
+      }
     );
     actions.push({
-      type: 'auto_promote_skill',
-      ok: promotion.ok,
-      result: promotion.result,
-      promotion,
+      type: 'request_skill_approval',
+      ok: decision.ok,
+      decision,
     });
   } else if (summary.total >= minUses && summary.successRate < 0.35) {
     const decision = await createRexDecision(
@@ -21357,7 +21382,6 @@ async function recordSkillOutcomeRecord(params = {}) {
     skillId: params.skillId || params.skill_id || '',
   };
   const usage = await persistSkillUsageToPg(usageRecord);
-  const supabaseRestUsage = usage ? false : await persistSkillUsageToSupabaseRest(usageRecord);
   let scriptTest = null;
   if (params.testId && record.version) {
     scriptTest = await scriptTestRecord({
@@ -21402,7 +21426,8 @@ async function recordSkillOutcomeRecord(params = {}) {
       localState: true,
       postgres,
       skillUsage: usage,
-      supabaseRestUsage,
+      failClosed: !usage,
+      fallbackWrites: 'disabled',
     },
   };
 }
@@ -39581,97 +39606,6 @@ async function fetchSkillOutcomesFromSupabaseRest() {
   }
 }
 
-async function runAutoSkillLearnerSupabaseRest(params = {}, pgError = '') {
-  const minSuccessCount = Math.max(1, Number(params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes || 5));
-  const minSuccessRate = Math.max(0, Math.min(1, Number(params.minSuccessRate || params.min_success_rate || 0.8)));
-  const confidenceIncrement = Math.max(0.01, Math.min(0.2, Number(params.confidenceIncrement || 0.05)));
-  const maxConfidence = Math.max(0.1, Math.min(0.99, Number(params.maxConfidence || 0.95)));
-  const limit = Math.max(1, Math.min(50, Number(params.limit || 10)));
-  const rest = await fetchSkillOutcomesFromSupabaseRest();
-  if (!rest.ok) {
-    return {
-      ok: false,
-      result: 'postgres_unavailable_supabase_rest_failed',
-      error: pgError || rest.error || rest.reason || 'Postgres and Supabase REST skill reads are unavailable.',
-      pgError,
-      supabaseRest: rest,
-    };
-  }
-  const boosted = [];
-  for (const skill of rest.rows.map(normalizeSkillOutcome)) {
-    if (boosted.length >= limit) break;
-    const uses = Number(skill.uses || 0);
-    const wins = Number(skill.wins || 0);
-    const rate = uses ? wins / uses : 0;
-    if (wins < minSuccessCount || rate < minSuccessRate) continue;
-    const currentConfidence = Number(skill.confidence || 0) > 1 ? Number(skill.confidence || 0) / 100 : Number(skill.confidence || 0);
-    const nextConfidence = Math.min(maxConfidence, Math.max(0.05, currentConfidence) + confidenceIncrement);
-    const updatedAt = isoNow();
-    const ok = await upsertSupabaseRestRows(
-      'skills',
-      {
-        id: skill.id,
-        workspace_id: 'pbk',
-        agent_id: normalizeAgentId(skill.agentId || skill.agentName || 'ava') || 'ava',
-        agent_name: normalizeAgentName(skill.agentName || 'Ava'),
-        name: skill.name || skill.skillName || 'Measured Skill',
-        source: skill.source || 'skill_usage',
-        level: skill.level || 'measured',
-        status: skill.status || 'active',
-        confidence: nextConfidence,
-        evidence: skill.evidence || `Boosted from ${uses} measured PBK skill uses.`,
-        metadata: {
-          autoLearner: {
-            provider: 'supabase-rest-fallback',
-            boostedAt: updatedAt,
-            successRate: rate,
-            uses,
-            wins,
-            pgError,
-          },
-        },
-        updated_at: updatedAt,
-      },
-      'id'
-    );
-    if (ok) {
-      boosted.push({
-        id: skill.id,
-        name: skill.name,
-        confidence: nextConfidence,
-        previousConfidence: currentConfidence,
-        uses,
-        wins,
-        successRate: Number(rate.toFixed(3)),
-        source: 'supabase-rest-fallback',
-      });
-    }
-  }
-  if (boosted.length) {
-    addActivity(
-      state,
-      makeActivity({
-        actor: 'Rex Skill Learner',
-        category: 'BRAIN',
-        status: 'success',
-        text: `Boosted ${boosted.length} measured skill${boosted.length === 1 ? '' : 's'} through Supabase fallback.`,
-        target: 'SkillRepo',
-      })
-    );
-    await persistState(state);
-  }
-  return {
-    ok: true,
-    result: 'supabase_rest_fallback',
-    boostedCount: boosted.length,
-    createdCount: 0,
-    boosted,
-    created: [],
-    thresholds: { minSuccessCount, minSuccessRate, maxConfidence, confidenceIncrement },
-    warning: pgError ? `Direct Postgres was unavailable (${pgError}); used Supabase REST fallback.` : '',
-  };
-}
-
 async function buildSkillOutcomes() {
   const result = await queryPgRows(`
     SELECT
@@ -39730,55 +39664,84 @@ async function buildSkillOutcomes() {
   };
 }
 
-async function reloadActiveSkillsIntoBridgeState(options = {}) {
+async function reloadApprovedSkillsIntoBridgeState(options = {}) {
   ensureAgentFleetCollections();
-  const limit = Math.max(1, Math.min(250, Number(options.limit || 100)));
-  const result = await queryPgRows(
-    `SELECT id, agent_id AS "agentId", agent_name AS "agentName", name, source, level, status,
-            COALESCE(confidence, 0)::float AS confidence, evidence, updated_at AS "updatedAt"
-     FROM public.skills
-     WHERE COALESCE(workspace_id, 'pbk') = 'pbk'
-       AND COALESCE(status, 'active') NOT IN ('retired', 'disabled')
-     ORDER BY confidence DESC, updated_at DESC
-     LIMIT $1`,
-    [limit]
-  );
-  let rows = result.ok ? result.rows : [];
-  let source = result.ok ? 'postgres' : result.reason || 'postgres_unavailable';
-  if (!rows.length) {
-    const rest = await fetchSkillOutcomesFromSupabaseRest();
-    if (rest.ok && rest.rows.length) {
-      rows = rest.rows;
-      source = 'supabase-rest';
-    }
+  const pool = getPgPool();
+  if (!pool) {
+    markSkillGovernanceHealth({
+      status: 'runtime_unavailable',
+      error: 'PBK_DATABASE_URL is required for approved runtime skill loading.',
+    });
+    return {
+      ok: false,
+      result: 'skill_governance_unavailable',
+      source: 'postgres_unavailable',
+      skillsReloaded: 0,
+      agentsUpdated: 0,
+      warning: 'Approved runtime skills require Render Postgres governance tables.',
+    };
   }
-  const skills = rows.map(normalizeSkillOutcome).filter((skill) => !/retired|disabled/i.test(`${skill.status || ''} ${skill.level || ''}`));
+  let skills = [];
+  try {
+    skills = await loadApprovedRuntimeSkills(pool, {
+      workspaceId: options.workspaceId || 'pbk',
+      agentId: options.agentId || '',
+      environment: options.environment || 'production',
+    });
+    markSkillGovernanceHealth({ status: 'runtime_loaded', error: '' });
+  } catch (error) {
+    markSkillGovernanceHealth({
+      status: 'runtime_load_failed',
+      error: String(error?.message || error).slice(0, 500),
+    });
+    return {
+      ok: false,
+      result: 'approved_runtime_skill_load_failed',
+      source: 'skill-governance',
+      skillsReloaded: 0,
+      agentsUpdated: 0,
+      warning: error?.message || String(error),
+    };
+  }
   const now = isoNow();
   const touchedAgents = new Set();
   for (const skill of skills) {
-    const agentId = normalizeAgentId(skill.agentId || skill.agentName || 'ava') || 'ava';
+    const agentId = normalizeAgentId(skill.agentId || 'ava') || 'ava';
     let agent = findAgentRecord(agentId);
     if (!agent && agentId === 'ava') agent = findAgentRecord('ava');
     if (!agent) continue;
-    const confidence = Number(skill.confidence || 0) <= 1 ? Math.round(Number(skill.confidence || 0) * 100) : Math.round(Number(skill.confidence || 0));
+    const confidence = skill.status === 'active' ? 100 : Math.max(1, Math.min(99, Number(skill.rolloutPercent || 10)));
     const nextSkill = {
       id: skill.id,
       name: skill.name,
-      level: skill.level || 'candidate',
-      status: skill.status || 'active',
-      source: skill.source || source,
+      level: skill.lifecycleState || 'canary',
+      status: skill.status || 'canary',
+      source: 'skill-governance',
       confidence: Math.max(0, Math.min(100, confidence)),
-      evidence: skill.evidence || '',
-      updatedAt: skill.updatedAt || now,
+      evidence: skill.instructions || '',
+      versionId: skill.versionId,
+      activationId: skill.activationId,
+      approvalId: skill.approvalId,
+      contentHash: skill.contentHash,
+      rolloutMode: skill.rolloutMode,
+      rolloutPercent: skill.rolloutPercent,
+      updatedAt: skill.activatedAt || now,
       reloadedAt: now,
     };
     const existingSkills = Array.isArray(agent.skills) ? agent.skills : [];
     const nextAgent = {
       ...agent,
-      skills: [...existingSkills.filter((item) => String(item.name || '').trim().toLowerCase() !== String(nextSkill.name || '').trim().toLowerCase()), nextSkill].sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0)),
+      skills: [
+        ...existingSkills.filter((item) => {
+          const sameVersion = nextSkill.versionId && String(item.versionId || '') === String(nextSkill.versionId);
+          const sameName = String(item.name || '').trim().toLowerCase() === String(nextSkill.name || '').trim().toLowerCase();
+          return !(sameVersion || sameName);
+        }),
+        nextSkill,
+      ].sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0)),
       updatedAt: now,
-      updatedBy: options.actor || 'Auto Skill Learner',
-      activity: options.activity || `Reloaded ${skill.name} from SkillRepo.`,
+      updatedBy: options.actor || 'Skill Governance',
+      activity: options.activity || `Reloaded ${skill.name} from approved skill governance.`,
     };
     nextAgent.skillsTotal = Math.max(Number(nextAgent.skillsTotal || 0), nextAgent.skills.length);
     upsertById(state, 'agents', nextAgent);
@@ -39788,10 +39751,10 @@ async function reloadActiveSkillsIntoBridgeState(options = {}) {
     addActivity(
       state,
       makeActivity({
-        actor: options.actor || 'Auto Skill Learner',
+        actor: options.actor || 'Skill Governance',
         category: 'BRAIN',
         status: 'success',
-        text: `Reloaded ${skills.length} active skill${skills.length === 1 ? '' : 's'} into ${touchedAgents.size} agent${touchedAgents.size === 1 ? '' : 's'}.`,
+        text: `Reloaded ${skills.length} approved skill${skills.length === 1 ? '' : 's'} into ${touchedAgents.size} agent${touchedAgents.size === 1 ? '' : 's'}.`,
         target: 'SkillRepo',
       })
     );
@@ -39799,11 +39762,11 @@ async function reloadActiveSkillsIntoBridgeState(options = {}) {
   }
   return {
     ok: true,
-    result: touchedAgents.size ? 'active_skills_reloaded' : 'no_active_skills_reloaded',
-    source,
+    result: touchedAgents.size ? 'approved_skills_reloaded' : 'no_approved_skills_reloaded',
+    source: 'skill-governance',
     skillsReloaded: skills.length,
     agentsUpdated: touchedAgents.size,
-    warning: result.ok ? '' : result.error || result.reason || '',
+    warning: skills.length ? '' : 'No approved active/canary skill versions were available for runtime loading.',
   };
 }
 
@@ -44272,11 +44235,7 @@ const toolHandlers = {
         minSuccessCount: params.minSuccessCount || params.minSuccesses || params.min_success_count || params.min_successes,
         minSuccessRate: params.minSuccessRate || params.min_success_rate,
         limit: params.limit,
-        reloadActiveSkills: (payload) =>
-          reloadActiveSkillsIntoBridgeState({
-            ...payload,
-            actor: params.actor || 'Auto Skill Learner',
-          }),
+        reloadActiveSkills: null,
         strategist: async ({ role, prompt, responseFormat }) =>
           askStrategistRecord({
             agentName: role || 'Auto Skill Learner',
@@ -44288,11 +44247,15 @@ const toolHandlers = {
           }),
       });
       if (result?.ok === false) {
-        return runAutoSkillLearnerSupabaseRest(params, result.error || result.reason || '');
+        return result;
       }
       return result;
     } catch (error) {
-      return runAutoSkillLearnerSupabaseRest(params, error?.message || String(error));
+      return {
+        ok: false,
+        result: 'auto_skill_learner_failed',
+        error: error?.message || String(error),
+      };
     }
   },
 
@@ -59441,9 +59404,9 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/skills/reload', '/api/v1/skills/reload'])) {
       const body = await readBody(request);
-      const result = await reloadActiveSkillsIntoBridgeState({
+      const result = await reloadApprovedSkillsIntoBridgeState({
         ...body,
-        actor: body.actor || 'PBK Command Center',
+        actor: body.actor || 'Skill Governance',
       });
       json(response, result.ok ? 200 : 503, {
         ...result,
@@ -63195,12 +63158,13 @@ const server = createServer(async (request, response) => {
 
     if (['GET', 'POST'].includes(request.method) && matchesPath(pathname, ['/api/admin/schema/status', '/api/admin/schema/ensure'])) {
       const pool = getPgPool();
-      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities', 'provider_action_dispatches'];
+      const requiredTables = ['pbk_memories', 'pbk_feedback', 'pbk_intent_events', 'pbk_knowledge', 'pbk_tool_usage', 'pbk_local_commands', 'pbk_tasks', 'pbk_qa_audit', 'agent_registry', 'event_dead_letters', 'pbk_rex_autonomy_runs', 'pbk_safety_audit', 'pbk_eval_runs', 'test_cases', 'pbk_turn_latency', 'pbk_observability_alerts', 'pbk_goal_trajectories', 'pbk_action_intents', 'pbk_memory_curation_events', 'pbk_mission_resilience_eval_runs', 'agent_ops', 'generated_tools', 'agent_teams', 'skills', 'skill_usage', 'skill_definitions', 'skill_versions', 'skill_approvals', 'agent_skill_assignments', 'skill_activations', 'skill_audit_events', 'skill_projection_outbox', 'lead_profiles', 'lead_imports', 'calls', 'contract_path_templates', 'contracts', 'nurture_sequence_templates', 'nurture_instances', 'nurture_step_logs', 'pbk_research_additive_runs', 'pbk_research_additive_provider_checks', 'conversation_threads', 'conversation_thread_identities', 'conversation_events', 'communication_sender_identities', 'provider_action_dispatches'];
       if (!pool) {
         json(response, 200, {
           ok: false,
           result: 'no_database',
           requiredTables: requiredTables.map((table) => ({ table, exists: false })),
+          skillGovernance: getSkillGovernanceHealthMeta(),
           error: 'PBK_DATABASE_URL/DATABASE_URL is not configured for this bridge.',
           state: {
             status: buildStateSnapshot().status,
@@ -63228,6 +63192,7 @@ const server = createServer(async (request, response) => {
           result: tables.every((row) => row.exists) ? 'live' : 'missing_tables',
           ensured: request.method === 'POST' || pathname.endsWith('/ensure'),
           requiredTables: tables,
+          skillGovernance: getSkillGovernanceHealthMeta(),
           state: {
             status: buildStateSnapshot().status,
           },

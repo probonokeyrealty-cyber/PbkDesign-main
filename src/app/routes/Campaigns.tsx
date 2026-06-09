@@ -1051,7 +1051,13 @@ function CampaignWizard({
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <section
         className="pbk-wiz-modal"
         role="dialog"
@@ -1387,6 +1393,7 @@ export function Campaigns() {
   const [channelFilter, setChannelFilter] = useState('all');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [wizardOpen, setWizardOpen] = useState(false);
+  const closeWizard = useCallback(() => setWizardOpen(false), []);
   const [draft, setDraft] = useState<CampaignWizardDraft>(() => readDraft());
   const [templates, setTemplates] = useState<Record<string, ReplyTemplateRecord> | null>(null);
   const [templateStatus, setTemplateStatus] = useState<TemplateStatus>('idle');
@@ -1796,7 +1803,7 @@ export function Campaigns() {
         saving={saving}
         onChange={setDraft}
         onRefreshTemplates={() => void loadTemplates(draft.channel)}
-        onClose={() => setWizardOpen(false)}
+        onClose={closeWizard}
         onSubmit={(mode) => void handleWizardSubmit(mode)}
       />
     </div>

@@ -97,6 +97,14 @@ const senderSelect = readFileSync(senderSelectPath, 'utf8');
 const liveCallPip = readFileSync(liveCallPipPath, 'utf8');
 const conversationRuntimeLogic = readFileSync(conversationRuntimeLogicPath, 'utf8');
 const css = readFileSync(cssPath, 'utf8');
+const unifiedInboxBaseCss = css.slice(
+  css.indexOf('.pbk-unified-inbox {'),
+  css.indexOf('.pbk-conversation-degraded')
+);
+const unifiedInboxGridCss = css.slice(
+  css.indexOf('.pbk-unified-inbox-grid {'),
+  css.indexOf('.pbk-unified-inbox:has(.pbk-conversation-degraded)')
+);
 const netlify = readFileSync(netlifyPath, 'utf8');
 const combined = `${unifiedInbox}\n${threadRail}\n${timeline}\n${inspector}`;
 const composerCombined = `${composer}\n${senderSelect}`;
@@ -356,24 +364,35 @@ assert(
   css.includes('.pbk-conversation-composer') &&
     css.includes('.pbk-sender-select-control') &&
     css.includes('env(safe-area-inset-bottom)') &&
-    css.includes('--pbk-conversation-viewport-height') &&
     unifiedInbox.includes('window.visualViewport') &&
     css.includes('overflow-y: auto'),
   'Composer and sender selector must respond to mobile keyboard and safe-area geometry.'
 );
 assert(
+  unifiedInboxBaseCss.includes('display: flex') &&
+    unifiedInboxBaseCss.includes('height: 100%') &&
+    unifiedInboxBaseCss.includes('min-height: 0') &&
+    unifiedInboxBaseCss.includes('flex-direction: column') &&
+    unifiedInboxGridCss.includes('height: auto') &&
+    unifiedInboxGridCss.includes('min-height: 0') &&
+    unifiedInboxGridCss.includes('flex: 1'),
+  'Unified inbox must fill the routed shell container instead of assuming a viewport header height.'
+);
+assert(
   composer.includes('pbk-composer-scroll-body') &&
-    /\.pbk-conversation-main\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\)\s+auto/.test(
+    /\.pbk-conversation-main\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto/.test(
       css
     ) &&
     /\.pbk-conversation-timeline-scroll\s*\{[\s\S]*?overflow-y:\s*auto/.test(css),
   'The workspace must reserve fixed header/composer rows and scroll only the message timeline.'
 );
 assert(
-  /\.pbk-conversation-timeline\s*\{[\s\S]*?display:\s*contents/.test(css) &&
-    /\.pbk-conversation-composer\s*\{[\s\S]*?display:\s*contents/.test(css) &&
-    /\.pbk-composer-scroll-body\s*\{[\s\S]*?grid-row:\s*2/.test(css) &&
-    /\.pbk-composer-send-row\s*\{[\s\S]*?grid-row:\s*4/.test(css),
+  /\.pbk-conversation-timeline\s*\{[\s\S]*?display:\s*grid[\s\S]*?grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/.test(
+    css
+  ) &&
+    /\.pbk-conversation-composer\s*\{[\s\S]*?display:\s*grid[\s\S]*?grid-template-rows:\s*auto\s+auto/.test(
+      css
+    ),
   'Conversation identity controls and Send must remain fixed around the scrolling timeline.'
 );
 assert(

@@ -2237,6 +2237,14 @@ export async function patchLeadRequest(leadId: string, body: Record<string, unkn
   });
 }
 
+export async function deleteLeadRequest(leadId: string, body: Record<string, unknown> = {}) {
+  return bridgeRequest<Record<string, unknown>>({
+    method: 'DELETE',
+    path: `/api/leads/${encodeURIComponent(leadId)}`,
+    body,
+  });
+}
+
 export async function sendLeadContractRequest(body: Record<string, unknown>) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',

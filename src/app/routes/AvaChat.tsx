@@ -475,7 +475,7 @@ export function AvaChat() {
   };
 
   return (
-    <section className="pbk-ava-chat-surface h-[calc(100dvh-188px)] min-h-0 overflow-hidden bg-[var(--ava-bg)] text-[var(--ava-text)] md:h-[calc(100dvh-96px)]">
+    <section className="pbk-ava-chat-surface h-[calc(100dvh-188px)] min-h-0 min-w-0 overflow-hidden bg-[var(--ava-bg)] text-[var(--ava-text)] md:h-[calc(100dvh-96px)]">
       <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
         <AvaIdentityBar
           state={avaState}
@@ -488,7 +488,7 @@ export function AvaChat() {
         />
 
         <div className="grid min-h-0 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <main className="grid min-h-0 grid-rows-[auto_minmax(260px,1fr)_auto] border-r border-[var(--ava-border)]">
+          <main className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-[var(--ava-border)] xl:grid-rows-[auto_minmax(260px,1fr)_auto]">
             <ConversationToolbar
               query={searchQuery}
               onQueryChange={setSearchQuery}
@@ -934,7 +934,7 @@ function AvaComposer({
   const ActionIcon = actionConfig.icon;
 
   return (
-    <div className="border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 sm:px-5 sm:pb-4 sm:pt-3">
+    <div className="pbk-ava-chat-composer border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pt-2 sm:px-5 sm:pb-4 sm:pt-3">
       <div className="mx-auto w-full max-w-4xl">
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
           {QUICK_COMMANDS.map((item) => {
@@ -983,8 +983,8 @@ function AvaComposer({
             placeholder="Ask Ava to inspect, prepare, check, or run something..."
           />
 
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ava-border)] px-1 pt-2">
-            <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 sm:w-auto sm:flex-wrap">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-[var(--ava-border)] px-1 pt-2">
+            <div className="pbk-ava-chat-controls flex w-full min-w-0 flex-nowrap items-center gap-2 sm:w-auto sm:flex-wrap">
               <button
                 type="button"
                 onClick={listening ? onStopListening : onStartListening}
@@ -1077,7 +1077,7 @@ function AvaComposer({
               <PbkButton
                 type="button"
                 variant="sky-gradient"
-                className="min-h-11 min-w-11 shrink-0 justify-center px-3 sm:hidden"
+                className="min-h-11 min-w-11 shrink-0 justify-center p-0 sm:hidden"
                 disabled={!draft.trim() || submitting}
                 onClick={onSubmit}
                 aria-label="Send command to Ava"

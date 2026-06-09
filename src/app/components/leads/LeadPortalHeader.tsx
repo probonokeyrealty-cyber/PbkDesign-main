@@ -7,6 +7,7 @@ import {
   Phone,
   RefreshCw,
   StickyNote,
+  Trash2,
 } from 'lucide-react';
 import type { LeadPortalModel } from './leadPortalModel';
 
@@ -23,6 +24,7 @@ type LeadPortalHeaderProps = {
   onNote: () => void;
   onContract: () => void;
   onAnalyze: () => void;
+  onDelete: () => void;
 };
 
 export function LeadPortalHeader({
@@ -38,6 +40,7 @@ export function LeadPortalHeader({
   onNote,
   onContract,
   onAnalyze,
+  onDelete,
 }: LeadPortalHeaderProps) {
   return (
     <header className="pbk-lead-portal-header">
@@ -100,6 +103,15 @@ export function LeadPortalHeader({
         <button type="button" className="primary" onClick={onAnalyze}>
           <BadgeDollarSign size={16} />
           Analyze
+        </button>
+        <button
+          type="button"
+          className="danger"
+          onClick={onDelete}
+          disabled={Boolean(pendingAction)}
+        >
+          <Trash2 size={16} />
+          Delete lead
         </button>
       </div>
     </header>

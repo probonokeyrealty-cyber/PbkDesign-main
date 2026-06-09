@@ -47,9 +47,18 @@ assert(/CAMPAIGN_WIZARD_DRAFT_KEY/.test(campaigns), 'Campaign wizard must autosa
 assert(/fetchCampaignsRequest/.test(campaigns), 'Campaigns page must read live campaign data from the bridge.');
 assert(/createCampaignRequest/.test(campaigns), 'Campaign wizard must create campaigns through the bridge.');
 assert(/requestCampaignApprovalRequest/.test(campaigns), 'Campaign launch must request bridge approval.');
+assert(
+  /const closeWizard = useCallback\(\(\) => setWizardOpen\(false\), \[\]\)/.test(campaigns) &&
+    /onClose=\{closeWizard\}/.test(campaigns),
+  'Campaign wizard close behavior must stay referentially stable while the draft changes.'
+);
+assert(
+  /event\.target === event\.currentTarget/.test(campaigns),
+  'Campaign wizard backdrop must close only on a deliberate backdrop press.'
+);
 assert(!/SAMPLE_CAMPAIGNS|MOCK_CAMPAIGNS|Diane Kowalski|Marco Hill|Lena Brooks/.test(campaigns), 'Campaigns page must not ship hardcoded seller/campaign mock data.');
 assert(
-  /@media \(max-width: 560px\)[\s\S]*?\.pbk-wiz-foot \.nav-btns[\s\S]*?grid-template-columns: 1fr[\s\S]*?min-height: 44px/.test(
+  /@media \(max-width: 560px\)[\s\S]*?\.pbk-wiz-foot \.nav-btns[\s\S]*?grid-template-columns:\s*repeat\(3[\s\S]*?min-height: 44px/.test(
     styles
   ),
   'Campaign wizard actions must stay fully visible and touch-sized on narrow mobile screens.'

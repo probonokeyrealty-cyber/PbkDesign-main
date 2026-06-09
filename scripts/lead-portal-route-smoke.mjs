@@ -55,12 +55,19 @@ for (const helper of [
   'fetchConversationsRequest',
   'fetchConversationTimelineRequest',
   'patchLeadRequest',
+  'deleteLeadRequest',
   'startLeadCallRequest',
   'sendLeadContractRequest',
   'saveLeadNoteRequest',
 ]) {
   assert(portal.includes(helper), `Lead portal must use ${helper}.`);
 }
+assert(
+  components.includes('Delete lead') &&
+    portal.includes("confirmAction === 'delete'") &&
+    /method:\s*'DELETE'[\s\S]*?\/api\/leads\//.test(bridge),
+  'Lead Portal must expose a confirmed bridge-backed delete action.'
+);
 
 assert(
   /leadId\?: string/.test(bridge) &&

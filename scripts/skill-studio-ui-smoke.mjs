@@ -49,5 +49,19 @@ assert(
     styles.includes('.pbk-skill-studio-inspector'),
   'Skill Studio must include responsive workspace and inspector styles.'
 );
+assert(
+  route.includes('pbk-skill-dialog-body') &&
+    /event\.target === event\.currentTarget/.test(route),
+  'Skill candidate intake must have a dedicated scroll body and deliberate backdrop dismissal.'
+);
+assert(
+  /\.pbk-skill-dialog\s*\{[\s\S]*?grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/.test(
+    styles
+  ) &&
+    /@media \(max-width: 760px\)[\s\S]*?\.pbk-skill-dialog footer[\s\S]*?position:\s*sticky[\s\S]*?bottom:\s*0/.test(
+      styles
+    ),
+  'Skill candidate actions must remain visible above mobile safe areas.'
+);
 
 console.log('skill-studio-ui-smoke: ok');

@@ -119,7 +119,13 @@ function CreateCandidateDialog({
   const [sourceNote, setSourceNote] = useState('');
   if (!open) return null;
   return (
-    <div className="pbk-skill-dialog-backdrop" role="presentation" onMouseDown={onClose}>
+    <div
+      className="pbk-skill-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <section
         className="pbk-skill-dialog"
         role="dialog"
@@ -136,56 +142,58 @@ function CreateCandidateDialog({
             <X size={18} />
           </button>
         </header>
-        <p>
-          New skills enter review only. They cannot execute until an operator approves the exact
-          hash and activates a rollout.
-        </p>
-        <label>
-          Skill name
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Price-gap discovery"
-            autoFocus
-          />
-        </label>
-        <label>
-          Instructions
-          <textarea
-            value={instructions}
-            onChange={(event) => setInstructions(event.target.value)}
-            placeholder="Describe the behavior, trigger, limits, and expected operator outcome."
-            rows={7}
-          />
-        </label>
-        <div className="pbk-skill-dialog-grid">
+        <div className="pbk-skill-dialog-body">
+          <p>
+            New skills enter review only. They cannot execute until an operator approves the exact
+            hash and activates a rollout.
+          </p>
           <label>
-            Risk class
-            <select value={riskClass} onChange={(event) => setRiskClass(event.target.value)}>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
-            </select>
+            Skill name
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Price-gap discovery"
+              autoFocus
+            />
           </label>
           <label>
-            Suggested agent
-            <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-              <option value="ava">Ava</option>
-              <option value="rex">Rex</option>
-              <option value="nurture">Nurture</option>
-              <option value="max">Max</option>
-            </select>
+            Instructions
+            <textarea
+              value={instructions}
+              onChange={(event) => setInstructions(event.target.value)}
+              placeholder="Describe the behavior, trigger, limits, and expected operator outcome."
+              rows={7}
+            />
+          </label>
+          <div className="pbk-skill-dialog-grid">
+            <label>
+              Risk class
+              <select value={riskClass} onChange={(event) => setRiskClass(event.target.value)}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </label>
+            <label>
+              Suggested agent
+              <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                <option value="ava">Ava</option>
+                <option value="rex">Rex</option>
+                <option value="nurture">Nurture</option>
+                <option value="max">Max</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            Provenance note
+            <input
+              value={sourceNote}
+              onChange={(event) => setSourceNote(event.target.value)}
+              placeholder="Operator doctrine, call review, training source..."
+            />
           </label>
         </div>
-        <label>
-          Provenance note
-          <input
-            value={sourceNote}
-            onChange={(event) => setSourceNote(event.target.value)}
-            placeholder="Operator doctrine, call review, training source..."
-          />
-        </label>
         <footer>
           <button type="button" className="pbk-btn pbk-btn-ghost" onClick={onClose}>
             Cancel

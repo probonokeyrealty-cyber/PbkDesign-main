@@ -280,6 +280,17 @@ export function ConversationComposer({
     !scheduleInvalid &&
     !exactMessageAlreadyQueued &&
     !sending;
+  const showSendGuard = Boolean(
+    blockedByDnc ||
+    recommendationGuard ||
+    !recipient ||
+    senderLoading ||
+    !senderIdentityId ||
+    !senderMatchesChannel ||
+    senderRestriction ||
+    scheduleInvalid ||
+    exactMessageAlreadyQueued
+  );
 
   const loadSenders = useCallback(async () => {
     const requestId = ++senderRequestSequence.current;
@@ -582,17 +593,6 @@ export function ConversationComposer({
           </label>
         )}
 
-        <button
-          type="button"
-          className="pbk-composer-mobile-tools-toggle"
-          aria-expanded={mobileToolsOpen}
-          onClick={() => setMobileToolsOpen((open) => !open)}
-        >
-          <SlidersHorizontal size={14} />
-          Message tools
-          <span>{mobileToolsOpen ? 'Hide' : 'Open'}</span>
-        </button>
-
         <div className={`pbk-composer-advanced ${mobileToolsOpen ? 'open' : ''}`}>
           <div className="pbk-composer-smart-replies" aria-label="Ava smart replies">
             <span>
@@ -666,7 +666,7 @@ export function ConversationComposer({
           </div>
         </div>
 
-        {!canSend && sendDisabledReason && !sending && (
+        {showSendGuard && !canSend && sendDisabledReason && !sending && (
           <div
             id="conversation-send-requirement"
             className={`pbk-composer-guard ${
@@ -704,6 +704,16 @@ export function ConversationComposer({
 
       <div className="pbk-composer-send-row">
         <div className="pbk-composer-draft-shell">
+          <button
+            type="button"
+            className="pbk-composer-mobile-tools-toggle"
+            aria-expanded={mobileToolsOpen}
+            aria-label={mobileToolsOpen ? 'Hide message tools' : 'Open message tools'}
+            onClick={() => setMobileToolsOpen((open) => !open)}
+          >
+            <SlidersHorizontal size={16} />
+            <span>Message tools</span>
+          </button>
           <label className="pbk-composer-body">
             <span className="sr-only">Message body</span>
             <textarea
@@ -726,7 +736,7 @@ export function ConversationComposer({
             disabled={!canSend}
             aria-label={sendLater ? 'Schedule message' : 'Send message'}
             aria-describedby={
-              !canSend && sendDisabledReason && !sending
+              showSendGuard && !canSend && sendDisabledReason && !sending
                 ? 'conversation-send-requirement'
                 : undefined
             }

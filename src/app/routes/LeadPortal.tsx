@@ -38,6 +38,7 @@ import {
   fetchConversationTimelineRequest,
   fetchConversationsRequest,
   fetchLeadFullRequest,
+  deleteLeadRequest,
   patchLeadRequest,
   saveLeadNoteRequest,
   sendLeadContractRequest,
@@ -70,7 +71,7 @@ function isCallablePhone(value: string) {
   return value.replace(/\D/g, '').length >= 10;
 }
 
-type PortalAction = 'call' | 'contract' | '';
+type PortalAction = 'call' | 'contract' | 'delete' | '';
 
 type FieldProps = {
   label: string;
@@ -513,6 +514,40 @@ export function LeadPortal() {
     }
   };
 
+  const executeDelete = async () => {
+    if (!lead) return;
+    const actionLeadId = lead.id || leadId;
+    const actionToken = beginAction('delete');
+    try {
+      const response = await deleteLeadRequest(actionLeadId, {
+        actor: 'Canonical Lead Portal',
+        reason: 'operator_confirmed_delete',
+      });
+      if (response.ok === false) {
+        throw new Error(String(response.error || 'The bridge rejected the delete request.'));
+      }
+      showUiToast({
+        tone: 'success',
+        title: 'Lead deleted',
+        desc: `${lead.name} was removed from the PBK lead roster.`,
+      });
+      navigate('/leads', { replace: true });
+    } catch (nextError) {
+      showUiToast({
+        tone: 'error',
+        title: 'Lead not deleted',
+        desc:
+          nextError instanceof Error
+            ? nextError.message
+            : 'The bridge rejected the delete request.',
+        critical: true,
+      });
+    } finally {
+      finishAction(actionToken);
+      setConfirmAction('');
+    }
+  };
+
   if (loading && !lead) {
     return (
       <div className="pbk-lead-portal-loading" aria-label="Loading seller workspace">
@@ -542,17 +577,24 @@ export function LeadPortal() {
   }
 
   const confirmCopy =
-    confirmAction === 'call'
+    confirmAction === 'delete'
       ? {
-          title: `Call ${lead.name}?`,
-          description: `${lead.phone} will be sent to the real Telnyx call lane. Provider policy may require operator approval.`,
-          action: 'Place call',
+          title: `Delete ${lead.name}?`,
+          description:
+            'This removes the lead and its PBK runtime calls, messages, appointments, contracts, and analyzer records. Provider-side records are not revoked. This action cannot be undone.',
+          action: 'Delete lead',
         }
-      : {
-          title: `Prepare ${lead.pathLabel} contract?`,
-          description: `${PATH_TEMPLATE_NAMES[lead.path] || PATH_TEMPLATE_NAMES.cash} will be sent through the bridge for ${lead.email}.`,
-          action: 'Prepare contract',
-        };
+      : confirmAction === 'call'
+        ? {
+            title: `Call ${lead.name}?`,
+            description: `${lead.phone} will be sent to the real Telnyx call lane. Provider policy may require operator approval.`,
+            action: 'Place call',
+          }
+        : {
+            title: `Prepare ${lead.pathLabel} contract?`,
+            description: `${PATH_TEMPLATE_NAMES[lead.path] || PATH_TEMPLATE_NAMES.cash} will be sent through the bridge for ${lead.email}.`,
+            action: 'Prepare contract',
+          };
 
   return (
     <main className="pbk-lead-portal">
@@ -599,6 +641,7 @@ export function LeadPortal() {
           setConfirmAction('contract');
         }}
         onAnalyze={() => navigate(`/deal/${encodeURIComponent(lead.id || leadId)}`)}
+        onDelete={() => setConfirmAction('delete')}
       />
 
       <div className="pbk-lead-portal-source">
@@ -935,7 +978,14 @@ export function LeadPortal() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => void (confirmAction === 'call' ? executeCall() : executeContract())}
+              className={confirmAction === 'delete' ? 'pbk-btn-danger' : undefined}
+              onClick={() =>
+                void (confirmAction === 'delete'
+                  ? executeDelete()
+                  : confirmAction === 'call'
+                    ? executeCall()
+                    : executeContract())
+              }
             >
               {confirmCopy.action}
             </AlertDialogAction>

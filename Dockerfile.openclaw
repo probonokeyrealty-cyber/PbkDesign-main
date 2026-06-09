@@ -110,6 +110,7 @@ COPY scripts/qa-agent.mjs ./scripts/qa-agent.mjs
 COPY scripts/agent-registry.mjs ./scripts/agent-registry.mjs
 COPY scripts/rex-autonomy.mjs ./scripts/rex-autonomy.mjs
 COPY scripts/context-aware-script-rotator.mjs ./scripts/context-aware-script-rotator.mjs
+COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.mjs
 COPY scripts/safety-validator.mjs ./scripts/safety-validator.mjs
 COPY scripts/ava-eval-suite.mjs ./scripts/ava-eval-suite.mjs
 COPY scripts/observability.mjs ./scripts/observability.mjs

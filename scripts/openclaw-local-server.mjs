@@ -18,6 +18,11 @@ import { buildAgentRegistrySnapshot, buildDefaultAgentRegistry, findAgentsByCapa
 import { EventTypes, getEventBusStatus, publishEvent as publishEventBusEvent } from './event-bus/streams.mjs';
 import { buildRexKpiSnapshot, proposeAutonomousRexGoals, selectRexProactiveLeadAction } from './rex-autonomy.mjs';
 import { recordScriptOutcomeStats, selectContextAwareScript } from './context-aware-script-rotator.mjs';
+import {
+  buildGovernedSkillNextMove,
+  isGovernedSkillToolAllowed,
+  selectGovernedAvaSkill,
+} from './ava-governed-skill-router.mjs';
 import { validateProviderActionSafety as validateProviderActionSafetyCore } from './safety-validator.mjs';
 import { runAvaCanonicalEvalSuite as runAvaCanonicalEvalSuiteCore } from './ava-eval-suite.mjs';
 import { buildCoworkerHeartbeatPlan, summarizeHeartbeatPlan } from './coworker-heartbeat.mjs';
@@ -19455,14 +19460,58 @@ function buildAvaScriptRotationSnapshot(params = {}) {
   const ava = findAgentRecord('ava') || {};
   const bridgeSkills = (ava.skills || [])
     .map((skill) => ({
+      id: skill.id || skill.versionId || '',
+      versionId: skill.versionId || '',
+      activationId: skill.activationId || '',
       name: skill.name || '',
       confidence: Number(skill.confidence || 0),
       level: skill.level || '',
+      status: skill.status || '',
+      priority: Number(skill.priority || 100),
       evidence: skill.evidence || '',
-      source: 'agent_fleet',
+      instructions: skill.instructions || skill.evidence || '',
+      triggerPolicy: skill.triggerPolicy || {},
+      toolAllowlist: Array.isArray(skill.toolAllowlist) ? skill.toolAllowlist : [],
+      scope: skill.scope || {},
+      rolloutMode: skill.rolloutMode || '',
+      rolloutPercent: skill.rolloutPercent,
+      source: skill.source || '',
     }))
     .filter((skill) => skill.name)
     .sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0));
+  const governedSkillSelection = selectGovernedAvaSkill({
+    skills: bridgeSkills,
+    transcript: query,
+    lastObjection:
+      params.lastObjection ||
+      params.last_objection ||
+      params.objectionTag ||
+      params.warManual?.objection?.tag ||
+      '',
+    emotion:
+      params.emotion ||
+      params.sellerEmotion ||
+      params.warManual?.emotionalState?.id ||
+      params.warManual?.emotionalState?.label ||
+      '',
+    stage: params.stage || params.leadStage || params.session?.stage || '',
+    path:
+      params.pathKey ||
+      params.selectedPath ||
+      params.pathDecision?.selectedPath ||
+      params.session?.selectedPath ||
+      '',
+    intent: params.intent || params.sellerIntent || '',
+    workspaceId: params.workspaceId || params.workspace_id || 'pbk',
+    leadId: params.leadId || params.lead_id || params.session?.leadId || '',
+    callId: params.callId || params.call_id || params.session?.callId || '',
+    campaignId: params.campaignId || params.campaign_id || params.session?.campaignId || '',
+    sessionId: params.sessionId || params.session_id || params.session?.sessionId || '',
+    currentSkillId:
+      params.currentGovernedSkillId ||
+      params.session?.activeGovernedSkillId ||
+      '',
+  });
   const activeMemories = sortNewest(state.avaActiveMemories || [])
     .filter((memory) => {
       const haystack = [memory.objectionTag, memory.memoryType, memory.prompt, memory.response, memory.summary].filter(Boolean).join(' ').toLowerCase();
@@ -19477,7 +19526,13 @@ function buildAvaScriptRotationSnapshot(params = {}) {
     }));
   return {
     activeSkillCount: bridgeSkills.length || Number(ava.skillsTotal || 0),
-    selectedSkills: bridgeSkills.slice(0, 6),
+    selectedSkills: [
+      ...(governedSkillSelection.selectedSkill ? [governedSkillSelection.selectedSkill] : []),
+      ...bridgeSkills.filter(
+        (skill) => skill.id !== governedSkillSelection.selectedSkill?.id
+      ),
+    ].slice(0, 6),
+    governedSkillSelection,
     activeMemories,
     contextAwareSelection: contextAwareSelection.ok
       ? {
@@ -20290,6 +20345,13 @@ function buildAvaCallArchitectureContext(params = {}) {
   const contextScriptId = scripts.contextAwareSelection?.selectedScript?.id || scripts.selectedScript?.id || '';
   if (contextScriptId) {
     session.contextAwareScriptSelection = scripts.contextAwareSelection;
+  }
+  if (scripts.governedSkillSelection?.action === 'clear') {
+    delete session.activeGovernedSkillId;
+    session.governedSkillSelection = scripts.governedSkillSelection;
+  } else if (scripts.governedSkillSelection?.selectedSkill?.id) {
+    session.activeGovernedSkillId = scripts.governedSkillSelection.selectedSkill.id;
+    session.governedSkillSelection = scripts.governedSkillSelection;
   }
   const activeListening = buildAvaActiveListeningContext({
     ...params,
@@ -25414,6 +25476,11 @@ function buildAvaCallStateSummary(params = {}) {
   const activeNextStep = activeListening.callFlow?.nextStepId || '';
   const contextScript = architecture.scripts?.contextAwareSelection?.selectedScript || architecture.scripts?.selectedScript || {};
   const contextScriptLine = contextScript?.content ? `Context-aware script rotator selected "${contextScript.title || contextScript.id}" (${(architecture.scripts?.contextAwareSelection?.reasonCodes || contextScript.reasonCodes || []).join(',') || 'best_context'}): ${sanitizeAvaSpokenOutput(contextScript.content).slice(0, 260)}` : '';
+  const governedSkillSelection = architecture.scripts?.governedSkillSelection || {};
+  const governedSkill = governedSkillSelection.selectedSkill || {};
+  const governedSkillLine = governedSkill?.instructions || governedSkill?.evidence
+    ? `Governed skill ${governedSkillSelection.action || 'cue'}: "${governedSkill.name || governedSkill.id}" because ${(governedSkillSelection.reasonCodes || []).join(', ') || 'approved trigger match'}. Apply this strategy: ${sanitizeAvaSpokenOutput(governedSkill.instructions || governedSkill.evidence).slice(0, 360)}`
+    : '';
   const topGoalLabel = goalInference.topGoal?.label || '';
   const secondaryGoalLabels = Array.isArray(goalInference.secondaryGoals)
     ? goalInference.secondaryGoals
@@ -25449,6 +25516,7 @@ function buildAvaCallStateSummary(params = {}) {
     warListenQuestion ? `L.I.S.T.E.N. next step (${warManual.listenProbe?.step || 'probe'}): ${warListenQuestion}` : '',
     warPowerLine ? `War manual power line if natural: ${warPowerLine}` : '',
     warMove?.instruction ? `Psychology move: ${warMove.label || warMove.id} - ${sanitizeAvaSpokenOutput(warMove.instruction).slice(0, 220)}` : '',
+    governedSkillLine,
     contextScriptLine,
     activeListening.revision ? `Active listening: ${activeListening.revision}; mode ${activeListening.mode || 'twenty_year_pro_ready'}; responseRequired=${activeListening.responseRequired !== false}; waitingForSeller=${Boolean(activeListening.waitingForSeller)}; call flow ${activeNextStep || 'listen.mirror_label'} via ${activeListening.callFlow?.schema || 'call_flow/call_flow_edges'}.` : '',
     activeSellerWords ? `Seller just said: ${activeSellerWords}` : '',
@@ -25486,6 +25554,9 @@ function buildAvaResolvedNextMove(params = {}) {
   const nextProbe = sanitizeAvaSpokenOutput(pathDecision.nextProbeQuestion || warManual.listenProbe?.question || bant.nextQuestion || activeListening.callFlow?.recommendedHook || '').slice(0, 280);
   const contextAwareScript = sanitizeAvaSpokenOutput(architecture.scripts?.contextAwareSelection?.selectedScript?.content || architecture.scripts?.selectedScript?.content || '').slice(0, 420);
   const script = sanitizeAvaSpokenOutput(contextAwareScript || pathDecision.scriptTrigger || warManual.path?.scriptTrigger || warManual.powerLine?.line || '').slice(0, 420);
+  const governedSkillSelection = architecture.scripts?.governedSkillSelection || {};
+  const governedSkill = governedSkillSelection.selectedSkill || null;
+  const governedNextMove = buildGovernedSkillNextMove(governedSkillSelection);
   const fallback = sanitizeAvaSpokenOutput(conversation.nextBestPhrase || conversation.reaction?.nextTactic || 'I hear you. Let me make sure I understand before I recommend anything. What matters most right now: speed, certainty, or price?').slice(0, 360);
   const missingBant = Array.isArray(bant.missing) ? bant.missing : [];
   let type = 'fallback_probe';
@@ -25504,26 +25575,31 @@ function buildAvaResolvedNextMove(params = {}) {
     intent: sellerIntent,
   });
 
-  if (salesMove && !['unknown', 'empty', 'greeting', 'audio_check', 'acknowledgement'].includes(sellerIntent.intent)) {
-    type = 'sales_progression';
-    source = 'live_sales_wholesale_intelligence';
-    reason = sellerIntent.intent;
-    text = salesMove;
-  } else if ((callerRole.needsClarification && ![PBK_CALLER_ROLES.OWNER, PBK_CALLER_ROLES.AGENT].includes(role)) || role === PBK_CALLER_ROLES.UNKNOWN) {
+  if ((callerRole.needsClarification && ![PBK_CALLER_ROLES.OWNER, PBK_CALLER_ROLES.AGENT].includes(role)) || role === PBK_CALLER_ROLES.UNKNOWN) {
     type = 'role_probe';
     source = 'caller_role_guard';
     reason = 'owner_agent_decision_maker_unknown';
     text = 'Just so I handle this the right way, are you the property owner, the agent on the deal, or helping the owner make the decision?';
-  } else if (objectionResponse) {
-    type = 'objection_response';
-    source = objection.source || 'fifty_plus_objection_decoder';
-    reason = objection.tag || objection.category || 'matched_objection';
-    text = objectionResponse;
   } else if (masterProbe.mustAskBeforePitch && masterProbe.question) {
     type = 'master_probe';
     source = 'master_probe_guardrail';
     reason = masterProbe.reason || 'probe_required_before_pitch';
     text = sanitizeAvaSpokenOutput(masterProbe.question).slice(0, 280);
+  } else if (governedNextMove) {
+    type = governedNextMove.type;
+    source = governedNextMove.source;
+    reason = governedNextMove.reason;
+    text = sanitizeAvaSpokenOutput(governedNextMove.text).slice(0, 420);
+  } else if (salesMove && !['unknown', 'empty', 'greeting', 'audio_check', 'acknowledgement'].includes(sellerIntent.intent)) {
+    type = 'sales_progression';
+    source = 'live_sales_wholesale_intelligence';
+    reason = sellerIntent.intent;
+    text = salesMove;
+  } else if (objectionResponse) {
+    type = 'objection_response';
+    source = objection.source || 'fifty_plus_objection_decoder';
+    reason = objection.tag || objection.category || 'matched_objection';
+    text = objectionResponse;
   } else if (!pathLocked && goalInference.uncertaintyHigh && goalClarifyingQuestion) {
     type = 'goal_clarification';
     source = 'GOOD_style_goal_inference';
@@ -25578,11 +25654,13 @@ function buildAvaResolvedNextMove(params = {}) {
       goalClarifyingQuestion,
       user_goals: goalInference.user_goals || [],
     },
+    governedSkill: governedNextMove?.governedSkill || null,
     guardrails: {
       agentOnlyCreativeFinance: true,
       ownerSafe: role !== PBK_CALLER_ROLES.AGENT,
       responseRequired: activeListening.responseRequired !== false,
       noProviderWrite: true,
+      allowedTools: governedNextMove?.governedSkill?.toolAllowlist || null,
     },
   };
 }
@@ -25713,6 +25791,7 @@ async function resolveAvaLiveCallContext(params = {}) {
         path: architecture.pathDecision?.selectedPath || '',
         bestMatch: sanitizeAvaSpokenOutput(architecture.pathDecision?.scriptTrigger || architecture.warManual?.powerLine?.line || '').slice(0, 360),
         contextAware: architecture.scripts?.contextAwareSelection || null,
+        governedSkillSelection: architecture.scripts?.governedSkillSelection || null,
       },
       objection: objection.response
         ? {
@@ -25797,6 +25876,8 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
   const lead = resolvedContext.lead || {};
   const stateSnapshot = resolvedContext.state || {};
   const contextScript = resolvedContext.script?.contextAware?.selectedScript || resolvedContext.script?.contextAware?.selected || null;
+  const governedSkillSelection = resolvedContext.script?.governedSkillSelection || {};
+  const governedSkill = governedSkillSelection.selectedSkill || null;
   const goalInference = resolvedContext.goalInference || move.goalInference || {};
   const goalLine = goalInference.topGoal?.label
     ? `Goal inference: top=${goalInference.topGoal.label}; uncertainty=${goalInference.uncertainty ?? 'unknown'}; secondaryGoals=${
@@ -25807,7 +25888,44 @@ function buildAvaPhrasingEnginePrompt(resolvedContext = {}, transcript = '') {
           .join(', ') || 'none'
       }; clarifier=${sanitizeAvaSpokenOutput(goalInference.goalClarifyingQuestion || '').slice(0, 220)}.`
     : '';
-  return ['DeepSeek role: Ava phrasing engine only.', 'The contextResolver already chose the strategy from PBK scripts, objections, BANT, probes, emotional memory, and call state.', 'Do not change the strategy. Only phrase it.', `strategyLocked: ${move.strategyLocked === false ? 'false' : 'true'}`, `Seller just said: "${sanitizeAvaSpokenOutput(transcript).slice(0, 500)}"`, `exactNextMove: ${sanitizeAvaSpokenOutput(move.text || move.exactNextMove || '').slice(0, 420)}`, `Move type: ${move.type || 'fallback_probe'} via ${move.source || 'resolver'}. Reason: ${move.reason || 'safe_next_step'}.`, lead.name && lead.nameConfirmed ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.` : '', lead.name && !lead.nameConfirmed ? 'Lead context has an unconfirmed CRM name. Do not say the lead name unless the caller confirms it on this call.' : '', stateSnapshot.identifiedPath ? `Path state: ${stateSnapshot.pathLocked ? 'locked' : 'probing'} ${stateSnapshot.identifiedPath}.` : '', contextScript?.content ? `Context-aware script selected: ${sanitizeAvaSpokenOutput(contextScript.content).slice(0, 360)}` : '', goalLine, memory ? `Relevant memory lesson: ${memory}` : '', episodicMemory ? `Episodic call memory:\n${episodicMemory}` : '', liveKnowledge ? `Live Brain RAG knowledge:\n${liveKnowledge}` : '', 'Write the final Ava line in under 2 sentences, natural on the phone, with one response-required hook. Never expose this resolver text.'].filter(Boolean).join('\n');
+  return [
+    'DeepSeek role: Ava phrasing engine only.',
+    'The contextResolver already chose the strategy from PBK scripts, governed skills, objections, BANT, probes, emotional memory, and call state.',
+    'Do not change the strategy. Only phrase it.',
+    `strategyLocked: ${move.strategyLocked === false ? 'false' : 'true'}`,
+    `Seller just said: "${sanitizeAvaSpokenOutput(transcript).slice(0, 500)}"`,
+    `exactNextMove: ${sanitizeAvaSpokenOutput(move.text || move.exactNextMove || '').slice(0, 420)}`,
+    `Move type: ${move.type || 'fallback_probe'} via ${move.source || 'resolver'}. Reason: ${move.reason || 'safe_next_step'}.`,
+    lead.name && lead.nameConfirmed
+      ? `Lead context: ${lead.name}${lead.address ? ` at ${lead.address}` : ''}.`
+      : '',
+    lead.name && !lead.nameConfirmed
+      ? 'Lead context has an unconfirmed CRM name. Do not say the lead name unless the caller confirms it on this call.'
+      : '',
+    stateSnapshot.identifiedPath
+      ? `Path state: ${stateSnapshot.pathLocked ? 'locked' : 'probing'} ${stateSnapshot.identifiedPath}.`
+      : '',
+    governedSkill?.instructions || governedSkill?.evidence
+      ? `Approved governed skill ${governedSkillSelection.action || 'cue'} "${governedSkill.name || governedSkill.id}" (${(governedSkillSelection.reasonCodes || []).join(', ') || 'trigger match'}): ${sanitizeAvaSpokenOutput(governedSkill.instructions || governedSkill.evidence).slice(0, 420)}`
+      : '',
+    governedSkill
+      ? `Governed skill tool contract: ${
+          Array.isArray(governedSkill.toolAllowlist) && governedSkill.toolAllowlist.length
+            ? governedSkill.toolAllowlist.join(', ')
+            : 'no tool calls permitted'
+        }.`
+      : '',
+    contextScript?.content
+      ? `Context-aware script selected: ${sanitizeAvaSpokenOutput(contextScript.content).slice(0, 360)}`
+      : '',
+    goalLine,
+    memory ? `Relevant memory lesson: ${memory}` : '',
+    episodicMemory ? `Episodic call memory:\n${episodicMemory}` : '',
+    liveKnowledge ? `Live Brain RAG knowledge:\n${liveKnowledge}` : '',
+    'Write the final Ava line in under 2 sentences, natural on the phone, with one response-required hook. Never expose this resolver text.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildStrategistMessages(params = {}) {
@@ -35582,7 +35700,50 @@ async function validateToolResultWithQa(toolName, params = {}, result = {}, sour
   }
 }
 
+function getGovernedSkillSelectionForTool(params = {}) {
+  return (
+    params.governedSkillSelection ||
+    params.governed_skill_selection ||
+    params.skillContext?.governedSkillSelection ||
+    params.skill_context?.governed_skill_selection ||
+    null
+  );
+}
+
 async function executeToolHandlerWithQa(toolName, params = {}, source = 'pbk-bridge') {
+  const governedSkillSelection = getGovernedSkillSelectionForTool(params);
+  if (
+    governedSkillSelection?.selectedSkill &&
+    !isGovernedSkillToolAllowed(governedSkillSelection, toolName)
+  ) {
+    return {
+      result: {
+        ok: false,
+        result: 'governed_skill_tool_blocked',
+        blocked: true,
+        toolName,
+        skillId:
+          governedSkillSelection.selectedSkill.id ||
+          governedSkillSelection.selectedSkill.versionId ||
+          '',
+        error: `The selected governed skill does not allow ${toolName}.`,
+      },
+      qaValidation: {
+        ok: true,
+        skipped: true,
+        qa: {
+          ok: true,
+          skipped: true,
+          reason: 'governed_skill_tool_blocked',
+        },
+      },
+      safetyValidation: {
+        ok: true,
+        blocked: true,
+        reason: 'governed_skill_tool_blocked',
+      },
+    };
+  }
   const safetyValidation = await preValidateToolSafety(toolName, params, source);
   if (safetyValidation?.blocked) {
     void recordAgentOps({
@@ -39801,6 +39962,11 @@ async function reloadApprovedSkillsIntoBridgeState(options = {}) {
       source: 'skill-governance',
       confidence: Math.max(0, Math.min(100, confidence)),
       evidence: skill.instructions || '',
+      instructions: skill.instructions || '',
+      triggerPolicy: skill.triggerPolicy || {},
+      toolAllowlist: Array.isArray(skill.toolAllowlist) ? skill.toolAllowlist : [],
+      scope: skill.scope || {},
+      priority: Number(skill.priority || 100),
       versionId: skill.versionId,
       activationId: skill.activationId,
       approvalId: skill.approvalId,

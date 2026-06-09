@@ -11,16 +11,19 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
+function jsonClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 function checksumSnapshotPayload(snapshot = {}) {
+  const payload = jsonClone({
+    schemaVersion: Number(snapshot.schemaVersion || 1),
+    generatedAt: snapshot.generatedAt || '',
+    authority: snapshot.authority || 'render-postgres',
+    skills: Array.isArray(snapshot.skills) ? snapshot.skills : [],
+  });
   return createHash('sha256')
-    .update(
-      canonicalJson({
-        schemaVersion: Number(snapshot.schemaVersion || 1),
-        generatedAt: snapshot.generatedAt || '',
-        authority: snapshot.authority || 'render-postgres',
-        skills: Array.isArray(snapshot.skills) ? snapshot.skills : [],
-      })
-    )
+    .update(canonicalJson(payload))
     .digest('hex');
 }
 
@@ -73,7 +76,7 @@ export function createSkillRuntimeSnapshotCache({
       schemaVersion: 1,
       authority: 'render-postgres',
       generatedAt: now().toISOString(),
-      skills: structuredClone(Array.isArray(skills) ? skills : []),
+      skills: jsonClone(Array.isArray(skills) ? skills : []),
     };
     snapshot.checksum = checksumSnapshotPayload(snapshot);
     const redisPayload = structuredClone(snapshot);

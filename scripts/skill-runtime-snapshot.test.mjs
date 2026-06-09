@@ -72,4 +72,34 @@ describe('skill runtime snapshot cache', () => {
     expect(loaded.reason).toBe('snapshot_checksum_invalid');
     expect(loaded.skills).toEqual([]);
   });
+
+  test('preserves checksum validity after JSON drops undefined skill fields', async () => {
+    const adapters = createMemoryAdapters();
+    const cache = createSkillRuntimeSnapshotCache({
+      ...adapters,
+      redisKey: 'pbk:skill-runtime-snapshot',
+      filePath: 'approved-skills.json',
+      now: () => new Date('2026-06-09T12:00:00.000Z'),
+    });
+
+    await cache.save([
+      {
+        versionId: 'version-1',
+        contentHash: 'hash-1',
+        name: 'Price gap discovery',
+        optionalAssignmentId: undefined,
+      },
+    ]);
+
+    const stored = adapters.values.get('redis:pbk:skill-runtime-snapshot');
+    adapters.values.set(
+      'redis:pbk:skill-runtime-snapshot',
+      JSON.parse(JSON.stringify(stored))
+    );
+
+    const loaded = await cache.load();
+
+    expect(loaded.available).toBe(true);
+    expect(loaded.skills[0]).not.toHaveProperty('optionalAssignmentId');
+  });
 });

@@ -109,6 +109,20 @@ assert(
   'Current-script reconciliation should be allowed through the local dev proxy without exposing bridge secrets.'
 );
 assert(/fetchCurrentScriptRequest/.test(scriptPanelSource), 'ScriptPanel should fetch the bridge-selected current script.');
+assert(
+  /loadApprovedRuntimeSkills/.test(bridgeSource) &&
+    /reloadApprovedSkillsIntoBridgeState/.test(bridgeSource),
+  'Runtime skill reload must use approved Render-backed versions.'
+);
+assert(
+  /skillRuntimeSnapshotCache\.save/.test(bridgeSource) &&
+    /source = 'last-known-good-render'/.test(bridgeSource),
+  'Runtime skill reload must persist and restore a validated Render snapshot.'
+);
+assert(
+  /result: 'skill_authority_unavailable'[\s\S]*failClosed: true/.test(bridgeSource),
+  'Runtime skill reload must fail closed without Render authority or a validated snapshot.'
+);
 
 console.log('context-aware-script-rotator smoke passed', {
   lowSentiment: lowSentimentSelection.selectedScript.id,

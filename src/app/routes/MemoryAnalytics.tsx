@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Database, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router';
+import { Database, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import {
   fetchActiveExperimentsRequest,
@@ -124,15 +125,25 @@ function MemoryHero({
             training story.
           </p>
         </div>
-        <button
-          type="button"
-          className="pbk-memory-refresh"
-          onClick={onRefresh}
-          disabled={status === 'loading'}
-        >
-          <RefreshCw size={15} className={status === 'loading' ? 'animate-spin' : ''} />
-          {status === 'loading' ? 'Refreshing' : 'Refresh memory'}
-        </button>
+        <div className="pbk-memory-hero-actions">
+          <button
+            type="button"
+            className="pbk-memory-refresh"
+            onClick={onRefresh}
+            disabled={status === 'loading'}
+          >
+            <RefreshCw size={15} className={status === 'loading' ? 'animate-spin' : ''} />
+            {status === 'loading' ? 'Refreshing' : 'Refresh memory'}
+          </button>
+          <Link className="pbk-btn pbk-btn-ghost" to="/skills">
+            <Sparkles size={15} />
+            Open Skill Studio
+          </Link>
+          <Link className="pbk-btn pbk-btn-primary" to="/skills?create=1">
+            <Plus size={15} />
+            Add Skill
+          </Link>
+        </div>
       </div>
       <MemoryStatRibbon stats={stats} generatedAt={model.generatedAt} />
       <MemorySourceRail />

@@ -468,6 +468,305 @@ export async function loadApprovedRuntimeSkills(pool, input = {}) {
   return (result.rows || []).map(normalizeRuntimeSkillRow);
 }
 
+export async function getSkillGovernanceStatus(pool, input = {}) {
+  if (!pool?.query) {
+    return {
+      ok: false,
+      result: 'skill_authority_unavailable',
+      authority: 'render-postgres',
+      failClosed: true,
+      candidates: 0,
+      approvedInactive: 0,
+      canary: 0,
+      active: 0,
+      paused: 0,
+      staleApprovals: 0,
+      outbox: {
+        pending: 0,
+        retrying: 0,
+        deadLettered: 0,
+        oldestPendingAt: null,
+      },
+      snapshot: input.snapshot || {
+        available: false,
+        source: 'none',
+        generatedAt: null,
+        ageSeconds: null,
+      },
+    };
+  }
+  const workspaceId = input.workspaceId || 'pbk';
+  const [lifecycleResult, staleResult, outboxResult] = await Promise.all([
+    pool.query(
+      `SELECT lifecycle_state, COUNT(*)::BIGINT AS count
+       FROM public.skill_versions
+       WHERE workspace_id = $1
+       GROUP BY lifecycle_state`,
+      [workspaceId]
+    ),
+    pool.query(
+      `SELECT COUNT(*)::BIGINT AS stale_approvals
+       FROM public.skill_approvals AS approval
+       JOIN public.skill_versions AS version
+         ON version.id = approval.subject_version_id
+       WHERE approval.workspace_id = $1
+         AND approval.subject_type = 'skill_version'
+         AND approval.decision = 'approved'
+         AND approval.subject_hash <> version.content_hash`,
+      [workspaceId]
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*) FILTER (
+           WHERE delivered_at IS NULL
+             AND dead_lettered_at IS NULL
+         )::BIGINT AS pending,
+         COUNT(*) FILTER (
+           WHERE delivered_at IS NULL
+             AND dead_lettered_at IS NULL
+             AND attempt_count > 0
+         )::BIGINT AS retrying,
+         COUNT(*) FILTER (WHERE dead_lettered_at IS NOT NULL)::BIGINT AS dead_lettered,
+         MIN(created_at) FILTER (
+           WHERE delivered_at IS NULL
+             AND dead_lettered_at IS NULL
+         ) AS oldest_pending_at
+       FROM public.skill_projection_outbox
+       WHERE workspace_id = $1`,
+      [workspaceId]
+    ),
+  ]);
+  const lifecycle = Object.fromEntries(
+    (lifecycleResult.rows || []).map((row) => [
+      row.lifecycle_state,
+      Number(row.count || 0),
+    ])
+  );
+  const outbox = outboxResult.rows?.[0] || {};
+  return {
+    ok: true,
+    result: 'skill_governance_ready',
+    authority: 'render-postgres',
+    candidates: Number(lifecycle.candidate || 0) + Number(lifecycle.needs_review || 0),
+    approvedInactive: Number(lifecycle.approved_inactive || 0),
+    canary: Number(lifecycle.canary || 0),
+    active: Number(lifecycle.active || 0),
+    paused: Number(lifecycle.paused || 0),
+    staleApprovals: Number(staleResult.rows?.[0]?.stale_approvals || 0),
+    outbox: {
+      pending: Number(outbox.pending || 0),
+      retrying: Number(outbox.retrying || 0),
+      deadLettered: Number(outbox.dead_lettered || 0),
+      oldestPendingAt: outbox.oldest_pending_at || null,
+    },
+    snapshot: input.snapshot || {
+      available: false,
+      source: 'none',
+      generatedAt: null,
+      ageSeconds: null,
+    },
+  };
+}
+
+export async function getSkillGovernanceRepository(pool, input = {}) {
+  if (!pool?.query) {
+    return {
+      ok: false,
+      result: 'skill_authority_unavailable',
+      authority: 'render-postgres',
+      failClosed: true,
+      items: [],
+    };
+  }
+  const workspaceId = input.workspaceId || 'pbk';
+  const lifecycleState = String(input.lifecycleState || '').trim();
+  const search = String(input.search || '').trim();
+  const limit = Math.max(1, Math.min(200, Number(input.limit || 100)));
+  const result = await pool.query(
+    `SELECT *
+     FROM (
+       SELECT DISTINCT ON (version.id)
+         version.id AS version_id,
+         definition.id AS definition_id,
+         definition.slug,
+         definition.display_name,
+         definition.risk_class,
+         definition.source,
+         version.version_number,
+         version.lifecycle_state,
+         version.content_hash,
+         version.instructions,
+         version.trigger_policy,
+         version.input_schema,
+         version.output_schema,
+         version.tool_allowlist,
+         version.source_provenance,
+         version.safety_scan,
+         version.created_by,
+         version.created_at,
+         approval.id AS approval_id,
+         approval.approver_id,
+         approval.decided_at AS approved_at,
+         activation.id AS activation_id,
+         activation.status AS activation_status,
+         activation.rollout_mode,
+         activation.rollout_percent,
+         activation.activated_at,
+         assignment.agent_id,
+         assignment.scope,
+         assignment.priority
+       FROM public.skill_versions AS version
+       JOIN public.skill_definitions AS definition
+         ON definition.id = version.skill_definition_id
+       LEFT JOIN public.skill_approvals AS approval
+         ON approval.subject_version_id = version.id
+        AND approval.subject_hash = version.content_hash
+        AND approval.decision = 'approved'
+       LEFT JOIN public.skill_activations AS activation
+         ON activation.subject_version_id = version.id
+        AND activation.subject_type = 'skill_version'
+        AND activation.ended_at IS NULL
+       LEFT JOIN public.agent_skill_assignments AS assignment
+         ON assignment.subject_version_id = version.id
+        AND assignment.subject_type = 'skill_version'
+        AND assignment.effective_until IS NULL
+       WHERE version.workspace_id = $1
+         AND ($2 = '' OR version.lifecycle_state = $2)
+         AND (
+           $3 = ''
+           OR definition.display_name ILIKE '%' || $3 || '%'
+           OR definition.slug ILIKE '%' || $3 || '%'
+           OR version.instructions ILIKE '%' || $3 || '%'
+         )
+       ORDER BY version.id, activation.activated_at DESC NULLS LAST,
+                approval.decided_at DESC NULLS LAST, version.created_at DESC
+     ) AS repository
+     ORDER BY repository.created_at DESC
+     LIMIT $4`,
+    [workspaceId, lifecycleState, search, limit]
+  );
+  return {
+    ok: true,
+    result: 'skill_governance_repository',
+    authority: 'render-postgres',
+    count: result.rows?.length || 0,
+    items: (result.rows || []).map((row) => ({
+      versionId: row.version_id,
+      definitionId: row.definition_id,
+      slug: row.slug || '',
+      name: row.display_name || row.slug || '',
+      riskClass: row.risk_class || 'medium',
+      source: row.source || '',
+      versionNumber: Number(row.version_number || 1),
+      lifecycleState: row.lifecycle_state || 'candidate',
+      contentHash: row.content_hash || '',
+      instructions: row.instructions || '',
+      triggerPolicy: row.trigger_policy || {},
+      inputSchema: row.input_schema || {},
+      outputSchema: row.output_schema || {},
+      toolAllowlist: Array.isArray(row.tool_allowlist) ? row.tool_allowlist : [],
+      sourceProvenance: row.source_provenance || {},
+      safetyScan: row.safety_scan || {},
+      createdBy: row.created_by || '',
+      createdAt: row.created_at || null,
+      approvalId: row.approval_id || null,
+      approvedBy: row.approver_id || '',
+      approvedAt: row.approved_at || null,
+      activationId: row.activation_id || null,
+      activationStatus: row.activation_status || '',
+      rolloutMode: row.rollout_mode || '',
+      rolloutPercent: Number(row.rollout_percent || 0),
+      activatedAt: row.activated_at || null,
+      agentId: row.agent_id || '',
+      scope: row.scope || {},
+      priority: Number(row.priority || 100),
+    })),
+  };
+}
+
+export async function claimSkillProjectionEvents(pool, input = {}) {
+  if (!pool?.query) return [];
+  const workspaceId = input.workspaceId || 'pbk';
+  const workerId = String(input.workerId || '').trim();
+  if (!workerId) throw new Error('Projection workerId is required.');
+  const leaseSeconds = Math.max(15, Math.min(900, Number(input.leaseSeconds || 60)));
+  const limit = Math.max(1, Math.min(100, Number(input.limit || 25)));
+  const result = await pool.query(
+    `WITH claimable AS (
+       SELECT event_id
+       FROM public.skill_projection_outbox
+       WHERE workspace_id = $1
+         AND delivered_at IS NULL
+         AND dead_lettered_at IS NULL
+         AND available_at <= NOW()
+         AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
+       ORDER BY created_at ASC
+       FOR UPDATE SKIP LOCKED
+       LIMIT $4
+     )
+     UPDATE public.skill_projection_outbox AS event
+     SET lease_owner = $2,
+         lease_expires_at = NOW() + make_interval(secs => $3),
+         attempt_count = event.attempt_count + 1
+     FROM claimable
+     WHERE event.event_id = claimable.event_id
+     RETURNING event.*`,
+    [workspaceId, workerId, leaseSeconds, limit]
+  );
+  return result.rows || [];
+}
+
+export async function markSkillProjectionDelivered(pool, input = {}) {
+  if (!pool?.query) throw new Error('Render Postgres is required.');
+  const result = await pool.query(
+    `UPDATE public.skill_projection_outbox
+     SET delivered_at = NOW(),
+         lease_owner = NULL,
+         lease_expires_at = NULL,
+         last_error = ''
+     WHERE event_id = $1
+       AND ($2 = '' OR lease_owner = $2)
+     RETURNING *`,
+    [input.eventId, String(input.workerId || '')]
+  );
+  return result.rows?.[0] || null;
+}
+
+function redactProjectionError(value = '') {
+  return String(value || 'Projection delivery failed.')
+    .replace(/\b(?:sk|key|token|secret|bearer)[-_a-z0-9]{12,}\b/gi, '[redacted]')
+    .replace(/\b[a-z0-9]{20,}\b/gi, '[redacted]')
+    .slice(0, 500);
+}
+
+export async function markSkillProjectionFailed(pool, input = {}) {
+  if (!pool?.query) throw new Error('Render Postgres is required.');
+  const nextAttempt = Math.max(1, Number(input.attemptCount || 0) + 1);
+  const jitterMs = Math.max(0, Math.min(30_000, Number(input.jitterMs ?? Math.random() * 5000)));
+  const delayMs = Math.min(60 * 60 * 1000, 15_000 * 2 ** Math.min(8, nextAttempt - 1)) + jitterMs;
+  const availableAt = new Date(Date.now() + delayMs).toISOString();
+  const deadLettered = nextAttempt >= 8;
+  const result = await pool.query(
+    `UPDATE public.skill_projection_outbox
+     SET last_error = $3,
+         lease_owner = NULL,
+         lease_expires_at = NULL,
+         available_at = $4::timestamptz,
+         dead_lettered_at = CASE WHEN $5::boolean THEN NOW() ELSE dead_lettered_at END
+     WHERE event_id = $1
+       AND ($2 = '' OR lease_owner = $2)
+     RETURNING *`,
+    [
+      input.eventId,
+      String(input.workerId || ''),
+      redactProjectionError(input.error),
+      availableAt,
+      deadLettered,
+    ]
+  );
+  return result.rows?.[0] || null;
+}
+
 async function selectVersionForUpdate(client, versionId) {
   const result = await client.query(
     `SELECT *

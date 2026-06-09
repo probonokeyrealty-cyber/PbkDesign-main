@@ -1,0 +1,799 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  Check,
+  ChevronLeft,
+  CircleDot,
+  Database,
+  FileCheck2,
+  Filter,
+  GitBranch,
+  History,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  X,
+} from 'lucide-react';
+import {
+  activateSkillVersionRequest,
+  approveSkillVersionRequest,
+  createSkillCandidateRequest,
+  fetchSkillGovernanceRepositoryRequest,
+  fetchSkillGovernanceStatusRequest,
+  rollbackSkillActivationRequest,
+  type SkillGovernanceItem,
+  type SkillGovernanceStatusResponse,
+} from '../utils/runtimeBridge';
+
+const LIFECYCLE_STEPS = [
+  'Review',
+  'Scenarios',
+  'Chain',
+  'Agents',
+  'Approval',
+  'Activate',
+  'Outcomes',
+];
+
+const STATE_LABELS: Record<string, string> = {
+  candidate: 'Candidate',
+  needs_review: 'Needs review',
+  test_ready: 'Test ready',
+  testing: 'Testing',
+  failed: 'Failed',
+  ready_for_approval: 'Ready for approval',
+  approved_inactive: 'Approved inactive',
+  canary: 'Canary',
+  active: 'Active',
+  paused: 'Paused',
+  rolled_back: 'Rolled back',
+  retired: 'Retired',
+};
+
+const STATE_STEP: Record<string, number> = {
+  candidate: 0,
+  needs_review: 0,
+  test_ready: 1,
+  testing: 1,
+  failed: 1,
+  ready_for_approval: 4,
+  approved_inactive: 5,
+  canary: 5,
+  active: 6,
+  paused: 6,
+  rolled_back: 6,
+  retired: 6,
+};
+
+function displayDate(value?: string | null) {
+  if (!value) return 'Not recorded';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+function shortenHash(value = '') {
+  return value ? `${value.slice(0, 10)}...${value.slice(-6)}` : 'No hash';
+}
+
+function JsonSummary({ value }: { value?: Record<string, unknown> }) {
+  const entries = Object.entries(value || {});
+  if (!entries.length) return <span className="pbk-skill-muted">None recorded</span>;
+  return (
+    <dl className="pbk-skill-json-summary">
+      {entries.slice(0, 6).map(([key, item]) => (
+        <div key={key}>
+          <dt>{key.replace(/_/g, ' ')}</dt>
+          <dd>{typeof item === 'object' ? JSON.stringify(item) : String(item)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function CreateCandidateDialog({
+  open,
+  busy,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onCreate: (payload: Record<string, unknown>) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [riskClass, setRiskClass] = useState('medium');
+  const [agentId, setAgentId] = useState('ava');
+  const [sourceNote, setSourceNote] = useState('');
+  if (!open) return null;
+  return (
+    <div className="pbk-skill-dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="pbk-skill-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-candidate-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <span>Candidate intake</span>
+            <h2 id="skill-candidate-title">Add a governed skill</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close candidate form">
+            <X size={18} />
+          </button>
+        </header>
+        <p>
+          New skills enter review only. They cannot execute until an operator approves the exact
+          hash and activates a rollout.
+        </p>
+        <label>
+          Skill name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Price-gap discovery"
+            autoFocus
+          />
+        </label>
+        <label>
+          Instructions
+          <textarea
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+            placeholder="Describe the behavior, trigger, limits, and expected operator outcome."
+            rows={7}
+          />
+        </label>
+        <div className="pbk-skill-dialog-grid">
+          <label>
+            Risk class
+            <select value={riskClass} onChange={(event) => setRiskClass(event.target.value)}>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
+          <label>
+            Suggested agent
+            <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+              <option value="ava">Ava</option>
+              <option value="rex">Rex</option>
+              <option value="nurture">Nurture</option>
+              <option value="max">Max</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Provenance note
+          <input
+            value={sourceNote}
+            onChange={(event) => setSourceNote(event.target.value)}
+            placeholder="Operator doctrine, call review, training source..."
+          />
+        </label>
+        <footer>
+          <button type="button" className="pbk-btn pbk-btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-primary"
+            disabled={busy || !name.trim() || !instructions.trim()}
+            onClick={() =>
+              onCreate({
+                displayName: name.trim(),
+                instructions: instructions.trim(),
+                riskClass,
+                agentId,
+                source: 'operator',
+                sourceNote: sourceNote.trim() || 'Created in PBK Skill Studio.',
+              })
+            }
+          >
+            <Plus size={16} />
+            {busy ? 'Creating' : 'Create candidate'}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+export function SkillStudio() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [status, setStatus] = useState<SkillGovernanceStatusResponse | null>(null);
+  const [items, setItems] = useState<SkillGovernanceItem[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [search, setSearch] = useState('');
+  const [lifecycleFilter, setLifecycleFilter] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(searchParams.get('create') === '1');
+  const [agentId, setAgentId] = useState('ava');
+  const [rolloutPercent, setRolloutPercent] = useState(10);
+  const [compactViewport, setCompactViewport] = useState(false);
+
+  const selected = useMemo(
+    () => items.find((item) => item.versionId === selectedId) || null,
+    [items, selectedId]
+  );
+  const currentStep = STATE_STEP[selected?.lifecycleState || 'candidate'] || 0;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [statusResult, repositoryResult] = await Promise.all([
+        fetchSkillGovernanceStatusRequest(),
+        fetchSkillGovernanceRepositoryRequest({
+          lifecycleState: lifecycleFilter,
+          search,
+          limit: 150,
+        }),
+      ]);
+      const nextItems = repositoryResult.items || [];
+      setStatus(statusResult);
+      setItems(nextItems);
+      setSelectedId((current) =>
+        nextItems.some((item) => item.versionId === current)
+          ? current
+          : compactViewport
+            ? ''
+            : nextItems[0]?.versionId || ''
+      );
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError));
+    } finally {
+      setLoading(false);
+    }
+  }, [compactViewport, lifecycleFilter, search]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 760px)');
+    const update = () => setCompactViewport(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (compactViewport) setSelectedId('');
+  }, [compactViewport]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 180);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const runAction = async (action: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await action();
+      setNotice(success);
+      await load();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : String(actionError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    if (searchParams.get('create')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('create');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
+  const primaryAction = !selected
+    ? null
+    : [
+          'candidate',
+          'needs_review',
+          'test_ready',
+          'testing',
+          'failed',
+          'ready_for_approval',
+        ].includes(selected.lifecycleState)
+      ? {
+          label: 'Approve exact version',
+          icon: FileCheck2,
+          run: () =>
+            runAction(
+              () =>
+                approveSkillVersionRequest(selected.versionId, {
+                  expectedHash: selected.contentHash,
+                  decision: 'approved',
+                  evidenceSnapshot: {
+                    reviewedIn: 'PBK Skill Studio',
+                    riskClass: selected.riskClass,
+                    safetyScan: selected.safetyScan || {},
+                  },
+                }),
+              `${selected.name} is approved but remains inactive.`
+            ),
+        }
+      : selected.lifecycleState === 'approved_inactive'
+        ? {
+            label: 'Activate canary',
+            icon: Sparkles,
+            run: () =>
+              runAction(
+                () =>
+                  activateSkillVersionRequest(selected.versionId, {
+                    agentId,
+                    rolloutMode: rolloutPercent >= 100 ? 'full' : 'canary',
+                    rolloutPercent,
+                    scope: { type: 'global' },
+                    rollbackThresholds: {
+                      complianceFailure: 1,
+                      sellerComplaint: 1,
+                      toolErrorRate: 0.1,
+                    },
+                  }),
+                `${selected.name} is live for ${rolloutPercent}% of ${agentId.toUpperCase()} traffic.`
+              ),
+          }
+        : selected.activationId && ['canary', 'active'].includes(selected.lifecycleState)
+          ? {
+              label: 'Roll back',
+              icon: RotateCcw,
+              danger: true,
+              run: () =>
+                runAction(
+                  () =>
+                    rollbackSkillActivationRequest(selected.activationId as string, {
+                      reason: 'Operator rollback from PBK Skill Studio.',
+                    }),
+                  `${selected.name} was removed from new runtime selections.`
+                ),
+            }
+          : null;
+
+  return (
+    <div className="pbk-skill-studio">
+      <header className="pbk-skill-studio-header">
+        <div>
+          <span className="pbk-eyebrow">Render authority - approval-gated runtime</span>
+          <h1 className="pbk-display">
+            Skill <em>Studio</em>
+          </h1>
+          <p>Review exact versions, control rollout, and keep every agent skill auditable.</p>
+        </div>
+        <div className="pbk-skill-studio-header-actions">
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-ghost"
+            onClick={() => void load()}
+            disabled={loading}
+            title="Refresh governance authority"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            className="pbk-btn pbk-btn-primary"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus size={16} />
+            Add skill
+          </button>
+        </div>
+      </header>
+
+      <section className="pbk-skill-status-ribbon" aria-label="Skill governance status">
+        <div>
+          <span>Review queue</span>
+          <strong>{status?.candidates || 0}</strong>
+        </div>
+        <div>
+          <span>Approved inactive</span>
+          <strong>{status?.approvedInactive || 0}</strong>
+        </div>
+        <div>
+          <span>Canary</span>
+          <strong>{status?.canary || 0}</strong>
+        </div>
+        <div>
+          <span>Active</span>
+          <strong>{status?.active || 0}</strong>
+        </div>
+        <div className={status?.outbox?.deadLettered ? 'warning' : ''}>
+          <span>Mirror queue</span>
+          <strong>{status?.outbox?.pending || 0}</strong>
+          <small>Supabase analytics mirror</small>
+        </div>
+      </section>
+
+      {(error || notice) && (
+        <div className={`pbk-skill-banner ${error ? 'error' : 'success'}`}>
+          {error ? <AlertTriangle size={16} /> : <Check size={16} />}
+          <span>{error || notice}</span>
+          <button type="button" onClick={() => (error ? setError('') : setNotice(''))}>
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      <div className={`pbk-skill-workspace ${selected ? 'has-selection' : ''}`}>
+        <aside className="pbk-skill-repository">
+          <div className="pbk-skill-pane-head">
+            <div>
+              <span>Repository</span>
+              <strong>{items.length} exact versions</strong>
+            </div>
+            <Database size={17} />
+          </div>
+          <div className="pbk-skill-search">
+            <Search size={16} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search skills or instructions"
+              aria-label="Search skill repository"
+            />
+          </div>
+          <label className="pbk-skill-filter">
+            <Filter size={15} />
+            <select
+              value={lifecycleFilter}
+              onChange={(event) => setLifecycleFilter(event.target.value)}
+              aria-label="Filter by lifecycle state"
+            >
+              <option value="">All lifecycle states</option>
+              {Object.entries(STATE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="pbk-skill-list">
+            {loading && !items.length ? (
+              <div className="pbk-skill-empty">
+                <RefreshCw className="animate-spin" />
+                Loading authority...
+              </div>
+            ) : items.length ? (
+              items.map((item) => (
+                <button
+                  type="button"
+                  key={item.versionId}
+                  className={`pbk-skill-list-item ${selected?.versionId === item.versionId ? 'selected' : ''}`}
+                  onClick={() => setSelectedId(item.versionId)}
+                >
+                  <span className={`pbk-skill-state state-${item.lifecycleState}`}>
+                    {STATE_LABELS[item.lifecycleState] || item.lifecycleState}
+                  </span>
+                  <strong>{item.name}</strong>
+                  <small>
+                    v{item.versionNumber || 1} - {item.agentId || 'Unassigned'} -{' '}
+                    {item.riskClass || 'medium'} risk
+                  </small>
+                </button>
+              ))
+            ) : (
+              <div className="pbk-skill-empty">
+                <Search size={18} />
+                No governed versions match this view.
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <main className="pbk-skill-canvas">
+          {selected ? (
+            <>
+              <div className="pbk-skill-mobile-detail-head">
+                <button type="button" onClick={() => setSelectedId('')}>
+                  <ChevronLeft size={17} />
+                  Repository
+                </button>
+                <button type="button" onClick={() => setInspectorOpen(true)}>
+                  <SlidersHorizontal size={17} />
+                  Inspect
+                </button>
+              </div>
+              <div className="pbk-skill-version-head">
+                <div>
+                  <div className="pbk-skill-version-kicker">
+                    <span className={`pbk-skill-state state-${selected.lifecycleState}`}>
+                      {STATE_LABELS[selected.lifecycleState] || selected.lifecycleState}
+                    </span>
+                    <span>Version {selected.versionNumber || 1}</span>
+                    <span>{shortenHash(selected.contentHash)}</span>
+                  </div>
+                  <h2>{selected.name}</h2>
+                  <p>{selected.instructions || 'No instructions were stored for this version.'}</p>
+                </div>
+                <div className="pbk-skill-version-icon">
+                  <Sparkles size={22} />
+                </div>
+              </div>
+
+              <ol className="pbk-skill-lifecycle" aria-label="Skill lifecycle">
+                {LIFECYCLE_STEPS.map((step, index) => (
+                  <li
+                    key={step}
+                    className={`${index < currentStep ? 'complete' : ''} ${index === currentStep ? 'current' : ''}`}
+                  >
+                    <span>{index < currentStep ? <Check size={13} /> : index + 1}</span>
+                    <strong>{step}</strong>
+                  </li>
+                ))}
+              </ol>
+
+              <section className="pbk-skill-stage">
+                <header>
+                  <CircleDot size={17} />
+                  <div>
+                    <span>Current decision</span>
+                    <h3>{LIFECYCLE_STEPS[currentStep]}</h3>
+                  </div>
+                </header>
+                <div className="pbk-skill-stage-grid">
+                  <article>
+                    <ShieldCheck size={18} />
+                    <div>
+                      <strong>Safety boundary</strong>
+                      <p>
+                        Candidates remain non-executable. Approval binds this exact SHA-256 content
+                        hash.
+                      </p>
+                    </div>
+                  </article>
+                  <article>
+                    <GitBranch size={18} />
+                    <div>
+                      <strong>Chain placement</strong>
+                      <p>
+                        This release treats the version as a standalone skill. Chain dependencies
+                        are not invented.
+                      </p>
+                    </div>
+                  </article>
+                  <article>
+                    <Activity size={18} />
+                    <div>
+                      <strong>Scenario evidence</strong>
+                      <p>
+                        {selected.approvalId
+                          ? 'Operator approval evidence is attached.'
+                          : 'No scenario run is attached yet. Review provenance and safety before approval.'}
+                      </p>
+                    </div>
+                  </article>
+                  <article>
+                    <Bot size={18} />
+                    <div>
+                      <strong>Agent scope</strong>
+                      <p>
+                        {selected.agentId
+                          ? `${selected.agentId.toUpperCase()} - ${selected.rolloutPercent || 0}% rollout`
+                          : 'Choose an agent when activating this approved version.'}
+                      </p>
+                    </div>
+                  </article>
+                </div>
+              </section>
+
+              {selected.lifecycleState === 'approved_inactive' && (
+                <section className="pbk-skill-rollout">
+                  <div>
+                    <label>
+                      Agent
+                      <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                        <option value="ava">Ava</option>
+                        <option value="rex">Rex</option>
+                        <option value="nurture">Nurture</option>
+                        <option value="max">Max</option>
+                      </select>
+                    </label>
+                    <label>
+                      Rollout
+                      <output>{rolloutPercent}%</output>
+                      <input
+                        type="range"
+                        min="5"
+                        max="100"
+                        step="5"
+                        value={rolloutPercent}
+                        onChange={(event) => setRolloutPercent(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <p>
+                    New versions default to a bounded canary. Full activation is explicit at 100%.
+                  </p>
+                </section>
+              )}
+
+              <section className="pbk-skill-outcomes">
+                <header>
+                  <Activity size={17} />
+                  <h3>Outcome readiness</h3>
+                </header>
+                <div>
+                  <span>Runtime state</span>
+                  <strong>{selected.activationStatus || 'Not active'}</strong>
+                  <span>Rollout</span>
+                  <strong>{selected.rolloutPercent || 0}%</strong>
+                  <span>Priority</span>
+                  <strong>{selected.priority || 100}</strong>
+                  <span>Last activation</span>
+                  <strong>{displayDate(selected.activatedAt)}</strong>
+                </div>
+              </section>
+
+              {primaryAction && (
+                <div className="pbk-skill-primary-action">
+                  <div>
+                    <span>Next controlled action</span>
+                    <strong>{primaryAction.label}</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className={`pbk-btn ${primaryAction.danger ? 'pbk-btn-danger' : 'pbk-btn-primary'}`}
+                    onClick={() => void primaryAction.run()}
+                    disabled={busy}
+                  >
+                    <primaryAction.icon size={16} />
+                    {busy ? 'Working' : primaryAction.label}
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="pbk-skill-empty-canvas">
+              <Sparkles size={26} />
+              <h2>Select a skill version</h2>
+              <p>
+                Choose an exact version from the repository to inspect its lifecycle and controls.
+              </p>
+            </div>
+          )}
+        </main>
+
+        <aside className={`pbk-skill-studio-inspector ${inspectorOpen ? 'open' : ''}`}>
+          <div className="pbk-skill-pane-head">
+            <div>
+              <span>Inspector</span>
+              <strong>{selected ? 'Authority record' : 'System posture'}</strong>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspectorOpen(false)}
+              aria-label="Close inspector"
+            >
+              <X size={17} />
+            </button>
+          </div>
+          {selected ? (
+            <>
+              <section>
+                <h3>
+                  <FileCheck2 size={15} />
+                  Provenance
+                </h3>
+                <JsonSummary value={selected.sourceProvenance} />
+              </section>
+              <section>
+                <h3>
+                  <ShieldCheck size={15} />
+                  Safety scan
+                </h3>
+                <JsonSummary value={selected.safetyScan} />
+              </section>
+              <section>
+                <h3>
+                  <Bot size={15} />
+                  Runtime
+                </h3>
+                <dl className="pbk-skill-inspector-list">
+                  <div>
+                    <dt>Agent</dt>
+                    <dd>{selected.agentId || 'Unassigned'}</dd>
+                  </div>
+                  <div>
+                    <dt>Tools</dt>
+                    <dd>{selected.toolAllowlist?.join(', ') || 'No tools declared'}</dd>
+                  </div>
+                  <div>
+                    <dt>Scope</dt>
+                    <dd>{JSON.stringify(selected.scope || { type: 'not assigned' })}</dd>
+                  </div>
+                </dl>
+              </section>
+              <section>
+                <h3>
+                  <History size={15} />
+                  Audit facts
+                </h3>
+                <dl className="pbk-skill-inspector-list">
+                  <div>
+                    <dt>Created</dt>
+                    <dd>{displayDate(selected.createdAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Creator</dt>
+                    <dd>{selected.createdBy || 'Unknown'}</dd>
+                  </div>
+                  <div>
+                    <dt>Approved</dt>
+                    <dd>{displayDate(selected.approvedAt)}</dd>
+                  </div>
+                  <div>
+                    <dt>Reviewer</dt>
+                    <dd>{selected.approvedBy || 'Not approved'}</dd>
+                  </div>
+                </dl>
+              </section>
+            </>
+          ) : (
+            <section className="pbk-skill-inspector-empty">
+              <ShieldCheck size={22} />
+              <strong>Fail-closed governance</strong>
+              <p>Select an exact version to inspect provenance, safety, approval, and rollout.</p>
+            </section>
+          )}
+          <section>
+            <h3>
+              <Database size={15} />
+              Mirror health
+            </h3>
+            <dl className="pbk-skill-inspector-list">
+              <div>
+                <dt>Authority</dt>
+                <dd>{status?.authority || 'Render Postgres'}</dd>
+              </div>
+              <div>
+                <dt>Snapshot</dt>
+                <dd>{status?.snapshot?.available ? 'Validated' : 'Unavailable'}</dd>
+              </div>
+              <div>
+                <dt>Projection</dt>
+                <dd>{status?.outbox?.deadLettered ? 'Needs attention' : 'Healthy'}</dd>
+              </div>
+            </dl>
+          </section>
+        </aside>
+      </div>
+
+      <CreateCandidateDialog
+        open={createOpen}
+        busy={busy}
+        onClose={closeCreate}
+        onCreate={async (payload) => {
+          await runAction(
+            () => createSkillCandidateRequest(payload),
+            'Candidate created. Review is required before approval or activation.'
+          );
+          closeCreate();
+        }}
+      />
+    </div>
+  );
+}

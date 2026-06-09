@@ -11,6 +11,7 @@ import {
   Megaphone,
   Mic2,
   Settings as SettingsIcon,
+  Sparkles,
   Users,
   X,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ export const SHELL_NAV_ITEMS: Array<{ to: string; label: string; icon: typeof La
   { to: '/inbox', label: 'Inbox', icon: InboxIcon },
   { to: '/fleet', label: 'Agent Fleet', icon: Bot },
   { to: '/memory', label: 'Memory', icon: BrainCircuit },
+  { to: '/skills', label: 'Skill Studio', icon: Sparkles },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
   { to: '/ava-chat', label: 'Ava Chat', icon: Mic2 },

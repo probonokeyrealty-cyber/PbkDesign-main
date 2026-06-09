@@ -79,7 +79,17 @@ import {
   listCommandIntentRouterRules,
 } from './command-intent-router.mjs';
 import { ensureSkillGovernanceSchema } from './skill-governance-schema.mjs';
-import { loadApprovedRuntimeSkills, migrateLegacySkills } from './skill-governance-store.mjs';
+import {
+  activateSkillVersion,
+  approveSkillVersion,
+  createSkillCandidate,
+  getSkillGovernanceRepository,
+  getSkillGovernanceStatus,
+  loadApprovedRuntimeSkills,
+  migrateLegacySkills,
+  rollbackSkillActivation,
+} from './skill-governance-store.mjs';
+import { createSkillRuntimeSnapshotCache } from './skill-runtime-snapshot.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -115,6 +125,10 @@ const IS_HOSTED = IS_PUBLIC || Boolean(process.env.RENDER) || Boolean(process.en
 const STATE_DIR_ENV = String(process.env.PBK_OPENCLAW_STATE_DIR || '').trim();
 const RUNTIME_DIR = STATE_DIR_ENV ? (path.isAbsolute(STATE_DIR_ENV) ? STATE_DIR_ENV : path.resolve(ROOT_DIR, STATE_DIR_ENV)) : path.join(ROOT_DIR, '.pbk-local');
 const STATE_FILE = path.join(RUNTIME_DIR, 'openclaw-state.json');
+const SKILL_RUNTIME_SNAPSHOT_FILE = path.join(
+  RUNTIME_DIR,
+  'approved-skill-runtime-snapshot.json'
+);
 
 function hydrateLocalRuntimeEnv() {
   const envPath = path.join(RUNTIME_DIR, 'pbk-runtime.env');
@@ -8728,6 +8742,18 @@ function pruneCommandIntentResultCache(now = Date.now()) {
     }
   }
 }
+
+const skillRuntimeSnapshotCache = createSkillRuntimeSnapshotCache({
+  redisKey: redisKey('skill-runtime-snapshot', 'approved'),
+  filePath: SKILL_RUNTIME_SNAPSHOT_FILE,
+  redisGet: redisGetJson,
+  redisSet: (key, value) => redisSetJson(key, value, 60 * 60 * 24 * 30),
+  readText: (filePath) => readFile(filePath, 'utf8'),
+  writeText: async (filePath, value) => {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, value, 'utf8');
+  },
+});
 
 async function getCachedCommandIntentResult(classification = {}) {
   if (!COMMAND_INTENT_CACHE_ENABLED || !classification.cacheable || !classification.cacheKey) {
@@ -39702,49 +39728,70 @@ async function buildSkillOutcomes() {
 async function reloadApprovedSkillsIntoBridgeState(options = {}) {
   ensureAgentFleetCollections();
   const pool = getPgPool();
-  if (!pool) {
-    markSkillGovernanceHealth({
-      status: 'runtime_unavailable',
-      error: 'PBK_DATABASE_URL is required for approved runtime skill loading.',
-    });
-    return {
-      ok: false,
-      result: 'skill_governance_unavailable',
-      source: 'postgres_unavailable',
-      skillsReloaded: 0,
-      agentsUpdated: 0,
-      warning: 'Approved runtime skills require Render Postgres governance tables.',
-    };
-  }
   let skills = [];
-  try {
-    skills = await loadApprovedRuntimeSkills(pool, {
-      workspaceId: options.workspaceId || 'pbk',
-      agentId: options.agentId || '',
-      environment: options.environment || 'production',
-    });
-    markSkillGovernanceHealth({ status: 'runtime_loaded', error: '' });
-  } catch (error) {
+  let source = 'render-postgres';
+  let authorityWarning = '';
+  if (pool) {
+    try {
+      skills = await loadApprovedRuntimeSkills(pool, {
+        workspaceId: options.workspaceId || 'pbk',
+        agentId: options.agentId || '',
+        environment: options.environment || 'production',
+      });
+      await skillRuntimeSnapshotCache.save(skills);
+      markSkillGovernanceHealth({ status: 'runtime_loaded', error: '' });
+    } catch (error) {
+      authorityWarning = String(error?.message || error);
+    }
+  } else {
+    authorityWarning = 'PBK_DATABASE_URL is required for approved runtime skill loading.';
+  }
+  if (authorityWarning) {
+    const snapshot = await skillRuntimeSnapshotCache.load();
+    if (snapshot.available) {
+      skills = snapshot.skills;
+      source = 'last-known-good-render';
+      markSkillGovernanceHealth({
+        status: 'runtime_snapshot_loaded',
+        error: authorityWarning.slice(0, 500),
+      });
+    } else {
+      markSkillGovernanceHealth({
+        status: 'runtime_unavailable',
+        error: authorityWarning.slice(0, 500),
+      });
+      return {
+        ok: false,
+        result: 'skill_authority_unavailable',
+        source: 'none',
+        skillsReloaded: 0,
+        agentsUpdated: 0,
+        failClosed: true,
+        warning:
+          'Render Postgres and the validated approved-skill snapshot are unavailable. New skill selection is disabled.',
+      };
+    }
+  }
+  if (!Array.isArray(skills)) {
     markSkillGovernanceHealth({
       status: 'runtime_load_failed',
-      error: String(error?.message || error).slice(0, 500),
+      error: 'Approved skill loader returned an invalid payload.',
     });
     return {
       ok: false,
-      result: 'approved_runtime_skill_load_failed',
-      source: 'skill-governance',
+      result: 'skill_authority_unavailable',
+      source: 'none',
       skillsReloaded: 0,
       agentsUpdated: 0,
-      warning: error?.message || String(error),
+      failClosed: true,
+      warning: 'Approved skill authority returned an invalid runtime payload.',
     };
   }
   const now = isoNow();
   const touchedAgents = new Set();
+  const governedByAgent = new Map();
   for (const skill of skills) {
     const agentId = normalizeAgentId(skill.agentId || 'ava') || 'ava';
-    let agent = findAgentRecord(agentId);
-    if (!agent && agentId === 'ava') agent = findAgentRecord('ava');
-    if (!agent) continue;
     const confidence = skill.status === 'active' ? 100 : Math.max(1, Math.min(99, Number(skill.rolloutPercent || 10)));
     const nextSkill = {
       id: skill.id,
@@ -39762,23 +39809,41 @@ async function reloadApprovedSkillsIntoBridgeState(options = {}) {
       rolloutPercent: skill.rolloutPercent,
       updatedAt: skill.activatedAt || now,
       reloadedAt: now,
+      snapshotSource: source,
     };
+    const governed = governedByAgent.get(agentId) || [];
+    governed.push(nextSkill);
+    governedByAgent.set(agentId, governed);
+  }
+  const agentIds = new Set([
+    ...(state.agents || [])
+      .filter((agent) =>
+        (Array.isArray(agent.skills) ? agent.skills : []).some(
+          (skill) => skill.source === 'skill-governance'
+        )
+      )
+      .map((agent) => normalizeAgentId(agent.id || agent.name || '')),
+    ...governedByAgent.keys(),
+  ]);
+  for (const agentId of agentIds) {
+    let agent = findAgentRecord(agentId);
+    if (!agent && agentId === 'ava') agent = findAgentRecord('ava');
+    if (!agent) continue;
     const existingSkills = Array.isArray(agent.skills) ? agent.skills : [];
+    const governedSkills = governedByAgent.get(agentId) || [];
     const nextAgent = {
       ...agent,
       skills: [
-        ...existingSkills.filter((item) => {
-          const sameVersion = nextSkill.versionId && String(item.versionId || '') === String(nextSkill.versionId);
-          const sameName = String(item.name || '').trim().toLowerCase() === String(nextSkill.name || '').trim().toLowerCase();
-          return !(sameVersion || sameName);
-        }),
-        nextSkill,
+        ...existingSkills.filter((item) => item.source !== 'skill-governance'),
+        ...governedSkills,
       ].sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0)),
       updatedAt: now,
       updatedBy: options.actor || 'Skill Governance',
-      activity: options.activity || `Reloaded ${skill.name} from approved skill governance.`,
+      activity:
+        options.activity ||
+        `Reloaded ${governedSkills.length} approved governed skill${governedSkills.length === 1 ? '' : 's'}.`,
     };
-    nextAgent.skillsTotal = Math.max(Number(nextAgent.skillsTotal || 0), nextAgent.skills.length);
+    nextAgent.skillsTotal = nextAgent.skills.length;
     upsertById(state, 'agents', nextAgent);
     touchedAgents.add(nextAgent.id || nextAgent.name || agentId);
   }
@@ -39798,10 +39863,14 @@ async function reloadApprovedSkillsIntoBridgeState(options = {}) {
   return {
     ok: true,
     result: touchedAgents.size ? 'approved_skills_reloaded' : 'no_approved_skills_reloaded',
-    source: 'skill-governance',
+    source,
     skillsReloaded: skills.length,
     agentsUpdated: touchedAgents.size,
-    warning: skills.length ? '' : 'No approved active/canary skill versions were available for runtime loading.',
+    warning:
+      authorityWarning ||
+      (skills.length
+        ? ''
+        : 'No approved active/canary skill versions were available for runtime loading.'),
   };
 }
 
@@ -53065,6 +53134,15 @@ function getConversationRequestActor(request) {
   return teamAuth.ok && teamAuth.actor ? teamAuth.actor : 'operator';
 }
 
+function getSkillGovernanceErrorStatus(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  if (/stale|changed/.test(message)) return 409;
+  if (/not found/.test(message)) return 404;
+  if (/approval|required|lifecycle|activation|rollout|agent/.test(message)) return 422;
+  if (/postgres|database|connection|timeout|unavailable/.test(message)) return 503;
+  return 400;
+}
+
 function requirePlainConversationActionBody(body, message) {
   if (
     !body ||
@@ -59450,6 +59528,215 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const result = await decomposeGoalPlan(body);
       json(response, result.ok ? 200 : 400, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/skills/governance/status') {
+      const snapshot = await skillRuntimeSnapshotCache.load();
+      const result = await getSkillGovernanceStatus(getPgPool(), {
+        workspaceId: 'pbk',
+        snapshot,
+      });
+      json(response, result.ok ? 200 : 503, result);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/api/skills/governance/repository') {
+      const result = await getSkillGovernanceRepository(getPgPool(), {
+        workspaceId: 'pbk',
+        lifecycleState: url.searchParams.get('lifecycleState') || '',
+        search: url.searchParams.get('search') || '',
+        limit: url.searchParams.get('limit') || 100,
+      });
+      json(response, result.ok ? 200 : 503, result);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/skills/candidates') {
+      const body = await readBody(request);
+      const displayName = String(body.displayName || body.name || '').trim();
+      const instructions = String(body.instructions || '').trim();
+      if (!displayName || !instructions) {
+        json(response, 400, {
+          ok: false,
+          result: 'skill_candidate_fields_required',
+          error: 'displayName and instructions are required.',
+        });
+        return;
+      }
+      try {
+        const actor = getConversationRequestActor(request);
+        const slug =
+          String(body.slug || displayName)
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 80) || `skill-${Date.now()}`;
+        const result = await createSkillCandidate(getPgPool(), {
+          workspaceId: 'pbk',
+          slug,
+          displayName,
+          instructions,
+          riskClass: body.riskClass || 'medium',
+          source: body.source || 'operator',
+          triggerPolicy: body.triggerPolicy || {},
+          inputSchema: body.inputSchema || {},
+          outputSchema: body.outputSchema || {},
+          toolAllowlist: Array.isArray(body.toolAllowlist) ? body.toolAllowlist : [],
+          sourceProvenance: body.sourceProvenance || {
+            source: body.source || 'operator',
+            note: body.sourceNote || 'Created in PBK Skill Studio.',
+          },
+          safetyScan: body.safetyScan || {
+            status: 'pending_review',
+            createdInSkillStudio: true,
+          },
+          agentId: body.agentId || '',
+          createdBy: actor,
+        });
+        json(response, 201, {
+          ok: true,
+          result: 'skill_candidate_created',
+          ...result,
+        });
+      } catch (error) {
+        json(response, getSkillGovernanceErrorStatus(error), {
+          ok: false,
+          result: 'skill_candidate_creation_failed',
+          error: error?.message || String(error),
+        });
+      }
+      return;
+    }
+
+    const approveSkillMatch = matchPath(
+      pathname,
+      '/api/skills/versions/:versionId/approve'
+    );
+    if (request.method === 'POST' && approveSkillMatch) {
+      const body = await readBody(request);
+      if (!body.expectedHash) {
+        json(response, 400, {
+          ok: false,
+          result: 'expected_hash_required',
+          error: 'expectedHash is required to approve an exact immutable skill version.',
+        });
+        return;
+      }
+      try {
+        const approval = await approveSkillVersion(getPgPool(), {
+          workspaceId: 'pbk',
+          versionId: decodeURIComponent(approveSkillMatch.groups.versionId),
+          expectedHash: body.expectedHash,
+          decision: body.decision || 'approved',
+          approverId: getConversationRequestActor(request),
+          evidenceSnapshot: body.evidenceSnapshot || {},
+        });
+        json(response, 200, {
+          ok: true,
+          result:
+            approval.decision === 'approved'
+              ? 'skill_version_approved'
+              : 'skill_version_rejected',
+          approval,
+        });
+      } catch (error) {
+        json(response, getSkillGovernanceErrorStatus(error), {
+          ok: false,
+          result: 'skill_version_approval_failed',
+          error: error?.message || String(error),
+        });
+      }
+      return;
+    }
+
+    const activateSkillMatch = matchPath(
+      pathname,
+      '/api/skills/versions/:versionId/activate'
+    );
+    if (request.method === 'POST' && activateSkillMatch) {
+      const body = await readBody(request);
+      if (!body.agentId) {
+        json(response, 400, {
+          ok: false,
+          result: 'agent_id_required',
+          error: 'agentId is required for skill activation.',
+        });
+        return;
+      }
+      try {
+        const result = await activateSkillVersion(getPgPool(), {
+          workspaceId: 'pbk',
+          versionId: decodeURIComponent(activateSkillMatch.groups.versionId),
+          agentId: body.agentId,
+          scope: body.scope || { type: 'global' },
+          priority: body.priority || 100,
+          rolloutMode: body.rolloutMode || 'canary',
+          rolloutPercent: body.rolloutPercent || 10,
+          rollbackThresholds: body.rollbackThresholds || {},
+          actorId: getConversationRequestActor(request),
+        });
+        const runtimeReload = await reloadApprovedSkillsIntoBridgeState({
+          actor: result.activation.activated_by || getConversationRequestActor(request),
+        });
+        json(response, runtimeReload.ok ? 200 : 503, {
+          ok: runtimeReload.ok,
+          result: runtimeReload.ok
+            ? 'skill_version_activated'
+            : 'skill_version_activated_runtime_reload_failed',
+          ...result,
+          runtimeReload,
+        });
+      } catch (error) {
+        json(response, getSkillGovernanceErrorStatus(error), {
+          ok: false,
+          result: 'skill_version_activation_failed',
+          error: error?.message || String(error),
+        });
+      }
+      return;
+    }
+
+    const rollbackSkillMatch = matchPath(
+      pathname,
+      '/api/skills/activations/:activationId/rollback'
+    );
+    if (request.method === 'POST' && rollbackSkillMatch) {
+      const body = await readBody(request);
+      if (!String(body.reason || '').trim()) {
+        json(response, 400, {
+          ok: false,
+          result: 'rollback_reason_required',
+          error: 'A rollback reason is required for the audit trail.',
+        });
+        return;
+      }
+      try {
+        const result = await rollbackSkillActivation(getPgPool(), {
+          workspaceId: 'pbk',
+          activationId: decodeURIComponent(rollbackSkillMatch.groups.activationId),
+          actorId: getConversationRequestActor(request),
+          reason: body.reason,
+        });
+        const runtimeReload = await reloadApprovedSkillsIntoBridgeState({
+          actor: result.actorId,
+        });
+        json(response, runtimeReload.ok ? 200 : 503, {
+          ok: runtimeReload.ok,
+          result: runtimeReload.ok
+            ? 'skill_activation_rolled_back'
+            : 'skill_activation_rolled_back_runtime_reload_failed',
+          ...result,
+          runtimeReload,
+        });
+      } catch (error) {
+        json(response, getSkillGovernanceErrorStatus(error), {
+          ok: false,
+          result: 'skill_activation_rollback_failed',
+          error: error?.message || String(error),
+        });
+      }
       return;
     }
 

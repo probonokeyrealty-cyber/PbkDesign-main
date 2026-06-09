@@ -671,6 +671,73 @@ export type SkillOutcomesResponse = {
   warning?: string;
 };
 
+export type SkillGovernanceItem = {
+  versionId: string;
+  definitionId?: string;
+  slug?: string;
+  name: string;
+  riskClass?: 'low' | 'medium' | 'high' | 'critical' | string;
+  source?: string;
+  versionNumber?: number;
+  lifecycleState: string;
+  contentHash: string;
+  instructions?: string;
+  triggerPolicy?: Record<string, unknown>;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  toolAllowlist?: string[];
+  sourceProvenance?: Record<string, unknown>;
+  safetyScan?: Record<string, unknown>;
+  createdBy?: string;
+  createdAt?: string | null;
+  approvalId?: string | null;
+  approvedBy?: string;
+  approvedAt?: string | null;
+  activationId?: string | null;
+  activationStatus?: string;
+  rolloutMode?: string;
+  rolloutPercent?: number;
+  activatedAt?: string | null;
+  agentId?: string;
+  scope?: Record<string, unknown>;
+  priority?: number;
+};
+
+export type SkillGovernanceStatusResponse = {
+  ok: boolean;
+  result?: string;
+  authority?: string;
+  failClosed?: boolean;
+  candidates?: number;
+  approvedInactive?: number;
+  canary?: number;
+  active?: number;
+  paused?: number;
+  staleApprovals?: number;
+  outbox?: {
+    pending?: number;
+    retrying?: number;
+    deadLettered?: number;
+    oldestPendingAt?: string | null;
+  };
+  snapshot?: {
+    available?: boolean;
+    source?: string;
+    generatedAt?: string | null;
+    ageSeconds?: number | null;
+  };
+  error?: string;
+};
+
+export type SkillGovernanceRepositoryResponse = {
+  ok: boolean;
+  result?: string;
+  authority?: string;
+  count?: number;
+  items?: SkillGovernanceItem[];
+  error?: string;
+};
+
 export type SkillTrendsResponse = {
   ok: boolean;
   result?: string;
@@ -1648,6 +1715,88 @@ export async function fetchAiMetricsRequest({ days = 30 } = {}) {
 export async function fetchSkillOutcomesRequest() {
   return bridgeRequest<SkillOutcomesResponse>({
     path: '/api/skills/outcomes',
+  });
+}
+
+export async function fetchSkillGovernanceStatusRequest() {
+  return bridgeRequest<SkillGovernanceStatusResponse>({
+    path: '/api/skills/governance/status',
+  });
+}
+
+export async function fetchSkillGovernanceRepositoryRequest({
+  lifecycleState = '',
+  search = '',
+  limit = 100,
+}: {
+  lifecycleState?: string;
+  search?: string;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(200, limit))),
+  });
+  if (lifecycleState) params.set('lifecycleState', lifecycleState);
+  if (search.trim()) params.set('search', search.trim());
+  return bridgeRequest<SkillGovernanceRepositoryResponse>({
+    path: `/api/skills/governance/repository?${params.toString()}`,
+  });
+}
+
+export async function createSkillCandidateRequest(body: Record<string, unknown>) {
+  return bridgeRequest<
+    Record<string, unknown> & {
+      ok: boolean;
+      version?: SkillGovernanceItem;
+    }
+  >({
+    method: 'POST',
+    path: '/api/skills/candidates',
+    body,
+  });
+}
+
+export async function approveSkillVersionRequest(
+  versionId: string,
+  body: {
+    expectedHash: string;
+    decision?: 'approved' | 'rejected';
+    evidenceSnapshot?: Record<string, unknown>;
+  }
+) {
+  return bridgeRequest<Record<string, unknown> & { ok: boolean }>({
+    method: 'POST',
+    path: `/api/skills/versions/${encodeURIComponent(versionId)}/approve`,
+    body,
+  });
+}
+
+export async function activateSkillVersionRequest(
+  versionId: string,
+  body: {
+    agentId: string;
+    rolloutMode?: 'canary' | 'full';
+    rolloutPercent?: number;
+    priority?: number;
+    scope?: Record<string, unknown>;
+    rollbackThresholds?: Record<string, unknown>;
+  }
+) {
+  return bridgeRequest<Record<string, unknown> & { ok: boolean }>({
+    method: 'POST',
+    path: `/api/skills/versions/${encodeURIComponent(versionId)}/activate`,
+    body,
+  });
+}
+
+export async function rollbackSkillActivationRequest(
+  activationId: string,
+  body: { reason: string }
+) {
+  return bridgeRequest<Record<string, unknown> & { ok: boolean }>({
+    method: 'POST',
+    path: `/api/skills/activations/${encodeURIComponent(activationId)}/rollback`,
+    body,
   });
 }
 

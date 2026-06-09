@@ -14,6 +14,10 @@ const workflow = readFileSync(
   resolve(root, '.github/workflows/tooling-verify.yml'),
   'utf8'
 );
+const skillGovernanceStore = readFileSync(
+  resolve(root, 'scripts/skill-governance-store.mjs'),
+  'utf8'
+);
 
 const publicReadBlock =
   bridge.match(/const PUBLIC_READ_PATHS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '';
@@ -91,6 +95,18 @@ assert(
   workflow.includes('npm run test:founder') &&
     !workflow.includes('npm run test:tooling'),
   'GitHub CI must run the complete founder release gate.'
+);
+assert(
+  /FOR UPDATE SKIP LOCKED/.test(skillGovernanceStore),
+  'Skill projection events must use skip-locked leasing.'
+);
+assert(
+  /dead_lettered_at/.test(skillGovernanceStore),
+  'Repeated skill projection failures must enter a dead-letter state.'
+);
+assert(
+  /result: 'skill_authority_unavailable'[\s\S]*failClosed: true/.test(bridge),
+  'Skill runtime authority failure must be explicit and fail closed.'
 );
 
 const docusignSecret = 'pbk-docusign-test-secret';

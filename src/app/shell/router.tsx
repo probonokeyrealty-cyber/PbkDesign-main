@@ -26,6 +26,9 @@ const AgentFleet = lazy(() =>
 const MemoryAnalytics = lazy(() =>
   import('../routes/MemoryAnalytics').then((module) => ({ default: module.MemoryAnalytics }))
 );
+const SkillStudio = lazy(() =>
+  import('../routes/SkillStudio').then((module) => ({ default: module.SkillStudio }))
+);
 const Analytics = lazy(() =>
   import('../routes/Analytics').then((module) => ({ default: module.Analytics }))
 );
@@ -61,6 +64,8 @@ const router = createBrowserRouter(
         { path: 'fleet', element: <AgentFleet /> },
         { path: 'agents', element: <AgentFleet /> },
         { path: 'memory', element: <MemoryAnalytics /> },
+        { path: 'skills', element: <SkillStudio /> },
+        { path: 'skill-studio', element: <SkillStudio /> },
         { path: 'analytics', element: <Analytics /> },
         { path: 'campaigns', element: <Campaigns /> },
         { path: 'ava-chat', element: <AvaChat /> },

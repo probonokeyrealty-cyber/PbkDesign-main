@@ -32,6 +32,8 @@ const VALID_SHELL_PATHS = new Set([
   '/fleet',
   '/agents',
   '/memory',
+  '/skills',
+  '/skill-studio',
   '/analytics',
   '/campaigns',
   '/ava-chat',

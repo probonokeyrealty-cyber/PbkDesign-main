@@ -3,9 +3,14 @@ import { describe, expect, test } from '@jest/globals';
 import {
   activateSkillVersion,
   approveSkillVersion,
+  claimSkillProjectionEvents,
   classifyLegacySkillForMigration,
   createSkillCandidate,
+  getSkillGovernanceRepository,
+  getSkillGovernanceStatus,
   loadApprovedRuntimeSkills,
+  markSkillProjectionDelivered,
+  markSkillProjectionFailed,
   migrateLegacySkills,
   rollbackSkillActivation,
 } from './skill-governance-store.mjs';
@@ -301,5 +306,160 @@ describe('skill governance store', () => {
     expect(pool.queries[0].sql).toMatch(/public\.agent_skill_assignments/);
     expect(pool.queries[0].sql).toMatch(/activation\.status IN \('canary', 'active'\)/);
     expect(pool.queries[0].params).toEqual(['pbk', 'ava', 'production']);
+  });
+
+  test('governance status separates lifecycle and outbox health', async () => {
+    const pool = {
+      async query(sql) {
+        if (/GROUP BY lifecycle_state/.test(sql)) {
+          return {
+            rows: [
+              { lifecycle_state: 'candidate', count: '4' },
+              { lifecycle_state: 'approved_inactive', count: '2' },
+              { lifecycle_state: 'active', count: '8' },
+            ],
+          };
+        }
+        if (/stale_approvals/.test(sql)) return { rows: [{ stale_approvals: '1' }] };
+        if (/skill_projection_outbox/.test(sql)) {
+          return {
+            rows: [
+              {
+                pending: '3',
+                retrying: '1',
+                dead_lettered: '0',
+                oldest_pending_at: '2026-06-09T10:00:00.000Z',
+              },
+            ],
+          };
+        }
+        return { rows: [] };
+      },
+    };
+
+    const status = await getSkillGovernanceStatus(pool, {
+      workspaceId: 'pbk',
+      snapshot: {
+        available: true,
+        source: 'last-known-good-render',
+        generatedAt: '2026-06-09T11:59:00.000Z',
+        ageSeconds: 60,
+      },
+    });
+
+    expect(status.authority).toBe('render-postgres');
+    expect(status.candidates).toBe(4);
+    expect(status.approvedInactive).toBe(2);
+    expect(status.active).toBe(8);
+    expect(status.staleApprovals).toBe(1);
+    expect(status.outbox.pending).toBe(3);
+    expect(status.snapshot.available).toBe(true);
+  });
+
+  test('repository returns exact versions with approval and activation metadata', async () => {
+    const pool = {
+      async query(sql, params) {
+        expect(sql).toMatch(/FROM public\.skill_versions AS version/);
+        expect(sql).toMatch(/LEFT JOIN public\.skill_approvals/);
+        expect(sql).toMatch(/LEFT JOIN public\.skill_activations/);
+        expect(params).toEqual(['pbk', '', '', 100]);
+        return {
+          rows: [
+            {
+              version_id: 'version-1',
+              definition_id: 'definition-1',
+              display_name: 'Price gap',
+              slug: 'price-gap',
+              lifecycle_state: 'candidate',
+              content_hash: 'hash-1',
+              version_number: 1,
+              risk_class: 'medium',
+              source: 'operator',
+              instructions: 'Ask one calibrated question.',
+              tool_allowlist: [],
+              source_provenance: { source: 'operator' },
+              safety_scan: {},
+              approval_id: null,
+              activation_id: null,
+              created_at: '2026-06-09T12:00:00.000Z',
+            },
+          ],
+        };
+      },
+    };
+
+    const repository = await getSkillGovernanceRepository(pool, {
+      workspaceId: 'pbk',
+      limit: 100,
+    });
+
+    expect(repository.items).toHaveLength(1);
+    expect(repository.items[0]).toMatchObject({
+      versionId: 'version-1',
+      name: 'Price gap',
+      lifecycleState: 'candidate',
+      contentHash: 'hash-1',
+    });
+  });
+
+  test('outbox claim uses skip locked and a bounded lease', async () => {
+    const pool = {
+      queries: [],
+      async query(sql, params) {
+        this.queries.push({ sql, params });
+        return { rows: [] };
+      },
+    };
+
+    await claimSkillProjectionEvents(pool, {
+      workspaceId: 'pbk',
+      workerId: 'worker-1',
+      leaseSeconds: 60,
+      limit: 25,
+    });
+
+    expect(pool.queries[0].sql).toMatch(/FOR UPDATE SKIP LOCKED/);
+    expect(pool.queries[0].sql).toMatch(/lease_expires_at/);
+    expect(pool.queries[0].params).toEqual(['pbk', 'worker-1', 60, 25]);
+  });
+
+  test('outbox completion and failure clear leases and preserve retry state', async () => {
+    const pool = {
+      queries: [],
+      async query(sql, params) {
+        this.queries.push({ sql, params });
+        return {
+          rows: [
+            {
+              event_id: params[0],
+              attempt_count: 2,
+              delivered_at: /delivered_at = NOW/.test(sql)
+                ? '2026-06-09T12:00:00.000Z'
+                : null,
+            },
+          ],
+        };
+      },
+    };
+
+    await markSkillProjectionDelivered(pool, {
+      eventId: 'event-1',
+      workerId: 'worker-1',
+    });
+    await markSkillProjectionFailed(pool, {
+      eventId: 'event-2',
+      workerId: 'worker-1',
+      error: 'provider secret abcdefghijklmnopqrstuvwxyz failed',
+      attemptCount: 2,
+      jitterMs: 0,
+    });
+
+    expect(pool.queries[0].sql).toMatch(/delivered_at = NOW/);
+    expect(pool.queries[0].sql).toMatch(/lease_owner = NULL/);
+    expect(pool.queries[1].sql).toMatch(/available_at/);
+    expect(pool.queries[1].sql).toMatch(/dead_lettered_at/);
+    expect(String(pool.queries[1].params[2])).not.toContain(
+      'abcdefghijklmnopqrstuvwxyz'
+    );
   });
 });

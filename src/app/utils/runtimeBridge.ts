@@ -431,7 +431,7 @@ export async function postRuntimeEvent<T = Record<string, unknown>>(eventType: s
   });
 }
 
-export async function updateApprovalDecision(approvalId: string, status: string) {
+export async function updateApprovalDecision(approvalId: string, status: string, notes?: string) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'PUT',
     path: `/api/approvals/${encodeURIComponent(approvalId)}`,
@@ -439,6 +439,7 @@ export async function updateApprovalDecision(approvalId: string, status: string)
       status,
       actor: 'PBK React shell',
       actedAt: new Date().toISOString(),
+      ...(notes ? { notes } : {}),
     },
   });
 }

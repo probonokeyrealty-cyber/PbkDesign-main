@@ -44,7 +44,13 @@ type LeadFormState = {
   lastOffer: string;
   sentiment: string;
   summary: string;
-  bant: string;
+  bantBudget: string;
+  bantAuthority: string;
+  bantNeed: string;
+  bantTimeline: string;
+  bantUrgency: string;
+  bantObjection: string;
+  bantNextStep: string;
 };
 
 type NewLeadFormState = {
@@ -273,16 +279,6 @@ function clampMotivationScore(value: string) {
   return String(Math.min(10, Math.max(1, Math.round(numeric))));
 }
 
-function validateBantJson(value: string) {
-  if (!value.trim()) return '';
-  try {
-    JSON.parse(value);
-    return '';
-  } catch (error) {
-    return error instanceof Error ? error.message : 'Invalid JSON syntax.';
-  }
-}
-
 function getSeller1EmailError(form: ContractFormState | null) {
   if (!form) return '';
   if (!text(form.seller1Email)) return 'Seller 1 email is required.';
@@ -366,7 +362,7 @@ function formFromLead(lead: BridgeRecord): LeadFormState {
   const seller = getSeller(lead);
   const property = getProperty(lead);
   const callContext = getCallContext(lead);
-  const bant = lead.bant && typeof lead.bant === 'object' ? lead.bant : {};
+  const bant = lead.bant && typeof lead.bant === 'object' ? (lead.bant as BridgeRecord) : {};
   return {
     name: text(lead.name || seller.name),
     phone: text(lead.phone || seller.phone),
@@ -383,7 +379,33 @@ function formFromLead(lead: BridgeRecord): LeadFormState {
     lastOffer: text(callContext.last_offer || callContext.lastOffer),
     sentiment: text(callContext.sentiment || callContext.sentimentScore),
     summary: text(callContext.summary || callContext.callSummary),
-    bant: JSON.stringify(bant, null, 2),
+    bantBudget: text(bant.budget || callContext.budget || callContext.askingPrice),
+    bantAuthority: text(
+      bant.authority ||
+        callContext.authority ||
+        seller.relationshipToProperty ||
+        seller.relationship
+    ),
+    bantNeed: text(bant.need || callContext.need || lead.motivation || callContext.motivation),
+    bantTimeline: text(bant.timeline || callContext.timeline),
+    bantUrgency: text(bant.urgency || callContext.urgency),
+    bantObjection: text(bant.objection || callContext.objection || callContext.primaryObjection),
+    bantNextStep: text(
+      bant.nextStep || bant.next_step || callContext.nextStep || callContext.next_step
+    ),
+  };
+}
+
+function buildBantFromLeadForm(form: LeadFormState): BridgeRecord {
+  return {
+    budget: form.bantBudget,
+    authority: form.bantAuthority,
+    need: form.bantNeed,
+    timeline: form.bantTimeline,
+    urgency: form.bantUrgency,
+    objection: form.bantObjection,
+    sentiment: form.sentiment ? Number(form.sentiment) : null,
+    nextStep: form.bantNextStep,
   };
 }
 
@@ -963,10 +985,6 @@ export function Leads() {
   const leadsStats = useMemo(() => buildLeadsStats(leads), [leads]);
   const activeLead = leadDetail || selectedLead;
   const activeLeadId = activeLead ? getLeadId(activeLead) : '';
-  const bantJsonError = useMemo(
-    () => (editForm ? validateBantJson(editForm.bant) : ''),
-    [editForm]
-  );
   const seller1EmailError = useMemo(() => getSeller1EmailError(contractForm), [contractForm]);
   const contractLiveValidation = useMemo(
     () => getContractLiveValidation(contractForm),
@@ -1183,19 +1201,9 @@ export function Leads() {
 
   const saveLead = async () => {
     if (!editForm || !activeLeadId) return;
-    if (bantJsonError) {
-      setDetailStatus({
-        tone: 'error',
-        text: `Invalid BANT JSON: ${bantJsonError}`,
-      });
-      return;
-    }
     if (!beginLeadAction('save-lead')) return;
     try {
-      let bant: BridgeRecord = {};
-      if (editForm.bant.trim()) {
-        bant = JSON.parse(editForm.bant);
-      }
+      const bant = buildBantFromLeadForm(editForm);
       const response = await patchLeadRequest(activeLeadId, {
         name: editForm.name,
         phone: editForm.phone,
@@ -1210,6 +1218,13 @@ export function Leads() {
         sentiment: editForm.sentiment ? Number(editForm.sentiment) : null,
         summary: editForm.summary,
         bant,
+        call_metadata: {
+          bant,
+          summary: editForm.summary,
+          sentiment: editForm.sentiment ? Number(editForm.sentiment) : null,
+          nextStep: editForm.bantNextStep,
+          objection: editForm.bantObjection,
+        },
         actor: 'Lead Detail',
       });
       const lead = unwrapLeadResponse(response);
@@ -2530,21 +2545,91 @@ export function Leads() {
                   />
                 </Field>
               </div>
-              <div className="mt-3">
-                <Field label="BANT+ JSON">
-                  <textarea
-                    className={`${inputClass} min-h-40 resize-y font-mono text-xs`}
-                    value={editForm.bant}
-                    onChange={(event) => setEditForm({ ...editForm, bant: event.target.value })}
-                    aria-invalid={Boolean(bantJsonError)}
-                  />
-                  {bantJsonError && (
-                    <span className="mt-1 flex items-center gap-1.5 text-[11px] text-rose-300">
-                      <AlertCircle size={12} />
-                      Invalid JSON: {bantJsonError}
-                    </span>
-                  )}
-                </Field>
+              <div className="mt-4 rounded-2xl border border-sky-400/15 bg-sky-400/5 p-3">
+                <div className="mb-3">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-sky-300">
+                    Compliance &amp; memory
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">
+                    Human BANT+ fields
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    These fields save back into the bridge BANT record and Ava call metadata. No raw
+                    JSON editing required.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <Field label="Budget / price expectation">
+                    <input
+                      className={inputClass}
+                      value={editForm.bantBudget}
+                      placeholder="Seller wants $145,000 or needs payoff covered"
+                      onChange={(event) =>
+                        setEditForm({ ...editForm, bantBudget: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Authority / decision maker">
+                    <input
+                      className={inputClass}
+                      value={editForm.bantAuthority}
+                      placeholder="Owner, executor, spouse also signs..."
+                      onChange={(event) =>
+                        setEditForm({ ...editForm, bantAuthority: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Need / motivation">
+                    <textarea
+                      className={`${inputClass} min-h-24 resize-y`}
+                      value={editForm.bantNeed}
+                      placeholder="Inherited property, tired landlord, repairs, moving..."
+                      onChange={(event) =>
+                        setEditForm({ ...editForm, bantNeed: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Timeline / urgency">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <input
+                        className={inputClass}
+                        value={editForm.bantTimeline}
+                        placeholder="Close in 14 days"
+                        onChange={(event) =>
+                          setEditForm({ ...editForm, bantTimeline: event.target.value })
+                        }
+                      />
+                      <input
+                        className={inputClass}
+                        value={editForm.bantUrgency}
+                        placeholder="High, medium, low"
+                        onChange={(event) =>
+                          setEditForm({ ...editForm, bantUrgency: event.target.value })
+                        }
+                      />
+                    </div>
+                  </Field>
+                  <Field label="Primary objection">
+                    <input
+                      className={inputClass}
+                      value={editForm.bantObjection}
+                      placeholder="Price, trust, spouse, timing..."
+                      onChange={(event) =>
+                        setEditForm({ ...editForm, bantObjection: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Next step">
+                    <input
+                      className={inputClass}
+                      value={editForm.bantNextStep}
+                      placeholder="Send docs, call Friday, verify title..."
+                      onChange={(event) =>
+                        setEditForm({ ...editForm, bantNextStep: event.target.value })
+                      }
+                    />
+                  </Field>
+                </div>
               </div>
             </div>
             <div className="flex flex-col gap-2 border-t border-slate-800 px-4 py-4 sm:flex-row sm:justify-end">
@@ -2557,7 +2642,7 @@ export function Leads() {
               </button>
               <button
                 type="button"
-                disabled={isLeadActionBusy || Boolean(bantJsonError)}
+                disabled={isLeadActionBusy}
                 onClick={saveLead}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-sky-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-sky-300 disabled:cursor-wait disabled:opacity-60"
               >

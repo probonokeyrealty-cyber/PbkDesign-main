@@ -53,11 +53,16 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'role="alert"',
   'role="radiogroup"',
   'text-[16px]',
-  'h-[calc(100dvh-188px)]',
+  'h-full max-h-full',
+  'pbk-ava-chat-quick-strip',
   'Open Ava context',
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
 });
+assert(
+  !avaChat.includes('h-[calc(100dvh-188px)]') && !avaChat.includes('md:h-[calc(100dvh-96px)]'),
+  'AvaChat must use shell-owned height instead of stale viewport subtractions.'
+);
 
 assert(
   /command: 'Check OpenClaw sidecar status',[\s\S]*action: 'status'/.test(avaChat),
@@ -127,9 +132,31 @@ assert(/from = "\/ava-chat"/.test(netlify), 'Netlify must rewrite /ava-chat to t
   '/api/local/commands/:id/result',
   'createApproval',
   'syncLocalCommandApprovalDecision',
+  'dispatchApprovedLocalCommand',
 ].forEach((token) => {
   assert(bridge.includes(token), `openclaw-local-server.mjs must include ${token}.`);
 });
+assert(
+  /incomingStatus === 'approved'[\s\S]*dispatchApprovedLocalCommand/.test(bridge),
+  'Approved UI or Slack callbacks must dispatch sidecar-safe local commands through the shared bridge path.'
+);
+assert(
+  /local_command_waiting_for_sidecar/.test(bridge) &&
+    /status: 'approved'[\s\S]*waiting for the desktop sidecar to reconnect/.test(bridge),
+  'Approved commands must stay queued when the desktop sidecar is offline.'
+);
+assert(
+  /local_command_waiting_for_local_agent/.test(bridge) &&
+    /unsupported_sidecar_action/.test(bridge),
+  'Unsupported desktop actions must remain queued for the allowlisted local agent instead of executing unsafely.'
+);
+assert(
+  /UPDATE public\.pbk_local_commands[\s\S]*status = 'dispatched'[\s\S]*status = 'approved'[\s\S]*RETURNING \*/.test(
+    bridge
+  ) &&
+    /localCommandDispatchClaims/.test(bridge),
+  'Approved sidecar commands must use a database conditional claim plus an in-process dispatch guard.'
+);
 
 const commandMigration = migrations.find(([, sql]) =>
   /CREATE TABLE IF NOT EXISTS public\.pbk_local_commands/.test(sql)

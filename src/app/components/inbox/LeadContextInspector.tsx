@@ -8,6 +8,7 @@ import {
   Home,
   Mail,
   MapPin,
+  Pencil,
   Phone,
   ShieldCheck,
   Sparkles,
@@ -115,14 +116,13 @@ export function LeadContextInspector({
   }
 
   return (
-    <aside
-      className="pbk-lead-context-inspector open"
-      aria-label="Seller profile"
-    >
+    <aside className="pbk-lead-context-inspector open" aria-label="Seller profile">
       <header>
         <div>
           <div className="pbk-eyebrow">Lead portal context</div>
-          <h2>{text(profile.leadName || profile.name || seller.name || thread?.title, 'Seller')}</h2>
+          <h2>
+            {text(profile.leadName || profile.name || seller.name || thread?.title, 'Seller')}
+          </h2>
           <p>{address}</p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close seller profile">
@@ -176,13 +176,15 @@ export function LeadContextInspector({
               <DetailRow label="Address" value={address} Icon={MapPin} />
               <DetailRow
                 label="Asset"
-                value={[
-                  property.beds ? `${property.beds} bd` : '',
-                  property.baths ? `${property.baths} ba` : '',
-                  property.sqft ? `${property.sqft} sq ft` : '',
-                ]
-                  .filter(Boolean)
-                  .join(' · ') || 'Not captured'}
+                value={
+                  [
+                    property.beds ? `${property.beds} bd` : '',
+                    property.baths ? `${property.baths} ba` : '',
+                    property.sqft ? `${property.sqft} sq ft` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || 'Not captured'
+                }
                 Icon={Building2}
               />
               <DetailRow
@@ -229,7 +231,9 @@ export function LeadContextInspector({
                 </div>
                 <div>
                   <span>Repairs</span>
-                  <strong>{money(profile.repairs || profile.estimatedRepairs || numbers.repairs)}</strong>
+                  <strong>
+                    {money(profile.repairs || profile.estimatedRepairs || numbers.repairs)}
+                  </strong>
                 </div>
                 <div>
                   <span>Ask</span>
@@ -273,6 +277,10 @@ export function LeadContextInspector({
 
       {thread && (
         <footer>
+          <Link to={leadId ? `/leads/${encodeURIComponent(leadId)}?edit=1` : '/leads'}>
+            <Pencil size={14} />
+            Edit lead
+          </Link>
           <Link to={leadId ? `/leads/${encodeURIComponent(leadId)}` : '/leads'}>
             <ExternalLink size={14} />
             Full lead portal

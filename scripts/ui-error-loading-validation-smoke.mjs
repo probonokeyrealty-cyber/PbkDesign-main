@@ -33,7 +33,13 @@ expect(leads, /lead-detail-skeleton/, 'Leads renders a lead detail skeleton');
 expect(leads, /Retry detail/, 'Leads detail error exposes a retry action');
 expect(leads, /RefreshCw size=\{14\} className=\{reloading \? 'animate-spin'/, 'Lead refresh button shows animated loader');
 expect(leads, /clampMotivationScore/, 'Motivation score is clamped while typing');
-expect(leads, /bantJsonError/, 'BANT JSON validates live while typing');
+expect(leads, /Human BANT\+ fields/, 'Lead edit modal renders BANT+ as human-editable fields');
+expect(leads, /buildBantFromLeadForm/, 'Lead edit modal saves BANT+ fields back to the bridge object');
+expect(
+  String(!/BANT\+ JSON|bantJsonError|validateBantJson/.test(leads)),
+  'true',
+  'Lead edit modal must not expose raw BANT JSON editing'
+);
 expect(leads, /seller1EmailError/, 'Contract seller email validates live');
 expect(leads, /type="email"[\s\S]*required[\s\S]*value=\{contractForm\.seller1Email\}/, 'Seller 1 email is an email + required field');
 expect(leads, /disabled=\{isLeadActionBusy \|\| Boolean\(contractLiveValidation\)\}/, 'Contract send is disabled by live validation');

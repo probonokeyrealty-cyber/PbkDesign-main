@@ -273,6 +273,9 @@ export function ParadiseLayout() {
     void persistShellPrefs({ railCollapsed: !prefs.railCollapsed });
   };
 
+  const isFullHeightChatRoute =
+    location.pathname === '/inbox/conversations' || location.pathname === '/ava-chat';
+
   return (
     <TeamAccessGate
       onAuthenticated={async () => {
@@ -291,14 +294,28 @@ export function ParadiseLayout() {
           prefsSource={prefsSource}
           onToggleRail={toggleRail}
         />
-        <div className="pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0">
+        <div
+          className={[
+            'pbk-shell-main-column grid grid-rows-[56px_auto_1fr] min-w-0 min-h-0',
+            isFullHeightChatRoute ? 'pbk-shell-main-column-chat' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
           <ShellTopbar
             theme={prefs.theme}
             themeDataSource={prefsSource}
             onToggleTheme={updateTheme}
           />
           <FavoritesBar snapshot={snapshot} refresh={refresh} />
-          <main className="pbk-shell-content relative overflow-auto bg-slate-900">
+          <main
+            className={[
+              'pbk-shell-content relative overflow-auto bg-slate-900',
+              isFullHeightChatRoute ? 'pbk-shell-content-chat' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
             {skeletonOn && <div className="page-switch-skeleton" aria-hidden="true" />}
             <ErrorBoundary>
               <Suspense

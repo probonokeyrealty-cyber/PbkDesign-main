@@ -475,7 +475,7 @@ export function AvaChat() {
   };
 
   return (
-    <section className="pbk-ava-chat-surface h-[calc(100dvh-188px)] min-h-0 min-w-0 overflow-hidden bg-[var(--ava-bg)] text-[var(--ava-text)] md:h-[calc(100dvh-96px)]">
+    <section className="pbk-ava-chat-surface h-full max-h-full min-h-0 min-w-0 overflow-hidden bg-[var(--ava-bg)] text-[var(--ava-text)]">
       <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
         <AvaIdentityBar
           state={avaState}
@@ -748,7 +748,7 @@ function ConversationToolbar({
   onFilterChange: (value: HistoryFilter) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-b border-[var(--ava-border)] bg-[var(--ava-bg)] px-3 py-3 sm:flex-row sm:px-5">
+    <div className="pbk-ava-chat-toolbar flex flex-col gap-2 border-b border-[var(--ava-border)] bg-[var(--ava-bg)] px-3 py-3 sm:flex-row sm:px-5">
       <label className="relative min-w-0 flex-1">
         <span className="sr-only">Search Ava history</span>
         <Search
@@ -936,7 +936,7 @@ function AvaComposer({
   return (
     <div className="pbk-ava-chat-composer border-t border-[var(--ava-border)] bg-[var(--ava-bg)] px-2 pt-2 sm:px-5 sm:pb-4 sm:pt-3">
       <div className="mx-auto w-full max-w-4xl">
-        <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+        <div className="pbk-ava-chat-quick-strip mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
           {QUICK_COMMANDS.map((item) => {
             const Icon = item.icon;
             return (
@@ -1108,7 +1108,7 @@ function AvaComposer({
             </div>
           </div>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-[var(--ava-text-faint)]">
+        <p className="pbk-ava-chat-mobile-note mt-1.5 text-center text-[10px] text-[var(--ava-text-faint)]">
           Ava can make mistakes. Review important actions before approval.
         </p>
       </div>

@@ -1055,7 +1055,12 @@ function CampaignWizard({
       className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (
+          event.target === event.currentTarget &&
+          (typeof window === 'undefined' || window.matchMedia('(min-width: 561px)').matches)
+        ) {
+          onClose();
+        }
       }}
     >
       <section

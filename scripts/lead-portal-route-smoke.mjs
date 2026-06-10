@@ -68,6 +68,25 @@ assert(
     /method:\s*'DELETE'[\s\S]*?\/api\/leads\//.test(bridge),
   'Lead Portal must expose a confirmed bridge-backed delete action.'
 );
+assert(
+  portal.includes('BANT+ call context') &&
+    read('src/app/components/leads/leadPortalModel.ts').includes('buildLeadPortalPatch') &&
+    read('src/app/components/leads/leadPortalModel.ts').includes('call_metadata') &&
+    !/BANT\+ JSON|bantJsonError|validateBantJson/.test(portal),
+  'Lead Portal edit modal must expose human BANT+ fields and persist them through the canonical patch.'
+);
+assert(
+  /useSearchParams/.test(portal) &&
+    /searchParams\.get\('edit'\) !== '1'/.test(portal) &&
+    /setEditOpen\(true\)/.test(portal),
+  'Lead Portal should support a one-click ?edit=1 handoff into the canonical edit dialog.'
+);
+assert(
+  /pbk-lead-portal :where\(h1, h2, p, strong, span\)[\s\S]*overflow-wrap:\s*break-word[\s\S]*word-break:\s*normal/.test(
+    read('src/styles/pbk-components.css')
+  ),
+  'Lead Portal text should wrap naturally without breaking words.'
+);
 
 assert(
   /leadId\?: string/.test(bridge) &&

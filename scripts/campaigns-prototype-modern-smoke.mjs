@@ -46,6 +46,10 @@ assert(/const\s+\[viewMode,\s*setViewMode\]/.test(campaigns), 'Campaigns should 
 assert(/fetchReplyTemplatesRequest/.test(campaigns), 'Campaign wizard template step must use the real reply-template endpoint helper.');
 assert(/fetchCampaignRankedTemplatesRequest/.test(campaigns), 'Campaign wizard template step must use the ranked campaign-template endpoint helper.');
 assert(
+  /matchMedia\('\(min-width: 561px\)'\)/.test(campaigns),
+  'Campaign wizard should not close from accidental mobile backdrop taps.'
+);
+assert(
   /PbkDataSource[\s\S]*endpoint="GET \/api\/replies\/templates"[\s\S]*status="ships"/.test(campaigns),
   'Campaign template step must mark GET /api/replies/templates as a shipped data source.'
 );
@@ -70,5 +74,18 @@ assert(dataMap.includes('/api/replies/templates'), 'Bridge data map must documen
 ].forEach((selector) => {
   assert(pbkCss.includes(selector), `PBK CSS should include ${selector}.`);
 });
+
+assert(
+  /@media \(max-width: 560px\)[\s\S]*\.pbk-wiz-foot\s*\{[\s\S]*position:\s*sticky[\s\S]*bottom:\s*0/.test(
+    pbkCss
+  ),
+  'Campaign wizard mobile footer must stay reachable at the bottom.'
+);
+assert(
+  /@media \(max-width: 560px\)[\s\S]*\.pbk-wiz-modal input,[\s\S]*font-size:\s*16px/.test(
+    pbkCss
+  ),
+  'Campaign wizard mobile fields must use 16px text to avoid browser zoom while typing.'
+);
 
 console.log('campaigns-prototype-modern-smoke: ok');

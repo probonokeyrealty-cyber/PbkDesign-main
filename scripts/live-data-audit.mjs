@@ -1794,7 +1794,9 @@ const checks = [
     ok:
       /function buildRequestUrl/.test(netlifyDocumentsPdfFunction) &&
       !/event\.rawUrl/.test(netlifyDocumentsPdfFunction) &&
-      /Invalid BANT JSON/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
+      /Human BANT\+ fields/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
+      /buildBantFromLeadForm/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
+      !/Invalid BANT JSON/.test(readFileSync(resolve(root, 'src/app/routes/Leads.tsx'), 'utf8')) &&
       /assertRuntimeAuthConfigured/.test(runtimeBridge) &&
       /PBK bridge API key is not configured/.test(runtimeBridge) &&
       !/apiKey:\s*env\.[\s\S]*\|\|\s*''/.test(runtimeBridge) &&

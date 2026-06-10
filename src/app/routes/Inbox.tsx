@@ -147,6 +147,124 @@ function formatRuntimeStatus(status: unknown) {
   return normalized ? normalized.replace(/_/g, ' ') : 'No data yet';
 }
 
+type ApprovalRisk = 'low' | 'medium' | 'high';
+
+function getApprovalMetadata(approval: Record<string, unknown>) {
+  return approval.metadata && typeof approval.metadata === 'object'
+    ? (approval.metadata as Record<string, unknown>)
+    : {};
+}
+
+function getApprovalAction(approval: Record<string, unknown>) {
+  const metadata = getApprovalMetadata(approval);
+  return String(
+    approval.approvalAction ||
+      approval.action ||
+      metadata.approvalAction ||
+      metadata.action ||
+      metadata.toolName ||
+      metadata.requestedTool ||
+      ''
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isLocalCommandApproval(approval: Record<string, unknown>) {
+  const metadata = getApprovalMetadata(approval);
+  const action = getApprovalAction(approval);
+  return (
+    String(approval.type || '').toLowerCase() === 'local_command' ||
+    metadata.kind === 'local_command' ||
+    action === 'executelocalcommand' ||
+    action === 'execute_local_command'
+  );
+}
+
+function getApprovalRisk(approval: Record<string, unknown>): ApprovalRisk {
+  const metadata = getApprovalMetadata(approval);
+  const explicitRisk = String(
+    approval.riskLevel || approval.risk || metadata.riskLevel || metadata.risk || ''
+  ).toLowerCase();
+  if (explicitRisk === 'high' || explicitRisk === 'medium' || explicitRisk === 'low') {
+    return explicitRisk;
+  }
+  const searchable = [
+    approval.type,
+    approval.approvalAction,
+    approval.action,
+    approval.notes,
+    metadata.command,
+    metadata.action,
+    metadata.reason,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (
+    /\b(delete|remove|install|purchase|deploy|restart|admin|contract|docusign|payment|provider write)\b/.test(
+      searchable
+    )
+  ) {
+    return 'high';
+  }
+  if (/\b(status|health|ping|read|list|inspect|screenshot|screen shot)\b/.test(searchable)) {
+    return 'low';
+  }
+  return 'medium';
+}
+
+function approvalRiskRank(approval: Record<string, unknown>) {
+  return { high: 3, medium: 2, low: 1 }[getApprovalRisk(approval)];
+}
+
+function getApprovalTypeLabel(approval: Record<string, unknown>) {
+  if (isLocalCommandApproval(approval)) return 'Desktop command';
+  if (isContractApproval(approval)) return 'Contract';
+  const normalized = String(approval.type || 'approval')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  return normalized || 'Approval';
+}
+
+function getApprovalTitle(approval: Record<string, unknown>) {
+  const metadata = getApprovalMetadata(approval);
+  if (isLocalCommandApproval(approval)) {
+    const command = String(metadata.command || approval.command || metadata.action || '').trim();
+    return `Ava wants to run: ${command || 'local desktop command'}`;
+  }
+  if (isContractApproval(approval)) {
+    return `Review contract for ${String(approval.leadName || 'this seller')}`;
+  }
+  return String(
+    approval.title ||
+      approval.summary ||
+      approval.leadName ||
+      `${getApprovalTypeLabel(approval)} request`
+  );
+}
+
+function getApprovalReason(approval: Record<string, unknown>) {
+  const metadata = getApprovalMetadata(approval);
+  const explicit = String(
+    metadata.reason || metadata.why || approval.reason || approval.description || ''
+  ).trim();
+  if (explicit) return explicit;
+  if (isLocalCommandApproval(approval)) {
+    const action = String(metadata.action || approval.action || '').toLowerCase();
+    if (action.includes('screenshot')) return 'Capture the current desktop state for Ava.';
+    if (action.includes('status') || action.includes('ping')) {
+      return 'Confirm the local OpenClaw sidecar is connected and healthy.';
+    }
+    if (action.includes('type'))
+      return 'Complete the operator-approved text entry on this computer.';
+    return `Complete the requested desktop step for ${String(
+      metadata.requestedBy || approval.actor || 'Ava'
+    )}.`;
+  }
+  return String(approval.notes || 'Ava or Rex needs an operator decision before continuing.');
+}
+
 function isValidRecipientEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
@@ -416,23 +534,34 @@ function InboxApprovalCard({
   pendingAction,
   feedback,
   onDecision,
+  onDefer,
 }: {
   approval: Record<string, unknown>;
   index: number;
   pendingAction: string;
   feedback?: string;
   onDecision: (approval: Record<string, unknown>, status: string) => void;
+  onDefer: (approval: Record<string, unknown>) => void;
 }) {
   const contract = isContractApproval(approval);
   const approvalId = String(approval.id || '');
-  const secondaryStatus = contract ? 'needs-revision' : 'rejected';
+  const risk = getApprovalRisk(approval);
   return (
-    <div className={`pbk-inbox-approval-card ${contract ? 'contract' : ''}`.trim()}>
+    <div className={`pbk-inbox-approval-card risk-${risk} ${contract ? 'contract' : ''}`.trim()}>
       <div className="approval-top">
         <div>
-          <div className="approval-type">{String(approval.type || 'approval')}</div>
-          <h3>{String(approval.leadName || 'Pending lead')}</h3>
-          <p>{String(approval.address || 'No address recorded')}</p>
+          <div className="approval-type">
+            {getApprovalTypeLabel(approval)} · {risk} risk
+          </div>
+          <h3>{getApprovalTitle(approval)}</h3>
+          <p>
+            {String(
+              approval.address ||
+                getApprovalMetadata(approval).requestedBy ||
+                approval.actor ||
+                'PBK operator review'
+            )}
+          </p>
         </div>
         {feedback && (
           <div className="approval-feedback">
@@ -440,6 +569,10 @@ function InboxApprovalCard({
             {feedback}
           </div>
         )}
+      </div>
+      <div className="approval-why">
+        <strong>Why?</strong>
+        <span>{getApprovalReason(approval)}</span>
       </div>
       <div className="approval-preview">{getApprovalPreview(approval)}</div>
       {contract && (
@@ -463,19 +596,38 @@ function InboxApprovalCard({
         <button
           type="button"
           data-approval-secondary={index === 0 ? 'true' : undefined}
-          disabled={pendingAction === `approval:${approvalId}:${secondaryStatus}`}
-          onClick={() => onDecision(approval, secondaryStatus)}
+          disabled={pendingAction === `approval:${approvalId}:rejected`}
+          onClick={() => onDecision(approval, 'rejected')}
           className="pbk-btn pbk-btn-ghost pbk-btn-sm"
         >
-          {pendingAction === `approval:${approvalId}:${secondaryStatus}` && (
+          {pendingAction === `approval:${approvalId}:rejected` && (
             <Loader2 size={14} className="animate-spin" />
           )}
-          {pendingAction === `approval:${approvalId}:${secondaryStatus}`
-            ? 'Sending'
-            : contract
-              ? 'Needs Revision'
-              : 'Decline'}
+          {pendingAction === `approval:${approvalId}:rejected` ? 'Sending' : 'Deny'}
         </button>
+        {contract ? (
+          <button
+            type="button"
+            disabled={pendingAction === `approval:${approvalId}:needs-revision`}
+            onClick={() => onDecision(approval, 'needs-revision')}
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+          >
+            {pendingAction === `approval:${approvalId}:needs-revision` && (
+              <Loader2 size={14} className="animate-spin" />
+            )}
+            {pendingAction === `approval:${approvalId}:needs-revision`
+              ? 'Sending'
+              : 'Needs revision'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onDefer(approval)}
+            className="pbk-btn pbk-btn-ghost pbk-btn-sm"
+          >
+            Ask later
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1100,7 +1252,13 @@ export function Inbox() {
   const [liveLeads, setLiveLeads] = useState<ComposeLead[]>([]);
   const [leadStatus, setLeadStatus] = useState('');
 
-  const approvals = useMemo(() => getPendingApprovals(snapshot?.approvals), [snapshot?.approvals]);
+  const approvals = useMemo(
+    () =>
+      [...getPendingApprovals(snapshot?.approvals)].sort(
+        (left, right) => approvalRiskRank(right) - approvalRiskRank(left)
+      ),
+    [snapshot?.approvals]
+  );
   const fallbackMessages = useMemo(
     () => sortMessagesNewest(snapshot?.messages || []),
     [snapshot?.messages]
@@ -1240,6 +1398,20 @@ export function Inbox() {
     setApprovalDecisionDraft({ approval, status, actionLabel, warning });
   };
 
+  const deferApproval = (approval: Record<string, unknown>) => {
+    const approvalId = String(approval.id || '');
+    if (approvalId) {
+      setApprovalFeedbackById((current) => ({
+        ...current,
+        [approvalId]: 'Left pending',
+      }));
+    }
+    setActionStatus({
+      tone: 'success',
+      text: 'Left pending. Ava will wait for your decision.',
+    });
+  };
+
   const executeApprovalDecision = () => {
     if (!approvalDecisionDraft) return;
     const draft = approvalDecisionDraft;
@@ -1375,7 +1547,7 @@ export function Inbox() {
             <div className="pbk-inbox-card-head">
               <div>
                 <h2>Approvals needed</h2>
-                <p>Items Ava/Rex need you to approve before sending.</p>
+                <p>Actions Ava or Rex cannot complete without your decision.</p>
               </div>
               <span className="count">{approvals.length}</span>
             </div>
@@ -1390,6 +1562,7 @@ export function Inbox() {
                     pendingAction={pendingAction}
                     feedback={approvalFeedbackById[approvalId]}
                     onDecision={openApprovalDecisionConfirm}
+                    onDefer={deferApproval}
                   />
                 );
               })}

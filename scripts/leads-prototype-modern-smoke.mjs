@@ -75,6 +75,12 @@ assert(
   !/John Smith|Diane Kowalski|123 Main St|Approve Offer|UI-only|SAMPLE_LEADS|MOCK_LEADS/.test(leads),
   'Leads must not port prototype sample people, addresses, or mock labels.'
 );
+assert(
+  /Human BANT\+ fields/.test(leads) &&
+    /buildBantFromLeadForm/.test(leads) &&
+    !/BANT\+ JSON|bantJsonError|validateBantJson/.test(leads),
+  'Leads edit modal must expose human BANT+ fields instead of raw JSON.'
+);
 
 assert(
   runtimeBridge.includes('/api/leads/') &&

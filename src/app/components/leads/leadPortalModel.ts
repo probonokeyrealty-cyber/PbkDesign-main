@@ -38,6 +38,14 @@ export type LeadPortalModel = {
   mortgageBalance: number | null;
   sellerNotes: string;
   internalNotes: string;
+  bantBudget: string;
+  bantAuthority: string;
+  bantNeed: string;
+  bantTimeline: string;
+  bantUrgency: string;
+  bantObjection: string;
+  bantSentiment: string;
+  bantNextStep: string;
   avaBrief: string;
   calls: BridgeRecord[];
   messages: BridgeRecord[];
@@ -81,12 +89,18 @@ export type LeadPortalDraft = {
   dncStatus: string;
   sellerNotes: string;
   internalNotes: string;
+  bantBudget: string;
+  bantAuthority: string;
+  bantNeed: string;
+  bantTimeline: string;
+  bantUrgency: string;
+  bantObjection: string;
+  bantSentiment: string;
+  bantNextStep: string;
 };
 
 export function record(value: unknown): BridgeRecord {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as BridgeRecord)
-    : {};
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as BridgeRecord) : {};
 }
 
 export function text(value: unknown, fallback = '') {
@@ -134,9 +148,7 @@ function normalizeTags(value: unknown) {
 }
 
 function titleCase(value: string) {
-  return value
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (character) => character.toUpperCase());
+  return value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function normalizePath(value: unknown) {
@@ -168,6 +180,10 @@ export function buildLeadPortalModel(payload: BridgeRecord): LeadPortalModel {
   const callContext = {
     ...record(lead.call_context),
     ...record(lead.callContext),
+  };
+  const bant = {
+    ...record(callContext.bant),
+    ...record(lead.bant),
   };
   const portalRecord = {
     ...record(lead.portal_record),
@@ -215,11 +231,7 @@ export function buildLeadPortalModel(payload: BridgeRecord): LeadPortalModel {
     preferredChannel: firstText(seller.preferredChannel, lead.preferredChannel) || 'unknown',
     bestTimeToCall: firstText(seller.bestTimeToCall, lead.bestTimeToCall),
     relationship:
-      firstText(
-        seller.relationship,
-        seller.relationshipToProperty,
-        lead.relationship
-      ) || 'unknown',
+      firstText(seller.relationship, seller.relationshipToProperty, lead.relationship) || 'unknown',
     tcpaConsent:
       firstText(compliance.tcpaConsent, compliance.consentStatus, lead.tcpaConsent) || 'unknown',
     dncStatus: firstText(compliance.dncStatus, lead.dncStatus) || 'needs_review',
@@ -236,14 +248,9 @@ export function buildLeadPortalModel(payload: BridgeRecord): LeadPortalModel {
         motivationRecord.summary,
         lead.motivationSummary,
         typeof lead.motivation === 'string' ? lead.motivation : ''
-      ) ||
-      'Not captured',
+      ) || 'Not captured',
     timeline: firstText(motivationRecord.timeline, lead.timeline) || 'Unknown',
-    askingPrice: firstNumber(
-      property.askingPrice,
-      motivationRecord.askingPrice,
-      lead.askingPrice
-    ),
+    askingPrice: firstNumber(property.askingPrice, motivationRecord.askingPrice, lead.askingPrice),
     arv: firstNumber(property.arv, callContext.arv, lead.arv),
     mao: firstNumber(property.mao, callContext.mao, lead.mao, lead.maoRbp),
     estimatedRepairs: firstNumber(
@@ -263,6 +270,29 @@ export function buildLeadPortalModel(payload: BridgeRecord): LeadPortalModel {
       typeof lead.notes === 'string' ? lead.notes : '',
       lead.internalNotes
     ),
+    bantBudget: firstText(bant.budget, callContext.budget, property.askingPrice),
+    bantAuthority: firstText(
+      bant.authority,
+      callContext.authority,
+      seller.relationshipToProperty,
+      seller.relationship
+    ),
+    bantNeed: firstText(
+      bant.need,
+      callContext.need,
+      motivationRecord.summary,
+      typeof lead.motivation === 'string' ? lead.motivation : ''
+    ),
+    bantTimeline: firstText(bant.timeline, callContext.timeline, motivationRecord.timeline),
+    bantUrgency: firstText(bant.urgency, callContext.urgency),
+    bantObjection: firstText(bant.objection, callContext.objection, callContext.primaryObjection),
+    bantSentiment: firstText(bant.sentiment, callContext.sentiment, callContext.sentimentScore),
+    bantNextStep: firstText(
+      bant.nextStep,
+      bant.next_step,
+      callContext.nextStep,
+      callContext.next_step
+    ),
     avaBrief:
       firstText(
         callContext.summary,
@@ -274,9 +304,7 @@ export function buildLeadPortalModel(payload: BridgeRecord): LeadPortalModel {
     calls: Array.isArray(root.calls) ? (root.calls as BridgeRecord[]) : [],
     messages: Array.isArray(root.messages) ? (root.messages as BridgeRecord[]) : [],
     contracts: Array.isArray(root.contracts) ? (root.contracts as BridgeRecord[]) : [],
-    analyzerRuns: Array.isArray(root.analyzerRuns)
-      ? (root.analyzerRuns as BridgeRecord[])
-      : [],
+    analyzerRuns: Array.isArray(root.analyzerRuns) ? (root.analyzerRuns as BridgeRecord[]) : [],
     activity: Array.isArray(root.activity) ? (root.activity as BridgeRecord[]) : [],
     raw: lead,
   };
@@ -331,6 +359,14 @@ export function createLeadPortalDraft(lead: LeadPortalModel): LeadPortalDraft {
     dncStatus: lead.dncStatus,
     sellerNotes: lead.sellerNotes,
     internalNotes: lead.internalNotes,
+    bantBudget: lead.bantBudget,
+    bantAuthority: lead.bantAuthority,
+    bantNeed: lead.bantNeed,
+    bantTimeline: lead.bantTimeline,
+    bantUrgency: lead.bantUrgency,
+    bantObjection: lead.bantObjection,
+    bantSentiment: lead.bantSentiment,
+    bantNextStep: lead.bantNextStep,
   };
 }
 
@@ -341,6 +377,17 @@ function draftNumber(value: string) {
 
 export function buildLeadPortalPatch(draft: LeadPortalDraft): BridgeRecord {
   const tags = normalizeTags(draft.tags);
+  const sentiment = draftNumber(draft.bantSentiment);
+  const bant = {
+    budget: draft.bantBudget,
+    authority: draft.bantAuthority,
+    need: draft.bantNeed,
+    timeline: draft.bantTimeline,
+    urgency: draft.bantUrgency,
+    objection: draft.bantObjection,
+    sentiment,
+    nextStep: draft.bantNextStep,
+  };
   return {
     name: draft.name,
     phone: draft.phone,
@@ -378,6 +425,13 @@ export function buildLeadPortalPatch(draft: LeadPortalDraft): BridgeRecord {
     sellerNotes: draft.sellerNotes,
     internalNotes: draft.internalNotes,
     notes: draft.internalNotes,
+    bant,
+    call_metadata: {
+      bant,
+      sentiment,
+      objection: draft.bantObjection,
+      nextStep: draft.bantNextStep,
+    },
     seller: {
       name: draft.name,
       phone: draft.phone,

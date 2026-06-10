@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Loader2, Save, StickyNote } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { PbkDataSource } from '../../components/pbk/index';
 import { LeadPortalContactability } from '../components/leads/LeadPortalContactability';
 import { LeadPortalDealContext } from '../components/leads/LeadPortalDealContext';
@@ -122,11 +122,13 @@ function PortalSelect({
 export function LeadPortal() {
   const { leadId = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
   const timelineRequestSequence = useRef(0);
   const timelineThreadIdRef = useRef('');
   const currentLeadIdRef = useRef(leadId);
   const actionSequence = useRef(0);
+  const editRequestHandled = useRef('');
   const [leadPayload, setLeadPayload] = useState<BridgeRecord | null>(null);
   const [thread, setThread] = useState<ConversationThread | null>(null);
   const [events, setEvents] = useState<ConversationEvent[]>([]);
@@ -281,6 +283,19 @@ export function LeadPortal() {
     setDraftLeadId(lead.id || leadId);
     setEditOpen(true);
   };
+
+  useEffect(() => {
+    if (!lead || searchParams.get('edit') !== '1') return;
+    const requestKey = `${leadId}:${lead.id || leadId}`;
+    if (editRequestHandled.current === requestKey) return;
+    editRequestHandled.current = requestKey;
+    setDraft(createLeadPortalDraft(lead));
+    setDraftLeadId(lead.id || leadId);
+    setEditOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('edit');
+    setSearchParams(next, { replace: true });
+  }, [lead, leadId, searchParams, setSearchParams]);
 
   const updateDraft = (key: keyof LeadPortalDraft, value: string) => {
     setDraft((current) => (current ? { ...current, [key]: value } : current));
@@ -893,6 +908,55 @@ export function LeadPortal() {
                 value={draft.internalNotes}
                 multiline
                 onChange={(value) => updateDraft('internalNotes', value)}
+              />
+              <div className="pbk-lead-edit-section wide">
+                <span>Compliance &amp; memory</span>
+                <strong>BANT+ call context</strong>
+                <small>
+                  Editable human fields that save into the bridge BANT object and Ava call metadata.
+                </small>
+              </div>
+              <PortalField
+                label="Budget / price expectation"
+                value={draft.bantBudget}
+                onChange={(value) => updateDraft('bantBudget', value)}
+              />
+              <PortalField
+                label="Authority / decision maker"
+                value={draft.bantAuthority}
+                onChange={(value) => updateDraft('bantAuthority', value)}
+              />
+              <PortalField
+                label="Need / motivation"
+                value={draft.bantNeed}
+                multiline
+                onChange={(value) => updateDraft('bantNeed', value)}
+              />
+              <PortalField
+                label="Timeline"
+                value={draft.bantTimeline}
+                onChange={(value) => updateDraft('bantTimeline', value)}
+              />
+              <PortalField
+                label="Urgency"
+                value={draft.bantUrgency}
+                onChange={(value) => updateDraft('bantUrgency', value)}
+              />
+              <PortalField
+                label="Primary objection"
+                value={draft.bantObjection}
+                onChange={(value) => updateDraft('bantObjection', value)}
+              />
+              <PortalField
+                label="Sentiment"
+                type="number"
+                value={draft.bantSentiment}
+                onChange={(value) => updateDraft('bantSentiment', value)}
+              />
+              <PortalField
+                label="Next step"
+                value={draft.bantNextStep}
+                onChange={(value) => updateDraft('bantNextStep', value)}
               />
             </div>
           )}

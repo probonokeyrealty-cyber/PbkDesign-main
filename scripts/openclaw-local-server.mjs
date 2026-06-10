@@ -11285,12 +11285,21 @@ function upsertLocalCommandState(record = {}) {
   return upsertById(state, 'localCommands', mapped);
 }
 
-async function persistLocalCommandRecordToPg(record = {}) {
+async function persistLocalCommandRecordToPg(record = {}, options = {}) {
   const pool = getPgPool();
   if (!pool || !record.id) return { ok: false, reason: 'postgres_unavailable' };
   try {
     await ensureLocalCommandQueueSchema(pool);
-    await pool.query(
+    const statusAssignment =
+      options.allowDispatchRequeue === true
+        ? 'EXCLUDED.status'
+        : `CASE
+            WHEN pbk_local_commands.status IN ('dispatched', 'completed')
+              AND EXCLUDED.status IN ('approved', 'rejected')
+            THEN pbk_local_commands.status
+            ELSE EXCLUDED.status
+          END`;
+    const { rows } = await pool.query(
       `INSERT INTO public.pbk_local_commands (
         id, tenant_id, command, action, params, requested_by, source, status,
         requires_approval, approval_id, sidecar_id, result, error, created_at,
@@ -11304,7 +11313,7 @@ async function persistLocalCommandRecordToPg(record = {}) {
         params = EXCLUDED.params,
         requested_by = EXCLUDED.requested_by,
         source = EXCLUDED.source,
-        status = EXCLUDED.status,
+        status = ${statusAssignment},
         requires_approval = EXCLUDED.requires_approval,
         approval_id = EXCLUDED.approval_id,
         sidecar_id = EXCLUDED.sidecar_id,
@@ -11313,7 +11322,8 @@ async function persistLocalCommandRecordToPg(record = {}) {
         approved_at = EXCLUDED.approved_at,
         dispatched_at = EXCLUDED.dispatched_at,
         completed_at = EXCLUDED.completed_at,
-        updated_at = EXCLUDED.updated_at`,
+        updated_at = EXCLUDED.updated_at
+      RETURNING *`,
       [
         record.id,
         normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
@@ -11335,11 +11345,85 @@ async function persistLocalCommandRecordToPg(record = {}) {
         record.updatedAt || record.updated_at || isoNow(),
       ]
     );
-    return { ok: true };
+    return {
+      ok: true,
+      command: rows[0] ? mapLocalCommandRow(rows[0]) : null,
+    };
   } catch (error) {
     console.warn('[pbk-local-openclaw] local command persistence skipped:', error?.message || error);
     return { ok: false, error: error?.message || String(error) };
   }
+}
+
+const localCommandDispatchClaims = new Set();
+
+async function claimApprovedLocalCommandForDispatch(command = {}, action = '') {
+  const commandId = String(command.id || '').trim();
+  if (!commandId) {
+    return { ok: false, claimed: false, result: 'local_command_missing_id' };
+  }
+  if (localCommandDispatchClaims.has(commandId)) {
+    return { ok: true, claimed: false, result: 'local_command_dispatch_in_progress' };
+  }
+
+  localCommandDispatchClaims.add(commandId);
+  const dispatchedAt = isoNow();
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      await ensureLocalCommandQueueSchema(pool);
+      const { rows } = await pool.query(
+        `UPDATE public.pbk_local_commands
+         SET status = 'dispatched',
+             action = $3,
+             dispatched_at = $4,
+             error = '',
+             updated_at = $4
+         WHERE id = $1
+           AND tenant_id = $2
+           AND status = 'approved'
+         RETURNING *`,
+        [
+          commandId,
+          normalizeTenantId(command.tenantId || command.tenant_id || 'pbk'),
+          action || normalizeLocalCommandAction(command),
+          dispatchedAt,
+        ]
+      );
+      if (!rows.length) {
+        localCommandDispatchClaims.delete(commandId);
+        return { ok: true, claimed: false, result: 'local_command_dispatch_already_claimed' };
+      }
+      const claimedCommand = mapLocalCommandRow(rows[0]);
+      upsertLocalCommandState(claimedCommand);
+      return { ok: true, claimed: true, command: claimedCommand };
+    } catch (error) {
+      localCommandDispatchClaims.delete(commandId);
+      return {
+        ok: false,
+        claimed: false,
+        result: 'local_command_dispatch_claim_failed',
+        error: error?.message || String(error),
+      };
+    }
+  }
+
+  const existing =
+    (state.localCommands || []).find((item) => String(item.id || '') === commandId) || command;
+  if (normalizeLocalCommandStatus(existing.status) !== 'approved') {
+    localCommandDispatchClaims.delete(commandId);
+    return { ok: true, claimed: false, result: 'local_command_dispatch_already_claimed' };
+  }
+  const claimedCommand = {
+    ...existing,
+    action: action || normalizeLocalCommandAction(existing),
+    status: 'dispatched',
+    dispatchedAt,
+    error: '',
+    updatedAt: dispatchedAt,
+  };
+  upsertLocalCommandState(claimedCommand);
+  return { ok: true, claimed: true, command: claimedCommand };
 }
 
 async function listLocalCommands({ status = 'all', limit = 40, pendingOnly = false } = {}) {
@@ -11455,7 +11539,16 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
   const metadata = approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
   const commandId = String(metadata.commandId || metadata.command_id || approval.commandId || '').trim();
   if (!commandId) return { ok: false, result: 'local_command_missing_id' };
-  const approved = normalizeLocalCommandStatus(approval.status) === 'approved';
+  const decisionStatus = normalizeApprovalDecisionStatus(approval.status);
+  if (!['approved', 'rejected', 'cancelled'].includes(decisionStatus)) {
+    return {
+      ok: true,
+      result: 'local_command_decision_deferred',
+      decisionStatus,
+      commandId,
+    };
+  }
+  const approved = decisionStatus === 'approved';
   const nextStatus = approved ? 'approved' : 'rejected';
   const existing =
     (state.localCommands || []).find((item) => String(item.id || '') === commandId) ||
@@ -11470,6 +11563,14 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
       approvalId: approval.id,
       createdAt: approval.createdAt || isoNow(),
     });
+  const existingStatus = normalizeLocalCommandStatus(existing.status);
+  if (approved && ['dispatched', 'completed'].includes(existingStatus)) {
+    return {
+      ok: true,
+      result: `local_command_already_${existingStatus}`,
+      command: existing,
+    };
+  }
   const patched = {
     ...existing,
     approvalId: approval.id || existing.approvalId || '',
@@ -11478,23 +11579,111 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
     error: approved ? '' : approval.notes || 'Rejected by operator.',
     updatedAt: isoNow(),
   };
-  upsertLocalCommandState(patched);
-  await persistLocalCommandRecordToPg(patched);
+  const persistence = await persistLocalCommandRecordToPg(patched);
+  const canonicalCommand = persistence.command || patched;
+  const canonicalStatus = normalizeLocalCommandStatus(canonicalCommand.status);
+  upsertLocalCommandState(canonicalCommand);
+  if (['dispatched', 'completed'].includes(canonicalStatus)) {
+    return {
+      ok: true,
+      result: `local_command_already_${canonicalStatus}`,
+      command: canonicalCommand,
+    };
+  }
   addActivity(
     state,
     makeActivity({
       actor: options.actor || approval.actor || 'PBK Approval',
       category: 'LOCAL',
       status: approved ? 'approved' : 'rejected',
-      text: `${approved ? 'Approved' : 'Rejected'} local command ${patched.action}: ${patched.command}`,
-      target: patched.id,
+      text: `${approved ? 'Approved' : 'Rejected'} local command ${canonicalCommand.action}: ${canonicalCommand.command}`,
+      target: canonicalCommand.id,
     })
   );
   return {
     ok: true,
     result: approved ? 'local_command_approved' : 'local_command_rejected',
-    command: patched,
+    command: canonicalCommand,
   };
+}
+
+async function dispatchApprovedLocalCommand(command = {}, options = {}) {
+  const commandId = String(command.id || '').trim();
+  if (!commandId) {
+    return { ok: false, result: 'local_command_missing_id' };
+  }
+  const currentStatus = normalizeLocalCommandStatus(command.status);
+  if (currentStatus === 'completed') {
+    return { ok: true, result: 'local_command_already_completed', command };
+  }
+  if (currentStatus !== 'approved') {
+    return {
+      ok: false,
+      result: 'local_command_not_approved',
+      status: currentStatus,
+      command,
+    };
+  }
+  const action = normalizeLocalCommandAction(command);
+  if (!isLocalCommandSidecarAction(action)) {
+    return {
+      ok: true,
+      result: 'local_command_waiting_for_local_agent',
+      dispatched: false,
+      reason: 'unsupported_sidecar_action',
+      command,
+    };
+  }
+
+  const claim = await claimApprovedLocalCommandForDispatch(command, action);
+  if (!claim.ok || !claim.claimed) return claim;
+  const dispatched = claim.command;
+
+  try {
+    const sidecarResult = await sendDesktopSidecarCommand({
+      id: commandId,
+      action,
+      ...(dispatched.params && typeof dispatched.params === 'object' ? dispatched.params : {}),
+      command: dispatched.command || '',
+      sidecarId: dispatched.sidecarId || '',
+      allowAutomation: true,
+      wait: true,
+    });
+
+    if (sidecarResult?.result === 'no_sidecar_connected') {
+      const waiting = {
+        ...dispatched,
+        status: 'approved',
+        dispatchedAt: null,
+        error: 'Approved and waiting for the desktop sidecar to reconnect.',
+        updatedAt: isoNow(),
+      };
+      upsertLocalCommandState(waiting);
+      await persistLocalCommandRecordToPg(waiting, { allowDispatchRequeue: true });
+      return {
+        ok: true,
+        result: 'local_command_waiting_for_sidecar',
+        dispatched: false,
+        command: waiting,
+        sidecarStatus: sidecarResult.status,
+      };
+    }
+
+    return await completeLocalCommand(commandId, {
+      ok: sidecarResult?.ok !== false,
+      result: sidecarResult?.payload || sidecarResult,
+      error: sidecarResult?.error || '',
+      actor: options.actor || 'PBK Approval',
+    });
+  } catch (error) {
+    return await completeLocalCommand(commandId, {
+      ok: false,
+      error: error?.message || String(error),
+      actor: options.actor || 'PBK Approval',
+    });
+  } finally {
+    localCommandDispatchClaims.delete(commandId);
+  }
 }
 
 async function completeLocalCommand(commandId = '', payload = {}) {
@@ -11827,19 +12016,166 @@ function upsertMessage(stateRef, message) {
   updateDerivedStatus(stateRef);
 }
 
-function upsertContract(stateRef, contract) {
-  const existingIndex = stateRef.contracts.findIndex((item) => item.id === contract.id);
-  if (existingIndex >= 0) {
-    stateRef.contracts.splice(existingIndex, 1, {
-      ...stateRef.contracts[existingIndex],
-      ...contract,
-      updatedAt: isoNow(),
+async function persistContractRecordToPg(contract = {}) {
+  const contractId = String(contract.id || contract.contractId || '').trim();
+  if (!contractId) {
+    return { ok: false, reason: 'missing_contract_id', rows: [] };
+  }
+  return queryPgRows(
+    `INSERT INTO public.contracts (
+       id, lead_id, workspace_id, amount, selected_path, selected_path_label,
+       timeline, earnest_deposit, status, provider, envelope_id, document_title,
+       preview_url, pdf_url, master_package_query, pdf_generated_at, notes,
+       approval_id, template_id, template_fields, template_field_map, contract_path,
+       contract_type, template_path, template_file, negotiation_file,
+       negotiation_prompt, underwriting_status, underwriting_reviewer_email,
+       underwriting_reviewer_name, seller_notice, payload, created_at, updated_at
+     )
+     VALUES (
+       $1,
+       (SELECT id FROM public.lead_profiles WHERE id = $2 LIMIT 1),
+       $3,
+       $4,
+       (SELECT path_key FROM public.contract_path_templates WHERE path_key = $5 LIMIT 1),
+       $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+       $20::jsonb, $21::jsonb, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+       $31, $32::jsonb, $33, $34
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       lead_id = EXCLUDED.lead_id,
+       workspace_id = EXCLUDED.workspace_id,
+       amount = EXCLUDED.amount,
+       selected_path = EXCLUDED.selected_path,
+       selected_path_label = EXCLUDED.selected_path_label,
+       timeline = EXCLUDED.timeline,
+       earnest_deposit = EXCLUDED.earnest_deposit,
+       status = EXCLUDED.status,
+       provider = EXCLUDED.provider,
+       envelope_id = EXCLUDED.envelope_id,
+       document_title = EXCLUDED.document_title,
+       preview_url = EXCLUDED.preview_url,
+       pdf_url = EXCLUDED.pdf_url,
+       master_package_query = EXCLUDED.master_package_query,
+       pdf_generated_at = EXCLUDED.pdf_generated_at,
+       notes = EXCLUDED.notes,
+       approval_id = EXCLUDED.approval_id,
+       template_id = EXCLUDED.template_id,
+       template_fields = EXCLUDED.template_fields,
+       template_field_map = EXCLUDED.template_field_map,
+       contract_path = EXCLUDED.contract_path,
+       contract_type = EXCLUDED.contract_type,
+       template_path = EXCLUDED.template_path,
+       template_file = EXCLUDED.template_file,
+       negotiation_file = EXCLUDED.negotiation_file,
+       negotiation_prompt = EXCLUDED.negotiation_prompt,
+       underwriting_status = EXCLUDED.underwriting_status,
+       underwriting_reviewer_email = EXCLUDED.underwriting_reviewer_email,
+       underwriting_reviewer_name = EXCLUDED.underwriting_reviewer_name,
+       seller_notice = EXCLUDED.seller_notice,
+       payload = EXCLUDED.payload,
+       updated_at = EXCLUDED.updated_at
+     RETURNING id, status, updated_at`,
+    [
+      contractId,
+      String(contract.leadId || contract.lead_id || '').trim(),
+      normalizeTenantId(contract.workspaceId || contract.workspace_id || 'pbk'),
+      toNumber(contract.amount || contract.offerPrice, 0),
+      String(contract.selectedPath || contract.selected_path || '').trim(),
+      String(contract.selectedPathLabel || contract.selected_path_label || '').trim(),
+      String(contract.timeline || '').trim(),
+      String(contract.earnestDeposit || contract.earnest_deposit || '').trim(),
+      String(contract.status || 'draft').trim(),
+      String(contract.provider || 'docusign').trim().toLowerCase(),
+      String(contract.envelopeId || contract.envelope_id || '').trim(),
+      String(contract.documentTitle || contract.document_title || '').trim(),
+      String(contract.previewUrl || contract.preview_url || '').trim(),
+      String(contract.pdfUrl || contract.pdf_url || '').trim(),
+      String(contract.masterPackageQuery || contract.master_package_query || '').trim(),
+      contract.pdfGeneratedAt || contract.pdf_generated_at || null,
+      String(contract.notes || '').trim(),
+      String(contract.approvalId || contract.approval_id || '').trim(),
+      String(contract.templateId || contract.template_id || '').trim(),
+      JSON.stringify(contract.templateFields || contract.template_fields || {}),
+      JSON.stringify(contract.templateFieldMap || contract.template_field_map || {}),
+      String(
+        contract.contractPath ||
+          contract.contract_path ||
+          contract.selectedPath ||
+          contract.selected_path ||
+          ''
+      ).trim(),
+      String(contract.contractType || contract.contract_type || '').trim(),
+      String(contract.templatePath || contract.template_path || '').trim(),
+      String(contract.templateFile || contract.template_file || '').trim(),
+      String(contract.negotiationFile || contract.negotiation_file || '').trim(),
+      String(contract.negotiationPrompt || contract.negotiation_prompt || '').trim(),
+      String(contract.underwritingStatus || contract.underwriting_status || '').trim(),
+      String(
+        contract.underwritingReviewerEmail || contract.underwriting_reviewer_email || ''
+      ).trim(),
+      String(
+        contract.underwritingReviewerName || contract.underwriting_reviewer_name || ''
+      ).trim(),
+      String(contract.sellerNotice || contract.seller_notice || '').trim(),
+      JSON.stringify(contract),
+      contract.createdAt || contract.created_at || isoNow(),
+      contract.updatedAt || contract.updated_at || isoNow(),
+    ]
+  );
+}
+
+async function backfillContractRecordsToPg(contracts = state.contracts || []) {
+  const records = Array.isArray(contracts) ? contracts.filter((contract) => contract?.id) : [];
+  let persisted = 0;
+  const failures = [];
+  for (let index = 0; index < records.length; index += 25) {
+    const batch = records.slice(index, index + 25);
+    const results = await Promise.all(batch.map((contract) => persistContractRecordToPg(contract)));
+    results.forEach((result, resultIndex) => {
+      if (result.ok) {
+        persisted += 1;
+      } else {
+        failures.push({
+          id: String(batch[resultIndex]?.id || ''),
+          reason: result.error || result.reason || 'contract_persistence_failed',
+        });
+      }
     });
+  }
+  return {
+    ok: failures.length === 0,
+    result: failures.length ? 'contract_backfill_partial' : 'contract_backfill_completed',
+    total: records.length,
+    persisted,
+    failed: failures.length,
+    failures: failures.slice(0, 20),
+  };
+}
+
+async function upsertContract(stateRef, contract) {
+  const existingIndex = stateRef.contracts.findIndex((item) => item.id === contract.id);
+  const nextContract =
+    existingIndex >= 0
+      ? {
+          ...stateRef.contracts[existingIndex],
+          ...contract,
+          updatedAt: isoNow(),
+        }
+      : contract;
+  const persistence = await persistContractRecordToPg(nextContract);
+  if (!persistence.ok && persistence.reason !== 'no_database') {
+    throw new Error(
+      `Contract persistence failed: ${persistence.error || persistence.reason || 'unknown_error'}`
+    );
+  }
+  if (existingIndex >= 0) {
+    stateRef.contracts.splice(existingIndex, 1, nextContract);
   } else {
-    stateRef.contracts.unshift(contract);
+    stateRef.contracts.unshift(nextContract);
   }
   limitStateArrays(stateRef);
   updateDerivedStatus(stateRef);
+  return nextContract;
 }
 
 function findLeadContext(params = {}) {
@@ -12192,12 +12528,16 @@ function normalizeLeadTags(value = []) {
 
 function parseBantPayload(value, fallback = {}) {
   if (value === undefined) return fallback || {};
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return { ...(fallback || {}), ...value };
+  }
   const raw = String(value || '').trim();
   if (!raw) return fallback || {};
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback || {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { ...(fallback || {}), ...parsed }
+      : fallback || {};
   } catch {
     return fallback || {};
   }
@@ -48484,7 +48824,7 @@ const toolHandlers = {
       providerError = docusignMeta.summary || 'DocuSign provider is configured but not ready.';
     }
 
-    upsertContract(state, contract);
+    await upsertContract(state, contract);
     const queueOnly = !docusignMeta.configured;
     const contractActivity = makeActivity({
       actor: 'DocuSign',
@@ -48875,7 +49215,7 @@ const toolHandlers = {
     contract.negotiationPrompt = template.negotiationScript || '';
     contract.underwritingStatus = 'pending';
 
-    upsertContract(state, contract);
+    await upsertContract(state, contract);
     const prepareActivity = makeActivity({
       actor: 'Underwriting',
       category: 'DOCUMENT',
@@ -48946,7 +49286,7 @@ const toolHandlers = {
     contract.sellerNotice = sellerNotice;
     contract.notes = approvalNotes;
     contract.updatedAt = isoNow();
-    upsertContract(state, contract);
+    await upsertContract(state, contract);
 
     addActivity(
       state,
@@ -49462,14 +49802,46 @@ async function handleEvent(eventType, payload = {}) {
 
     // Replay short-circuit: if status/actor/actedAt already match incoming
     // payload, n8n is just retrying. No mutation, no extra activity entry.
-    const incomingStatus = String(payload.status || approval.status || 'pending').replace(/-/g, '_');
+    const incomingStatus = normalizeApprovalDecisionStatus(
+      payload.status || approval.status || 'pending'
+    );
     const incomingActor = payload.actor || approval.actor || 'n8n';
     const incomingActedAt = payload.actedAt || approval.actedAt || null;
     const exactApprovalReplay =
-      approval.status === incomingStatus &&
+      normalizeApprovalDecisionStatus(approval.status) === incomingStatus &&
       approval.actor === incomingActor &&
       incomingActedAt &&
       approval.actedAt === incomingActedAt;
+    const replayApprovalMetadata =
+      approval.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+    const replayApprovalAction = String(
+      approval.approvalAction ||
+        approval.action ||
+        replayApprovalMetadata.approvalAction ||
+        replayApprovalMetadata.action ||
+        replayApprovalMetadata.toolName ||
+        replayApprovalMetadata.requestedTool ||
+        ''
+    ).toLowerCase();
+    const replayIsLocalCommandApproval =
+      String(approval.type || '').toLowerCase() === 'local_command' ||
+      replayApprovalMetadata.kind === 'local_command' ||
+      replayApprovalAction === 'executelocalcommand' ||
+      replayApprovalAction === 'execute_local_command';
+    const replayCommandId = String(
+      replayApprovalMetadata.commandId ||
+        replayApprovalMetadata.command_id ||
+        approval.commandId ||
+        ''
+    ).trim();
+    const replayLocalCommand = replayCommandId
+      ? (state.localCommands || []).find((item) => String(item.id || '') === replayCommandId)
+      : null;
+    const retryApprovedLocalCommandDispatch =
+      exactApprovalReplay &&
+      incomingStatus === 'approved' &&
+      replayIsLocalCommandApproval &&
+      normalizeLocalCommandStatus(replayLocalCommand?.status) === 'approved';
     const reconcileUnknownProviderDispatch =
       exactApprovalReplay &&
       String(approval.type || '').toLowerCase() === 'provider-action' &&
@@ -49490,7 +49862,8 @@ async function handleEvent(eventType, payload = {}) {
       exactApprovalReplay &&
       !retryConversationProjectionOnly &&
       !reconcileUnknownProviderDispatch &&
-      !retryUnavailableProviderLease
+      !retryUnavailableProviderLease &&
+      !retryApprovedLocalCommandDispatch
     ) {
       await projectLiveConversationRecord({
         record: approval,
@@ -49604,11 +49977,11 @@ async function handleEvent(eventType, payload = {}) {
           deliveredContract.underwritingReviewerName = approval.reviewerName || contract.underwritingReviewerName || 'PBK Underwriting';
           deliveredContract.sellerNotice = approval.sellerNotice || contract.sellerNotice || '';
           deliveredContract.updatedAt = isoNow();
-          upsertContract(state, deliveredContract);
+          await upsertContract(state, deliveredContract);
         } else if (approval.status !== 'approved') {
           contract.underwritingStatus = 'needs-revision';
           contract.updatedAt = isoNow();
-          upsertContract(state, contract);
+          await upsertContract(state, contract);
         }
       }
     }
@@ -50011,6 +50384,15 @@ async function handleEvent(eventType, payload = {}) {
         localCommandResult = await syncLocalCommandApprovalDecision(approval, {
           actor: incomingActor,
         });
+        if (
+          incomingStatus === 'approved' &&
+          localCommandResult?.command &&
+          !String(localCommandResult.result || '').startsWith('local_command_already_')
+        ) {
+          localCommandResult = await dispatchApprovedLocalCommand(localCommandResult.command, {
+            actor: incomingActor,
+          });
+        }
       }
     }
 
@@ -50578,7 +50960,7 @@ async function handleEvent(eventType, payload = {}) {
       templateFields: payload.templateFields || existingContract?.templateFields || {},
       underwritingStatus: normalizedEvent === 'contract-signed' ? 'completed' : payload.underwritingStatus || existingContract?.underwritingStatus || '',
     });
-    upsertContract(state, contract);
+    await upsertContract(state, contract);
     addActivity(
       state,
       makeActivity({
@@ -65055,6 +65437,16 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/api/contracts/backfill') {
+      const result = await backfillContractRecordsToPg();
+      json(response, result.ok ? 200 : result.persisted > 0 ? 207 : 503, {
+        ...result,
+        source: 'bridge-state',
+        target: 'postgres:contracts',
+      });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/api/contracts/draft') {
       const body = await readBody(request);
       const result = await toolHandlers.prepareContract({
@@ -65212,7 +65604,7 @@ const server = createServer(async (request, response) => {
         contract.lastReminderAt = isoNow();
         contract.lastReminderActor = body.actor || 'api';
         contract.updatedAt = isoNow();
-        upsertContract(state, contract);
+        await upsertContract(state, contract);
         addActivity(
           state,
           makeActivity({
@@ -65270,14 +65662,27 @@ const server = createServer(async (request, response) => {
       const stage = getRuntimeContractStage(contract);
       const removeRecord = body.force === true || ['draft', 'void'].includes(stage);
       if (removeRecord) {
+        const deletion = await queryPgRows(`DELETE FROM public.contracts WHERE id = $1`, [
+          contract.id,
+        ]);
+        if (!deletion.ok && deletion.reason !== 'no_database') {
+          json(response, 503, {
+            ok: false,
+            error: deletion.error || 'Canonical contract deletion failed.',
+            contract,
+            state: buildStateSnapshot(),
+          });
+          return;
+        }
         state.contracts.splice(existingIndex, 1);
       } else {
-        state.contracts.splice(existingIndex, 1, {
+        const voidedContract = {
           ...contract,
           status: 'void',
           voidReason: body.reason || 'Deleted from PBK Command Center.',
           updatedAt: isoNow(),
-        });
+        };
+        await upsertContract(state, voidedContract);
       }
       addActivity(
         state,
@@ -65515,6 +65920,12 @@ const server = createServer(async (request, response) => {
         !Array.isArray(body.assignment)
           ? body.assignment
           : {};
+      const callMetadataPatch =
+        (body.call_metadata || body.callMetadata) &&
+        typeof (body.call_metadata || body.callMetadata) === 'object' &&
+        !Array.isArray(body.call_metadata || body.callMetadata)
+          ? body.call_metadata || body.callMetadata
+          : {};
       const existingNotesRecord =
         existing?.notes &&
         typeof existing.notes === 'object' &&
@@ -65544,8 +65955,11 @@ const server = createServer(async (request, response) => {
               : existing?.notes;
       const currentCallContext = existing?.callContext || existing?.call_context || {};
       const selectedPath = normalizePbkDealPath(body.selected_path || body.selectedPath || body.path || currentCallContext.selected_path || currentCallContext.selectedPath, existing ? inferLeadSelectedPath(existing) : 'cash');
+      const nextBant = parseBantPayload(body.bant, existing?.bant || {});
       const callContextPatch = {
         ...currentCallContext,
+        ...callMetadataPatch,
+        bant: parseBantPayload(callMetadataPatch.bant, nextBant),
         selected_path: selectedPath,
         selectedPath,
         selectedPathLabel: getPathDisplayLabel(selectedPath),
@@ -65667,7 +66081,7 @@ const server = createServer(async (request, response) => {
           body.mortgageBalance !== undefined
             ? body.mortgageBalance
             : existing?.mortgageBalance,
-        bant: parseBantPayload(body.bant, existing?.bant || {}),
+        bant: nextBant,
         callContext: callContextPatch,
         selectedPath,
         selected_path: selectedPath,

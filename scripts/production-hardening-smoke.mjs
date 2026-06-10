@@ -44,6 +44,36 @@ assert(
   'Unknown local command completions must fail closed.'
 );
 assert(
+  /async function persistContractRecordToPg/.test(bridge) &&
+    /INSERT INTO public\.contracts/.test(bridge) &&
+    /async function upsertContract/.test(bridge) &&
+    /await persistContractRecordToPg\(nextContract\)/.test(bridge),
+  'Every bridge contract mutation must await canonical Postgres projection.'
+);
+assert(
+  /master_package_query, pdf_generated_at/.test(bridge) &&
+    /template_path, template_file, negotiation_file/.test(bridge) &&
+    /negotiation_prompt = EXCLUDED\.negotiation_prompt/.test(bridge),
+  'Structured contract projection must preserve package, PDF, template, and negotiation metadata.'
+);
+assert(
+  /const deletion = await queryPgRows\(`DELETE FROM public\.contracts/.test(bridge) &&
+    /if \(!deletion\.ok && deletion\.reason !== 'no_database'\)/.test(bridge),
+  'Contract deletion must fail visibly before removing local state when Postgres rejects the write.'
+);
+assert(
+  /return \{ \.\.\.\(fallback \|\| \{\}\), \.\.\.value \};/.test(bridge) &&
+    /callMetadataPatch[\s\S]*bant: parseBantPayload\(callMetadataPatch\.bant, nextBant\)/.test(
+      bridge
+    ),
+  'Human BANT updates must preserve unrepresented keys and merge call metadata.'
+);
+assert(
+  /async function backfillContractRecordsToPg/.test(bridge) &&
+    /pathname === '\/api\/contracts\/backfill'/.test(bridge),
+  'The bridge must expose an idempotent contract backfill from state into Postgres.'
+);
+assert(
   /safety validation failed closed[\s\S]*blocked: true[\s\S]*providerWrite: true/.test(bridge),
   'Safety runtime failures must block provider writes.'
 );

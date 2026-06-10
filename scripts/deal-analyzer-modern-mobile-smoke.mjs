@@ -12,6 +12,7 @@ function assert(condition, message) {
 }
 
 const app = read('src/app/App.tsx');
+const dealView = read('src/app/routes/DealView.tsx');
 const analyzer = read('src/app/components/AnalyzerTab.tsx');
 const chrome = read('src/app/components/DealAnalyzerChrome.tsx');
 const leftPanel = read('src/app/components/LeftPanel.tsx');
@@ -30,6 +31,52 @@ assert(/handleCreateLeadFromAnalyzer/.test(app), 'Deal Analyzer should expose a 
 assert(/\/leads\?new=1/.test(app), 'Analyzer create-lead handoff should route to the bridge-backed lead portal.');
 assert(/pbk-analyzer-side-panel/.test(leftPanel), 'Analyzer snapshot side panel should use modern side-panel styling.');
 assert(/pbk-analyzer-workflow-panel/.test(rightPanel), 'Analyzer workflow side panel should use modern workflow-panel styling.');
+
+assert(
+  /useParams/.test(dealView) && /fetchLeadFullRequest\(leadId\)/.test(dealView),
+  'The /deal/:id route should fetch the canonical lead before mounting the analyzer.'
+);
+assert(
+  /buildAnalyzerDealFromLead/.test(dealView) &&
+    /sellerName/.test(dealView) &&
+    /estimatedRepairs/.test(dealView) &&
+    /callContext/.test(dealView),
+  'Lead hydration should map seller, property, underwriting, and call-context values into DealData.'
+);
+assert(
+  /mergeMeaningfulAnalyzerValues/.test(dealView) &&
+    /isMeaningfulAnalyzerValue/.test(dealView),
+  'Lead hydration should preserve meaningful analyzer values when the canonical lead contains blanks.'
+);
+assert(
+  /currentLeadId && currentLeadId === leadId[\s\S]*mergeMeaningfulAnalyzerValues\(\{\}, mappedDeal\)/.test(
+    dealView
+  ),
+  'Lead hydration must not preserve analyzer values from a different seller.'
+);
+assert(
+  /propertyTypeSource/.test(dealView) &&
+    /selectedPathSource/.test(dealView) &&
+    /isAnalyzed:\s*arv !== undefined \|\| mao !== undefined \|\| maoRBP !== undefined\s*\? true\s*:\s*undefined/.test(
+      dealView
+    ),
+  'Lead hydration should not replace existing type, path, or analyzed state with guessed defaults.'
+);
+assert(
+  /window\.PBKAnalyzer\?\.setState/.test(dealView) &&
+    /writeAnalyzerStorage/.test(dealView) &&
+    /ANALYZER_CURRENT_DEAL_KEY/.test(dealView),
+  'Lead hydration should use PBKAnalyzer.setState when available and the established analyzer storage fallback otherwise.'
+);
+assert(
+  /Loading seller deal/.test(dealView) &&
+    /Could not load this lead into the Deal Analyzer/.test(dealView),
+  'The lead-backed deal route should expose honest loading and error states.'
+);
+assert(
+  /if \(!leadId\)/.test(dealView) && /<App engineOnly \/>/.test(dealView),
+  'The plain /deal route should continue to mount the analyzer without fetching a lead.'
+);
 
 assert(/PbkDataSource/.test(analyzer), 'AnalyzerTab should show honest source labels.');
 assert(/POST \/api\/analyzeDeal/.test(analyzer), 'AnalyzerTab should name the bridge analysis endpoint.');

@@ -10,6 +10,7 @@ const assert = (condition, message) => {
 const app = read('src/app/App.tsx');
 const campaigns = read('src/app/routes/Campaigns.tsx');
 const commandCenter = read('src/app/routes/CommandCenter.tsx');
+const shell = read('src/app/shell/ParadiseLayout.tsx');
 const leads = read('src/app/routes/Leads.tsx');
 const analyzerChrome = read('src/app/components/DealAnalyzerChrome.tsx');
 const timeline = read('src/app/components/inbox/ConversationTimeline.tsx');
@@ -62,6 +63,41 @@ assert(
   'Unified inbox must keep identity/composer controls fixed and scroll only messages.'
 );
 assert(
+  shell.includes('isFullHeightChatRoute') &&
+    shell.includes('pbk-shell-content-chat') &&
+    shell.includes('pbk-shell-main-column-chat') &&
+    shell.includes("location.pathname === '/inbox/conversations'") &&
+    shell.includes("location.pathname === '/ava-chat'") &&
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-frame\s*\{[\s\S]*?height:\s*100dvh[\s\S]*?min-height:\s*100dvh/.test(
+      css
+    ) &&
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content\s*\{[\s\S]*?padding-bottom:\s*max\(86px/.test(
+      css
+    ) &&
+    /\.pbk-shell-content-chat\s*\{[\s\S]*?height:\s*100%[\s\S]*?max-height:\s*100%[\s\S]*?min-height:\s*0/.test(
+      css
+    ) &&
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content-chat\s*\{[\s\S]*?height:\s*calc\(100dvh - 56px\)[\s\S]*?max-height:\s*calc\(100dvh - 56px\)[\s\S]*?overflow:\s*hidden/.test(
+      css
+    ) &&
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-main-column-chat \.pbk-shell-favorites\s*\{[\s\S]*?display:\s*none/.test(
+      css
+    ) &&
+    /@media \(max-width: 767px\)[\s\S]*?\.pbk-shell-content-chat\s*\{[\s\S]*?overflow:\s*hidden/.test(
+      css
+    ),
+  'Full-height chat routes must let the shell own mobile nav inset while their internal timeline owns scrolling.'
+);
+assert(
+  !/@media \(max-width: 760px\)[\s\S]*?\.pbk-unified-inbox\s*\{[\s\S]*?padding-bottom:\s*max\(84px/.test(
+    css
+  ) &&
+    /@media \(max-width: 760px\)[\s\S]*?\.pbk-unified-inbox\s*\{[\s\S]*?padding-bottom:\s*0/.test(
+      css
+    ),
+  'Unified Inbox must not reserve mobile navigation space twice.'
+);
+assert(
   composer.includes('const showSendGuard') &&
     composer.indexOf('pbk-composer-draft-shell') <
       composer.lastIndexOf('pbk-composer-mobile-tools-toggle') &&
@@ -83,8 +119,15 @@ assert(
   avaChat.includes('pbk-ava-chat-composer') &&
     avaChat.includes('pbk-ava-chat-controls') &&
     avaChat.includes('min-w-0') &&
+    avaChat.includes('h-full max-h-full') &&
+    !avaChat.includes('h-[calc(100dvh-188px)]') &&
+    avaChat.includes('pbk-ava-chat-toolbar') &&
+    avaChat.includes('pbk-ava-chat-quick-strip') &&
     avaChat.includes('grid-rows-[auto_minmax(0,1fr)_auto]') &&
     /\.pbk-ava-chat-composer\s*\{[\s\S]*?padding-bottom:\s*max\(/.test(css) &&
+    /@media \(max-width: 640px\)[\s\S]*?\.pbk-ava-chat-toolbar\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+44px/.test(
+      css
+    ) &&
     /@media \(max-width: 420px\)[\s\S]*?\.pbk-ava-chat-controls[\s\S]*?grid-template-columns:\s*44px\s+minmax\(0,\s*1fr\)\s+44px\s+44px/.test(
       css
     ),

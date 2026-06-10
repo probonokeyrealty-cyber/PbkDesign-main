@@ -136,6 +136,11 @@ assert(
   'Unified inbox must not contain mock sellers or fake messages.'
 );
 assert(
+  inspector.includes('`/leads/${encodeURIComponent(leadId)}?edit=1`') &&
+    inspector.includes('Edit lead'),
+  'Conversation lead context must deep-link into the canonical lead editor.'
+);
+assert(
   css.includes('.pbk-conversation-bubble') &&
     css.includes('border-radius: 17px 17px 17px 6px') &&
     css.includes('.pbk-conversation-bubble.outbound'),

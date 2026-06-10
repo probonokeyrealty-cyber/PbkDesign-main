@@ -82,6 +82,22 @@ assert(
   /\/leads\/\$\{encodeURIComponent\(leadId\)\}/.test(inbox),
   'Inbox Open lead action should deep-link to the canonical bridge-backed lead portal.'
 );
+assert(
+  /getApprovalRisk/.test(inbox) &&
+    /getApprovalTitle/.test(inbox) &&
+    /getApprovalReason/.test(inbox) &&
+    /Ava wants to run:/.test(inbox),
+  'Inbox approvals should use plain-English action copy with an explicit reason and risk.'
+);
+assert(
+  /Ask later/.test(inbox) &&
+    /Left pending\. Ava will wait for your decision\./.test(inbox),
+  'Inbox approvals should let operators defer without rejecting the queued action.'
+);
+assert(
+  /approvalRiskRank\(right\) - approvalRiskRank\(left\)/.test(inbox),
+  'Inbox approvals should sort high-risk requests before lower-risk requests.'
+);
 
 assert(
   !/John Smith|Diane Kowalski|123 Main St|Approve Offer|UI-only|SAMPLE_MESSAGES|MOCK_MESSAGES/.test(inbox),
@@ -109,6 +125,8 @@ assert(
   '.pbk-inbox-stat',
   '.pbk-inbox-thread-rail',
   '.pbk-inbox-approval-card',
+  '.pbk-inbox-approval-card.risk-high',
+  '.pbk-inbox-approval-card .approval-why',
   '.pbk-inbox-message-row',
 ].forEach((selector) => {
   assert(pbkCss.includes(selector), `PBK CSS should include ${selector}.`);

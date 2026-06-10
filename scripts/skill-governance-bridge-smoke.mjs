@@ -11,6 +11,7 @@ for (const contract of [
   '/api/skills/governance/status',
   '/api/skills/governance/repository',
   '/api/skills/candidates',
+  '/api/skills/ingest',
   '/api/skills/versions/:versionId/approve',
   '/api/skills/versions/:versionId/activate',
   '/api/skills/activations/:activationId/rollback',
@@ -33,6 +34,14 @@ assert(
 assert(
   /skill_authority_unavailable[\s\S]*failClosed:\s*true/.test(bridge),
   'Missing Render authority and approved snapshot must fail closed.'
+);
+assert(
+  /fetchYouTubeTranscript[\s\S]*runDeepSeekChatCompletion[\s\S]*createSkillCandidate/.test(bridge),
+  'YouTube ingestion must use the existing transcript, DeepSeek, and governance authority.'
+);
+assert(
+  /sourceType:\s*'youtube'[\s\S]*transcriptHash/.test(bridge),
+  'YouTube candidates must retain stable source provenance.'
 );
 
 console.log('skill-governance-bridge-smoke: ok');

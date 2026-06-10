@@ -1759,6 +1759,43 @@ export async function createSkillCandidateRequest(body: Record<string, unknown>)
   });
 }
 
+export type SkillIngestResponse = {
+  ok: boolean;
+  result: string;
+  sourceType?: 'youtube';
+  sourceUrl?: string;
+  agentId?: string;
+  createdCount?: number;
+  candidates?: Array<{
+    name: string;
+    riskClass: string;
+    confidence: number;
+    definitionId: string;
+    versionId: string;
+    contentHash: string;
+    lifecycleState: string;
+  }>;
+  transcript?: {
+    videoId?: string;
+    title?: string;
+    chars?: number;
+    segmentCount?: number;
+  };
+};
+
+export async function ingestSkillCandidatesRequest(body: {
+  sourceType: 'youtube';
+  source: string;
+  agentId: string;
+  maxCandidates?: number;
+}) {
+  return bridgeRequest<SkillIngestResponse>({
+    method: 'POST',
+    path: '/api/skills/ingest',
+    body,
+  });
+}
+
 export async function approveSkillVersionRequest(
   versionId: string,
   body: {

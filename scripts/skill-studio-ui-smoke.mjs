@@ -26,10 +26,24 @@ for (const helper of [
   'approveSkillVersionRequest',
   'activateSkillVersionRequest',
   'rollbackSkillActivationRequest',
+  'ingestSkillCandidatesRequest',
 ]) {
   assert(runtimeBridge.includes(helper), `Runtime bridge must expose ${helper}.`);
   assert(route.includes(helper), `Skill Studio must use ${helper}.`);
 }
+
+for (const label of ['Manual', 'YouTube', 'Learn from YouTube', 'Analyze video']) {
+  assert(route.includes(label), `Skill candidate intake must expose ${label}.`);
+}
+assert(
+  route.includes("sourceType: 'youtube'") && route.includes('maxCandidates'),
+  'Skill Studio must submit bounded YouTube ingestion requests.'
+);
+assert(
+  styles.includes('.pbk-skill-intake-mode') &&
+    styles.includes('.pbk-skill-youtube-note'),
+  'Skill Studio must style the YouTube intake mode.'
+);
 
 for (const label of [
   'Review',

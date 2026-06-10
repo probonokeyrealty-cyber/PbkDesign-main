@@ -100,6 +100,11 @@ import {
   rollbackSkillActivation,
 } from './skill-governance-store.mjs';
 import { createSkillRuntimeSnapshotCache } from './skill-runtime-snapshot.mjs';
+import {
+  buildYouTubeSkillExtractionPrompt,
+  buildYouTubeSkillProvenance,
+  parseYouTubeSkillProposals,
+} from './skill-youtube-ingest.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
 const { Pool: PgPool } = pg;
@@ -59782,6 +59787,178 @@ const server = createServer(async (request, response) => {
         json(response, getSkillGovernanceErrorStatus(error), {
           ok: false,
           result: 'skill_candidate_creation_failed',
+          error: error?.message || String(error),
+        });
+      }
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/api/skills/ingest') {
+      const body = await readBody(request);
+      const sourceType = String(body.sourceType || '').trim().toLowerCase();
+      const sourceUrl = String(body.source || body.sourceUrl || '').trim();
+      const agentId = String(body.agentId || 'ava').trim().toLowerCase();
+      const maxCandidates = Math.max(1, Math.min(8, Number(body.maxCandidates) || 5));
+      const allowedSkillAgents = new Set(['ava', 'rex', 'nurture', 'max']);
+      if (sourceType !== 'youtube' || !extractYouTubeVideoId(sourceUrl)) {
+        json(response, 400, {
+          ok: false,
+          result: 'youtube_skill_source_required',
+          error: 'A valid YouTube URL and sourceType "youtube" are required.',
+        });
+        return;
+      }
+      if (!allowedSkillAgents.has(agentId)) {
+        json(response, 400, {
+          ok: false,
+          result: 'youtube_skill_agent_invalid',
+          error: 'agentId must be one of ava, rex, nurture, or max.',
+        });
+        return;
+      }
+
+      const [transcriptResult, title] = await Promise.all([
+        fetchYouTubeTranscript(sourceUrl),
+        fetchYouTubeTitle(sourceUrl),
+      ]);
+      if (!transcriptResult.ok || String(transcriptResult.transcript || '').length < 400) {
+        json(response, 422, {
+          ok: false,
+          result: 'youtube_skill_transcript_unavailable',
+          error:
+            transcriptResult.error ||
+            'The YouTube transcript was unavailable or too short to extract a reliable skill.',
+          transcript: {
+            videoId: transcriptResult.videoId || extractYouTubeVideoId(sourceUrl),
+            segmentCount: transcriptResult.segmentCount || 0,
+          },
+        });
+        return;
+      }
+
+      const extraction = await runDeepSeekChatCompletion(
+        [
+          {
+            role: 'system',
+            content:
+              'Extract governed PBK skill candidates. Return valid JSON only and never imply approval or activation.',
+          },
+          {
+            role: 'user',
+            content: buildYouTubeSkillExtractionPrompt({
+              title,
+              transcript: transcriptResult.transcript,
+              agentId,
+              maxCandidates,
+            }),
+          },
+        ],
+        {
+          source: 'skill-youtube-ingest',
+          responseFormat: 'json',
+          temperature: 0.15,
+          maxTokens: 3000,
+        }
+      );
+      if (!extraction.ok) {
+        json(response, extraction.result === 'provider_missing' ? 503 : 502, {
+          ok: false,
+          result: 'youtube_skill_extraction_failed',
+          error: extraction.error || 'DeepSeek could not extract governed skill candidates.',
+          provider: extraction.provider || null,
+        });
+        return;
+      }
+
+      const proposals = parseYouTubeSkillProposals(extraction.answer, { maxCandidates });
+      if (!proposals.length) {
+        json(response, 422, {
+          ok: false,
+          result: 'youtube_skill_candidates_empty',
+          error: 'The video did not produce any complete, reviewable skill candidates.',
+        });
+        return;
+      }
+
+      try {
+        const actor = getConversationRequestActor(request);
+        const candidates = [];
+        for (const proposal of proposals) {
+          const slug =
+            proposal.name
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .slice(0, 80) || `youtube-skill-${Date.now()}`;
+          const provenance = buildYouTubeSkillProvenance({
+            sourceUrl,
+            videoId: transcriptResult.videoId,
+            title,
+            transcript: transcriptResult.transcript,
+            model: extraction.provider?.model || DEEPSEEK_MODEL,
+            agentId,
+            proposal,
+          });
+          const candidate = await createSkillCandidate(getPgPool(), {
+            workspaceId: 'pbk',
+            slug,
+            displayName: proposal.name,
+            instructions: proposal.instructions,
+            riskClass: proposal.riskClass,
+            source: 'youtube',
+            triggerPolicy: proposal.triggerPolicy,
+            inputSchema: {},
+            outputSchema: {},
+            toolAllowlist: [],
+            sourceProvenance: {
+              ...provenance,
+              sourceType: 'youtube',
+              transcriptHash: provenance.transcriptHash,
+            },
+            safetyScan: {
+              status: 'pending_review',
+              createdInSkillStudio: true,
+              importedFromYouTube: true,
+              toolAccessGranted: false,
+            },
+            agentId,
+            createdBy: actor,
+          });
+          candidates.push({
+            name: proposal.name,
+            riskClass: proposal.riskClass,
+            confidence: proposal.confidence,
+            definitionId: candidate.definition?.id || '',
+            versionId: candidate.version?.id || '',
+            contentHash: candidate.version?.content_hash || '',
+            lifecycleState: candidate.version?.lifecycle_state || 'candidate',
+          });
+        }
+
+        json(response, 201, {
+          ok: true,
+          result: 'youtube_skill_candidates_created',
+          sourceType: 'youtube',
+          sourceUrl,
+          agentId,
+          createdCount: candidates.length,
+          candidates,
+          transcript: {
+            videoId: transcriptResult.videoId,
+            title: title || 'Untitled YouTube training',
+            chars: transcriptResult.transcript.length,
+            segmentCount: transcriptResult.segmentCount || 0,
+          },
+          governance: {
+            lifecycleState: 'candidate',
+            approvalRequired: true,
+            activationRequired: true,
+          },
+        });
+      } catch (error) {
+        json(response, getSkillGovernanceErrorStatus(error), {
+          ok: false,
+          result: 'youtube_skill_candidate_creation_failed',
           error: error?.message || String(error),
         });
       }

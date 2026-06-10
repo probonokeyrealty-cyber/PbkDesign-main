@@ -3661,6 +3661,72 @@
   font-size: 12px;
   line-height: 1.55;
 }
+.pbk-skill-intake-mode {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-void);
+  padding: 4px;
+}
+.pbk-skill-intake-mode button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-secondary);
+  font: 600 12px var(--font-ui);
+}
+.pbk-skill-intake-mode button.active {
+  background: var(--bg-panel-elevated);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-bright);
+}
+.pbk-skill-youtube-input {
+  position: relative;
+}
+.pbk-skill-youtube-input > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 12px;
+  color: #ff5a5f;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.pbk-skill-dialog .pbk-skill-youtube-input input {
+  padding-left: 40px;
+}
+.pbk-skill-youtube-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid color-mix(in srgb, var(--lime) 35%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--lime) 7%, var(--bg-void));
+  padding: 12px;
+  color: var(--lime);
+}
+.pbk-skill-youtube-note div {
+  display: grid;
+  gap: 3px;
+}
+.pbk-skill-youtube-note strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.pbk-skill-youtube-note span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
 .pbk-skill-dialog-body > label,
 .pbk-skill-dialog-grid {
   margin-top: 12px;

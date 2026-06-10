@@ -138,6 +138,7 @@ COPY scripts/vector-embedding.mjs ./scripts/vector-embedding.mjs
 COPY scripts/skill-governance-schema.mjs ./scripts/skill-governance-schema.mjs
 COPY scripts/skill-governance-store.mjs ./scripts/skill-governance-store.mjs
 COPY scripts/skill-runtime-snapshot.mjs ./scripts/skill-runtime-snapshot.mjs
+COPY scripts/skill-youtube-ingest.mjs ./scripts/skill-youtube-ingest.mjs
 COPY scripts/docusign-webhook-auth.mjs ./scripts/docusign-webhook-auth.mjs
 COPY scripts/command-intent-router.mjs ./scripts/command-intent-router.mjs
 COPY scripts/ava-coaching-memory.mjs ./scripts/ava-coaching-memory.mjs

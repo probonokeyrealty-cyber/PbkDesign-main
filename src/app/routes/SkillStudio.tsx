@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Youtube,
   X,
 } from 'lucide-react';
 import {
@@ -27,6 +28,7 @@ import {
   createSkillCandidateRequest,
   fetchSkillGovernanceRepositoryRequest,
   fetchSkillGovernanceStatusRequest,
+  ingestSkillCandidatesRequest,
   rollbackSkillActivationRequest,
   type SkillGovernanceItem,
   type SkillGovernanceStatusResponse,
@@ -106,17 +108,27 @@ function CreateCandidateDialog({
   busy,
   onClose,
   onCreate,
+  onIngest,
 }: {
   open: boolean;
   busy: boolean;
   onClose: () => void;
   onCreate: (payload: Record<string, unknown>) => Promise<void>;
+  onIngest: (payload: {
+    sourceType: 'youtube';
+    source: string;
+    agentId: string;
+    maxCandidates: number;
+  }) => Promise<void>;
 }) {
+  const [mode, setMode] = useState<'manual' | 'youtube'>('manual');
   const [name, setName] = useState('');
   const [instructions, setInstructions] = useState('');
   const [riskClass, setRiskClass] = useState('medium');
   const [agentId, setAgentId] = useState('ava');
   const [sourceNote, setSourceNote] = useState('');
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [maxCandidates, setMaxCandidates] = useState(5);
   if (!open) return null;
   return (
     <div
@@ -143,56 +155,130 @@ function CreateCandidateDialog({
           </button>
         </header>
         <div className="pbk-skill-dialog-body">
-          <p>
-            New skills enter review only. They cannot execute until an operator approves the exact
-            hash and activates a rollout.
-          </p>
-          <label>
-            Skill name
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Price-gap discovery"
-              autoFocus
-            />
-          </label>
-          <label>
-            Instructions
-            <textarea
-              value={instructions}
-              onChange={(event) => setInstructions(event.target.value)}
-              placeholder="Describe the behavior, trigger, limits, and expected operator outcome."
-              rows={7}
-            />
-          </label>
-          <div className="pbk-skill-dialog-grid">
-            <label>
-              Risk class
-              <select value={riskClass} onChange={(event) => setRiskClass(event.target.value)}>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="critical">Critical</option>
-              </select>
-            </label>
-            <label>
-              Suggested agent
-              <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-                <option value="ava">Ava</option>
-                <option value="rex">Rex</option>
-                <option value="nurture">Nurture</option>
-                <option value="max">Max</option>
-              </select>
-            </label>
+          <div className="pbk-skill-intake-mode" role="tablist" aria-label="Skill intake method">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'manual'}
+              className={mode === 'manual' ? 'active' : ''}
+              onClick={() => setMode('manual')}
+            >
+              <Plus size={15} />
+              Manual
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'youtube'}
+              className={mode === 'youtube' ? 'active' : ''}
+              onClick={() => setMode('youtube')}
+            >
+              <Youtube size={16} />
+              YouTube
+            </button>
           </div>
-          <label>
-            Provenance note
-            <input
-              value={sourceNote}
-              onChange={(event) => setSourceNote(event.target.value)}
-              placeholder="Operator doctrine, call review, training source..."
-            />
-          </label>
+          <p>
+            {mode === 'manual'
+              ? 'New skills enter review only. They cannot execute until an operator approves the exact hash and activates a rollout.'
+              : 'Learn from YouTube without bypassing governance. DeepSeek extracts bounded candidates; every result remains inactive until reviewed.'}
+          </p>
+          {mode === 'manual' ? (
+            <>
+              <label>
+                Skill name
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Price-gap discovery"
+                  autoFocus
+                />
+              </label>
+              <label>
+                Instructions
+                <textarea
+                  value={instructions}
+                  onChange={(event) => setInstructions(event.target.value)}
+                  placeholder="Describe the behavior, trigger, limits, and expected operator outcome."
+                  rows={7}
+                />
+              </label>
+              <div className="pbk-skill-dialog-grid">
+                <label>
+                  Risk class
+                  <select value={riskClass} onChange={(event) => setRiskClass(event.target.value)}>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </label>
+                <label>
+                  Suggested agent
+                  <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                    <option value="ava">Ava</option>
+                    <option value="rex">Rex</option>
+                    <option value="nurture">Nurture</option>
+                    <option value="max">Max</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Provenance note
+                <input
+                  value={sourceNote}
+                  onChange={(event) => setSourceNote(event.target.value)}
+                  placeholder="Operator doctrine, call review, training source..."
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label>
+                YouTube URL
+                <div className="pbk-skill-youtube-input">
+                  <Youtube size={17} aria-hidden="true" />
+                  <input
+                    value={youtubeUrl}
+                    onChange={(event) => setYoutubeUrl(event.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    autoFocus
+                  />
+                </div>
+              </label>
+              <div className="pbk-skill-dialog-grid">
+                <label>
+                  Suggested agent
+                  <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+                    <option value="ava">Ava</option>
+                    <option value="rex">Rex</option>
+                    <option value="nurture">Nurture</option>
+                    <option value="max">Max</option>
+                  </select>
+                </label>
+                <label>
+                  Candidate limit
+                  <select
+                    value={maxCandidates}
+                    onChange={(event) => setMaxCandidates(Number(event.target.value))}
+                  >
+                    <option value={3}>3 focused skills</option>
+                    <option value={5}>5 balanced skills</option>
+                    <option value={8}>8 broad skills</option>
+                  </select>
+                </label>
+              </div>
+              <div className="pbk-skill-youtube-note">
+                <ShieldCheck size={18} />
+                <div>
+                  <strong>Review stays mandatory</strong>
+                  <span>No tool access, approval, or activation is granted during ingestion.</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
         <footer>
           <button type="button" className="pbk-btn pbk-btn-ghost" onClick={onClose}>
@@ -201,20 +287,40 @@ function CreateCandidateDialog({
           <button
             type="button"
             className="pbk-btn pbk-btn-primary"
-            disabled={busy || !name.trim() || !instructions.trim()}
-            onClick={() =>
-              onCreate({
+            disabled={
+              busy ||
+              (mode === 'manual'
+                ? !name.trim() || !instructions.trim()
+                : !/^https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(youtubeUrl.trim()))
+            }
+            onClick={() => {
+              if (mode === 'youtube') {
+                void onIngest({
+                  sourceType: 'youtube',
+                  source: youtubeUrl.trim(),
+                  agentId,
+                  maxCandidates,
+                });
+                return;
+              }
+              void onCreate({
                 displayName: name.trim(),
                 instructions: instructions.trim(),
                 riskClass,
                 agentId,
                 source: 'operator',
                 sourceNote: sourceNote.trim() || 'Created in PBK Skill Studio.',
-              })
-            }
+              });
+            }}
           >
-            <Plus size={16} />
-            {busy ? 'Creating' : 'Create candidate'}
+            {mode === 'youtube' ? <Youtube size={17} /> : <Plus size={16} />}
+            {busy
+              ? mode === 'youtube'
+                ? 'Analyzing video'
+                : 'Creating'
+              : mode === 'youtube'
+                ? 'Analyze video'
+                : 'Create candidate'}
           </button>
         </footer>
       </section>
@@ -291,19 +397,24 @@ export function SkillStudio() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const runAction = async (action: () => Promise<unknown>, success: string) => {
+  const runAction = async <T,>(
+    action: () => Promise<T>,
+    success: string | ((result: T) => string)
+  ): Promise<T | null> => {
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      await action();
-      setNotice(success);
+      const result = await action();
+      setNotice(typeof success === 'function' ? success(result) : success);
       await load();
+      return result;
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
       setBusy(false);
     }
+    return null;
   };
 
   const closeCreate = () => {
@@ -795,11 +906,21 @@ export function SkillStudio() {
         busy={busy}
         onClose={closeCreate}
         onCreate={async (payload) => {
-          await runAction(
+          const result = await runAction(
             () => createSkillCandidateRequest(payload),
             'Candidate created. Review is required before approval or activation.'
           );
-          closeCreate();
+          if (result) closeCreate();
+        }}
+        onIngest={async (payload) => {
+          const result = await runAction(
+            () => ingestSkillCandidatesRequest(payload),
+            (response) =>
+              `${response.createdCount || 0} governed candidate${
+                response.createdCount === 1 ? '' : 's'
+              } created from YouTube. Review is required before activation.`
+          );
+          if (result) closeCreate();
         }}
       />
     </div>

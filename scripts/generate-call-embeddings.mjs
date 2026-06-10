@@ -7,6 +7,10 @@ import {
   createTextEmbedding,
   getEmbeddingProviderConfig,
 } from './vector-embedding.mjs';
+import {
+  isExcludedEpisodicCall,
+  selectBestEpisodicTranscript,
+} from './ava-episodic-memory.mjs';
 
 const { Pool } = pg;
 
@@ -61,24 +65,6 @@ function sha256(value = '') {
   return createHash('sha256').update(String(value || '')).digest('hex');
 }
 
-function normalizeTranscriptText(transcript) {
-  if (Array.isArray(transcript)) {
-    return transcript
-      .map((turn) => {
-        if (typeof turn === 'string') return turn;
-        const speaker = String(turn?.speaker || turn?.role || turn?.from || '').trim();
-        const text = String(turn?.text || turn?.transcript || turn?.message || turn?.content || '').trim();
-        return text ? [speaker, text].filter(Boolean).join(': ') : '';
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  if (transcript && typeof transcript === 'object') {
-    return normalizeTranscriptText(Object.values(transcript));
-  }
-  return String(transcript || '').trim();
-}
-
 function inferOutcome(call = {}) {
   const status = String(call.status || '').trim().toLowerCase();
   const notes = String(call.notes || '').trim().toLowerCase();
@@ -125,7 +111,8 @@ const pool = new Pool({
 
 async function loadCandidateCalls() {
   const result = await pool.query(
-    `SELECT c.id, c.lead_id, c.workspace_id, c.status, c.sentiment, c.transcript, c.notes, c.started_at, c.ended_at, c.created_at, c.updated_at
+    `SELECT c.id, c.lead_id, c.workspace_id, c.status, c.provider, c.assistant_id,
+            c.sentiment, c.transcript, c.notes, c.started_at, c.ended_at, c.created_at, c.updated_at
      FROM public.calls c
      LEFT JOIN public.call_embeddings ce
        ON ce.workspace_id = COALESCE(NULLIF(c.workspace_id, ''), 'pbk')
@@ -204,7 +191,11 @@ async function main() {
   };
 
   for (const call of calls) {
-    const sourceText = normalizeTranscriptText(call.transcript).replace(/\s+/g, ' ').trim();
+    if (isExcludedEpisodicCall(call)) {
+      summary.skipped += 1;
+      continue;
+    }
+    const sourceText = selectBestEpisodicTranscript([call.transcript, call.notes]);
     if (sourceText.length < minChars) {
       summary.skipped += 1;
       continue;

@@ -528,6 +528,9 @@ export type VectorCapacityTable = {
   statsUpdatedAt?: string | null;
   vectorIndexMethod?: string;
   indexNames?: string[];
+  infrastructureReady?: boolean;
+  populated?: boolean;
+  status?: 'needs_setup' | 'awaiting_data' | 'ready';
   ready?: boolean;
 };
 

@@ -73,6 +73,11 @@ import {
   normalizeAvaCoachingMemoryRow,
 } from './ava-coaching-memory.mjs';
 import {
+  buildVectorTableReadiness,
+  isExcludedEpisodicCall,
+  selectBestEpisodicTranscript,
+} from './ava-episodic-memory.mjs';
+import {
   createTextEmbedding,
   getEmbeddingProviderConfig,
   prewarmEmbeddingProvider,
@@ -22627,24 +22632,6 @@ function vectorLiteral(embedding = []) {
     .join(',')}]`;
 }
 
-function normalizeCallTranscriptForMemory(transcript) {
-  if (Array.isArray(transcript)) {
-    return transcript
-      .map((turn) => {
-        if (typeof turn === 'string') return turn;
-        const speaker = String(turn?.speaker || turn?.role || turn?.from || '').trim();
-        const text = String(turn?.text || turn?.transcript || turn?.message || turn?.content || '').trim();
-        return text ? [speaker, text].filter(Boolean).join(': ') : '';
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  if (transcript && typeof transcript === 'object') {
-    return normalizeCallTranscriptForMemory(Object.values(transcript));
-  }
-  return String(transcript || '').trim();
-}
-
 function chunkCallTranscriptForEmbedding(text = '', options = {}) {
   const cleanText = String(text || '')
     .replace(/\s+/g, ' ')
@@ -23415,10 +23402,17 @@ async function upsertCallEmbeddingFromTranscript(record = {}) {
   if (!AVA_EPISODIC_MEMORY_ENABLED) return { ok: false, skipped: true, result: 'episodic_memory_disabled' };
   if (!DATABASE_URL) return { ok: false, skipped: true, result: 'no_database' };
   const callId = String(record.callId || record.call_id || '').trim();
-  const callRecord = normalizeCallTranscriptForMemory(record.transcriptText || record.transcript || '').trim() ? null : await loadCallRecordForEmbedding(callId).catch(() => null);
-  const sourceText = normalizeCallTranscriptForMemory(record.transcriptText || record.transcript || callRecord?.transcript || callRecord?.notes || '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const callRecord = await loadCallRecordForEmbedding(callId).catch(() => null);
+  const mergedRecord = { ...callRecord, ...record, id: callId || callRecord?.id || '' };
+  if (isExcludedEpisodicCall(mergedRecord)) {
+    return { ok: false, skipped: true, result: 'excluded_call_memory', callId };
+  }
+  const sourceText = selectBestEpisodicTranscript([
+    record.transcriptText,
+    record.transcript,
+    callRecord?.transcript,
+    callRecord?.notes,
+  ]);
   if (!callId || sourceText.length < 80) return { ok: false, skipped: true, result: 'insufficient_call_memory' };
   const leadId = record.leadId || record.lead_id || callRecord?.lead_id || '';
   const transcriptHash = createHash('sha256').update(sourceText).digest('hex');
@@ -38241,7 +38235,8 @@ async function buildVectorCapacityStatus() {
     };
   }
 
-  const [rexCanaryResult, rexCountsResult] = await Promise.all([
+  const [rexCanaryResult, callCountsResult, coachCountsResult, rexCountsResult] =
+    await Promise.all([
     queryPgRows(
       `SELECT ok, result, latency_ms, embedding_model, dimensions, matched_id, error, metadata, created_at
        FROM public.pbk_vector_canary_runs
@@ -38253,12 +38248,30 @@ async function buildVectorCapacityStatus() {
       `SELECT
          COUNT(*)::bigint AS row_count,
          COUNT(embedding)::bigint AS embedded_count
+       FROM public.call_embeddings
+       WHERE workspace_id = 'pbk'`
+    ),
+    queryPgRows(
+      `SELECT
+         COUNT(*)::bigint AS row_count,
+         COUNT(embedding)::bigint AS embedded_count
+       FROM public.coach_memory
+       WHERE workspace_id = 'pbk'`
+    ),
+    queryPgRows(
+      `SELECT
+         COUNT(*)::bigint AS row_count,
+         COUNT(embedding)::bigint AS embedded_count
        FROM public.brain_blog_posts
        WHERE workspace_id = 'pbk' AND status <> 'hidden'`
     ),
   ]);
   const rexCanaryRow = rexCanaryResult.ok ? rexCanaryResult.rows?.[0] || null : null;
-  const rexCountsRow = rexCountsResult.ok ? rexCountsResult.rows?.[0] || null : null;
+  const exactCountsByTable = new Map([
+    ['call_embeddings', callCountsResult.ok ? callCountsResult.rows?.[0] || null : null],
+    ['coach_memory', coachCountsResult.ok ? coachCountsResult.rows?.[0] || null : null],
+    ['brain_blog_posts', rexCountsResult.ok ? rexCountsResult.rows?.[0] || null : null],
+  ]);
   const rexCanaryAgeMs = rexCanaryRow?.created_at
     ? Date.now() - new Date(rexCanaryRow.created_at).getTime()
     : Number.POSITIVE_INFINITY;
@@ -38289,19 +38302,17 @@ async function buildVectorCapacityStatus() {
       : indexMethods.includes('ivfflat')
         ? 'ivfflat'
         : 'none';
-    const isRexResearch = String(row.table_name || '') === 'brain_blog_posts';
+    const exactCounts = exactCountsByTable.get(String(row.table_name || '')) || null;
     const table = {
       id: String(row.table_name || ''),
       label: String(row.label || row.table_name || ''),
       exists: Boolean(row.exists),
-      estimatedRowCount:
-        isRexResearch && rexCountsRow
-          ? Number(rexCountsRow.row_count || 0)
-          : Number(row.estimated_row_count || 0),
-      estimatedEmbeddedCount:
-        isRexResearch && rexCountsRow
-          ? Number(rexCountsRow.embedded_count || 0)
-          : Number(row.estimated_embedded_count || 0),
+      estimatedRowCount: exactCounts
+        ? Number(exactCounts.row_count || 0)
+        : Number(row.estimated_row_count || 0),
+      estimatedEmbeddedCount: exactCounts
+        ? Number(exactCounts.embedded_count || 0)
+        : Number(row.estimated_embedded_count || 0),
       dimensions: Number(dimensionMatch?.[1] || 0),
       tableBytes: Number(row.table_bytes || 0),
       indexBytes: Number(row.index_bytes || 0),
@@ -38312,11 +38323,12 @@ async function buildVectorCapacityStatus() {
     };
     return {
       ...table,
-      ready:
-        table.exists &&
-        table.dimensions === 1536 &&
-        table.estimatedEmbeddedCount > 0 &&
-        table.vectorIndexMethod !== 'none',
+      ...buildVectorTableReadiness({
+        exists: table.exists,
+        dimensions: table.dimensions,
+        embeddedCount: table.estimatedEmbeddedCount,
+        vectorIndexMethod: table.vectorIndexMethod,
+      }),
     };
   });
   const existingTables = tables.filter((table) => table.exists);

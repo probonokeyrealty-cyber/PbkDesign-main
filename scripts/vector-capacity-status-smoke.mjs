@@ -49,6 +49,19 @@ assert(
 );
 
 assert(
+  /infrastructureReady/.test(runtimeBridge) &&
+    /populated/.test(runtimeBridge) &&
+    /status\?:\s*'needs_setup'\s*\|\s*'awaiting_data'\s*\|\s*'ready'/.test(runtimeBridge),
+  'runtimeBridge must distinguish vector infrastructure readiness from populated memory.'
+);
+
+assert(
+  /buildVectorTableReadiness/.test(bridge) &&
+    /exactCountsByTable/.test(bridge),
+  'Vector capacity must use the shared readiness contract and exact table counts.'
+);
+
+assert(
   /s3Role:\s*['"]backup_only['"]/.test(bridge) &&
     /mastraRequired:\s*false/.test(bridge),
   'Bridge must keep S3 backup-only and avoid claiming Mastra is required.'
@@ -65,6 +78,12 @@ assert(
   /SettingsVectorCapacityPanel/.test(settings) &&
     /fetchVectorCapacityStatusRequest/.test(settings),
   'Settings must render the bridge-backed vector capacity panel.'
+);
+
+assert(
+  /Ready for eligible calls/.test(settings) &&
+    /Awaiting call memory/.test(settings),
+  'Settings must present an empty but configured episodic store as ready for eligible calls.'
 );
 
 assert(

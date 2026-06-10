@@ -557,39 +557,72 @@ function SettingsVectorCapacityPanel({
       </div>
 
       <div className="mt-3 space-y-2">
-        {tables.map((table) => (
-          <div
-            key={table.id}
-            className="grid gap-2 rounded-lg border border-slate-800/90 bg-slate-950/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]"
-          >
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-100" title={table.label}>
-                {table.label || table.id}
+        {tables.map((table) => {
+          const infrastructureReady =
+            table.infrastructureReady ??
+            Boolean(
+              table.exists &&
+              table.dimensions === 1536 &&
+              table.vectorIndexMethod &&
+              table.vectorIndexMethod !== 'none'
+            );
+          const populated = table.populated ?? Number(table.estimatedEmbeddedCount || 0) > 0;
+          const awaitingData = infrastructureReady && !populated;
+          const statusLabel = table.ready
+            ? 'Schema, vectors, and index ready'
+            : awaitingData
+              ? table.id === 'call_embeddings'
+                ? 'Ready for eligible calls'
+                : 'Ready for new memory'
+              : 'Needs setup';
+          const statusDetail = awaitingData
+            ? table.id === 'call_embeddings'
+              ? 'Awaiting call memory'
+              : 'Awaiting eligible records'
+            : '';
+
+          return (
+            <div
+              key={table.id}
+              className="grid gap-2 rounded-lg border border-slate-800/90 bg-slate-950/40 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-100" title={table.label}>
+                  {table.label || table.id}
+                </div>
+                <div className="mt-1 text-xs text-slate-400">
+                  {table.dimensions || 0} dimensions -{' '}
+                  {table.vectorIndexMethod || 'no vector index'}
+                </div>
+                <div
+                  className={[
+                    'mt-1 text-xs font-semibold',
+                    table.ready
+                      ? 'text-emerald-300'
+                      : awaitingData
+                        ? 'text-sky-300'
+                        : 'text-amber-300',
+                  ].join(' ')}
+                >
+                  {statusLabel}
+                </div>
+                {statusDetail && (
+                  <div className="mt-0.5 text-xs text-slate-500">{statusDetail}</div>
+                )}
               </div>
-              <div className="mt-1 text-xs text-slate-400">
-                {table.dimensions || 0} dimensions - {table.vectorIndexMethod || 'no vector index'}
+              <div className="text-left sm:text-right">
+                <div className="pbk-kicker">Rows</div>
+                <strong className="text-sm text-slate-200">
+                  {formatCount(table.estimatedEmbeddedCount)}
+                </strong>
               </div>
-              <div
-                className={[
-                  'mt-1 text-xs font-semibold',
-                  table.ready ? 'text-emerald-300' : 'text-amber-300',
-                ].join(' ')}
-              >
-                {table.ready ? 'Schema, vectors, and index ready' : 'Not ready'}
+              <div className="text-left sm:text-right">
+                <div className="pbk-kicker">Size</div>
+                <strong className="text-sm text-slate-200">{formatBytes(table.totalBytes)}</strong>
               </div>
             </div>
-            <div className="text-left sm:text-right">
-              <div className="pbk-kicker">Rows</div>
-              <strong className="text-sm text-slate-200">
-                {formatCount(table.estimatedEmbeddedCount)}
-              </strong>
-            </div>
-            <div className="text-left sm:text-right">
-              <div className="pbk-kicker">Size</div>
-              <strong className="text-sm text-slate-200">{formatBytes(table.totalBytes)}</strong>
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {capacity && !tables.length && (
           <div className="pbk-settings-empty">No canonical vector tables are visible.</div>
         )}

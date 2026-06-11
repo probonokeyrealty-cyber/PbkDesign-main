@@ -223,10 +223,18 @@ async function main() {
     report.skipped.length ? `Skipped: ${report.skipped.join(' | ')}` : 'Skipped: none',
   ];
 
-  await postSlackWebhook({
-    webhookUrl: slackWebhookUrl,
-    text: digestLines.join('\n'),
-  });
+  try {
+    await postSlackWebhook({
+      webhookUrl: slackWebhookUrl,
+      text: digestLines.join('\n'),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const detail = message.startsWith('Slack notification failed')
+      ? message
+      : `Slack notification failed: ${message}`;
+    console.error(`::warning::${detail}`);
+  }
 
   console.log(JSON.stringify({ ok: true, ...report }, null, 2));
 }

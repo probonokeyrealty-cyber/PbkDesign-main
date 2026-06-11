@@ -1804,7 +1804,13 @@ const checks = [
       !/as unknown as \{ env/.test(runtimeBridge) &&
       /No bridge URL configured/.test(viteConfig) &&
       /stat\(migrationsDir\)/.test(applySupabaseMigrations) &&
-      /Supabase migrations directory not found/.test(applySupabaseMigrations),
+      /Supabase\/Postgres migrations directory not found/.test(applySupabaseMigrations) &&
+      /PBK_MIGRATION_DATABASE_URL/.test(applySupabaseMigrations) &&
+      /PBK_MIGRATION_ALLOWLIST/.test(applySupabaseMigrations) &&
+      /PBK_MIGRATION_EXPECT_HOST/.test(applySupabaseMigrations) &&
+      /PBK_MIGRATION_APPLY/.test(applySupabaseMigrations) &&
+      /pg_advisory_lock/.test(applySupabaseMigrations) &&
+      !/process\.env\.PBK_DATABASE_URL\s*\|\|/.test(applySupabaseMigrations),
   },
   {
     name: 'Package scripts are validated before founder release gates pass',

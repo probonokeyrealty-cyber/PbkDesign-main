@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -30,11 +30,50 @@ jobs:
             package-lock.json
             mcp-server/package-lock.json
 
-      - name: Install root dependencies
-        run: npm ci
+      - name: Install dependencies with retry
+        shell: bash
+        env:
+          NPM_INSTALL_ATTEMPTS: 3
+          NPM_INSTALL_RETRY_SECONDS: 10
+        run: |
+          set -euo pipefail
 
-      - name: Install MCP server dependencies
-        run: npm ci --prefix ./mcp-server
+          npm_ci_with_retry() {
+            local label="$1"
+            shift
+            local attempt output status
+
+            for attempt in $(seq 1 "$NPM_INSTALL_ATTEMPTS"); do
+              echo "::group::${label} (attempt ${attempt}/${NPM_INSTALL_ATTEMPTS})"
+              if output=$("$@" 2>&1); then
+                status=0
+              else
+                status=$?
+              fi
+              printf '%s\n' "$output"
+              echo "::endgroup::"
+
+              if [ "$status" -eq 0 ]; then
+                return 0
+              fi
+
+              if ! grep -qi 'ECONNRESET' <<< "$output"; then
+                echo "::error::${label} failed with a non-transient npm error; not retrying."
+                return "$status"
+              fi
+
+              if [ "$attempt" -eq "$NPM_INSTALL_ATTEMPTS" ]; then
+                echo "::error::${label} failed after ${NPM_INSTALL_ATTEMPTS} ECONNRESET attempts."
+                return "$status"
+              fi
+
+              echo "::warning::${label} hit ECONNRESET; retrying in ${NPM_INSTALL_RETRY_SECONDS}s."
+              sleep "$NPM_INSTALL_RETRY_SECONDS"
+            done
+          }
+
+          npm_ci_with_retry "root dependencies" npm ci
+          npm_ci_with_retry "MCP server dependencies" npm ci --prefix ./mcp-server
 
       - name: Run founder gate
         run: npm run test:founder

@@ -375,7 +375,7 @@ export async function postSlackWebhook({ webhookUrl, text }) {
 
   if (!response.ok) {
     const raw = await response.text();
-    throw new Error(`Slack webhook failed (${response.status}): ${raw.slice(0, 500)}`);
+    throw new Error(`Slack notification failed (${response.status}): ${raw.slice(0, 500)}`);
   }
 
   return { ok: true };

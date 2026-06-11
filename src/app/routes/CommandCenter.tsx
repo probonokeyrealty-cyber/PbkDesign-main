@@ -623,17 +623,18 @@ function normalizeSystemSourceLabel(item: SystemSourceLabel, index: number): Sys
     endpoint: item.endpoint || 'unknown',
     category: item.category || 'runtime',
     status: item.status || 'fallback',
+    readiness: item.readiness || (item.status === 'offline' ? 'unavailable' : 'ready'),
     source: item.source || 'bridge',
-    confidence:
-      typeof item.confidence === 'number' && Number.isFinite(item.confidence)
-        ? Math.max(0, Math.min(1, item.confidence))
-        : null,
+    dataState: item.dataState || 'unknown',
     stalenessMs:
       typeof item.stalenessMs === 'number' && Number.isFinite(item.stalenessMs)
         ? Math.max(0, item.stalenessMs)
         : null,
+    lastCheckedAt: item.lastCheckedAt || '',
+    lastDataAt: item.lastDataAt || item.lastUpdatedAt || '',
     lastUpdatedAt: item.lastUpdatedAt || '',
     fallbackReason: item.fallbackReason || '',
+    degradedReason: item.degradedReason || '',
     recordCount: Number.isFinite(Number(item.recordCount)) ? Number(item.recordCount) : 0,
     note: item.note || '',
   };
@@ -664,7 +665,9 @@ function buildFallbackSourceLabels({
       category: 'runtime',
       status: runtimeStatus,
       source: 'client runtime snapshot',
-      confidence: error ? 0.2 : loading ? 0.58 : 0.82,
+      readiness: error ? 'unavailable' : loading ? 'degraded' : 'ready',
+      dataState: leadCount ? 'unknown' : 'empty',
+      lastCheckedAt: new Date().toISOString(),
       recordCount: leadCount,
       fallbackReason,
       note: 'Client fallback used until /api/system/source-labels responds.',
@@ -676,7 +679,9 @@ function buildFallbackSourceLabels({
       category: 'operator',
       status: battlefieldSource.startsWith('fallback') ? 'fallback' : 'live',
       source: battlefieldSource,
-      confidence: battlefieldSource.startsWith('fallback') ? 0.52 : 0.86,
+      readiness: battlefieldSource.startsWith('fallback') ? 'degraded' : 'ready',
+      dataState: activityCount ? 'unknown' : 'empty',
+      lastCheckedAt: new Date().toISOString(),
       recordCount: activityCount,
       fallbackReason: battlefieldSource.startsWith('fallback') ? battlefieldSource : '',
       note: 'Falls back to client-ranked snapshot work.',
@@ -688,7 +693,9 @@ function buildFallbackSourceLabels({
       category: 'agent',
       status: intelligenceStreamSource.startsWith('fallback') ? 'fallback' : 'live',
       source: intelligenceStreamSource,
-      confidence: intelligenceStreamSource.startsWith('fallback') ? 0.5 : 0.84,
+      readiness: intelligenceStreamSource.startsWith('fallback') ? 'degraded' : 'ready',
+      dataState: activityCount ? 'unknown' : 'empty',
+      lastCheckedAt: new Date().toISOString(),
       recordCount: activityCount,
       fallbackReason: intelligenceStreamSource.startsWith('fallback')
         ? intelligenceStreamSource
@@ -718,33 +725,66 @@ function SourceConfidenceRail({ items, source }: { items: SystemSourceLabel[]; s
     if (status === 'stale') return 'border-amber-400/30 bg-amber-500/10 text-amber-100';
     return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
   };
+  const relativeLabel = (value?: string, prefix = 'Checked') => {
+    const parsed = Date.parse(value || '');
+    if (!Number.isFinite(parsed)) return `${prefix} time unavailable`;
+    const minutes = Math.max(0, Math.floor((Date.now() - parsed) / 60_000));
+    if (minutes < 1) return `${prefix} just now`;
+    if (minutes < 60) return `${prefix} ${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${prefix} ${hours}h ago`;
+    return `${prefix} ${Math.floor(hours / 24)}d ago`;
+  };
+  const activityLabel = (item: SystemSourceLabel) => {
+    if (item.dataState === 'empty') return 'No records yet';
+    if (item.stalenessMs == null) return 'Activity time unavailable';
+    const minutes = Math.floor(item.stalenessMs / 60_000);
+    if (minutes < 1) return 'Activity just now';
+    if (minutes < 60) return `Activity ${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `Activity ${hours}h ago`;
+    return `Activity ${Math.floor(hours / 24)}d ago`;
+  };
 
   return (
     <PbkPanel className="pbk-command-source-rail space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="pbk-eyebrow">Source confidence</div>
+          <div className="pbk-eyebrow">Runtime data truth</div>
           <h2 className="text-base font-semibold text-[var(--text-primary)]">
-            Runtime truth labels
+            Live sources and data activity
           </h2>
         </div>
         <DataSourceCaption endpoint="GET /api/system/source-labels" note={source} />
       </div>
-      <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {visibleItems.map((item) => {
-          const confidence =
-            typeof item.confidence === 'number' ? `${Math.round(item.confidence * 100)}%` : 'n/a';
+          const detail = item.fallbackReason || item.degradedReason || activityLabel(item);
+          const tone =
+            item.readiness === 'degraded' && item.status === 'live' ? 'stale' : item.status;
           return (
             <div
               key={item.id}
-              className={`rounded-2xl border p-3 ${statusTone(item.status)}`}
-              title={[item.endpoint, item.fallbackReason, item.note].filter(Boolean).join(' - ')}
+              className={`min-w-0 rounded-lg border p-2.5 ${statusTone(tone)}`}
+              title={[item.endpoint, item.fallbackReason, item.degradedReason, item.note]
+                .filter(Boolean)
+                .join(' - ')}
             >
-              <div className="truncate text-[10px] uppercase tracking-[0.18em] opacity-70">
-                {item.status || 'unknown'} / {confidence}
+              <div className="flex items-center justify-between gap-2 text-[10px] uppercase opacity-75">
+                <span className="truncate font-semibold">
+                  {item.status || 'unknown'}
+                  {item.readiness === 'degraded' ? ' · degraded' : ''}
+                </span>
+                <span className="truncate">{item.dataState || 'unknown'}</span>
               </div>
-              <div className="mt-1 truncate text-sm font-semibold">{item.label}</div>
-              <code className="mt-1 block truncate text-[10px] opacity-70">{item.endpoint}</code>
+              <div className="mt-1 truncate text-sm font-semibold text-current">{item.label}</div>
+              <div className="mt-1 truncate text-[11px] opacity-75">
+                {item.source || 'bridge'} ·{' '}
+                <time dateTime={item.lastCheckedAt || undefined}>
+                  {relativeLabel(item.lastCheckedAt, 'checked').replace(/^checked /, '')}
+                </time>
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-[11px] opacity-85">{detail}</div>
             </div>
           );
         })}
@@ -1092,26 +1132,31 @@ export function CommandCenter() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchSystemSourceLabelsRequest()
-      .then((response) => {
-        if (cancelled) return;
-        const items = Array.isArray(response.items)
-          ? response.items.map(normalizeSystemSourceLabel)
-          : [];
-        setSourceConfidenceItems(items);
-        setSourceConfidenceSource(response.source || response.result || 'bridge source labels');
-      })
-      .catch((sourceError) => {
-        if (cancelled) return;
-        setSourceConfidenceItems(null);
-        setSourceConfidenceSource(
-          sourceError instanceof Error ? `fallback: ${sourceError.message}` : 'client fallback'
-        );
-      });
+    const refreshSourceLabels = () => {
+      fetchSystemSourceLabelsRequest()
+        .then((response) => {
+          if (cancelled) return;
+          const items = Array.isArray(response.items)
+            ? response.items.map(normalizeSystemSourceLabel)
+            : [];
+          setSourceConfidenceItems(items);
+          setSourceConfidenceSource(response.source || response.result || 'bridge source labels');
+        })
+        .catch((sourceError) => {
+          if (cancelled) return;
+          setSourceConfidenceItems(null);
+          setSourceConfidenceSource(
+            sourceError instanceof Error ? `fallback: ${sourceError.message}` : 'client fallback'
+          );
+        });
+    };
+    refreshSourceLabels();
+    const refreshTimer = window.setInterval(refreshSourceLabels, 30_000);
     return () => {
       cancelled = true;
+      window.clearInterval(refreshTimer);
     };
-  }, [fallbackActivityItems.length, leadImports.length]);
+  }, []);
 
   useEffect(() => {
     const bridgePrefs = getBridgeCommandWidgetPrefs(snapshot);

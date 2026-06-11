@@ -475,12 +475,16 @@ export type SystemSourceLabel = {
   label: string;
   endpoint: string;
   category?: string;
-  status?: 'live' | 'fallback' | 'stale' | 'offline' | 'needs-wiring';
+  status?: 'live' | 'fallback' | 'offline' | 'needs-wiring';
+  readiness?: 'ready' | 'degraded' | 'unavailable';
   source?: string;
-  confidence?: number | null;
+  dataState?: 'fresh' | 'aging' | 'stale' | 'empty' | 'unknown';
   stalenessMs?: number | null;
+  lastCheckedAt?: string;
+  lastDataAt?: string;
   lastUpdatedAt?: string;
   fallbackReason?: string;
+  degradedReason?: string;
   recordCount?: number;
   note?: string;
 };
@@ -923,6 +927,23 @@ export type CampaignDrilldownResponse = {
 export type CampaignsResponse = {
   ok: boolean;
   result?: string;
+  source?: string;
+  fallbackReason?: string;
+  provenance?: {
+    configuredSource?: string;
+    source?: string;
+    loadedFrom?: string;
+    fallbackReason?: string;
+    lastLoadAt?: string;
+    lastPersistAt?: string;
+  };
+  generatedAt?: string;
+  summary?: {
+    dataState?: 'populated' | 'empty';
+    campaigns?: number;
+    leads?: number;
+    events?: number;
+  };
   campaigns?: CampaignRecord[];
   leads?: CampaignLeadRecord[];
   events?: CampaignEventRecord[];

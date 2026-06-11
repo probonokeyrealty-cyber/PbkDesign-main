@@ -114,6 +114,7 @@ COPY scripts/ava-governed-skill-router.mjs ./scripts/ava-governed-skill-router.m
 COPY scripts/safety-validator.mjs ./scripts/safety-validator.mjs
 COPY scripts/ava-eval-suite.mjs ./scripts/ava-eval-suite.mjs
 COPY scripts/observability.mjs ./scripts/observability.mjs
+COPY scripts/system-source-health.mjs ./scripts/system-source-health.mjs
 COPY scripts/ava-latency-status.mjs ./scripts/ava-latency-status.mjs
 COPY scripts/coworker-heartbeat.mjs ./scripts/coworker-heartbeat.mjs
 COPY scripts/slack-mention-router.mjs ./scripts/slack-mention-router.mjs

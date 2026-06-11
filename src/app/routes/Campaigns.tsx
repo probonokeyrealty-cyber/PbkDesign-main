@@ -260,7 +260,7 @@ function buildSourcePerformanceRows(
       current.latestAt = row.lastEventAt || row.updatedAt || current.latestAt;
       grouped.set(id, current);
     }
-    return sortPerformanceRows(Array.from(grouped.values())).slice(0, 5);
+    return sortPerformanceRows(Array.from(grouped.values()));
   }
 
   for (const campaign of campaigns) {
@@ -288,7 +288,7 @@ function buildSourcePerformanceRows(
     current.latestAt = campaign.updatedAt || campaign.createdAt || current.latestAt;
     grouped.set(id, current);
   }
-  return sortPerformanceRows(Array.from(grouped.values())).slice(0, 5);
+  return sortPerformanceRows(Array.from(grouped.values()));
 }
 
 function buildChannelPerformanceRows(
@@ -372,14 +372,14 @@ function getDrilldownSummary(
     replyRate:
       summary.replyRate !== undefined
         ? asNumber(summary.replyRate)
-        : fallbackLeads
-          ? (fallbackReplied / fallbackLeads) * 100
+        : fallbackSent
+          ? (fallbackReplied / fallbackSent) * 100
           : 0,
     connectRate:
       summary.connectRate !== undefined
         ? asNumber(summary.connectRate)
-        : fallbackLeads
-          ? (fallbackConnected / fallbackLeads) * 100
+        : fallbackSent
+          ? (fallbackConnected / fallbackSent) * 100
           : 0,
   };
 }
@@ -465,7 +465,7 @@ function CampaignPerformanceList({
       <h3>{title}</h3>
       {rows.length ? (
         rows.map((row) => {
-          const replyRate = row.leads ? (row.replied / row.leads) * 100 : 0;
+          const replyRate = row.sent ? (row.replied / row.sent) * 100 : 0;
           return (
             <div className="pbk-camp-drilldown-row" key={row.id}>
               <div className="min-w-0">
@@ -575,7 +575,7 @@ function CampaignDrilldownPanel({
       <div className="pbk-camp-drilldown-grid">
         <CampaignPerformanceList
           title="Source ranking"
-          rows={sourceRows}
+          rows={sourceRows.slice(0, 5)}
           emptyLabel="No source rows returned yet."
         />
         <CampaignPerformanceList
@@ -1405,6 +1405,8 @@ export function Campaigns() {
   const [saving, setSaving] = useState<WizardMode | null>(null);
   const [busyCampaignId, setBusyCampaignId] = useState('');
   const [drilldown, setDrilldown] = useState<CampaignDrilldownResponse | null>(null);
+  const [campaignRuntimeSource, setCampaignRuntimeSource] = useState('Loading campaign source');
+  const [campaignRuntimeFallbackReason, setCampaignRuntimeFallbackReason] = useState('');
 
   const loadCampaigns = useCallback(async () => {
     setStatus('loading');
@@ -1427,10 +1429,22 @@ export function Campaigns() {
       setCampaigns(campaignResponse.campaigns || []);
       setSources(sourceResponse.sources || campaignResponse.sources || []);
       setDrilldown(drilldownResponse);
+      setCampaignRuntimeFallbackReason(campaignResponse.fallbackReason || '');
+      setCampaignRuntimeSource(
+        [
+          campaignResponse.source || campaignResponse.result || 'bridge',
+          campaignResponse.fallbackReason
+            ? 'fallback active'
+            : campaignResponse.summary?.dataState === 'empty'
+              ? 'ready, no campaigns yet'
+              : 'live data',
+        ].join(' - ')
+      );
       setStatus('ready');
     } catch (loadError) {
       setStatus('error');
       setDrilldown(null);
+      setCampaignRuntimeFallbackReason('');
       setError(loadError instanceof Error ? loadError.message : 'Campaign bridge request failed.');
     }
   }, [search, statusFilter]);
@@ -1719,6 +1733,7 @@ export function Campaigns() {
           <PbkDataSource
             endpoint="GET /api/campaigns + GET /api/campaigns/lead-sources"
             status="ships"
+            note={campaignRuntimeSource}
           />
         </PbkPanel>
 
@@ -1753,8 +1768,12 @@ export function Campaigns() {
 
         {status === 'ready' && campaigns.length === 0 && (
           <PbkEmpty
-            title="No bridge campaigns returned"
-            description="Create the first campaign draft or adjust the filters. This page will not invent fake seller campaigns."
+            title="No campaigns yet"
+            description={
+              campaignRuntimeFallbackReason
+                ? `Campaign data is currently served from ${campaignRuntimeSource}. ${campaignRuntimeFallbackReason}`
+                : `${campaignRuntimeSource}. Create the first campaign draft or adjust the filters.`
+            }
             action={
               <PbkButton variant="primary" onClick={() => setWizardOpen(true)}>
                 <Plus size={15} />

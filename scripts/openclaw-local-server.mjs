@@ -107,6 +107,10 @@ import {
 } from './skill-youtube-ingest.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
 import { validateToolCallWithQa } from './qa-agent.mjs';
+import {
+  buildSourceTruthLabel,
+  summarizeSourceTruthLabels,
+} from './system-source-health.mjs';
 const { Pool: PgPool } = pg;
 
 void initializeObservability({ serviceName: 'pbk-openclaw-bridge' });
@@ -666,6 +670,18 @@ function isPublicBridgeRequest(method = 'GET', pathname = '') {
 // .pbk-local/openclaw-state.json file. Survives Render free-tier cold starts.
 const DATABASE_URL = String(process.env.PBK_DATABASE_URL || '').trim();
 const STATE_BACKEND = DATABASE_URL ? 'postgres' : 'file';
+const runtimeStateProvenance = {
+  source: DATABASE_URL ? 'render-postgres-pending' : 'local-bridge-state',
+  loadedFrom: '',
+  fallbackReason: '',
+  lastLoadAt: '',
+  lastPersistAt: '',
+};
+let lastStateDbLoad = {
+  ok: !DATABASE_URL,
+  found: false,
+  error: '',
+};
 
 const SHOULD_RESET = IS_RESET;
 
@@ -9154,9 +9170,20 @@ async function loadStateFromDb() {
   try {
     const result = await pool.query("SELECT data FROM bridge_state WHERE id = 'singleton' LIMIT 1");
     markPostgresHealth(true);
-    return result.rows[0]?.data || null;
+    const data = result.rows[0]?.data || null;
+    lastStateDbLoad = {
+      ok: true,
+      found: Boolean(data),
+      error: '',
+    };
+    return data;
   } catch (error) {
     markPostgresHealth(false, error?.message || error);
+    lastStateDbLoad = {
+      ok: false,
+      found: false,
+      error: error?.message || String(error || 'postgres state load failed'),
+    };
     if (!stateDbLoadWarned) {
       console.warn('[pbk-local-openclaw] postgres state load unavailable; using runtime fallback:', error?.message || error);
       stateDbLoadWarned = true;
@@ -9266,6 +9293,10 @@ async function persistStateToDb(nextState) {
     );
     await persistActivityLogRecords(nextState.activity || []);
     markPostgresHealth(true);
+    runtimeStateProvenance.source = 'render-postgres';
+    runtimeStateProvenance.loadedFrom ||= 'render-postgres';
+    runtimeStateProvenance.fallbackReason = '';
+    runtimeStateProvenance.lastPersistAt = isoNow();
     return true;
   } catch (error) {
     markPostgresHealth(false, error?.message || error);
@@ -9302,6 +9333,14 @@ async function persistState(nextState) {
   }
   await ensureRuntimeDir();
   await writeFile(STATE_FILE, jsonStringify(nextState), 'utf8');
+  runtimeStateProvenance.source = DATABASE_URL ? 'runtime-file-fallback' : 'local-bridge-state';
+  runtimeStateProvenance.loadedFrom ||= runtimeStateProvenance.source;
+  runtimeStateProvenance.fallbackReason = DATABASE_URL
+    ? getPostgresHealthMeta().error ||
+      lastStateDbLoad.error ||
+      'Render Postgres state persistence was unavailable; serving the runtime file.'
+    : '';
+  runtimeStateProvenance.lastPersistAt = isoNow();
   scheduleRuntimeStateBroadcast('persist');
 }
 
@@ -10415,19 +10454,49 @@ async function loadState() {
 
   if (DATABASE_URL) {
     const dbState = await loadStateFromDb();
-    if (dbState) return hydrateState(dbState);
+    if (dbState) {
+      runtimeStateProvenance.source = 'render-postgres';
+      runtimeStateProvenance.loadedFrom = 'render-postgres';
+      runtimeStateProvenance.fallbackReason = '';
+      runtimeStateProvenance.lastLoadAt = isoNow();
+      return hydrateState(dbState);
+    }
     const runtimeState = await loadStateFromRuntimeFile();
-    if (runtimeState) return runtimeState;
+    if (runtimeState) {
+      runtimeStateProvenance.source = 'runtime-file-fallback';
+      runtimeStateProvenance.loadedFrom = 'runtime-file';
+      runtimeStateProvenance.fallbackReason = lastStateDbLoad.ok
+        ? 'Render Postgres bridge_state was empty; loaded the runtime file.'
+        : `Render Postgres load failed; loaded the runtime file: ${lastStateDbLoad.error}`;
+      runtimeStateProvenance.lastLoadAt = isoNow();
+      return runtimeState;
+    }
     const fresh = buildDefaultState();
     ensureImmutablePbkKnowledge(fresh);
+    runtimeStateProvenance.source = 'runtime-default-fallback';
+    runtimeStateProvenance.loadedFrom = 'default-state';
+    runtimeStateProvenance.fallbackReason = lastStateDbLoad.ok
+      ? 'Render Postgres bridge_state was empty and no runtime file existed; initialized default state.'
+      : `Render Postgres load failed and no runtime file existed; initialized default state: ${lastStateDbLoad.error}`;
+    runtimeStateProvenance.lastLoadAt = isoNow();
     await persistState(fresh);
     return fresh;
   }
 
   const runtimeState = await loadStateFromRuntimeFile();
-  if (runtimeState) return runtimeState;
+  if (runtimeState) {
+    runtimeStateProvenance.source = 'local-bridge-state';
+    runtimeStateProvenance.loadedFrom = 'runtime-file';
+    runtimeStateProvenance.fallbackReason = '';
+    runtimeStateProvenance.lastLoadAt = isoNow();
+    return runtimeState;
+  }
   const fresh = buildDefaultState();
   ensureImmutablePbkKnowledge(fresh);
+  runtimeStateProvenance.source = 'local-bridge-state';
+  runtimeStateProvenance.loadedFrom = 'default-state';
+  runtimeStateProvenance.fallbackReason = '';
+  runtimeStateProvenance.lastLoadAt = isoNow();
   await persistState(fresh);
   return fresh;
 }
@@ -36502,7 +36571,7 @@ function buildAnalyticsSnapshot(range = '30d') {
     ok: true,
     range: normalizedRange,
     generatedAt: isoNow(),
-    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    source: getRuntimeStateSource(),
     summary: {
       leadImports: leadImports.length,
       calls: calls.length,
@@ -37079,6 +37148,9 @@ function buildCampaignAnalyticsDrilldown(searchParams = new URLSearchParams()) {
   }
   const sortedRows = sortNewest(rows, 'lastEventAt').slice(0, limit);
   const sourceOptions = Array.from(new Set(rows.map((row) => row.source).filter(Boolean))).sort();
+  const sentRows = rows.filter((row) => row.sent);
+  const repliedRows = sentRows.filter((row) => row.replied);
+  const connectedRows = sentRows.filter((row) => row.connected);
   const rowCost = rows.reduce((sum, row) => {
     if (row.channel === 'email') return sum + 5 * 0.002;
     if (row.channel === 'sms') return sum + 3 * 0.007;
@@ -37090,19 +37162,23 @@ function buildCampaignAnalyticsDrilldown(searchParams = new URLSearchParams()) {
     result: 'live',
     range,
     generatedAt: isoNow(),
-    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    source: getRuntimeStateSource(),
     filters: { campaignId, source, channel: channelRaw, status: statusRaw, limit },
     summary: {
       campaigns: campaigns.length,
       leads: rows.length,
-      sent: rows.filter((row) => row.sent).length,
+      sent: sentRows.length,
       opened: rows.filter((row) => row.opened).length,
-      replied: rows.filter((row) => row.replied).length,
-      connected: rows.filter((row) => row.connected).length,
+      replied: repliedRows.length,
+      connected: connectedRows.length,
       dnc: rows.filter((row) => row.dnc).length,
       estimatedCost: Number(rowCost.toFixed(2)),
-      replyRate: rows.length ? Number(((rows.filter((row) => row.replied).length / rows.length) * 100).toFixed(1)) : 0,
-      connectRate: rows.length ? Number(((rows.filter((row) => row.connected).length / rows.length) * 100).toFixed(1)) : 0,
+      replyRate: sentRows.length
+        ? Number(((repliedRows.length / sentRows.length) * 100).toFixed(1))
+        : 0,
+      connectRate: sentRows.length
+        ? Number(((connectedRows.length / sentRows.length) * 100).toFixed(1))
+        : 0,
     },
     campaigns: campaigns.map((campaign) => ({
       id: campaign.id,
@@ -39868,8 +39944,8 @@ function buildIntelligenceStreamSnapshot({ limit = 24, agentId = '' } = {}) {
       category: source.toUpperCase().replace(/_/g, ' '),
       source,
       status: thought.status || '',
-      at: thought.timestamp || isoNow(),
-      createdAt: thought.timestamp || isoNow(),
+      at: thought.timestamp || '',
+      createdAt: thought.timestamp || '',
       confidence: thought.confidence ?? null,
       leadId: thought.leadId || '',
       callId: thought.callId || '',
@@ -39879,7 +39955,7 @@ function buildIntelligenceStreamSnapshot({ limit = 24, agentId = '' } = {}) {
   return {
     ok: true,
     result: 'intelligence_stream',
-    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    source: getRuntimeStateSource(),
     generatedAt: isoNow(),
     count: items.length,
     summary: {
@@ -39893,10 +39969,10 @@ function buildIntelligenceStreamSnapshot({ limit = 24, agentId = '' } = {}) {
   };
 }
 
-function buildSystemSourceLabelsSnapshot() {
+async function buildSystemSourceLabelsSnapshot() {
   const generatedAt = isoNow();
-  const nowMs = Date.parse(generatedAt);
-  const backendSource = STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state';
+  const runtimeProvenance = getRuntimeStateProvenance();
+  const backendSource = getRuntimeStateSource();
   const latestFrom = (records = [], keys = ['updatedAt', 'createdAt', 'at', 'timestamp']) => {
     let latest = 0;
     for (const record of Array.isArray(records) ? records : []) {
@@ -39908,28 +39984,6 @@ function buildSystemSourceLabelsSnapshot() {
     }
     return latest ? new Date(latest).toISOString() : '';
   };
-  const stalenessFor = (lastUpdatedAt) => {
-    const parsed = Date.parse(lastUpdatedAt || '');
-    return Number.isFinite(parsed) ? Math.max(0, nowMs - parsed) : null;
-  };
-  const statusFor = ({ endpointReady = true, recordCount = 0, lastUpdatedAt = '', fallbackReason = '' }) => {
-    if (!endpointReady) return 'needs-wiring';
-    if (fallbackReason) return 'fallback';
-    if (!recordCount && !lastUpdatedAt) return 'stale';
-    const stalenessMs = stalenessFor(lastUpdatedAt);
-    if (stalenessMs != null && stalenessMs > 6 * 60 * 60 * 1000) return 'stale';
-    return 'live';
-  };
-  const confidenceFor = ({ status, recordCount = 0, lastUpdatedAt = '' }) => {
-    if (status === 'needs-wiring') return 0.15;
-    if (status === 'offline') return 0.1;
-    const stalenessMs = stalenessFor(lastUpdatedAt);
-    const freshness =
-      stalenessMs == null ? 0.55 : stalenessMs < 10 * 60 * 1000 ? 1 : stalenessMs < 60 * 60 * 1000 ? 0.82 : 0.62;
-    const density = recordCount > 20 ? 1 : recordCount > 4 ? 0.88 : recordCount > 0 ? 0.74 : 0.5;
-    const fallbackPenalty = status === 'fallback' ? 0.2 : status === 'stale' ? 0.28 : 0;
-    return Number(Math.max(0.05, Math.min(0.99, freshness * density - fallbackPenalty)).toFixed(2));
-  };
   const makeLabel = ({
     id,
     label,
@@ -39940,50 +39994,56 @@ function buildSystemSourceLabelsSnapshot() {
     recordCount = records.length,
     lastUpdatedAt = latestFrom(records),
     fallbackReason = '',
+    degradedReason = '',
     note = '',
     endpointReady = true,
-  }) => {
-    const status = statusFor({ endpointReady, recordCount, lastUpdatedAt, fallbackReason });
-    return {
+  }) =>
+    buildSourceTruthLabel({
       id,
       label,
       endpoint,
       category,
-      status,
       source,
-      confidence: confidenceFor({ status, recordCount, lastUpdatedAt }),
-      stalenessMs: stalenessFor(lastUpdatedAt),
-      lastUpdatedAt,
+      endpointReady,
+      checkedAt: generatedAt,
+      lastDataAt: lastUpdatedAt,
       fallbackReason,
+      degradedReason,
       recordCount,
       note,
-    };
-  };
+    });
+  const runtimeRecords = [
+    ...(state.leadImports || []),
+    ...(state.calls || []),
+    ...(state.messages || []),
+    ...(state.contracts || []),
+  ];
+  const workQueue = buildFounderWorkQueueSnapshot({ limit: 50 });
+  const intelligenceStream = buildIntelligenceStreamSnapshot({ limit: 24 });
+  const agentRegistry = buildAgentRegistryStatus();
+  const toolingStatus = await buildToolingStatus();
+  const registryAgents = Array.isArray(agentRegistry.registry?.agents)
+    ? agentRegistry.registry.agents
+    : [];
   const items = [
     makeLabel({
       id: 'runtime-snapshot',
       label: 'Runtime snapshot',
       endpoint: 'GET /state',
       category: 'runtime',
-      records: [
-        ...(state.leadImports || []),
-        ...(state.calls || []),
-        ...(state.messages || []),
-        ...(state.contracts || []),
-      ],
-      note: 'Primary shell fallback for every route.',
+      records: runtimeRecords,
+      lastUpdatedAt: latestFrom(runtimeRecords),
+      fallbackReason: runtimeProvenance.fallbackReason,
+      note: 'Runtime endpoint health and latest seller/deal activity are reported independently.',
     }),
     makeLabel({
       id: 'founder-work-queue',
       label: 'Founder work queue',
       endpoint: 'GET /api/founder/work-queue',
       category: 'operator',
-      records: [
-        ...(state.approvals || []),
-        ...(state.adminTasks || []),
-        ...(state.messages || []),
-        ...(state.calls || []),
-      ],
+      records: workQueue.items || [],
+      lastUpdatedAt: latestFrom(workQueue.items || []),
+      fallbackReason: runtimeProvenance.fallbackReason,
       note: 'Ranked from approvals, failed sends, calls, and lead signals.',
     }),
     makeLabel({
@@ -39991,12 +40051,9 @@ function buildSystemSourceLabelsSnapshot() {
       label: 'Ava/Rex intelligence',
       endpoint: 'GET /api/intelligence/stream',
       category: 'agent',
-      records: [
-        ...(state.agentDecisions || []),
-        ...(state.rexDecisions || []),
-        ...(state.agentTasks || []),
-        ...(state.activity || []),
-      ],
+      records: intelligenceStream.items || [],
+      lastUpdatedAt: latestFrom(intelligenceStream.items || []),
+      fallbackReason: runtimeProvenance.fallbackReason,
       note: 'Agent-authored decision stream with activity fallback.',
     }),
     makeLabel({
@@ -40004,13 +40061,18 @@ function buildSystemSourceLabelsSnapshot() {
       label: 'Agent registry',
       endpoint: 'GET /api/agents/registry',
       category: 'agent',
-      records: buildDefaultAgentRegistry().agents || [],
-      lastUpdatedAt: latestFrom(buildDefaultAgentRegistry().agents || [], [
+      records: registryAgents,
+      lastUpdatedAt: latestFrom(registryAgents, [
         'healthCheckedAt',
         'updatedAt',
         'createdAt',
       ]),
-      source: 'agent-registry',
+      source: agentRegistry.source || 'agent-registry',
+      fallbackReason:
+        agentRegistry.source === 'default_registry'
+          ? 'Runtime registry is unavailable; serving the built-in registry.'
+          : '',
+      degradedReason: agentRegistry.ok ? '' : agentRegistry.result || 'agent registry degraded',
       note: 'Canonical remote/local roster for Agent Fleet.',
     }),
     makeLabel({
@@ -40019,6 +40081,7 @@ function buildSystemSourceLabelsSnapshot() {
       endpoint: 'GET /api/campaigns',
       category: 'growth',
       records: state.campaigns || [],
+      fallbackReason: runtimeProvenance.fallbackReason,
       note: 'Campaign wizard and premium campaign panels.',
     }),
     makeLabel({
@@ -40026,9 +40089,13 @@ function buildSystemSourceLabelsSnapshot() {
       label: 'Observability',
       endpoint: 'GET /api/tooling/status',
       category: 'ops',
-      records: state.activity || [],
-      fallbackReason: state.toolingStatus ? '' : 'tooling status has not reported yet',
-      note: 'Provider/tool readiness overlay.',
+      recordCount: toolingStatus.summary?.totalCount || 0,
+      source: 'runtime-tooling-probe',
+      degradedReason:
+        toolingStatus.summary?.requiredReadyCount === toolingStatus.summary?.requiredCount
+          ? ''
+          : `${toolingStatus.summary?.requiredReadyCount || 0}/${toolingStatus.summary?.requiredCount || 0} core tooling checks ready`,
+      note: toolingStatus.summary?.note || 'Provider/tool readiness overlay.',
     }),
   ];
   return {
@@ -40037,13 +40104,23 @@ function buildSystemSourceLabelsSnapshot() {
     source: backendSource,
     generatedAt,
     count: items.length,
-    summary: {
-      live: items.filter((item) => item.status === 'live').length,
-      fallback: items.filter((item) => item.status === 'fallback').length,
-      stale: items.filter((item) => item.status === 'stale').length,
-      needsWiring: items.filter((item) => item.status === 'needs-wiring').length,
-    },
+    summary: summarizeSourceTruthLabels(items),
     items,
+  };
+}
+
+function getRuntimeStateSource() {
+  return runtimeStateProvenance.source || (STATE_BACKEND === 'postgres' ? 'render-postgres-pending' : 'local-bridge-state');
+}
+
+function getRuntimeStateProvenance() {
+  return {
+    configuredSource: STATE_BACKEND === 'postgres' ? 'render-postgres' : 'local-bridge-state',
+    source: getRuntimeStateSource(),
+    loadedFrom: runtimeStateProvenance.loadedFrom,
+    fallbackReason: runtimeStateProvenance.fallbackReason,
+    lastLoadAt: runtimeStateProvenance.lastLoadAt,
+    lastPersistAt: runtimeStateProvenance.lastPersistAt,
   };
 }
 
@@ -40180,7 +40257,7 @@ function buildReleaseStatusSnapshot() {
   return {
     ok: true,
     result: warnings.length ? 'release_readiness_review' : 'release_ready',
-    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    source: getRuntimeStateSource(),
     generatedAt,
     release: {
       bridgeRevision: BUILD_REVISION,
@@ -52094,6 +52171,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
           ['live', 'connected'].includes(status.toLowerCase()) ? 99 : 92
         ),
         source: 'state.calls',
+        at: getItemTimestamp(call),
         reason: 'Active seller call needs operator awareness.',
         cta: 'Open live call',
         pulse: 'default',
@@ -52121,6 +52199,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
           (isContract ? 91 : 84) + (toNumber(amount, 0) ? 4 : 0)
         ),
         source: 'state.approvals',
+        at: getItemTimestamp(approval),
         reason: isContract
           ? 'Contract approval can trigger DocuSign delivery.'
           : 'Outbound agent action is waiting on approval.',
@@ -52148,6 +52227,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
         tone: 'urgent',
         score: 94,
         source: 'state.messages',
+        at: getItemTimestamp(message),
         reason: 'Provider marked an outbound send as failed.',
         cta: 'Open inbox',
         targetPath: '/inbox',
@@ -52170,6 +52250,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
         tone: 'warm',
         score: 72,
         source: 'state.messages',
+        at: getItemTimestamp(message),
         reason: 'Unread seller reply is waiting in Inbox.',
         cta: 'Reply',
         pulse: 'amber',
@@ -52192,6 +52273,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
         tone: 'hot',
         score: 86,
         source: 'state.adminTasks',
+        at: getItemTimestamp(task),
         reason: 'Infrastructure/admin action is approval gated.',
         cta: 'Review admin task',
         targetPath: '#admin-activity',
@@ -52213,6 +52295,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
         tone: 'money',
         score,
         source: 'state.leadImports',
+        at: getItemTimestamp(lead),
         reason: 'Lead score crossed the hot-lead threshold.',
         cta: 'Open lead',
         targetPath: '/leads',
@@ -52223,7 +52306,7 @@ function buildFounderWorkQueueSnapshot({ limit = 8 } = {}) {
   return {
     ok: true,
     result: 'live',
-    source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+    source: getRuntimeStateSource(),
     generatedAt: isoNow(),
     count: ranked.length,
     summary: {
@@ -59492,7 +59575,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && pathname === '/api/settings') {
       json(response, 200, {
         ok: true,
-        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+        source: getRuntimeStateSource(),
         settings: ensureRuntimeSettings(state),
       });
       return;
@@ -59520,13 +59603,13 @@ const server = createServer(async (request, response) => {
           category: 'SETTINGS',
           status: 'saved',
           text: 'Command Center settings persisted to bridge state.',
-          target: STATE_BACKEND === 'postgres' ? 'supabase' : 'local-state',
+          target: getRuntimeStateSource(),
         })
       );
       await persistState(state);
       json(response, 200, {
         ok: true,
-        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+        source: getRuntimeStateSource(),
         settings: state.settings,
         state: buildStateSnapshot(),
       });
@@ -60238,9 +60321,14 @@ const server = createServer(async (request, response) => {
 
     if (
       request.method === 'GET' &&
-      matchesPath(pathname, ['/api/system/source-labels', '/api/v1/system/source-labels'])
+      matchesPath(pathname, [
+        '/api/system/source-labels',
+        '/api/v1/system/source-labels',
+        '/api/health/staleness',
+        '/health/staleness',
+      ])
     ) {
-      json(response, 200, buildSystemSourceLabelsSnapshot());
+      json(response, 200, await buildSystemSourceLabelsSnapshot());
       return;
     }
 
@@ -60871,7 +60959,7 @@ const server = createServer(async (request, response) => {
         ok: true,
         result: 'live',
         weights: getLeadScoringWeights(),
-        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+        source: getRuntimeStateSource(),
       });
       return;
     }
@@ -61536,7 +61624,7 @@ const server = createServer(async (request, response) => {
         query,
         count: results.length,
         results,
-        source: STATE_BACKEND === 'postgres' ? 'supabase-bridge-state' : 'local-bridge-state',
+        source: getRuntimeStateSource(),
       });
       return;
     }
@@ -64024,9 +64112,21 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && pathname === '/api/campaigns') {
       const campaigns = queryCampaignRecords(url.searchParams);
+      const generatedAt = isoNow();
+      const provenance = getRuntimeStateProvenance();
       json(response, 200, {
         ok: true,
-        result: 'live',
+        result: provenance.fallbackReason ? 'fallback' : 'live',
+        source: provenance.source,
+        fallbackReason: provenance.fallbackReason,
+        provenance,
+        generatedAt,
+        summary: {
+          dataState: campaigns.length ? 'populated' : 'empty',
+          campaigns: campaigns.length,
+          leads: (state.campaignLeads || []).length,
+          events: (state.campaignEvents || []).length,
+        },
         campaigns,
         leads: state.campaignLeads || [],
         events: state.campaignEvents || [],

@@ -7,6 +7,7 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8');
 const packageJson = read('package.json');
 const campaigns = read('src/app/routes/Campaigns.tsx');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
+const bridge = read('scripts/openclaw-local-server.mjs');
 const pbkCss = read('src/styles/pbk-components.css');
 const dataMap = read('docs/modern-shell-bridge-data-map.md');
 
@@ -63,6 +64,40 @@ assert(/export\s+async\s+function\s+fetchReplyTemplatesRequest/.test(runtimeBrid
 assert(/export\s+async\s+function\s+fetchCampaignRankedTemplatesRequest/.test(runtimeBridge), 'runtimeBridge must expose fetchCampaignRankedTemplatesRequest.');
 assert(/\/api\/replies\/templates/.test(runtimeBridge), 'fetchReplyTemplatesRequest must target GET /api/replies/templates.');
 assert(dataMap.includes('/api/replies/templates'), 'Bridge data map must document the campaign wizard template source.');
+assert(
+  /export type CampaignsResponse[\s\S]*source\?: string[\s\S]*generatedAt\?: string[\s\S]*summary\?:/.test(
+    runtimeBridge
+  ),
+  'Campaign responses must expose runtime source, refresh time, and explicit empty/live summary metadata.'
+);
+assert(
+  /pathname === '\/api\/campaigns'[\s\S]*getRuntimeStateProvenance\(\)[\s\S]*fallbackReason[\s\S]*dataState: campaigns\.length \? 'populated' : 'empty'/.test(
+    bridge
+  ),
+  'GET /api/campaigns must identify actual storage provenance and distinguish healthy-empty data.'
+);
+assert(
+  /campaignRuntimeSource/.test(campaigns) &&
+    /campaignRuntimeFallbackReason/.test(campaigns) &&
+    /No campaigns yet/.test(campaigns) &&
+    !/The Render Postgres campaign source is live/.test(campaigns),
+  'Campaigns UI must present a source-aware empty state without claiming Postgres is live during fallback.'
+);
+assert(
+  !/sortPerformanceRows\(Array\.from\(grouped\.values\(\)\)\)\.slice\(0,\s*5\)/.test(campaigns),
+  'Campaign totals must aggregate all source rows before the UI limits visible rankings.'
+);
+assert(
+  /fallbackSent[\s\S]*fallbackReplied \/ fallbackSent/.test(campaigns) &&
+    /fallbackSent[\s\S]*fallbackConnected \/ fallbackSent/.test(campaigns),
+  'Campaign reply and connect rates must use contacted leads rather than all loaded leads.'
+);
+assert(
+  /const sentRows = rows\.filter\(\(row\) => row\.sent\)[\s\S]*repliedRows\.length \/ sentRows\.length[\s\S]*connectedRows\.length \/ sentRows\.length/.test(
+    bridge
+  ),
+  'Bridge campaign rates must use sent/dialed rows as the denominator.'
+);
 
 [
   '.pbk-campaign-hero',

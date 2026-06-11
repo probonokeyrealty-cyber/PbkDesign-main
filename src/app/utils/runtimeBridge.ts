@@ -364,6 +364,7 @@ export type LocalCommandRecord = {
   requestedBy?: string;
   source?: string;
   status?: string;
+  riskLevel?: 'low' | 'medium' | 'high' | string;
   requiresApproval?: boolean;
   approvalId?: string;
   sidecarId?: string;

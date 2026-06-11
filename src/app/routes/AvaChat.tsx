@@ -65,6 +65,7 @@ type AvaCommandAction =
 type SubmitLane = 'rest' | 'invoke';
 type HistoryFilter = 'all' | 'active' | 'completed' | 'failed';
 type ConnectionState = 'checking' | 'connected' | 'degraded';
+type CommandRiskLevel = 'low' | 'medium' | 'high';
 
 const ACTIONS: Array<{
   id: AvaCommandAction;
@@ -115,30 +116,35 @@ const QUICK_COMMANDS: Array<{
   action: AvaCommandAction;
   label: string;
   icon: typeof Terminal;
+  requiresApproval: boolean;
 }> = [
   {
     command: 'Check OpenClaw sidecar status',
     action: 'status',
     label: 'Check system health',
     icon: Radio,
+    requiresApproval: false,
   },
   {
     command: 'Take a screenshot of the current desktop',
     action: 'screenshot',
     label: 'Capture desktop',
     icon: Camera,
+    requiresApproval: true,
   },
   {
     command: 'ClickUI: inspect the active window and report visible buttons',
     action: 'clickui',
     label: 'Inspect active window',
     icon: MousePointer2,
+    requiresApproval: true,
   },
   {
     command: 'OpenClaw: prepare the next safe PBK script run',
     action: 'operator_command',
     label: 'Prepare safe script',
     icon: Terminal,
+    requiresApproval: true,
   },
 ];
 
@@ -200,6 +206,24 @@ function getResultText(command: LocalCommandRecord) {
   if (command.error) return command.error;
   const result = command.result;
   if (!result) return '';
+  const payload = getResultPayload(command);
+  if (getSafeResultImageUrl(payload)) {
+    for (const key of ['message', 'summary', 'output', 'result']) {
+      const value = payload?.[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    const sourceName = String(payload?.sourceName || payload?.windowTitle || '').trim();
+    return sourceName
+      ? `Screenshot captured from ${sourceName}.`
+      : 'Screenshot captured. Preview is below.';
+  }
+  if (getStructuredResultItems(payload)) {
+    for (const key of ['message', 'summary', 'output', 'result']) {
+      const value = payload?.[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return 'Command completed. Structured preview is below.';
+  }
   for (const key of ['message', 'summary', 'output', 'result']) {
     const value = result[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -209,6 +233,54 @@ function getResultText(command: LocalCommandRecord) {
   } catch {
     return 'Command completed and returned a result.';
   }
+}
+
+function getResultPayload(command: LocalCommandRecord) {
+  const result = command.result;
+  if (!result || typeof result !== 'object') return null;
+  const nested = result.payload;
+  return nested && typeof nested === 'object' && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : result;
+}
+
+function getSafeResultImageUrl(payload: Record<string, unknown> | null) {
+  const candidate = String(
+    payload?.imageDataUrl || payload?.imageUrl || payload?.screenshotUrl || payload?.url || ''
+  ).trim();
+  if (/^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i.test(candidate)) return candidate;
+  if (/^https:\/\//i.test(candidate)) return candidate;
+  return '';
+}
+
+function getStructuredResultItems(payload: Record<string, unknown> | null) {
+  for (const key of ['buttons', 'windows', 'entries', 'items']) {
+    const value = payload?.[key];
+    if (Array.isArray(value)) {
+      return {
+        label: key,
+        items: value.slice(0, 40),
+      };
+    }
+  }
+  return null;
+}
+
+function formatStructuredResultItem(item: unknown) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return String(item ?? '');
+  const record = item as Record<string, unknown>;
+  return (
+    [record.name, record.label, record.title, record.type, record.status]
+      .filter((value) => typeof value === 'string' && value.trim())
+      .join(' · ') || JSON.stringify(record)
+  );
+}
+
+function getCommandRiskLevel(command: LocalCommandRecord): CommandRiskLevel {
+  const value = String(command.riskLevel || '').toLowerCase();
+  if (value === 'low' || value === 'high') return value;
+  return command.requiresApproval === false ? 'low' : 'medium';
 }
 
 function getAssistantMessage(command: LocalCommandRecord) {
@@ -258,6 +330,7 @@ export function AvaChat() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
+  const loadInFlightRef = useRef(false);
 
   const pendingApprovals = useMemo(
     () =>
@@ -306,40 +379,46 @@ export function AvaChat() {
   }, [commands, historyFilter, searchQuery]);
 
   const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     if (!silent) setLoading(true);
-    const [sidecarResult, historyResult] = await Promise.allSettled([
-      fetchDesktopSidecarStatusRequest(),
-      fetchLocalCommandsRequest({ limit: 40 }),
-    ]);
+    try {
+      const [sidecarResult, historyResult] = await Promise.allSettled([
+        fetchDesktopSidecarStatusRequest(),
+        fetchLocalCommandsRequest({ limit: 40 }),
+      ]);
 
-    let successCount = 0;
-    const failures: string[] = [];
-    if (sidecarResult.status === 'fulfilled') {
-      setStatus(sidecarResult.value);
-      successCount += 1;
-    } else {
-      failures.push(
-        sidecarResult.reason instanceof Error
-          ? sidecarResult.reason.message
-          : 'Sidecar status is unavailable.'
-      );
-    }
-    if (historyResult.status === 'fulfilled') {
-      setCommands(historyResult.value.commands || []);
-      successCount += 1;
-    } else {
-      failures.push(
-        historyResult.reason instanceof Error
-          ? historyResult.reason.message
-          : 'Command history is unavailable.'
-      );
-    }
+      let successCount = 0;
+      const failures: string[] = [];
+      if (sidecarResult.status === 'fulfilled') {
+        setStatus(sidecarResult.value);
+        successCount += 1;
+      } else {
+        failures.push(
+          sidecarResult.reason instanceof Error
+            ? sidecarResult.reason.message
+            : 'Sidecar status is unavailable.'
+        );
+      }
+      if (historyResult.status === 'fulfilled') {
+        setCommands(historyResult.value.commands || []);
+        successCount += 1;
+      } else {
+        failures.push(
+          historyResult.reason instanceof Error
+            ? historyResult.reason.message
+            : 'Command history is unavailable.'
+        );
+      }
 
-    setConnectionState(
-      successCount === 2 ? 'connected' : successCount === 0 ? 'degraded' : 'degraded'
-    );
-    setConnectionError(failures.join(' '));
-    if (!silent) setLoading(false);
+      setConnectionState(
+        successCount === 2 ? 'connected' : successCount === 0 ? 'degraded' : 'degraded'
+      );
+      setConnectionError(failures.join(' '));
+    } finally {
+      loadInFlightRef.current = false;
+      if (!silent) setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -460,6 +539,7 @@ export function AvaChat() {
 
   const selectQuickCommand = (item: (typeof QUICK_COMMANDS)[number]) => {
     setAction(item.action);
+    setRequiresApproval(item.requiresApproval);
     setDraft(item.command);
     window.requestAnimationFrame(() => composerRef.current?.focus());
   };
@@ -811,6 +891,7 @@ function CommandExchange({
   const active = ACTIVE_STATUSES.has(status);
   const actionConfig = ACTIONS.find((item) => item.id === command.action) || ACTIONS[0];
   const ActionIcon = actionConfig.icon;
+  const riskLevel = getCommandRiskLevel(command);
 
   return (
     <article className="space-y-3">
@@ -848,11 +929,24 @@ function CommandExchange({
             ].join(' ')}
           >
             <p className="whitespace-pre-wrap break-words">{getAssistantMessage(command)}</p>
+            <CommandResultPreview command={command} />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
             <CommandStatus command={command} />
+            <span
+              className={[
+                'rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase',
+                riskLevel === 'low'
+                  ? 'border-[var(--ava-success-border)] bg-[var(--ava-success-soft)] text-[var(--ava-success)]'
+                  : riskLevel === 'high'
+                    ? 'border-[var(--ava-danger-border)] bg-[var(--ava-danger-soft)] text-[var(--ava-danger)]'
+                    : 'border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] text-[var(--ava-warning)]',
+              ].join(' ')}
+            >
+              {riskLevel} risk
+            </span>
             <span className="text-[var(--ava-text-faint)]">
-              {command.requiresApproval ? 'Approval gated' : 'Low-risk lane'}
+              {command.requiresApproval ? 'Approval gated' : 'Trusted read-only auto-run'}
             </span>
             <button
               type="button"
@@ -866,6 +960,93 @@ function CommandExchange({
         </div>
       </div>
     </article>
+  );
+}
+
+function CommandResultPreview({ command }: { command: LocalCommandRecord }) {
+  const payload = getResultPayload(command);
+  if (!payload || Object.keys(payload).length === 0) return null;
+
+  const imageDataUrl = getSafeResultImageUrl(payload);
+  const structured = getStructuredResultItems(payload);
+  const sourceName = String(payload.sourceName || payload.windowTitle || payload.path || '').trim();
+  const hiddenKeys = new Set([
+    'imageDataUrl',
+    'imageUrl',
+    'screenshotUrl',
+    'url',
+    'buttons',
+    'windows',
+    'entries',
+    'items',
+    'message',
+    'summary',
+    'output',
+    'result',
+    'payload',
+  ]);
+  const facts = Object.entries(payload)
+    .filter(
+      ([key, value]) =>
+        !hiddenKeys.has(key) &&
+        ['string', 'number', 'boolean'].includes(typeof value) &&
+        String(value).trim()
+    )
+    .slice(0, 10);
+
+  if (!imageDataUrl && !structured && facts.length === 0) return null;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-[var(--ava-border)] bg-[var(--ava-bg)]">
+      {imageDataUrl && (
+        <figure>
+          <img
+            src={imageDataUrl}
+            alt={sourceName ? `Desktop capture of ${sourceName}` : 'Desktop command result'}
+            className="block max-h-[420px] w-full bg-black object-contain"
+            loading="lazy"
+          />
+          {sourceName && (
+            <figcaption className="border-t border-[var(--ava-border)] px-3 py-2 text-[11px] text-[var(--ava-text-muted)]">
+              {sourceName}
+            </figcaption>
+          )}
+        </figure>
+      )}
+
+      {structured && (
+        <div className="border-t border-[var(--ava-border)] p-3 first:border-t-0">
+          <div className="mb-2 text-[10px] font-bold uppercase text-[var(--ava-text-faint)]">
+            {structured.label}
+          </div>
+          <ul className="grid gap-1.5">
+            {structured.items.map((item, index) => (
+              <li
+                key={`${structured.label}-${index}-${formatStructuredResultItem(item)}`}
+                className="rounded-lg bg-[var(--ava-panel)] px-3 py-2 text-xs text-[var(--ava-text-muted)]"
+              >
+                {formatStructuredResultItem(item)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {facts.length > 0 && (
+        <dl className="grid gap-x-4 gap-y-2 border-t border-[var(--ava-border)] p-3 first:border-t-0 sm:grid-cols-2">
+          {facts.map(([key, value]) => (
+            <div key={key} className="min-w-0">
+              <dt className="text-[10px] font-bold uppercase text-[var(--ava-text-faint)]">
+                {key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')}
+              </dt>
+              <dd className="mt-0.5 break-words text-xs text-[var(--ava-text-muted)]">
+                {String(value)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 

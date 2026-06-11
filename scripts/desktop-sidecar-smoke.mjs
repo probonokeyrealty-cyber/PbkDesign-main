@@ -10,10 +10,15 @@ assert.equal(existsSync(sidecarCorePath), true, 'desktop sidecar core module sho
 const sidecarCore = await import(pathToFileURL(sidecarCorePath).href);
 const {
   buildBridgeSidecarUrl,
+  buildSidecarHeartbeatPayload,
   buildSidecarStatusPayload,
+  normalizeScreenshotDimensions,
   redactSensitiveText,
   validateSidecarCommand,
 } = sidecarCore.default || sidecarCore;
+
+assert.equal(typeof normalizeScreenshotDimensions, 'function', 'sidecar core should export screenshot dimension normalization.');
+assert.equal(typeof buildSidecarHeartbeatPayload, 'function', 'sidecar core should export heartbeat payload construction.');
 
 assert.equal(
   buildBridgeSidecarUrl('https://pbk-openclaw-bridge.onrender.com'),
@@ -24,6 +29,27 @@ assert.equal(
   buildBridgeSidecarUrl('http://localhost:8787/custom-sidecar'),
   'ws://localhost:8787/custom-sidecar',
   'explicit local sidecar URL should keep its path and use ws protocol.',
+);
+
+assert.deepEqual(
+  normalizeScreenshotDimensions({}),
+  { width: 1280, height: 720 },
+  'screenshots should use bounded desktop-friendly default dimensions.',
+);
+assert.deepEqual(
+  normalizeScreenshotDimensions({ width: 1, height: 120 }),
+  { width: 320, height: 180 },
+  'screenshots should enforce minimum dimensions.',
+);
+assert.deepEqual(
+  normalizeScreenshotDimensions({ width: 4000, height: 3000 }),
+  { width: 1920, height: 1080 },
+  'screenshots should enforce maximum dimensions.',
+);
+assert.deepEqual(
+  normalizeScreenshotDimensions({ width: 'invalid', height: null }),
+  { width: 1280, height: 720 },
+  'invalid screenshot dimensions should fall back to defaults.',
 );
 
 const workspace = path.join(tmpdir(), `pbk-sidecar-smoke-${Date.now()}`);
@@ -83,6 +109,32 @@ try {
   assert.equal(status.capabilities.localLlm, true);
   assert.deepEqual(status.allowedRootLabels, [path.basename(allowedRoot)]);
 
+  assert.deepEqual(
+    buildSidecarHeartbeatPayload({
+      sidecarId: 'sidecar-local',
+      status,
+    }),
+    {
+      type: 'sidecar.heartbeat',
+      sidecarId: 'sidecar-local',
+      status,
+    },
+    'heartbeat payloads should identify the sidecar and include its current status.',
+  );
+  assert.deepEqual(
+    buildSidecarHeartbeatPayload({
+      type: 'sidecar.pong',
+      sidecarId: 'sidecar-local',
+      status,
+    }),
+    {
+      type: 'sidecar.pong',
+      sidecarId: 'sidecar-local',
+      status,
+    },
+    'bridge ping responses should reuse the bounded presence payload shape.',
+  );
+
   const redacted = redactSensitiveText('api key sk-live-abc123 and token=secret-value');
   assert(!redacted.includes('sk-live-abc123'), 'sidecar outbound payloads should redact API-looking secrets.');
   assert(!redacted.includes('secret-value'), 'sidecar outbound payloads should redact token values.');
@@ -112,6 +164,18 @@ assert.match(electronMain, /safeWarn/, 'Electron sidecar should log socket error
 assert.match(electronMain, /installRecoverableProcessErrorGuards/, 'Electron sidecar should install main-process recoverable error guards.');
 assert.match(electronMain, /uncaughtException/, 'Electron sidecar should suppress recoverable broken-pipe uncaught exceptions.');
 assert.match(electronMain, /sidecarSocket\?\.terminate/, 'Electron sidecar should terminate and reconnect after socket errors.');
+assert.match(electronMain, /SIDECAR_HEARTBEAT_INTERVAL_MS\s*=\s*15\s*\*\s*1000/, 'Electron sidecar heartbeat should use a bounded 15 second interval.');
+assert.match(electronMain, /startSidecarHeartbeat/, 'Electron sidecar should start an application heartbeat after connecting.');
+assert.match(electronMain, /stopSidecarHeartbeat/, 'Electron sidecar should clean up heartbeat timers on disconnect and quit.');
+assert.match(electronMain, /socket\.on\(['"]close['"][\s\S]*stopSidecarHeartbeat\(\)[\s\S]*scheduleSidecarReconnect\(\)/, 'Electron sidecar should stop heartbeat delivery before reconnecting a closed socket.');
+assert.match(electronMain, /app\.on\(['"]will-quit['"][\s\S]*app\.isQuitting\s*=\s*true[\s\S]*stopSidecarHeartbeat\(\)/, 'Electron sidecar shutdown should suppress reconnects and stop heartbeat delivery.');
+assert.match(electronMain, /message\.type\s*===\s*['"]sidecar\.ping['"]/, 'Electron sidecar should handle bridge sidecar.ping messages.');
+assert.match(electronMain, /type:\s*['"]sidecar\.pong['"]/, 'Electron sidecar should answer bridge pings with sidecar.pong.');
+assert.match(electronMain, /normalizeScreenshotDimensions\(command\)/, 'Electron screenshot capture should normalize requested dimensions server-side.');
+assert.match(electronMain, /width:\s*imageSize\.width/, 'Electron screenshot results should include captured image width metadata.');
+assert.match(electronMain, /height:\s*imageSize\.height/, 'Electron screenshot results should include captured image height metadata.');
+assert.match(electronMain, /mediaType:\s*['"]image\/png['"]/, 'Electron screenshot results should identify PNG media.');
+assert.match(electronMain, /byteLength/, 'Electron screenshot results should include image byte length metadata.');
 assert.match(rootPackage, /test:desktop-sidecar/, 'root package should expose the desktop sidecar smoke test.');
 
 console.log('[desktop-sidecar-smoke] ok', {

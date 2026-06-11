@@ -1,6 +1,12 @@
 const path = require('node:path');
 
 const DEFAULT_MAX_TEXT_BYTES = 64 * 1024;
+const DEFAULT_SCREENSHOT_WIDTH = 1280;
+const DEFAULT_SCREENSHOT_HEIGHT = 720;
+const MIN_SCREENSHOT_WIDTH = 320;
+const MIN_SCREENSHOT_HEIGHT = 180;
+const MAX_SCREENSHOT_WIDTH = 1920;
+const MAX_SCREENSHOT_HEIGHT = 1080;
 const DEFAULT_ALLOWED_ACTIONS = new Set([
   'ping',
   'status',
@@ -25,6 +31,30 @@ function buildBridgeSidecarUrl(input = '') {
   if (url.protocol === 'http:') url.protocol = 'ws:';
   if (!url.pathname || url.pathname === '/') url.pathname = '/ws/sidecar';
   return url.toString().replace(/\/$/, '');
+}
+
+function normalizeScreenshotDimension(value, fallback, minimum, maximum) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const dimension = Number(value);
+  if (!Number.isFinite(dimension)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.round(dimension)));
+}
+
+function normalizeScreenshotDimensions(input = {}) {
+  return {
+    width: normalizeScreenshotDimension(
+      input.width,
+      DEFAULT_SCREENSHOT_WIDTH,
+      MIN_SCREENSHOT_WIDTH,
+      MAX_SCREENSHOT_WIDTH,
+    ),
+    height: normalizeScreenshotDimension(
+      input.height,
+      DEFAULT_SCREENSHOT_HEIGHT,
+      MIN_SCREENSHOT_HEIGHT,
+      MAX_SCREENSHOT_HEIGHT,
+    ),
+  };
 }
 
 function normalizeAllowedRoots(rawRoots = '', fallbackRoots = []) {
@@ -127,6 +157,15 @@ function buildSidecarStatusPayload(config = {}) {
   };
 }
 
+function buildSidecarHeartbeatPayload(config = {}) {
+  const status = config.status && typeof config.status === 'object' ? config.status : {};
+  return {
+    type: config.type || 'sidecar.heartbeat',
+    sidecarId: config.sidecarId || status.sidecarId || '',
+    status,
+  };
+}
+
 function buildCommandResult(command = {}, result = {}) {
   return {
     type: 'sidecar.command.result',
@@ -144,11 +183,13 @@ module.exports = {
   DEFAULT_MAX_TEXT_BYTES,
   buildBridgeSidecarUrl,
   buildCommandResult,
+  buildSidecarHeartbeatPayload,
   buildSidecarStatusPayload,
   isTruthy,
   limitText,
   normalizeAllowedRoots,
   normalizeCommand,
+  normalizeScreenshotDimensions,
   redactSensitiveText,
   resolveAllowedPath,
   validateSidecarCommand,

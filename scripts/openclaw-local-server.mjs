@@ -5386,6 +5386,11 @@ async function ensureLocalCommandQueueSchema(pool) {
       source TEXT NOT NULL DEFAULT 'ava-chat',
       status TEXT NOT NULL DEFAULT 'pending_approval',
       requires_approval BOOLEAN NOT NULL DEFAULT TRUE,
+      risk_level TEXT NOT NULL DEFAULT 'medium',
+      risk_reason TEXT NOT NULL DEFAULT '',
+      classification_version TEXT NOT NULL DEFAULT 'local-command-risk-v1',
+      command_digest TEXT NOT NULL DEFAULT '',
+      approval_digest TEXT NOT NULL DEFAULT '',
       approval_id TEXT NOT NULL DEFAULT '',
       sidecar_id TEXT NOT NULL DEFAULT '',
       result JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -5406,6 +5411,11 @@ async function ensureLocalCommandQueueSchema(pool) {
       ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'ava-chat',
       ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_approval',
       ADD COLUMN IF NOT EXISTS requires_approval BOOLEAN NOT NULL DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS risk_level TEXT NOT NULL DEFAULT 'medium',
+      ADD COLUMN IF NOT EXISTS risk_reason TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS classification_version TEXT NOT NULL DEFAULT 'local-command-risk-v1',
+      ADD COLUMN IF NOT EXISTS command_digest TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS approval_digest TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS approval_id TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS sidecar_id TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS result JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -5416,6 +5426,12 @@ async function ensureLocalCommandQueueSchema(pool) {
       ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+    ALTER TABLE public.pbk_local_commands
+      DROP CONSTRAINT IF EXISTS pbk_local_commands_risk_level_check;
+    ALTER TABLE public.pbk_local_commands
+      ADD CONSTRAINT pbk_local_commands_risk_level_check
+      CHECK (risk_level IN ('low', 'medium', 'high'));
+
     ALTER TABLE public.pbk_local_commands ENABLE ROW LEVEL SECURITY;
 
     CREATE INDEX IF NOT EXISTS pbk_local_commands_status_idx
@@ -5424,6 +5440,10 @@ async function ensureLocalCommandQueueSchema(pool) {
       ON public.pbk_local_commands (tenant_id, approval_id);
     CREATE INDEX IF NOT EXISTS pbk_local_commands_source_idx
       ON public.pbk_local_commands (tenant_id, source, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_local_commands_risk_idx
+      ON public.pbk_local_commands (tenant_id, risk_level, created_at DESC);
+    CREATE INDEX IF NOT EXISTS pbk_local_commands_digest_idx
+      ON public.pbk_local_commands (tenant_id, command_digest);
   `);
   return true;
 }
@@ -11214,19 +11234,69 @@ function isLocalCommandSidecarAction(action = '') {
   }
 }
 
-function isLowRiskLocalCommandAction(action = '') {
-  return ['ping', 'status'].includes(String(action || '').trim().toLowerCase());
+const LOCAL_COMMAND_RISK_CLASSIFICATION_VERSION = 'local-command-risk-v1';
+
+function normalizeLocalCommandRiskLevel(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'medium';
+}
+
+function classifyLocalCommandRisk(action = '') {
+  const normalized = String(action || '').trim().toLowerCase();
+  const lowRiskActions = ['ping', 'status'];
+  if (lowRiskActions.includes(normalized)) return 'low';
+  if (['type_text', 'clickui'].includes(normalized)) return 'high';
+  if (['screenshot', 'screenshot_ocr', 'read_file', 'list_dir', 'watch_folder'].includes(normalized)) {
+    return 'medium';
+  }
+  return 'medium';
+}
+
+function getLocalCommandRiskReason(action = '', riskLevel = 'medium') {
+  const normalized = String(action || '').trim().toLowerCase();
+  if (riskLevel === 'low') return 'Read-only health check allowed for automatic sidecar dispatch.';
+  if (normalized === 'type_text') return 'Keyboard input can mutate applications and must be operator-approved.';
+  if (normalized === 'clickui') return 'GUI automation may click or inspect sensitive desktop state.';
+  if (normalized === 'screenshot' || normalized === 'screenshot_ocr') {
+    return 'Screen capture can expose private desktop data and must be reviewed first.';
+  }
+  if (['read_file', 'list_dir', 'watch_folder'].includes(normalized)) {
+    return 'Filesystem reads can expose sensitive local data and require approval.';
+  }
+  return 'Local desktop command requires approval unless explicitly classified as a health check.';
+}
+
+function stableLocalCommandJson(value) {
+  if (Array.isArray(value)) return value.map((item) => stableLocalCommandJson(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.keys(value)
+    .sort()
+    .reduce((acc, key) => {
+      acc[key] = stableLocalCommandJson(value[key]);
+      return acc;
+    }, {});
+}
+
+function computeLocalCommandDigest(record = {}) {
+  const payload = {
+    tenantId: normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+    command: String(record.command || ''),
+    action: normalizeLocalCommandAction(record),
+    params: stableLocalCommandJson(record.params && typeof record.params === 'object' ? record.params : {}),
+  };
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
 function buildLocalCommandRecord(params = {}) {
   const command = String(params.command || params.text || params.transcript || '').trim();
   const action = normalizeLocalCommandAction(params);
-  const lowRisk = isLowRiskLocalCommandAction(action);
+  const riskLevel = classifyLocalCommandRisk(action);
+  const lowRisk = riskLevel === 'low';
   const requiresApproval = params.requiresApproval === false && lowRisk ? false : true;
   const now = isoNow();
   const id = String(params.id || params.commandId || `local-command-${Date.now()}-${randomUUID().slice(0, 8)}`).trim();
   const sidecarParams = params.params && typeof params.params === 'object' ? params.params : {};
-  return {
+  const record = {
     id,
     tenantId: normalizeTenantId(params.tenantId || params.tenant_id || 'pbk'),
     command,
@@ -11241,7 +11311,11 @@ function buildLocalCommandRecord(params = {}) {
     source: String(params.source || 'ava-chat').trim(),
     status: requiresApproval ? 'pending_approval' : 'approved',
     requiresApproval,
+    riskLevel,
+    riskReason: String(params.riskReason || params.risk_reason || getLocalCommandRiskReason(action, riskLevel)).trim(),
+    classificationVersion: String(params.classificationVersion || params.classification_version || LOCAL_COMMAND_RISK_CLASSIFICATION_VERSION).trim(),
     approvalId: String(params.approvalId || params.approval_id || '').trim(),
+    approvalDigest: String(params.approvalDigest || params.approval_digest || '').trim(),
     sidecarId: String(params.sidecarId || params.sidecar_id || '').trim(),
     result: params.result && typeof params.result === 'object' ? params.result : {},
     error: String(params.error || '').trim(),
@@ -11251,6 +11325,8 @@ function buildLocalCommandRecord(params = {}) {
     completedAt: params.completedAt || params.completed_at || null,
     updatedAt: params.updatedAt || params.updated_at || now,
   };
+  record.commandDigest = String(params.commandDigest || params.command_digest || computeLocalCommandDigest(record)).trim();
+  return record;
 }
 
 function mapLocalCommandRow(row = {}) {
@@ -11264,6 +11340,11 @@ function mapLocalCommandRow(row = {}) {
     source: String(row.source || 'ava-chat'),
     status: normalizeLocalCommandStatus(row.status),
     requiresApproval: row.requires_approval ?? row.requiresApproval ?? true,
+    riskLevel: normalizeLocalCommandRiskLevel(row.risk_level || row.riskLevel || 'medium'),
+    riskReason: String(row.risk_reason || row.riskReason || ''),
+    classificationVersion: String(row.classification_version || row.classificationVersion || LOCAL_COMMAND_RISK_CLASSIFICATION_VERSION),
+    commandDigest: String(row.command_digest || row.commandDigest || ''),
+    approvalDigest: String(row.approval_digest || row.approvalDigest || ''),
     approvalId: String(row.approval_id || row.approvalId || ''),
     sidecarId: String(row.sidecar_id || row.sidecarId || ''),
     result: row.result && typeof row.result === 'object' ? row.result : {},
@@ -11285,11 +11366,53 @@ function upsertLocalCommandState(record = {}) {
   return upsertById(state, 'localCommands', mapped);
 }
 
+async function findLocalCommandRecordById(commandId = '', tenantId = 'pbk') {
+  const id = String(commandId || '').trim();
+  if (!id) return null;
+  const normalizedTenantId = normalizeTenantId(tenantId || 'pbk');
+  const pool = getPgPool();
+  if (pool) {
+    try {
+      await ensureLocalCommandQueueSchema(pool);
+      const { rows } = await pool.query(
+        `SELECT * FROM public.pbk_local_commands
+         WHERE tenant_id = $1 AND id = $2
+         LIMIT 1`,
+        [normalizedTenantId, id]
+      );
+      if (rows[0]) return mapLocalCommandRow(rows[0]);
+    } catch (error) {
+      console.warn('[pbk-local-openclaw] local command lookup skipped:', error?.message || error);
+    }
+  }
+  return (state.localCommands || []).find((item) => String(item.id || '') === id) || null;
+}
+
 async function persistLocalCommandRecordToPg(record = {}, options = {}) {
   const pool = getPgPool();
   if (!pool || !record.id) return { ok: false, reason: 'postgres_unavailable' };
   try {
     await ensureLocalCommandQueueSchema(pool);
+    const tenantId = normalizeTenantId(record.tenantId || record.tenant_id || 'pbk');
+    const commandDigest = String(record.commandDigest || record.command_digest || computeLocalCommandDigest(record)).trim();
+    const approvalDigest = String(record.approvalDigest || record.approval_digest || '').trim();
+    const riskLevel = normalizeLocalCommandRiskLevel(record.riskLevel || record.risk_level || classifyLocalCommandRisk(record.action));
+    const { rows: existingRows } = await pool.query(
+      `SELECT id, status, command_digest
+       FROM public.pbk_local_commands
+       WHERE tenant_id = $1 AND id = $2
+       LIMIT 1`,
+      [tenantId, record.id]
+    );
+    const existingDigest = String(existingRows[0]?.command_digest || '').trim();
+    if (existingDigest && commandDigest && existingDigest !== commandDigest) {
+      return {
+        ok: false,
+        result: 'local_command_digest_conflict',
+        error: 'Refusing to overwrite local command contents after queueing.',
+        existingStatus: normalizeLocalCommandStatus(existingRows[0]?.status),
+      };
+    }
     const statusAssignment =
       options.allowDispatchRequeue === true
         ? 'EXCLUDED.status'
@@ -11302,19 +11425,41 @@ async function persistLocalCommandRecordToPg(record = {}, options = {}) {
     const { rows } = await pool.query(
       `INSERT INTO public.pbk_local_commands (
         id, tenant_id, command, action, params, requested_by, source, status,
-        requires_approval, approval_id, sidecar_id, result, error, created_at,
-        approved_at, dispatched_at, completed_at, updated_at
+        requires_approval, risk_level, risk_reason, classification_version,
+        command_digest, approval_digest, approval_id, sidecar_id, result, error,
+        created_at, approved_at, dispatched_at, completed_at, updated_at
       )
-      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18)
+      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20,$21,$22,$23)
       ON CONFLICT (id) DO UPDATE SET
         tenant_id = EXCLUDED.tenant_id,
-        command = EXCLUDED.command,
-        action = EXCLUDED.action,
-        params = EXCLUDED.params,
+        command = CASE
+          WHEN pbk_local_commands.command_digest = '' OR pbk_local_commands.command_digest = EXCLUDED.command_digest
+          THEN EXCLUDED.command
+          ELSE pbk_local_commands.command
+        END,
+        action = CASE
+          WHEN pbk_local_commands.command_digest = '' OR pbk_local_commands.command_digest = EXCLUDED.command_digest
+          THEN EXCLUDED.action
+          ELSE pbk_local_commands.action
+        END,
+        params = CASE
+          WHEN pbk_local_commands.command_digest = '' OR pbk_local_commands.command_digest = EXCLUDED.command_digest
+          THEN EXCLUDED.params
+          ELSE pbk_local_commands.params
+        END,
         requested_by = EXCLUDED.requested_by,
         source = EXCLUDED.source,
         status = ${statusAssignment},
         requires_approval = EXCLUDED.requires_approval,
+        risk_level = EXCLUDED.risk_level,
+        risk_reason = EXCLUDED.risk_reason,
+        classification_version = EXCLUDED.classification_version,
+        command_digest = CASE
+          WHEN pbk_local_commands.command_digest = ''
+          THEN EXCLUDED.command_digest
+          ELSE pbk_local_commands.command_digest
+        END,
+        approval_digest = EXCLUDED.approval_digest,
         approval_id = EXCLUDED.approval_id,
         sidecar_id = EXCLUDED.sidecar_id,
         result = EXCLUDED.result,
@@ -11326,7 +11471,7 @@ async function persistLocalCommandRecordToPg(record = {}, options = {}) {
       RETURNING *`,
       [
         record.id,
-        normalizeTenantId(record.tenantId || record.tenant_id || 'pbk'),
+        tenantId,
         record.command || '',
         record.action || 'operator_command',
         JSON.stringify(record.params || {}),
@@ -11334,6 +11479,11 @@ async function persistLocalCommandRecordToPg(record = {}, options = {}) {
         record.source || 'ava-chat',
         normalizeLocalCommandStatus(record.status),
         record.requiresApproval !== false && record.requires_approval !== false,
+        riskLevel,
+        record.riskReason || record.risk_reason || getLocalCommandRiskReason(record.action, riskLevel),
+        record.classificationVersion || record.classification_version || LOCAL_COMMAND_RISK_CLASSIFICATION_VERSION,
+        commandDigest,
+        approvalDigest,
         record.approvalId || record.approval_id || '',
         record.sidecarId || record.sidecar_id || '',
         JSON.stringify(record.result || {}),
@@ -11469,7 +11619,7 @@ async function listLocalCommands({ status = 'all', limit = 40, pendingOnly = fal
 }
 
 async function queueLocalCommand(params = {}) {
-  const record = buildLocalCommandRecord(params);
+  let record = buildLocalCommandRecord(params);
   if (!record.command) {
     return { ok: false, result: 'missing_command', error: 'A local command transcript is required.' };
   }
@@ -11482,8 +11632,12 @@ async function queueLocalCommand(params = {}) {
     };
   }
   upsertLocalCommandState(record);
-  await persistLocalCommandRecordToPg(record);
+  const initialPersistence = await persistLocalCommandRecordToPg(record);
+  if (initialPersistence.ok === false && initialPersistence.result === 'local_command_digest_conflict') {
+    return initialPersistence;
+  }
   let approvalResult = null;
+  let autoDispatchResult = null;
   if (record.requiresApproval) {
     approvalResult = await toolHandlers.createApproval({
       type: 'local_command',
@@ -11502,9 +11656,15 @@ async function queueLocalCommand(params = {}) {
         sidecarId: record.sidecarId,
         requestedBy: record.requestedBy,
         source: record.source,
+        riskLevel: record.riskLevel,
+        riskReason: record.riskReason,
+        classificationVersion: record.classificationVersion,
+        commandDigest: record.commandDigest,
+        approvalDigest: record.commandDigest,
       },
     });
     record.approvalId = approvalResult?.approval?.id || '';
+    record.approvalDigest = record.commandDigest;
     record.updatedAt = isoNow();
     upsertLocalCommandState(record);
     await persistLocalCommandRecordToPg(record);
@@ -11519,16 +11679,29 @@ async function queueLocalCommand(params = {}) {
         target: record.id,
       })
     );
+    if (!record.requiresApproval && isLocalCommandSidecarAction(record.action)) {
+      autoDispatchResult = await dispatchApprovedLocalCommand(record, {
+        actor: 'Ava trusted read-only lane',
+      });
+      if (autoDispatchResult?.command) {
+        record = autoDispatchResult.command;
+      }
+    }
   }
   await persistState(state);
   return {
     ok: true,
-    result: record.requiresApproval ? 'queued_for_approval' : 'queued_for_local_agent',
+    result: record.requiresApproval
+      ? 'queued_for_approval'
+      : autoDispatchResult?.result || 'queued_for_local_agent',
     message: record.requiresApproval
       ? 'Command queued for approval before OpenClaw/ClickUI execution.'
-      : 'Low-risk command queued for the local OpenClaw worker.',
+      : autoDispatchResult?.dispatched === false
+        ? 'Trusted read-only command is approved and waiting for the local sidecar.'
+        : 'Trusted read-only command was sent to the local sidecar.',
     commandId: record.id,
     command: record,
+    dispatch: autoDispatchResult,
     approval: approvalResult?.approval || null,
     sidecarStatus: buildDesktopSidecarStatus(),
     state: buildStateSnapshot({ compact: true }),
@@ -11551,7 +11724,7 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
   const approved = decisionStatus === 'approved';
   const nextStatus = approved ? 'approved' : 'rejected';
   const existing =
-    (state.localCommands || []).find((item) => String(item.id || '') === commandId) ||
+    (await findLocalCommandRecordById(commandId, metadata.tenantId || metadata.tenant_id || 'pbk')) ||
     buildLocalCommandRecord({
       id: commandId,
       command: metadata.command || approval.notes || '',
@@ -11563,6 +11736,35 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
       approvalId: approval.id,
       createdAt: approval.createdAt || isoNow(),
     });
+  const commandDigest = String(existing.commandDigest || existing.command_digest || computeLocalCommandDigest(existing)).trim();
+  const approvalDigest = String(
+    metadata.commandDigest ||
+      metadata.command_digest ||
+      metadata.approvalDigest ||
+      metadata.approval_digest ||
+      ''
+  ).trim();
+  if (approvalDigest && commandDigest && approvalDigest !== commandDigest) {
+    addActivity(
+      state,
+      makeActivity({
+        actor: options.actor || approval.actor || 'PBK Approval',
+        category: 'LOCAL',
+        status: 'error',
+        text: `Blocked local command approval digest mismatch for ${existing.action || commandId}`,
+        target: commandId,
+      })
+    );
+    await persistState(state);
+    return {
+      ok: false,
+      result: 'local_command_approval_digest_mismatch',
+      commandId,
+      commandDigest,
+      approvalDigest,
+      command: existing,
+    };
+  }
   const existingStatus = normalizeLocalCommandStatus(existing.status);
   if (approved && ['dispatched', 'completed'].includes(existingStatus)) {
     return {
@@ -11574,6 +11776,7 @@ async function syncLocalCommandApprovalDecision(approval = {}, options = {}) {
   const patched = {
     ...existing,
     approvalId: approval.id || existing.approvalId || '',
+    approvalDigest: approvalDigest || commandDigest,
     status: nextStatus,
     approvedAt: approved ? approval.actedAt || isoNow() : existing.approvedAt || null,
     error: approved ? '' : approval.notes || 'Rejected by operator.',
@@ -11712,6 +11915,23 @@ async function completeLocalCommand(commandId = '', payload = {}) {
       ok: false,
       result: 'local_command_not_found',
       error: 'Local command was not found; refusing to create a completion record.',
+    };
+  }
+  const existingStatus = normalizeLocalCommandStatus(existing.status);
+  if (['pending_approval', 'rejected'].includes(existingStatus)) {
+    return {
+      ok: false,
+      result: 'local_command_completion_not_approved',
+      error: 'Local command has not been approved for execution.',
+      command: existing,
+    };
+  }
+  if (existingStatus === 'approved' && isLocalCommandSidecarAction(existing.action)) {
+    return {
+      ok: false,
+      result: 'local_command_completion_not_dispatched',
+      error: 'Sidecar command completion requires a bridge dispatch claim.',
+      command: existing,
     };
   }
   const ok = payload.ok !== false && String(payload.status || '').toLowerCase() !== 'failed';
@@ -45047,7 +45267,23 @@ const toolHandlers = {
 
   async sidecarCommand(params = {}) {
     recordToolUse('sidecarCommand');
-    return sendDesktopSidecarCommand(params);
+    const action = normalizeLocalCommandAction(params);
+    const riskLevel = classifyLocalCommandRisk(action);
+    if (riskLevel !== 'low') {
+      return {
+        ok: false,
+        result: 'sidecar_command_requires_approval',
+        action,
+        riskLevel,
+        riskReason: getLocalCommandRiskReason(action, riskLevel),
+        hint: 'Use executeLocalCommand so the command is queued, approval-bound, and dispatched safely.',
+      };
+    }
+    return sendDesktopSidecarCommand({
+      ...params,
+      action,
+      allowAutomation: false,
+    });
   },
 
   async executeLocalCommand(params = {}) {
@@ -66796,6 +67032,8 @@ const desktopSidecarSockets = new Map();
 const pendingSidecarCommands = new Map();
 const desktopSidecarEvents = [];
 const DESKTOP_SIDECAR_ALLOWED_ACTIONS = new Set(['ping', 'status', 'read_file', 'list_dir', 'screenshot', 'screenshot_ocr', 'type_text', 'llm_query', 'watch_folder']);
+const DESKTOP_SIDECAR_STALE_MS = 45 * 1000;
+const DESKTOP_SIDECAR_BRIDGE_PING_INTERVAL_MS = 15 * 1000;
 
 function pushDesktopSidecarEvent(event = {}) {
   desktopSidecarEvents.unshift({
@@ -66815,6 +67053,41 @@ function sendDesktopSidecarSocketMessage(socket, message = {}) {
   }
 }
 
+function parseSidecarTime(value = '') {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function getDesktopSidecarLastSeenAt(socket) {
+  const meta = socket?.meta || {};
+  return Math.max(
+    parseSidecarTime(meta.lastHeartbeatAt),
+    parseSidecarTime(meta.lastMessageAt),
+    parseSidecarTime(meta.connectedAt)
+  );
+}
+
+function isDesktopSidecarSocketFresh(socket) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  const lastSeen = getDesktopSidecarLastSeenAt(socket);
+  return lastSeen > 0 && Date.now() - lastSeen <= DESKTOP_SIDECAR_STALE_MS;
+}
+
+function unregisterDesktopSidecarSocket(socket, fallbackSidecarId = '') {
+  const sidecarId = String(socket?.meta?.sidecarId || fallbackSidecarId || '').trim();
+  if (sidecarId && desktopSidecarSockets.get(sidecarId) === socket) {
+    desktopSidecarSockets.delete(sidecarId);
+    return sidecarId;
+  }
+  for (const [id, registeredSocket] of desktopSidecarSockets.entries()) {
+    if (registeredSocket === socket) {
+      desktopSidecarSockets.delete(id);
+      return id;
+    }
+  }
+  return sidecarId;
+}
+
 function getDesktopSidecarAuthToken(request, upgradeUrl) {
   return (
     upgradeUrl.searchParams.get('token') ||
@@ -66831,16 +67104,23 @@ function getDesktopSidecarAuthToken(request, upgradeUrl) {
 }
 
 function buildDesktopSidecarStatus() {
-  const sidecars = [...desktopSidecarSockets.entries()].map(([sidecarId, socket]) => ({
-    sidecarId,
-    connected: socket.readyState === WebSocket.OPEN,
-    machineName: socket.meta?.machineName || '',
-    capabilities: socket.meta?.capabilities || {},
-    allowedRootLabels: socket.meta?.allowedRootLabels || [],
-    connectedAt: socket.meta?.connectedAt || '',
-    lastMessageAt: socket.meta?.lastMessageAt || '',
-    lastCommandAt: socket.meta?.lastCommandAt || '',
-  }));
+  const sidecars = [...desktopSidecarSockets.entries()].map(([sidecarId, socket]) => {
+    const lastSeenAt = getDesktopSidecarLastSeenAt(socket);
+    const connected = isDesktopSidecarSocketFresh(socket);
+    return {
+      sidecarId,
+      connected,
+      stale: socket.readyState !== WebSocket.OPEN || !connected,
+      machineName: socket.meta?.machineName || '',
+      capabilities: socket.meta?.capabilities || {},
+      allowedRootLabels: socket.meta?.allowedRootLabels || [],
+      connectedAt: socket.meta?.connectedAt || '',
+      lastMessageAt: socket.meta?.lastMessageAt || '',
+      lastHeartbeatAt: socket.meta?.lastHeartbeatAt || '',
+      lastCommandAt: socket.meta?.lastCommandAt || '',
+      ageMs: lastSeenAt ? Math.max(0, Date.now() - lastSeenAt) : null,
+    };
+  });
   return {
     ok: true,
     result: 'desktop_sidecar_status',
@@ -66854,10 +67134,11 @@ function buildDesktopSidecarStatus() {
 
 function getActiveDesktopSidecar(sidecarId = '') {
   const requested = String(sidecarId || '').trim();
-  if (requested && desktopSidecarSockets.get(requested)?.readyState === WebSocket.OPEN) {
-    return desktopSidecarSockets.get(requested);
+  if (requested) {
+    const socket = desktopSidecarSockets.get(requested);
+    return isDesktopSidecarSocketFresh(socket) ? socket : null;
   }
-  return [...desktopSidecarSockets.values()].find((socket) => socket.readyState === WebSocket.OPEN) || null;
+  return [...desktopSidecarSockets.values()].find((socket) => isDesktopSidecarSocketFresh(socket)) || null;
 }
 
 function validateDesktopSidecarBridgeCommand(params = {}) {
@@ -66960,6 +67241,40 @@ async function sendDesktopSidecarCommand(params = {}) {
   });
 }
 
+function registerDesktopSidecarPresence(socket, message = {}) {
+  const status = message.status || {};
+  const sidecarId = String(
+    message.sidecarId ||
+      status.sidecarId ||
+      socket.meta?.sidecarId ||
+      `sidecar-${randomUUID().slice(0, 8)}`
+  ).trim();
+  const previousSocket = desktopSidecarSockets.get(sidecarId);
+  if (previousSocket && previousSocket !== socket) {
+    unregisterDesktopSidecarSocket(previousSocket, sidecarId);
+    try {
+      previousSocket.close?.();
+    } catch {
+      // Best-effort eviction of stale duplicate sidecar registrations.
+    }
+  }
+  if (socket.meta?.sidecarId && socket.meta.sidecarId !== sidecarId) {
+    unregisterDesktopSidecarSocket(socket, socket.meta.sidecarId);
+  }
+  socket.meta = {
+    ...(socket.meta || {}),
+    sidecarId,
+    machineName: status.machineName || message.machineName || socket.meta?.machineName || '',
+    capabilities: status.capabilities || socket.meta?.capabilities || {},
+    allowedRootLabels: status.allowedRootLabels || socket.meta?.allowedRootLabels || [],
+    connectedAt: socket.meta?.connectedAt || isoNow(),
+    lastMessageAt: isoNow(),
+    lastHeartbeatAt: isoNow(),
+  };
+  desktopSidecarSockets.set(sidecarId, socket);
+  return sidecarId;
+}
+
 function handleDesktopSidecarMessage(socket, raw) {
   socket.meta = {
     ...(socket.meta || {}),
@@ -66967,21 +67282,7 @@ function handleDesktopSidecarMessage(socket, raw) {
   };
   const message = safeJsonParse(String(raw || ''), {});
   if (message.type === 'sidecar.hello') {
-    const status = message.status || {};
-    const sidecarId = String(message.sidecarId || status.sidecarId || socket.meta?.sidecarId || `sidecar-${randomUUID().slice(0, 8)}`).trim();
-    if (socket.meta?.sidecarId && socket.meta.sidecarId !== sidecarId) {
-      desktopSidecarSockets.delete(socket.meta.sidecarId);
-    }
-    socket.meta = {
-      ...(socket.meta || {}),
-      sidecarId,
-      machineName: status.machineName || message.machineName || '',
-      capabilities: status.capabilities || {},
-      allowedRootLabels: status.allowedRootLabels || [],
-      connectedAt: socket.meta?.connectedAt || isoNow(),
-      lastMessageAt: isoNow(),
-    };
-    desktopSidecarSockets.set(sidecarId, socket);
+    const sidecarId = registerDesktopSidecarPresence(socket, message);
     pushDesktopSidecarEvent({
       type: 'sidecar_connected',
       sidecarId,
@@ -66993,6 +67294,16 @@ function handleDesktopSidecarMessage(socket, raw) {
       bridgeRevision: BUILD_REVISION,
       at: isoNow(),
     });
+    return;
+  }
+  if (message.type === 'sidecar.heartbeat' || message.type === 'sidecar.pong') {
+    const sidecarId = registerDesktopSidecarPresence(socket, message);
+    if (message.type === 'sidecar.pong') {
+      pushDesktopSidecarEvent({
+        type: 'sidecar_pong',
+        sidecarId,
+      });
+    }
     return;
   }
   if (message.type === 'sidecar.command.result') {
@@ -67041,16 +67352,39 @@ desktopSidecarWss.on('connection', (socket, request) => {
   });
   socket.on('message', (raw) => handleDesktopSidecarMessage(socket, raw));
   socket.on('close', () => {
-    desktopSidecarSockets.delete(socket.meta?.sidecarId || sidecarId);
+    const disconnectedSidecarId = unregisterDesktopSidecarSocket(socket, sidecarId);
     pushDesktopSidecarEvent({
       type: 'sidecar_disconnected',
-      sidecarId: socket.meta?.sidecarId || sidecarId,
+      sidecarId: disconnectedSidecarId,
     });
   });
   socket.on('error', () => {
-    desktopSidecarSockets.delete(socket.meta?.sidecarId || sidecarId);
+    unregisterDesktopSidecarSocket(socket, sidecarId);
   });
 });
+
+const desktopSidecarHeartbeatTimer = setInterval(() => {
+  for (const socket of desktopSidecarWss.clients) {
+    if (!isDesktopSidecarSocketFresh(socket)) {
+      const sidecarId = unregisterDesktopSidecarSocket(socket);
+      pushDesktopSidecarEvent({
+        type: 'sidecar_stale_terminated',
+        sidecarId,
+      });
+      try {
+        socket.terminate();
+      } catch {
+        // Socket was already gone.
+      }
+      continue;
+    }
+    sendDesktopSidecarSocketMessage(socket, {
+      type: 'sidecar.ping',
+      at: isoNow(),
+    });
+  }
+}, DESKTOP_SIDECAR_BRIDGE_PING_INTERVAL_MS);
+desktopSidecarHeartbeatTimer.unref?.();
 
 const runtimeBrowserWss = new WebSocketServer({
   noServer: true,

@@ -50,6 +50,8 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'Search command history',
   'Replay',
   'getResultText',
+  'CommandResultPreview',
+  'riskLevel',
   'role="alert"',
   'role="radiogroup"',
   'text-[16px]',
@@ -71,6 +73,22 @@ assert(
 assert(
   /command: 'Take a screenshot of the current desktop',[\s\S]*action: 'screenshot'/.test(avaChat),
   'Screenshot quick prompt must select the screenshot action.'
+);
+assert(
+  /command: 'Check OpenClaw sidecar status',[\s\S]*requiresApproval: false/.test(avaChat) &&
+    /command: 'Take a screenshot of the current desktop',[\s\S]*requiresApproval: true/.test(
+      avaChat
+    ) &&
+    /command: 'ClickUI: inspect the active window[\s\S]*requiresApproval: true/.test(avaChat),
+  'Quick commands must auto-run health checks while keeping screen capture and automation approval-gated.'
+);
+assert(
+  /setRequiresApproval\(item\.requiresApproval\)/.test(avaChat),
+  'Selecting a quick command must update the composer approval mode.'
+);
+assert(
+  /function CommandResultPreview[\s\S]*imageDataUrl[\s\S]*entries[\s\S]*sourceName/.test(avaChat),
+  'Ava Chat must render screenshots and structured sidecar results inline.'
 );
 assert(
   /showUiToast\(\{[\s\S]*title: result\.result[\s\S]*setSubmitting\(false\);[\s\S]*Promise\.allSettled/.test(
@@ -133,9 +151,33 @@ assert(/from = "\/ava-chat"/.test(netlify), 'Netlify must rewrite /ava-chat to t
   'createApproval',
   'syncLocalCommandApprovalDecision',
   'dispatchApprovedLocalCommand',
+  'classifyLocalCommandRisk',
+  'risk_level',
 ].forEach((token) => {
   assert(bridge.includes(token), `openclaw-local-server.mjs must include ${token}.`);
 });
+assert(
+  /function classifyLocalCommandRisk[\s\S]*\['ping', 'status'\]/.test(bridge),
+  'The bridge must own a narrow read-only low-risk action allowlist.'
+);
+assert(
+  /const riskLevel = classifyLocalCommandRisk\(action\)[\s\S]*const lowRisk = riskLevel === 'low'/.test(
+    bridge
+  ),
+  'Command risk must be derived from the normalized server action.'
+);
+assert(
+  /!record\.requiresApproval[\s\S]*isLocalCommandSidecarAction\(record\.action\)[\s\S]*dispatchApprovedLocalCommand/.test(
+    bridge
+  ),
+  'Approved read-only commands must dispatch immediately through the guarded sidecar path.'
+);
+assert(
+  /commandDigest[\s\S]*approvalDigest/.test(bridge) &&
+    /commandDigest[\s\S]*metadata/.test(bridge) &&
+    /local_command_approval_digest_mismatch/.test(bridge),
+  'Approval decisions must remain bound to the immutable command contents.'
+);
 assert(
   /incomingStatus === 'approved'[\s\S]*dispatchApprovedLocalCommand/.test(bridge),
   'Approved UI or Slack callbacks must dispatch sidecar-safe local commands through the shared bridge path.'
@@ -169,6 +211,21 @@ assert(
 assert(
   /CREATE INDEX IF NOT EXISTS .*pbk_local_commands.*status/.test(commandMigration[1]),
   'pbk_local_commands migration must index command status for polling.'
+);
+const commandRiskMigration = migrations.find(([, sql]) =>
+  /pbk_local_commands/.test(sql) &&
+  /ADD COLUMN IF NOT EXISTS risk_level TEXT/.test(sql) &&
+  /ADD COLUMN IF NOT EXISTS command_digest TEXT/.test(sql)
+);
+assert(commandRiskMigration, 'A migration must add local-command risk metadata.');
+assert(
+  /CHECK \(risk_level IN \('low', 'medium', 'high'\)\)/.test(commandRiskMigration[1]),
+  'Local-command risk metadata must be constrained to supported values.'
+);
+assert(
+  /ADD COLUMN IF NOT EXISTS command_digest TEXT/.test(commandRiskMigration[1]) &&
+    /ADD COLUMN IF NOT EXISTS approval_digest TEXT/.test(commandRiskMigration[1]),
+  'The command migration must persist command and approval digests.'
 );
 
 console.log('[ava-chat-local-command-smoke] ok');

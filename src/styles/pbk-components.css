@@ -8651,6 +8651,8 @@ html[data-theme='light'] .pbk-mobile-shell-menu-link.active {
   --ava-user-bubble: #142a44;
   --ava-user-border: #25517b;
   --ava-success: #4ade80;
+  --ava-success-soft: rgba(74, 222, 128, 0.1);
+  --ava-success-border: rgba(74, 222, 128, 0.3);
   --ava-warning: #fbbf24;
   --ava-warning-soft: rgba(251, 191, 36, 0.1);
   --ava-warning-border: rgba(251, 191, 36, 0.35);
@@ -8675,6 +8677,8 @@ html[data-theme='light'] .pbk-ava-chat-surface {
   --ava-user-bubble: #e3f2fd;
   --ava-user-border: #9ccbe8;
   --ava-success: #15803d;
+  --ava-success-soft: rgba(21, 128, 61, 0.08);
+  --ava-success-border: rgba(21, 128, 61, 0.24);
   --ava-warning: #a16207;
   --ava-warning-soft: rgba(217, 119, 6, 0.09);
   --ava-warning-border: rgba(217, 119, 6, 0.28);

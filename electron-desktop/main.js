@@ -6,10 +6,12 @@ const WebSocket = require('ws');
 const {
   buildBridgeSidecarUrl,
   buildCommandResult,
+  buildSidecarHeartbeatPayload,
   buildSidecarStatusPayload,
   isTruthy,
   limitText,
   normalizeAllowedRoots,
+  normalizeScreenshotDimensions,
   validateSidecarCommand,
 } = require('./sidecar-core');
 
@@ -25,11 +27,13 @@ const SIDECAR_SCREEN_ENABLED = process.env.PBK_SIDECAR_SCREEN_ENABLED === undefi
   : isTruthy(process.env.PBK_SIDECAR_SCREEN_ENABLED);
 const SIDECAR_LOCAL_LLM_ENABLED = isTruthy(process.env.PBK_SIDECAR_LOCAL_LLM_ENABLED);
 const SIDECAR_ALLOWED_ROOTS_RAW = process.env.PBK_SIDECAR_ALLOWED_ROOTS || '';
+const SIDECAR_HEARTBEAT_INTERVAL_MS = 15 * 1000;
 
 let win = null;
 let tray = null;
 let sidecarSocket = null;
 let sidecarReconnectTimer = null;
+let sidecarHeartbeatTimer = null;
 let sidecarStartedAt = new Date().toISOString();
 let sidecarLastBridgeMessageAt = '';
 let sidecarWatchers = new Map();
@@ -176,6 +180,26 @@ function buildLocalSidecarStatus(connected = false) {
   });
 }
 
+function stopSidecarHeartbeat() {
+  if (!sidecarHeartbeatTimer) return;
+  clearInterval(sidecarHeartbeatTimer);
+  sidecarHeartbeatTimer = null;
+}
+
+function sendSidecarHeartbeat() {
+  return sendSidecarMessage(buildSidecarHeartbeatPayload({
+    sidecarId: SIDECAR_ID,
+    status: buildLocalSidecarStatus(true),
+  }));
+}
+
+function startSidecarHeartbeat() {
+  stopSidecarHeartbeat();
+  sidecarHeartbeatTimer = setInterval(() => {
+    if (!sendSidecarHeartbeat()) stopSidecarHeartbeat();
+  }, SIDECAR_HEARTBEAT_INTERVAL_MS);
+}
+
 async function runLocalLlmQuery(command) {
   const response = await fetch(process.env.PBK_OLLAMA_URL || 'http://127.0.0.1:11434/api/chat', {
     method: 'POST',
@@ -194,19 +218,23 @@ async function runLocalLlmQuery(command) {
 }
 
 async function captureScreenPayload(command) {
+  const dimensions = normalizeScreenshotDimensions(command);
   const sources = await desktopCapturer.getSources({
     types: ['screen', 'window'],
-    thumbnailSize: {
-      width: Number(command.width || 1280),
-      height: Number(command.height || 720),
-    },
+    thumbnailSize: dimensions,
   });
   const source = sources.find((item) => item.name && !/entire screen/i.test(item.name)) || sources[0];
   if (!source) throw new Error('No desktop capture source available.');
+  const imageBuffer = source.thumbnail.toPNG();
+  const imageSize = source.thumbnail.getSize();
   return {
     sourceName: source.name,
     displayId: source.display_id || '',
-    imageDataUrl: source.thumbnail.toDataURL(),
+    width: imageSize.width,
+    height: imageSize.height,
+    mediaType: 'image/png',
+    byteLength: imageBuffer.byteLength,
+    imageDataUrl: `data:image/png;base64,${imageBuffer.toString('base64')}`,
     ocrText: '',
     note: 'OCR is optional. Screenshot image is returned locally to the bridge for Ava/Rex review.',
   };
@@ -235,7 +263,10 @@ function watchFolderForSidecar(command) {
 function scheduleSidecarReconnect() {
   if (app.isQuitting || !SIDECAR_ENABLED) return;
   if (sidecarReconnectTimer) clearTimeout(sidecarReconnectTimer);
-  sidecarReconnectTimer = setTimeout(connectDesktopSidecar, 5000);
+  sidecarReconnectTimer = setTimeout(() => {
+    sidecarReconnectTimer = null;
+    connectDesktopSidecar();
+  }, 5000);
 }
 
 async function handleSidecarCommand(rawCommand) {
@@ -303,20 +334,36 @@ function connectDesktopSidecar() {
   if (sidecarSocket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(sidecarSocket.readyState)) return;
   const url = new URL(SIDECAR_BRIDGE_URL);
   if (SIDECAR_TOKEN) url.searchParams.set('token', SIDECAR_TOKEN);
-  sidecarSocket = new WebSocket(url.toString(), {
+  const socket = new WebSocket(url.toString(), {
     headers: SIDECAR_TOKEN ? { Authorization: `Bearer ${SIDECAR_TOKEN}` } : {},
   });
-  sidecarSocket.on('open', () => {
+  sidecarSocket = socket;
+  socket.on('open', () => {
+    if (sidecarSocket !== socket) return;
+    if (sidecarReconnectTimer) {
+      clearTimeout(sidecarReconnectTimer);
+      sidecarReconnectTimer = null;
+    }
     sendSidecarMessage({
       type: 'sidecar.hello',
       sidecarId: SIDECAR_ID,
       status: buildLocalSidecarStatus(true),
     });
+    startSidecarHeartbeat();
   });
-  sidecarSocket.on('message', (raw) => {
+  socket.on('message', (raw) => {
+    if (sidecarSocket !== socket) return;
     try {
       sidecarLastBridgeMessageAt = new Date().toISOString();
       const message = JSON.parse(String(raw || '{}'));
+      if (message.type === 'sidecar.ping') {
+        sendSidecarMessage(buildSidecarHeartbeatPayload({
+          type: 'sidecar.pong',
+          sidecarId: SIDECAR_ID,
+          status: buildLocalSidecarStatus(true),
+        }));
+        return;
+      }
       if (message.type === 'sidecar.command' || message.type === 'command') {
         void handleSidecarCommand(message.payload || message);
       }
@@ -324,12 +371,17 @@ function connectDesktopSidecar() {
       safeWarn('[pbk-ava-desktop] ignored malformed sidecar message:', error?.message || error);
     }
   });
-  sidecarSocket.on('close', () => {
+  socket.on('close', () => {
+    if (sidecarSocket !== socket) return;
+    stopSidecarHeartbeat();
+    sidecarSocket = null;
     scheduleSidecarReconnect();
   });
-  sidecarSocket.on('error', (error) => {
+  socket.on('error', (error) => {
     safeWarn('[pbk-ava-desktop] sidecar socket error:', error?.message || error);
-    try { sidecarSocket?.terminate?.(); } catch {}
+    if (sidecarSocket === socket) {
+      try { sidecarSocket?.terminate?.(); } catch {}
+    }
   });
 }
 
@@ -372,11 +424,16 @@ app.on('activate', () => {
 });
 
 app.on('will-quit', () => {
+  app.isQuitting = true;
   globalShortcut.unregisterAll();
   for (const watcher of sidecarWatchers.values()) {
     try { watcher.close(); } catch {}
   }
   sidecarWatchers = new Map();
-  if (sidecarReconnectTimer) clearTimeout(sidecarReconnectTimer);
+  stopSidecarHeartbeat();
+  if (sidecarReconnectTimer) {
+    clearTimeout(sidecarReconnectTimer);
+    sidecarReconnectTimer = null;
+  }
   try { sidecarSocket?.close(); } catch {}
 });

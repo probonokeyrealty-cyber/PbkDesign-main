@@ -66,6 +66,88 @@ function compactTranscript(value = '', maxLength = 28000) {
   ].join('\n[transcript excerpt]\n');
 }
 
+export function normalizeManualYouTubeTranscript(value = '', { minLength = 400 } = {}) {
+  const transcript = cleanText(value, 200000);
+  const minimum = Math.max(120, Number(minLength) || 400);
+  if (!transcript) {
+    return {
+      ok: false,
+      source: 'operator_pasted_transcript',
+      reason: 'manual_transcript_missing',
+      message: 'Paste a transcript or detailed notes to train from a YouTube video with disabled captions.',
+      transcript: '',
+      chars: 0,
+      minChars: minimum,
+    };
+  }
+  if (transcript.length < minimum) {
+    return {
+      ok: false,
+      source: 'operator_pasted_transcript',
+      reason: 'manual_transcript_too_short',
+      message: `Paste at least ${minimum} characters of transcript or detailed notes before extracting governed skills.`,
+      transcript,
+      chars: transcript.length,
+      minChars: minimum,
+    };
+  }
+  return {
+    ok: true,
+    source: 'operator_pasted_transcript',
+    reason: 'manual_transcript_ready',
+    message: 'Using operator-pasted transcript fallback.',
+    transcript,
+    chars: transcript.length,
+    minChars: minimum,
+  };
+}
+
+export function classifyYouTubeTranscriptFailure(error = '') {
+  const raw = String(error?.message || error || '').trim();
+  const lower = raw.toLowerCase();
+  const base = {
+    reason: 'transcript_unavailable',
+    retryable: false,
+    provider: 'youtube-transcript',
+    message:
+      'YouTube transcript is unavailable for this video. Paste a transcript or detailed notes to keep the governed skill extraction moving.',
+  };
+  if (/disabled|transcript is disabled|captions? disabled/.test(lower)) {
+    return {
+      ...base,
+      reason: 'captions_disabled',
+      message:
+        'Captions are disabled for this video. Paste a transcript or detailed notes, then analyze again; candidates will still require review and activation.',
+    };
+  }
+  if (/no transcripts? are available|not available|could not find/i.test(raw)) {
+    return {
+      ...base,
+      reason: 'captions_unavailable',
+      message:
+        'No usable YouTube captions were found. Paste a transcript or detailed notes to extract governed skill candidates safely.',
+    };
+  }
+  if (/too many requests|captcha|rate/i.test(raw)) {
+    return {
+      ...base,
+      reason: 'provider_rate_limited',
+      retryable: true,
+      message:
+        'YouTube transcript lookup is temporarily rate-limited. Retry shortly, or paste a transcript to continue immediately.',
+    };
+  }
+  if (/private|unavailable|removed|no longer available/i.test(raw)) {
+    return {
+      ...base,
+      reason: 'video_unavailable',
+      message:
+        'This YouTube video is unavailable to the bridge. Use a reachable video URL or paste transcript notes for governed extraction.',
+    };
+  }
+  return base;
+}
+
 export function parseYouTubeSkillProposals(value = '', { maxCandidates = 5 } = {}) {
   const parsed = typeof value === 'object' && value ? value : extractJsonObject(value);
   const source = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.skills) ? parsed.skills : [];
@@ -148,6 +230,7 @@ export function buildYouTubeSkillProvenance({
   videoId = '',
   title = '',
   transcript = '',
+  transcriptSource = 'youtube-transcript',
   model = '',
   agentId = 'ava',
   proposal = {},
@@ -159,6 +242,7 @@ export function buildYouTubeSkillProvenance({
     videoId: cleanText(videoId, 100),
     title: cleanText(title, 300),
     transcriptHash: createHash('sha256').update(String(transcript || '')).digest('hex'),
+    transcriptSource: cleanText(transcriptSource, 120) || 'youtube-transcript',
     extractor: 'pbk-deepseek-skill-extractor-v1',
     model: cleanText(model, 120),
     targetAgent: normalizeToken(agentId) || 'ava',

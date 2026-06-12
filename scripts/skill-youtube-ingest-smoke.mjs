@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   buildYouTubeSkillExtractionPrompt,
   buildYouTubeSkillProvenance,
+  classifyYouTubeTranscriptFailure,
+  normalizeManualYouTubeTranscript,
   parseYouTubeSkillProposals,
 } from './skill-youtube-ingest.mjs';
 
@@ -43,5 +45,24 @@ assert.equal(provenance.targetAgent, 'ava');
 assert.match(provenance.transcriptHash, /^[a-f0-9]{64}$/);
 assert.equal(provenance.confidence, 0.88);
 assert(!('createdAt' in provenance), 'Stable provenance must not include volatile timestamps.');
+
+const disabled = classifyYouTubeTranscriptFailure(
+  '[YoutubeTranscript] 🚨 Transcript is disabled on this video (gJGU3GlU2UQ)'
+);
+assert.equal(disabled.reason, 'captions_disabled');
+assert.equal(disabled.retryable, false);
+assert(!disabled.message.includes('[YoutubeTranscript]'), 'Operator message must not expose raw provider noise.');
+assert(disabled.message.includes('Paste a transcript'), 'Disabled captions should guide the operator to the fallback path.');
+
+const normalizedManualTranscript = normalizeManualYouTubeTranscript(
+  '  Speaker 1: Ask one clear question.\n\nSpeaker 2: Then wait for the seller answer. '.repeat(15)
+);
+assert(normalizedManualTranscript.ok, 'Long pasted transcript should be accepted.');
+assert.equal(normalizedManualTranscript.source, 'operator_pasted_transcript');
+assert(normalizedManualTranscript.transcript.includes('Ask one clear question.'));
+
+const shortManualTranscript = normalizeManualYouTubeTranscript('too short');
+assert.equal(shortManualTranscript.ok, false);
+assert.equal(shortManualTranscript.reason, 'manual_transcript_too_short');
 
 console.log('skill-youtube-ingest-smoke: ok');

@@ -1802,6 +1802,16 @@ export type SkillIngestResponse = {
     title?: string;
     chars?: number;
     segmentCount?: number;
+    source?: string;
+    fallbackUsed?: boolean;
+  };
+  reason?: string;
+  retryable?: boolean;
+  fallback?: {
+    type?: string;
+    field?: string;
+    minChars?: number;
+    available?: boolean;
   };
 };
 
@@ -1810,6 +1820,7 @@ export async function ingestSkillCandidatesRequest(body: {
   source: string;
   agentId: string;
   maxCandidates?: number;
+  manualTranscript?: string;
 }) {
   return bridgeRequest<SkillIngestResponse>({
     method: 'POST',

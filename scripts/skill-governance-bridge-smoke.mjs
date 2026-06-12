@@ -53,5 +53,15 @@ assert(
   /sourceType:\s*'youtube'[\s\S]*transcriptHash/.test(bridge),
   'YouTube candidates must retain stable source provenance.'
 );
+assert(
+  /manualTranscript[\s\S]*normalizeManualYouTubeTranscript[\s\S]*operator_pasted_transcript/.test(
+    bridge
+  ),
+  'YouTube ingestion must allow an operator-pasted transcript fallback for videos with disabled captions.'
+);
+assert(
+  /classifyYouTubeTranscriptFailure[\s\S]*youtubeTranscriptFailure/.test(bridge),
+  'YouTube ingestion must classify transcript provider failures before returning them to Skill Studio.'
+);
 
 console.log('skill-governance-bridge-smoke: ok');

@@ -119,6 +119,7 @@ function CreateCandidateDialog({
     source: string;
     agentId: string;
     maxCandidates: number;
+    manualTranscript?: string;
   }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<'manual' | 'youtube'>('manual');
@@ -128,6 +129,7 @@ function CreateCandidateDialog({
   const [agentId, setAgentId] = useState('ava');
   const [sourceNote, setSourceNote] = useState('');
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [manualTranscript, setManualTranscript] = useState('');
   const [maxCandidates, setMaxCandidates] = useState(5);
   if (!open) return null;
   return (
@@ -277,6 +279,19 @@ function CreateCandidateDialog({
                   <span>No tool access, approval, or activation is granted during ingestion.</span>
                 </div>
               </div>
+              <label className="pbk-skill-youtube-fallback">
+                Paste transcript or detailed notes
+                <textarea
+                  value={manualTranscript}
+                  onChange={(event) => setManualTranscript(event.target.value)}
+                  placeholder="Optional fallback for videos with disabled captions. Paste the transcript, show notes, or detailed training notes here."
+                  rows={5}
+                />
+                <small>
+                  Use this when YouTube captions are disabled. Ava still creates review-only
+                  candidates, never live skills.
+                </small>
+              </label>
             </>
           )}
         </div>
@@ -300,6 +315,7 @@ function CreateCandidateDialog({
                   source: youtubeUrl.trim(),
                   agentId,
                   maxCandidates,
+                  manualTranscript: manualTranscript.trim(),
                 });
                 return;
               }

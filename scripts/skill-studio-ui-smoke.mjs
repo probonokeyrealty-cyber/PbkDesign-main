@@ -36,13 +36,21 @@ for (const label of ['Manual', 'YouTube', 'Learn from YouTube', 'Analyze video']
   assert(route.includes(label), `Skill candidate intake must expose ${label}.`);
 }
 assert(
-  route.includes("sourceType: 'youtube'") && route.includes('maxCandidates'),
-  'Skill Studio must submit bounded YouTube ingestion requests.'
+  route.includes("sourceType: 'youtube'") &&
+    route.includes('maxCandidates') &&
+    route.includes('manualTranscript'),
+  'Skill Studio must submit bounded YouTube ingestion requests with a manual transcript fallback.'
+);
+assert(
+  route.includes('Paste transcript or detailed notes') &&
+    route.includes('pbk-skill-youtube-fallback'),
+  'Skill Studio must expose a clear fallback input for disabled YouTube captions.'
 );
 assert(
   styles.includes('.pbk-skill-intake-mode') &&
-    styles.includes('.pbk-skill-youtube-note'),
-  'Skill Studio must style the YouTube intake mode.'
+    styles.includes('.pbk-skill-youtube-note') &&
+    styles.includes('.pbk-skill-youtube-fallback'),
+  'Skill Studio must style the YouTube intake mode and fallback transcript block.'
 );
 
 for (const label of [

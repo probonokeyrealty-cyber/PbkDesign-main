@@ -104,6 +104,8 @@ import { createSkillRuntimeSnapshotCache } from './skill-runtime-snapshot.mjs';
 import {
   buildYouTubeSkillExtractionPrompt,
   buildYouTubeSkillProvenance,
+  classifyYouTubeTranscriptFailure,
+  normalizeManualYouTubeTranscript,
   parseYouTubeSkillProposals,
 } from './skill-youtube-ingest.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -60567,6 +60569,10 @@ const server = createServer(async (request, response) => {
       const sourceUrl = String(body.source || body.sourceUrl || '').trim();
       const agentId = String(body.agentId || 'ava').trim().toLowerCase();
       const maxCandidates = Math.max(1, Math.min(8, Number(body.maxCandidates) || 5));
+      const manualTranscript = String(
+        body.manualTranscript || body.transcript || body.text || body.content || ''
+      );
+      const manualTranscriptResult = normalizeManualYouTubeTranscript(manualTranscript);
       const allowedSkillAgents = new Set(['ava', 'rex', 'nurture', 'max']);
       if (sourceType !== 'youtube' || !extractYouTubeVideoId(sourceUrl)) {
         json(response, 400, {
@@ -60585,20 +60591,45 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const [transcriptResult, title] = await Promise.all([
-        fetchYouTubeTranscript(sourceUrl),
+      const [fetchedTranscriptResult, title] = await Promise.all([
+        manualTranscriptResult.ok
+          ? Promise.resolve({
+              ok: true,
+              transcript: manualTranscriptResult.transcript,
+              videoId: extractYouTubeVideoId(sourceUrl),
+              segmentCount: 0,
+              source: manualTranscriptResult.source,
+            })
+          : fetchYouTubeTranscript(sourceUrl),
         fetchYouTubeTitle(sourceUrl),
       ]);
+      const transcriptResult = fetchedTranscriptResult;
       if (!transcriptResult.ok || String(transcriptResult.transcript || '').length < 400) {
+        const youtubeTranscriptFailure = classifyYouTubeTranscriptFailure(transcriptResult.error);
+        const fallbackReason =
+          manualTranscript && !manualTranscriptResult.ok
+            ? manualTranscriptResult.reason
+            : youtubeTranscriptFailure.reason;
         json(response, 422, {
           ok: false,
           result: 'youtube_skill_transcript_unavailable',
           error:
-            transcriptResult.error ||
-            'The YouTube transcript was unavailable or too short to extract a reliable skill.',
+            manualTranscript && !manualTranscriptResult.ok
+              ? manualTranscriptResult.message
+              : youtubeTranscriptFailure.message,
+          reason: fallbackReason,
+          retryable: Boolean(youtubeTranscriptFailure.retryable),
+          fallback: {
+            type: 'operator_pasted_transcript',
+            field: 'manualTranscript',
+            minChars: manualTranscriptResult.minChars || 400,
+            available: true,
+          },
           transcript: {
             videoId: transcriptResult.videoId || extractYouTubeVideoId(sourceUrl),
             segmentCount: transcriptResult.segmentCount || 0,
+            source: transcriptResult.source || 'youtube-transcript',
+            chars: String(transcriptResult.transcript || manualTranscriptResult.transcript || '').length,
           },
         });
         return;
@@ -60663,6 +60694,7 @@ const server = createServer(async (request, response) => {
             videoId: transcriptResult.videoId,
             title,
             transcript: transcriptResult.transcript,
+            transcriptSource: transcriptResult.source || 'youtube-transcript',
             model: extraction.provider?.model || DEEPSEEK_MODEL,
             agentId,
             proposal,
@@ -60716,6 +60748,8 @@ const server = createServer(async (request, response) => {
             title: title || 'Untitled YouTube training',
             chars: transcriptResult.transcript.length,
             segmentCount: transcriptResult.segmentCount || 0,
+            source: transcriptResult.source || 'youtube-transcript',
+            fallbackUsed: transcriptResult.source === 'operator_pasted_transcript',
           },
           governance: {
             lifecycleState: 'candidate',

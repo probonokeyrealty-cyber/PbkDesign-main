@@ -649,13 +649,11 @@ const checks = [
     ok:
       /invokeRuntimeTool<Record<string, unknown>>\('pbk_test_skill'/.test(agentFleet) &&
       /invokeRuntimeTool\('previewAgentDealContext'/.test(index) &&
-      /PBK\.openclaw\.invoke\('getSnnWorkerStatus'/.test(index) &&
       /data-fleet-action="preview_deal_context"/.test(index) &&
       /Bridge SNN worker status/.test(index) &&
       /Deal context preview/.test(index) &&
-      /invokeRuntimeTool<\{ workers\?: BridgeSnnWorker\[\] \}>\('getSnnWorkerStatus'/.test(
-        agentFleet
-      ) &&
+      /fetchAgentSnnStatusRequest/.test(agentFleet) &&
+      /GET \/api\/agents\/snn-status/.test(agentFleet) &&
       /invokeRuntimeTool<AgentDealPreview>\('previewAgentDealContext'/.test(agentFleet) &&
       /async pbk_test_skill\(params = \{\}\)/.test(bridge) &&
       /async getSnnWorkerStatus\(params = \{\}\)/.test(bridge) &&

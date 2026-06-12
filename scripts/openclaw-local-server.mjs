@@ -688,7 +688,7 @@ let lastStateDbLoad = {
 
 const SHOULD_RESET = IS_RESET;
 
-const TOOL_NAMES = ['analyzeDeal', 'getPropertyData', 'cachePropertyData', 'scrape_property', 'import_leads', 'classifyParticipant', 'getParticipantProfile', 'getBrainEmailContext', 'pbk_retrieve_closing_intelligence', 'retrieveClosingIntelligence', 'pbk_ava_conversation_intelligence', 'getAvaConversationIntelligence', 'getProsodyAdvice', 'retrieveSimilarDeals', 'recallConversationMemory', 'upsertCallEmbeddingFromTranscript', 'scoreCallQuality', 'recordSkillOutcome', 'runRexSkillAutopilot', 'runAutonomousRexGoalDiscovery', 'handleRexLeadImported', 'runCoworkerHeartbeat', 'runYouTubeTrainingPipeline', 'runYouTubeTrainingEvalSuite', 'generateSyntheticEdgeCases', 'trainEmotionWorldModel', 'selectContextAwareScript', 'recordContextAwareScriptOutcome', 'validateProviderActionSafety', 'runAvaCanonicalEvalSuite', 'getObservabilityStatus', 'getSnnWorkerStatus', 'previewAgentDealContext', 'humanHandoff', 'webSearch', 'getReplyTemplates', 'getAdminPersistenceStatus', 'getDocuSignProviderStatus', 'inspectStreakPipeline', 'getStreakBootstrapPlan', 'bootstrapStreakPipeline', 'routeAdminCommand', 'admin_check_health', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var', 'createApproval', 'createApprovalTask', 'handleReplyIntent', 'updateCRM', 'ingestResearchDoc', 'createBrainBlogPost', 'trainBrainBlogPost', 'harvestBrainBlog', 'recordMarketIntel', 'planLeadNurture', 'consultNurtureAgent', 'startNurtureSequence', 'processDueNurtureSteps', 'simulateDealConfidence', 'matchBuyers', 'runSystemAudit', 'getBrainState', 'checkDNC', 'sendColdEmail', 'scheduleAppointment', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'routeInboundCall', 'runAvaMemoryLearning', 'addPbkMemory', 'recallPbkMemory', 'rememberPersonalFact', 'getPersonalContext', 'avaAskStrategist', 'askStrategist', 'pbk_teach_ava', 'recordRepairs', 'pbkRecordRepairs', 'sendNegotiationApproval', 'pbkSendNegotiationApproval', 'avaOverrideOffer', 'pbk_test_skill', 'pbk_script_test', 'scriptTest', 'pbk_outcome_analyzer', 'outcomeAnalyzer', 'pbk_suggestion_engine', 'suggestionEngine', 'pbk_knowledge_verifier', 'knowledgeVerifier', 'pbk_learn', 'pbk_learn_from_chat', 'recordPbkFeedback', 'detectPbkIntent', 'recordPbkKnowledge', 'queryPbkKnowledge', 'runPbkAgentPipeline', 'getReadableSummary', 'openAiWebSearch', 'pbk_send_update', 'pbk_call_operator', 'pbk_kill_switch', 'pbk_send_slack_reply', 'generatePersona', 'scoreAgentLikability', 'prepare_and_send_contract', 'sendDocuSign', 'sendContract', 'skipTrace', 'detectYelling', 'slackNotify', 'sendSellerDocs', 'prepareContract', 'contractLawyerReview', 'reloadContractTemplates', 'requestAdminAction', 'launchBrowserResearch', 'runAgentCommand', 'executeLocalCommand'];
+const TOOL_NAMES = ['analyzeDeal', 'getPropertyData', 'cachePropertyData', 'scrape_property', 'import_leads', 'classifyParticipant', 'getParticipantProfile', 'getBrainEmailContext', 'pbk_retrieve_closing_intelligence', 'retrieveClosingIntelligence', 'pbk_ava_conversation_intelligence', 'getAvaConversationIntelligence', 'getProsodyAdvice', 'retrieveSimilarDeals', 'recallConversationMemory', 'upsertCallEmbeddingFromTranscript', 'scoreCallQuality', 'recordSkillOutcome', 'runRexSkillAutopilot', 'runAutonomousRexGoalDiscovery', 'handleRexLeadImported', 'runCoworkerHeartbeat', 'runYouTubeTrainingPipeline', 'runYouTubeTrainingEvalSuite', 'generateSyntheticEdgeCases', 'trainEmotionWorldModel', 'selectContextAwareScript', 'recordContextAwareScriptOutcome', 'validateProviderActionSafety', 'runAvaCanonicalEvalSuite', 'getObservabilityStatus', 'getSnnWorkerStatus', 'previewAgentDealContext', 'pbk_transfer_agent_skill', 'humanHandoff', 'webSearch', 'getReplyTemplates', 'getAdminPersistenceStatus', 'getDocuSignProviderStatus', 'inspectStreakPipeline', 'getStreakBootstrapPlan', 'bootstrapStreakPipeline', 'routeAdminCommand', 'admin_check_health', 'admin_restart_openclaw', 'admin_run_away_worker', 'admin_update_env_var', 'createApproval', 'createApprovalTask', 'handleReplyIntent', 'updateCRM', 'ingestResearchDoc', 'createBrainBlogPost', 'trainBrainBlogPost', 'harvestBrainBlog', 'recordMarketIntel', 'planLeadNurture', 'consultNurtureAgent', 'startNurtureSequence', 'processDueNurtureSteps', 'simulateDealConfidence', 'matchBuyers', 'runSystemAudit', 'getBrainState', 'checkDNC', 'sendColdEmail', 'scheduleAppointment', 'telnyx_call', 'telnyx_sms', 'send_verification_sms', 'routeInboundCall', 'runAvaMemoryLearning', 'addPbkMemory', 'recallPbkMemory', 'rememberPersonalFact', 'getPersonalContext', 'avaAskStrategist', 'askStrategist', 'pbk_teach_ava', 'recordRepairs', 'pbkRecordRepairs', 'sendNegotiationApproval', 'pbkSendNegotiationApproval', 'avaOverrideOffer', 'pbk_test_skill', 'pbk_script_test', 'scriptTest', 'pbk_outcome_analyzer', 'outcomeAnalyzer', 'pbk_suggestion_engine', 'suggestionEngine', 'pbk_knowledge_verifier', 'knowledgeVerifier', 'pbk_learn', 'pbk_learn_from_chat', 'recordPbkFeedback', 'detectPbkIntent', 'recordPbkKnowledge', 'queryPbkKnowledge', 'runPbkAgentPipeline', 'getReadableSummary', 'openAiWebSearch', 'pbk_send_update', 'pbk_call_operator', 'pbk_kill_switch', 'pbk_send_slack_reply', 'generatePersona', 'scoreAgentLikability', 'prepare_and_send_contract', 'sendDocuSign', 'sendContract', 'skipTrace', 'detectYelling', 'slackNotify', 'sendSellerDocs', 'prepareContract', 'contractLawyerReview', 'reloadContractTemplates', 'requestAdminAction', 'launchBrowserResearch', 'runAgentCommand', 'executeLocalCommand'];
 
 const runtimeBrowserSockets = new Set();
 const runtimeBrowserSessions = new Map();
@@ -44338,6 +44338,7 @@ const TOOL_RISK_METADATA = Object.freeze({
   listTeamWorkflows: { risk: 'readonly', approvalRequired: false },
   runAgentTeam: { risk: 'low', approvalRequired: false },
   runTeamWorkflow: { risk: 'low', approvalRequired: false },
+  pbk_transfer_agent_skill: { risk: 'low', approvalRequired: false },
   generateTool: { risk: 'medium', approvalRequired: true },
   activateGeneratedTool: { risk: 'high', approvalRequired: true },
   invokeGeneratedTool: { risk: 'high', approvalRequired: true },
@@ -45547,6 +45548,56 @@ const toolHandlers = {
   async previewAgentDealContext(params = {}) {
     recordToolUse('previewAgentDealContext');
     return buildAgentDealContextPreview(params);
+  },
+
+  async pbk_transfer_agent_skill(params = {}) {
+    recordToolUse('pbk_transfer_agent_skill');
+    const targetAgentIds = Array.isArray(params.toAgentIds)
+      ? params.toAgentIds
+      : Array.isArray(params.targetAgentIds)
+        ? params.targetAgentIds
+        : [params.targetAgentId || params.targetAgentName || params.toAgentId || params.toAgentName].filter(Boolean);
+    const uniqueTargets = [...new Set(targetAgentIds.map((value) => String(value || '').trim()).filter(Boolean))];
+    if (!uniqueTargets.length) {
+      return {
+        ok: false,
+        result: 'missing_target_agent',
+        error: 'At least one target agent is required for a skill transfer.',
+      };
+    }
+    const transfers = [];
+    const updatedAgents = [];
+    const errors = [];
+    for (const targetAgentId of uniqueTargets) {
+      const result = await applyAgentSkillAction('transfer_skill', {
+        ...params,
+        skill: params.skill || params.skillName,
+        sourceAgentId: params.fromAgentId || params.sourceAgentId || params.agentId,
+        targetAgentId,
+      }, {
+        actor: params.requestedBy || params.actor || 'Agent Fleet UI',
+        rationale: params.rationale || `Agent Fleet requested skill transfer for ${params.skillName || params.skill || 'a skill'}.`,
+      });
+      if (result.ok) {
+        transfers.push(result.transfer);
+        if (result.agent) updatedAgents.push(result.agent);
+      } else {
+        errors.push({
+          targetAgentId,
+          error: result.error || result.verbiage || result.result || 'transfer_failed',
+        });
+      }
+    }
+    return {
+      ok: errors.length === 0,
+      result: errors.length ? 'partial_transfer' : 'live',
+      verbiage: errors.length ? 'Some skill transfers failed' : 'Skill transferred',
+      skill: params.skill || params.skillName || '',
+      transfers,
+      updatedAgents,
+      errors,
+      state: buildStateSnapshot(),
+    };
   },
 
   async publishEventBusTest(params = {}) {

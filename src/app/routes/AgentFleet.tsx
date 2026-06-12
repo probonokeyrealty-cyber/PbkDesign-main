@@ -6,6 +6,7 @@ import {
   deployAgentRequest,
   fetchAgentHealthRequest,
   fetchAgentRegistryRequest,
+  fetchAgentSnnStatusRequest,
   fetchLeadsRequest,
   fetchRuntimeState,
   fetchRuntimeToolingStatus,
@@ -470,7 +471,6 @@ function AgentFleetSourceRail() {
       <PbkDataSource endpoint="GET /api/agents/health" status="ships" />
       <PbkDataSource endpoint="GET /api/leads" status="ships" note="lead context picker" />
       <PbkDataSource endpoint="GET /state" status="ships" note="snapshot fallback and calls" />
-      <PbkDataSource endpoint="POST /invoke: getSnnWorkerStatus" status="ships" />
       <PbkDataSource endpoint="POST /invoke: previewAgentDealContext" status="ships" />
       <PbkDataSource endpoint="POST /invoke: pbk_transfer_agent_skill" status="ships" />
       <PbkDataSource endpoint="POST /invoke: telnyx_call" status="ships" />
@@ -1056,9 +1056,7 @@ export function AgentFleet() {
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      invokeRuntimeTool<{ workers?: BridgeSnnWorker[] }>('getSnnWorkerStatus', {
-        source: 'agent-fleet-ui',
-      }),
+      fetchAgentSnnStatusRequest(),
       fetchLeadsRequest(),
       fetchRuntimeState(),
     ]).then(([snnResult, rosterResult, stateResult]) => {

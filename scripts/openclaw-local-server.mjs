@@ -35333,7 +35333,12 @@ async function fetchYouTubeTranscript(url = '') {
   if (!videoId) return { ok: false, transcript: '', error: 'YouTube video ID was not found.' };
   try {
     const mod = await import('youtube-transcript');
-    const transcriptFetcher = mod.YoutubeTranscript?.fetchTranscript || mod.fetchTranscript;
+    const transcriptFetcher =
+      mod.fetchTranscript ||
+      mod.default?.fetchTranscript ||
+      (mod.YoutubeTranscript?.fetchTranscript
+        ? mod.YoutubeTranscript.fetchTranscript.bind(mod.YoutubeTranscript)
+        : null);
     if (typeof transcriptFetcher !== 'function') throw new Error('youtube-transcript fetcher is unavailable.');
     const segments = await transcriptFetcher(videoId);
     const transcript = (segments || [])

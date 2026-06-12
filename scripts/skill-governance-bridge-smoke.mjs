@@ -40,6 +40,16 @@ assert(
   'YouTube ingestion must use the existing transcript, DeepSeek, and governance authority.'
 );
 assert(
+  !/YoutubeTranscript\?\.fetchTranscript\s*\|\|\s*mod\.fetchTranscript/.test(bridge),
+  'YouTube ingestion must not detach YoutubeTranscript.fetchTranscript; it requires class binding for retrieveVideoId.'
+);
+assert(
+  /mod\.fetchTranscript[\s\S]*YoutubeTranscript\.fetchTranscript\.bind\(mod\.YoutubeTranscript\)/.test(
+    bridge
+  ),
+  'YouTube ingestion must prefer the package wrapper and bind the class fallback.'
+);
+assert(
   /sourceType:\s*'youtube'[\s\S]*transcriptHash/.test(bridge),
   'YouTube candidates must retain stable source provenance.'
 );

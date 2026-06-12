@@ -122,6 +122,9 @@ COPY scripts/youtube-training.mjs ./scripts/youtube-training.mjs
 COPY scripts/ava-assistant-chat.mjs ./scripts/ava-assistant-chat.mjs
 COPY scripts/ava-state-machine.mjs ./scripts/ava-state-machine.mjs
 COPY scripts/ava-confidence.mjs ./scripts/ava-confidence.mjs
+COPY scripts/ava-working-memory.mjs ./scripts/ava-working-memory.mjs
+COPY scripts/ava-response-guard.mjs ./scripts/ava-response-guard.mjs
+COPY scripts/ava-turn-orchestrator.mjs ./scripts/ava-turn-orchestrator.mjs
 COPY scripts/negotiation-policy.mjs ./scripts/negotiation-policy.mjs
 COPY scripts/question-policy.mjs ./scripts/question-policy.mjs
 COPY scripts/closing-questions.mjs ./scripts/closing-questions.mjs

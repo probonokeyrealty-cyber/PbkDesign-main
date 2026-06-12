@@ -35,6 +35,7 @@ import { appendAssistantMessage, createAssistantSessionId, detectAssistantIntent
 import { buildInvokeRateLimitIdentity, createInvokeRateLimiter } from './invoke-rate-limit.mjs';
 import { ClosingStateMachine, Phase } from './ava-state-machine.mjs';
 import { calibrateAvaConfidence } from './ava-confidence.mjs';
+import { orchestrateAvaTurn } from './ava-turn-orchestrator.mjs';
 import { NegotiationPolicy } from './negotiation-policy.mjs';
 import { QuestionPolicy } from './question-policy.mjs';
 import { getEmotionPolicy as getAvaDoctrineEmotionPolicy } from './emotion-policy.mjs';
@@ -22854,11 +22855,62 @@ async function buildAvaConversationIntelligence(params = {}) {
     callerRoleDecision: callerRole,
     masterProbe,
   });
+  const sessionHistory = Array.isArray(sessionContext.history) ? sessionContext.history : [];
+  const previousQuestions = [
+    ...(Array.isArray(params.previousQuestions) ? params.previousQuestions : []),
+    ...(Array.isArray(params.previous_questions) ? params.previous_questions : []),
+    ...(Array.isArray(params.recentAvaLines) ? params.recentAvaLines : []),
+    ...(Array.isArray(params.recent_ava_lines) ? params.recent_ava_lines : []),
+    ...sessionHistory
+      .filter((turn) => /^(assistant|ava|agent)$/i.test(String(turn?.role || turn?.speaker || '')))
+      .map((turn) => String(turn?.content || turn?.text || turn?.message || '').trim())
+      .filter((line) => /\?\s*$/.test(line)),
+  ];
+  const avaTurn = orchestrateAvaTurn({
+    candidateAnswer: responseText,
+    transcript: query,
+    phase: doctrine.state?.phase,
+    state: doctrine.state,
+    evidence: doctrine.state?.evidence,
+    lead: {
+      ...context,
+      id: context.leadId || params.leadId || params.lead_id || '',
+      name: context.leadName || context.name || context.sellerName || '',
+      address: context.address || context.propertyAddress || '',
+      mao: params.mao || context.mao,
+    },
+    context,
+    history: sessionHistory,
+    previousQuestions,
+    memories: [
+      ...((Array.isArray(memories?.memories) && memories.memories) || []),
+      ...((Array.isArray(closing.memories) && closing.memories) || []),
+    ],
+    coachingMemories: Array.isArray(closing.coachMemoryEntries)
+      ? closing.coachMemoryEntries
+      : [],
+    skills: architecture.scripts?.selectedSkills || [],
+    governedSkillSelection: architecture.scripts?.governedSkillSelection,
+    currentGovernedSkillId: params.currentGovernedSkillId || sessionContext.activeGovernedSkillId || '',
+    lastObjection: reaction.objectionType,
+    emotion:
+      reaction.prosody?.emotion ||
+      closing.emotionalMemory?.dominantEmotion ||
+      closing.advice?.emotionalMemory?.dominantEmotion ||
+      params.emotion ||
+      '',
+    path: pathDecision.selectedPath || closing.selectedPath || params.selectedPath || '',
+    confidence: doctrine.confidence,
+    shouldStopContact: reaction.shouldStopContact,
+    authorityKnown: callerRole.role === PBK_CALLER_ROLES.OWNER || callerRole.role === PBK_CALLER_ROLES.AGENT,
+    mao: params.mao || context.mao,
+  });
+  const guardedResponseText = avaTurn.answer || responseText;
   return {
     ok: true,
     result: 'ava_conversation_intelligence',
-    answer: responseText,
-    nextBestPhrase: responseText,
+    answer: guardedResponseText,
+    nextBestPhrase: guardedResponseText,
     closeQuestion:
       closing.closeQuestion ||
       closing.advice?.closeQuestion ||
@@ -22889,6 +22941,11 @@ async function buildAvaConversationIntelligence(params = {}) {
     promptFrame: closing.promptFrame || closing.advice?.promptFrame,
     doctrine,
     confidenceCalibration: doctrine.confidence,
+    turnDecision: avaTurn.turnDecision,
+    activeGovernedSkill: avaTurn.activeSkill,
+    responseGuard: avaTurn.guard,
+    workingMemory: avaTurn.workingMemory,
+    memoryContinuity: avaTurn.memory,
     actionPolicy: {
       providerWrites: params.noProviderWrites === true || params.providerWrites === false || params.readOnly === true ? 'blocked' : 'approval_gated',
       providerWritesBlocked: params.noProviderWrites === true || params.providerWrites === false || params.readOnly === true,

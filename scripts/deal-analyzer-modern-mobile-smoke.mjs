@@ -17,7 +17,11 @@ const analyzer = read('src/app/components/AnalyzerTab.tsx');
 const chrome = read('src/app/components/DealAnalyzerChrome.tsx');
 const leftPanel = read('src/app/components/LeftPanel.tsx');
 const rightPanel = read('src/app/components/RightPanel.tsx');
+const pathDeliverables = read('src/app/components/PathDeliverables.tsx');
 const css = read('src/styles/pbk-components.css');
+const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
+const leadsRoute = read('src/app/routes/Leads.tsx');
+const bridgeServer = read('scripts/openclaw-local-server.mjs');
 const pkg = JSON.parse(read('package.json'));
 
 assert(/readPbkPrefs/.test(app) && /applyPbkTheme/.test(app), 'Deal Analyzer should use the shared shell theme preference, not only pbk-dark-mode.');
@@ -29,6 +33,16 @@ assert(/setRightPanelOpen\(true\)/.test(app), 'Mobile rail should open the workf
 assert(/pbk-deal-content-with-mobile-rail/.test(app), 'Scrollable analyzer content should reserve room for the mobile rail.');
 assert(/handleCreateLeadFromAnalyzer/.test(app), 'Deal Analyzer should expose a create-lead handoff from the current analyzer state.');
 assert(/\/leads\?new=1/.test(app), 'Analyzer create-lead handoff should route to the bridge-backed lead portal.');
+assert(/patchLeadRequest/.test(app) && /actor: 'Deal Analyzer'/.test(app), 'Analyzer runs should patch the attached lead with the latest underwriting numbers.');
+assert(/Create or sync this lead before sending seller documents/.test(app), 'Seller-doc emails should require a canonical bridge lead id before sending.');
+assert(/const leadId = String\(activeDeal\.leadId \|\| ''\)\.trim\(\)/.test(app), 'Seller-doc emails should use the real leadId without falling back to address.');
+assert(/Add a valid seller email before sending/.test(app), 'Seller-doc emails should block before sending when the seller email is missing.');
+assert(/Runtime analysis failed\. Retry before opening Call Mode/.test(app), 'Analyzer runtime failures should not unlock Call Mode.');
+assert(!/Runtime sync failed, but the local analyzer is still ready/.test(app), 'Analyzer should not claim local readiness after a failed runtime sync.');
+assert(/isAnalyzed:\s*false/.test(app), 'Analyzer runtime failure should leave the deal unanalyzed until sync succeeds.');
+assert(/documentSet\?: Partial<Record<QuickDocumentType, string>>/.test(app), 'Seller-doc email handler should accept edited document content.');
+assert(/documentSet: documentSet \|\| generatedDocuments/.test(app), 'Seller-doc email handler should prefer edited documents when provided.');
+assert(/documentSet: editableDocuments/.test(pathDeliverables), 'Path deliverables should send operator-edited document text to email delivery.');
 assert(/pbk-analyzer-side-panel/.test(leftPanel), 'Analyzer snapshot side panel should use modern side-panel styling.');
 assert(/pbk-analyzer-workflow-panel/.test(rightPanel), 'Analyzer workflow side panel should use modern workflow-panel styling.');
 
@@ -76,6 +90,38 @@ assert(
 assert(
   /if \(!leadId\)/.test(dealView) && /<App engineOnly \/>/.test(dealView),
   'The plain /deal route should continue to mount the analyzer without fetching a lead.'
+);
+assert(
+  /readAnalyzerStorage/.test(leadsRoute) && !/JSON\.parse\(raw\)/.test(leadsRoute),
+  'Lead portal analyzer seeding should use encoded analyzer storage instead of raw localStorage JSON.'
+);
+
+assert(
+  /leadId: deal\.leadId/.test(runtimeBridge) &&
+    /sellerEmail: deal\.sellerEmail/.test(runtimeBridge) &&
+    /selectedPath/.test(runtimeBridge) &&
+    /maoRBP: deal\.maoRBP/.test(runtimeBridge) &&
+    /pathTerms/.test(runtimeBridge),
+  'Analyzer bridge payload should include lead, seller, path, underwriting, and path-term context.'
+);
+
+assert(
+  /syncAnalyzerRunToLeadProfile/.test(bridgeServer) &&
+    /leadSynced/.test(bridgeServer) &&
+    /lastAnalyzerRunId/.test(bridgeServer),
+  'Bridge analyzeDeal should sync successful analyzer runs back to the matching lead profile.'
+);
+assert(
+  /A valid seller email is required before sending seller documents/.test(bridgeServer) &&
+    /getSenderAddress\(senderProfile, selectedFromEmail\)/.test(bridgeServer) &&
+    /fromEmail: from/.test(bridgeServer),
+  'Seller document delivery should validate recipient email and preserve the chosen sender address.'
+);
+assert(
+  /latestAnalyzerRun/.test(bridgeServer) &&
+    /analyzerAmount/.test(bridgeServer) &&
+    /analyzerSnapshot/.test(bridgeServer),
+  'Contract prep should inherit and persist the latest analyzer run when preparing paperwork.'
 );
 
 assert(/PbkDataSource/.test(analyzer), 'AnalyzerTab should show honest source labels.');

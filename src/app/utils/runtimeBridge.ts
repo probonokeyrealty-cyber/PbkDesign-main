@@ -1351,6 +1351,23 @@ export async function bridgeRequest<T = unknown>({
   return parsed as T;
 }
 
+function assertBridgeMutationSucceeded<T>(response: T, action = 'Bridge mutation'): T {
+  const record =
+    response && typeof response === 'object' ? (response as Record<string, unknown>) : {};
+  const statusText = String(
+    record.result || record.status || record.outcome || record.reason || ''
+  ).toLowerCase();
+  const failed =
+    record.ok === false ||
+    /\b(failed|error|rejected|denied|provider_missing|safety_blocked|missing_[a-z0-9_]*proof)\b/i.test(
+      statusText
+    );
+  if (!failed) return response;
+  const message =
+    String(record.error || record.message || record.verbiage || '').trim() || `${action} failed.`;
+  throw new Error(message);
+}
+
 function isNetlifyHostedRuntimeShell() {
   if (typeof window === 'undefined') return false;
   const host = String(window.location.hostname || '').toLowerCase();
@@ -1542,6 +1559,46 @@ export async function fetchAgentRegistryRequest() {
   });
 }
 
+export type QaAuditRecord = {
+  id?: string;
+  toolName?: string;
+  passed?: boolean;
+  skipped?: boolean;
+  reason?: string;
+  validator?: string;
+  retryCount?: number;
+  source?: string;
+  createdAt?: string;
+  qa?: Record<string, unknown>;
+  params?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+};
+
+export async function fetchLatestQaAuditRequest({
+  leadId = '',
+  limit = 5,
+}: {
+  leadId?: string;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(50, limit))),
+  });
+  if (leadId) params.set('leadId', leadId);
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    source?: string;
+    leadId?: string;
+    count?: number;
+    latest?: QaAuditRecord | null;
+    audits?: QaAuditRecord[];
+    warning?: string;
+  }>({
+    path: `/api/qa/audit/latest?${params.toString()}`,
+  });
+}
+
 export async function deployAgentRequest(body: Record<string, unknown>) {
   return bridgeRequest<Record<string, unknown>>({
     method: 'POST',
@@ -1680,7 +1737,7 @@ export async function postRuntimeEvent<T = Record<string, unknown>>(
 }
 
 export async function updateApprovalDecision(approvalId: string, status: string) {
-  return bridgeRequest<Record<string, unknown>>({
+  const response = await bridgeRequest<Record<string, unknown>>({
     method: 'PUT',
     path: `/api/approvals/${encodeURIComponent(approvalId)}`,
     body: {
@@ -1689,6 +1746,7 @@ export async function updateApprovalDecision(approvalId: string, status: string)
       actedAt: new Date().toISOString(),
     },
   });
+  return assertBridgeMutationSucceeded(response, 'Approval decision');
 }
 
 export async function fetchLeadsRequest() {
@@ -2150,15 +2208,16 @@ export async function saveLeadNoteRequest(body: Record<string, unknown>) {
 }
 
 export async function sendOfferEmailRequest(body: Record<string, unknown>) {
-  return bridgeRequest<Record<string, unknown>>({
+  const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/cold-email/send',
     body,
   });
+  return assertBridgeMutationSucceeded(response, 'Offer email send');
 }
 
 export async function updateAdminTaskDecision(taskId: string, status: string) {
-  return bridgeRequest<Record<string, unknown>>({
+  const response = await bridgeRequest<Record<string, unknown>>({
     method: 'PUT',
     path: `/api/admin/tasks/${encodeURIComponent(taskId)}`,
     body: {
@@ -2167,6 +2226,7 @@ export async function updateAdminTaskDecision(taskId: string, status: string) {
       notes: `React shell marked task ${status}.`,
     },
   });
+  return assertBridgeMutationSucceeded(response, 'Admin task decision');
 }
 
 export async function controlRuntimeCall(
@@ -2284,11 +2344,12 @@ export async function fetchWebSearchStatusRequest() {
 }
 
 export async function sendSellerDocsRequest(body: Record<string, unknown>) {
-  return bridgeRequest<Record<string, unknown>>({
+  const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/send-seller-docs',
     body,
   });
+  return assertBridgeMutationSucceeded(response, 'Seller document send');
 }
 
 export async function fetchLeadFullRequest(leadId: string) {
@@ -2320,11 +2381,12 @@ export async function deleteLeadRequest(leadId: string, body: Record<string, unk
 }
 
 export async function sendLeadContractRequest(body: Record<string, unknown>) {
-  return bridgeRequest<Record<string, unknown>>({
+  const response = await bridgeRequest<Record<string, unknown>>({
     method: 'POST',
     path: '/api/contract/send',
     body,
   });
+  return assertBridgeMutationSucceeded(response, 'Lead contract send');
 }
 
 export async function prepareContractRequest(body: Record<string, unknown>) {
@@ -2344,11 +2406,29 @@ export async function requestAdminActionRequest(body: Record<string, unknown>) {
 }
 
 export function buildAnalyzePayload(deal: DealData) {
+  const repairsMid = Number(deal.repairs?.mid || 0);
+  const selectedPath = deal.selectedPath || '';
+  const targetOffer = Number(deal.offer || deal.agreedPrice || deal.mao60 || 0);
+
   return {
+    leadId: deal.leadId,
+    lead_id: deal.leadId,
     address: deal.address,
+    propertyAddress: deal.address,
     type: deal.type,
+    propertyType: deal.type,
     contact: deal.contact === 'realtor' ? 'agent' : deal.contact,
+    selectedPath,
+    selected_path: selectedPath,
+    path: selectedPath,
+    sellerName: deal.sellerName,
+    leadName: deal.sellerName,
+    sellerEmail: deal.sellerEmail,
+    email: deal.sellerEmail,
+    sellerPhone: deal.sellerPhone,
+    phone: deal.sellerPhone,
     price: deal.price,
+    askingPrice: deal.price,
     agreedPrice: deal.agreedPrice,
     beds: deal.beds,
     baths: deal.baths,
@@ -2356,7 +2436,74 @@ export function buildAnalyzePayload(deal: DealData) {
     year: deal.year,
     dom: deal.dom,
     lotSize: Number(deal.lotSize || 0),
-    repairs: deal.repairs?.mid || 0,
+    repairs: repairsMid,
+    repairsMid,
+    repairEstimate: repairsMid,
+    condition: deal.repairs?.condition || '',
+    arv: deal.arv,
+    mao: deal.mao60,
+    mao60: deal.mao60,
+    maoCash: deal.mao60,
+    maoRbp: deal.maoRBP,
+    maoRBP: deal.maoRBP,
+    targetOffer,
+    offer: deal.offer,
+    offerPrice: targetOffer,
+    fee: deal.fee,
+    assignmentFee: deal.fee,
+    rent: deal.rent,
+    balance: deal.balance,
+    mortgageBalance: deal.balance,
+    rate: deal.rate,
+    mortgageRate: deal.rate,
+    zipCode: deal.zipCode,
+    timeline: deal.timeline,
+    motivationScore: deal.motivationScore,
+    motivationLevel: deal.motivationLevel,
+    vacantStatus: deal.vacantStatus,
+    reductions: deal.reductions,
+    earnestDeposit: deal.earnestDeposit,
+    confirmedTerms: deal.confirmedTerms,
+    bant: {
+      budget: deal.price || deal.agreedPrice || targetOffer || 0,
+      authority: deal.contact,
+      need: deal.notes || deal.motivationLevel || '',
+      timeline: deal.timeline || '',
+      urgency: deal.motivationLevel || '',
+    },
+    pathTerms: {
+      cash: {
+        asIs: deal.cashAsIs,
+        closePeriod: deal.cashClosePeriod,
+      },
+      creativeFinance: {
+        downPayment: deal.cfDownPayment,
+        rate: deal.cfRate,
+        term: deal.cfTerm,
+        monthlyPayment: deal.cfMonthlyPayment,
+        type: deal.cfType,
+      },
+      mortgageTakeover: {
+        upfront: deal.mtUpfront,
+        balance: deal.mtBalanceConfirm,
+        rate: deal.mtRateConfirm,
+        type: deal.mtType,
+      },
+      rbp: {
+        priceConfirm: deal.rbpPriceConfirm,
+        buyerType: deal.rbpBuyerType,
+        sellerCosts: deal.rbpSellerCosts,
+        cashAlternative: deal.rbpCashAlternative,
+      },
+      land: {
+        inputMode: deal.landInputMode,
+        priceSqFt: deal.landPriceSqFt,
+        lotSizeSqFt: deal.landLotSizeSqFt,
+        lotSizeConfirm: deal.landLotSizeConfirm,
+        buyerType: deal.landBuyerType,
+        sellerCosts: deal.landSellerCosts,
+      },
+    },
     notes: deal.notes || '',
   };
 }
@@ -2369,6 +2516,12 @@ export async function sendDealToAgent(
   deal: DealData,
   options: { agentDealContext?: AgentDealContext } = {}
 ) {
+  const leadId = String(
+    deal.leadId || (deal as DealData & { lead_id?: string }).lead_id || ''
+  ).trim();
+  if (!leadId) {
+    throw new Error('Create or sync this lead before sending analyzer context to Ava or CRM.');
+  }
   const agentDealContext =
     options.agentDealContext ||
     buildAgentDealContext(deal, {
@@ -2376,7 +2529,8 @@ export async function sendDealToAgent(
     });
   return invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
     target: deal.address || deal.sellerName || 'deal',
-    leadId: deal.address || deal.sellerPhone || deal.sellerEmail || 'manual-deal',
+    leadId,
+    lead_id: leadId,
     message: `Analyzer synced ${deal.address || 'deal'} to the runtime for ${deal.selectedPath || 'cash'} follow-up. Agent context includes ${agentDealContext.scriptPath}/${agentDealContext.scriptVariant}/${agentDealContext.activeScriptTab} script.`,
     deal,
     agentDealContext,

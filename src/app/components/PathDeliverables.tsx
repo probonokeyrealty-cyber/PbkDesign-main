@@ -2,7 +2,12 @@ import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { DealData, PBKPath, QuickDocumentType } from '../types';
 import { Clipboard, Copy, Eye, FileText, Printer, Send } from 'lucide-react';
 import { PBKBranding, buildDocumentSet, getPathLabel, getPdfReadiness } from '../utils/pbk';
+import {
+  fetchSenderIdentitiesRequest,
+  type CommunicationSenderIdentity,
+} from '../utils/runtimeBridge';
 import { DocumentPdfPanel } from './DocumentPdfPanel';
+import { SenderIdentitySelect } from './inbox/SenderIdentitySelect';
 
 interface PathDeliverablesProps {
   deal: DealData;
@@ -19,6 +24,9 @@ interface PathDeliverablesProps {
   onEmailDocuments: (payload: {
     selectedDocuments: QuickDocumentType[];
     senderProfile: 'warm' | 'cold';
+    fromEmail?: string;
+    senderIdentityId?: string;
+    documentSet: Partial<Record<QuickDocumentType, string>>;
   }) => void | Promise<void>;
   onPdfAction?: (action: 'refresh' | 'download' | 'open') => void;
 }
@@ -90,11 +98,70 @@ export function PathDeliverables({
     'loi',
   ]);
   const [senderProfile, setSenderProfile] = useState<'warm' | 'cold'>('warm');
+  const [fromEmail, setFromEmail] = useState('');
+  const [senderIdentities, setSenderIdentities] = useState<CommunicationSenderIdentity[]>([]);
+  const [senderIdentityId, setSenderIdentityId] = useState('');
+  const [senderIdentitiesLoading, setSenderIdentitiesLoading] = useState(false);
+  const [senderIdentityError, setSenderIdentityError] = useState('');
   const readiness = getPdfReadiness(documentDeal);
+  const selectedSenderIdentity =
+    senderIdentities.find((identity) => identity.id === senderIdentityId) || null;
+  const eligibleSenderIdentities = useMemo(
+    () =>
+      senderIdentities.filter(
+        (identity) =>
+          String(identity.lifecycleStatus || '').toLowerCase() === 'active' &&
+          !/(blocked|error|failed|retired|disabled|quarantined)/i.test(
+            String(identity.healthStatus || '')
+          )
+      ),
+    [senderIdentities]
+  );
+  const recommendedSenderIdentity =
+    eligibleSenderIdentities.find((identity) => identity.isWorkspaceDefault) ||
+    eligibleSenderIdentities[0] ||
+    null;
 
   useEffect(() => {
     setEditableDocuments(generatedDocuments);
   }, [generatedDocuments]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSenderIdentitiesLoading(true);
+    fetchSenderIdentitiesRequest({ channel: 'email' })
+      .then((response) => {
+        if (cancelled) return;
+        const items = Array.isArray(response.items) ? response.items : [];
+        setSenderIdentities(items);
+        setSenderIdentityError('');
+        setSenderIdentityId((current) => {
+          if (current && items.some((identity) => identity.id === current)) return current;
+          const usable = items.filter(
+            (identity) =>
+              String(identity.lifecycleStatus || '').toLowerCase() === 'active' &&
+              !/(blocked|error|failed|retired|disabled|quarantined)/i.test(
+                String(identity.healthStatus || '')
+              )
+          );
+          const workspaceDefault = usable.find((identity) => identity.isWorkspaceDefault);
+          return workspaceDefault?.id || usable[0]?.id || '';
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setSenderIdentities([]);
+        setSenderIdentityError(
+          error instanceof Error ? error.message : 'Unable to load sender identities.'
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setSenderIdentitiesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleDocumentEdit = (documentType: QuickDocumentType, value: string) => {
     setEditableDocuments((prev) => ({
@@ -355,9 +422,58 @@ export function PathDeliverables({
               </button>
             </div>
 
+            {(senderIdentitiesLoading || senderIdentities.length > 0) && (
+              <div className="mt-3">
+                <SenderIdentitySelect
+                  identities={senderIdentities}
+                  selectedId={senderIdentityId}
+                  recommendedId={recommendedSenderIdentity?.id || ''}
+                  loading={senderIdentitiesLoading}
+                  onChange={(identityId) => {
+                    setSenderIdentityId(identityId);
+                    const identity = senderIdentities.find((item) => item.id === identityId);
+                    if (identity?.address) setFromEmail(identity.address);
+                  }}
+                />
+              </div>
+            )}
+
+            <label className="mt-3 block">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
+                {selectedSenderIdentity ? 'Selected from email' : 'Fallback from email'}
+              </span>
+              <input
+                type="email"
+                value={selectedSenderIdentity?.address || fromEmail}
+                onChange={(event) => setFromEmail(event.target.value)}
+                disabled={Boolean(selectedSenderIdentity)}
+                placeholder={
+                  senderProfile === 'cold'
+                    ? 'Optional cold sender override'
+                    : 'Optional warm sender override'
+                }
+                className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-[12px] text-gray-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 dark:border-slate-700 dark:bg-slate-950 dark:text-gray-100 dark:disabled:bg-slate-900 dark:disabled:text-slate-500 dark:focus:border-blue-400 dark:focus:ring-blue-900/40"
+              />
+              <span className="mt-1 block text-[10.5px] leading-4 text-gray-500 dark:text-gray-400">
+                {selectedSenderIdentity
+                  ? `${selectedSenderIdentity.provider} identity selected from the connected sender inventory.`
+                  : senderIdentityError
+                    ? `Sender inventory unavailable: ${senderIdentityError}. The profile fallback will be used.`
+                    : 'Leave blank to use the selected sender profile default.'}
+              </span>
+            </label>
+
             <button
               type="button"
-              onClick={() => onEmailDocuments({ selectedDocuments, senderProfile })}
+              onClick={() =>
+                onEmailDocuments({
+                  selectedDocuments,
+                  senderProfile,
+                  fromEmail: fromEmail.trim() || undefined,
+                  senderIdentityId: senderIdentityId || undefined,
+                  documentSet: editableDocuments,
+                })
+              }
               disabled={!selectedDocuments.length}
               className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-[12px] font-semibold transition-all ${
                 selectedDocuments.length

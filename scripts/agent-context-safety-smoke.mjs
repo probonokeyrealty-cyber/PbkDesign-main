@@ -39,6 +39,13 @@ for (const toolName of ['scheduleAppointment', 'updateCRM']) {
   );
 }
 
+for (const toolName of ['sendSellerDocs', 'startNurtureSequence']) {
+  assert(
+    safetyValidator.includes(`'${toolName}'`),
+    `${toolName} must be classified as a provider write by the safety validator.`
+  );
+}
+
 assert(
   /SELLER_BOUND_PROVIDER_TOOLS/.test(bridge) &&
     /seller_context_required/.test(bridge) &&
@@ -57,9 +64,38 @@ assert(
   'The appointments HTTP route must use the shared approval and QA guard.'
 );
 
+for (const [toolName, routeName] of [
+  ['telnyx_call', 'calls-route'],
+  ['telnyx_sms', 'messages-route'],
+  ['sendSellerDocs', 'seller-docs-route'],
+  ['prepare_and_send_contract', 'contract-send-route'],
+  ['sendColdEmail', 'cold-email-route'],
+  ['sendColdEmail', 'lead-send-message'],
+]) {
+  assert(
+    bridge.includes(`executeRouteToolHandler('${toolName}'`) && bridge.includes(routeName),
+    `${toolName} route must use the shared approval, safety, and QA guard.`
+  );
+}
+
+assert(
+  /pathname === '\/api\/cold-email\/send'[\s\S]*const routeTool = await executeRouteToolHandler\('sendColdEmail'[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
+  'Cold email route must preserve QA and safety metadata in the HTTP response.'
+);
+
+assert(
+  /pathname === '\/api\/lead\/send-message'[\s\S]*const routeTool = await executeRouteToolHandler\('telnyx_sms'[\s\S]*buildRouteToolResponse\(routeTool\)[\s\S]*const routeTool = await executeRouteToolHandler\('sendColdEmail'[\s\S]*buildRouteToolResponse\(routeTool\)/.test(bridge),
+  'Lead send-message route must preserve QA and safety metadata for SMS and email branches.'
+);
+
 assert(
   safetyValidator.includes("'updateCRM'"),
   'CRM writes must be classified as provider writes by the safety validator.'
+);
+
+assert(
+  /QA validation failed closed[\s\S]*ok:\s*false[\s\S]*reason:\s*'qa_runtime_error'/.test(bridge),
+  'QA runtime errors must fail closed instead of being treated as successful skipped QA.'
 );
 
 console.log('agent-context-safety-smoke: ok');

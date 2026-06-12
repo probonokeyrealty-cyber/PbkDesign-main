@@ -39,6 +39,29 @@ async function main() {
   assert.equal(brainState.ok, true, 'getBrainState should pass as a known read-only tool.');
   assert.equal(brainState.skipped, false, 'getBrainState should have a registered QA validator.');
 
+  const operatorCall = validateQaToolResult('pbk_call_operator', {
+    ok: true,
+    call: { callControlId: 'call_operator_123456' },
+  });
+  assert.equal(operatorCall.ok, true, 'pbk_call_operator should reuse Telnyx call proof validation.');
+  assert.equal(operatorCall.skipped, false, 'pbk_call_operator should not skip QA proof checks.');
+
+  const scheduledAppointment = validateQaToolResult('scheduleAppointment', {
+    ok: true,
+    appointment: {
+      id: 'appointment_123456',
+      status: 'scheduled',
+    },
+  });
+  assert.equal(scheduledAppointment.ok, true, 'scheduleAppointment should pass when appointment proof is present.');
+  assert.equal(scheduledAppointment.skipped, false, 'scheduleAppointment should not skip QA proof checks.');
+
+  const brokenAppointment = validateQaToolResult('scheduleAppointment', {
+    ok: true,
+    status: 'scheduled',
+  });
+  assert.equal(brokenAppointment.ok, false, 'scheduleAppointment should fail QA without appointment proof.');
+
   const nurtureConsult = validateQaToolResult('consultNurtureAgent', {
     ok: true,
     recommendation: {
@@ -48,6 +71,28 @@ async function main() {
     },
   });
   assert.equal(nurtureConsult.ok, true, 'consultNurtureAgent should have a semantic QA validator.');
+
+  const sellerDocs = validateQaToolResult('sendSellerDocs', {
+    ok: true,
+    result: 'live',
+    delivery: {
+      id: 'doc-delivery-123',
+      status: 'sent',
+    },
+    email: {
+      providerMessageId: 'msg_seller_docs_123',
+    },
+    attachments: ['seller-package.pdf'],
+  });
+  assert.equal(sellerDocs.ok, true, 'sendSellerDocs should pass when email and delivery proof are present.');
+
+  const brokenSellerDocs = validateQaToolResult('sendSellerDocs', {
+    ok: true,
+    result: 'live',
+    email: { status: 'sent' },
+  });
+  assert.equal(brokenSellerDocs.ok, false, 'sendSellerDocs should fail without a durable delivery or email id.');
+  assert.match(brokenSellerDocs.reason, /missing_seller_docs_delivery_proof/);
 
   const brokenNurtureStart = validateQaToolResult('startNurtureSequence', {
     ok: true,

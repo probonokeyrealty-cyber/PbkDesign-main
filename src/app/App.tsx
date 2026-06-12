@@ -30,7 +30,12 @@ import {
   normalizeSelectedPath,
   openMasterPackageWindow,
 } from './utils/pbk';
-import { sendDealToAgent, sendSellerDocsRequest, syncDealAnalysis } from './utils/runtimeBridge';
+import {
+  patchLeadRequest,
+  sendDealToAgent,
+  sendSellerDocsRequest,
+  syncDealAnalysis,
+} from './utils/runtimeBridge';
 import {
   ANALYZER_CURRENT_DEAL_KEY,
   clearAnalyzerDeal,
@@ -534,13 +539,14 @@ export default function App({ engineOnly = false }: AppProps) {
       const result =
         (response as { result?: Record<string, unknown> }).result ||
         (response as Record<string, unknown>);
+      const nextArv = Number(result?.arv || deal.arv || 0);
+      const nextMao60 = Number(result?.mao || result?.mao60 || deal.mao60 || 0);
+      const nextMaoRBP = Number(
+        result?.maoRbp || result?.maoRBP || result?.mao || deal.maoRBP || 0
+      );
+      const nextOffer = Number(result?.targetOffer || deal.offer || 0);
+      const nextRepairsMid = Number(result?.repairsMid || deal.repairs.mid || 0);
       setDeal((prev) => {
-        const nextArv = Number(result?.arv || prev.arv || 0);
-        const nextMao60 = Number(result?.mao || result?.mao60 || prev.mao60 || 0);
-        const nextMaoRBP = Number(
-          result?.maoRbp || result?.maoRBP || result?.mao || prev.maoRBP || 0
-        );
-
         return {
           ...prev,
           isAnalyzed: true,
@@ -548,29 +554,80 @@ export default function App({ engineOnly = false }: AppProps) {
           mao60: nextMao60,
           maoRBP: nextMaoRBP,
           verdict: calculateVerdict(prev.price, nextArv, nextMaoRBP),
-          offer: Number(result?.targetOffer || prev.offer || 0),
+          offer: nextOffer,
           repairs: {
             ...prev.repairs,
-            mid: Number(result?.repairsMid || prev.repairs.mid || 0),
+            mid: nextRepairsMid,
           },
         };
       });
-      setAnalyzeStatus(
-        result?.mao
-          ? `Bridge analysis synced. ARV ${Number(result.arv || 0).toLocaleString()} · MAO ${Number(result.mao || 0).toLocaleString()}`
-          : readiness.successMessage
-      );
+      let leadSyncStatus = '';
+      if (deal.leadId) {
+        try {
+          await patchLeadRequest(deal.leadId, {
+            actor: 'Deal Analyzer',
+            selectedPath: deal.selectedPath,
+            selected_path: deal.selectedPath,
+            property: {
+              address: deal.address,
+              propertyType: deal.type,
+              askingPrice: deal.price,
+              arv: nextArv,
+              mao: nextMao60,
+              mao60: nextMao60,
+              maoRbp: nextMaoRBP,
+              maoRBP: nextMaoRBP,
+              estimatedRepairs: nextRepairsMid,
+              repairsMid: nextRepairsMid,
+              targetOffer: nextOffer,
+            },
+            callContext: {
+              selectedPath: deal.selectedPath,
+              selected_path: deal.selectedPath,
+              lastOffer: nextOffer,
+              last_offer: nextOffer,
+              targetOffer: nextOffer,
+              mao: nextMao60,
+              maoRbp: nextMaoRBP,
+              arv: nextArv,
+              repairsMid: nextRepairsMid,
+            },
+            analyzer: {
+              runId: result?.id,
+              address: result?.address || deal.address,
+              arv: nextArv,
+              mao: nextMao60,
+              maoRbp: nextMaoRBP,
+              targetOffer: nextOffer,
+              repairsMid: nextRepairsMid,
+              estProfit: result?.estProfit,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+          leadSyncStatus = ' Lead profile synced.';
+        } catch (syncError) {
+          leadSyncStatus =
+            syncError instanceof Error
+              ? ` Lead profile sync needs retry: ${syncError.message}`
+              : ' Lead profile sync needs retry.';
+        }
+      }
+      const bridgeAnalysisStatus = result?.mao
+        ? `Bridge analysis synced. ARV ${Number(result.arv || 0).toLocaleString()} / MAO ${Number(result.mao || 0).toLocaleString()}.${leadSyncStatus}`
+        : `${readiness.successMessage}${leadSyncStatus}`;
+      setAnalyzeStatus(bridgeAnalysisStatus);
     } catch (error) {
       setDeal((prev) => ({
         ...prev,
-        isAnalyzed: true,
+        isAnalyzed: false,
         verdict: calculateVerdict(prev.price, prev.arv, prev.maoRBP),
       }));
       setAnalyzeStatus(
         error instanceof Error
-          ? `Runtime sync failed, but the local analyzer is still ready: ${error.message}`
-          : readiness.successMessage
+          ? `Runtime analysis failed. Retry before opening Call Mode or sending this deal to Ava: ${error.message}`
+          : 'Runtime analysis failed. Retry before opening Call Mode or sending this deal to Ava.'
       );
+      return;
     }
 
     setAnalyzeStatus((prev) =>
@@ -639,7 +696,7 @@ export default function App({ engineOnly = false }: AppProps) {
         type: 'note',
         content: `Analyzer deal saved with path ${getPathLabel(activeSelectedPath)}.`,
       });
-      setAnalyzeStatus(`${saved.address}: Saved locally · Bridge sync pending.`);
+      setAnalyzeStatus(`${saved.address}: Saved locally / Bridge sync pending.`);
       try {
         await sendDealToAgent(activeDeal);
         appendSavedDealActivity(activeDeal, {
@@ -647,13 +704,13 @@ export default function App({ engineOnly = false }: AppProps) {
           content: `Activity saved to team CRM for ${getPathLabel(activeSelectedPath)}.`,
         });
         setAnalyzeStatus(
-          `${saved.address}: Saved locally · runtime CRM synced for ${getPathLabel(activeSelectedPath)}.`
+          `${saved.address}: Saved locally / runtime CRM synced for ${getPathLabel(activeSelectedPath)}.`
         );
       } catch (syncError) {
         setAnalyzeStatus(
           syncError instanceof Error
-            ? `${saved.address}: Saved locally · Bridge sync pending: ${syncError.message}`
-            : `${saved.address}: Saved locally · Bridge sync pending.`
+            ? `${saved.address}: Saved locally / Bridge sync pending: ${syncError.message}`
+            : `${saved.address}: Saved locally / Bridge sync pending.`
         );
       }
     } catch (error) {
@@ -768,42 +825,77 @@ export default function App({ engineOnly = false }: AppProps) {
   const handleEmailDocuments = async ({
     selectedDocuments,
     senderProfile,
+    fromEmail,
+    senderIdentityId,
+    documentSet,
   }: {
     selectedDocuments: QuickDocumentType[];
     senderProfile: 'warm' | 'cold';
+    fromEmail?: string;
+    senderIdentityId?: string;
+    documentSet?: Partial<Record<QuickDocumentType, string>>;
   }) => {
     try {
+      const sellerEmail = String(activeDeal.sellerEmail || '').trim();
+      if (!sellerEmail || !sellerEmail.includes('@')) {
+        setDocumentDeliveryStatus(
+          'Add a valid seller email before sending the seller document package.'
+        );
+        setActiveTab('documents');
+        return;
+      }
+      const leadId = String(activeDeal.leadId || '').trim();
+      if (!leadId) {
+        setDocumentDeliveryStatus('Create or sync this lead before sending seller documents.');
+        setActiveTab('documents');
+        return;
+      }
       const response = await sendSellerDocsRequest({
-        leadId: activeDeal.address || undefined,
+        leadId,
         leadName: activeDeal.sellerName || undefined,
         address: activeDeal.address,
-        email: activeDeal.sellerEmail,
+        email: sellerEmail,
         senderProfile,
+        fromEmail: fromEmail?.trim() || undefined,
+        senderIdentityId: senderIdentityId?.trim() || undefined,
         selectedDocuments,
-        documentSet: generatedDocuments,
+        documentSet: documentSet || generatedDocuments,
         selectedPath: activeSelectedPath,
         selectedPathLabel: getPathLabel(activeSelectedPath),
       });
       const delivery = response?.delivery as { status?: string } | undefined;
+      const senderIdentity = response?.senderIdentity as
+        | { label?: string; address?: string; provider?: string }
+        | null
+        | undefined;
+      const senderLabel =
+        senderIdentity?.label ||
+        senderIdentity?.address ||
+        fromEmail?.trim() ||
+        `${senderProfile} sender profile`;
       const deliveryStatus = String(delivery?.status || response?.result || '').toLowerCase();
       const deliveryLabel =
         deliveryStatus === 'sent'
           ? 'Sent'
           : deliveryStatus === 'provider_missing'
             ? 'Provider key missing'
-            : deliveryStatus === 'queued_for_approval'
-              ? 'Queued for approval'
-              : 'Queued to send';
+            : deliveryStatus === 'failed'
+              ? 'Failed'
+              : deliveryStatus === 'queued_for_approval'
+                ? 'Queued for approval'
+                : 'Queued to send';
       appendSavedDealActivity(activeDeal, {
         type: 'email',
-        content: `Seller documents: ${deliveryLabel} via ${senderProfile} sender for ${getPathLabel(activeSelectedPath)}: ${selectedDocuments.join(', ')}.`,
+        content: `Seller documents: ${deliveryLabel} via ${senderLabel} for ${getPathLabel(activeSelectedPath)}: ${selectedDocuments.join(', ')}.`,
       });
       setDocumentDeliveryStatus(
         deliveryStatus === 'sent'
-          ? `Seller package emailed from the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`
+          ? `Seller package emailed from ${senderLabel} for ${getPathLabel(activeSelectedPath)}.`
           : deliveryStatus === 'provider_missing'
             ? `Provider key missing. Seller package was not sent for ${getPathLabel(activeSelectedPath)}.`
-            : `Queued for approval with the ${senderProfile} sender profile for ${getPathLabel(activeSelectedPath)}.`
+            : deliveryStatus === 'failed'
+              ? `Seller package failed to send for ${getPathLabel(activeSelectedPath)}.`
+              : `Queued for approval with ${senderLabel} for ${getPathLabel(activeSelectedPath)}.`
       );
     } catch (error) {
       setDocumentDeliveryStatus(

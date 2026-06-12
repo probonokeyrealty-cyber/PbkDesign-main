@@ -1311,6 +1311,10 @@ export function CommandCenter() {
     successMessage: string,
     action: () => Promise<void>
   ) => {
+    if (pendingAction) {
+      setActionStatus({ tone: 'pending', text: 'Another bridge action is already running.' });
+      return;
+    }
     setPendingAction(key);
     setActionStatus({ tone: 'pending', text: 'Working with the bridge...' });
     try {
@@ -1375,6 +1379,7 @@ export function CommandCenter() {
   ) => {
     const taskId = String(task.id || '');
     if (!taskId) return;
+    if (pendingAction.startsWith(`admin:${taskId}:`)) return;
     setAdminDecisionDraft({
       taskId,
       status,
@@ -1387,6 +1392,7 @@ export function CommandCenter() {
   const executeAdminDecision = () => {
     if (!adminDecisionDraft) return;
     const draft = adminDecisionDraft;
+    if (pendingAction.startsWith(`admin:${draft.taskId}:`)) return;
     setAdminDecisionDraft(null);
     void runRuntimeAction(
       `admin:${draft.taskId}:${draft.status}`,
@@ -1405,6 +1411,7 @@ export function CommandCenter() {
   ) => {
     const approvalId = String(approval.id || '');
     if (!approvalId) return;
+    if (pendingAction.startsWith(`approval:${approvalId}:`)) return;
     const type = String(approval.type || 'approval');
     const actionLabel =
       status === 'approved'
@@ -1425,6 +1432,7 @@ export function CommandCenter() {
   const executeApprovalDecision = () => {
     if (!approvalDecisionDraft) return;
     const draft = approvalDecisionDraft;
+    if (pendingAction.startsWith(`approval:${draft.approvalId}:`)) return;
     setApprovalDecisionDraft(null);
     void runRuntimeAction(
       `approval:${draft.approvalId}:${draft.status}`,
@@ -1434,6 +1442,14 @@ export function CommandCenter() {
       }
     );
   };
+
+  const isAdminDecisionPending = (taskId: string) => pendingAction.startsWith(`admin:${taskId}:`);
+  const isApprovalDecisionPending = (approvalId: string) =>
+    pendingAction.startsWith(`approval:${approvalId}:`);
+  const getApprovalSecondaryStatus = (
+    approval: Record<string, unknown>
+  ): ApprovalDecisionDraft['status'] =>
+    String(approval.type || '').toLowerCase() === 'contract' ? 'needs-revision' : 'rejected';
 
   return (
     <div className="pbk-command-surface min-h-full space-y-6 bg-[var(--bg-void)] p-4 text-[var(--text-primary)] md:p-6">
@@ -1665,23 +1681,19 @@ export function CommandCenter() {
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
                             type="button"
-                            disabled={pendingAction === `admin:${String(task.id)}:approved`}
+                            disabled={isAdminDecisionPending(String(task.id))}
                             onClick={() => confirmAdminDecision(task, 'approved')}
                             className="rounded-full bg-sky-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-60"
                           >
-                            {pendingAction === `admin:${String(task.id)}:approved`
-                              ? '…'
-                              : 'Approve'}
+                            {isAdminDecisionPending(String(task.id)) ? '…' : 'Approve'}
                           </button>
                           <button
                             type="button"
-                            disabled={pendingAction === `admin:${String(task.id)}:rejected`}
+                            disabled={isAdminDecisionPending(String(task.id))}
                             onClick={() => confirmAdminDecision(task, 'rejected')}
                             className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                           >
-                            {pendingAction === `admin:${String(task.id)}:rejected`
-                              ? '…'
-                              : 'Decline'}
+                            {isAdminDecisionPending(String(task.id)) ? '…' : 'Decline'}
                           </button>
                         </div>
                       )}
@@ -1969,28 +1981,25 @@ export function CommandCenter() {
                           <button
                             type="button"
                             data-approval-primary="true"
-                            disabled={pendingAction === `approval:${String(approval.id)}:approved`}
+                            disabled={isApprovalDecisionPending(String(approval.id))}
                             onClick={() => confirmApprovalDecision(approval, 'approved')}
                             className="rounded-full bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300 disabled:cursor-wait disabled:opacity-60"
                           >
-                            {pendingAction === `approval:${String(approval.id)}:approved`
-                              ? '…'
-                              : 'Approve'}
+                            {isApprovalDecisionPending(String(approval.id)) ? '…' : 'Approve'}
                           </button>
                           <button
                             type="button"
                             data-approval-secondary="true"
-                            disabled={pendingAction === `approval:${String(approval.id)}:rejected`}
+                            disabled={isApprovalDecisionPending(String(approval.id))}
                             onClick={() => {
-                              const rejectionStatus =
-                                String(approval.type || '').toLowerCase() === 'contract'
-                                  ? 'needs-revision'
-                                  : 'rejected';
-                              confirmApprovalDecision(approval, rejectionStatus);
+                              confirmApprovalDecision(
+                                approval,
+                                getApprovalSecondaryStatus(approval)
+                              );
                             }}
                             className="rounded-full border border-slate-700 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition hover:border-slate-500 disabled:cursor-wait disabled:opacity-60"
                           >
-                            {pendingAction === `approval:${String(approval.id)}:rejected`
+                            {isApprovalDecisionPending(String(approval.id))
                               ? '…'
                               : String(approval.type || '').toLowerCase() === 'contract'
                                 ? 'Needs Revision'

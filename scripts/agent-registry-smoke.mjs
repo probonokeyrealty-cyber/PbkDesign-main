@@ -24,6 +24,7 @@ async function main() {
     'bant-enforcer',
     'qa-agent',
     'nurture-agent',
+    'research-orchestrator',
   ]) {
     assert(ids.includes(required), `Default registry should include ${required}.`);
   }
@@ -35,9 +36,19 @@ async function main() {
       `${agent.id} should explicitly route local dispatch through the bridge invoke endpoint.`
     );
     assert.equal(agent.metadata?.local, true, `${agent.id} should be marked as local-only.`);
+    assert(
+      Array.isArray(agent.metadata?.requiredTools) && agent.metadata.requiredTools.length >= 2,
+      `${agent.id} should declare production required tools for honest health checks.`
+    );
   }
 
-  for (const required of ['script-rotator', 'bant-enforcer', 'qa-agent', 'nurture-agent']) {
+  for (const required of [
+    'script-rotator',
+    'bant-enforcer',
+    'qa-agent',
+    'nurture-agent',
+    'research-orchestrator',
+  ]) {
     const agent = registry.find((item) => item.id === required);
     assert.equal(agent.endpoint, '/invoke', `${required} should expose the bridge invoke endpoint.`);
     assert.equal(agent.status, 'standby', `${required} should start as standby until a health check runs.`);
@@ -60,6 +71,23 @@ async function main() {
   assert(
     nurtureAgents.some((agent) => agent.id === 'nurture-agent'),
     'nurture capability should discover Nurture Agent.'
+  );
+  const researchAgents = findAgentsByCapability(registry, 'research_additives');
+  assert(
+    researchAgents.some((agent) => agent.id === 'research-orchestrator'),
+    'research_additives capability should discover Research Orchestrator.'
+  );
+  const research = registry.find((agent) => agent.id === 'research-orchestrator');
+  assert(
+    research.metadata.requiredTools.includes('runProviderAugmentedAdditiveIntelligence') &&
+      research.metadata.requiredTools.includes('evaluateStoppingAgent'),
+    'Research Orchestrator should require its additive intelligence and stopping-agent tools.'
+  );
+  const qaAgent = registry.find((agent) => agent.id === 'qa-agent');
+  assert(
+    qaAgent.metadata.requiredTools.includes('validateProviderActionSafety') &&
+      qaAgent.metadata.requiredTools.includes('getObservabilityStatus'),
+    'QA Agent should require safety and observability tools.'
   );
 
   const merged = mergeAgentRegistryRecords(
@@ -157,6 +185,11 @@ async function main() {
       result: 'nurture_recommendation',
       recommendation: { channel: 'sms', urgency: 'today' },
     }),
+    'research-orchestrator': async () => ({
+      ok: true,
+      result: 'research_orchestrator_ready',
+      plan: { mode: 'approval_gated' },
+    }),
   };
   for (const required of Object.keys(invocationSmokeHandlers)) {
     const agent = registry.find((item) => item.id === required);
@@ -169,13 +202,30 @@ async function main() {
   }
 
   const snapshot = buildAgentRegistrySnapshot(registry);
-  assert.equal(snapshot.ok, true, 'default registry should be ready.');
+  assert.equal(snapshot.inventoryReady, true, 'default registry should have complete inventory.');
+  assert.equal(snapshot.ok, false, 'default registry should not claim health readiness before checks run.');
+  assert.equal(snapshot.result, 'agent_registry_pending_health', 'default registry should report pending health.');
+  assert.equal(
+    snapshot.required.pendingHealth.length,
+    registry.length,
+    'default registry should list unprobed required agents as pending health.'
+  );
   assert(snapshot.capabilities.includes('closing'), 'snapshot should expose capability index.');
   assert.equal(
     snapshot.required.missing.length,
     0,
     'default registry should include all required agents.'
   );
+  const checkedSnapshot = buildAgentRegistrySnapshot(
+    registry.map((agent) => ({
+      ...agent,
+      status: 'active',
+      healthCheckedAt: '2026-06-12T00:00:00.000Z',
+      health_checked_at: '2026-06-12T00:00:00.000Z',
+    }))
+  );
+  assert.equal(checkedSnapshot.ok, true, 'health-checked registry should be ready.');
+  assert.equal(checkedSnapshot.required.pendingHealth.length, 0, 'health-checked registry should have no pending health.');
 
   console.log('Agent registry smoke passed.');
 }

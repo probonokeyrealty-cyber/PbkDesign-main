@@ -1032,6 +1032,13 @@ async function main() {
         amount: 91500,
         selectedPath: 'cash',
         selectedPathLabel: 'Cash Offer',
+        bant: {
+          budget: '$95k target',
+          authority: 'owner confirmed',
+          need: 'smoke test seller wants as-is cash offer',
+          timeline: '30 days',
+          urgency: 'testing contract send path',
+        },
       }),
     }).then((response) => response.json());
     const canonicalDraftContract = await fetch(`${BASE_URL}/api/contracts/draft`, {
@@ -1123,6 +1130,13 @@ async function main() {
       },
       body: JSON.stringify({
         actor: 'smoke-test',
+        bant: {
+          budget: '$95k target',
+          authority: 'owner confirmed',
+          need: 'smoke test seller wants as-is cash offer',
+          timeline: '30 days',
+          urgency: 'testing contract send path',
+        },
       }),
     }).then((response) => response.json());
     const canonicalContractRemind = await fetch(`${BASE_URL}/api/contracts/${encodeURIComponent(preparedContractId)}/remind`, {
@@ -1407,10 +1421,46 @@ async function main() {
     assert(agentOrchestration?.orchestration?.supervisor?.id === 'ava', 'Agent orchestration did not report Ava as supervisor.');
     assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'rex'), 'Agent orchestration did not include Rex as a worker.');
     assert((agentOrchestration?.orchestration?.workers || []).some((agent) => agent.id === 'hermes'), 'Agent orchestration did not include Hermes as a worker.');
+    const orchestrationAgentIds = new Set([
+      agentOrchestration?.orchestration?.supervisor?.id,
+      ...(agentOrchestration?.orchestration?.workers || []).map((agent) => agent.id),
+    ]);
+    for (const requiredAgentId of [
+      'ava',
+      'rex',
+      'max',
+      'hermes',
+      'call-analyzer',
+      'prosody-tuner',
+      'script-rotator',
+      'bant-enforcer',
+      'qa-agent',
+      'nurture-agent',
+      'research-orchestrator',
+    ]) {
+      assert(orchestrationAgentIds.has(requiredAgentId), `Agent orchestration did not include ${requiredAgentId}.`);
+    }
     assert(agentOrchestrationSmoke?.ok === true, 'Agent orchestration smoke endpoint did not pass.');
     assert(agentOrchestrationSmoke?.probes?.ava?.routedTo === 'tool_first:analyze_deal', 'Agent orchestration smoke did not force Ava through analyze_deal.');
     assert(agentOrchestrationSmoke?.probes?.rex?.ok === true, 'Agent orchestration smoke did not verify Rex handoff.');
-    assert(Array.isArray(agentOrchestrationSmoke?.tasks) && agentOrchestrationSmoke.tasks.length >= 3, 'Agent orchestration smoke did not create a full task trail.');
+    assert(agentOrchestrationSmoke?.probes?.handlerCoverageReady === true, 'Agent orchestration smoke did not verify all local agent handlers.');
+    const smokeProbeAgentIds = new Set((agentOrchestrationSmoke?.probes?.agents || []).map((probe) => probe.agentId));
+    for (const requiredAgentId of [
+      'ava',
+      'rex',
+      'max',
+      'hermes',
+      'call-analyzer',
+      'prosody-tuner',
+      'script-rotator',
+      'bant-enforcer',
+      'qa-agent',
+      'nurture-agent',
+      'research-orchestrator',
+    ]) {
+      assert(smokeProbeAgentIds.has(requiredAgentId), `Agent orchestration smoke did not probe ${requiredAgentId}.`);
+    }
+    assert(Array.isArray(agentOrchestrationSmoke?.tasks) && agentOrchestrationSmoke.tasks.length >= 10, 'Agent orchestration smoke did not create a full task trail.');
     assert(workflowSave?.ok === true, 'Workflow persistence endpoint did not save a draft.');
     assert(Array.isArray(workflows?.workflows), 'Workflow list endpoint did not return workflows.');
     assert(recordingSave?.ok === true, 'Recording metadata endpoint did not save.');

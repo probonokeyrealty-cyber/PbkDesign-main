@@ -6,6 +6,7 @@ import {
   deployAgentRequest,
   fetchAgentHealthRequest,
   fetchAgentRegistryRequest,
+  fetchLatestQaAuditRequest,
   fetchAgentSnnStatusRequest,
   fetchLeadsRequest,
   fetchRuntimeState,
@@ -16,6 +17,7 @@ import {
   type AgentHealthProbe,
   type AgentRegistryRecord,
   type AgentRegistryResponse,
+  type QaAuditRecord,
 } from '../utils/runtimeBridge';
 import { AGENT_REGISTRY, type RegistryAgent } from '../utils/agentRegistry';
 
@@ -49,6 +51,7 @@ type PendingTransfer = {
 type RuntimeLeadOption = {
   id?: string;
   leadId?: string;
+  lead_id?: string;
   leadName?: string;
   name?: string;
   address?: string;
@@ -124,6 +127,17 @@ type AgentDealPreview = {
   safety?: {
     note?: string;
   };
+  qaAudit?: {
+    ok?: boolean;
+    id?: string;
+    source?: string;
+    record?: {
+      passed?: boolean;
+      reason?: string;
+      validator?: string;
+      createdAt?: string;
+    };
+  };
 };
 
 const AGENT_SKILLS: Record<string, AgentSkill[]> = {
@@ -156,11 +170,71 @@ const AGENT_SKILLS: Record<string, AgentSkill[]> = {
   ],
   max: [
     {
-      name: 'Pattern Tagging',
-      source: 'call outcomes',
+      name: 'Offer Recap Before Contract',
+      source: 'PBK contract handoff',
+      confidence: 91,
+      usage: 'live',
+      success: 'approval-gated',
+    },
+    {
+      name: 'Seller Follow-up Close',
+      source: 'Ava handoff outcomes',
       confidence: 84,
       usage: '66x',
       success: '61%',
+    },
+    {
+      name: 'Contract Delivery Guard',
+      source: 'DocuSign QA proof',
+      confidence: 96,
+      usage: 'live',
+      success: 'verified',
+    },
+  ],
+  hermes: [
+    {
+      name: 'Loss Pattern Diagnosis',
+      source: 'PBK feedback ledger',
+      confidence: 91,
+      usage: 'live',
+      success: 'suggest-only',
+    },
+    {
+      name: 'Risk Review Before Action',
+      source: 'Transcript + QA audit',
+      confidence: 87,
+      usage: 'live',
+      success: 'no provider writes',
+    },
+    {
+      name: 'Approval-safe Recommendation',
+      source: 'Founder governance',
+      confidence: 95,
+      usage: 'live',
+      success: 'blocked writes',
+    },
+  ],
+  'call-analyzer': [
+    {
+      name: 'Call Quality Score',
+      source: 'scoreCallQuality',
+      confidence: 90,
+      usage: 'post-call',
+      success: 'coaching-ready',
+    },
+    {
+      name: 'Failure Tag Extraction',
+      source: 'Call Analyzer QA',
+      confidence: 86,
+      usage: 'live',
+      success: 'actionable',
+    },
+    {
+      name: 'Next-call Coaching',
+      source: 'Ava coaching memory',
+      confidence: 88,
+      usage: 'post-call',
+      success: 'memory-backed',
     },
   ],
   'prosody-tuner': [
@@ -170,6 +244,135 @@ const AGENT_SKILLS: Record<string, AgentSkill[]> = {
       confidence: 79,
       usage: '51x',
       success: '58%',
+    },
+    {
+      name: 'Emotion Prosody Match',
+      source: 'getProsodyAdvice',
+      confidence: 83,
+      usage: 'live',
+      success: 'seller-safe',
+    },
+    {
+      name: 'Voice Stability Check',
+      source: 'TTS readiness',
+      confidence: 81,
+      usage: 'live',
+      success: 'de-escalates',
+    },
+  ],
+  'script-rotator': [
+    {
+      name: 'Context Script Selection',
+      source: 'selectContextAwareScript',
+      confidence: 89,
+      usage: 'live',
+      success: 'anti-repeat',
+    },
+    {
+      name: 'Objection Line Rotation',
+      source: 'Skill outcomes',
+      confidence: 86,
+      usage: 'live',
+      success: 'tested',
+    },
+    {
+      name: 'Trust Builder Rotation',
+      source: 'Ava doctrine',
+      confidence: 82,
+      usage: 'live',
+      success: 'stage-aware',
+    },
+  ],
+  'bant-enforcer': [
+    {
+      name: 'BANT+ Completeness Gate',
+      source: 'Safety validator',
+      confidence: 94,
+      usage: 'live',
+      success: 'blocks weak offers',
+    },
+    {
+      name: 'Authority Clarifier',
+      source: 'Participant profile',
+      confidence: 88,
+      usage: 'live',
+      success: 'seller-bound',
+    },
+    {
+      name: 'Timeline Lock',
+      source: 'Call phase state',
+      confidence: 86,
+      usage: 'live',
+      success: 'path-safe',
+    },
+  ],
+  'qa-agent': [
+    {
+      name: 'Provider Proof Gate',
+      source: 'PBK QA audit',
+      confidence: 96,
+      usage: 'live',
+      success: 'proof-first',
+    },
+    {
+      name: 'BANT+ Readiness Check',
+      source: 'Safety validator',
+      confidence: 93,
+      usage: 'live',
+      success: 'blocks gaps',
+    },
+    {
+      name: 'Failure Escalation',
+      source: 'Approval queue',
+      confidence: 91,
+      usage: 'live',
+      success: 'audited',
+    },
+  ],
+  'nurture-agent': [
+    {
+      name: 'Approval-gated Follow-up',
+      source: 'Nurture runtime',
+      confidence: 90,
+      usage: 'live',
+      success: 'queued safely',
+    },
+    {
+      name: 'Reply Intent Routing',
+      source: 'handleReplyIntent',
+      confidence: 86,
+      usage: 'live',
+      success: 'thread-aware',
+    },
+    {
+      name: 'Send Later Recovery',
+      source: 'processDueNurtureSteps',
+      confidence: 84,
+      usage: 'scheduled',
+      success: 'approval-first',
+    },
+  ],
+  'research-orchestrator': [
+    {
+      name: 'Execution Path Search',
+      source: 'Research additives',
+      confidence: 88,
+      usage: 'live',
+      success: 'tool-aware',
+    },
+    {
+      name: 'Tool Discovery Guard',
+      source: 'discoverExternalTool',
+      confidence: 82,
+      usage: 'gated',
+      success: 'approval-first',
+    },
+    {
+      name: 'Long Context Compaction',
+      source: 'compactLongHorizonMemory',
+      confidence: 85,
+      usage: 'live',
+      success: 'memory-safe',
     },
   ],
 };
@@ -315,7 +518,14 @@ function normalizeFleetAgentId(value = '') {
 }
 
 function getLeadOptionId(lead: RuntimeLeadOption) {
-  return String(lead.leadId || lead.id || lead.phone || lead.address || '').trim();
+  return String(lead.leadId || lead.id || lead.lead_id || '').trim();
+}
+
+function getLeadOptionKey(lead: RuntimeLeadOption) {
+  return (
+    getLeadOptionId(lead) ||
+    String(lead.phone || lead.address || lead.email || lead.leadName || lead.name || '').trim()
+  );
 }
 
 function getLeadOptionLabel(lead: RuntimeLeadOption) {
@@ -338,6 +548,19 @@ function getLeadOptionPhone(lead: RuntimeLeadOption) {
 
 function normalizePhone(value = '') {
   return String(value || '').replace(/\D/g, '');
+}
+
+const CALLING_AGENT_IDS = new Set(['ava', 'max', 'nurture-agent']);
+
+function isCallingCapableAgent(agent: Pick<FleetAgent, 'id' | 'capabilities'>) {
+  const capabilities = (agent.capabilities || []).map((capability) =>
+    String(capability || '').toLowerCase()
+  );
+  return (
+    CALLING_AGENT_IDS.has(agent.id) ||
+    capabilities.includes('voice') ||
+    capabilities.includes('calling')
+  );
 }
 
 function assertBridgeTransferApplied(result: unknown, skillName = 'skill') {
@@ -1033,6 +1256,9 @@ export function AgentFleet() {
   const [runtimeCalls, setRuntimeCalls] = useState<RuntimeCallRecord[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
   const [dealPreview, setDealPreview] = useState<AgentDealPreview | null>(null);
+  const [qaAudits, setQaAudits] = useState<QaAuditRecord[]>([]);
+  const [qaAuditStatus, setQaAuditStatus] = useState('No QA proof loaded yet');
+  const [qaAuditLoading, setQaAuditLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [callActionPending, setCallActionPending] = useState(false);
@@ -1081,14 +1307,14 @@ export function AgentFleet() {
         setLeadOptions(fullRoster.slice(0, 25));
         setLeadContextSource('GET /api/leads full roster');
         setSelectedLeadId(
-          (current) => current || (fullRoster[0] ? getLeadOptionId(fullRoster[0]) : '')
+          (current) => current || (fullRoster[0] ? getLeadOptionKey(fullRoster[0]) : '')
         );
       } else {
         console.warn('[PBK AgentFleet] full lead roster unavailable', rosterResult.reason);
         setLeadOptions(snapshotLeads.slice(0, 25));
         setLeadContextSource('snapshot fallback');
         setSelectedLeadId(
-          (current) => current || (snapshotLeads[0] ? getLeadOptionId(snapshotLeads[0]) : '')
+          (current) => current || (snapshotLeads[0] ? getLeadOptionKey(snapshotLeads[0]) : '')
         );
       }
       if (stateResult.status === 'fulfilled') {
@@ -1218,18 +1444,62 @@ export function AgentFleet() {
     }, {});
   }, [agents, runtimeCalls]);
   const selectedLead = useMemo(
-    () => leadOptions.find((lead) => getLeadOptionId(lead) === selectedLeadId) || null,
+    () => leadOptions.find((lead) => getLeadOptionKey(lead) === selectedLeadId) || null,
     [leadOptions, selectedLeadId]
   );
+  const selectedLeadCanonicalId = selectedLead ? getLeadOptionId(selectedLead) : '';
   const activeBridgeWorker = getBridgeSnnWorkerForAgent(bridgeSnnWorkers, activeAgent.id);
   const activeLocalSnn =
     (activeAgent.id === 'ava' && snnStatus.ava) || (activeAgent.id === 'rex' && snnStatus.rex);
   const activeActivityState = getAgentActivityState(activeAgent, activeBridgeWorker);
+  const activeAgentCanCall = isCallingCapableAgent(activeAgent);
+  const latestQaAudit = qaAudits[0] || null;
 
   useEffect(() => {
     setDealPreview(null);
     setPreviewError('');
   }, [activeAgentId, selectedLeadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedLeadCanonicalId) {
+      setQaAudits([]);
+      setQaAuditStatus(
+        selectedLead
+          ? 'Sync this lead to the bridge before QA proof can load'
+          : 'Select a lead to load QA proof'
+      );
+      return () => {
+        cancelled = true;
+      };
+    }
+    setQaAuditLoading(true);
+    fetchLatestQaAuditRequest({ leadId: selectedLeadCanonicalId, limit: 5 })
+      .then((response) => {
+        if (cancelled) return;
+        const audits = Array.isArray(response.audits) ? response.audits : [];
+        setQaAudits(audits);
+        setQaAuditStatus(
+          audits.length
+            ? `${response.source || 'qa'} - ${audits.length} recent proof item${audits.length === 1 ? '' : 's'}`
+            : response.warning || 'No QA proof yet for this lead'
+        );
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn('[PBK AgentFleet] QA audit status unavailable', error);
+        setQaAudits([]);
+        setQaAuditStatus(
+          error instanceof Error ? error.message : 'QA audit status could not reach the bridge.'
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setQaAuditLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLead, selectedLeadCanonicalId]);
 
   const handlePreviewAgentDealContext = async () => {
     if (!selectedLead) {
@@ -1240,13 +1510,21 @@ export function AgentFleet() {
       });
       return;
     }
+    if (!selectedLeadCanonicalId) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Lead sync required',
+        desc: 'Preview needs a bridge lead id. Create or sync this lead before agent QA proof is recorded.',
+      });
+      return;
+    }
     setPreviewLoading(true);
     setPreviewError('');
     try {
       const result = await invokeRuntimeTool<AgentDealPreview>('previewAgentDealContext', {
         agentId: activeAgent.id,
         agentName: activeAgent.name,
-        leadId: getLeadOptionId(selectedLead),
+        leadId: selectedLeadCanonicalId,
         leadName: selectedLead.leadName || selectedLead.name || selectedLead.seller?.name || '',
         address: selectedLead.address || selectedLead.property?.address || '',
         phone: selectedLead.phone || selectedLead.seller?.phone || '',
@@ -1254,6 +1532,24 @@ export function AgentFleet() {
         selectedPath: selectedLead.selectedPath || selectedLead.selected_path || '',
       });
       setDealPreview(result);
+      if (result.qaAudit?.record) {
+        setQaAudits((current) =>
+          [
+            {
+              id: result.qaAudit?.id,
+              toolName: 'previewAgentDealContext',
+              passed: result.qaAudit?.record?.passed,
+              skipped: false,
+              reason: result.qaAudit?.record?.reason,
+              validator: result.qaAudit?.record?.validator,
+              source: result.qaAudit?.source,
+              createdAt: result.qaAudit?.record?.createdAt,
+            },
+            ...current.filter((item) => item.id !== result.qaAudit?.id),
+          ].slice(0, 5)
+        );
+        setQaAuditStatus(result.qaAudit.source || 'QA preview recorded');
+      }
     } catch (error) {
       console.warn('[PBK AgentFleet] deal context preview failed', error);
       setPreviewError(
@@ -1275,6 +1571,22 @@ export function AgentFleet() {
       });
       return;
     }
+    if (!selectedLeadCanonicalId) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Lead sync required',
+        desc: 'Create or sync this lead before requesting a Telnyx call.',
+      });
+      return;
+    }
+    if (!activeAgentCanCall) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Call lane unavailable',
+        desc: `${activeAgent.name} is a ${activeAgent.role.toLowerCase()} agent. Use Ava, Max, or Nurture Agent for Telnyx calls.`,
+      });
+      return;
+    }
     const phone = getLeadOptionPhone(selectedLead);
     if (normalizePhone(phone).length < 10) {
       showUiToast({
@@ -1287,7 +1599,7 @@ export function AgentFleet() {
     setCallActionPending(true);
     try {
       const response = await startLeadCallRequest({
-        leadId: getLeadOptionId(selectedLead),
+        leadId: selectedLeadCanonicalId,
         leadName: getLeadOptionName(selectedLead),
         phone,
         email: selectedLead.email || selectedLead.seller?.email || '',
@@ -1564,7 +1876,7 @@ export function AgentFleet() {
                     >
                       {leadOptions.length ? (
                         leadOptions.map((lead) => (
-                          <option key={getLeadOptionId(lead)} value={getLeadOptionId(lead)}>
+                          <option key={getLeadOptionKey(lead)} value={getLeadOptionKey(lead)}>
                             {getLeadOptionLabel(lead)}
                           </option>
                         ))
@@ -1577,8 +1889,18 @@ export function AgentFleet() {
                     <button
                       type="button"
                       className="btn-secondary flex min-h-10 items-center justify-center gap-2"
-                      disabled={!selectedLead || callActionPending}
+                      disabled={
+                        !selectedLead ||
+                        !selectedLeadCanonicalId ||
+                        !activeAgentCanCall ||
+                        callActionPending
+                      }
                       onClick={handleCallSelectedLead}
+                      title={
+                        activeAgentCanCall
+                          ? 'Start an approval-safe Telnyx call lane for this lead'
+                          : 'Only Ava, Max, and Nurture Agent can initiate seller calls'
+                      }
                     >
                       {callActionPending ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -1590,7 +1912,7 @@ export function AgentFleet() {
                     <button
                       type="button"
                       className="btn-primary flex min-h-10 items-center justify-center gap-2"
-                      disabled={!selectedLead || previewLoading}
+                      disabled={!selectedLead || !selectedLeadCanonicalId || previewLoading}
                       onClick={handlePreviewAgentDealContext}
                     >
                       {previewLoading ? <Loader2 size={14} className="animate-spin" /> : null}
@@ -1677,6 +1999,39 @@ export function AgentFleet() {
                             : 'No provider write'}
                         </div>
                       </div>
+                    </div>
+                    <div className="mt-3 flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-2">
+                        {qaAuditLoading ? (
+                          <Loader2 size={13} className="shrink-0 animate-spin text-sky-300" />
+                        ) : latestQaAudit?.passed ? (
+                          <Check size={13} className="shrink-0 text-lime-300" />
+                        ) : latestQaAudit ? (
+                          <AlertCircle size={13} className="shrink-0 text-amber-300" />
+                        ) : (
+                          <AlertCircle size={13} className="shrink-0 text-slate-500" />
+                        )}
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-slate-100">
+                            QA proof{' '}
+                            {latestQaAudit
+                              ? latestQaAudit.skipped
+                                ? 'skipped'
+                                : latestQaAudit.passed
+                                  ? 'passed'
+                                  : 'needs review'
+                              : 'not recorded yet'}
+                          </div>
+                          <div className="truncate text-slate-500">
+                            {latestQaAudit
+                              ? `${latestQaAudit.toolName || 'tool'} - ${latestQaAudit.reason || 'validated'}`
+                              : qaAuditStatus}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="shrink-0 rounded-full border border-slate-700 px-2 py-1 text-[10px] uppercase tracking-wide text-slate-500">
+                        {latestQaAudit?.source || qaAuditStatus}
+                      </span>
                     </div>
                     {dealPreview.reasoning?.length ? (
                       <ul className="mt-3 space-y-1 text-xs text-slate-500">

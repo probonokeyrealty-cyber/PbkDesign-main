@@ -10611,6 +10611,120 @@ async function recordPbkQaAudit(record = {}) {
   }
 }
 
+async function recordQaPreviewAudit({
+  toolName = 'provider_action_preview',
+  params = {},
+  result = {},
+  qa = {},
+  source = 'pbk-bridge-preview',
+  reason = 'preview_created',
+  validator = 'preview',
+} = {}) {
+  const id = `pbk-qa-preview-${Date.now()}-${Math.abs(hashString(`${toolName}\n${JSON.stringify(qa || {})}`))}`;
+  const normalizedQa =
+    qa && typeof qa === 'object'
+      ? qa
+      : {
+          ok: true,
+          skipped: false,
+          reason,
+        };
+  const record = {
+    id,
+    toolName,
+    passed: normalizedQa.ok !== false,
+    skipped: Boolean(normalizedQa.skipped),
+    reason: normalizedQa.reason || reason,
+    validator: normalizedQa.validator || validator,
+    retryCount: 0,
+    params: redactApprovalParamPreview(params || {}),
+    result: redactApprovalParamPreview(result || {}),
+    qa: redactApprovalParamPreview(normalizedQa || {}),
+    source,
+    createdAt: isoNow(),
+  };
+  const stored = await recordPbkQaAudit(record);
+  return {
+    ...stored,
+    id,
+    source: stored.ok ? 'postgres:pbk_qa_audit' : 'qa_audit_unavailable',
+    record: {
+      id,
+      toolName,
+      passed: record.passed,
+      skipped: record.skipped,
+      reason: record.reason,
+      validator: record.validator,
+      createdAt: record.createdAt,
+    },
+  };
+}
+
+function normalizeQaAuditRow(row = {}) {
+  return {
+    id: row.id || '',
+    tenantId: row.tenantId || row.tenant_id || 'pbk',
+    toolName: row.toolName || row.tool_name || '',
+    passed: Boolean(row.passed),
+    skipped: Boolean(row.skipped),
+    reason: row.reason || '',
+    validator: row.validator || '',
+    retryCount: Number(row.retryCount ?? row.retry_count ?? 0) || 0,
+    params: row.params && typeof row.params === 'object' ? row.params : {},
+    result: row.result && typeof row.result === 'object' ? row.result : {},
+    qa: row.qa && typeof row.qa === 'object' ? row.qa : {},
+    source: row.source || '',
+    createdAt: row.createdAt || row.created_at || '',
+  };
+}
+
+async function getLatestQaAuditStatus({ leadId = '', limit = 10 } = {}) {
+  const normalizedLeadId = String(leadId || '').trim();
+  const safeLimit = Math.max(1, Math.min(50, Number(limit || 10)));
+  const result = await queryPgRows(
+    `SELECT
+       id,
+       tenant_id AS "tenantId",
+       tool_name AS "toolName",
+       passed,
+       skipped,
+       reason,
+       validator,
+       retry_count AS "retryCount",
+       params,
+       result,
+       qa,
+       source,
+       created_at AS "createdAt"
+     FROM public.pbk_qa_audit
+     WHERE tenant_id = $1
+       AND (
+         $2::text = ''
+         OR params->>'leadId' = $2
+         OR params->>'lead_id' = $2
+         OR params->>'id' = $2
+         OR result->>'leadId' = $2
+         OR result->>'lead_id' = $2
+         OR result->'lead'->>'leadId' = $2
+         OR result->'lead'->>'lead_id' = $2
+       )
+     ORDER BY created_at DESC
+     LIMIT $3::int`,
+    ['pbk', normalizedLeadId, safeLimit]
+  );
+  const audits = (result.rows || []).map(normalizeQaAuditRow);
+  return {
+    ok: Boolean(result.ok),
+    result: result.ok ? 'live' : 'unavailable',
+    source: result.ok ? 'postgres:pbk_qa_audit' : 'postgres_unavailable',
+    leadId: normalizedLeadId,
+    count: audits.length,
+    audits,
+    latest: audits[0] || null,
+    warning: result.ok ? '' : result.error || result.reason || 'QA audit table unavailable.',
+  };
+}
+
 async function recordPbkSafetyAudit(record = {}) {
   const toolName = String(record.toolName || record.tool_name || '').trim();
   if (!toolName) return { ok: false, reason: 'missing_tool_name' };
@@ -28958,6 +29072,99 @@ function findLatestAnalyzerRun(params = {}) {
   );
 }
 
+function syncAnalyzerRunToLeadProfile(params = {}, run = {}) {
+  const context = findLeadContext({
+    ...params,
+    leadId: params.leadId || params.lead_id || run.leadId,
+    address: params.address || params.propertyAddress || run.address,
+    email: params.email || params.sellerEmail,
+    leadName: params.leadName || params.sellerName,
+  });
+  const existing = findLatestLeadImport({
+    ...params,
+    leadId: context.leadId,
+    address: context.address || run.address,
+    email: context.email,
+    leadName: context.leadName,
+  });
+  if (!existing) return null;
+
+  const selectedPath = normalizePbkDealPath(
+    params.path ||
+      params.selectedPath ||
+      params.selected_path ||
+      existing.selectedPath ||
+      existing.selected_path ||
+      existing.callContext?.selectedPath ||
+      existing.call_context?.selectedPath,
+    inferLeadSelectedPath(existing)
+  );
+  const currentCallContext = {
+    ...(existing.call_context || {}),
+    ...(existing.callContext || {}),
+  };
+  const propertyPatch = {
+    ...(existing.property || {}),
+    address: context.address || run.address || existing.property?.address || '',
+    propertyType: params.propertyType || params.type || existing.property?.propertyType || existing.property?.type || '',
+    type: params.propertyType || params.type || existing.property?.type || existing.property?.propertyType || '',
+    askingPrice: toMoneyNumber(params.askingPrice ?? params.price, existing.property?.askingPrice || 0),
+    arv: toMoneyNumber(run.arv, existing.property?.arv || 0),
+    mao: toMoneyNumber(run.mao, existing.property?.mao || 0),
+    mao60: toMoneyNumber(run.mao, existing.property?.mao60 || existing.property?.mao || 0),
+    maoRbp: toMoneyNumber(params.maoRbp ?? params.maoRBP ?? run.maoRbp ?? run.mao, existing.property?.maoRbp || existing.property?.maoRBP || 0),
+    maoRBP: toMoneyNumber(params.maoRBP ?? params.maoRbp ?? run.maoRBP ?? run.mao, existing.property?.maoRBP || existing.property?.maoRbp || 0),
+    estimatedRepairs: toMoneyNumber(run.repairsMid, existing.property?.estimatedRepairs || 0),
+    repairsMid: toMoneyNumber(run.repairsMid, existing.property?.repairsMid || 0),
+    targetOffer: toMoneyNumber(run.targetOffer, existing.property?.targetOffer || 0),
+    lastAnalyzerRunId: run.id || '',
+    lastAnalyzerAt: run.createdAt || isoNow(),
+  };
+  const callContextPatch = {
+    ...currentCallContext,
+    selectedPath,
+    selected_path: selectedPath,
+    selectedPathLabel: getPathDisplayLabel(selectedPath),
+    lastOffer: toMoneyNumber(run.targetOffer, currentCallContext.lastOffer || currentCallContext.last_offer || 0),
+    last_offer: toMoneyNumber(run.targetOffer, currentCallContext.last_offer || currentCallContext.lastOffer || 0),
+    targetOffer: toMoneyNumber(run.targetOffer, currentCallContext.targetOffer || 0),
+    mao: toMoneyNumber(run.mao, currentCallContext.mao || 0),
+    maoRbp: propertyPatch.maoRbp,
+    arv: toMoneyNumber(run.arv, currentCallContext.arv || 0),
+    repairsMid: toMoneyNumber(run.repairsMid, currentCallContext.repairsMid || 0),
+    lastAnalyzerRunId: run.id || '',
+    lastAnalyzerAt: run.createdAt || isoNow(),
+  };
+
+  return patchLeadImport(
+    state,
+    {
+      leadId: existing.leadId || context.leadId,
+      address: existing.property?.address || context.address || run.address,
+      email: existing.seller?.email || context.email,
+      leadName: existing.seller?.name || context.leadName,
+    },
+    {
+      selectedPath,
+      selected_path: selectedPath,
+      property: propertyPatch,
+      callContext: callContextPatch,
+      call_context: callContextPatch,
+      analyzer: {
+        runId: run.id || '',
+        address: run.address || context.address || '',
+        arv: run.arv,
+        mao: run.mao,
+        maoRbp: propertyPatch.maoRbp,
+        targetOffer: run.targetOffer,
+        repairsMid: run.repairsMid,
+        estProfit: run.estProfit,
+        updatedAt: run.createdAt || isoNow(),
+      },
+    }
+  );
+}
+
 function buildBrainEmailContext(params = {}) {
   const context = findLeadContext(params);
   const leadImport = findLatestLeadImport(params);
@@ -29574,6 +29781,8 @@ function createContractRecord(params = {}) {
     underwritingStatus: params.underwritingStatus || '',
     underwritingReviewerEmail: params.underwritingReviewerEmail || '',
     underwritingReviewerName: params.underwritingReviewerName || '',
+    analyzerRunId: params.analyzerRunId || params.analyzer_run_id || '',
+    analyzerSnapshot: params.analyzerSnapshot || params.analyzer_snapshot || null,
     sellerNotice: params.sellerNotice || '',
     sentAt: params.sentAt || params.sent_at || '',
     viewedAt: params.viewedAt || params.viewed_at || '',
@@ -30280,6 +30489,8 @@ function createDocumentDeliveryRecord(params = {}) {
     address: params.address || context.address,
     email: params.email || context.email || '',
     senderProfile: inferSenderProfile(params.senderProfile),
+    senderIdentityId: params.senderIdentityId || params.sender_identity_id || '',
+    fromEmail: params.fromEmail || params.from_email || params.senderEmail || '',
     documents: Array.isArray(params.documents) ? params.documents : [],
     status: params.status || 'queued',
     subject: params.subject || '',
@@ -36275,6 +36486,28 @@ async function enforceOperatingModeForTool(toolName, params = {}) {
       executionParams: buildProviderActionReplayParams(params || {}),
     },
   });
+  await recordQaPreviewAudit({
+    toolName,
+    params,
+    result: {
+      approvalId: approval?.id || '',
+      approvalStatus: approval?.status || 'pending',
+      mode,
+      safety: safetyValidation,
+    },
+    qa: {
+      ok: safetyValidation?.blocked !== true,
+      skipped: false,
+      validator: 'provider_action_preview',
+      reason: safetyReviewRequired ? 'approval_preview_safety_review' : 'approval_preview_created',
+      safetyResult: safetyValidation?.result || '',
+      warnings: safetyValidation?.warnings || [],
+      violations: safetyValidation?.violations || [],
+    },
+    source: 'provider-action-preview',
+    reason: safetyReviewRequired ? 'approval_preview_safety_review' : 'approval_preview_created',
+    validator: 'provider_action_preview',
+  });
   return {
     ok: true,
     result: 'queued_for_approval',
@@ -36391,13 +36624,13 @@ async function validateToolResultWithQa(toolName, params = {}, result = {}, sour
     }
     return validation;
   } catch (error) {
-    console.warn('[pbk-local-openclaw] QA validation skipped:', error?.message || error);
+    console.warn('[pbk-local-openclaw] QA validation failed closed:', error?.message || error);
     return {
-      ok: true,
-      skipped: true,
+      ok: false,
+      skipped: false,
       qa: {
-        ok: true,
-        skipped: true,
+        ok: false,
+        skipped: false,
         reason: 'qa_runtime_error',
         error: error?.message || String(error),
       },
@@ -36558,6 +36791,22 @@ async function executeRouteToolHandler(toolName, params = {}, source = 'http-rou
     };
   }
   return executeToolHandlerWithQa(toolName, params, source);
+}
+
+function getRouteToolStatusCode({ result = {}, guarded = null, qaValidation = null } = {}, { failureStatus = 400, successStatus = 200 } = {}) {
+  if (guarded) return guarded.ok === false ? 409 : 202;
+  if (qaValidation?.qa?.ok === false || qaValidation?.ok === false) return 502;
+  if (result?.ok === false) return failureStatus;
+  return successStatus;
+}
+
+function buildRouteToolResponse(payload = {}) {
+  return {
+    ...(payload.result && typeof payload.result === 'object' ? payload.result : {}),
+    qa: payload.qaValidation?.qa || null,
+    safety: payload.safetyValidation || null,
+    state: buildStateSnapshot(),
+  };
 }
 
 async function personalizeNurtureMessageWithStrategist({ draft = '', lead = {}, channel = '', step = null } = {}) {
@@ -37300,7 +37549,7 @@ function mapRegistryAgentToFleetAgent(agent = {}) {
     },
     endpoint: normalized.endpoint || '',
     capabilities: normalized.capabilities,
-    lastSeen: normalized.healthCheckedAt || normalized.health_checked_at || isoNow(),
+    lastSeen: normalized.healthCheckedAt || normalized.health_checked_at || null,
     registry: {
       source: 'agent_registry',
       lastError: normalized.lastError || normalized.last_error || '',
@@ -37384,8 +37633,8 @@ function buildAgentOrchestrationSnapshot() {
   const registryStatus = buildAgentRegistrySnapshot(getCurrentAgentRegistry());
   const probes = (state.agents || []).map(buildAgentHealthProbe);
   const supervisor = probes.find((agent) => agent.id === 'ava') || null;
-  const workers = probes.filter((agent) => agent.supervisor === 'ava' || ['rex', 'hermes'].includes(agent.id));
   const requiredIds = registryStatus.required.ids;
+  const workers = probes.filter((agent) => requiredIds.includes(agent.id) && agent.id !== 'ava');
   const missingAgents = requiredIds.filter((id) => !probes.find((agent) => agent.id === id));
   const requiredToolGaps = probes.filter((agent) => requiredIds.includes(agent.id) && agent.missingTools.length).map((agent) => ({ agentId: agent.id, missingTools: agent.missingTools }));
   const handoffQueues = {
@@ -37394,7 +37643,8 @@ function buildAgentOrchestrationSnapshot() {
     adminTasks: (state.adminTasks || []).filter((task) => ['pending', 'approved', 'executing'].includes(String(task.status || '').toLowerCase())).length,
     approvals: getPendingRuntimeApprovals(state.approvals).length,
   };
-  const registryReady = registryStatus.ok && missingAgents.length === 0 && Boolean(supervisor) && workers.some((agent) => agent.id === 'rex') && workers.some((agent) => agent.id === 'hermes');
+  const registryInventoryReady = Boolean(registryStatus.inventoryReady ?? registryStatus.required?.missing?.length === 0);
+  const registryReady = registryInventoryReady && missingAgents.length === 0 && Boolean(supervisor) && workers.some((agent) => agent.id === 'rex') && workers.some((agent) => agent.id === 'hermes');
   const toolsReady = requiredToolGaps.length === 0;
   return {
     ok: registryReady && toolsReady,
@@ -37405,8 +37655,11 @@ function buildAgentOrchestrationSnapshot() {
     workers,
     registry: {
       ready: registryReady && registryStatus.ok,
+      inventoryReady: registryReady,
+      healthReady: Boolean(registryStatus.ok),
       requiredAgents: requiredIds,
       missingAgents,
+      pendingHealth: registryStatus.required?.pendingHealth || [],
       count: probes.length,
       source: 'agent_registry',
       loadedAt: agentRegistryLoadedAt,
@@ -37441,7 +37694,9 @@ function buildSnnWorkerStatusSnapshot(params = {}) {
   const requestedAgents = normalizeStringList(params.agents || params.agentIds || params.agentId || params.agentName || [])
     .map(normalizeAgentRosterId)
     .filter(Boolean);
-  const snnAgentIds = requestedAgents.length ? requestedAgents : ['ava', 'rex', 'hermes', 'script-rotator', 'bant-enforcer'];
+  const snnAgentIds = requestedAgents.length
+    ? requestedAgents
+    : (orchestration.registry?.requiredAgents || []).map(normalizeAgentRosterId).filter(Boolean);
   const toolUsage = state.status?.toolUsage || {};
   const webSearchStatus = getWebSearchProviderStatus();
   const openAiSearch = getOpenAiWebSearchProviderMeta();
@@ -37488,7 +37743,7 @@ function buildSnnWorkerStatusSnapshot(params = {}) {
     };
   });
   return {
-    ok: workers.every((worker) => worker.ready),
+    ok: snnAgentIds.length > 0 && workers.length === snnAgentIds.length && workers.every((worker) => worker.ready),
     result: 'snn_worker_status',
     writeMode: 'read_only',
     generatedAt: isoNow(),
@@ -37533,7 +37788,8 @@ function buildBantPreview(lead = {}, params = {}) {
   const authority = source.authority || source.owner || lead.ownerVerified || lead.seller?.authority || '';
   const need = source.need || source.motivation || lead.motivation || lead.motivationScore || '';
   const timeline = source.timeline || lead.timeline || lead.seller?.timeline || '';
-  const fields = { budget, authority, need, timeline };
+  const urgency = source.urgency || source.urgencyLevel || source.urgency_level || lead.urgency || lead.urgencyLevel || lead.seller?.urgency || '';
+  const fields = { budget, authority, need, timeline, urgency };
   const missing = Object.entries(fields)
     .filter(([, value]) => value === '' || value === null || typeof value === 'undefined' || value === false)
     .map(([key]) => key);
@@ -37652,6 +37908,141 @@ async function recordAgentHandoffTask(task = {}) {
   return record;
 }
 
+function buildAgentSmokePayload(agentId = '', params = {}) {
+  const base = {
+    dryRun: true,
+    smoke: true,
+    source: 'agent-orchestration-smoke',
+    actor: params.actor || 'Agent Orchestration Smoke',
+    leadId: params.leadId || 'agent-orchestration-smoke-lead',
+    leadName: params.leadName || 'Smoke Seller',
+    address: params.address || '202 Cherry Lane',
+    query: params.query || 'Run a safe readiness probe with no provider writes.',
+    command: params.command || 'Run a safe readiness probe with no provider writes.',
+  };
+  const payloads = {
+    ava: {
+      ...base,
+      command: params.command || 'What is the MAO on 202 Cherry Lane?',
+    },
+    max: {
+      ...base,
+      query: 'Prepare an approval-safe offer recap and contract handoff readiness summary.',
+      selectedPath: params.selectedPath || 'cash',
+    },
+    rex: {
+      ...base,
+      query: 'Summarize PBK strategist readiness and next safe action.',
+      agent: 'rex',
+    },
+    hermes: {
+      ...base,
+      query: 'Verify suggest-only analysis lane readiness.',
+    },
+    'call-analyzer': {
+      ...base,
+      limit: 1,
+      transcript: 'Ava: What would need to be true for this to be a yes? Seller: I need the roof handled.',
+    },
+    'prosody-tuner': {
+      ...base,
+      emotion: 'hesitation',
+      sentiment: 0.38,
+      text: 'Seller sounds hesitant and needs calm pacing.',
+    },
+    'script-rotator': {
+      ...base,
+      query: 'Seller says the price is too low. Select an approval-safe objection script.',
+      objection: 'price_too_low',
+    },
+    'bant-enforcer': {
+      ...base,
+      transcript:
+        'Seller is the owner, wants to avoid repairs, needs to close in 30 days, and is comparing a 95000 offer.',
+      bant: {
+        budget: 95000,
+        authority: true,
+        need: 'avoid repairs',
+        timeline: '30 days',
+      },
+    },
+    'qa-agent': {
+      ...base,
+      query: 'Verify QA validators and audit lane readiness.',
+    },
+    'nurture-agent': {
+      ...base,
+      channel: 'sms',
+      stage: 'warm',
+      intent: 'follow_up',
+    },
+    'research-orchestrator': {
+      ...base,
+      query: 'Run stopping guard readiness for a deal-close workflow.',
+      goal: 'deal_close_readiness',
+    },
+  };
+  return payloads[agentId] || base;
+}
+
+function summarizeAgentProbeOutput(output = {}) {
+  return {
+    ok: output?.ok !== false,
+    result: output?.result || output?.status || output?.type || '',
+    writeMode: output?.writeMode || output?.safety?.providerWrites || output?.safety?.providerWritesBlocked || '',
+    blocked: Boolean(output?.blocked || output?.safety?.blocked),
+  };
+}
+
+async function runLocalAgentSmokeProbe(agentId = '', params = {}) {
+  const startedAt = Date.now();
+  const registry = getCurrentAgentRegistry();
+  const agent = registry.find((item) => item.id === agentId) || null;
+  if (!agent) {
+    return {
+      agentId,
+      ok: false,
+      handlerReady: false,
+      result: 'agent_not_registered',
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+  const handlers = getLocalAgentRegistryHandlers();
+  const handlerReady = typeof handlers[agentId] === 'function';
+  if (!handlerReady) {
+    return {
+      agentId,
+      ok: false,
+      handlerReady: false,
+      result: 'local_handler_missing',
+      latencyMs: Date.now() - startedAt,
+    };
+  }
+  try {
+    const output = await invokeRegisteredAgent(agent, buildAgentSmokePayload(agentId, params), {
+      localHandlers: handlers,
+      timeoutMs: params.timeoutMs || params.timeout_ms || 5000,
+    });
+    return {
+      agentId,
+      ok: output?.ok !== false,
+      handlerReady: true,
+      result: output?.result || 'agent_probe_complete',
+      latencyMs: Date.now() - startedAt,
+      output: summarizeAgentProbeOutput(output),
+    };
+  } catch (error) {
+    return {
+      agentId,
+      ok: false,
+      handlerReady: true,
+      result: 'agent_probe_failed',
+      latencyMs: Date.now() - startedAt,
+      error: error?.message || String(error),
+    };
+  }
+}
+
 async function runAgentOrchestrationSmoke(params = {}) {
   ensureAgentFleetCollections();
   const correlationId = params.correlationId || `agent-orchestration-smoke-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -37728,14 +38119,44 @@ async function runAgentOrchestrationSmoke(params = {}) {
       source: 'agent-orchestration-smoke',
     },
   });
+  const orchestrationBeforePersist = buildAgentOrchestrationSnapshot();
+  const requiredAgentIds = orchestrationBeforePersist.registry?.requiredAgents || [];
+  const agentProbes = [];
+  for (const agentId of requiredAgentIds) {
+    agentProbes.push(await runLocalAgentSmokeProbe(agentId, params));
+  }
+  const probeTasks = [];
+  for (const probe of agentProbes.filter((item) => !['ava', 'rex', 'hermes'].includes(item.agentId))) {
+    probeTasks.push(
+      await recordAgentHandoffTask({
+        correlationId,
+        fromAgent: 'Ava',
+        toAgent: probe.agentId,
+        taskType: 'agent_smoke_probe',
+        status: probe.ok ? 'complete' : 'warning',
+        summary: `${probe.agentId} local handler smoke ${probe.ok ? 'passed' : 'needs review'}.`,
+        providerWrites: 'blocked',
+        metadata: {
+          result: probe.result,
+          handlerReady: probe.handlerReady,
+          latencyMs: probe.latencyMs,
+          error: probe.error || '',
+          source: 'agent-orchestration-smoke',
+        },
+      })
+    );
+  }
   await persistState(state);
   const orchestration = buildAgentOrchestrationSnapshot();
+  const requiredWorkers = (orchestration.registry?.requiredAgents || []).filter((agentId) => agentId !== 'ava');
+  const handlerCoverageReady = agentProbes.length === (orchestration.registry?.requiredAgents || []).length
+    && agentProbes.every((probe) => probe.handlerReady && probe.ok);
   return {
-    ok: Boolean(orchestration.registry?.ready && avaRoutedTo === 'tool_first:analyze_deal' && rexResult?.ok && hermesTask?.id),
+    ok: Boolean(orchestration.registry?.inventoryReady && avaRoutedTo === 'tool_first:analyze_deal' && rexResult?.ok && hermesTask?.id && handlerCoverageReady),
     result: 'live',
     correlationId,
     supervisor: 'ava',
-    workers: ['rex', 'hermes'],
+    workers: requiredWorkers,
     safety: {
       approvalGate: true,
       providerWrites: 'blocked',
@@ -37758,8 +38179,10 @@ async function runAgentOrchestrationSmoke(params = {}) {
         mode: hermes.mode || '',
         writeMode: hermes.writeMode || 'suggest-only',
       },
+      agents: agentProbes,
+      handlerCoverageReady,
     },
-    tasks: [avaTask, rexTask, hermesTask],
+    tasks: [avaTask, rexTask, hermesTask, ...probeTasks],
     orchestration,
   };
 }
@@ -37928,10 +38351,28 @@ function getLocalAgentRegistryHandlers() {
       };
     },
     'nurture-agent': async (payload = {}) =>
-      toolHandlers.consultNurtureAgent({
-        ...payload,
-        source: payload.source || 'agent-registry',
-      }),
+      {
+        const pool = getPgPool();
+        if ((payload.dryRun || payload.smoke) && !pool) {
+          return {
+            ok: true,
+            result: 'nurture_agent_handler_ready',
+            configured: false,
+            providerReady: false,
+            writeMode: 'approval_gated',
+            recommendation: {
+              channel: payload.channel || 'sms',
+              urgency: payload.stage === 'hot' ? 'today' : 'next_best_follow_up',
+              approvalRequired: true,
+            },
+            warnings: ['PBK_DATABASE_URL/DATABASE_URL is required before live nurture sequence reads or writes.'],
+          };
+        }
+        return toolHandlers.consultNurtureAgent({
+          ...payload,
+          source: payload.source || 'agent-registry',
+        });
+      },
     'research-orchestrator': async (payload = {}) => {
       const query = String(payload.query || payload.command || payload.goal || '').trim();
       if (/\b(sync|unified|frontier|all additives|whole system|robust|fusion)\b/i.test(query)) {
@@ -42575,7 +43016,7 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
         verbiage: 'Lead is managed by Instantly campaign.',
       };
     }
-    delivery = await toolHandlers.sendColdEmail({
+    const execution = await executeToolHandlerWithQa('sendColdEmail', {
       leadId: lead.leadId,
       leadName: lead.leadName,
       address: lead.address,
@@ -42587,9 +43028,14 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       from_email: providerConfig.fromEmail,
       body: buildCampaignOutboundText(campaign, lead, channel),
       actor: 'Campaign worker',
-    });
+    }, 'campaign-due-worker');
+    delivery = {
+      ...execution.result,
+      qa: execution.qaValidation?.qa || null,
+      safety: execution.safetyValidation || null,
+    };
   } else if (channel === 'sms') {
-    delivery = await toolHandlers.telnyx_sms({
+    const execution = await executeToolHandlerWithQa('telnyx_sms', {
       leadId: lead.leadId,
       leadName: lead.leadName,
       address: lead.address,
@@ -42599,9 +43045,14 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       body: buildCampaignOutboundText(campaign, lead, channel),
       campaignId: campaign.id,
       actor: 'Campaign worker',
-    });
+    }, 'campaign-due-worker');
+    delivery = {
+      ...execution.result,
+      qa: execution.qaValidation?.qa || null,
+      safety: execution.safetyValidation || null,
+    };
   } else if (channel === 'call') {
-    delivery = await toolHandlers.telnyx_call({
+    const execution = await executeToolHandlerWithQa('telnyx_call', {
       leadId: lead.leadId,
       leadName: lead.leadName,
       address: lead.address,
@@ -42613,16 +43064,26 @@ async function processCampaignLeadStep(campaign = {}, lead = {}, options = {}) {
       record: true,
       transcription: true,
       actor: 'Campaign worker',
-    });
+    }, 'campaign-due-worker');
+    delivery = {
+      ...execution.result,
+      qa: execution.qaValidation?.qa || null,
+      safety: execution.safetyValidation || null,
+    };
   } else if (channel === 'contract') {
-    delivery = await toolHandlers.sendDocuSign({
+    const execution = await executeToolHandlerWithQa('sendDocuSign', {
       leadId: lead.leadId,
       leadName: lead.leadName,
       address: lead.address,
       email: lead.email,
       campaignId: campaign.id,
       actor: 'Campaign worker',
-    });
+    }, 'campaign-due-worker');
+    delivery = {
+      ...execution.result,
+      qa: execution.qaValidation?.qa || null,
+      safety: execution.safetyValidation || null,
+    };
   }
 
   const live = Boolean(delivery?.telnyx?.live || delivery?.docusign?.live || delivery?.delivery?.live || delivery?.result === 'live');
@@ -45589,7 +46050,38 @@ const toolHandlers = {
 
   async previewAgentDealContext(params = {}) {
     recordToolUse('previewAgentDealContext');
-    return buildAgentDealContextPreview(params);
+    const preview = buildAgentDealContextPreview(params);
+    const missingProof = [
+      ...(preview.bant?.complete ? [] : [`missing_bant:${(preview.bant?.missing || []).join(',') || 'unknown'}`]),
+      ...(preview.analyzer?.found ? [] : ['missing_analyzer_numbers']),
+      ...(preview.agent?.ready ? [] : ['agent_not_ready']),
+    ].filter(Boolean);
+    const qaAudit = await recordQaPreviewAudit({
+      toolName: 'previewAgentDealContext',
+      params,
+      result: {
+        result: preview.result,
+        lead: preview.lead,
+        agent: preview.agent,
+        selectedPath: preview.selectedPath,
+        recommendedAction: preview.recommendedAction,
+        confidence: preview.confidence,
+      },
+      qa: {
+        ok: missingProof.length === 0,
+        skipped: false,
+        validator: 'agent_deal_context_preview',
+        reason: missingProof.length ? 'agent_context_incomplete' : 'agent_context_ready',
+        missingProof,
+      },
+      source: 'agent-fleet-preview',
+      reason: missingProof.length ? 'agent_context_incomplete' : 'agent_context_ready',
+      validator: 'agent_deal_context_preview',
+    });
+    return {
+      ...preview,
+      qaAudit,
+    };
   },
 
   async pbk_transfer_agent_skill(params = {}) {
@@ -46355,6 +46847,7 @@ const toolHandlers = {
       run.bantComplete = getMissingBantFields(bant).length === 0;
     }
     addAnalyzerRun(state, run);
+    const syncedLead = syncAnalyzerRunToLeadProfile(params, run);
     addActivity(
       state,
       makeActivity({
@@ -46367,7 +46860,11 @@ const toolHandlers = {
     );
     await persistState(state);
     setAnalyzerResultCache(params, run);
-    return run;
+    return {
+      ...run,
+      leadSynced: Boolean(syncedLead),
+      leadId: syncedLead?.leadId || run.leadId,
+    };
   },
 
   async getPropertyData(params = {}) {
@@ -47356,14 +47853,19 @@ const toolHandlers = {
     } else if (reply.nextAction === 'call-now') {
       leadStage = 'hot';
       if (params.autoDialImmediate ?? AUTO_DIAL_IMMEDIATE_REPLIES) {
-        telnyxCall = await toolHandlers.telnyx_call({
+        const callExecution = await executeToolHandlerWithQa('telnyx_call', {
           leadId: context.leadId,
           leadName: context.leadName,
           address: context.address,
           phone: params.phone || context.phone,
           email: params.email || context.email,
           notes: `Immediate inbound follow-up requested via ${params.provider || params.channel || 'reply automation'}: ${reply.body}`.slice(0, 500),
-        });
+        }, 'reply-intent-auto-dial');
+        telnyxCall = {
+          ...callExecution.result,
+          qa: callExecution.qaValidation?.qa || null,
+          safety: callExecution.safetyValidation || null,
+        };
       }
       if (!telnyxCall || telnyxCall.ok === false) {
         const approvalResult = await toolHandlers.createApproval({
@@ -47390,7 +47892,7 @@ const toolHandlers = {
           notes: reply.body,
         };
       }
-      const appointmentResult = await toolHandlers.scheduleAppointment({
+      const appointmentExecution = await executeToolHandlerWithQa('scheduleAppointment', {
         leadId: context.leadId,
         leadName: context.leadName,
         address: context.address,
@@ -47404,7 +47906,8 @@ const toolHandlers = {
         bookingUrl: params.bookingUrl || params.calendarUrl || DEFAULT_BOOKING_LINK,
         calendarEventStatus: parsedSlot ? (parsedSlot.approximate ? 'drafted' : 'created') : '',
         notes: `Reply intent: ${reply.intent}${reply.requestedWindow ? ` · requested window ${reply.requestedWindow}` : ''} · ${reply.body}`.slice(0, 500),
-      });
+      }, 'reply-intent-booking');
+      const appointmentResult = appointmentExecution.result;
       appointment = appointmentResult.appointment || appointmentResult;
     } else if (reply.temperature === 'warm') {
       leadStage = 'warm';
@@ -49155,6 +49658,17 @@ const toolHandlers = {
     const slot2Email = String(params.slot2Email || params.rbpManagerEmail || (selectedPath === 'rbp' ? process.env.RBP_MANAGER_EMAIL : '') || 'info@probonokeyrealty.com').trim();
     const companyEmail = String(params.companyEmail || process.env.PBK_CONTRACT_COMPANY_EMAIL || 'info@probonokeyrealty.com').trim();
     const companyName = String(params.companyName || 'Probono Key Realty').trim();
+    const latestAnalyzerRun = findLatestAnalyzerRun({
+      ...params,
+      leadId: params.leadId || lead.leadId || lead.id || leadLookup,
+      address: params.address || lead.address || property.address || '',
+      email: seller1Email,
+      leadName: seller1Name,
+    });
+    const analyzerAmount = toMoneyNumber(
+      latestAnalyzerRun?.targetOffer || latestAnalyzerRun?.offer || latestAnalyzerRun?.mao,
+      0
+    );
     const providedSigners = Array.isArray(params.signers) ? params.signers.filter((signer) => signer?.email) : [];
     const signers = providedSigners.length
       ? providedSigners
@@ -49209,7 +49723,7 @@ const toolHandlers = {
       email: seller1Email,
       phone: params.phone || lead.phone || seller.phone || '',
       address: params.address || lead.address || property.address || '',
-      amount: params.amount || params.offerPrice || callContext.last_offer || callContext.lastOffer || property.askingPrice || 0,
+      amount: params.amount || params.offerPrice || callContext.last_offer || callContext.lastOffer || analyzerAmount || property.askingPrice || 0,
       timeline: params.timeline || callContext.timeline || lead.motivation?.timeline || '',
       earnestDeposit: params.earnestDeposit || callContext.earnestDeposit || '',
       selectedPath,
@@ -49219,6 +49733,17 @@ const toolHandlers = {
       docusignTemplateName: templateName,
       templateName,
       signers,
+      analyzerRunId: latestAnalyzerRun?.id || '',
+      analyzerSnapshot: latestAnalyzerRun
+        ? {
+            id: latestAnalyzerRun.id || '',
+            arv: latestAnalyzerRun.arv || 0,
+            mao: latestAnalyzerRun.mao || 0,
+            targetOffer: latestAnalyzerRun.targetOffer || 0,
+            repairsMid: latestAnalyzerRun.repairsMid || 0,
+            createdAt: latestAnalyzerRun.createdAt || '',
+          }
+        : null,
       notes: params.notes || `Path-aware contract prepared from lead detail (${pathLabel}, ${templateName}).`,
     };
 
@@ -49563,13 +50088,66 @@ const toolHandlers = {
     const documents = normalizeDocumentItems(params);
     const recipientEmail = String(params.email || context.email || '').trim();
     const senderProfile = inferSenderProfile(params.senderProfile);
-    const from = getSenderAddress(senderProfile);
+    const senderIdentityId = String(params.senderIdentityId || params.sender_identity_id || '').trim();
+    let senderIdentity = null;
+    if (senderIdentityId) {
+      const pool = getPgPool();
+      if (!pool) {
+        return {
+          ok: false,
+          result: 'sender_identity_store_unavailable',
+          error: 'Communication sender identities require Postgres before sending seller documents.',
+        };
+      }
+      const store = createConversationStore(pool);
+      senderIdentity = await store.getSenderIdentity(senderIdentityId, {
+        workspaceId: CONVERSATION_WORKSPACE_ID,
+      });
+      if (!senderIdentity) {
+        return {
+          ok: false,
+          result: 'sender_identity_not_found',
+          error: 'Selected sender identity was not found.',
+        };
+      }
+      if (senderIdentity.channel !== 'email') {
+        return {
+          ok: false,
+          result: 'sender_identity_channel_mismatch',
+          error: 'Selected sender identity must be an email identity for seller documents.',
+        };
+      }
+      if (!rankEligibleSenderIdentities([senderIdentity]).length) {
+        return {
+          ok: false,
+          result: 'sender_identity_ineligible',
+          error: 'Selected sender identity is not currently eligible.',
+        };
+      }
+    }
+    const selectedFromEmail = String(
+      senderIdentity?.address ||
+        params.fromEmail ||
+        params.from_email ||
+        params.senderEmail ||
+        params.instantlySender ||
+        ''
+    ).trim();
+    const from = getSenderAddress(senderProfile, selectedFromEmail);
     const subject = params.subject || `Your property at ${context.address || 'PBK'} - ${documents.length > 1 ? 'seller packet' : 'document package'}`;
 
     if (!documents.length) {
       return {
         ok: false,
         error: 'No seller documents were provided for delivery.',
+      };
+    }
+
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      return {
+        ok: false,
+        result: 'missing_recipient_email',
+        error: 'A valid seller email is required before sending seller documents.',
       };
     }
 
@@ -49608,6 +50186,8 @@ const toolHandlers = {
       address: context.address,
       email: recipientEmail,
       senderProfile,
+      senderIdentityId: senderIdentity?.id || '',
+      fromEmail: from,
       documents: documents.map((item) => item.type),
       status: emailResult.ok ? 'sent' : 'failed',
       subject,
@@ -49625,6 +50205,8 @@ const toolHandlers = {
         channel: 'email',
         direction: 'outbound',
         body: subject,
+        fromEmail: from,
+        senderIdentityId: senderIdentity?.id || '',
         status: emailResult.ok ? 'sent' : 'failed',
         provider: delivery.provider,
       })
@@ -49644,11 +50226,12 @@ const toolHandlers = {
     await persistState(state);
 
     return {
-      ok: true,
-      result: emailResult.ok ? 'live' : 'provider_missing',
-      verbiage: emailResult.ok ? 'Seller documents sent' : 'Email provider not configured - add Resend API key in Settings',
+      ok: Boolean(emailResult.ok),
+      result: emailResult.ok ? 'live' : emailResult.result || 'failed',
+      verbiage: emailResult.ok ? 'Seller documents sent' : emailResult.error || 'Seller document email failed',
       delivery,
       email: emailResult,
+      senderIdentity: senderIdentity ? mapPublicConversationSenderIdentity(senderIdentity) : null,
       attachments: attachments.map((item) => item.filename),
     };
   },
@@ -50802,7 +51385,7 @@ async function handleEvent(eventType, payload = {}) {
       } else if (approvalType === 'lead-nurture' && approvalMetadata.executeOnApproval !== false) {
         const sequenceParams = approvalMetadata.sequenceParams && typeof approvalMetadata.sequenceParams === 'object' ? approvalMetadata.sequenceParams : {};
         try {
-          nurtureResult = await toolHandlers.startNurtureSequence({
+          const nurtureExecution = await executeToolHandlerWithQa('startNurtureSequence', {
             ...sequenceParams,
             leadId: sequenceParams.leadId || approval.leadId || approval.targetId || '',
             leadName: sequenceParams.leadName || approval.leadName || '',
@@ -50812,7 +51395,12 @@ async function handleEvent(eventType, payload = {}) {
             source: 'approval-callback',
             approvalId: approval.id,
             force: sequenceParams.force ?? true,
-          });
+          }, 'lead-nurture-approval-callback');
+          nurtureResult = {
+            ...nurtureExecution.result,
+            qa: nurtureExecution.qaValidation?.qa || null,
+            safety: nurtureExecution.safetyValidation || null,
+          };
           approval.metadata = {
             ...approvalMetadata,
             nurtureExecution: {
@@ -50820,6 +51408,8 @@ async function handleEvent(eventType, payload = {}) {
               ok: nurtureResult?.ok !== false,
               nurtureInstanceId: nurtureResult?.nurtureInstanceId || '',
               executedAt: isoNow(),
+              qa: nurtureResult?.qa || null,
+              safety: nurtureResult?.safety || null,
             },
           };
         } catch (error) {
@@ -59358,6 +59948,15 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && matchesPath(pathname, ['/api/qa/audit/latest', '/api/qa/status'])) {
+      const status = await getLatestQaAuditStatus({
+        leadId: url.searchParams.get('leadId') || url.searchParams.get('lead_id') || '',
+        limit: url.searchParams.get('limit') || 10,
+      });
+      json(response, status.ok ? 200 : 503, status);
+      return;
+    }
+
     if (request.method === 'GET' && matchesPath(pathname, ['/api/agents/discover', '/api/agent-discovery'])) {
       const capability = url.searchParams.get('capability') || '';
       const status = buildAgentRegistryStatus({
@@ -60660,13 +61259,14 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const sourceType = String(body.sourceType || '').trim().toLowerCase();
       const sourceUrl = String(body.source || body.sourceUrl || '').trim();
-      const agentId = String(body.agentId || 'ava').trim().toLowerCase();
+      const rawAgentId = String(body.agentId || 'ava').trim().toLowerCase();
+      const agentId = rawAgentId === 'nurture' ? 'nurture-agent' : rawAgentId;
       const maxCandidates = Math.max(1, Math.min(8, Number(body.maxCandidates) || 5));
       const manualTranscript = String(
         body.manualTranscript || body.transcript || body.text || body.content || ''
       );
       const manualTranscriptResult = normalizeManualYouTubeTranscript(manualTranscript);
-      const allowedSkillAgents = new Set(['ava', 'rex', 'nurture', 'max']);
+      const allowedSkillAgents = new Set(['ava', 'rex', 'nurture-agent', 'max']);
       if (sourceType !== 'youtube' || !extractYouTubeVideoId(sourceUrl)) {
         json(response, 400, {
           ok: false,
@@ -60679,7 +61279,7 @@ const server = createServer(async (request, response) => {
         json(response, 400, {
           ok: false,
           result: 'youtube_skill_agent_invalid',
-          error: 'agentId must be one of ava, rex, nurture, or max.',
+          error: 'agentId must be one of ava, rex, nurture-agent, or max.',
         });
         return;
       }
@@ -61127,19 +61727,8 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/ava/send-verification-sms', '/api/lead/send-verification-sms'])) {
       const body = await readBody(request);
-      const guarded = await enforceOperatingModeForTool('send_verification_sms', body);
-      if (guarded) {
-        json(response, guarded.ok === false ? 409 : 202, {
-          ...guarded,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.send_verification_sms(body);
-      json(response, result.ok === false ? 400 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('send_verification_sms', body, 'verification-sms-route');
+      json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }
 
@@ -62719,29 +63308,15 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/send-seller-docs') {
       const body = await readBody(request);
-      const guard = await enforceOperatingModeForTool('sendSellerDocs', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.sendSellerDocs(body);
-      json(response, result.ok === false ? 400 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('sendSellerDocs', body, 'seller-docs-route');
+      json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }
 
     if (request.method === 'POST' && pathname === '/api/cold-email/send') {
       const body = await readBody(request);
-      const { result } = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route');
-      json(response, result.ok === false ? 400 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('sendColdEmail', body, 'cold-email-route');
+      json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }
 
@@ -65164,37 +65739,15 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/calls') {
       const body = await readBody(request);
-      const guard = await enforceOperatingModeForTool('telnyx_call', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.telnyx_call(body);
-      json(response, result.ok === false ? 409 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('telnyx_call', body, 'calls-route');
+      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), buildRouteToolResponse(routeTool));
       return;
     }
 
     if (request.method === 'POST' && matchesPath(pathname, ['/api/operator/call', '/api/ava/call-operator'])) {
       const body = await readBody(request);
-      const guard = await enforceOperatingModeForTool('pbk_call_operator', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.pbk_call_operator(body);
-      json(response, result.ok === false ? 409 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('pbk_call_operator', body, 'operator-call-route');
+      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), buildRouteToolResponse(routeTool));
       return;
     }
 
@@ -65332,19 +65885,8 @@ const server = createServer(async (request, response) => {
         });
         return;
       }
-      const guard = await enforceOperatingModeForTool('telnyx_sms', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.telnyx_sms(body);
-      json(response, result.ok === false ? 409 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('telnyx_sms', body, 'messages-route');
+      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), buildRouteToolResponse(routeTool));
       return;
     }
 
@@ -65987,37 +66529,15 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/contracts') {
       const body = await readBody(request);
-      const guard = await enforceOperatingModeForTool('sendDocuSign', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.sendDocuSign(body);
-      json(response, 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('sendDocuSign', body, 'contracts-route');
+      json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }
 
     if (request.method === 'POST' && pathname === '/api/contract/send') {
       const body = await readBody(request);
-      const guard = await enforceOperatingModeForTool('sendDocuSign', body);
-      if (guard) {
-        json(response, guard.ok === false ? 409 : 202, {
-          ...guard,
-          state: buildStateSnapshot(),
-        });
-        return;
-      }
-      const result = await toolHandlers.prepare_and_send_contract(body);
-      json(response, result.ok === false ? 400 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      const routeTool = await executeRouteToolHandler('prepare_and_send_contract', body, 'contract-send-route');
+      json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
       return;
     }
 
@@ -66091,19 +66611,8 @@ const server = createServer(async (request, response) => {
             email: body.email || contract.email,
             amount: body.amount ?? contract.amount,
           };
-          const guard = await enforceOperatingModeForTool('sendDocuSign', payload);
-          if (guard) {
-            json(response, guard.ok === false ? 409 : 202, {
-              ...guard,
-              state: buildStateSnapshot(),
-            });
-            return;
-          }
-          const result = await toolHandlers.sendDocuSign(payload);
-          json(response, result.ok === false ? 400 : 200, {
-            ...result,
-            state: buildStateSnapshot(),
-          });
+          const routeTool = await executeRouteToolHandler('sendDocuSign', payload, 'contract-action-send-route');
+          json(response, getRouteToolStatusCode(routeTool), buildRouteToolResponse(routeTool));
           return;
         }
 
@@ -66256,7 +66765,7 @@ const server = createServer(async (request, response) => {
         });
       }
 
-      const result = await toolHandlers.sendDocuSign({
+      const routeTool = await executeRouteToolHandler('sendDocuSign', {
         ...contract,
         ...body,
         id: contract.id,
@@ -66268,14 +66777,14 @@ const server = createServer(async (request, response) => {
         notes: body.notes || contract.notes || 'Prepared for underwriting sign-off.',
         signers,
       });
+      const result = routeTool.result || {};
 
-      contract.underwritingStatus = result.ok ? 'sent' : 'pending';
+      contract.underwritingStatus = result.result === 'queued_for_approval' ? 'pending' : result.ok ? 'sent' : 'pending';
       contract.updatedAt = isoNow();
       await persistState(state);
-      json(response, result.ok === false ? 400 : 200, {
-        ...result,
+      json(response, getRouteToolStatusCode(routeTool), {
+        ...buildRouteToolResponse(routeTool),
         contract,
-        state: buildStateSnapshot(),
       });
       return;
     }
@@ -66771,16 +67280,16 @@ const server = createServer(async (request, response) => {
         return;
       }
       if (channel === 'sms') {
-        const { result } = await executeRouteToolHandler('telnyx_sms', {
+        const routeTool = await executeRouteToolHandler('telnyx_sms', {
           ...body,
           ...context,
           body: messageBody,
         }, 'lead-send-message');
-        json(response, result.requiresApproval ? 202 : result.ok === false ? 400 : 200, {
-          ...result,
+        const result = routeTool.result || {};
+        json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), {
+          ...buildRouteToolResponse(routeTool),
           result: result.telnyx?.live ? 'live' : result.result || 'provider_missing',
           verbiage: result.telnyx?.live ? 'SMS sent or queued through Telnyx.' : 'SMS was recorded without claiming carrier delivery.',
-          state: buildStateSnapshot(),
         });
         return;
       }
@@ -66789,7 +67298,7 @@ const server = createServer(async (request, response) => {
       const subject = body.subject || explicitSubjectMatch?.[1]?.trim() || `Message from Probono Key Realty`;
       const cleanText = messageBody.replace(/^subject:\s*.+\r?\n*/i, '').trim();
       const recipient = body.email || context.email || inferSkipTraceContact(context).email;
-      const { result } = await executeRouteToolHandler('sendColdEmail', {
+      const routeTool = await executeRouteToolHandler('sendColdEmail', {
         ...body,
         ...context,
         email: recipient,
@@ -66798,11 +67307,11 @@ const server = createServer(async (request, response) => {
         customBody: cleanText,
         templateId: body.templateId || 'custom',
       }, 'lead-send-message');
-      json(response, result.requiresApproval ? 202 : result.ok === false ? 400 : 200, {
-        ...result,
+      const result = routeTool.result || {};
+      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 409 }), {
+        ...buildRouteToolResponse(routeTool),
         result: result.delivery?.live ? 'live' : result.result || 'provider_missing',
         verbiage: result.delivery?.ok ? 'Email sent or prepared.' : result.verbiage || result.delivery?.error || 'Provider key missing.',
-        state: buildStateSnapshot(),
       });
       return;
     }
@@ -66922,15 +67431,12 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && pathname === '/api/appointments') {
       const body = await readBody(request);
-      const { result } = await executeRouteToolHandler(
+      const routeTool = await executeRouteToolHandler(
         'scheduleAppointment',
         body,
         'appointments-route'
       );
-      json(response, result.result === 'queued_for_approval' ? 202 : result.ok === false ? 400 : 200, {
-        ...result,
-        state: buildStateSnapshot(),
-      });
+      json(response, getRouteToolStatusCode(routeTool, { failureStatus: 400 }), buildRouteToolResponse(routeTool));
       return;
     }
 

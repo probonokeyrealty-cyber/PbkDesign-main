@@ -6,6 +6,7 @@ const safeOffer = validateProviderActionSafety('avaOverrideOffer', {
   mao: 100000,
   arv: 180000,
   repairs: 25000,
+  qualificationVerified: true,
 });
 
 assert.equal(safeOffer.ok, true, 'Offer below MAO should pass safety validation.');
@@ -14,6 +15,7 @@ assert.equal(safeOffer.blocked, false, 'Safe offer should not be blocked.');
 const highOffer = validateProviderActionSafety('avaOverrideOffer', {
   finalOffer: 115000,
   mao: 100000,
+  qualificationVerified: true,
 });
 
 assert.equal(highOffer.ok, false, 'Offer above MAO should fail safety validation.');
@@ -47,6 +49,7 @@ assert(missingConsentCall.violations.some((item) => item.code === 'tcpa_consent_
 
 const missingMaoOffer = validateProviderActionSafety('sendDocuSign', {
   finalOffer: 95000,
+  qualificationVerified: true,
 });
 
 assert.equal(missingMaoOffer.blocked, false, 'Missing MAO should not hard-block existing approval flow.');
@@ -57,6 +60,7 @@ const distressedSellerOffer = validateProviderActionSafety('sendDocuSign', {
   finalOffer: 90000,
   mao: 100000,
   emotion: 'anger',
+  qualificationVerified: true,
 });
 
 assert.equal(distressedSellerOffer.blocked, false, 'Seller emotion should route to review instead of hard-blocking.');
@@ -66,6 +70,31 @@ assert(
   'Emotion review warning should be explicit.',
 );
 
+const missingBantOffer = validateProviderActionSafety('sendDocuSign', {
+  finalOffer: 90000,
+  mao: 100000,
+});
+
+assert.equal(missingBantOffer.blocked, true, 'Seller-facing contracts must be blocked until BANT+ proof is captured.');
+assert(
+  missingBantOffer.violations.some((item) => item.code === 'bant_incomplete'),
+  'BANT+ qualification violation should be explicit.'
+);
+
+const qualifiedBantOffer = validateProviderActionSafety('sendDocuSign', {
+  finalOffer: 90000,
+  mao: 100000,
+  bant: {
+    budget: '$100k',
+    authority: 'owner confirmed',
+    need: 'avoid repairs',
+    timeline: '30 days',
+    urgency: 'vacant property',
+  },
+});
+
+assert.equal(qualifiedBantOffer.blocked, false, 'Complete BANT+ proof should unlock seller-facing contract safety.');
+
 console.log('safety-validator smoke passed', {
   safeOffer: safeOffer.result,
   highOffer: highOffer.result,
@@ -73,4 +102,5 @@ console.log('safety-validator smoke passed', {
   afterHoursCall: afterHoursCall.result,
   missingConsentCall: missingConsentCall.result,
   distressedSellerOffer: distressedSellerOffer.result,
+  missingBantOffer: missingBantOffer.result,
 });

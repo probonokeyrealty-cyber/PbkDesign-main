@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { PbkDataSource } from '../../components/pbk/index';
 import { useRuntimeSnapshot } from '../hooks/useRuntimeSnapshot';
-import { ANALYZER_CURRENT_DEAL_KEY } from '../utils/analyzerStorage';
+import { ANALYZER_CURRENT_DEAL_KEY, readAnalyzerStorage } from '../utils/analyzerStorage';
 import {
   createLeadRequest,
   fetchLeadFullRequest,
@@ -411,14 +411,8 @@ function buildBantFromLeadForm(form: LeadFormState): BridgeRecord {
 
 function readAnalyzerSeedDeal(): BridgeRecord {
   if (typeof window === 'undefined') return {};
-  try {
-    const raw = window.localStorage.getItem(ANALYZER_CURRENT_DEAL_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as BridgeRecord) : {};
-  } catch {
-    return {};
-  }
+  const parsed = readAnalyzerStorage<BridgeRecord>(ANALYZER_CURRENT_DEAL_KEY, {});
+  return parsed && typeof parsed === 'object' ? parsed : {};
 }
 
 function seedNewLeadFromAnalyzer(): NewLeadFormState {

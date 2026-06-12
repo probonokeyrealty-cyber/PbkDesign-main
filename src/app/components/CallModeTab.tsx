@@ -41,7 +41,7 @@ function normalizePhone(value = '') {
 }
 
 function getDealLeadId(deal: DealData) {
-  return deal.sellerPhone || deal.sellerEmail || deal.address || 'manual-deal';
+  return String(deal.leadId || (deal as DealData & { lead_id?: string }).lead_id || '').trim();
 }
 
 function getDealLeadName(deal: DealData) {
@@ -76,6 +76,10 @@ function buildOfferEmailBody(deal: DealData, selectedPath: PBKPath, callNotes = 
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function getMissingLeadSyncMessage(action: string) {
+  return `Create or sync this lead before ${action}.`;
 }
 
 export function CallModeTab({
@@ -113,9 +117,14 @@ export function CallModeTab({
   const saveCallNotes = useCallback(async () => {
     const note = callNotes.trim();
     if (!note || note === lastSavedNotes.trim()) return;
+    const leadId = getDealLeadId(deal);
+    if (!leadId) {
+      setPostCallStatus(getMissingLeadSyncMessage('saving call notes to the bridge'));
+      return;
+    }
     try {
       await saveLeadNoteRequest({
-        leadId: getDealLeadId(deal),
+        leadId,
         leadName: getDealLeadName(deal),
         address: deal.address,
         email: deal.sellerEmail || '',
@@ -136,12 +145,21 @@ export function CallModeTab({
   }, [callNotes, deal, lastSavedNotes]);
 
   const handleScheduleFollowUp = async () => {
+    const leadId = getDealLeadId(deal);
+    if (!leadId) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Lead sync required',
+        desc: getMissingLeadSyncMessage('scheduling a follow-up'),
+      });
+      return;
+    }
     setPendingPostCallAction('schedule');
     setPostCallStatus('');
     try {
       const startTime = getTomorrowMorningIso();
       await scheduleAppointmentRequest({
-        leadId: getDealLeadId(deal),
+        leadId,
         leadName: getDealLeadName(deal),
         address: deal.address,
         email: deal.sellerEmail || '',
@@ -170,6 +188,15 @@ export function CallModeTab({
   };
 
   const handleSendOfferEmail = async () => {
+    const leadId = getDealLeadId(deal);
+    if (!leadId) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Lead sync required',
+        desc: getMissingLeadSyncMessage('sending an offer email'),
+      });
+      return;
+    }
     if (!deal.sellerEmail?.includes('@')) {
       showUiToast({
         tone: 'error',
@@ -184,7 +211,7 @@ export function CallModeTab({
       const subject = `Offer next steps for ${deal.address || 'your property'}`;
       const body = buildOfferEmailBody(deal, activePath, callNotes);
       const result = await sendOfferEmailRequest({
-        leadId: getDealLeadId(deal),
+        leadId,
         leadName: getDealLeadName(deal),
         address: deal.address,
         email: deal.sellerEmail,
@@ -222,12 +249,21 @@ export function CallModeTab({
   };
 
   const handleAddToCrm = async () => {
+    const leadId = getDealLeadId(deal);
+    if (!leadId) {
+      showUiToast({
+        tone: 'warning',
+        title: 'Lead sync required',
+        desc: getMissingLeadSyncMessage('syncing CRM activity'),
+      });
+      return;
+    }
     setPendingPostCallAction('crm');
     setPostCallStatus('');
     try {
       const result = await invokeRuntimeTool<Record<string, unknown>>('updateCRM', {
         target: deal.address || getDealLeadName(deal),
-        leadId: getDealLeadId(deal),
+        leadId,
         leadName: getDealLeadName(deal),
         address: deal.address,
         email: deal.sellerEmail || '',

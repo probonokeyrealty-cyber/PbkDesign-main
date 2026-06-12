@@ -9,6 +9,7 @@ const REQUIRED_AGENT_IDS = [
   'bant-enforcer',
   'qa-agent',
   'nurture-agent',
+  'research-orchestrator',
 ];
 const LOCAL_BRIDGE_INVOKE_ENDPOINT = '/invoke';
 const ROUTABLE_AGENT_STATUSES = new Set(['active', 'standby']);
@@ -25,6 +26,26 @@ const EXTERNAL_AGENT_ENV_ALIASES = {
   'qa-agent': ['PBK_EXTERNAL_AGENT_QA', 'PBK_EXTERNAL_AGENT_QA_AGENT'],
   'nurture-agent': ['PBK_EXTERNAL_AGENT_NURTURE', 'PBK_EXTERNAL_AGENT_NURTURE_AGENT'],
   'research-orchestrator': ['PBK_EXTERNAL_AGENT_RESEARCH', 'PBK_EXTERNAL_AGENT_RESEARCH_ORCHESTRATOR'],
+};
+
+const AGENT_REQUIRED_TOOLS = {
+  ava: ['runAgentCommand', 'getAvaConversationIntelligence', 'analyzeDeal', 'createApproval'],
+  max: ['runAgentCommand', 'analyzeDeal', 'prepareContract', 'sendSellerDocs'],
+  rex: ['getBrainState', 'createRexDecision', 'queryPbkKnowledge', 'launchBrowserResearch'],
+  hermes: ['askStrategist', 'avaAskStrategist', 'recordPbkFeedback'],
+  'call-analyzer': ['scoreCallQuality', 'recordSkillOutcome'],
+  'prosody-tuner': ['getProsodyAdvice', 'trainEmotionWorldModel'],
+  'script-rotator': ['selectContextAwareScript', 'retrieveClosingIntelligence', 'recordContextAwareScriptOutcome'],
+  'bant-enforcer': ['classifyParticipant', 'getParticipantProfile', 'getAvaConversationIntelligence'],
+  'qa-agent': ['validateProviderActionSafety', 'getObservabilityStatus', 'createApproval'],
+  'nurture-agent': ['consultNurtureAgent', 'startNurtureSequence', 'processDueNurtureSteps'],
+  'research-orchestrator': [
+    'runProviderAugmentedAdditiveIntelligence',
+    'evaluateStoppingAgent',
+    'discoverExternalTool',
+    'compactLongHorizonMemory',
+    'induceWorkflowMemory',
+  ],
 };
 
 function uniqueStrings(values = []) {
@@ -101,7 +122,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v2.1',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'supervisor', supervises: ['max', 'rex', 'hermes'], local: true },
+      metadata: {
+        orchestrationRole: 'supervisor',
+        supervises: ['max', 'rex', 'hermes'],
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS.ava,
+      },
     },
     {
       id: 'max',
@@ -122,7 +148,13 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.4',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'ava', approvalGated: true, local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'ava',
+        approvalGated: true,
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS.max,
+      },
     },
     {
       id: 'rex',
@@ -144,7 +176,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v3.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'ava', local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'ava',
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS.rex,
+      },
     },
     {
       id: 'hermes',
@@ -162,7 +199,13 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'ava', suggestOnly: true, local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'ava',
+        suggestOnly: true,
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS.hermes,
+      },
     },
     {
       id: 'call-analyzer',
@@ -175,7 +218,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'rex', local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'rex',
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['call-analyzer'],
+      },
     },
     {
       id: 'prosody-tuner',
@@ -187,7 +235,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'rex', local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'rex',
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['prosody-tuner'],
+      },
     },
     {
       id: 'script-rotator',
@@ -208,7 +261,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'ava', local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'ava',
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['script-rotator'],
+      },
     },
     {
       id: 'bant-enforcer',
@@ -227,7 +285,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'ava', local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'ava',
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['bant-enforcer'],
+      },
     },
     {
       id: 'qa-agent',
@@ -239,7 +302,12 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
       version: 'v1.0',
       healthCheckedAt: activeAt,
       lastError: '',
-      metadata: { orchestrationRole: 'worker', supervisor: 'rex', local: true },
+      metadata: {
+        orchestrationRole: 'worker',
+        supervisor: 'rex',
+        local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['qa-agent'],
+      },
     },
     {
       id: 'nurture-agent',
@@ -266,6 +334,7 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
         supervisor: 'ava',
         approvalGated: true,
         local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['nurture-agent'],
       },
     },
     {
@@ -296,6 +365,7 @@ export function buildDefaultAgentRegistry({ now = Date.now(), env = process.env 
         supervisor: 'rex',
         approvalGated: true,
         local: true,
+        requiredTools: AGENT_REQUIRED_TOOLS['research-orchestrator'],
       },
     },
   ];
@@ -394,16 +464,31 @@ export function buildAgentRegistrySnapshot(
   const degraded = agents.filter(
     (agent) => !['active', 'standby'].includes(String(agent.status || '').toLowerCase())
   );
+  const pendingHealth = agents.filter(
+    (agent) =>
+      requiredIds.includes(agent.id) &&
+      String(agent.status || '').toLowerCase() !== 'active' &&
+      !(agent.healthCheckedAt || agent.health_checked_at)
+  );
   const capabilities = uniqueStrings(agents.flatMap((agent) => agent.capabilities || [])).sort();
+  const inventoryReady = missing.length === 0 && degraded.length === 0;
+  const healthReady = inventoryReady && pendingHealth.length === 0;
   return {
-    ok: missing.length === 0 && degraded.length === 0,
-    result: missing.length || degraded.length ? 'agent_registry_degraded' : 'agent_registry_ready',
+    ok: healthReady,
+    ready: healthReady,
+    inventoryReady,
+    result: !inventoryReady
+      ? 'agent_registry_degraded'
+      : pendingHealth.length
+        ? 'agent_registry_pending_health'
+        : 'agent_registry_ready',
     generatedAt: new Date().toISOString(),
     count: agents.length,
     capabilities,
     required: {
       ids: requiredIds,
       missing,
+      pendingHealth: pendingHealth.map((agent) => agent.id),
     },
     degraded: degraded.map((agent) => ({
       id: agent.id,

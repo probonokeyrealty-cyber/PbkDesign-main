@@ -6,11 +6,13 @@ const PROVIDER_WRITE_TOOLS = new Set([
   'sendDocuSign',
   'sendContract',
   'prepare_and_send_contract',
+  'sendSellerDocs',
   'avaOverrideOffer',
   'pbkSendNegotiationApproval',
   'sendNegotiationApproval',
   'scheduleAppointment',
   'updateCRM',
+  'startNurtureSequence',
   'launch_campaign',
   'admin_update_env_var',
 ]);
@@ -26,6 +28,22 @@ const OFFER_TOOLS = new Set([
 
 const CALL_TOOLS = new Set(['telnyx_call', 'send_verification_sms']);
 const MESSAGE_TOOLS = new Set(['telnyx_sms', 'sendColdEmail']);
+const BANT_FIELDS = ['budget', 'authority', 'need', 'timeline', 'urgency'];
+const BANT_FIELD_LABELS = {
+  budget: 'Budget',
+  authority: 'Authority',
+  need: 'Need',
+  timeline: 'Timeline',
+  urgency: 'Urgency',
+};
+const SELLER_FACING_QUALIFICATION_TOOLS = new Set([
+  'sendDocuSign',
+  'sendContract',
+  'prepare_and_send_contract',
+  'pbkSendNegotiationApproval',
+  'sendNegotiationApproval',
+  'avaOverrideOffer',
+]);
 
 function normalizeToolName(value = '') {
   return String(value || '').trim();
@@ -146,6 +164,78 @@ function pushIssue(list, code, message, severity = 'high', evidence = {}) {
   list.push({ code, message, severity, evidence });
 }
 
+function normalizeBantValue(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'object') {
+    return String(value.value || value.answer || value.summary || value.text || '').trim();
+  }
+  return String(value).trim();
+}
+
+function getBantValue(params = {}, field = '') {
+  const camel = `bant${field[0]?.toUpperCase() || ''}${field.slice(1)}`;
+  const sources = [
+    params.bant,
+    params.bantStatus?.known,
+    params.qualification?.bant,
+    params.lead?.bant,
+    params.lead?.metadata?.bant,
+    params.metadata?.bant,
+    params.callContext?.bant,
+    params.conversationContext?.bant,
+    params,
+  ];
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    const value = normalizeBantValue(source[field] ?? source[`bant_${field}`] ?? source[camel]);
+    if (value) return value;
+  }
+  if (field === 'budget') {
+    return normalizeBantValue(
+      params.sellerBudget ?? params.seller_budget ?? params.askingPrice ?? params.asking_price ?? params.desiredNet ?? params.desired_net
+    );
+  }
+  if (field === 'authority') {
+    if (bool(params.ownerVerified) || bool(params.owner_verified) || bool(params.authorityConfirmed)) {
+      return 'decision authority confirmed';
+    }
+  }
+  if (field === 'need') {
+    return normalizeBantValue(params.motivation ?? params.motivationReason ?? params.motivation_reason);
+  }
+  if (field === 'timeline') {
+    return normalizeBantValue(params.timeline ?? params.closeBy ?? params.close_by ?? params.targetCloseDate);
+  }
+  if (field === 'urgency') {
+    return normalizeBantValue(params.urgency ?? params.urgencyReason ?? params.urgency_reason);
+  }
+  return '';
+}
+
+function buildBantQualification(params = {}) {
+  if (
+    bool(params.bantComplete) ||
+    bool(params.bant_complete) ||
+    bool(params.qualificationVerified) ||
+    bool(params.qualification_verified)
+  ) {
+    return {
+      complete: true,
+      missing: [],
+      fields: Object.fromEntries(BANT_FIELDS.map((field) => [field, 'operator_verified'])),
+      operatorVerified: true,
+    };
+  }
+  const fields = Object.fromEntries(BANT_FIELDS.map((field) => [field, getBantValue(params, field)]));
+  const missing = BANT_FIELDS.filter((field) => !normalizeBantValue(fields[field]));
+  return {
+    complete: missing.length === 0,
+    missing,
+    fields,
+    operatorVerified: false,
+  };
+}
+
 export function validateProviderActionSafety(toolName, params = {}, options = {}) {
   const tool = normalizeToolName(toolName);
   const violations = [];
@@ -165,6 +255,24 @@ export function validateProviderActionSafety(toolName, params = {}, options = {}
   }
 
   if (OFFER_TOOLS.has(tool)) {
+    if (SELLER_FACING_QUALIFICATION_TOOLS.has(tool)) {
+      const qualification = buildBantQualification(params);
+      if (!qualification.complete) {
+        const labels = qualification.missing.map((field) => BANT_FIELD_LABELS[field] || field);
+        pushIssue(
+          violations,
+          'bant_incomplete',
+          `BANT+ is incomplete (${labels.join(', ')}); seller-facing offers, contracts, or negotiation approvals are blocked until qualification is captured.`,
+          'critical',
+          {
+            missing: qualification.missing,
+            known: Object.fromEntries(
+              Object.entries(qualification.fields).filter(([, value]) => normalizeBantValue(value))
+            ),
+          },
+        );
+      }
+    }
     const offer = getOfferAmount(params);
     const mao = getMao(params);
     if (offer > 0 && mao > 0 && offer > mao) {

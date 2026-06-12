@@ -234,6 +234,13 @@ export function LiveCallWidget({
 
   const isLive =
     live.status === 'connected' || live.status === 'on-hold' || live.status === 'dialing';
+  const hasBridgeCallId = Boolean(live.callId);
+  const canControlCall = isLive && hasBridgeCallId;
+  const controlTitle = canControlCall
+    ? 'Send this command to the live bridge call'
+    : hasBridgeCallId
+      ? 'Call controls are available after the call connects'
+      : 'Waiting for the bridge call id before controls are enabled';
 
   return (
     <div
@@ -350,33 +357,38 @@ export function LiveCallWidget({
       </div>
 
       {/* Action row */}
+      {isLive && !hasBridgeCallId && (
+        <div className="border-t border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+          Waiting for bridge call id before call controls can send commands.
+        </div>
+      )}
       <div className="px-3 py-2.5 border-t border-slate-800 bg-slate-900/60 flex items-center gap-2">
         <button
           type="button"
-          disabled={!isLive}
+          disabled={!canControlCall}
           onClick={() => onTakeOver?.(live)}
           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-medium transition-colors"
-          title="Take over the call and route to the deal workspace"
+          title={controlTitle}
         >
           <Hand className="h-3.5 w-3.5" />
           Take Over
         </button>
         <button
           type="button"
-          disabled={!isLive}
+          disabled={!canControlCall}
           onClick={() => onMute?.(live)}
           className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-medium transition-colors"
-          title="Mute Ava (you take over voice, transcript continues)"
+          title={controlTitle}
         >
           <MicOff className="h-3.5 w-3.5" />
           Mute Ava
         </button>
         <button
           type="button"
-          disabled={!isLive}
+          disabled={!canControlCall}
           onClick={() => onEnd?.(live)}
           className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-rose-600/90 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-medium transition-colors"
-          title="End call"
+          title={controlTitle}
         >
           <PhoneOff className="h-3.5 w-3.5" />
           End

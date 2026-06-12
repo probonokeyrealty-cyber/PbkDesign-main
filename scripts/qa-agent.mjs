@@ -176,6 +176,10 @@ const QA_VALIDATORS = {
     return qaFail('telnyx_call', 'missing_call_proof');
   },
 
+  pbk_call_operator(result = {}) {
+    return QA_VALIDATORS.telnyx_call(result);
+  },
+
   telnyx_sms(result = {}) {
     const providerFailure = validateProviderOk('telnyx_sms', result);
     if (providerFailure) return providerFailure;
@@ -209,6 +213,52 @@ const QA_VALIDATORS = {
     const prepared = result.live === false || result.prepared === true || /prepared|draft/i.test(String(result.status || ''));
     if (emailId || prepared) return qaPass('sendColdEmail', { deliveryProof: Boolean(emailId), prepared });
     return qaFail('sendColdEmail', 'missing_email_delivery_proof');
+  },
+
+  scheduleAppointment(result = {}) {
+    const providerFailure = validateProviderOk('scheduleAppointment', result);
+    if (providerFailure) return providerFailure;
+    const appointmentId = getFirstPathValue(result, [
+      'appointment.id',
+      'appointmentId',
+      'appointment_id',
+      'id',
+    ]);
+    const status = String(result.appointment?.status || result.status || '').toLowerCase();
+    if (hasValue(appointmentId) && /scheduled|confirmed|requested|pending-confirmation|drafted/.test(status)) {
+      return qaPass('scheduleAppointment', { appointmentProof: true, status });
+    }
+    if (hasValue(appointmentId)) {
+      return qaPass('scheduleAppointment', { appointmentProof: true, status: status || 'recorded' });
+    }
+    return qaFail('scheduleAppointment', 'missing_appointment_proof', { status });
+  },
+
+  sendSellerDocs(result = {}) {
+    const providerFailure = validateProviderOk('sendSellerDocs', result);
+    if (providerFailure) return providerFailure;
+    const deliveryId = getFirstPathValue(result, [
+      'delivery.id',
+      'delivery.deliveryId',
+      'delivery.delivery_id',
+      'email.messageId',
+      'email.message_id',
+      'email.providerMessageId',
+      'email.provider_message_id',
+      'messageId',
+      'message_id',
+      'id',
+    ]);
+    const status = String(result.delivery?.status || result.email?.status || result.status || result.result || '').toLowerCase();
+    const sent = /sent|delivered|queued|accepted|live/.test(status) || result.delivery?.status === 'sent';
+    if (hasValue(deliveryId) && sent) {
+      return qaPass('sendSellerDocs', {
+        deliveryProof: true,
+        status,
+        attachmentCount: Array.isArray(result.attachments) ? result.attachments.length : 0,
+      });
+    }
+    return qaFail('sendSellerDocs', 'missing_seller_docs_delivery_proof', { status });
   },
 
   updateCRM(result = {}) {

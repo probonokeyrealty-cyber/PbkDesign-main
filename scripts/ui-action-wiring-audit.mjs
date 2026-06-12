@@ -10,6 +10,12 @@ const publicAvaFunction = readFileSync(resolve(root, 'netlify/functions/public-a
 const documentsPdfFunction = readFileSync(resolve(root, 'netlify/functions/documents-pdf.ts'), 'utf8');
 const bridgeProxyFunction = readFileSync(resolve(root, 'netlify/functions/pbk-bridge-proxy.ts'), 'utf8');
 const runtimeBridge = readFileSync(resolve(root, 'src/app/utils/runtimeBridge.ts'), 'utf8');
+const reactApp = readFileSync(resolve(root, 'src/app/App.tsx'), 'utf8');
+const commandCenter = readFileSync(resolve(root, 'src/app/routes/CommandCenter.tsx'), 'utf8');
+const agentFleet = readFileSync(resolve(root, 'src/app/routes/AgentFleet.tsx'), 'utf8');
+const callModeTab = readFileSync(resolve(root, 'src/app/components/CallModeTab.tsx'), 'utf8');
+const liveCallWidget = readFileSync(resolve(root, 'src/app/components/shell/LiveCallWidget.tsx'), 'utf8');
+const pathDeliverables = readFileSync(resolve(root, 'src/app/components/PathDeliverables.tsx'), 'utf8');
 const openclawDockerfile = readFileSync(resolve(root, 'Dockerfile.openclaw'), 'utf8');
 const dockerignore = readFileSync(resolve(root, '.dockerignore'), 'utf8');
 const pkgPath = resolve(root, 'package.json');
@@ -374,6 +380,124 @@ if (runtimeBridgeFallbackMissing) {
   });
 }
 
+const mutationSuccessGuardMissing =
+  !/function assertBridgeMutationSucceeded/.test(runtimeBridge) ||
+  !/provider_missing\|safety_blocked/.test(runtimeBridge) ||
+  !/return assertBridgeMutationSucceeded\(response, 'Offer email send'\)/.test(runtimeBridge) ||
+  !/return assertBridgeMutationSucceeded\(response, 'Seller document send'\)/.test(runtimeBridge) ||
+  !/return assertBridgeMutationSucceeded\(response, 'Lead contract send'\)/.test(runtimeBridge) ||
+  !/return assertBridgeMutationSucceeded\(response, 'Approval decision'\)/.test(runtimeBridge) ||
+  !/return assertBridgeMutationSucceeded\(response, 'Admin task decision'\)/.test(runtimeBridge);
+if (mutationSuccessGuardMissing) {
+  fail.push({
+    name: 'Deal-critical mutation wrappers must reject false-success bridge JSON',
+    details: [
+      'Seller-facing sends and approval/admin decisions should throw on ok:false, provider_missing, safety_blocked, rejected, or missing proof results even when HTTP returned 200.',
+    ],
+  });
+}
+
+const sellerDocIdentityMissing =
+  !/fetchSenderIdentitiesRequest/.test(pathDeliverables) ||
+  !/SenderIdentitySelect/.test(pathDeliverables) ||
+  !/senderIdentityId:\s*senderIdentityId \|\| undefined/.test(pathDeliverables) ||
+  !/documentSet:\s*editableDocuments/.test(pathDeliverables) ||
+  !/sellerEmail[\s\S]{0,240}includes\('@'\)/.test(reactApp) ||
+  !/sendSellerDocsRequest\(\{[\s\S]*senderIdentityId:\s*senderIdentityId\?\.trim\(\) \|\| undefined/.test(reactApp) ||
+  !/documentSet:\s*documentSet \|\| generatedDocuments/.test(reactApp) ||
+  !/response\?\.senderIdentity/.test(reactApp) ||
+  !/const senderIdentityId = String\(params\.senderIdentityId/.test(bridge) ||
+  !/store\.getSenderIdentity\(senderIdentityId/.test(bridge) ||
+  !/senderIdentity\.channel !== 'email'/.test(bridge) ||
+  !/rankEligibleSenderIdentities\(\[senderIdentity\]\)/.test(bridge);
+if (sellerDocIdentityMissing) {
+  fail.push({
+    name: 'Seller document email must use a validated connected sender identity',
+    details: [
+      'PathDeliverables should load email sender identities, pass senderIdentityId with the PDF email request, and the bridge should validate the selected identity before using it as From.',
+    ],
+  });
+}
+
+const analyzerLeadSyncMissing =
+  !/const leadId = String\(deal\.leadId/.test(runtimeBridge) ||
+  !/Create or sync this lead before sending analyzer context to Ava or CRM/.test(runtimeBridge) ||
+  !/leadId,\s*\n\s*lead_id:\s*leadId/.test(runtimeBridge);
+if (analyzerLeadSyncMissing) {
+  fail.push({
+    name: 'Analyzer agent sync must preserve the canonical lead id',
+    details: [
+      'sendDealToAgent should send only a canonical leadId/lead_id and fail before falling back to address or contact fields.',
+    ],
+  });
+}
+
+const canonicalLeadActionGateMissing =
+  !/getLeadOptionKey/.test(agentFleet) ||
+  !/selectedLeadCanonicalId/.test(agentFleet) ||
+  !/Lead sync required/.test(agentFleet) ||
+  !/function getDealLeadId\(deal: DealData\) \{[\s\S]*deal\.leadId/.test(callModeTab) ||
+  !/Create or sync this lead before/.test(callModeTab);
+if (canonicalLeadActionGateMissing) {
+  fail.push({
+    name: 'Deal-making actions must require canonical bridge lead ids',
+    details: [
+      'Agent Fleet and Call Mode should not use phone/address/manual strings as lead ids for QA, calls, notes, email, appointments, or CRM writes.',
+    ],
+  });
+}
+
+const approvalDecisionLockMissing =
+  !/pendingAction\.startsWith\(`approval:\$\{approvalId\}:`\)/.test(commandCenter) ||
+  !/isApprovalDecisionPending\(String\(approval\.id\)\)/.test(commandCenter) ||
+  !/getApprovalSecondaryStatus\(approval\)/.test(commandCenter);
+if (approvalDecisionLockMissing) {
+  fail.push({
+    name: 'Approval buttons must lock the whole approval while a decision is pending',
+    details: [
+      'Approve/Decline/Needs Revision should not allow duplicate or conflicting bridge decisions for the same approval id.',
+    ],
+  });
+}
+
+const adminDecisionLockMissing =
+  !/pendingAction\.startsWith\(`admin:\$\{taskId\}:`\)/.test(commandCenter) ||
+  !/isAdminDecisionPending\(String\(task\.id\)\)/.test(commandCenter);
+if (adminDecisionLockMissing) {
+  fail.push({
+    name: 'Admin approval buttons must lock the whole admin task while pending',
+    details: [
+      'Admin approve/decline should disable together and guard execution while a bridge decision is already in flight.',
+    ],
+  });
+}
+
+const liveCallControlGateMissing =
+  !/hasBridgeCallId/.test(liveCallWidget) ||
+  !/canControlCall/.test(liveCallWidget) ||
+  !/Waiting for bridge call id/.test(liveCallWidget);
+if (liveCallControlGateMissing) {
+  fail.push({
+    name: 'Live call controls must require a bridge call id',
+    details: [
+      'Take Over, Mute, and End must stay disabled until the runtime has a real bridge call id.',
+    ],
+  });
+}
+
+const agentFleetCallGateMissing =
+  !/CALLING_AGENT_IDS/.test(agentFleet) ||
+  !/activeAgentCanCall/.test(agentFleet) ||
+  !/Only Ava, Max, and Nurture Agent can initiate seller calls/.test(agentFleet);
+if (agentFleetCallGateMissing) {
+  fail.push({
+    name: 'Agent Fleet call controls must be limited to calling-capable agents',
+    details: [
+      'Research, QA, Hermes, script, BANT, call-analysis, and prosody lanes should not initiate Telnyx calls as themselves.',
+    ],
+  });
+}
+
 const renderAppFallbackPaths = [
   '/app',
   '/dashboard',
@@ -654,6 +778,21 @@ const report = {
       name: 'Netlify function exhaustion falls back to direct Render',
       ok: !runtimeBridgeFallbackMissing,
       count: 2,
+    },
+    {
+      name: 'Seller document email uses validated sender identity',
+      ok: !sellerDocIdentityMissing,
+      count: 1,
+    },
+    {
+      name: 'Deal-making controls avoid false success and identity drift',
+      ok:
+        !analyzerLeadSyncMissing &&
+        !approvalDecisionLockMissing &&
+        !adminDecisionLockMissing &&
+        !liveCallControlGateMissing &&
+        !agentFleetCallGateMissing,
+      count: 5,
     },
     {
       name: 'Netlify direct app links fall back to the SPA shell',

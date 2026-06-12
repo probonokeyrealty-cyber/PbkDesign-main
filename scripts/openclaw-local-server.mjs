@@ -89,6 +89,10 @@ import {
   classifyCommandIntent,
   listCommandIntentRouterRules,
 } from './command-intent-router.mjs';
+import {
+  AVA_INTENT_ROUTER_VERSION,
+  classifyAvaConversationalIntent,
+} from './ava-intent-router.mjs';
 import { ensureSkillGovernanceSchema } from './skill-governance-schema.mjs';
 import {
   activateSkillVersion,
@@ -11287,8 +11291,11 @@ function normalizeLocalCommandAction(params = {}) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  if (raw) return raw;
   const command = String(params.command || params.text || params.transcript || '').trim().toLowerCase();
+  if (raw && raw !== 'operator_command') return raw;
+  const conversationalIntent = classifyAvaConversationalIntent(command, params);
+  if (conversationalIntent.matched && conversationalIntent.action) return conversationalIntent.action;
+  if (raw) return raw;
   if (/^clickui[:\s]/.test(command)) return 'clickui';
   if (/^openclaw[:\s]/.test(command)) return 'operator_command';
   if (/\bscreenshot\b|\bscreen shot\b|\bwhat.*screen\b/.test(command)) return 'screenshot';
@@ -11315,9 +11322,9 @@ function normalizeLocalCommandRiskLevel(value = '') {
 
 function classifyLocalCommandRisk(action = '') {
   const normalized = String(action || '').trim().toLowerCase();
-  const lowRiskActions = ['ping', 'status'];
+  const lowRiskActions = ['ping', 'status', 'search_leads', 'analyze_deal'];
   if (lowRiskActions.includes(normalized)) return 'low';
-  if (['type_text', 'clickui'].includes(normalized)) return 'high';
+  if (['type_text', 'clickui', 'send_email', 'send_sms', 'execute_safe_script'].includes(normalized)) return 'high';
   if (['screenshot', 'screenshot_ocr', 'read_file', 'list_dir', 'watch_folder'].includes(normalized)) {
     return 'medium';
   }
@@ -11329,6 +11336,12 @@ function getLocalCommandRiskReason(action = '', riskLevel = 'medium') {
   if (riskLevel === 'low') return 'Read-only health check allowed for automatic sidecar dispatch.';
   if (normalized === 'type_text') return 'Keyboard input can mutate applications and must be operator-approved.';
   if (normalized === 'clickui') return 'GUI automation may click or inspect sensitive desktop state.';
+  if (['send_email', 'send_sms'].includes(normalized)) {
+    return 'Provider messages must be drafted and approved before sending.';
+  }
+  if (normalized === 'execute_safe_script') {
+    return 'Local script execution can mutate the machine and must be operator-approved.';
+  }
   if (normalized === 'screenshot' || normalized === 'screenshot_ocr') {
     return 'Screen capture can expose private desktop data and must be reviewed first.';
   }
@@ -45303,7 +45316,36 @@ const toolHandlers = {
 
   async getAvaConversationIntelligence(params = {}) {
     recordToolUse('getAvaConversationIntelligence');
-    return toolHandlers.pbk_ava_conversation_intelligence(params);
+    const conversationalIntent = classifyAvaConversationalIntent(
+      params.message || params.prompt || params.command || params.text || params.transcript || '',
+      params
+    );
+    const result = await toolHandlers.pbk_ava_conversation_intelligence({
+      ...params,
+      conversationalIntent,
+    });
+    return result && typeof result === 'object'
+      ? {
+          ...result,
+          conversationalIntent,
+          approvalPolicy: {
+            version: AVA_INTENT_ROUTER_VERSION,
+            localComputerActions: 'inline_approval_required',
+            providerWrites: 'inline_approval_required',
+            readOnlyStatus: 'auto_run',
+          },
+        }
+      : {
+          ok: true,
+          result,
+          conversationalIntent,
+          approvalPolicy: {
+            version: AVA_INTENT_ROUTER_VERSION,
+            localComputerActions: 'inline_approval_required',
+            providerWrites: 'inline_approval_required',
+            readOnlyStatus: 'auto_run',
+          },
+        };
   },
 
   async updateGoalBeliefsBayesian(params = {}) {

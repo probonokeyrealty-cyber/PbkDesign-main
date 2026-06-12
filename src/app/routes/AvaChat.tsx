@@ -33,6 +33,7 @@ import {
   fetchDesktopSidecarStatusRequest,
   fetchLocalCommandsRequest,
   queueLocalCommandRequest,
+  updateApprovalDecision,
   type DesktopSidecarStatusResponse,
   type LocalCommandRecord,
 } from '../utils/runtimeBridge';
@@ -61,7 +62,12 @@ type AvaCommandAction =
   | 'status'
   | 'screenshot'
   | 'type_text'
-  | 'llm_query';
+  | 'llm_query'
+  | 'send_email'
+  | 'send_sms'
+  | 'execute_safe_script'
+  | 'search_leads'
+  | 'analyze_deal';
 type SubmitLane = 'rest' | 'invoke';
 type HistoryFilter = 'all' | 'active' | 'completed' | 'failed';
 type ConnectionState = 'checking' | 'connected' | 'degraded';
@@ -108,6 +114,36 @@ const ACTIONS: Array<{
     label: 'Local LLM',
     description: 'Ask the configured local CPU model.',
     icon: BrainCircuit,
+  },
+  {
+    id: 'send_email',
+    label: 'Email',
+    description: 'Draft seller email and keep sending behind approval.',
+    icon: Send,
+  },
+  {
+    id: 'send_sms',
+    label: 'SMS',
+    description: 'Draft seller text and keep sending behind approval.',
+    icon: Send,
+  },
+  {
+    id: 'execute_safe_script',
+    label: 'Script',
+    description: 'Prepare a local script request for approval.',
+    icon: Terminal,
+  },
+  {
+    id: 'search_leads',
+    label: 'Search',
+    description: 'Look up seller and lead context.',
+    icon: Search,
+  },
+  {
+    id: 'analyze_deal',
+    label: 'Analyze',
+    description: 'Prepare deal analysis context.',
+    icon: Sparkles,
   },
 ];
 
@@ -199,7 +235,70 @@ function buildCommandParams(action: AvaCommandAction, command: string) {
     };
   }
   if (action === 'llm_query') return { prompt: command };
+  if (action === 'send_email') return { channel: 'email', draftOnly: true };
+  if (action === 'send_sms') return { channel: 'sms', draftOnly: true };
+  if (action === 'search_leads') return { query: command };
+  if (action === 'analyze_deal') return { prompt: command };
   return {};
+}
+
+function classifyConversationalCommand(command: string, selectedAction: AvaCommandAction) {
+  const text = command.trim();
+  const routes: Array<{
+    pattern: RegExp;
+    action: AvaCommandAction;
+    requiresApproval: boolean;
+  }> = [
+    {
+      pattern:
+        /\b(?:take|grab|capture|get|snap).{0,24}(?:screenshot|screen shot|screen capture|desktop)\b|\bwhat(?:'s| is).{0,24}(?:on|shown on).{0,12}(?:my )?screen\b/i,
+      action: 'screenshot',
+      requiresApproval: true,
+    },
+    {
+      pattern:
+        /\b(?:clickui|click ui|inspect|observe|see|find).{0,32}(?:window|button|screen|desktop|app|ui)\b/i,
+      action: 'clickui',
+      requiresApproval: true,
+    },
+    {
+      pattern:
+        /\b(?:run|execute|start|launch).{0,32}(?:script|command|powershell|terminal|shell|program|app)\b/i,
+      action: 'execute_safe_script',
+      requiresApproval: true,
+    },
+    {
+      pattern: /\b(?:send|draft|write).{0,32}(?:email|mail)\b|\bemail\s+(?:to|the)\b/i,
+      action: 'send_email',
+      requiresApproval: true,
+    },
+    {
+      pattern: /\b(?:send|draft|write).{0,32}(?:text|sms|message)\b|\b(?:text|sms)\s+(?:to|the)\b/i,
+      action: 'send_sms',
+      requiresApproval: true,
+    },
+    {
+      pattern: /\b(?:health|status|ready|online|offline|sidecar|bridge|openclaw|connection)\b/i,
+      action: 'status',
+      requiresApproval: false,
+    },
+    {
+      pattern: /\b(?:search|find|look up|lookup).{0,32}(?:lead|seller|contact|property|record)\b/i,
+      action: 'search_leads',
+      requiresApproval: false,
+    },
+    {
+      pattern:
+        /\b(?:analy[sz]e|evaluate|underwrite|calculate).{0,32}(?:deal|property|mao|arv|offer)\b|\b(?:mao|arv|repair estimate)\b/i,
+      action: 'analyze_deal',
+      requiresApproval: false,
+    },
+  ];
+  const match = routes.find((route) => route.pattern.test(text));
+  if (!match || selectedAction !== 'operator_command') {
+    return { action: selectedAction, requiresApproval: undefined, matched: false };
+  }
+  return { ...match, matched: true };
 }
 
 function getResultText(command: LocalCommandRecord) {
@@ -287,14 +386,44 @@ function getAssistantMessage(command: LocalCommandRecord) {
   const status = String(command.status || 'queued').toLowerCase();
   const result = getResultText(command);
   if (status === 'completed') return result || 'Done. The local worker completed this command.';
-  if (FAILED_STATUSES.has(status)) return result || 'The command did not complete.';
+  if (status === 'rejected' || status === 'cancelled') {
+    return 'Denied. Ava left this command stopped.';
+  }
+  if (FAILED_STATUSES.has(status)) {
+    const safeResult = getConversationalResultText(result);
+    return safeResult
+      ? `The command did not complete. ${safeResult}`
+      : 'The command did not complete.';
+  }
   if (status === 'approved' || status === 'dispatched' || status === 'running') {
-    return 'Approval is cleared. I am waiting for the local worker to report back.';
+    return 'Approved. I am waiting for the local worker to finish and I will bring the result back here.';
   }
   if (command.requiresApproval || status === 'pending_approval') {
-    return 'This is queued and waiting for operator approval before local execution.';
+    return `I can do this, but it needs your approval first because ${getReadableRiskReason(command)}.`;
   }
-  return 'Queued to the PBK bridge. I will update this thread when the worker responds.';
+  return 'I am handling that now and will update this thread when the result is ready.';
+}
+
+function getConversationalResultText(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^(?:approve|approval)\s+local\s+/i.test(text)) return '';
+  if (/\b(?:POST|GET|PATCH|DELETE)\s+\/api\//.test(text)) return '';
+  if (/\bSOURCE\s+(?:GET|POST|PATCH|DELETE)\b/i.test(text)) return '';
+  return text;
+}
+
+function getReadableRiskReason(command: LocalCommandRecord) {
+  const action = String(command.action || '').toLowerCase();
+  const reason = String(command.riskReason || '').trim();
+  if (action === 'screenshot' || action === 'screenshot_ocr')
+    return 'screen capture can expose private desktop data';
+  if (action === 'clickui') return 'desktop inspection or automation can affect sensitive UI state';
+  if (action === 'type_text') return 'keyboard automation can change open applications';
+  if (action === 'send_email') return 'seller emails must be reviewed before sending';
+  if (action === 'send_sms') return 'seller texts must be reviewed before sending';
+  if (action === 'execute_safe_script') return 'local scripts can change this machine';
+  return reason || 'this action can affect your local system or providers';
 }
 
 function matchesHistoryFilter(command: LocalCommandRecord, filter: HistoryFilter) {
@@ -327,6 +456,7 @@ export function AvaChat() {
   const [connectionError, setConnectionError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [contextOpen, setContextOpen] = useState(false);
+  const [decidingApprovalId, setDecidingApprovalId] = useState('');
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
@@ -454,13 +584,20 @@ export function AvaChat() {
 
       let result;
       try {
+        const routed = classifyConversationalCommand(command, action);
+        const nextAction = routed.action;
+        const nextRequiresApproval =
+          routed.requiresApproval === undefined ? requiresApproval : routed.requiresApproval;
         const payload = {
           command,
-          action,
-          params: buildCommandParams(action, command),
+          action: nextAction,
+          params: {
+            ...buildCommandParams(nextAction, command),
+            conversationalIntent: routed.matched,
+          },
           requestedBy: 'ava-chat-page',
           source: 'ava-chat',
-          requiresApproval,
+          requiresApproval: nextRequiresApproval,
         };
         result =
           submitLane === 'invoke'
@@ -491,7 +628,7 @@ export function AvaChat() {
       showUiToast({
         tone: 'success',
         title: result.result === 'queued_for_approval' ? 'Queued for approval' : 'Command queued',
-        desc: result.message || `Ava handed ${action} to the local command queue.`,
+        desc: result.message || `Ava handed ${command} to the local command queue.`,
       });
       setSubmitting(false);
 
@@ -505,6 +642,39 @@ export function AvaChat() {
       }
     },
     [action, draft, load, refresh, requiresApproval, submitLane, submitting]
+  );
+
+  const handleApprovalDecision = useCallback(
+    async (command: LocalCommandRecord, decision: 'approved' | 'rejected') => {
+      const approvalId = String(command.approvalId || '').trim();
+      if (!approvalId || decidingApprovalId) return;
+      setDecidingApprovalId(approvalId);
+      setSubmitError('');
+      try {
+        await updateApprovalDecision(approvalId, decision);
+        showUiToast({
+          tone: decision === 'approved' ? 'success' : 'info',
+          title: decision === 'approved' ? 'Approved' : 'Denied',
+          desc:
+            decision === 'approved'
+              ? 'Ava will continue through the guarded local command path.'
+              : 'Ava will leave that command stopped.',
+        });
+        await Promise.allSettled([refresh(), load({ silent: true })]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : `Could not ${decision} this approval.`;
+        setSubmitError(message);
+        showUiToast({
+          tone: 'error',
+          title: 'Approval update failed',
+          desc: message,
+          critical: true,
+        });
+      } finally {
+        setDecidingApprovalId('');
+      }
+    },
+    [decidingApprovalId, load, refresh]
   );
 
   const startListening = () => {
@@ -606,6 +776,8 @@ export function AvaChat() {
                         key={command.id}
                         command={command}
                         onReplay={() => replayCommand(command)}
+                        onApprovalDecision={handleApprovalDecision}
+                        decidingApprovalId={decidingApprovalId}
                       />
                     ))}
                   </div>
@@ -881,9 +1053,13 @@ function ConversationToolbar({
 function CommandExchange({
   command,
   onReplay,
+  onApprovalDecision,
+  decidingApprovalId,
 }: {
   command: LocalCommandRecord;
   onReplay: () => void;
+  onApprovalDecision: (command: LocalCommandRecord, decision: 'approved' | 'rejected') => void;
+  decidingApprovalId: string;
 }) {
   const status = String(command.status || 'queued').toLowerCase();
   const failed = FAILED_STATUSES.has(status);
@@ -892,6 +1068,13 @@ function CommandExchange({
   const actionConfig = ACTIONS.find((item) => item.id === command.action) || ACTIONS[0];
   const ActionIcon = actionConfig.icon;
   const riskLevel = getCommandRiskLevel(command);
+  const awaitingApproval =
+    Boolean(command.approvalId) &&
+    (command.requiresApproval || status === 'pending_approval') &&
+    !failed &&
+    !completed &&
+    !['approved', 'dispatched', 'running'].includes(status);
+  const decisionBusy = decidingApprovalId === command.approvalId;
 
   return (
     <article className="space-y-3">
@@ -930,6 +1113,39 @@ function CommandExchange({
           >
             <p className="whitespace-pre-wrap break-words">{getAssistantMessage(command)}</p>
             <CommandResultPreview command={command} />
+            {awaitingApproval && (
+              <div className="mt-3 rounded-xl border border-[var(--ava-warning-border)] bg-[var(--ava-warning-soft)] p-2">
+                <div className="mb-2 flex items-center gap-2 px-1 text-[11px] font-semibold text-[var(--ava-warning)]">
+                  <ShieldCheck size={14} />
+                  Approval required before Ava continues
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <PbkButton
+                    type="button"
+                    variant="sky-gradient"
+                    className="min-h-10 justify-center text-xs"
+                    disabled={decisionBusy}
+                    onClick={() => onApprovalDecision(command, 'approved')}
+                  >
+                    {decisionBusy ? (
+                      <Loader2 className="animate-spin" size={14} />
+                    ) : (
+                      <CheckCircle2 size={14} />
+                    )}
+                    Approve
+                  </PbkButton>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-[var(--ava-border)] bg-[var(--ava-panel)] px-3 text-xs font-semibold text-[var(--ava-text-muted)] transition hover:border-[var(--ava-danger-border)] hover:text-[var(--ava-danger)]"
+                    disabled={decisionBusy}
+                    onClick={() => onApprovalDecision(command, 'rejected')}
+                  >
+                    <X size={14} />
+                    Deny
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
             <CommandStatus command={command} />
@@ -1403,8 +1619,8 @@ function AvaContextRail({
             </span>
           </ContextRow>
           <ContextRow label="Execution lane">
-            <span className="font-mono text-[11px]">
-              {submitLane === 'rest' ? 'POST /api/local/commands' : 'POST /invoke'}
+            <span>
+              {submitLane === 'rest' ? 'Conversational bridge queue' : 'Direct invoke lane'}
             </span>
           </ContextRow>
           <ContextRow label="Safety">
@@ -1470,12 +1686,18 @@ function AvaContextRail({
           />
         </ContextPanel>
 
-        <ContextPanel title="Data sources" icon={<Terminal size={16} />}>
-          <div className="space-y-2">
-            <PbkDataSource endpoint="POST /api/local/commands" status="ships" />
-            <PbkDataSource endpoint="GET /api/desktop-sidecar/status" status="ships" />
-            <PbkDataSource endpoint="POST /invoke executeLocalCommand" status="ships" />
-          </div>
+        <ContextPanel title="Debug log" icon={<Terminal size={16} />}>
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-[var(--ava-border)] px-3 py-2 text-xs font-semibold text-[var(--ava-text-muted)]">
+              Source and transport details
+              <ChevronDown size={14} className="transition group-open:rotate-180" />
+            </summary>
+            <div className="mt-2 space-y-2">
+              <PbkDataSource endpoint="POST /api/local/commands" status="ships" />
+              <PbkDataSource endpoint="GET /api/desktop-sidecar/status" status="ships" />
+              <PbkDataSource endpoint="POST /invoke executeLocalCommand" status="ships" />
+            </div>
+          </details>
         </ContextPanel>
       </div>
     </aside>

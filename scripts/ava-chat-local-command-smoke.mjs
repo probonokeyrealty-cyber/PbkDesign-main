@@ -17,6 +17,7 @@ const sidebar = read('src/app/shell/Sidebar.tsx');
 const layout = read('src/app/shell/ParadiseLayout.tsx');
 const runtimeBridge = read('src/app/utils/runtimeBridge.ts');
 const bridge = read('scripts/openclaw-local-server.mjs');
+const avaIntentRouter = read('scripts/ava-intent-router.mjs');
 const netlify = read('netlify.toml');
 const migrations = fs
   .readdirSync(path.join(root, 'supabase/migrations'))
@@ -42,6 +43,7 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'fetchLocalCommandsRequest',
   'fetchDesktopSidecarStatusRequest',
   'executeLocalCommandRequest',
+  'updateApprovalDecision',
   'requiresApproval',
   'Command history',
   'OpenClaw',
@@ -51,6 +53,8 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'Replay',
   'getResultText',
   'CommandResultPreview',
+  'classifyConversationalCommand',
+  'getConversationalResultText',
   'riskLevel',
   'role="alert"',
   'role="radiogroup"',
@@ -58,6 +62,8 @@ const avaChat = read('src/app/routes/AvaChat.tsx');
   'h-full max-h-full',
   'pbk-ava-chat-quick-strip',
   'Open Ava context',
+  'Approval required before Ava continues',
+  'onApprovalDecision',
 ].forEach((token) => {
   assert(avaChat.includes(token), `AvaChat.tsx must include ${token}.`);
 });
@@ -85,6 +91,31 @@ assert(
 assert(
   /setRequiresApproval\(item\.requiresApproval\)/.test(avaChat),
   'Selecting a quick command must update the composer approval mode.'
+);
+assert(
+  /send_email/.test(avaChat) &&
+    /send_sms/.test(avaChat) &&
+    /execute_safe_script/.test(avaChat) &&
+    /search_leads/.test(avaChat) &&
+    /analyze_deal/.test(avaChat),
+  'Ava Chat must expose conversational actions for provider drafts, scripts, search, and deal analysis.'
+);
+assert(
+  /classifyConversationalCommand[\s\S]*send_email[\s\S]*requiresApproval:\s*true/.test(avaChat) &&
+    /classifyConversationalCommand[\s\S]*send_sms[\s\S]*requiresApproval:\s*true/.test(avaChat) &&
+    /classifyConversationalCommand[\s\S]*status[\s\S]*requiresApproval:\s*false/.test(avaChat),
+  'Ava Chat must deterministically route common natural-language commands into the right approval lane.'
+);
+assert(
+  /updateApprovalDecision\(approvalId,\s*decision\)/.test(avaChat) &&
+    /onApprovalDecision\(command,\s*'approved'\)/.test(avaChat) &&
+    /onApprovalDecision\(command,\s*'rejected'\)/.test(avaChat),
+  'Ava Chat must approve or deny guarded actions inline from the conversation bubble.'
+);
+assert(
+  /ContextPanel title="Debug log"[\s\S]*<details/.test(avaChat) &&
+    /Conversational bridge queue/.test(avaChat),
+  'Ava Chat must keep transport/source details in a debug disclosure instead of the primary conversation copy.'
 );
 assert(
   /function CommandResultPreview[\s\S]*imageDataUrl[\s\S]*entries[\s\S]*sourceName/.test(avaChat),
@@ -137,11 +168,14 @@ assert(/from = "\/ava-chat"/.test(netlify), 'Netlify must rewrite /ava-chat to t
   '/api/local/commands',
   '/api/desktop-sidecar/status',
   'executeLocalCommand',
+  'updateApprovalDecision',
 ].forEach((token) => {
   assert(runtimeBridge.includes(token), `runtimeBridge.ts must include ${token}.`);
 });
 
 [
+  'AVA_INTENT_ROUTER_VERSION',
+  'classifyAvaConversationalIntent',
   "'executeLocalCommand'",
   'async executeLocalCommand',
   'pbk_local_commands',
@@ -157,7 +191,19 @@ assert(/from = "\/ava-chat"/.test(netlify), 'Netlify must rewrite /ava-chat to t
   assert(bridge.includes(token), `openclaw-local-server.mjs must include ${token}.`);
 });
 assert(
-  /function classifyLocalCommandRisk[\s\S]*\['ping', 'status'\]/.test(bridge),
+  /export const AVA_INTENT_ROUTER_VERSION/.test(avaIntentRouter) &&
+    /send_email[\s\S]*needsApproval:\s*true/.test(avaIntentRouter) &&
+    /send_sms[\s\S]*needsApproval:\s*true/.test(avaIntentRouter) &&
+    /check_status[\s\S]*needsApproval:\s*false/.test(avaIntentRouter),
+  'Ava deterministic intent router must classify status as read-only and provider sends as approval-gated.'
+);
+assert(
+  /classifyAvaConversationalIntent\(command,\s*params\)/.test(bridge) ||
+    /classifyAvaConversationalIntent\(command/.test(bridge),
+  'The bridge must classify local command transcripts with the deterministic Ava intent router.'
+);
+assert(
+  /function classifyLocalCommandRisk[\s\S]*\['ping', 'status', 'search_leads', 'analyze_deal'\]/.test(bridge),
   'The bridge must own a narrow read-only low-risk action allowlist.'
 );
 assert(

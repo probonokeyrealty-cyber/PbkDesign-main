@@ -145,6 +145,7 @@ COPY scripts/skill-runtime-snapshot.mjs ./scripts/skill-runtime-snapshot.mjs
 COPY scripts/skill-youtube-ingest.mjs ./scripts/skill-youtube-ingest.mjs
 COPY scripts/docusign-webhook-auth.mjs ./scripts/docusign-webhook-auth.mjs
 COPY scripts/command-intent-router.mjs ./scripts/command-intent-router.mjs
+COPY scripts/ava-intent-router.mjs ./scripts/ava-intent-router.mjs
 COPY scripts/ava-coaching-memory.mjs ./scripts/ava-coaching-memory.mjs
 COPY scripts/ava-episodic-memory.mjs ./scripts/ava-episodic-memory.mjs
 COPY scripts/train-emotion-world-model.mjs ./scripts/train-emotion-world-model.mjs

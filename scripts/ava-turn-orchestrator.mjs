@@ -47,6 +47,93 @@ function selectSkill(input = {}) {
   });
 }
 
+export const AVA_INTELLIGENCE_LAYER_IDS = Object.freeze([
+  'reasoning',
+  'salesDoctrine',
+  'stateMachine',
+  'sellerPersona',
+  'negotiation',
+  'emotion',
+  'memory',
+  'tools',
+  'compliance',
+  'skills',
+  'coaching',
+  'voice',
+  'operator',
+]);
+
+function hasItems(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function hasObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+export function buildAvaIntelligenceUnisonStatus(input = {}, result = {}) {
+  const layers = {
+    reasoning: Boolean(result.confidence?.revision && result.confidence?.responseMode),
+    salesDoctrine: Boolean(
+      input.path ||
+        input.selectedPath ||
+        input.pathKey ||
+        input.lastObjection ||
+        input.objectionType ||
+        input.objection ||
+        hasObject(input.propertyAnalysis)
+    ),
+    stateMachine: Boolean(result.state?.phase && result.turnDecision?.phase),
+    sellerPersona: Boolean(
+      input.sellerPersona ||
+        input.sellerType ||
+        input.lead?.sellerPersona ||
+        input.lead?.sellerType ||
+        input.context?.sellerPersona ||
+        input.context?.sellerType
+    ),
+    negotiation: Boolean(
+      hasObject(input.negotiation) ||
+        hasObject(input.propertyAnalysis) ||
+        Number.isFinite(Number(input.mao ?? input.lead?.mao ?? input.context?.mao))
+    ),
+    emotion: Boolean(input.emotion || input.sellerEmotion || input.sentiment || input.emotionPolicy),
+    memory: Boolean(result.workingMemory?.brief && (result.memory?.episodicMatches ?? 0) >= 0),
+    tools: Boolean(
+      hasItems(input.availableTools) ||
+        hasObject(input.toolResults) ||
+        hasObject(input.toolReadiness) ||
+        hasItems(result.activeSkill?.toolAllowlist)
+    ),
+    compliance: Boolean(result.guard?.result && result.confidence?.providerWrites === 'approval_gated'),
+    skills: Boolean(result.activeSkill?.id || result.skillSelection?.ok),
+    coaching: Boolean(
+      hasItems(input.coachingMemories) ||
+        hasItems(input.skillOutcomes) ||
+        hasObject(input.callQuality) ||
+        hasObject(input.coachingMemory)
+    ),
+    voice: Boolean(input.voice || input.callId || input.call_id || input.channel === 'voice'),
+    operator: Boolean(
+      hasObject(input.operator) ||
+        hasObject(input.approval) ||
+        input.handoff === true ||
+        result.guard?.result === 'handoff' ||
+        result.confidence?.offerApproval === 'always_required'
+    ),
+  };
+  const missingLayers = AVA_INTELLIGENCE_LAYER_IDS.filter((layer) => layers[layer] !== true);
+
+  return {
+    revision: 'ava-intelligence-unison-v1',
+    ready: missingLayers.length === 0,
+    layers,
+    activeLayerCount: AVA_INTELLIGENCE_LAYER_IDS.length - missingLayers.length,
+    totalLayerCount: AVA_INTELLIGENCE_LAYER_IDS.length,
+    missingLayers,
+  };
+}
+
 export function orchestrateAvaTurn(input = {}) {
   const phase = normalizePhase(input.phase || input.state?.phase || input.stage);
   const lead = normalizeLead(input);
@@ -92,7 +179,7 @@ export function orchestrateAvaTurn(input = {}) {
             ? 'verification_question'
             : 'seller_reply';
 
-  return {
+  const result = {
     ok: true,
     result: 'ava_turn_orchestrated',
     answer: guard.answer,
@@ -138,4 +225,6 @@ export function orchestrateAvaTurn(input = {}) {
     workingMemory,
     skillSelection,
   };
+  result.unison = buildAvaIntelligenceUnisonStatus(input, result);
+  return result;
 }

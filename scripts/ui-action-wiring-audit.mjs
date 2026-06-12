@@ -420,7 +420,7 @@ if (sellerDocIdentityMissing) {
 }
 
 const analyzerLeadSyncMissing =
-  !/const leadId = String\(deal\.leadId/.test(runtimeBridge) ||
+  !/const leadId = String\([\s\S]*deal\.leadId[\s\S]*lead_id[\s\S]*\)\.trim\(\)/.test(runtimeBridge) ||
   !/Create or sync this lead before sending analyzer context to Ava or CRM/.test(runtimeBridge) ||
   !/leadId,\s*\n\s*lead_id:\s*leadId/.test(runtimeBridge);
 if (analyzerLeadSyncMissing) {

@@ -4,6 +4,7 @@ import {
   buildYouTubeSkillProvenance,
   classifyYouTubeTranscriptFailure,
   normalizeManualYouTubeTranscript,
+  normalizeSkillAudioTranscriptUrl,
   parseYouTubeSkillProposals,
 } from './skill-youtube-ingest.mjs';
 
@@ -53,6 +54,7 @@ assert.equal(disabled.reason, 'captions_disabled');
 assert.equal(disabled.retryable, false);
 assert(!disabled.message.includes('[YoutubeTranscript]'), 'Operator message must not expose raw provider noise.');
 assert(disabled.message.includes('Paste a transcript'), 'Disabled captions should guide the operator to the fallback path.');
+assert(disabled.message.includes('direct audio/video URL'), 'Disabled captions should offer the Deepgram media URL fallback.');
 
 const normalizedManualTranscript = normalizeManualYouTubeTranscript(
   '  Speaker 1: Ask one clear question.\n\nSpeaker 2: Then wait for the seller answer. '.repeat(15)
@@ -64,5 +66,13 @@ assert(normalizedManualTranscript.transcript.includes('Ask one clear question.')
 const shortManualTranscript = normalizeManualYouTubeTranscript('too short');
 assert.equal(shortManualTranscript.ok, false);
 assert.equal(shortManualTranscript.reason, 'manual_transcript_too_short');
+
+const validAudioUrl = normalizeSkillAudioTranscriptUrl('https://cdn.example.com/training-call.mp3');
+assert.equal(validAudioUrl.ok, true, 'Public direct media URLs should be accepted for Deepgram fallback.');
+assert.equal(validAudioUrl.source, 'deepgram_audio_url');
+
+const youtubeWatchAsAudio = normalizeSkillAudioTranscriptUrl('https://www.youtube.com/watch?v=gJGU3GlU2UQ');
+assert.equal(youtubeWatchAsAudio.ok, false, 'YouTube watch URLs are not direct media files.');
+assert.equal(youtubeWatchAsAudio.reason, 'youtube_watch_url_not_direct_media');
 
 console.log('skill-youtube-ingest-smoke: ok');

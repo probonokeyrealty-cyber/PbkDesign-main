@@ -120,6 +120,7 @@ function CreateCandidateDialog({
     agentId: string;
     maxCandidates: number;
     manualTranscript?: string;
+    audioTranscriptUrl?: string;
   }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<'manual' | 'youtube'>('manual');
@@ -130,6 +131,7 @@ function CreateCandidateDialog({
   const [sourceNote, setSourceNote] = useState('');
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [manualTranscript, setManualTranscript] = useState('');
+  const [audioTranscriptUrl, setAudioTranscriptUrl] = useState('');
   const [maxCandidates, setMaxCandidates] = useState(5);
   if (!open) return null;
   return (
@@ -182,7 +184,7 @@ function CreateCandidateDialog({
           <p>
             {mode === 'manual'
               ? 'New skills enter review only. They cannot execute until an operator approves the exact hash and activates a rollout.'
-              : 'Learn from YouTube without bypassing governance. DeepSeek extracts bounded candidates; every result remains inactive until reviewed.'}
+              : 'Learn from YouTube without bypassing governance. Captions are used when available; disabled-caption videos can use pasted notes or a direct media URL for Deepgram transcription.'}
           </p>
           {mode === 'manual' ? (
             <>
@@ -276,9 +278,27 @@ function CreateCandidateDialog({
                 <ShieldCheck size={18} />
                 <div>
                   <strong>Review stays mandatory</strong>
-                  <span>No tool access, approval, or activation is granted during ingestion.</span>
+                  <span>
+                    Captions, transcript paste, and audio fallback only create inactive candidates.
+                    No tool access, approval, or activation is granted during ingestion.
+                  </span>
                 </div>
               </div>
+              <label className="pbk-skill-audio-fallback">
+                Direct audio/video transcript URL
+                <input
+                  value={audioTranscriptUrl}
+                  onChange={(event) => setAudioTranscriptUrl(event.target.value)}
+                  placeholder="https://.../training-call.mp3"
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                />
+                <small>
+                  Optional. Use a public MP3, M4A, WAV, MP4, MOV, or WebM file when YouTube captions
+                  are disabled. A normal YouTube watch link is not a direct media file.
+                </small>
+              </label>
               <label className="pbk-skill-youtube-fallback">
                 Paste transcript or detailed notes
                 <textarea
@@ -316,6 +336,7 @@ function CreateCandidateDialog({
                   agentId,
                   maxCandidates,
                   manualTranscript: manualTranscript.trim(),
+                  audioTranscriptUrl: audioTranscriptUrl.trim(),
                 });
                 return;
               }

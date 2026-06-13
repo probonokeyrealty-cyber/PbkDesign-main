@@ -3740,6 +3740,7 @@
   min-height: 118px;
   resize: vertical;
 }
+.pbk-skill-audio-fallback small,
 .pbk-skill-youtube-fallback small {
   display: block;
   margin-top: 6px;

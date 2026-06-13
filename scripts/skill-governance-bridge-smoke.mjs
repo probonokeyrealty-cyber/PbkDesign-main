@@ -60,6 +60,12 @@ assert(
   'YouTube ingestion must allow an operator-pasted transcript fallback for videos with disabled captions.'
 );
 assert(
+  /audioTranscriptUrl[\s\S]*normalizeSkillAudioTranscriptUrl[\s\S]*transcribeDeepgramUrl/.test(
+    bridge
+  ),
+  'YouTube ingestion must allow a direct audio/video URL fallback through Deepgram when captions are disabled.'
+);
+assert(
   /classifyYouTubeTranscriptFailure[\s\S]*youtubeTranscriptFailure/.test(bridge),
   'YouTube ingestion must classify transcript provider failures before returning them to Skill Studio.'
 );

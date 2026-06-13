@@ -9519,7 +9519,7 @@
                 <div class="skillrepo-field full">
                   <label for="skillRepoYoutube">YouTube URL</label>
                   <input id="skillRepoYoutube" name="youtubeUrl" placeholder="https://www.youtube.com/watch?v=...">
-                  <div class="skillrepo-help">Production can fetch captions/transcripts through the approved backend lane; this UI stores the source and queues a reviewable skill draft.</div>
+                  <div class="skillrepo-help">Production tries captions first. If captions are disabled, add a direct media URL or paste transcript/notes so the review lane still has usable source evidence.</div>
                 </div>
                 <div class="skillrepo-field">
                   <label for="skillRepoStart">Start time</label>
@@ -9528,6 +9528,16 @@
                 <div class="skillrepo-field">
                   <label for="skillRepoEnd">End time</label>
                   <input id="skillRepoEnd" name="endTime" placeholder="end">
+                </div>
+                <div class="skillrepo-field full">
+                  <label for="skillRepoAudioTranscriptUrl">Direct audio/video transcript URL</label>
+                  <input id="skillRepoAudioTranscriptUrl" name="audioTranscriptUrl" placeholder="https://.../training-call.mp3">
+                  <div class="skillrepo-help">Optional. Use a public MP3, M4A, WAV, MP4, MOV, or WebM file. A normal YouTube watch link is not a direct media file.</div>
+                </div>
+                <div class="skillrepo-field full">
+                  <label for="skillRepoManualTranscript">Paste transcript or detailed notes</label>
+                  <textarea id="skillRepoManualTranscript" name="manualTranscript" placeholder="Optional fallback for videos with disabled captions. Paste the transcript, show notes, or detailed training notes here."></textarea>
+                  <div class="skillrepo-help">Manual notes stay review-only and never activate a live skill without approval.</div>
                 </div>
               </div>
               <label class="skillrepo-rights">
@@ -19890,6 +19900,8 @@ Authority close: "What matters most to your seller: number, timeline, or certain
     const name = String(data.get('skillName') || '').trim();
     const manualText = String(data.get('manualText') || '').trim();
     const youtubeUrl = String(data.get('youtubeUrl') || '').trim();
+    const manualTranscript = String(data.get('manualTranscript') || '').trim();
+    const audioTranscriptUrl = String(data.get('audioTranscriptUrl') || '').trim();
     const targets = data.getAll('targetAgents').map(String);
     return {
       name,
@@ -19899,11 +19911,18 @@ Authority close: "What matters most to your seller: number, timeline, or certain
       mode: skillRepoState.mode,
       manualText,
       youtubeUrl,
+      manualTranscript,
+      audioTranscriptUrl,
       startTime: String(data.get('startTime') || '').trim(),
       endTime: String(data.get('endTime') || '').trim(),
       rightsOk: Boolean(data.get('rightsOk')),
       targets: targets.length ? targets : ['ava'],
-      sourceText: skillRepoState.mode === 'manual' ? manualText : skillRepoState.mode === 'upload' ? skillRepoState.uploadText : youtubeUrl,
+      sourceText:
+        skillRepoState.mode === 'manual'
+          ? manualText
+          : skillRepoState.mode === 'upload'
+            ? skillRepoState.uploadText
+            : manualTranscript || audioTranscriptUrl || youtubeUrl,
     };
   }
 
@@ -19988,9 +20007,15 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           url: payload.youtubeUrl,
           kind: 'video',
           topic: 'Agent Skills',
-          summary: draft.rationale,
+          summary: payload.manualTranscript || draft.rationale,
           tags,
           requestedBy: 'SkillRepo UI',
+          metadata: {
+            audioTranscriptUrl: payload.audioTranscriptUrl || '',
+            hasManualTranscript: Boolean(payload.manualTranscript),
+            startTime: payload.startTime || '',
+            endTime: payload.endTime || '',
+          },
         },
         timeout: 45000,
       }).catch(() => null);
@@ -20013,6 +20038,9 @@ Authority close: "What matters most to your seller: number, timeline, or certain
           targets: draft.targets,
           activationMode: draft.activationMode,
           engine: draft.engine,
+          audioTranscriptUrl: payload.audioTranscriptUrl || '',
+          hasManualTranscript: Boolean(payload.manualTranscript),
+          youtubeUrl: payload.youtubeUrl || '',
         },
       },
       timeout: 15000,

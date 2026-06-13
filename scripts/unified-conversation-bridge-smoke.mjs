@@ -247,6 +247,35 @@ assert(
   'Inbound Ava calls must read canonical lead_profiles and keep workflow stage distinct from status.'
 );
 assert(
+  /normalizeConversationPhone/.test(bridge) &&
+    /async function findInboundConversationThreadContext/.test(bridge) &&
+    /FROM public\.conversation_thread_identities AS identity[\s\S]*identity\.identity_type = 'phone'/.test(
+      bridge
+    ),
+  'Inbound Ava calls must reuse canonical unified-conversation phone identities before creating a new seller.'
+);
+assert(
+  /async function ensureInboundLeadProfileContext/.test(bridge) &&
+    /persistLeadProfileRowToDb\(profile,\s*'inbound-call'\)/.test(bridge) &&
+    /persistence\.leadId !== \(profile\.leadId \|\| profile\.id\)/.test(bridge) &&
+    /patchLeadImport\(state,\s*lookup,\s*profile\)/.test(bridge) &&
+    !/if \(!lead\.found && parsed\.from\)[\s\S]{0,500}addLeadImport\(state/.test(bridge),
+  'Inbound Ava calls must durably upsert the lead profile, honor the resolved durable id, and not blindly append placeholder sellers.'
+);
+assert(
+  /existingIsInboundPlaceholder/.test(bridge) &&
+    /incomingIsInboundPlaceholder/.test(bridge) &&
+    /regexp_replace\(COALESCE\(phone/.test(bridge),
+  'Lead profile persistence must merge same-phone inbound placeholders into the canonical durable seller profile.'
+);
+assert(
+  /async function reconcileInboundLeadProfiles/.test(bridge) &&
+    /ensureInboundLeadProfileContext\(/.test(bridge) &&
+    /scheduleRuntimeStateBroadcast\('inbound-lead-reconcile'\)/.test(bridge) &&
+    /\/api\/admin\/reconcile-inbound-leads/.test(bridge),
+  'Admin reconciliation must repair existing inbound call lead profiles and broadcast the refreshed runtime state.'
+);
+assert(
   /const persistence = await persistLeadProfileRowToDb\(nextLead, 'instantly-reply'\)/.test(
     bridge
   ) &&
@@ -926,6 +955,13 @@ assert(
       bridge
     ),
   'Inbound Telnyx routes must preserve seller-to-PBK direction and project call start after persistence.'
+);
+
+assert(
+  /normalizedEvent === 'call-transcript'[\s\S]*projectLiveConversationRecord\(\{[\s\S]*source:\s*'telnyx-call-transcript'[\s\S]*scheduleRuntimeStateBroadcast\('call-transcript'\)/.test(
+    bridge
+  ),
+  'Call transcript events must update live dashboards immediately after canonical timeline projection.'
 );
 
 assert(

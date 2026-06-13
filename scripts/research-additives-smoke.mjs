@@ -22,10 +22,14 @@ import { buildDefaultAgentRegistry, findAgentsByCapability } from './agent-regis
 
 const status = buildResearchAdditivesStatus({ env: {}, now: new Date('2026-05-31T12:00:00Z') });
 assert.equal(status.ok, true);
-assert.equal(status.summary.total, 10, 'all ten frontier additives should be represented.');
-assert.equal(status.summary.ready, 10, 'all frontier additives should have a PBK-native ready adapter.');
-assert.equal(status.summary.nativeReady, 10, 'all frontier additives should be native-ready today.');
+assert.equal(status.summary.total, 11, 'all registered frontier additives should be represented.');
+assert.equal(status.summary.ready, 11, 'all frontier additives should have a PBK-native ready adapter.');
+assert.equal(status.summary.nativeReady, 11, 'all frontier additives should be native-ready today.');
 assert(status.summary.providerUpgradesPending >= 4, 'provider/model upgrades should be tracked separately from native readiness.');
+assert(
+  status.additives.some((item) => item.id === 'agent_reach_internet_layer' && item.mode === 'optional_local_readonly'),
+  'Agent Reach should be registered as an optional read-only internet layer.'
+);
 
 const providerChecks = await checkResearchAdditiveProviders({ liveProbe: false }, { env: {} });
 assert.equal(providerChecks.ok, true);
@@ -33,6 +37,11 @@ assert.equal(providerChecks.result, 'provider_matrix_checked');
 assert.equal(providerChecks.summary.nativeFallbackReady, true);
 assert.equal(providerChecks.summary.configured, 0);
 assert(providerChecks.providers.length >= 8, 'provider connector matrix should cover optional frontier upgrades.');
+const agentReachProvider = providerChecks.providers.find((provider) => provider.providerId === 'agent-reach');
+assert(agentReachProvider, 'provider matrix should include Agent Reach.');
+assert.equal(agentReachProvider.commandEnv, '', 'Agent Reach command env should remain unset by default.');
+assert.equal(agentReachProvider.safety.advisoryOnly, true, 'Agent Reach must remain advisory/read-only.');
+assert.equal(agentReachProvider.safety.providerWritesAllowed, false, 'Agent Reach provider writes must stay blocked.');
 
 const registry = buildDefaultAgentRegistry({ now: 1780000000000 });
 assert(
@@ -132,8 +141,8 @@ const unified = await runUnifiedAdditiveIntelligence(
   { env: {}, toolNames: ['consultNurtureAgent', 'analyzeDeal', 'runAgentTeam'] }
 );
 assert.equal(unified.result, 'unified_intelligence_ready');
-assert.equal(unified.coverage.total, 10);
-assert.equal(unified.coverage.used, 10);
+assert.equal(unified.coverage.total, 11);
+assert.equal(unified.coverage.used, 11);
 assert.equal(unified.providerAugmentation.mode, 'native_first_provider_aware');
 assert.equal(unified.providerAugmentation.providerWritesAllowed, false);
 assert.equal(unified.sync.stoppingFeedsPathSearch, true);
@@ -158,6 +167,7 @@ assert.equal(providerAugmented.providerAugmentation.advisoryOnly, true);
 const bridge = readFileSync(resolve('scripts/openclaw-local-server.mjs'), 'utf8');
 const dockerfile = readFileSync(resolve('Dockerfile.openclaw'), 'utf8');
 assert.match(bridge, /getResearchAdditivesStatus/, 'bridge should expose research-additive status tool.');
+assert.match(bridge, /agentReach/, 'bridge should expose Agent Reach tooling status.');
 assert.match(bridge, /runUnifiedAdditiveIntelligence/, 'bridge should expose unified additive intelligence tool.');
 assert.match(bridge, /runProviderAugmentedAdditiveIntelligence/, 'bridge should expose provider-augmented additive intelligence tool.');
 assert.match(bridge, /checkResearchAdditiveProviders/, 'bridge should expose provider health checks.');

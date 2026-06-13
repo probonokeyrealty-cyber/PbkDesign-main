@@ -6,6 +6,7 @@ const netlifyConfig = readFileSync(resolve(root, 'netlify.toml'), 'utf8');
 const shellHtml = readFileSync(resolve(root, 'index.shell.html'), 'utf8');
 const legacyHtml = readFileSync(resolve(root, 'index.html'), 'utf8');
 const mainShell = readFileSync(resolve(root, 'src/main.shell.tsx'), 'utf8');
+const viteConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,14 +29,43 @@ assert(/to\s*=\s*"\/index\.shell\.html"/.test(netlifyConfig), 'Netlify must rout
   '/leads',
   '/deal',
   '/deal/*',
+  '/deals',
+  '/deals/*',
+  '/analyzer',
   '/inbox',
   '/fleet',
+  '/agent-fleet',
   '/memory',
+  '/skills',
+  '/skills/*',
+  '/skill-studio',
+  '/skill-studio/*',
   '/analytics',
   '/settings',
   '/campaigns',
+  '/agent',
+  '/agent-console',
 ].forEach((path) => {
   assert(redirectTargetsShell(path), `Netlify must route ${path} to the modern shell.`);
+});
+
+[
+  '/dashboard',
+  '/leads',
+  '/deal',
+  '/deals',
+  '/analyzer',
+  '/inbox',
+  '/fleet',
+  '/agent-fleet',
+  '/agents',
+  '/skill-studio',
+  '/campaigns',
+  '/agent',
+  '/agent-console',
+  '/ava-chat',
+].forEach((path) => {
+  assert(viteConfig.includes(`'${path}'`), `Vite dev fallback must route ${path} to the modern shell.`);
 });
 
 assert(/src\/main\.shell\.tsx/.test(shellHtml), 'index.shell.html must mount the React shell entry.');

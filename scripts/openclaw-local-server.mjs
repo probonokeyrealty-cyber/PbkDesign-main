@@ -49,7 +49,13 @@ import { buildNurtureComplianceHealth, consultNurtureAgentCore, ensureNurtureSch
 import { getEmotionTrainingStatus } from './onnx-training-worker.mjs';
 import { buildResearchAdditivesStatus, buildSafetyTransparencyReport, checkResearchAdditiveProviders as checkResearchAdditiveProvidersCore, compactLongHorizonMemory as compactLongHorizonMemoryCore, discoverExternalTool as discoverExternalToolCore, evaluateStoppingAgent as evaluateStoppingAgentCore, induceWorkflowMemory as induceWorkflowMemoryCore, inferProactiveHumanState as inferProactiveHumanStateCore, planDeterministicGuiAutomation as planDeterministicGuiAutomationCore, planExecutionPathSearch as planExecutionPathSearchCore, planMasterAgentMission as planMasterAgentMissionCore, routeAcpMessage as routeAcpMessageCore, runProviderAugmentedAdditiveIntelligence as runProviderAugmentedAdditiveIntelligenceCore, runUnifiedAdditiveIntelligence as runUnifiedAdditiveIntelligenceCore } from './research-additives.mjs';
 import { buildDeclarativeActionIntent, curateEpisodicMemories as curateEpisodicMemoriesCore, reconcileDeclarativeActionIntent, runMissionResilienceEval as runMissionResilienceEvalCore, selectBacktrackingStrategy as selectBacktrackingStrategyCore, updateGoalBeliefsBayesian as updateGoalBeliefsBayesianCore } from './mission-resilience.mjs';
-import { evaluateConversationSenderRecommendationCompliance, normalizeTelnyxSenderIdentity, normalizeInstantlySenderIdentity, rankEligibleSenderIdentities } from './conversation-identity.mjs';
+import {
+  evaluateConversationSenderRecommendationCompliance,
+  normalizeConversationPhone,
+  normalizeTelnyxSenderIdentity,
+  normalizeInstantlySenderIdentity,
+  rankEligibleSenderIdentities,
+} from './conversation-identity.mjs';
 import {
   projectActivityEvent,
   projectApprovalEvent,
@@ -110,6 +116,7 @@ import {
   buildYouTubeSkillProvenance,
   classifyYouTubeTranscriptFailure,
   normalizeManualYouTubeTranscript,
+  normalizeSkillAudioTranscriptUrl,
   parseYouTubeSkillProposals,
 } from './skill-youtube-ingest.mjs';
 import { DEEPGRAM_SAMPLE_URL, createDeepgramLiveConnection, getDeepgramProviderMeta, sendDeepgramAudio, sendDeepgramControl, transcribeDeepgramFile, transcribeDeepgramUrl } from './pbk-deepgram-client.mjs';
@@ -469,6 +476,11 @@ const RENDER_BASE_URL = String(process.env.PBK_RENDER_BASE_URL || 'https://api.r
   .trim()
   .replace(/\/+$/g, '');
 const BROWSEROS_MCP_URL = String(process.env.PBK_BROWSEROS_MCP_URL || 'http://127.0.0.1:9000/mcp').trim();
+const AGENT_REACH_COMMAND = String(process.env.PBK_AGENT_REACH_COMMAND || 'agent-reach').trim() || 'agent-reach';
+const AGENT_REACH_ENABLED = !/^(0|false|no|off)$/i.test(String(process.env.PBK_AGENT_REACH_ENABLED || 'true').trim());
+const AGENT_REACH_STATUS_TTL_MS = Math.max(15000, Math.min(300000, Number(process.env.PBK_AGENT_REACH_STATUS_TTL_MS || 60000)));
+const AGENT_REACH_DETECT_TIMEOUT_MS = Math.max(500, Math.min(8000, Number(process.env.PBK_AGENT_REACH_DETECT_TIMEOUT_MS || 2500)));
+let __agentReachStatusCache = { checkedAtMs: 0, status: null };
 const PROPERTY_CACHE_TTL_DAYS = Math.max(1, Number(process.env.PBK_PROPERTY_CACHE_TTL_DAYS || 30));
 const PROPERTY_CACHE_TTL_MS = PROPERTY_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
 const ANALYZER_RESULT_CACHE_TTL_MS = Math.max(30000, Number(process.env.PBK_ANALYZER_RESULT_CACHE_TTL_MS || 5 * 60 * 1000));
@@ -12169,6 +12181,22 @@ function addLeadImport(stateRef, leadImport) {
   updateDerivedStatus(stateRef);
 }
 
+function isInboundPlaceholderLead(lead = {}) {
+  const leadId = String(lead.leadId || lead.id || '').trim().toLowerCase();
+  const source = String(lead.source || lead.leadSource || lead.lead_source || '').trim().toLowerCase();
+  const seller = lead.seller || {};
+  const property = lead.property || {};
+  const name = getSpokenLeadName(seller.name || lead.leadName || lead.name || '');
+  const address = String(property.address || lead.address || '').trim();
+  const tags = normalizeLeadTags(lead.tags || []);
+  return (
+    leadId.startsWith('lead-inbound-') ||
+    source === 'inbound-call' ||
+    tags.includes('inbound-call') ||
+    (!name && !address && Boolean(normalizePhone(seller.phone || lead.phone || '')))
+  );
+}
+
 function patchLeadImport(stateRef, matcher = {}, patch = {}) {
   const normalizedEmail = String(matcher.email || '')
     .trim()
@@ -12177,9 +12205,11 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
     .trim()
     .toLowerCase();
   const normalizedLeadId = String(matcher.leadId || '').trim();
+  const normalizedPhone = normalizePhone(matcher.phone || patch.phone || patch.seller?.phone || '');
   const normalizedName = String(matcher.leadName || '')
     .trim()
     .toLowerCase();
+  let matchedByInboundPlaceholderPhone = false;
   const existingIndex = stateRef.leadImports.findIndex((item) => {
     if (normalizedLeadId && String(item.leadId || '').trim() === normalizedLeadId) return true;
     if (
@@ -12203,15 +12233,31 @@ function patchLeadImport(stateRef, matcher = {}, patch = {}) {
         .toLowerCase() === normalizedName
     )
       return true;
+    if (normalizedPhone) {
+      const itemPhone = normalizePhone(item?.seller?.phone || item?.phone || '');
+      if (
+        itemPhone === normalizedPhone &&
+        (isInboundPlaceholderLead(item) || isInboundPlaceholderLead(patch))
+      ) {
+        matchedByInboundPlaceholderPhone = true;
+        return true;
+      }
+    }
     return false;
   });
 
   if (existingIndex < 0) return null;
 
   const current = stateRef.leadImports[existingIndex];
+  const preserveInboundPlaceholderId =
+    matchedByInboundPlaceholderPhone && isInboundPlaceholderLead(current);
   const next = {
     ...current,
     ...patch,
+    id: preserveInboundPlaceholderId ? current.id || current.leadId : patch.id || current.id,
+    leadId: preserveInboundPlaceholderId
+      ? current.leadId || current.id
+      : patch.leadId || current.leadId,
     seller: {
       ...(current.seller || {}),
       ...(patch.seller || {}),
@@ -12568,6 +12614,136 @@ async function backfillContractRecordsToPg(contracts = state.contracts || []) {
     persisted,
     failed: failures.length,
     failures: failures.slice(0, 20),
+  };
+}
+
+function normalizePgContractRecord(row = {}) {
+  const payload =
+    row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+      ? row.payload
+      : {};
+  return {
+    ...payload,
+    id: String(row.id || payload.id || payload.contractId || '').trim(),
+    contractId: String(payload.contractId || row.id || '').trim(),
+    leadId: String(row.leadId || row.lead_id || payload.leadId || payload.lead_id || '').trim(),
+    lead_id: String(row.leadId || row.lead_id || payload.leadId || payload.lead_id || '').trim(),
+    amount: toNumber(row.amount ?? payload.amount ?? payload.offerPrice, 0),
+    offerPrice: toNumber(payload.offerPrice ?? row.amount ?? payload.amount, 0),
+    selectedPath: String(row.selectedPath || row.selected_path || payload.selectedPath || '').trim(),
+    selectedPathLabel: String(
+      row.selectedPathLabel || row.selected_path_label || payload.selectedPathLabel || ''
+    ).trim(),
+    timeline: String(row.timeline || payload.timeline || '').trim(),
+    earnestDeposit: String(row.earnestDeposit || row.earnest_deposit || payload.earnestDeposit || '').trim(),
+    status: String(row.status || payload.status || 'draft').trim(),
+    provider: String(row.provider || payload.provider || 'docusign').trim(),
+    envelopeId: String(row.envelopeId || row.envelope_id || payload.envelopeId || '').trim(),
+    documentTitle: String(row.documentTitle || row.document_title || payload.documentTitle || '').trim(),
+    previewUrl: String(row.previewUrl || row.preview_url || payload.previewUrl || '').trim(),
+    pdfUrl: String(row.pdfUrl || row.pdf_url || payload.pdfUrl || '').trim(),
+    masterPackageQuery: String(
+      row.masterPackageQuery || row.master_package_query || payload.masterPackageQuery || ''
+    ).trim(),
+    pdfGeneratedAt: row.pdfGeneratedAt || row.pdf_generated_at || payload.pdfGeneratedAt || '',
+    notes: String(row.notes || payload.notes || '').trim(),
+    approvalId: String(row.approvalId || row.approval_id || payload.approvalId || '').trim(),
+    templateId: String(row.templateId || row.template_id || payload.templateId || '').trim(),
+    templateFields: row.templateFields || row.template_fields || payload.templateFields || {},
+    templateFieldMap: row.templateFieldMap || row.template_field_map || payload.templateFieldMap || {},
+    contractPath: String(row.contractPath || row.contract_path || payload.contractPath || '').trim(),
+    contractType: String(row.contractType || row.contract_type || payload.contractType || '').trim(),
+    templatePath: String(row.templatePath || row.template_path || payload.templatePath || '').trim(),
+    templateFile: String(row.templateFile || row.template_file || payload.templateFile || '').trim(),
+    negotiationFile: String(row.negotiationFile || row.negotiation_file || payload.negotiationFile || '').trim(),
+    negotiationPrompt: String(
+      row.negotiationPrompt || row.negotiation_prompt || payload.negotiationPrompt || ''
+    ).trim(),
+    underwritingStatus: String(
+      row.underwritingStatus || row.underwriting_status || payload.underwritingStatus || ''
+    ).trim(),
+    underwritingReviewerEmail: String(
+      row.underwritingReviewerEmail ||
+        row.underwriting_reviewer_email ||
+        payload.underwritingReviewerEmail ||
+        ''
+    ).trim(),
+    underwritingReviewerName: String(
+      row.underwritingReviewerName ||
+        row.underwriting_reviewer_name ||
+        payload.underwritingReviewerName ||
+        ''
+    ).trim(),
+    sellerNotice: String(row.sellerNotice || row.seller_notice || payload.sellerNotice || '').trim(),
+    createdAt: row.createdAt || row.created_at || payload.createdAt || isoNow(),
+    updatedAt: row.updatedAt || row.updated_at || payload.updatedAt || isoNow(),
+  };
+}
+
+async function loadContractRecordsFromPg({ statusFilter = 'all', limit = 200 } = {}) {
+  const normalizedStatus = String(statusFilter || 'all').trim().toLowerCase();
+  const params = [Math.max(1, Math.min(500, Number(limit) || 200))];
+  const where = ["COALESCE(workspace_id, 'pbk') = 'pbk'"];
+  if (normalizedStatus && normalizedStatus !== 'all') {
+    params.push(normalizedStatus);
+    where.push(
+      `(LOWER(status) = $${params.length} OR
+        CASE
+          WHEN LOWER(status) IN ('void', 'voided', 'cancelled', 'canceled', 'rejected') THEN 'void'
+          WHEN LOWER(status) IN ('funded', 'closed') THEN 'funded'
+          WHEN LOWER(status) IN ('completed', 'signed') THEN 'signed'
+          WHEN LOWER(status) IN ('viewed', 'opened', 'review', 'reviewing', 'updated') THEN 'viewed'
+          WHEN LOWER(status) IN ('sent', 'delivered') THEN 'sent'
+          ELSE 'draft'
+        END = $${params.length})`
+    );
+  }
+  const result = await queryPgRows(
+    `SELECT
+       id,
+       lead_id AS "leadId",
+       workspace_id AS "workspaceId",
+       amount::float AS amount,
+       selected_path AS "selectedPath",
+       selected_path_label AS "selectedPathLabel",
+       timeline,
+       earnest_deposit AS "earnestDeposit",
+       status,
+       provider,
+       envelope_id AS "envelopeId",
+       document_title AS "documentTitle",
+       preview_url AS "previewUrl",
+       pdf_url AS "pdfUrl",
+       master_package_query AS "masterPackageQuery",
+       pdf_generated_at AS "pdfGeneratedAt",
+       notes,
+       approval_id AS "approvalId",
+       template_id AS "templateId",
+       template_fields AS "templateFields",
+       template_field_map AS "templateFieldMap",
+       contract_path AS "contractPath",
+       contract_type AS "contractType",
+       template_path AS "templatePath",
+       template_file AS "templateFile",
+       negotiation_file AS "negotiationFile",
+       negotiation_prompt AS "negotiationPrompt",
+       underwriting_status AS "underwritingStatus",
+       underwriting_reviewer_email AS "underwritingReviewerEmail",
+       underwriting_reviewer_name AS "underwritingReviewerName",
+       seller_notice AS "sellerNotice",
+       payload,
+       created_at AS "createdAt",
+       updated_at AS "updatedAt"
+     FROM public.contracts
+     WHERE ${where.join(' AND ')}
+     ORDER BY updated_at DESC, created_at DESC
+     LIMIT $1`,
+    params
+  );
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    rows: result.rows.map(normalizePgContractRecord),
   };
 }
 
@@ -29866,13 +30042,114 @@ function looksLikeDocuSignStatusIntent(text = '') {
   return mentionsDocuSign && asksForStatus;
 }
 
+function stripShellQuotes(value = '') {
+  return String(value || '').replace(/^["']|["']$/g, '');
+}
+
+function parseAgentReachCommand(raw = '') {
+  const command = String(raw || AGENT_REACH_COMMAND || 'agent-reach').trim() || 'agent-reach';
+  const parts = command.match(/"[^"]+"|'[^']+'|\S+/g) || ['agent-reach'];
+  const file = stripShellQuotes(parts[0] || 'agent-reach') || 'agent-reach';
+  const args = parts.slice(1).map(stripShellQuotes).filter(Boolean);
+  return {
+    file,
+    args,
+    display: [file, ...args].join(' '),
+  };
+}
+
+function selectAgentReachChannel(text = '') {
+  const normalized = String(text || '')
+    .trim()
+    .toLowerCase();
+  if (!normalized) return '';
+  if (/(x\.com|twitter|tweet|tweets)\b/.test(normalized)) return 'twitter';
+  if (/\breddit\b|reddit\.com|subreddit|r\/[a-z0-9_]+/i.test(normalized)) return 'reddit';
+  if (/youtu\.be|youtube\.com|youtube|captions?|transcript/.test(normalized)) return 'youtube';
+  if (/bilibili|b站|哔哩哔哩/.test(normalized)) return 'bilibili';
+  if (/xiaohongshu|小红书|rednote/.test(normalized)) return 'xiaohongshu';
+  if (/linkedin|linked in/.test(normalized)) return 'linkedin';
+  if (/\bgithub\b|github\.com/.test(normalized)) return 'github';
+  if (/(https?:\/\/|www\.)/i.test(normalized)) return 'webpage';
+  if (/\b(web search|internet search|search the web|market intel|social listening)\b/.test(normalized)) return 'web_search';
+  return '';
+}
+
+function detectAgentReachStatus({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && __agentReachStatusCache.status && now - __agentReachStatusCache.checkedAtMs < AGENT_REACH_STATUS_TTL_MS) {
+    return __agentReachStatusCache.status;
+  }
+  const parsed = parseAgentReachCommand(AGENT_REACH_COMMAND);
+  if (!AGENT_REACH_ENABLED) {
+    const status = {
+      optional: true,
+      ready: false,
+      installed: false,
+      configured: false,
+      status: 'disabled',
+      command: parsed.display,
+      version: '',
+      error: '',
+    };
+    __agentReachStatusCache = { checkedAtMs: now, status };
+    return status;
+  }
+  try {
+    let output = '';
+    try {
+      output = execFileSync(parsed.file, [...parsed.args, '--version'], {
+        encoding: 'utf8',
+        timeout: AGENT_REACH_DETECT_TIMEOUT_MS,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      output = execFileSync(parsed.file, [...parsed.args, '--help'], {
+        encoding: 'utf8',
+        timeout: AGENT_REACH_DETECT_TIMEOUT_MS,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }
+    const version = String(output || '').trim().split(/\r?\n/)[0]?.slice(0, 120) || 'installed';
+    const status = {
+      optional: true,
+      ready: true,
+      installed: true,
+      configured: true,
+      status: 'local_command_ready',
+      command: parsed.display,
+      version,
+      error: '',
+    };
+    __agentReachStatusCache = { checkedAtMs: now, status };
+    return status;
+  } catch (error) {
+    const message = error?.message || String(error || 'Agent Reach command unavailable.');
+    const status = {
+      optional: true,
+      ready: false,
+      installed: false,
+      configured: true,
+      status: /ENOENT|not recognized|cannot find/i.test(message) ? 'not_installed' : 'local_command_error',
+      command: parsed.display,
+      version: '',
+      error: message.slice(0, 240),
+    };
+    __agentReachStatusCache = { checkedAtMs: now, status };
+    return status;
+  }
+}
+
 function looksLikeBrowserResearchIntent(text = '') {
   const normalized = String(text || '')
     .trim()
     .toLowerCase();
   if (!normalized) return false;
   if (/(https?:\/\/|www\.)/i.test(normalized)) return true;
-  return ['browseros', 'browser os', 'browser research', 'use browser', 'use the browser', 'scrape', 'crawl', 'fetch this page', 'check zillow', 'check redfin', 'open zillow', 'open redfin', 'property page', 'listing page', 'public record site'].some((token) => normalized.includes(token));
+  if (selectAgentReachChannel(normalized)) return true;
+  return ['browseros', 'browser os', 'browser research', 'agent reach', 'agent-reach', 'use browser', 'use the browser', 'scrape', 'crawl', 'fetch this page', 'check zillow', 'check redfin', 'open zillow', 'open redfin', 'property page', 'listing page', 'public record site'].some((token) => normalized.includes(token));
 }
 
 function detectAdminIntent(command = '') {
@@ -30266,13 +30543,32 @@ function extractBrowserResearchRequest(command = '') {
   const lower = normalized.toLowerCase();
   const targetUrl = normalized.match(/https?:\/\/\S+/i)?.[0] || '';
   const propertyMatch = normalized.match(/\b\d{2,6}\s+[a-z0-9.'-]+(?:\s+[a-z0-9.'-]+){0,5}\b/i);
-  const source = lower.includes('zillow') ? 'Zillow' : lower.includes('redfin') ? 'Redfin' : lower.includes('county') || lower.includes('public record') ? 'Public records' : lower.includes('mls') ? 'MLS' : targetUrl ? 'Direct URL' : 'Browser research';
+  const agentReachChannel = selectAgentReachChannel(normalized);
+  const agentReachSource = {
+    twitter: 'X/Twitter',
+    reddit: 'Reddit',
+    youtube: 'YouTube',
+    bilibili: 'Bilibili',
+    xiaohongshu: 'Xiaohongshu',
+    linkedin: 'LinkedIn',
+    github: 'GitHub',
+    webpage: 'Webpage',
+    web_search: 'Web search',
+  }[agentReachChannel] || '';
+  let source = 'Browser research';
+  if (lower.includes('zillow')) source = 'Zillow';
+  else if (lower.includes('redfin')) source = 'Redfin';
+  else if (lower.includes('county') || lower.includes('public record')) source = 'Public records';
+  else if (lower.includes('mls')) source = 'MLS';
+  else if (agentReachSource) source = agentReachSource;
+  else if (targetUrl) source = 'Direct URL';
 
   return {
     query: normalized,
     targetUrl,
     targetLabel: propertyMatch?.[0] || targetUrl || normalized,
     source,
+    agentReachChannel,
   };
 }
 
@@ -31391,9 +31687,50 @@ async function persistPropertyCacheRowToDb(item = {}, source = 'property-data') 
 async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
   const property = lead.property || {};
   const seller = lead.seller || {};
-  const leadId = String(lead.leadId || lead.id || '').trim();
+  let leadId = String(lead.leadId || lead.id || '').trim();
   if (!leadId) return { ok: false, reason: 'missing_lead_id' };
-  return queryPgRows(
+  const phone = normalizePhone(seller.phone || lead.phone || '');
+  if (phone) {
+    const existingByPhone = await queryPgRows(
+      `SELECT id, source, lead_name, address, raw
+       FROM public.lead_profiles
+       WHERE workspace_id = 'pbk'
+         AND regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g') = regexp_replace($1, '[^0-9]', '', 'g')
+       ORDER BY
+         (id = $2) DESC,
+         (id LIKE 'lead-inbound-%' OR source = 'inbound-call') DESC,
+         updated_at DESC NULLS LAST,
+         created_at DESC NULLS LAST
+       LIMIT 1`,
+      [phone, leadId]
+    );
+    const existingRow = existingByPhone.ok ? existingByPhone.rows[0] : null;
+    const existingRaw =
+      existingRow?.raw && typeof existingRow.raw === 'object' && !Array.isArray(existingRow.raw)
+        ? existingRow.raw
+        : {};
+    const existingIsInboundPlaceholder =
+      Boolean(existingRow) &&
+      (String(existingRow.id || '').startsWith('lead-inbound-') ||
+        String(existingRow.source || '').toLowerCase() === 'inbound-call' ||
+        normalizeLeadTags(existingRaw.tags || []).includes('inbound-call') ||
+        (!getSpokenLeadName(existingRow.lead_name || existingRaw.leadName || existingRaw.seller?.name || '') &&
+          !String(existingRow.address || existingRaw.address || existingRaw.property?.address || '').trim()));
+    const incomingIsInboundPlaceholder = isInboundPlaceholderLead(lead);
+    if (
+      existingRow?.id &&
+      existingRow.id !== leadId &&
+      (existingIsInboundPlaceholder || incomingIsInboundPlaceholder)
+    ) {
+      leadId = existingRow.id;
+      lead = {
+        ...lead,
+        id: leadId,
+        leadId,
+      };
+    }
+  }
+  const result = await queryPgRows(
     `INSERT INTO public.lead_profiles (
        id, workspace_id, external_id, source, status, stage, temperature,
        lead_name, first_name, last_name, email, phone, address, city, state,
@@ -31455,6 +31792,11 @@ async function persistLeadProfileRowToDb(lead = {}, source = 'property-data') {
       JSON.stringify(lead),
     ]
   );
+  return {
+    ...result,
+    leadId,
+    profileId: leadId,
+  };
 }
 
 async function deleteLeadProfileRowFromDb(lead = {}, fallbackId = '') {
@@ -31550,6 +31892,7 @@ async function buildToolingStatus() {
   const desktopCopilotConfigured = desktopCopilotEndpointConfigured || desktopSidecarConnected || countManifestItems(upgradeManifest, 'desktopCopilot') > 0;
   const desktopCopilotReady = Boolean(desktopCopilotEndpointConfigured || desktopSidecarConnected);
   const metricsUrl = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/metrics` : `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}/metrics`;
+  const agentReachStatus = detectAgentReachStatus();
 
   const sections = {
     commandIntentRouter: {
@@ -31576,6 +31919,23 @@ async function buildToolingStatus() {
       registryConfigured: Boolean(browserOsRegistry),
       endpoint: browserOsRegistry?.url || browserOsRegistry?.endpoint || BROWSEROS_MCP_URL,
       note: Boolean(browserOsRegistry) ? 'BrowserOS is registered and can be launched from Rex inside the Brain lane.' : `Register BrowserOS at ${BROWSEROS_MCP_URL} to give Rex browser-native research without leaving PBK.`,
+    },
+    agentReach: {
+      optional: true,
+      ready: Boolean(agentReachStatus.ready),
+      configured: Boolean(agentReachStatus.configured),
+      installed: Boolean(agentReachStatus.installed),
+      status: agentReachStatus.status,
+      command: agentReachStatus.command || AGENT_REACH_COMMAND,
+      version: agentReachStatus.version || '',
+      error: agentReachStatus.error || '',
+      channels: ['twitter', 'reddit', 'youtube', 'bilibili', 'xiaohongshu', 'linkedin', 'github', 'webpage', 'web_search'],
+      executionPolicy: 'read_only_research_queue',
+      note: agentReachStatus.ready
+        ? 'Agent Reach is installed and can be queued by Rex for read-only platform research through the existing Brain lane.'
+        : AGENT_REACH_ENABLED
+          ? 'Optional Agent Reach CLI is not detected yet; BrowserOS, Tavily, OpenAI Web Search, and manual transcript paste remain active.'
+          : 'Agent Reach is disabled by PBK_AGENT_REACH_ENABLED.',
     },
     browserResearch: {
       optional: false,
@@ -32555,6 +32915,91 @@ function buildInboundLeadContextFromDbRow(row = {}, normalizedPhone = '') {
   };
 }
 
+function parseInboundThreadLeadName(title = '') {
+  const primary = String(title || '')
+    .split(/\s+-\s+/)[0]
+    .trim();
+  return getSpokenLeadName(primary);
+}
+
+function parseInboundThreadAddress(title = '') {
+  const parts = String(title || '')
+    .split(/\s+-\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const address = parts.length > 1 ? parts.slice(1).join(' - ') : '';
+  return /^unknown property$/i.test(address) ? '' : address;
+}
+
+async function findInboundConversationThreadContext(phone = '') {
+  const normalizedPhone = normalizeConversationPhone(phone);
+  if (!normalizedPhone) return null;
+  const result = await queryPgRows(
+    `SELECT
+       thread.lead_id,
+       thread.title,
+       thread.status,
+       thread.assigned_agent,
+       thread.metadata,
+       thread.last_event_at,
+       thread.updated_at,
+       thread.created_at,
+       identity.display_value
+     FROM public.conversation_thread_identities AS identity
+     JOIN public.conversation_threads AS thread
+       ON thread.id = identity.thread_id
+      AND thread.workspace_id = identity.workspace_id
+     WHERE identity.workspace_id = 'pbk'
+       AND identity.identity_type = 'phone'
+       AND identity.normalized_value = $1
+       AND thread.merged_into_thread_id IS NULL
+     ORDER BY
+       (thread.lead_id IS NOT NULL) DESC,
+       thread.last_event_at DESC NULLS LAST,
+       thread.updated_at DESC NULLS LAST,
+       thread.created_at DESC NULLS LAST
+     LIMIT 1`,
+    [normalizedPhone]
+  );
+  if (!result.ok || !result.rows[0]) return null;
+  const row = result.rows[0];
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const leadId = String(row.lead_id || metadata.leadId || '').trim();
+  if (!leadId) return null;
+  return {
+    found: true,
+    source: 'conversation-thread-identity',
+    leadId,
+    leadName: parseInboundThreadLeadName(row.title || metadata.title || ''),
+    address: parseInboundThreadAddress(row.title || metadata.title || ''),
+    phone: normalizedPhone,
+    email: '',
+    status: String(metadata.status || row.status || 'callback_requested').trim(),
+    stage: String(metadata.stage || metadata.workflowStage || 'callback_requested').trim(),
+    motivationScore: toNumber(metadata.motivationScore || metadata.score, 0),
+    lastContactAt: row.last_event_at || row.updated_at || row.created_at || '',
+    bant: normalizeBantInfo(metadata.bant || {}, metadata),
+    callContext: metadata.callContext || metadata.call_context || {},
+    raw: {
+      id: leadId,
+      leadId,
+      source: 'conversation-thread-identity',
+      status: String(metadata.status || row.status || 'callback_requested').trim(),
+      stage: String(metadata.stage || metadata.workflowStage || 'callback_requested').trim(),
+      seller: {
+        name: parseInboundThreadLeadName(row.title || metadata.title || ''),
+        phone: normalizedPhone,
+        email: '',
+      },
+      property: {
+        address: parseInboundThreadAddress(row.title || metadata.title || ''),
+      },
+      callContext: metadata.callContext || metadata.call_context || {},
+      metadata,
+    },
+  };
+}
+
 async function findInboundLeadContext(phone = '') {
   const normalizedPhone = normalizePhone(phone);
   if (!normalizedPhone) {
@@ -32591,6 +33036,17 @@ async function findInboundLeadContext(phone = '') {
   );
   if (dbResult.ok && dbResult.rows[0]) {
     return buildInboundLeadContextFromDbRow(dbResult.rows[0], normalizedPhone);
+  }
+
+  const threadContext = await findInboundConversationThreadContext(normalizedPhone);
+  if (threadContext) {
+    return {
+      ...threadContext,
+      diagnostics: {
+        durableLookupOk: Boolean(dbResult.ok),
+        durableLookupError: dbResult.ok ? '' : dbResult.error || dbResult.reason || '',
+      },
+    };
   }
 
   const localLead = (state.leadImports || []).find((lead) => {
@@ -32677,6 +33133,223 @@ async function persistInboundCallRoute(route = {}) {
   return result.ok;
 }
 
+function buildInboundLeadProfilePayload(lead = {}, parsed = {}, meta = {}) {
+  const raw = lead.raw && typeof lead.raw === 'object' && !Array.isArray(lead.raw) ? lead.raw : {};
+  const rawSeller = raw.seller && typeof raw.seller === 'object' && !Array.isArray(raw.seller) ? raw.seller : {};
+  const rawProperty =
+    raw.property && typeof raw.property === 'object' && !Array.isArray(raw.property)
+      ? raw.property
+      : {};
+  const leadId = String(lead.leadId || raw.leadId || raw.id || '').trim();
+  const phone = normalizePhone(lead.phone || parsed.from || rawSeller.phone || raw.phone || '');
+  const leadName = getSpokenLeadName(lead.leadName || rawSeller.name || raw.leadName || raw.name || '');
+  const address = String(lead.address || rawProperty.address || raw.address || '').trim();
+  const now = isoNow();
+  const callContext =
+    lead.callContext && typeof lead.callContext === 'object' && !Array.isArray(lead.callContext)
+      ? lead.callContext
+      : raw.callContext && typeof raw.callContext === 'object' && !Array.isArray(raw.callContext)
+        ? raw.callContext
+        : raw.call_context && typeof raw.call_context === 'object' && !Array.isArray(raw.call_context)
+          ? raw.call_context
+          : {};
+  const existingTags = normalizeLeadTags(raw.tags || lead.tags || []);
+  return normalizeLeadIntake({
+    ...raw,
+    id: leadId,
+    leadId,
+    externalId: raw.externalId || raw.external_id || leadId,
+    source: raw.source || lead.source || 'inbound-call',
+    leadSource: raw.leadSource || raw.lead_source || lead.source || 'inbound-call',
+    status: lead.status || raw.status || 'callback_requested',
+    stage: lead.stage || raw.stage || 'callback_requested',
+    temperature: raw.temperature || (lead.found ? 'warm' : 'new'),
+    seller: {
+      ...rawSeller,
+      name: leadName || rawSeller.name || '',
+      phone,
+      email: lead.email || rawSeller.email || raw.email || '',
+      preferredChannel: rawSeller.preferredChannel || raw.preferredChannel || 'call',
+    },
+    property: {
+      ...rawProperty,
+      address,
+    },
+    motivationScore: toNumber(lead.motivationScore ?? raw.motivationScore ?? raw.score, 0),
+    callContext: {
+      ...callContext,
+      lastInboundCallId: meta.callControlId || '',
+      lastInboundPhone: phone,
+      lastInboundAt: now,
+      source: 'inbound-call',
+    },
+    tags: [...new Set([...existingTags, 'inbound-call'])],
+    createdAt: raw.createdAt || raw.created_at || now,
+    updatedAt: now,
+  });
+}
+
+async function ensureInboundLeadProfileContext(lead = {}, parsed = {}, meta = {}) {
+  if (!lead?.leadId) return lead;
+  let profile = buildInboundLeadProfilePayload(lead, parsed, meta);
+  const lookup = {
+    leadId: profile.leadId || profile.id,
+    email: profile.seller?.email || profile.email,
+    phone: profile.seller?.phone || profile.phone,
+    address: profile.property?.address || profile.address,
+    leadName: profile.seller?.name || profile.leadName || profile.name,
+  };
+  const existing = (state.leadImports || []).find((item) => leadMatchesIdentifiers(item, lookup));
+  if (existing) {
+    patchLeadImport(state, lookup, profile);
+  } else {
+    addLeadImport(state, profile);
+  }
+
+  const persistence = await persistLeadProfileRowToDb(profile, 'inbound-call');
+  const persistenceOk = Boolean(persistence?.ok);
+  if (persistenceOk && persistence?.leadId && persistence.leadId !== (profile.leadId || profile.id)) {
+    profile = {
+      ...profile,
+      id: persistence.leadId,
+      leadId: persistence.leadId,
+    };
+    patchLeadImport(state, lookup, profile);
+  }
+  if (!persistenceOk && persistence?.reason !== 'no_database') {
+    recordCallTrace('inbound_lead_profile_persist_failed', {
+      callId: meta.callControlId || '',
+      phone: profile.phone || profile.seller?.phone || parsed.from || '',
+      leadId: profile.leadId || profile.id || '',
+      leadName: profile.leadName || profile.name || '',
+      address: profile.address || profile.property?.address || '',
+      source: lead.source || '',
+      result: persistence?.error || persistence?.reason || 'lead_profile_persist_failed',
+      stage: 'ensureInboundLeadProfileContext',
+    });
+  }
+
+  return {
+    ...lead,
+    leadId: profile.leadId || profile.id || persistence?.leadId || lead.leadId,
+    leadName: getSpokenLeadName(profile.leadName || profile.name || lead.leadName || ''),
+    address: profile.address || lead.address || '',
+    phone: profile.phone || lead.phone || parsed.from || '',
+    email: profile.email || lead.email || '',
+    status: profile.status || lead.status || '',
+    stage: profile.stage || lead.stage || '',
+    motivationScore: toNumber(profile.motivationScore ?? lead.motivationScore, 0),
+    bant: normalizeBantInfo(profile.bant || {}, lead.bant || {}),
+    callContext: profile.callContext || lead.callContext || {},
+    raw: profile,
+    durableProfile: persistenceOk ? 'postgres:lead_profiles' : 'bridge_state',
+    durableProfilePersisted: persistenceOk,
+  };
+}
+
+async function reconcileInboundLeadProfiles(params = {}) {
+  const limit = Math.min(200, Math.max(1, Math.trunc(toNumber(params.limit, 80) || 80)));
+  const requestedPhone = normalizePhone(params.phone || params.from || '');
+  const requestedLeadId = String(params.leadId || params.lead_id || '').trim();
+  const dryRun = params.dryRun === true || String(params.dry_run || '').toLowerCase() === 'true';
+  const candidates = sortNewest(state.calls || [])
+    .filter((call) => {
+      const callLeadId = String(call.leadId || '').trim();
+      const callPhone = normalizePhone(call.phone || call.from || call.to || '');
+      if (requestedLeadId && callLeadId !== requestedLeadId) return false;
+      if (requestedPhone && callPhone !== requestedPhone) return false;
+      return (
+        String(call.direction || '').toLowerCase() === 'inbound' ||
+        callLeadId.toLowerCase().startsWith('lead-inbound-') ||
+        String(call.provider || '').toLowerCase() === 'telnyx'
+      );
+    })
+    .slice(0, limit);
+
+  const repaired = [];
+  const skipped = [];
+  const failures = [];
+  for (const call of candidates) {
+    const phone = normalizePhone(call.phone || call.from || call.to || '');
+    if (!phone) {
+      skipped.push({ callId: call.id || call.callId || '', reason: 'missing_phone' });
+      continue;
+    }
+    try {
+      const parsed = {
+        from: phone,
+        to: normalizePhone(call.to || ''),
+        callControlId: call.telnyxCallControlId || call.callControlId || call.id || call.callId || '',
+      };
+      const lead = await findInboundLeadContext(phone);
+      if (dryRun) {
+        repaired.push({
+          dryRun: true,
+          callId: call.id || call.callId || '',
+          phone,
+          leadId: lead.leadId || '',
+          source: lead.source || '',
+        });
+        continue;
+      }
+      const resolved = await ensureInboundLeadProfileContext(
+        {
+          ...lead,
+          leadId: lead.leadId || call.leadId || `lead-inbound-${slugify(phone)}`,
+          leadName: getSpokenLeadName(lead.leadName || call.leadName || ''),
+          address: lead.address || call.address || '',
+          phone,
+          email: lead.email || call.email || '',
+          status: lead.status || call.leadStatus || 'callback_requested',
+          stage: lead.stage || call.stage || 'callback_requested',
+          raw: {
+            ...(lead.raw && typeof lead.raw === 'object' ? lead.raw : {}),
+            sourceCallId: call.id || call.callId || '',
+          },
+        },
+        parsed,
+        { callControlId: parsed.callControlId }
+      );
+      upsertCall(state, {
+        ...call,
+        leadId: resolved.leadId || call.leadId || '',
+        leadName: getSpokenLeadName(resolved.leadName || call.leadName || ''),
+        address: resolved.address || call.address || '',
+        phone,
+      });
+      repaired.push({
+        callId: call.id || call.callId || '',
+        phone,
+        leadId: resolved.leadId || '',
+        durableProfile: resolved.durableProfile || '',
+        persisted: Boolean(resolved.durableProfilePersisted),
+      });
+    } catch (error) {
+      failures.push({
+        callId: call.id || call.callId || '',
+        phone,
+        error: error instanceof Error ? error.message : String(error || 'unknown_error'),
+      });
+    }
+  }
+
+  if (!dryRun && repaired.length) {
+    await persistState(state);
+    scheduleRuntimeStateBroadcast('inbound-lead-reconcile');
+  }
+
+  return {
+    ok: failures.length === 0,
+    dryRun,
+    examined: candidates.length,
+    repaired: repaired.length,
+    skipped,
+    failures,
+    repairs: repaired,
+    state: buildStateSnapshot({ compact: true }),
+  };
+}
+
 async function handleAvaInboundRoute(body = {}, options = {}) {
   recordToolUse('routeInboundCall');
   const parsed = parseTelnyxCallPayload(body);
@@ -32700,7 +33373,8 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
       stage: 'handleAvaInboundRoute',
     });
   });
-  const lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
+  let lead = await findInboundLeadContext(parsed.from || body.from || body.phone || '');
+  lead = await ensureInboundLeadProfileContext(lead, parsed, { callControlId });
   const spokenLeadName = getSpokenLeadName(lead.leadName);
   const inboundDiagnostic = {
     callControlId,
@@ -32774,20 +33448,6 @@ async function handleAvaInboundRoute(body = {}, options = {}) {
     createdAt: isoNow(),
     updatedAt: isoNow(),
   };
-
-  if (!lead.found && parsed.from) {
-    addLeadImport(state, {
-      id: lead.leadId,
-      leadId: lead.leadId,
-      status: 'callback_requested',
-      source: 'inbound-call',
-      seller: { name: '', phone: parsed.from, email: '' },
-      property: { address: '' },
-      motivationScore: 0,
-      createdAt: isoNow(),
-      updatedAt: isoNow(),
-    });
-  }
 
   const callRecord = createCallRecord({
     id: callControlId || undefined,
@@ -41693,9 +42353,11 @@ async function updateBrowserResearchJobFromPayload(payload = {}) {
   const existing = findBrowserResearchJob(jobId) || {
     id: jobId,
     createdAt: isoNow(),
-    provider: 'browseros',
-    source: payload.source || 'browseros-callback',
+    provider: String(payload.provider || 'browseros').trim() || 'browseros',
+    source: payload.source || payload.provider || 'browseros-callback',
   };
+  const provider = String(payload.provider || existing.provider || 'browseros').trim() || 'browseros';
+  const providerLabel = provider === 'agent-reach' ? 'Agent Reach' : provider === 'browseros' ? 'BrowserOS' : provider;
   const status = String(payload.status || payload.state || 'complete')
     .trim()
     .toLowerCase();
@@ -41703,6 +42365,7 @@ async function updateBrowserResearchJobFromPayload(payload = {}) {
   const resultSummary = String(payload.resultSummary || payload.result_summary || payload.summary || payload.answer || resultData.summary || '').trim();
   const updated = upsertBrowserResearchJob(state, {
     ...existing,
+    provider,
     status,
     result: status,
     resultSummary,
@@ -41716,10 +42379,10 @@ async function updateBrowserResearchJobFromPayload(payload = {}) {
   addActivity(
     state,
     makeActivity({
-      actor: payload.actor || 'BrowserOS',
+      actor: payload.actor || providerLabel,
       category: 'RESEARCH',
       status: /fail|error/i.test(status) ? 'warning' : /complete|done|indexed|success/i.test(status) ? 'complete' : 'queued',
-      text: resultSummary ? `BrowserOS research ${status}: ${resultSummary.slice(0, 160)}` : `BrowserOS research job ${status}.`,
+      text: resultSummary ? `${providerLabel} research ${status}: ${resultSummary.slice(0, 160)}` : `${providerLabel} research job ${status}.`,
       target: updated.targetLabel || updated.targetUrl || updated.id,
     })
   );
@@ -48907,17 +49570,24 @@ const toolHandlers = {
   async launchBrowserResearch(params = {}) {
     recordToolUse('launchBrowserResearch');
     const structuredQuery = [params.goal, params.target ? `Target: ${params.target}` : ''].filter(Boolean).join('\n\n');
-    const request = extractBrowserResearchRequest(params.query || params.command || params.prompt || structuredQuery || '');
+    const requestText = params.query || params.command || params.prompt || structuredQuery || '';
+    const request = extractBrowserResearchRequest(requestText);
     const toolingStatus = await buildToolingStatus();
     const browserOs = toolingStatus.browserOs || {};
-    const ready = Boolean(browserOs.ready);
+    const agentReach = toolingStatus.agentReach || {};
+    const explicitProvider = String(params.provider || params.researchProvider || params.platform || '').trim().toLowerCase();
+    const agentReachChannel = request.agentReachChannel || selectAgentReachChannel(`${requestText} ${params.target || ''} ${params.platform || ''}`);
+    const wantsAgentReach = explicitProvider.includes('agent-reach') || explicitProvider.includes('agent reach') || Boolean(agentReachChannel);
+    const provider = wantsAgentReach ? 'agent-reach' : 'browseros';
+    const providerLabel = provider === 'agent-reach' ? 'Agent Reach' : 'BrowserOS';
+    const ready = provider === 'agent-reach' ? Boolean(agentReach.ready) : Boolean(browserOs.ready);
     const jobSlug = slugify(request.targetLabel || params.target || 'request') || randomUUID().slice(0, 8);
     const job = {
       id: `browser-research-${jobSlug}-${randomUUID().slice(0, 8)}`,
       createdAt: isoNow(),
       requestedBy: params.requestedBy || 'Rex',
       source: params.source || 'brain',
-      provider: 'browseros',
+      provider,
       status: ready ? 'queued' : 'setup-required',
       query: request.query,
       goal: params.goal || '',
@@ -48925,7 +49595,10 @@ const toolHandlers = {
       targetLabel: request.targetLabel,
       target: params.target || request.targetUrl || request.targetLabel || '',
       site: request.source,
-      endpoint: browserOs.endpoint || BROWSEROS_MCP_URL,
+      agentReachChannel: provider === 'agent-reach' ? agentReachChannel || 'web_search' : '',
+      endpoint: provider === 'agent-reach' ? agentReach.command || AGENT_REACH_COMMAND : browserOs.endpoint || BROWSEROS_MCP_URL,
+      executionPolicy: provider === 'agent-reach' ? 'read_only_local_command_queue' : 'read_only_mcp_research_queue',
+      diagnostic: provider === 'agent-reach' && !ready ? agentReach.error || agentReach.note || 'Agent Reach CLI is not installed or not reachable.' : '',
     };
 
     upsertBrowserResearchJob(state, job);
@@ -48935,8 +49608,12 @@ const toolHandlers = {
         actor: params.requestedBy || 'Rex',
         category: 'RESEARCH',
         status: ready ? 'queued' : 'warning',
-        text: ready ? `BrowserOS research queued for ${request.targetLabel || 'the requested page'}.` : `BrowserOS research requested for ${request.targetLabel || 'the requested page'}, but the MCP registry still needs BrowserOS configured.`,
-        target: request.targetLabel || request.targetUrl || 'BrowserOS',
+        text: ready
+          ? `${providerLabel} research queued for ${request.targetLabel || request.source || 'the requested source'}.`
+          : provider === 'agent-reach'
+            ? `Agent Reach research requested for ${request.targetLabel || request.source || 'the requested source'}, but the optional local CLI still needs installation.`
+            : `BrowserOS research requested for ${request.targetLabel || 'the requested page'}, but the MCP registry still needs BrowserOS configured.`,
+        target: request.targetLabel || request.targetUrl || providerLabel,
       })
     );
     state.status.lastBrowserResearchAt = job.createdAt;
@@ -48944,11 +49621,22 @@ const toolHandlers = {
 
     return {
       ok: ready,
-      answer: ready ? `BrowserOS is registered. I queued browser research for ${request.targetLabel || request.source}. Keep results inside the Brain lane and the existing tooling cards.` : `BrowserOS is not registered yet. Add a browseros entry in mcp-servers/registry.example.json and point it at ${BROWSEROS_MCP_URL}, then retry from Rex.`,
-      citations: ready ? ['BrowserOS MCP registry', 'PBK Browser Research Layer'] : ['mcp-servers/registry.example.json'],
+      answer: ready
+        ? `${providerLabel} is ready. I queued read-only research for ${request.targetLabel || request.source}. Keep results inside the Brain lane and the existing tooling cards.`
+        : provider === 'agent-reach'
+          ? `Agent Reach is optional and not detected yet. Install it locally or on the operator host, then retry this ${job.agentReachChannel || 'web'} research request.`
+          : `BrowserOS is not registered yet. Add a browseros entry in mcp-servers/registry.example.json and point it at ${BROWSEROS_MCP_URL}, then retry from Rex.`,
+      citations: ready
+        ? provider === 'agent-reach'
+          ? ['Agent Reach local CLI', 'PBK Browser Research Layer']
+          : ['BrowserOS MCP registry', 'PBK Browser Research Layer']
+        : provider === 'agent-reach'
+          ? ['PBK_AGENT_REACH_COMMAND', 'Agent Reach optional local setup']
+          : ['mcp-servers/registry.example.json'],
       job,
       tooling: {
         browserOs,
+        agentReach,
       },
     };
   },
@@ -51972,6 +52660,7 @@ async function handleEvent(eventType, payload = {}) {
       kind: 'transcript',
       source: 'telnyx-call-transcript',
     });
+    scheduleRuntimeStateBroadcast('call-transcript');
     return {
       ok: true,
       call,
@@ -61266,6 +61955,10 @@ const server = createServer(async (request, response) => {
         body.manualTranscript || body.transcript || body.text || body.content || ''
       );
       const manualTranscriptResult = normalizeManualYouTubeTranscript(manualTranscript);
+      const audioTranscriptUrl = String(
+        body.audioTranscriptUrl || body.audioUrl || body.mediaUrl || body.directMediaUrl || ''
+      ).trim();
+      const audioTranscriptUrlResult = normalizeSkillAudioTranscriptUrl(audioTranscriptUrl);
       const allowedSkillAgents = new Set(['ava', 'rex', 'nurture-agent', 'max']);
       if (sourceType !== 'youtube' || !extractYouTubeVideoId(sourceUrl)) {
         json(response, 400, {
@@ -61284,24 +61977,74 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const [fetchedTranscriptResult, title] = await Promise.all([
-        manualTranscriptResult.ok
-          ? Promise.resolve({
-              ok: true,
-              transcript: manualTranscriptResult.transcript,
-              videoId: extractYouTubeVideoId(sourceUrl),
-              segmentCount: 0,
-              source: manualTranscriptResult.source,
-            })
-          : fetchYouTubeTranscript(sourceUrl),
-        fetchYouTubeTitle(sourceUrl),
-      ]);
-      const transcriptResult = fetchedTranscriptResult;
+      const title = await fetchYouTubeTitle(sourceUrl);
+      let transcriptResult = manualTranscriptResult.ok
+        ? {
+            ok: true,
+            transcript: manualTranscriptResult.transcript,
+            videoId: extractYouTubeVideoId(sourceUrl),
+            segmentCount: 0,
+            source: manualTranscriptResult.source,
+          }
+        : await fetchYouTubeTranscript(sourceUrl);
+
+      if (
+        (!transcriptResult.ok || String(transcriptResult.transcript || '').length < 400) &&
+        audioTranscriptUrl
+      ) {
+        if (!audioTranscriptUrlResult.ok) {
+          json(response, 422, {
+            ok: false,
+            result: 'youtube_skill_audio_url_unavailable',
+            error:
+              audioTranscriptUrlResult.message ||
+              'Provide a direct public audio/video file URL or paste the transcript/notes.',
+            reason: audioTranscriptUrlResult.reason,
+            fallback: {
+              type: 'deepgram_audio_url',
+              field: 'audioTranscriptUrl',
+              available: true,
+              acceptedFormats: ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac', 'mp4', 'mov', 'webm'],
+            },
+            transcript: {
+              videoId: transcriptResult.videoId || extractYouTubeVideoId(sourceUrl),
+              source: 'deepgram_audio_url',
+              chars: 0,
+            },
+          });
+          return;
+        }
+
+        const deepgramTranscript = await transcribeDeepgramUrl({
+          url: audioTranscriptUrlResult.url,
+          smart_format: true,
+          sentiment: true,
+          utterances: true,
+        });
+        const audioTranscript = String(deepgramTranscript?.summary?.transcript || '').trim();
+        transcriptResult = {
+          ok: Boolean(deepgramTranscript?.ok && audioTranscript),
+          transcript: audioTranscript,
+          videoId: transcriptResult.videoId || extractYouTubeVideoId(sourceUrl),
+          segmentCount: Number(deepgramTranscript?.summary?.utteranceCount || 0),
+          source: 'deepgram_audio_url',
+          error: deepgramTranscript?.ok
+            ? audioTranscript
+              ? ''
+              : 'Deepgram returned no transcript words for the audio/video URL.'
+            : deepgramTranscript?.error || 'Deepgram could not transcribe that audio/video URL.',
+          provider: deepgramTranscript?.provider || 'deepgram',
+          audioTranscriptUrl: audioTranscriptUrlResult.url,
+        };
+      }
+
       if (!transcriptResult.ok || String(transcriptResult.transcript || '').length < 400) {
         const youtubeTranscriptFailure = classifyYouTubeTranscriptFailure(transcriptResult.error);
         const fallbackReason =
           manualTranscript && !manualTranscriptResult.ok
             ? manualTranscriptResult.reason
+            : audioTranscriptUrl && transcriptResult.source === 'deepgram_audio_url'
+              ? 'audio_transcript_unavailable'
             : youtubeTranscriptFailure.reason;
         json(response, 422, {
           ok: false,
@@ -61309,12 +62052,14 @@ const server = createServer(async (request, response) => {
           error:
             manualTranscript && !manualTranscriptResult.ok
               ? manualTranscriptResult.message
+              : audioTranscriptUrl && transcriptResult.source === 'deepgram_audio_url'
+                ? transcriptResult.error
               : youtubeTranscriptFailure.message,
           reason: fallbackReason,
           retryable: Boolean(youtubeTranscriptFailure.retryable),
           fallback: {
-            type: 'operator_pasted_transcript',
-            field: 'manualTranscript',
+            type: audioTranscriptUrl ? 'deepgram_audio_url_or_operator_pasted_transcript' : 'operator_pasted_transcript',
+            field: audioTranscriptUrl ? 'audioTranscriptUrl|manualTranscript' : 'manualTranscript',
             minChars: manualTranscriptResult.minChars || 400,
             available: true,
           },
@@ -65260,6 +66005,13 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && matchesPath(pathname, ['/api/admin/reconcile-inbound-leads', '/api/admin/leads/reconcile-inbound'])) {
+      const body = await readBody(request);
+      const result = await reconcileInboundLeadProfiles(body);
+      json(response, result.ok ? 200 : 207, result);
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/admin/activity-log/status') {
       const pool = getPgPool();
       if (!pool) {
@@ -66488,7 +67240,23 @@ const server = createServer(async (request, response) => {
       const statusFilter = String(url.searchParams.get('status') || url.searchParams.get('stage') || 'all')
         .trim()
         .toLowerCase();
-      const contracts =
+      const postgresContracts = await loadContractRecordsFromPg({
+        statusFilter,
+        limit: url.searchParams.get('limit') || 200,
+      });
+      if (postgresContracts.ok && postgresContracts.rows.length) {
+        json(response, 200, {
+          ok: true,
+          result: 'live',
+          status: statusFilter,
+          count: postgresContracts.rows.length,
+          source: 'postgres:contracts',
+          contractsSource: 'postgres:contracts',
+          contracts: postgresContracts.rows,
+        });
+        return;
+      }
+      const fallbackContracts =
         statusFilter && statusFilter !== 'all'
           ? state.contracts.filter((contract) => {
               const stage = getRuntimeContractStage(contract);
@@ -66498,8 +67266,15 @@ const server = createServer(async (request, response) => {
           : state.contracts;
       json(response, 200, {
         ok: true,
+        result: 'bridge_state_fallback',
         status: statusFilter,
-        contracts,
+        count: fallbackContracts.length,
+        source: 'bridge-state',
+        contractsSource: 'bridge-state',
+        warning: postgresContracts.ok
+          ? 'Postgres contracts is empty; showing bridge-state contract records.'
+          : `Postgres contracts unavailable (${postgresContracts.error || postgresContracts.reason || 'unknown_error'}); showing bridge-state contract records.`,
+        contracts: fallbackContracts,
       });
       return;
     }

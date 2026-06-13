@@ -38,6 +38,16 @@ const ADDITIVE_DEFINITIONS = Object.freeze([
     summary: 'Discovers best PBK/local/MCP tool candidates from a natural-language need.',
   },
   {
+    id: 'agent_reach_internet_layer',
+    name: 'Agent Reach Internet Layer',
+    phase: 2,
+    mode: 'optional_local_readonly',
+    env: ['PBK_AGENT_REACH_COMMAND'],
+    tools: ['launchBrowserResearch', 'webSearch', 'runProviderAugmentedAdditiveIntelligence'],
+    summary:
+      'Optional local internet-access lane for Twitter/X, Reddit, YouTube, Bilibili, LinkedIn, and webpage research. PBK keeps it read-only and routes through existing research jobs.',
+  },
+  {
     id: 'awm_induction',
     name: 'Agent Workflow Memory',
     phase: 2,
@@ -115,6 +125,13 @@ const PROVIDER_CONNECTORS = Object.freeze([
     endpointEnv: ['PBK_TOOLUNIVERSE_ENDPOINT'],
     tokenEnv: ['PBK_TOOLUNIVERSE_TOKEN', 'HF_TOKEN', 'HUGGINGFACE_API_TOKEN'],
     healthPath: 'health',
+  },
+  {
+    additiveId: 'agent_reach_internet_layer',
+    providerId: 'agent-reach',
+    label: 'Agent Reach Local Internet Layer',
+    commandEnv: ['PBK_AGENT_REACH_COMMAND'],
+    healthPath: 'doctor',
   },
   {
     additiveId: 'awm_induction',
@@ -356,7 +373,8 @@ function buildProviderBaseCheck(connector = {}, env = {}) {
   const endpoint = firstConfiguredEnv(connector.endpointEnv || [], env);
   const modelPath = firstConfiguredEnv(connector.modelPathEnv || [], env);
   const token = firstConfiguredEnv(connector.tokenEnv || [], env);
-  const configured = Boolean(endpoint.value || modelPath.value);
+  const command = firstConfiguredEnv(connector.commandEnv || [], env);
+  const configured = Boolean(endpoint.value || modelPath.value || command.value);
   const modelReady = modelPath.value ? existsSync(modelPath.value) : false;
   const status = !configured
     ? 'native_only_no_external_provider'
@@ -364,6 +382,8 @@ function buildProviderBaseCheck(connector = {}, env = {}) {
       ? 'model_path_missing'
       : modelPath.value && modelReady
         ? 'local_model_ready'
+        : command.value
+          ? 'local_command_configured_unverified'
         : 'endpoint_configured_unverified';
   return {
     additiveId: connector.additiveId,
@@ -376,6 +396,9 @@ function buildProviderBaseCheck(connector = {}, env = {}) {
     endpoint: sanitizeEndpoint(endpoint.value),
     modelPathEnv: modelPath.name,
     modelPathConfigured: Boolean(modelPath.value),
+    commandEnv: command.name,
+    commandConfigured: Boolean(command.value),
+    command: command.value ? String(command.value).split(/\s+/)[0] : '',
     tokenEnv: token.name,
     tokenConfigured: Boolean(token.value),
     latencyMs: 0,

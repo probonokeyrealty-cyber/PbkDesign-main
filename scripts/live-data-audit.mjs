@@ -1467,7 +1467,8 @@ const checks = [
       /function\s+isPlaceholderInboundLeadName/.test(bridge) &&
       /function\s+getSpokenLeadName/.test(bridge) &&
       /lead\.found && spokenLeadName/.test(bridge) &&
-      /seller:\s*\{\s*name:\s*''/.test(bridge),
+      /const leadName = getSpokenLeadName/.test(bridge) &&
+      /seller:\s*\{[\s\S]*name:\s*leadName \|\|/.test(bridge),
   },
   {
     name: 'After-hours voicemail is opt-in and still streams caller audio when enabled',

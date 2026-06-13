@@ -51,9 +51,12 @@ function toNumber(value: unknown, fallback: number | null = null) {
 
 function mapCallStatus(status: unknown): LiveCallState['status'] {
   const normalized = String(status || '').toLowerCase();
-  if (normalized === 'live' || normalized === 'connected') return 'connected';
-  if (normalized === 'dialing' || normalized === 'queued') return 'dialing';
-  if (normalized === 'hold' || normalized === 'on-hold') return 'on-hold';
+  if (/^(active|connected|in[_ -]?progress|live|ringing|transferring)$/.test(normalized))
+    return 'connected';
+  if (normalized === 'initiated' || normalized === 'dialing' || normalized === 'queued')
+    return 'dialing';
+  if (normalized === 'hold' || normalized === 'on-hold' || normalized === 'on_hold')
+    return 'on-hold';
   if (normalized === 'ended' || normalized === 'completed' || normalized === 'failed')
     return 'ended';
   return 'idle';

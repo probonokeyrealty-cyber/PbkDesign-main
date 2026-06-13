@@ -905,7 +905,7 @@ function AgentFleetCard({
           <span>
             {agent.skills.length} skills - {agent.capabilities.length} capabilities
           </span>
-          <span title={lastOutcome}>{lastOutcome}</span>
+          <span title={lastOutcome}>Last call outcome: {lastOutcome}</span>
         </span>
       </button>
       {transferFeedback && (

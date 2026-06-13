@@ -74,7 +74,8 @@ export function normalizeManualYouTubeTranscript(value = '', { minLength = 400 }
       ok: false,
       source: 'operator_pasted_transcript',
       reason: 'manual_transcript_missing',
-      message: 'Paste a transcript or detailed notes to train from a YouTube video with disabled captions.',
+      message:
+        'Paste a transcript/detailed notes, or provide a direct audio/video URL PBK can transcribe, to train from a YouTube video with disabled captions.',
       transcript: '',
       chars: 0,
       minChars: minimum,
@@ -85,7 +86,7 @@ export function normalizeManualYouTubeTranscript(value = '', { minLength = 400 }
       ok: false,
       source: 'operator_pasted_transcript',
       reason: 'manual_transcript_too_short',
-      message: `Paste at least ${minimum} characters of transcript or detailed notes before extracting governed skills.`,
+      message: `Paste at least ${minimum} characters of transcript or detailed notes, or provide a direct audio/video URL, before extracting governed skills.`,
       transcript,
       chars: transcript.length,
       minChars: minimum,
@@ -100,6 +101,48 @@ export function normalizeManualYouTubeTranscript(value = '', { minLength = 400 }
     chars: transcript.length,
     minChars: minimum,
   };
+}
+
+export function normalizeSkillAudioTranscriptUrl(value = '') {
+  const url = cleanText(value, 1200);
+  if (!url) return { ok: false, source: 'deepgram_audio_url', reason: 'audio_url_missing', url: '' };
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      return {
+        ok: false,
+        source: 'deepgram_audio_url',
+        reason: 'audio_url_invalid',
+        message: 'Audio/video transcript URL must start with http:// or https://.',
+        url,
+      };
+    }
+    if (/(\b|\.)(youtube\.com|youtu\.be)$/i.test(parsed.hostname.replace(/^www\./i, ''))) {
+      return {
+        ok: false,
+        source: 'deepgram_audio_url',
+        reason: 'youtube_watch_url_not_direct_media',
+        message:
+          'Deepgram needs a direct MP3, M4A, WAV, MP4, MOV, or WebM file URL; a normal YouTube watch link cannot be transcribed through the audio fallback.',
+        url,
+      };
+    }
+    return {
+      ok: true,
+      source: 'deepgram_audio_url',
+      reason: 'audio_url_ready',
+      message: 'Using direct audio/video URL transcript fallback.',
+      url: parsed.toString(),
+    };
+  } catch {
+    return {
+      ok: false,
+      source: 'deepgram_audio_url',
+      reason: 'audio_url_invalid',
+      message: 'Audio/video transcript URL must be a valid public http(s) URL.',
+      url,
+    };
+  }
 }
 
 export function classifyYouTubeTranscriptFailure(error = '') {
@@ -117,7 +160,7 @@ export function classifyYouTubeTranscriptFailure(error = '') {
       ...base,
       reason: 'captions_disabled',
       message:
-        'Captions are disabled for this video. Paste a transcript or detailed notes, then analyze again; candidates will still require review and activation.',
+        'Captions are disabled for this video. Paste a transcript/detailed notes or provide a direct audio/video URL, then analyze again; candidates will still require review and activation.',
     };
   }
   if (/no transcripts? are available|not available|could not find/i.test(raw)) {
@@ -125,7 +168,7 @@ export function classifyYouTubeTranscriptFailure(error = '') {
       ...base,
       reason: 'captions_unavailable',
       message:
-        'No usable YouTube captions were found. Paste a transcript or detailed notes to extract governed skill candidates safely.',
+        'No usable YouTube captions were found. Paste a transcript/detailed notes or provide a direct audio/video URL to extract governed skill candidates safely.',
     };
   }
   if (/too many requests|captcha|rate/i.test(raw)) {

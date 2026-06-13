@@ -1498,6 +1498,35 @@ export async function fetchRuntimeState() {
   });
 }
 
+export async function createRuntimeStateStreamSessionRequest() {
+  return bridgeRequest<{
+    ok: boolean;
+    result?: string;
+    session?: {
+      token?: string;
+      wsUrl?: string;
+      expiresAt?: string;
+      ttlMs?: number;
+    };
+  }>({
+    method: 'POST',
+    path: '/api/state/stream/session',
+    body: {
+      source: 'command-center-runtime-snapshot',
+      actor: 'PBK Command Center',
+    },
+  });
+}
+
+export function buildRuntimeWebSocketUrl(path: string) {
+  const url = new URL(
+    buildUrl(path),
+    typeof window !== 'undefined' ? window.location.href : undefined
+  );
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+}
+
 export async function fetchRuntimeSettingsRequest() {
   return bridgeRequest<{
     ok: boolean;
@@ -1880,6 +1909,7 @@ export async function ingestSkillCandidatesRequest(body: {
   agentId: string;
   maxCandidates?: number;
   manualTranscript?: string;
+  audioTranscriptUrl?: string;
 }) {
   return bridgeRequest<SkillIngestResponse>({
     method: 'POST',

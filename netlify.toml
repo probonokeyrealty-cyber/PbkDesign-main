@@ -122,12 +122,32 @@ timeout = 25
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
+  for = "/deals"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/deals/*"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/analyzer"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
   for = "/inbox"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
   for = "/fleet"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/agent-fleet"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
 
@@ -153,6 +173,16 @@ timeout = 25
 
 [[headers]]
   for = "/campaigns"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/agent"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/agent-console"
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
 
@@ -216,6 +246,24 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/deals"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/deals/*"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/analyzer"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
 from = "/inbox"
 to = "/index.shell.html"
 status = 200
@@ -234,6 +282,12 @@ status = 200
 force = true
 
 [[redirects]]
+from = "/agent-fleet"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
 from = "/agents"
 to = "/index.shell.html"
 status = 200
@@ -241,6 +295,30 @@ force = true
 
 [[redirects]]
 from = "/memory"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/skills"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/skills/*"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/skill-studio"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/skill-studio/*"
 to = "/index.shell.html"
 status = 200
 force = true
@@ -259,6 +337,18 @@ force = true
 
 [[redirects]]
 from = "/campaigns"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/agent"
+to = "/index.shell.html"
+status = 200
+force = true
+
+[[redirects]]
+from = "/agent-console"
 to = "/index.shell.html"
 status = 200
 force = true

@@ -39,12 +39,50 @@ function figmaAssetResolver() {
   }
 }
 
+const shellHistoryPaths = new Set([
+  '/',
+  '/dashboard',
+  '/command-center',
+  '/leads',
+  '/deal',
+  '/deals',
+  '/analyzer',
+  '/inbox',
+  '/fleet',
+  '/agent-fleet',
+  '/agents',
+  '/memory',
+  '/skills',
+  '/skill-studio',
+  '/analytics',
+  '/settings',
+  '/campaigns',
+  '/agent',
+  '/agent-console',
+  '/ava-chat',
+])
+
+const shellHistoryPrefixes = [
+  '/index.shell.html/',
+  '/leads/',
+  '/deal/',
+  '/deals/',
+  '/inbox/',
+  '/skills/',
+  '/skill-studio/',
+]
+
+function shouldServeShellHistory(url = '') {
+  const pathname = url.split('?')[0]
+  return shellHistoryPaths.has(pathname) || shellHistoryPrefixes.some((prefix) => pathname.startsWith(prefix))
+}
+
 function shellHistoryFallback() {
   return {
     name: 'pbk-shell-history-fallback',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
-        if (req.url?.startsWith('/index.shell.html/')) {
+        if (shouldServeShellHistory(req.url)) {
           req.url = '/index.shell.html'
         }
         next()

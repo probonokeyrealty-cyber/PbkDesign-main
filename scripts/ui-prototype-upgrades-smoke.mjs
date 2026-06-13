@@ -22,6 +22,7 @@ const uiFeedback = read('src/app/utils/uiFeedback.ts');
 const toastHost = read('src/app/components/UiToastHost.tsx');
 const layout = read('src/app/shell/ParadiseLayout.tsx');
 const commandCenter = read('src/app/routes/CommandCenter.tsx');
+const runtimeSnapshotHook = read('src/app/hooks/useRuntimeSnapshot.ts');
 const agentFleet = read('src/app/routes/AgentFleet.tsx');
 const liveCallWidget = read('src/app/components/shell/LiveCallWidget.tsx');
 const callFloor = read('src/app/components/CallFloorPanel.tsx');
@@ -51,6 +52,21 @@ expectContains(commandCenter, 'Load more activity', 'Activity feed exposes a loa
 expectContains(commandCenter, 'CallQualityReviewDialog', 'Ended calls surface a quality review popup');
 expectContains(commandCenter, 'pbk:command-center:widgets', 'Dashboard widget visibility is persisted locally');
 expectContains(commandCenter, 'Widget controls', 'Command Center exposes dashboard widget controls');
+expectMatches(
+  commandCenter,
+  /active\|connected\|in\[_ -\]\?progress\|live\|ringing\|transferring/,
+  'Command Center live-call status mapping must match backend active statuses'
+);
+expectContains(
+  runtimeSnapshotHook,
+  'createRuntimeStateStreamSessionRequest',
+  'Runtime snapshot hook must create a secured state-stream session'
+);
+expectContains(
+  runtimeSnapshotHook,
+  'subscribeRuntimeSnapshotStream',
+  'Runtime snapshot hook must subscribe to realtime state updates with polling fallback'
+);
 
 expectContains(agentFleet, 'lastCallOutcomeByAgentId', 'Agent Fleet computes last call outcome per agent');
 expectContains(agentFleet, 'runtimeCalls', 'Agent Fleet reads runtime calls from /state');

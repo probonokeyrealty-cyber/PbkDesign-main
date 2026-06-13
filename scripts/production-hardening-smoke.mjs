@@ -74,6 +74,13 @@ assert(
   'The bridge must expose an idempotent contract backfill from state into Postgres.'
 );
 assert(
+  /async function loadContractRecordsFromPg/.test(bridge) &&
+    /if \(postgresContracts\.ok && postgresContracts\.rows\.length\)/.test(bridge) &&
+    /contractsSource: 'postgres:contracts'/.test(bridge) &&
+    /contractsSource: 'bridge-state'/.test(bridge),
+  'The contracts API must prefer canonical Postgres rows and label bridge-state fallback explicitly.'
+);
+assert(
   /safety validation failed closed[\s\S]*blocked: true[\s\S]*providerWrite: true/.test(bridge),
   'Safety runtime failures must block provider writes.'
 );

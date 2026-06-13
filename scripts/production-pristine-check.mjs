@@ -229,10 +229,10 @@ function classifyIssues({ health, state, agents, manual, team, security, experim
   if (decisionCount < 50 || callEmotionCount < 50) {
     issues.push(makeIssue(
       'emotion_transition_samples_low',
-      'high',
+      'advisory',
       'Emotion world-model dataset is still too small.',
       { decisionCount, trainingReadyCount, callEmotionCount, memoryCount, target: '50-100 transition samples' },
-      'Run live/test Telnyx calls until agent decisions and call emotions are populated, then retrain/export ONNX.',
+      'Run live/test Telnyx calls until agent decisions and call emotions are populated, then retrain/export ONNX. This is a learning-readiness advisory; live calls continue through the heuristic fallback.',
     ));
   }
   if (emotional.worldModelProvider !== 'external_world_model' && emotionPredict?.modelProvider !== 'external_world_model') {
@@ -354,7 +354,7 @@ async function main() {
     emotionPredict,
     slackHealth,
   });
-  const severityRank = { critical: 4, high: 3, medium: 2, low: 1 };
+  const severityRank = { critical: 5, high: 4, medium: 3, low: 2, advisory: 1 };
   issues.sort((left, right) => (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0));
   const report = {
     ok: issues.filter((issue) => ['critical', 'high'].includes(issue.severity)).length === 0,
